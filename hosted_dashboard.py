@@ -504,15 +504,26 @@ function changePassword(){
   if(nw.length<8){st.style.display='block';st.style.color='var(--red)';st.textContent='Password must be at least 8 characters';return}
   fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(r=>r.json()).then(d=>{st.style.display='block';if(d.ok){st.style.color='var(--green)';st.textContent='Password updated';document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-confirm').value='';}else{st.style.color='var(--red)';st.textContent=d.error||'Update failed'}})}
 async function deactivateClient(id, name) {
-  if (!confirm('Deactivate ' + name + '? They will lose dashboard access immediately.')) return;
-  const res = await fetch('/admin/deactivate-client/' + id, {method:'POST'});
-  const data = await res.json();
-  if (data.ok) { location.reload(); }
+  const btn = event.target;
+  btn.textContent = 'Deactivating...';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/admin/deactivate-client/' + id, {method:'POST', headers:{'Content-Type':'application/json'}});
+    const data = await res.json();
+    if (data.ok) { location.reload(); }
+    else { btn.textContent = 'Error'; console.error(data); }
+  } catch(e) { btn.textContent = 'Error'; console.error(e); }
 }
 async function reactivateClient(id, name) {
-  const res = await fetch('/admin/reactivate-client/' + id, {method:'POST'});
-  const data = await res.json();
-  if (data.ok) { location.reload(); }
+  const btn = event.target;
+  btn.textContent = 'Reactivating...';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/admin/reactivate-client/' + id, {method:'POST', headers:{'Content-Type':'application/json'}});
+    const data = await res.json();
+    if (data.ok) { location.reload(); }
+    else { btn.textContent = 'Error'; console.error(data); }
+  } catch(e) { btn.textContent = 'Error'; console.error(e); }
 }
 </script>
 </body>
