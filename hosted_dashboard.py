@@ -508,6 +508,231 @@ function changePassword(){
 </body>
 </html>"""
 
+CLIENT_SETTINGS_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ restaurant.name }} — Settings</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--green:#2d5a3d;--green-bg:#eaf2ed;--r:8px}
+body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);font-size:14px}
+.hdr{background:var(--ink);height:54px;display:flex;align-items:center;padding:0 28px;justify-content:space-between}
+.hdr-logo{font-family:'DM Serif Display',serif;font-size:16px;color:var(--paper)}
+.hdr-logo em{color:#e8956a;font-style:italic}
+.back-btn{font-size:11px;color:var(--ink3);text-decoration:none;padding:5px 10px;border:1px solid #2a2520;border-radius:4px}
+.container{max-width:800px;margin:0 auto;padding:32px 24px}
+.page-title{font-family:'DM Serif Display',serif;font-size:24px;margin-bottom:4px}
+.page-sub{font-size:13px;color:var(--ink3);margin-bottom:28px}
+.section-card{background:white;border:1px solid var(--paper3);border-radius:var(--r);margin-bottom:20px;overflow:hidden}
+.section-hdr{background:var(--ink);padding:12px 18px}
+.section-title{font-size:13px;font-weight:500;color:var(--paper);letter-spacing:.02em}
+.section-body{padding:18px 20px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-group{display:flex;flex-direction:column;gap:4px}
+.form-group.full{grid-column:1/-1}
+label{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}
+input,select,textarea{padding:9px 12px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;color:var(--ink);background:white;outline:none;transition:border .15s;width:100%}
+input:focus,select:focus,textarea:focus{border-color:var(--ember)}
+textarea{resize:vertical;min-height:60px}
+.hint{font-size:10px;color:var(--ink3);margin-top:3px;line-height:1.4}
+.status-row{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper2)}
+.status-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.dot-live{background:var(--green)}
+.dot-sample{background:#f59e0b}
+.status-text{font-size:12px;color:var(--ink2);flex:1}
+.toggle{width:40px;height:22px;background:var(--paper3);border-radius:11px;cursor:pointer;position:relative;transition:background .2s;border:none;flex-shrink:0}
+.toggle.on{background:var(--green)}
+.toggle::after{content:'';position:absolute;width:16px;height:16px;border-radius:50%;background:white;top:3px;left:3px;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.toggle.on::after{left:21px}
+.save-bar{display:flex;align-items:center;gap:12px;margin-top:24px}
+.btn-save{background:var(--ember);color:white;padding:10px 24px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;border:none;cursor:pointer;transition:background .15s}
+.btn-save:hover{background:#a83d25}
+.btn-data{background:white;color:var(--ink2);padding:10px 18px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;border:1px solid var(--paper3);text-decoration:none;transition:all .15s}
+.btn-data:hover{background:var(--paper2)}
+.save-status{font-size:12px;display:none}
+.save-ok{color:var(--green)}
+.save-err{color:var(--ember)}
+</style>
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-logo">Cavnar <em>AI</em> <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink3);font-weight:400;margin-left:8px">/ Client Settings</span></div>
+  <a href="/admin" class="back-btn">← Back to admin</a>
+</header>
+
+<div class="container">
+  <div class="page-title">{{ restaurant.name }}</div>
+  <div class="page-sub">Configure all settings for this client's dashboard.</div>
+
+  <!-- Basic info -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Basic information</div></div>
+    <div class="section-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Restaurant name</label>
+          <input type="text" id="name" value="{{ restaurant.name }}">
+        </div>
+        <div class="form-group">
+          <label>Owner email</label>
+          <input type="email" id="owner_email" value="{{ restaurant.owner_email }}">
+        </div>
+        <div class="form-group">
+          <label>POS system</label>
+          <select id="pos_system">
+            <option value="">Unknown / not set</option>
+            {% for pos in ['Toast','Square','Lightspeed','Aloha / NCR','Clover','Revel','TouchBistro','Other / Manual'] %}
+            <option value="{{ pos }}" {{'selected' if restaurant.pos_system == pos}}>{{ pos }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Sign-off name (for emails & responses)</label>
+          <input type="text" id="sign_off_name" value="{{ restaurant.sign_off_name or '' }}" placeholder="e.g. Sarah, or The Maplewood Team">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Platform IDs -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Review platforms</div></div>
+    <div class="section-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Google Place ID</label>
+          <input type="text" id="google_place_id" value="{{ restaurant.google_place_id or '' }}" placeholder="ChIJ...">
+          <div class="hint">Found in Google Maps URL or Google Business Profile</div>
+        </div>
+        <div class="form-group">
+          <label>Yelp Business ID</label>
+          <input type="text" id="yelp_business_id" value="{{ restaurant.yelp_business_id or '' }}" placeholder="restaurant-name-chicago">
+          <div class="hint">The slug at the end of the Yelp business URL</div>
+        </div>
+      </div>
+      <div style="margin-top:14px">
+        <label style="display:block;margin-bottom:6px">Review data status</label>
+        <div class="status-row">
+          <div class="status-dot {{'dot-live' if restaurant.reviews_live else 'dot-sample'}}"></div>
+          <div class="status-text">
+            {{'Pulling live reviews from Google/Yelp' if restaurant.reviews_live else 'Using sample review data — add Place ID and enable to go live'}}
+          </div>
+          <button class="toggle {{'on' if restaurant.reviews_live}}" id="reviews-live-toggle"
+                  onclick="toggleReviewsLive(this)" title="Toggle live reviews"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Marketing profile -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Marketing profile</div></div>
+    <div class="section-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Neighborhood</label>
+          <input type="text" id="neighborhood" value="{{ restaurant.neighborhood or '' }}" placeholder="Lincoln Park, Chicago">
+        </div>
+        <div class="form-group">
+          <label>Known for</label>
+          <input type="text" id="known_for" value="{{ restaurant.known_for or '' }}" placeholder="short rib pasta, brunch, craft cocktails">
+          <div class="hint">Comma-separated list of signature items</div>
+        </div>
+        <div class="form-group full">
+          <label>Restaurant vibe</label>
+          <input type="text" id="vibe" value="{{ restaurant.vibe or '' }}" placeholder="warm neighborhood bistro, serious about food without being precious">
+          <div class="hint">How you'd describe the restaurant's personality in one sentence</div>
+        </div>
+        <div class="form-group full">
+          <label>Brand voice / tone notes</label>
+          <textarea id="voice_notes" placeholder="e.g. Warm and genuine, a little witty, never corporate. Always invite guests back. Never sound like a PR firm.">{{ restaurant.voice_notes or '' }}</textarea>
+          <div class="hint">Claude uses this to write review responses and marketing content in the owner's voice</div>
+        </div>
+        <div class="form-group full">
+          <label>Never use these words or phrases</label>
+          <input type="text" id="never_say" value="{{ restaurant.never_say or '' }}" placeholder="e.g. culinary journey, indulge, we strive to, it is our goal">
+          <div class="hint">Comma-separated — Claude will avoid these in all generated content</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Labor settings -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Labor settings</div></div>
+    <div class="section-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Blended hourly rate (wages + taxes + benefits)</label>
+          <input type="number" id="hourly_rate" value="{{ restaurant.hourly_rate or 26.0 }}" min="10" max="60" step="0.50">
+          <div class="hint">Used to calculate actual labor cost from hours worked. Industry average $22–28/hr blended.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="save-bar">
+    <button class="btn-save" onclick="saveSettings()">Save all settings</button>
+    <a href="/admin/client-data/{{ restaurant.id }}" class="btn-data">Manage data uploads →</a>
+    <span class="save-status" id="save-status"></span>
+  </div>
+</div>
+
+<script>
+let reviewsLive = {{ 'true' if restaurant.reviews_live else 'false' }};
+
+function toggleReviewsLive(btn) {
+  reviewsLive = !reviewsLive;
+  btn.classList.toggle('on', reviewsLive);
+  btn.previousElementSibling.className = 'status-dot ' + (reviewsLive ? 'dot-live' : 'dot-sample');
+  btn.previousElementSibling.nextElementSibling.textContent = reviewsLive
+    ? 'Pulling live reviews from Google/Yelp'
+    : 'Using sample review data — add Place ID and enable to go live';
+}
+
+async function saveSettings() {
+  const btn = document.querySelector('.btn-save');
+  const status = document.getElementById('save-status');
+  btn.textContent = 'Saving…'; btn.disabled = true;
+  const payload = {
+    name:            document.getElementById('name').value,
+    owner_email:     document.getElementById('owner_email').value,
+    pos_system:      document.getElementById('pos_system').value,
+    sign_off_name:   document.getElementById('sign_off_name').value,
+    google_place_id: document.getElementById('google_place_id').value,
+    yelp_business_id:document.getElementById('yelp_business_id').value,
+    reviews_live:    reviewsLive,
+    neighborhood:    document.getElementById('neighborhood').value,
+    known_for:       document.getElementById('known_for').value,
+    vibe:            document.getElementById('vibe').value,
+    voice_notes:     document.getElementById('voice_notes').value,
+    never_say:       document.getElementById('never_say').value,
+    hourly_rate:     parseFloat(document.getElementById('hourly_rate').value),
+  };
+  const res = await fetch(window.location.pathname, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  status.style.display = 'inline';
+  if (data.ok) {
+    status.className = 'save-status save-ok';
+    status.textContent = '✓ Saved';
+    setTimeout(() => status.style.display='none', 3000);
+  } else {
+    status.className = 'save-status save-err';
+    status.textContent = data.error || 'Save failed';
+  }
+  btn.textContent = 'Save all settings'; btn.disabled = false;
+}
+</script>
+</body>
+</html>"""
+
 CLIENT_DATA_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -880,10 +1105,16 @@ input:focus,select:focus{border-color:var(--ember)}
       </td>
       <td>
         {% if not user.is_admin %}
-        <a href="/admin/client-data/{{ user.restaurant_id }}"
-           style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid var(--paper3);background:white;color:var(--ink2);text-decoration:none;font-family:'DM Sans',sans-serif">
-          Manage data
-        </a>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          <a href="/admin/client-settings/{{ user.restaurant_id }}"
+             style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid var(--paper3);background:white;color:var(--ink2);text-decoration:none;font-family:'DM Sans',sans-serif">
+            Settings
+          </a>
+          <a href="/admin/client-data/{{ user.restaurant_id }}"
+             style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid var(--paper3);background:white;color:var(--ink2);text-decoration:none;font-family:'DM Sans',sans-serif">
+            Data
+          </a>
+        </div>
         {% else %}—{% endif %}
       </td>
       </tr>
@@ -1046,10 +1277,11 @@ def index(current_user):
     restaurant = get_restaurant(rid)
     rstats  = get_review_stats(rid)
     reviews = get_reviews_data(rid, rfilter, rsearch)
-    from labor import load_shifts_for_restaurant
-    from inventory import load_inventory_for_restaurant
-    labor   = analyse_shifts(load_shifts_for_restaurant(rid))
+    from labor import analyse_shifts_for_restaurant
+    from inventory import load_inventory_for_restaurant, analyse_inventory
+    labor   = analyse_shifts_for_restaurant(rid)
     inv     = analyse_inventory(load_inventory_for_restaurant(rid))
+    from marketing import CONTENT_TYPES
     return render_template_string(DASHBOARD_HTML,
         current_user=current_user, restaurant=restaurant,
         rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch,
@@ -1089,14 +1321,18 @@ def inv_insight_api(current_user):
 def gen_content(current_user):
     data = request.get_json()
     from marketing import generate_content
+    user = get_current_user()
     return jsonify(content=generate_content(
-        data.get("type","instagram_post"), data.get("topic","")))
+        data.get("type","instagram_post"), data.get("topic",""),
+        restaurant_id=user["restaurant_id"] if user else None))
 
 @app.route("/api/content-calendar")
 @login_required
 def content_calendar(current_user):
     from marketing import get_content_calendar_ideas
-    return jsonify(ideas=get_content_calendar_ideas())
+    user = get_current_user()
+    return jsonify(ideas=get_content_calendar_ideas(
+        restaurant_id=user["restaurant_id"] if user else None))
 
 @app.route("/api/change-password", methods=["POST"])
 @login_required
@@ -1214,6 +1450,44 @@ def upload_data(restaurant_id, current_user):
 
     save_client_data(restaurant_id, data_type, csv_content, source)
     return jsonify(ok=True, rows=len(rows))
+
+@app.route("/admin/client-settings/<int:restaurant_id>")
+@admin_required
+def client_settings_page(restaurant_id, current_user):
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return "Restaurant not found", 404
+    from models import get_client_data
+    client_data = get_client_data(restaurant_id) or {}
+    return render_template_string(CLIENT_SETTINGS_HTML,
+        current_user=current_user,
+        restaurant=restaurant,
+        client_data=client_data)
+
+@app.route("/admin/client-settings/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def save_client_settings(restaurant_id, current_user):
+    from models import update_restaurant
+    data = request.get_json()
+    try:
+        update_restaurant(restaurant_id, {
+            "name":            data.get("name","").strip(),
+            "owner_email":     data.get("owner_email","").strip(),
+            "google_place_id": data.get("google_place_id","").strip() or None,
+            "yelp_business_id":data.get("yelp_business_id","").strip() or None,
+            "voice_notes":     data.get("voice_notes","").strip() or None,
+            "neighborhood":    data.get("neighborhood","").strip() or None,
+            "vibe":            data.get("vibe","").strip() or None,
+            "known_for":       data.get("known_for","").strip() or None,
+            "sign_off_name":   data.get("sign_off_name","").strip() or None,
+            "never_say":       data.get("never_say","").strip() or None,
+            "hourly_rate":     float(data.get("hourly_rate") or 26.0),
+            "pos_system":      data.get("pos_system","").strip() or None,
+            "reviews_live":    int(bool(data.get("reviews_live"))),
+        })
+        return jsonify(ok=True)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 

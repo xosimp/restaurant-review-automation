@@ -6,13 +6,41 @@ import anthropic
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-RESTAURANT_PROFILE = {
+# Default profile used for demo/sample mode
+DEFAULT_PROFILE = {
     "name": "Maplewood Kitchen",
     "neighborhood": "Lincoln Park, Chicago",
     "vibe": "warm neighborhood bistro, serious about food without being precious about it",
     "known_for": "short rib pasta, brunch, house-baked bread, craft cocktails",
     "voice": "genuine and warm, a little witty, never corporate, speaks like a person not a brand",
+    "never_say": "",
+    "sign_off_name": "the Maplewood team",
 }
+
+# Keep for backward compat
+RESTAURANT_PROFILE = DEFAULT_PROFILE
+
+
+def get_profile_for_restaurant(restaurant_id: int = None) -> dict:
+    """Get restaurant profile from DB, fall back to default."""
+    if not restaurant_id:
+        return DEFAULT_PROFILE
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        if not r:
+            return DEFAULT_PROFILE
+        return {
+            "name":        r.name,
+            "neighborhood": r.neighborhood or "Chicago, IL",
+            "vibe":        r.vibe or "independent restaurant",
+            "known_for":   r.known_for or "great food and hospitality",
+            "voice":       r.voice_notes or "warm, genuine, never corporate",
+            "never_say":   r.never_say or "",
+            "sign_off_name": r.sign_off_name or r.name,
+        }
+    except Exception:
+        return DEFAULT_PROFILE
 
 CONTENT_TYPES = [
     {
@@ -102,10 +130,13 @@ Write 2 versions — one for Instagram (casual, visual), one for email subject l
 }
 
 
-def generate_content(content_type: str, topic: str) -> str:
+def generate_content(content_type: str, topic: str,
+                     restaurant_id: int = None) -> str:
     """Generate marketing content for a given type and topic."""
     prompt_template = PROMPTS.get(content_type, PROMPTS["instagram_post"])
-    p = RESTAURANT_PROFILE
+    p = get_profile_for_restaurant(restaurant_id)
+    # Build never_say addition
+    never_clause = f"\nNever use these words or phrases: {p['never_say']}." if p.get('never_say') else ""
     prompt = prompt_template.format(
         restaurant=p["name"],
         neighborhood=p["neighborhood"],
@@ -122,12 +153,13 @@ def generate_content(content_type: str, topic: str) -> str:
     return msg.content[0].text.strip()
 
 
-def get_content_calendar_ideas() -> list[dict]:
+def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
     """Generate a week of content ideas using Claude."""
-    prompt = f"""Generate a 7-day social media content calendar for {RESTAURANT_PROFILE['name']}, 
-a {RESTAURANT_PROFILE['vibe']} in {RESTAURANT_PROFILE['neighborhood']}.
+    p = get_profile_for_restaurant(restaurant_id)
+    prompt = f"""Generate a 7-day social media content calendar for {p['name']}, 
+a {p['vibe']} in {p['neighborhood']}.
 
-Known for: {RESTAURANT_PROFILE['known_for']}
+Known for: {p['known_for']}
 Current month: May
 
 Return ONLY valid JSON — no markdown fences. Array of 7 objects with:

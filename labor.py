@@ -6,7 +6,7 @@ from collections import defaultdict
 import anthropic
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-HOURLY_RATE = 26.0  # avg blended rate, configurable
+DEFAULT_HOURLY_RATE = 26.0  # fallback if not set per client
 
 
 def load_shifts(path: str = "sample_shifts.csv",
@@ -28,8 +28,27 @@ def load_shifts_for_restaurant(restaurant_id: int) -> list[dict]:
     return load_shifts()  # fallback to sample
 
 
-def analyse_shifts(shifts: list[dict]) -> dict:
+def get_hourly_rate(restaurant_id: int) -> float:
+    """Get per-client hourly rate from DB."""
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        return r.hourly_rate if r and r.hourly_rate else DEFAULT_HOURLY_RATE
+    except Exception:
+        return DEFAULT_HOURLY_RATE
+
+
+def analyse_shifts_for_restaurant(restaurant_id: int) -> dict:
+    """Load shifts and analyse with client-specific hourly rate."""
+    shifts = load_shifts_for_restaurant(restaurant_id)
+    rate   = get_hourly_rate(restaurant_id)
+    return analyse_shifts(shifts, hourly_rate=rate)
+
+
+def analyse_shifts(shifts: list[dict],
+                   hourly_rate: float = DEFAULT_HOURLY_RATE) -> dict:
     """Compute labor metrics from raw shift data."""
+    HOURLY_RATE = hourly_rate
     by_day = defaultdict(lambda: {"scheduled": 0, "actual": 0, "sales": 0, "shifts": []})
     by_employee = defaultdict(lambda: {"scheduled": 0, "actual": 0, "shifts": 0})
     by_dayofweek = defaultdict(lambda: {"labor_cost": 0, "sales": 0, "count": 0})

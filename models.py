@@ -19,7 +19,19 @@ CREATE TABLE IF NOT EXISTS restaurants (
     owner_email     TEXT    NOT NULL,
     google_place_id TEXT,
     yelp_business_id TEXT,
-    voice_notes     TEXT,          -- owner's brand-voice guidance for Claude
+    voice_notes     TEXT,          -- owner brand-voice guidance for Claude
+    -- Marketing profile
+    neighborhood    TEXT,          -- e.g. "Lincoln Park, Chicago"
+    vibe            TEXT,          -- e.g. "warm neighborhood bistro"
+    known_for       TEXT,          -- e.g. "short rib pasta, brunch, cocktails"
+    sign_off_name   TEXT,          -- e.g. "Sarah" or "The Maplewood Team"
+    never_say       TEXT,          -- words/phrases to avoid in AI responses
+    -- Labor settings
+    hourly_rate     REAL DEFAULT 26.0,
+    -- Tech info
+    pos_system      TEXT,          -- Toast / Square / Lightspeed / etc
+    -- Status
+    reviews_live    INTEGER DEFAULT 0,  -- 1 = pulling real reviews
     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -87,10 +99,18 @@ CREATE TABLE IF NOT EXISTS client_data (
 class Restaurant:
     name: str
     owner_email: str
-    google_place_id: Optional[str] = None
+    google_place_id: Optional[str]  = None
     yelp_business_id: Optional[str] = None
-    voice_notes: Optional[str] = None
-    id: Optional[int] = None
+    voice_notes: Optional[str]      = None
+    neighborhood: Optional[str]     = None
+    vibe: Optional[str]             = None
+    known_for: Optional[str]        = None
+    sign_off_name: Optional[str]    = None
+    never_say: Optional[str]        = None
+    hourly_rate: float              = 26.0
+    pos_system: Optional[str]       = None
+    reviews_live: int               = 0
+    id: Optional[int]               = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -142,6 +162,24 @@ def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
 def init_db(db_path: str = DB_PATH):
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
+    # Migrate: add new columns to existing databases
+    migrations = [
+        "ALTER TABLE restaurants ADD COLUMN neighborhood TEXT",
+        "ALTER TABLE restaurants ADD COLUMN vibe TEXT",
+        "ALTER TABLE restaurants ADD COLUMN known_for TEXT",
+        "ALTER TABLE restaurants ADD COLUMN sign_off_name TEXT",
+        "ALTER TABLE restaurants ADD COLUMN never_say TEXT",
+        "ALTER TABLE restaurants ADD COLUMN hourly_rate REAL DEFAULT 26.0",
+        "ALTER TABLE restaurants ADD COLUMN pos_system TEXT",
+        "ALTER TABLE restaurants ADD COLUMN reviews_live INTEGER DEFAULT 0",
+        "ALTER TABLE client_data ADD COLUMN shifts_csv TEXT",
+        "ALTER TABLE client_data ADD COLUMN inventory_csv TEXT",
+    ]
+    for m in migrations:
+        try:
+            conn.execute(m)
+        except Exception:
+            pass  # column already exists
     conn.commit()
     conn.close()
     print(f"Database initialised at {db_path}")
@@ -152,13 +190,36 @@ def init_db(db_path: str = DB_PATH):
 def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
     conn = get_conn(db_path)
     cur = conn.execute("""
-        INSERT INTO restaurants (name, owner_email, google_place_id, yelp_business_id, voice_notes, created_at)
-        VALUES (?,?,?,?,?,?)
-    """, (r.name, r.owner_email, r.google_place_id, r.yelp_business_id, r.voice_notes, r.created_at))
+        INSERT INTO restaurants (name, owner_email, google_place_id, yelp_business_id,
+            voice_notes, neighborhood, vibe, known_for, sign_off_name, never_say,
+            hourly_rate, pos_system, reviews_live, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (r.name, r.owner_email, r.google_place_id, r.yelp_business_id,
+          r.voice_notes, r.neighborhood, r.vibe, r.known_for,
+          r.sign_off_name, r.never_say, r.hourly_rate,
+          r.pos_system, r.reviews_live, r.created_at))
     conn.commit()
     rid = cur.lastrowid
     conn.close()
     return rid
+
+
+def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
+    """Update any restaurant fields by dict."""
+    allowed = {
+        "name","owner_email","google_place_id","yelp_business_id","voice_notes",
+        "neighborhood","vibe","known_for","sign_off_name","never_say",
+        "hourly_rate","pos_system","reviews_live"
+    }
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    set_clause = ", ".join(f"{k}=?" for k in updates)
+    values = list(updates.values()) + [restaurant_id]
+    conn = get_conn(db_path)
+    conn.execute(f"UPDATE restaurants SET {set_clause} WHERE id=?", values)
+    conn.commit()
+    conn.close()
 
 
 def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Restaurant]:
@@ -171,6 +232,14 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         id=row["id"], name=row["name"], owner_email=row["owner_email"],
         google_place_id=row["google_place_id"], yelp_business_id=row["yelp_business_id"],
         voice_notes=row["voice_notes"], created_at=row["created_at"],
+        neighborhood=row["neighborhood"] if "neighborhood" in row.keys() else None,
+        vibe=row["vibe"] if "vibe" in row.keys() else None,
+        known_for=row["known_for"] if "known_for" in row.keys() else None,
+        sign_off_name=row["sign_off_name"] if "sign_off_name" in row.keys() else None,
+        never_say=row["never_say"] if "never_say" in row.keys() else None,
+        hourly_rate=row["hourly_rate"] if "hourly_rate" in row.keys() else 26.0,
+        pos_system=row["pos_system"] if "pos_system" in row.keys() else None,
+        reviews_live=row["reviews_live"] if "reviews_live" in row.keys() else 0,
     )
 
 
