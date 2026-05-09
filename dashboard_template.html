@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maplewood Kitchen — AI Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --ink:#1a1714;--ink2:#4a4540;--ink3:#8a8480;
+  --paper:#faf8f5;--paper2:#f2efe9;--paper3:#e8e4dc;
+  --accent:#c84b2f;--accent2:#e8a87c;
+  --green:#2d6a4f;--green-bg:#eaf4ee;
+  --red:#c0392b;--red-bg:#fdf0ef;
+  --amber:#b7791f;--amber-bg:#fef9ec;
+  --blue:#1a56cc;--blue-bg:#e8f0fe;
+  --r:10px;
+}
+body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);font-size:14px;line-height:1.6}
+.hdr{background:var(--ink);height:58px;display:flex;align-items:center;padding:0 28px;gap:24px;position:sticky;top:0;z-index:200}
+.hdr-logo{font-family:'DM Serif Display',serif;font-size:17px;color:var(--paper);white-space:nowrap}
+.hdr-logo em{color:var(--accent2);font-style:italic}
+.tabs{display:flex;gap:2px;flex:1}
+.tab{padding:6px 18px;border-radius:20px;border:none;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;color:rgba(250,248,245,.55);background:transparent;transition:all .2s;white-space:nowrap}
+.tab:hover{color:var(--paper);background:rgba(255,255,255,.08)}
+.tab.active{background:var(--accent);color:white}
+.tab .badge{font-size:10px;padding:1px 6px;border-radius:10px;background:rgba(255,255,255,.2);margin-left:5px}
+.hdr-time{font-size:11px;color:var(--ink3);white-space:nowrap}
+.panel{display:none;padding:28px 32px;max-width:1100px}
+.panel.active{display:block}
+.slabel{font-size:10px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:10px}
+.stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:24px}
+.stat{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px;text-align:center}
+.stat.hi{background:var(--red-bg);border-color:#f5c6c2}
+.stat.ok{background:var(--green-bg);border-color:#b7dfca}
+.stat.warn{background:var(--amber-bg);border-color:#f6d860}
+.stat-n{font-family:'DM Serif Display',serif;font-size:28px;line-height:1}
+.stat-l{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;margin-top:3px}
+.stat.hi .stat-n{color:var(--red)}
+.stat.ok .stat-n{color:var(--green)}
+.stat.warn .stat-n{color:var(--amber)}
+.card{background:white;border:1px solid var(--paper3);border-radius:var(--r);overflow:hidden;margin-bottom:12px;box-shadow:0 1px 3px rgba(26,23,20,.06)}
+.card.urgent{border-left:3px solid var(--red)}
+.card.approved{border-left:3px solid var(--green)}
+.card-hd{display:flex;align-items:flex-start;gap:12px;padding:14px 16px 10px}
+.avatar{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'DM Serif Display',serif;font-size:14px;color:white;flex-shrink:0}
+.card-meta{flex:1;min-width:0}
+.card-author{font-weight:500}
+.card-sub{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink3);margin-top:2px;flex-wrap:wrap}
+.stars{color:#d4a017;letter-spacing:1px}
+.pbadge{font-size:10px;font-weight:500;padding:1px 6px;border-radius:10px;text-transform:uppercase;letter-spacing:.05em}
+.pg{background:var(--blue-bg);color:var(--blue)}
+.py{background:var(--red-bg);color:var(--red)}
+.schip{font-size:10px;font-weight:500;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.05em;margin-left:auto;flex-shrink:0}
+.sp{background:var(--green-bg);color:var(--green)}
+.sn{background:var(--red-bg);color:var(--red)}
+.su{background:var(--amber-bg);color:var(--amber)}
+.ubanner{background:var(--red-bg);border-top:1px solid #f5c6c2;padding:6px 16px;font-size:11px;font-weight:500;color:var(--red)}
+.card-body{padding:0 16px 14px}
+.rtext{font-size:13px;color:var(--ink2);line-height:1.65;border-left:2px solid var(--paper3);padding-left:10px;margin-bottom:10px}
+.cats{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px}
+.cat{font-size:10px;padding:2px 7px;border-radius:20px;background:var(--paper2);color:var(--ink3);text-transform:capitalize}
+.draft-box{background:var(--paper2);border:1px solid var(--paper3);border-radius:8px;padding:10px 12px}
+.draft-lbl{font-size:10px;font-weight:500;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px}
+.draft-txt{font-size:13px;color:var(--ink);line-height:1.6;font-style:italic}
+.draft-actions{display:flex;gap:8px;margin-top:8px}
+.btn{padding:7px 16px;border-radius:7px;border:none;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:5px}
+.btn-approve{background:var(--green);color:white}
+.btn-approve:hover{background:#1f5c40}
+.btn-skip{background:transparent;color:var(--ink3);border:1px solid var(--paper3)}
+.btn-skip:hover{background:var(--paper2)}
+.btn-approved{background:var(--green-bg);color:var(--green);border:1px solid #b7dfca;cursor:default}
+.btn-primary{background:var(--accent);color:white}
+.btn-primary:hover{background:#a83d25}
+.btn-secondary{background:white;color:var(--ink2);border:1px solid var(--paper3)}
+.btn-secondary:hover{background:var(--paper2)}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+.insight{background:var(--ink);color:var(--paper);border-radius:var(--r);padding:20px 22px;margin-bottom:20px}
+.insight-lbl{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px}
+.insight-text{font-size:13px;line-height:1.75;color:rgba(250,248,245,.88);white-space:pre-wrap}
+.insight-loading{color:var(--ink3);font-style:italic;font-size:13px}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.07em;color:var(--ink3);padding:8px 12px;border-bottom:1px solid var(--paper3);background:var(--paper2)}
+.tbl td{padding:10px 12px;border-bottom:1px solid var(--paper3);vertical-align:top}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr:hover td{background:var(--paper2)}
+.pill{display:inline-block;font-size:10px;padding:2px 8px;border-radius:20px;font-weight:500}
+.pill-red{background:var(--red-bg);color:var(--red)}
+.pill-amber{background:var(--amber-bg);color:var(--amber)}
+.pill-green{background:var(--green-bg);color:var(--green)}
+.day-bars{display:flex;align-items:flex-end;gap:8px;height:100px;margin:10px 0 4px}
+.day-bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center}
+.day-bar{width:100%;border-radius:4px 4px 0 0;min-height:4px}
+.content-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:8px;margin-bottom:20px}
+.ct-btn{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 12px;cursor:pointer;transition:all .2s;text-align:left}
+.ct-btn:hover{border-color:var(--accent);background:var(--paper2)}
+.ct-btn.selected{border-color:var(--accent);background:#fdf0ef}
+.ct-label{font-weight:500;font-size:13px;margin-bottom:3px}
+.ct-desc{font-size:11px;color:var(--ink3);line-height:1.4}
+.topic-row{display:flex;gap:10px;margin-bottom:16px;align-items:center}
+.topic-input{flex:1;padding:9px 14px;border:1px solid var(--paper3);border-radius:var(--r);font-family:'DM Sans',sans-serif;font-size:13px;background:white;outline:none}
+.topic-input:focus{border-color:var(--ink3)}
+.output-box{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px;min-height:140px;font-size:13px;line-height:1.75;color:var(--ink2);white-space:pre-wrap}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:12px}
+.cal-day{background:white;border:1px solid var(--paper3);border-radius:8px;padding:10px 8px;font-size:11px}
+.cal-day-name{font-weight:500;color:var(--ink2);margin-bottom:4px}
+.cal-platform{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:3px}
+.toolbar{display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+.search-wrap{position:relative;max-width:280px}
+.search-ico{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--ink3);pointer-events:none;width:13px;height:13px}
+.search-input{width:100%;padding:8px 12px 8px 32px;border:1px solid var(--paper3);border-radius:var(--r);font-family:'DM Sans',sans-serif;font-size:13px;background:white;outline:none}
+.filter-pills{display:flex;gap:5px;flex-wrap:wrap}
+.fpill{padding:5px 12px;border-radius:20px;border:1px solid var(--paper3);font-size:12px;cursor:pointer;background:white;font-family:'DM Sans',sans-serif;transition:all .15s}
+.fpill:hover{background:var(--paper2)}
+.fpill.active{background:var(--ink);color:white;border-color:var(--ink)}
+.fpill.active-red{background:var(--red);color:white;border-color:var(--red)}
+.count-lbl{margin-left:auto;font-size:12px;color:var(--ink3)}
+.no-data{text-align:center;padding:48px;color:var(--ink3);font-family:'DM Serif Display',serif;font-style:italic;font-size:16px}
+.toast{position:fixed;bottom:22px;right:22px;background:var(--ink);color:var(--paper);padding:10px 18px;border-radius:8px;font-size:13px;z-index:999;opacity:0;transform:translateY(6px);transition:all .3s;pointer-events:none}
+.toast.show{opacity:1;transform:translateY(0)}
+</style>
+</head>
+<body>
+
+<header class="hdr">
+  <div class="hdr-logo">Maplewood Kitchen <em>AI</em></div>
+  <nav class="tabs">
+    <button class="tab active" onclick="switchTab('reviews',this)">Reviews <span class="badge">{{rstats.total}}</span></button>
+    <button class="tab" onclick="switchTab('labor',this)">Labor</button>
+    <button class="tab" onclick="switchTab('inventory',this)">Inventory</button>
+    <button class="tab" onclick="switchTab('marketing',this)">Marketing</button>
+  </nav>
+  <div class="hdr-time">{{now}}</div>
+</header>
+
+<!-- REVIEWS -->
+<div class="panel active" id="panel-reviews">
+  <div class="stat-row">
+    <div class="stat"><div class="stat-n">{{rstats.avg_rating}}</div><div class="stat-l">Avg rating</div></div>
+    <div class="stat"><div class="stat-n">{{rstats.total}}</div><div class="stat-l">Total</div></div>
+    <div class="stat ok"><div class="stat-n">{{rstats.positive}}</div><div class="stat-l">Positive</div></div>
+    <div class="stat warn"><div class="stat-n">{{rstats.neutral}}</div><div class="stat-l">Neutral</div></div>
+    <div class="stat hi"><div class="stat-n">{{rstats.negative}}</div><div class="stat-l">Negative</div></div>
+    <div class="stat hi"><div class="stat-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
+    <div class="stat warn"><div class="stat-n">{{rstats.awaiting_approval}}</div><div class="stat-l">To approve</div></div>
+  </div>
+  <div class="toolbar">
+    <div class="search-wrap">
+      <svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input class="search-input" id="rsearch" placeholder="Search reviews…" value="{{rsearch}}" onkeydown="if(event.key==='Enter')filterReviews()">
+    </div>
+    <div class="filter-pills">
+      <button class="fpill {{'active' if rfilter=='all' else ''}}" onclick="setRFilter('all',this)">All</button>
+      <button class="fpill {{'active-red' if rfilter=='urgent' else ''}}" onclick="setRFilter('urgent',this)">Urgent</button>
+      <button class="fpill {{'active' if rfilter=='pending' else ''}}" onclick="setRFilter('pending',this)">To approve</button>
+      <button class="fpill {{'active' if rfilter=='negative' else ''}}" onclick="setRFilter('negative',this)">Negative</button>
+      <button class="fpill {{'active' if rfilter=='positive' else ''}}" onclick="setRFilter('positive',this)">Positive</button>
+    </div>
+    <span class="count-lbl">{{reviews|length}} review{{'s' if reviews|length != 1 else ''}}</span>
+  </div>
+  {% if reviews %}
+  {% set colors=['#c84b2f','#2d6a4f','#b7791f','#1a56cc','#6b4fa0','#1e7a8c'] %}
+  {% for r in reviews %}
+  {% set col = colors[loop.index0 % colors|length] %}
+  <div class="card {{'urgent' if r.urgency=='high'}} {{'approved' if r.response_status=='approved'}}" id="rc-{{r.id}}">
+    {% if r.urgency=='high' %}<div class="ubanner">⚠ Needs immediate attention</div>{% endif %}
+    <div class="card-hd">
+      <div class="avatar" style="background:{{col}}">{{r.author[0].upper()}}</div>
+      <div class="card-meta">
+        <div class="card-author">{{r.author}}</div>
+        <div class="card-sub">
+          <span class="stars">{% for i in range(5) %}{{('★' if i < r.rating else '☆')}}{% endfor %}</span>
+          <span class="pbadge {{'pg' if r.platform=='google' else 'py'}}">{{r.platform}}</span>
+          {% if r.review_date %}<span>{{r.review_date[:10]}}</span>{% endif %}
+        </div>
+      </div>
+      <span class="schip {{'sp' if r.sentiment=='positive' else ('sn' if r.sentiment=='negative' else 'su')}}">{{r.sentiment or 'neutral'}}</span>
+    </div>
+    <div class="card-body">
+      <div class="rtext">{{r.text}}</div>
+      {% if r.categories %}<div class="cats">{% for c in r.categories %}<span class="cat">{{c.replace('_',' ')}}</span>{% endfor %}</div>{% endif %}
+      {% if r.draft_response %}
+      <div class="draft-box">
+        <div class="draft-lbl">Suggested response</div>
+        <div class="draft-txt">{{r.draft_response}}</div>
+        <div class="draft-actions">
+          {% if r.response_status == 'posted' %}
+            <span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>
+          {% elif r.response_status == 'approved' %}
+            <span class="btn btn-approved">✓ Approved</span>
+            <button class="btn btn-skip" onclick="skipR({{r.id}})">Skip</button>
+          {% else %}
+            <button class="btn btn-approve" onclick="approveR({{r.id}})">✓ Approve</button>
+            <button class="btn btn-skip" onclick="skipR({{r.id}})">Skip</button>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="no-data">No reviews match this filter.</div>
+  {% endif %}
+</div>
+
+<!-- LABOR -->
+<div class="panel" id="panel-labor">
+  <div class="stat-row">
+    <div class="stat warn"><div class="stat-n">${{labor.total_labor_cost|int|format_num}}</div><div class="stat-l">Labor (2 wks)</div></div>
+    <div class="stat"><div class="stat-n">${{labor.total_sales|int|format_num}}</div><div class="stat-l">Revenue (2 wks)</div></div>
+    <div class="stat {{'hi' if labor.overall_labor_pct > 32 else 'ok'}}"><div class="stat-n">{{labor.overall_labor_pct}}%</div><div class="stat-l">Labor ratio</div></div>
+    <div class="stat ok"><div class="stat-n">${{labor.potential_savings|int|format_num}}</div><div class="stat-l">Saveable/mo</div></div>
+    <div class="stat hi"><div class="stat-n">{{labor.overstaffed_days|length}}</div><div class="stat-l">Overstaffed days</div></div>
+    <div class="stat warn"><div class="stat-n">{{labor.overtime_risk|length}}</div><div class="stat-l">OT risk</div></div>
+  </div>
+  <div class="insight">
+    <div class="insight-lbl">AI consultant analysis</div>
+    <div class="insight-text insight-loading" id="labor-insight-text">Loading analysis… (takes ~5 seconds)</div>
+  </div>
+  <div class="two-col">
+    <div>
+      <div class="slabel">Overstaffed days (labor above 35%)</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor</th><th>%</th></tr></thead>
+        <tbody>
+        {% for d in labor.overstaffed_days %}
+        <tr><td>{{d.date}}</td><td>{{d.day}}</td><td>${{d.sales|int|format_num}}</td><td>${{d.labor_cost|format_num}}</td><td><span class="pill pill-red">{{d.labor_pct}}%</span></td></tr>
+        {% else %}<tr><td colspan="5" style="color:var(--ink3);font-style:italic;padding:12px">None flagged</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+    <div>
+      <div class="slabel">Labor % by day of week</div>
+      <div class="card" style="padding:16px">
+        <div class="day-bars" id="day-bars"></div>
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--ink3);padding:0 2px">
+          {% for d in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}<span>{{d}}</span>{% endfor %}
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:var(--ink3)">Target: 28–32% &nbsp;·&nbsp; <span style="color:var(--red)">Red = over target</span></div>
+      </div>
+      {% if labor.overtime_risk %}
+      <div class="slabel" style="margin-top:16px">Overtime risk</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Employee</th><th>Hours</th><th>Flag</th></tr></thead>
+        <tbody>{% for e in labor.overtime_risk %}
+        <tr><td>{{e.employee}}</td><td>{{e.hours}}h</td><td><span class="pill pill-amber">Review schedule</span></td></tr>
+        {% endfor %}</tbody>
+      </table></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- INVENTORY -->
+<div class="panel" id="panel-inventory">
+  <div class="stat-row">
+    <div class="stat hi"><div class="stat-n">${{inv.total_waste_cost_week|format_num}}</div><div class="stat-l">Waste this week</div></div>
+    <div class="stat hi"><div class="stat-n">${{inv.monthly_waste_projection|int|format_num}}</div><div class="stat-l">Monthly projected</div></div>
+    <div class="stat ok"><div class="stat-n">${{inv.recoverable_monthly|int|format_num}}</div><div class="stat-l">Recoverable/mo</div></div>
+    <div class="stat warn"><div class="stat-n">{{inv.waste_items|length}}</div><div class="stat-l">High-waste items</div></div>
+    <div class="stat warn"><div class="stat-n">{{inv.overstock|length}}</div><div class="stat-l">Overstocked</div></div>
+    <div class="stat hi"><div class="stat-n">{{inv.critical_low|length}}</div><div class="stat-l">Critical low</div></div>
+  </div>
+  <div class="insight">
+    <div class="insight-lbl">AI food cost analysis</div>
+    <div class="insight-text insight-loading" id="inv-insight-text">Loading analysis… (takes ~5 seconds)</div>
+  </div>
+  <div class="two-col">
+    <div>
+      <div class="slabel">Top waste offenders</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Item</th><th>Wasted</th><th>Cost</th><th>% of order</th></tr></thead>
+        <tbody>{% for item in inv.waste_items %}
+        <tr>
+          <td><strong>{{item.item}}</strong><br><span style="font-size:11px;color:var(--ink3)">{{item.category}}</span></td>
+          <td>{{item.waste_last_week}} {{item.unit}}</td>
+          <td><span class="pill pill-red">${{item.waste_cost}}</span></td>
+          <td>{{item.waste_pct}}%</td>
+        </tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+    <div>
+      <div class="slabel">Overstocked (cash tied up)</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Item</th><th>Stock</th><th>Par</th><th>Excess $</th></tr></thead>
+        <tbody>{% for item in inv.overstock %}
+        <tr><td><strong>{{item.item}}</strong></td><td>{{item.current_stock}} {{item.unit}}</td><td>{{item.par_level}}</td><td><span class="pill pill-amber">${{item.overstock_cost}}</span></td></tr>
+        {% else %}<tr><td colspan="4" style="color:var(--ink3);font-style:italic;padding:12px">None flagged</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% if inv.critical_low %}
+      <div class="slabel" style="margin-top:16px">Critical low — order today</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Item</th><th>Days left</th><th>Action</th></tr></thead>
+        <tbody>{% for item in inv.critical_low %}
+        <tr><td><strong>{{item.item}}</strong></td><td>{{item.days_remaining}}d</td><td><span class="pill pill-red">Order now</span></td></tr>
+        {% endfor %}</tbody>
+      </table></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- MARKETING -->
+<div class="panel" id="panel-marketing">
+  <div class="slabel">Choose content type</div>
+  <div class="content-grid">
+    {% for ct in ctypes %}
+    <div class="ct-btn {{'selected' if loop.first else ''}}" onclick="selectCtype('{{ct.id}}',this)">
+      <div class="ct-label">{{ct.label}}</div>
+      <div class="ct-desc">{{ct.description}}</div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="slabel">Topic / occasion</div>
+  <div class="topic-row">
+    <input class="topic-input" id="mktopic" placeholder="e.g. New spring menu, Mother's Day brunch, Thursday happy hour…" value="New spring menu — morel mushroom risotto just added">
+    <button class="btn btn-primary" onclick="generateContent()">Generate ↗</button>
+  </div>
+  <div class="slabel">Generated content</div>
+  <div class="output-box" id="mkoutput" style="color:var(--ink3);font-style:italic">Select a type, enter a topic, and click Generate.</div>
+  <div style="margin-top:8px;display:flex;gap:8px">
+    <button class="btn btn-secondary" onclick="copyContent()">Copy</button>
+    <button class="btn btn-secondary" onclick="generateContent()">Regenerate</button>
+  </div>
+  <div style="margin-top:28px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div class="slabel" style="margin:0">This week's content calendar</div>
+      <button class="btn btn-secondary" style="font-size:11px;padding:5px 12px" onclick="loadCalendar()">Generate calendar ↗</button>
+    </div>
+    <div class="cal-grid" id="cal-grid">
+      <div class="no-data" style="grid-column:1/-1;padding:24px">Click "Generate calendar" for a week of content ideas.</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)}
+function switchTab(name,btn){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  btn.classList.add('active');
+  if(name==='labor'&&!laborLoaded)loadLaborInsight();
+  if(name==='inventory'&&!invLoaded)loadInvInsight();
+  if(name==='labor')renderBars();
+}
+let rfilter='{{rfilter}}';
+function setRFilter(f,btn){rfilter=f;document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active','active-red'));btn.classList.add(f==='urgent'?'active-red':'active');filterReviews()}
+function filterReviews(){const q=document.getElementById('rsearch').value;window.location='/?filter='+rfilter+'&search='+encodeURIComponent(q)}
+function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.ok){document.getElementById('rc-'+id).classList.add('approved');document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="btn btn-approved">✓ Approved</span><button class="btn btn-skip" onclick="skipR('+id+')">Skip</button>';toast('Response approved')}})}
+function skipR(id){fetch('/skip/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.ok){document.getElementById('rc-'+id).style.opacity='.4';toast('Skipped')}})}
+const dowData={{labor.dow_summary|tojson}};
+function renderBars(){const days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];const vals=days.map(d=>dowData[d]||0);const mx=Math.max(...vals,40);const c=document.getElementById('day-bars');if(!c)return;c.innerHTML=days.map(d=>{const pct=dowData[d]||0;const h=Math.round((pct/mx)*88);const col=pct>32?'var(--red)':pct>26?'var(--amber)':'var(--green)';return`<div class="day-bar-wrap"><div class="day-bar" style="height:${h}px;background:${col}" title="${d}: ${pct}%"></div></div>`}).join('')}
+let laborLoaded=false,invLoaded=false;
+function loadLaborInsight(){laborLoaded=true;fetch('/api/labor-insight').then(r=>r.json()).then(d=>{const el=document.getElementById('labor-insight-text');el.textContent=d.insight;el.classList.remove('insight-loading')}).catch(()=>{document.getElementById('labor-insight-text').textContent='Could not load analysis.'})}
+function loadInvInsight(){invLoaded=true;fetch('/api/inv-insight').then(r=>r.json()).then(d=>{const el=document.getElementById('inv-insight-text');el.textContent=d.insight;el.classList.remove('insight-loading')}).catch(()=>{document.getElementById('inv-insight-text').textContent='Could not load analysis.'})}
+let selectedCtype='{{ctypes[0].id if ctypes}}';
+function selectCtype(id,el){selectedCtype=id;document.querySelectorAll('.ct-btn').forEach(b=>b.classList.remove('selected'));el.classList.add('selected')}
+function generateContent(){const topic=document.getElementById('mktopic').value.trim();if(!topic){toast('Enter a topic first');return}const box=document.getElementById('mkoutput');box.style.fontStyle='italic';box.style.color='var(--ink3)';box.textContent='Generating with Claude…';fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selectedCtype,topic})}).then(r=>r.json()).then(d=>{box.style.fontStyle='normal';box.style.color='var(--ink2)';box.textContent=d.content}).catch(()=>{box.textContent='Generation failed — check API key.'})}
+function copyContent(){navigator.clipboard.writeText(document.getElementById('mkoutput').textContent).then(()=>toast('Copied to clipboard'))}
+function loadCalendar(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:20px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}g.innerHTML=d.ideas.map(i=>`<div class="cal-day"><div class="cal-day-name">${i.day}</div><div class="cal-platform">${i.platform||''}</div><div class="cal-angle">${i.angle||''}</div></div>`).join('')})}
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "build": {
+    "builder": "NIXPACKS"
+  },
+  "deploy": {
+    "startCommand": "python hosted_dashboard.py",
+    "restartPolicyType": "ON_FAILURE"
+  }
+}

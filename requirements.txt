@@ -1,0 +1,8 @@
+anthropic>=0.25.0
+flask>=3.0.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+schedule>=1.2.0
+werkzeug>=3.0.0
+resend>=0.8.0
+reportlab>=4.0.0
