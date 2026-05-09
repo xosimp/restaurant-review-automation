@@ -32,6 +32,17 @@ CREATE TABLE IF NOT EXISTS restaurants (
     pos_system      TEXT,          -- Toast / Square / Lightspeed / etc
     -- Status
     reviews_live    INTEGER DEFAULT 0,  -- 1 = pulling real reviews
+    -- Admin
+    billing_status  TEXT    DEFAULT 'trial',  -- trial/active/paused/churned
+    internal_notes  TEXT,                      -- private notes for Will only
+    -- Module access (1=enabled, 0=disabled)
+    module_reviews  INTEGER DEFAULT 1,
+    module_labor    INTEGER DEFAULT 1,
+    module_inventory INTEGER DEFAULT 1,
+    module_marketing INTEGER DEFAULT 1,
+    -- Activity
+    last_active_tab TEXT,
+    last_activity   TEXT,
     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -110,6 +121,14 @@ class Restaurant:
     hourly_rate: float              = 26.0
     pos_system: Optional[str]       = None
     reviews_live: int               = 0
+    billing_status: str             = "trial"
+    internal_notes: Optional[str]   = None
+    module_reviews: int             = 1
+    module_labor: int               = 1
+    module_inventory: int           = 1
+    module_marketing: int           = 1
+    last_active_tab: Optional[str]  = None
+    last_activity: Optional[str]    = None
     id: Optional[int]               = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -172,6 +191,14 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN hourly_rate REAL DEFAULT 26.0",
         "ALTER TABLE restaurants ADD COLUMN pos_system TEXT",
         "ALTER TABLE restaurants ADD COLUMN reviews_live INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN billing_status TEXT DEFAULT 'trial'",
+        "ALTER TABLE restaurants ADD COLUMN internal_notes TEXT",
+        "ALTER TABLE restaurants ADD COLUMN module_reviews INTEGER DEFAULT 1",
+        "ALTER TABLE restaurants ADD COLUMN module_labor INTEGER DEFAULT 1",
+        "ALTER TABLE restaurants ADD COLUMN module_inventory INTEGER DEFAULT 1",
+        "ALTER TABLE restaurants ADD COLUMN module_marketing INTEGER DEFAULT 1",
+        "ALTER TABLE restaurants ADD COLUMN last_active_tab TEXT",
+        "ALTER TABLE restaurants ADD COLUMN last_activity TEXT",
         "ALTER TABLE client_data ADD COLUMN shifts_csv TEXT",
         "ALTER TABLE client_data ADD COLUMN inventory_csv TEXT",
     ]
@@ -192,12 +219,16 @@ def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
     cur = conn.execute("""
         INSERT INTO restaurants (name, owner_email, google_place_id, yelp_business_id,
             voice_notes, neighborhood, vibe, known_for, sign_off_name, never_say,
-            hourly_rate, pos_system, reviews_live, created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            hourly_rate, pos_system, reviews_live, billing_status,
+            module_reviews, module_labor, module_inventory, module_marketing,
+            created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (r.name, r.owner_email, r.google_place_id, r.yelp_business_id,
           r.voice_notes, r.neighborhood, r.vibe, r.known_for,
           r.sign_off_name, r.never_say, r.hourly_rate,
-          r.pos_system, r.reviews_live, r.created_at))
+          r.pos_system, r.reviews_live, r.billing_status,
+          r.module_reviews, r.module_labor, r.module_inventory,
+          r.module_marketing, r.created_at))
     conn.commit()
     rid = cur.lastrowid
     conn.close()
@@ -209,7 +240,9 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","pos_system","reviews_live"
+        "hourly_rate","pos_system","reviews_live","billing_status","internal_notes",
+        "module_reviews","module_labor","module_inventory","module_marketing",
+        "last_active_tab","last_activity"
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -240,6 +273,14 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         hourly_rate=row["hourly_rate"] if "hourly_rate" in row.keys() else 26.0,
         pos_system=row["pos_system"] if "pos_system" in row.keys() else None,
         reviews_live=row["reviews_live"] if "reviews_live" in row.keys() else 0,
+        billing_status=row["billing_status"] if "billing_status" in row.keys() else "trial",
+        internal_notes=row["internal_notes"] if "internal_notes" in row.keys() else None,
+        module_reviews=row["module_reviews"] if "module_reviews" in row.keys() else 1,
+        module_labor=row["module_labor"] if "module_labor" in row.keys() else 1,
+        module_inventory=row["module_inventory"] if "module_inventory" in row.keys() else 1,
+        module_marketing=row["module_marketing"] if "module_marketing" in row.keys() else 1,
+        last_active_tab=row["last_active_tab"] if "last_active_tab" in row.keys() else None,
+        last_activity=row["last_activity"] if "last_activity" in row.keys() else None,
     )
 
 
@@ -461,3 +502,26 @@ def get_client_data(restaurant_id: int,
     ).fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def reset_user_password(user_id: int, new_password: str,
+                        db_path: str = DB_PATH):
+    """Admin reset of a user password."""
+    from werkzeug.security import generate_password_hash
+    conn = get_conn(db_path)
+    conn.execute("UPDATE users SET password_hash=? WHERE id=?",
+                 (generate_password_hash(new_password), user_id))
+    conn.commit()
+    conn.close()
+
+
+def log_activity(restaurant_id: int, tab: str,
+                 db_path: str = DB_PATH):
+    """Record last active tab and timestamp."""
+    from datetime import datetime, timezone
+    conn = get_conn(db_path)
+    conn.execute("""
+        UPDATE restaurants SET last_active_tab=?, last_activity=? WHERE id=?
+    """, (tab, datetime.now(timezone.utc).isoformat(), restaurant_id))
+    conn.commit()
+    conn.close()

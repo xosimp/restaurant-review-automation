@@ -273,11 +273,11 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 </header>
 <div style="background:var(--ink);padding:0 28px">
   <nav style="display:flex;gap:0">
-    <button class="tab active" onclick="switchTab('reviews',this)">Reviews <span class="badge">{{rstats.total}}</span></button>
-    <button class="tab" onclick="switchTab('labor',this)">Labor</button>
-    <button class="tab" onclick="switchTab('inventory',this)">Inventory</button>
-    <button class="tab" onclick="switchTab('marketing',this)">Marketing</button>
-    <button class="tab" onclick="switchTab('account',this)">Account</button>
+    {% if mod_reviews %}<button class="tab active" onclick="switchTab('reviews',this)">Reviews <span class="badge">{{rstats.total}}</span></button>{% endif %}
+    {% if mod_labor %}<button class="tab" onclick="switchTab('labor',this)">Labor</button>{% endif %}
+    {% if mod_inventory %}<button class="tab" onclick="switchTab('inventory',this)">Inventory</button>{% endif %}
+    {% if mod_marketing %}<button class="tab" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
+    <button class="tab {{'active' if not mod_reviews}}" onclick="switchTab('account',this)">Account</button>
   </nav>
 </div>
 
@@ -480,6 +480,8 @@ function switchTab(n,btn){
   if(n==='labor'&&!laborLoaded)loadLaborInsight();
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor')renderBars();
+  // Log activity
+  fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
 }
 let rfilter='{{rfilter}}';
 function setRF(f,btn){rfilter=f;document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active','active-red'));btn.classList.add(f==='urgent'?'active-red':'active');filterReviews()}
@@ -674,15 +676,77 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
+  <!-- Module access -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Module access</div></div>
+    <div class="section-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        {% for mod, label in [("reviews","Review Intelligence"),("labor","Labor Optimizer"),("inventory","Inventory Control"),("marketing","Marketing Autopilot")] %}
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px">
+          <span style="font-size:13px;font-weight:500">{{ label }}</span>
+          <button class="toggle {{'on' if restaurant['module_'+mod] else ''}}"
+                  id="mod-{{ mod }}" onclick="toggleMod('{{ mod }}', this)"></button>
+        </div>
+        {% endfor %}
+      </div>
+      <div style="font-size:11px;color:var(--ink3);margin-top:8px">Disabled modules are hidden from the client dashboard.</div>
+    </div>
+  </div>
+
+  <!-- Billing status -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Billing & status</div></div>
+    <div class="section-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Billing status</label>
+          <select id="billing_status">
+            {% for s in ["trial","active","paused","churned"] %}
+            <option value="{{ s }}" {{"selected" if restaurant.billing_status == s}}>{{ s|title }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Internal notes (private — not visible to client)</label>
+          <textarea id="internal_notes" style="min-height:52px" placeholder="e.g. Signed up May 2026, starter module, on Toast POS, prefers texts">{{ restaurant.internal_notes or "" }}</textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Password reset -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Reset client password</div></div>
+    <div class="section-body">
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <div class="form-group" style="flex:1;min-width:200px">
+          <label>New temporary password</label>
+          <input type="text" id="new-password" placeholder="Leave blank to auto-generate">
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding-bottom:2px">
+          <input type="checkbox" id="send-reset-email" checked style="width:14px;height:14px;accent-color:#c84b2f">
+          <label style="font-size:12px;color:var(--ink2);letter-spacing:0;text-transform:none;font-weight:400">Email new password to owner</label>
+        </div>
+        <button class="btn-save" style="padding:9px 16px;white-space:nowrap" onclick="resetPassword()">Reset password</button>
+      </div>
+      <div style="font-size:12px;margin-top:8px;display:none" id="reset-status"></div>
+    </div>
+  </div>
+
   <div class="save-bar">
     <button class="btn-save" onclick="saveSettings()">Save all settings</button>
-    <a href="/admin/client-data/{{ restaurant.id }}" class="btn-data">Manage data uploads →</a>
+    <a href="/admin/client-data/{{ restaurant.id }}" class="btn-data">Manage data →</a>
     <span class="save-status" id="save-status"></span>
   </div>
 </div>
 
 <script>
 let reviewsLive = {{ 'true' if restaurant.reviews_live else 'false' }};
+// Initialize module toggles from DB values
+moduleMods.reviews   = {{ restaurant.module_reviews or 1 }};
+moduleMods.labor     = {{ restaurant.module_labor or 1 }};
+moduleMods.inventory = {{ restaurant.module_inventory or 1 }};
+moduleMods.marketing = {{ restaurant.module_marketing or 1 }};
 
 function toggleReviewsLive(btn) {
   reviewsLive = !reviewsLive;
@@ -691,6 +755,34 @@ function toggleReviewsLive(btn) {
   btn.previousElementSibling.nextElementSibling.textContent = reviewsLive
     ? 'Pulling live reviews from Google/Yelp'
     : 'Using sample review data — add Place ID and enable to go live';
+}
+
+const moduleMods = {reviews:1, labor:1, inventory:1, marketing:1};
+function toggleMod(mod, btn) {
+  moduleMods[mod] = moduleMods[mod] ? 0 : 1;
+  btn.classList.toggle('on', !!moduleMods[mod]);
+}
+
+async function resetPassword() {
+  const btn = event.target;
+  const status = document.getElementById('reset-status');
+  const pw = document.getElementById('new-password').value.trim();
+  const sendEmail = document.getElementById('send-reset-email').checked;
+  btn.textContent = 'Resetting…'; btn.disabled = true;
+  const res = await fetch('/admin/reset-password-by-restaurant/{{ restaurant.id }}', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({password: pw, send_email: sendEmail})
+  });
+  const data = await res.json();
+  status.style.display = 'block';
+  if (data.ok) {
+    status.style.color = 'var(--green)';
+    status.textContent = '✓ Password reset to: ' + data.password + (sendEmail ? ' — email sent' : '');
+  } else {
+    status.style.color = 'var(--ember)';
+    status.textContent = data.error || 'Reset failed';
+  }
+  btn.textContent = 'Reset password'; btn.disabled = false;
 }
 
 async function saveSettings() {
@@ -711,6 +803,12 @@ async function saveSettings() {
     voice_notes:     document.getElementById('voice_notes').value,
     never_say:       document.getElementById('never_say').value,
     hourly_rate:     parseFloat(document.getElementById('hourly_rate').value),
+    billing_status:  document.getElementById('billing_status').value,
+    internal_notes:  document.getElementById('internal_notes').value,
+    module_reviews:  moduleMods.reviews,
+    module_labor:    moduleMods.labor,
+    module_inventory:moduleMods.inventory,
+    module_marketing:moduleMods.marketing,
   };
   const res = await fetch(window.location.pathname, {
     method: 'POST',
@@ -1077,15 +1175,21 @@ input:focus,select:focus{border-color:var(--ember)}
   <div class="section-title">Active client accounts</div>
   <div class="card" style="padding:0;overflow:hidden">
     <table class="tbl">
-      <thead><tr><th>Restaurant</th><th>Username</th><th>Email</th><th>Created</th><th>Last login</th><th>Status</th><th>Data</th></tr></thead>
+      <thead><tr><th>Restaurant</th><th>Username</th><th>Email</th><th>Billing</th><th>Last login</th><th>Last tab</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>
       {% for user in users %}
       <tr>
         <td><strong>{{user.restaurant_name}}</strong></td>
         <td><code style="font-size:12px">{{user.username}}</code></td>
         <td>{{user.email}}</td>
-        <td>{{user.created_at[:10]}}</td>
-        <td>{{user.last_login[:10] if user.last_login else '—'}}</td>
+        <td>
+          {% set bc = {'trial':'#b7791f','active':'#2d6a4f','paused':'#6b7280','churned':'#c0392b'} %}
+          <span style="font-size:10px;font-weight:500;padding:2px 8px;border-radius:20px;background:{% if user.billing_status == 'active' %}var(--green-bg){% elif user.billing_status == 'trial' %}var(--amber-bg){% else %}#f3f4f6{% endif %};color:{{ bc.get(user.billing_status,'#6b7280') }}">
+            {{(user.billing_status or 'trial')|title}}
+          </span>
+        </td>
+        <td style="font-size:12px">{{user.last_login[:10] if user.last_login else '—'}}</td>
+        <td style="font-size:11px;color:var(--ink3)">{{user.last_active_tab or '—'}}</td>
         <td>
         {% if user.is_active %}
           <span class="badge-active">Active</span>
@@ -1286,6 +1390,10 @@ def index(current_user):
         current_user=current_user, restaurant=restaurant,
         rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch,
         labor=labor, inv=inv, ctypes=CONTENT_TYPES,
+        mod_reviews=restaurant.module_reviews,
+        mod_labor=restaurant.module_labor,
+        mod_inventory=restaurant.module_inventory,
+        mod_marketing=restaurant.module_marketing,
         now=datetime.now().strftime("%b %d, %Y"))
 
 @app.route("/approve/<int:rid>", methods=["POST"])
@@ -1353,8 +1461,17 @@ def change_password(current_user):
 @admin_required
 def admin(current_user):
     users = list_users()
+    # Enrich with restaurant data
+    from models import get_restaurant
+    enriched = []
+    for u in users:
+        r = get_restaurant(u["restaurant_id"])
+        u["billing_status"] = r.billing_status if r else "trial"
+        u["last_active_tab"] = r.last_active_tab if r else None
+        u["internal_notes"] = r.internal_notes if r else None
+        enriched.append(u)
     return render_template_string(ADMIN_HTML,
-        current_user=current_user, users=users)
+        current_user=current_user, users=enriched)
 
 @app.route("/admin/create-client", methods=["POST"])
 @admin_required
@@ -1488,6 +1605,71 @@ def save_client_settings(restaurant_id, current_user):
         return jsonify(ok=True)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
+
+@app.route("/admin/reset-password/<int:user_id>", methods=["POST"])
+@admin_required
+def reset_password(user_id, current_user):
+    from models import reset_user_password
+    import secrets, string
+    data = request.get_json()
+    new_pw = data.get("password","").strip()
+    if not new_pw:
+        # Auto-generate if not provided
+        new_pw = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(10))
+    if len(new_pw) < 6:
+        return jsonify(ok=False, error="Password must be at least 6 characters")
+    reset_user_password(user_id, new_pw)
+    # Optionally email the new password
+    if data.get("send_email"):
+        try:
+            conn = get_conn()
+            row = conn.execute(
+                "SELECT u.email, r.name FROM users u JOIN restaurants r ON u.restaurant_id=r.id WHERE u.id=?",
+                (user_id,)
+            ).fetchone()
+            conn.close()
+            if row:
+                import resend as _resend
+                _resend.api_key = RESEND_API_KEY
+                _resend.Emails.send({
+                    "from": f"Will Cavnar <{FROM_EMAIL}>",
+                    "to": [row["email"]],
+                    "subject": "Your Cavnar AI password has been reset",
+                    "html": f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+                        <h3 style="color:#0e0c0a">Password reset</h3>
+                        <p>Hi — your Cavnar AI dashboard password has been reset.</p>
+                        <div style="background:#f7f4ef;padding:14px;border-radius:8px;margin:16px 0">
+                            <p><strong>URL:</strong> <a href="https://dashboard.cavnar.ai">dashboard.cavnar.ai</a></p>
+                            <p><strong>New password:</strong> {new_pw}</p>
+                        </div>
+                        <p>Log in and update your password in the Account tab.</p>
+                        <p style="color:#7a736a;font-size:12px">— Will Cavnar · will@cavnar.ai</p>
+                    </div>"""
+                })
+        except Exception as e:
+            print(f"Reset email failed: {e}")
+    return jsonify(ok=True, password=new_pw)
+
+@app.route("/admin/reset-password-by-restaurant/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def reset_password_by_restaurant(restaurant_id, current_user):
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT id FROM users WHERE restaurant_id=? AND is_admin=0 LIMIT 1",
+        (restaurant_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return jsonify(ok=False, error="No client user found for this restaurant")
+    return reset_password(row["id"], current_user=current_user)
+
+@app.route("/api/log-activity", methods=["POST"])
+@login_required
+def log_activity_route(current_user):
+    from models import log_activity
+    data = request.get_json()
+    log_activity(current_user["restaurant_id"], data.get("tab",""))
+    return jsonify(ok=True)
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
