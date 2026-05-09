@@ -9,9 +9,23 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 HOURLY_RATE = 26.0  # avg blended rate, configurable
 
 
-def load_shifts(path: str = "sample_shifts.csv") -> list[dict]:
+def load_shifts(path: str = "sample_shifts.csv",
+                csv_string: str = None) -> list[dict]:
+    """Load shifts from a CSV string (client data) or file (sample/demo)."""
+    if csv_string:
+        import io
+        return list(csv.DictReader(io.StringIO(csv_string)))
     with open(path, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
+
+
+def load_shifts_for_restaurant(restaurant_id: int) -> list[dict]:
+    """Load real client data if available, otherwise use sample data."""
+    from models import get_client_data
+    data = get_client_data(restaurant_id)
+    if data and data.get("shifts_csv"):
+        return load_shifts(csv_string=data["shifts_csv"])
+    return load_shifts()  # fallback to sample
 
 
 def analyse_shifts(shifts: list[dict]) -> dict:

@@ -7,9 +7,15 @@ import anthropic
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 
-def load_inventory(path: str = "sample_inventory.csv") -> list[dict]:
-    with open(path, newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
+def load_inventory(path: str = "sample_inventory.csv",
+                   csv_string: str = None) -> list[dict]:
+    """Load inventory from a CSV string (client data) or file (sample/demo)."""
+    if csv_string:
+        import io
+        rows = list(csv.DictReader(io.StringIO(csv_string)))
+    else:
+        with open(path, newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
     for r in rows:
         r["par_level"]      = float(r["par_level"])
         r["current_stock"]  = float(r["current_stock"])
@@ -111,3 +117,12 @@ Be direct and specific. Use real numbers. No fluff."""
         messages=[{"role": "user", "content": prompt}],
     )
     return msg.content[0].text.strip()
+
+
+def load_inventory_for_restaurant(restaurant_id: int) -> list[dict]:
+    """Load real client data if available, otherwise use sample data."""
+    from models import get_client_data
+    data = get_client_data(restaurant_id)
+    if data and data.get("inventory_csv"):
+        return load_inventory(csv_string=data["inventory_csv"])
+    return load_inventory()  # fallback to sample

@@ -68,6 +68,16 @@ CREATE INDEX IF NOT EXISTS idx_reviews_restaurant   ON reviews(restaurant_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_status       ON reviews(response_status);
 CREATE INDEX IF NOT EXISTS idx_reviews_fetched      ON reviews(fetched_at);
 CREATE INDEX IF NOT EXISTS idx_reviews_urgency      ON reviews(urgency);
+
+CREATE TABLE IF NOT EXISTS client_data (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id) UNIQUE,
+    shifts_csv      TEXT,           -- raw CSV content for labor module
+    inventory_csv   TEXT,           -- raw CSV content for inventory module
+    shifts_source   TEXT,           -- "upload" | "manual" | "sample"
+    inventory_source TEXT,          -- "upload" | "manual" | "sample"
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -345,3 +355,40 @@ if __name__ == "__main__":
     tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     print("Tables:", [t["name"] for t in tables])
     conn.close()
+
+# ── Client data helpers ───────────────────────────────────────────────────────
+
+def save_client_data(restaurant_id: int, data_type: str,
+                     csv_content: str, source: str = "upload",
+                     db_path: str = DB_PATH):
+    """Save labor (shifts) or inventory CSV for a client."""
+    conn = get_conn(db_path)
+    existing = conn.execute(
+        "SELECT id FROM client_data WHERE restaurant_id=?",
+        (restaurant_id,)
+    ).fetchone()
+    if existing:
+        conn.execute(f"""
+            UPDATE client_data
+            SET {data_type}_csv=?, {data_type}_source=?, updated_at=datetime('now')
+            WHERE restaurant_id=?
+        """, (csv_content, source, restaurant_id))
+    else:
+        conn.execute(f"""
+            INSERT INTO client_data (restaurant_id, {data_type}_csv, {data_type}_source)
+            VALUES (?, ?, ?)
+        """, (restaurant_id, csv_content, source))
+    conn.commit()
+    conn.close()
+
+
+def get_client_data(restaurant_id: int,
+                    db_path: str = DB_PATH) -> Optional[dict]:
+    """Get client's CSV data. Returns None if not set."""
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT * FROM client_data WHERE restaurant_id=?",
+        (restaurant_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None

@@ -508,6 +508,278 @@ function changePassword(){
 </body>
 </html>"""
 
+CLIENT_DATA_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ restaurant.name }} — Data Setup</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--green:#2d5a3d;--green-bg:#eaf2ed;--amber:#b7791f;--amber-bg:#fef9ec;--r:8px}
+body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);font-size:14px}
+.hdr{background:var(--ink);height:54px;display:flex;align-items:center;padding:0 28px;justify-content:space-between}
+.hdr-logo{font-family:'DM Serif Display',serif;font-size:16px;color:var(--paper)}
+.hdr-logo em{color:#e8956a;font-style:italic}
+.hdr-right{display:flex;align-items:center;gap:12px}
+.back-btn{font-size:11px;color:var(--ink3);text-decoration:none;padding:5px 10px;border:1px solid #2a2520;border-radius:4px}
+.container{max-width:860px;margin:0 auto;padding:32px 24px}
+.page-title{font-family:'DM Serif Display',serif;font-size:24px;margin-bottom:4px}
+.page-sub{font-size:13px;color:var(--ink3);margin-bottom:28px}
+.module-card{background:white;border:1px solid var(--paper3);border-radius:var(--r);margin-bottom:20px;overflow:hidden}
+.module-hdr{padding:16px 20px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between}
+.module-title{font-weight:600;font-size:15px}
+.module-status{font-size:11px;font-weight:500;padding:3px 10px;border-radius:20px}
+.status-live{background:var(--green-bg);color:var(--green)}
+.status-sample{background:var(--amber-bg);color:var(--amber)}
+.module-body{padding:20px}
+.slabel{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:8px}
+.tabs{display:flex;gap:4px;margin-bottom:16px}
+.mtab{padding:6px 14px;border-radius:6px;border:1px solid var(--paper3);font-size:12px;cursor:pointer;background:white;font-family:'DM Sans',sans-serif;transition:all .15s}
+.mtab.active{background:var(--ink);color:white;border-color:var(--ink)}
+.tab-content{display:none}
+.tab-content.active{display:block}
+.upload-zone{border:2px dashed var(--paper3);border-radius:var(--r);padding:28px;text-align:center;cursor:pointer;transition:all .2s;position:relative}
+.upload-zone:hover{border-color:var(--ember);background:var(--paper2)}
+.upload-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.upload-icon{font-size:28px;margin-bottom:8px}
+.upload-label{font-size:13px;font-weight:500;color:var(--ink2);margin-bottom:4px}
+.upload-sub{font-size:11px;color:var(--ink3)}
+.pos-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px}
+.pos-card{background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;padding:10px 12px;cursor:pointer;transition:all .15s}
+.pos-card:hover{border-color:var(--ember)}
+.pos-name{font-weight:600;font-size:12px;margin-bottom:3px}
+.pos-steps{font-size:11px;color:var(--ink3);line-height:1.5}
+.textarea{width:100%;padding:10px 12px;border:1px solid var(--paper3);border-radius:6px;font-family:monospace;font-size:11px;color:var(--ink);background:white;outline:none;resize:vertical;min-height:140px}
+.textarea:focus{border-color:var(--ember)}
+.btn-primary{background:var(--ember);color:white;padding:9px 20px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;border:none;cursor:pointer;transition:background .15s}
+.btn-primary:hover{background:#a83d25}
+.btn-primary:disabled{background:var(--ink3);cursor:default}
+.result-msg{font-size:12px;margin-top:10px;padding:8px 12px;border-radius:6px;display:none}
+.result-ok{background:var(--green-bg);color:var(--green);border:1px solid #b7dfca}
+.result-err{background:#fdf0ef;color:var(--ember);border:1px solid #f5c6c2}
+.current-data{background:var(--paper2);border-radius:6px;padding:12px 14px;font-size:12px;color:var(--ink2);margin-bottom:14px}
+.format-box{background:var(--ink);border-radius:6px;padding:12px 14px;font-family:monospace;font-size:11px;color:rgba(250,248,245,.8);overflow-x:auto;margin-top:8px;line-height:1.6}
+</style>
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-logo">Cavnar <em>AI</em> <span style="font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink3);font-weight:400;margin-left:8px">/ Data Setup</span></div>
+  <div class="hdr-right">
+    <a href="/admin" class="back-btn">← Back to admin</a>
+  </div>
+</header>
+
+<div class="container">
+  <div class="page-title">{{ restaurant.name }}</div>
+  <div class="page-sub">Set up real data for this client's labor and inventory modules.</div>
+
+  <!-- LABOR MODULE -->
+  <div class="module-card">
+    <div class="module-hdr">
+      <div class="module-title">Labor & Scheduling</div>
+      <span class="module-status {{'status-live' if data.get('shifts_source') in ('upload','manual') else 'status-sample'}}">
+        {{'Live data' if data.get('shifts_source') in ('upload','manual') else 'Using sample data'}}
+      </span>
+    </div>
+    <div class="module-body">
+      {% if data.get('shifts_csv') %}
+      <div class="current-data">
+        ✓ Real data loaded — uploaded {{ data.get('updated_at','')[:10] }} via {{ data.get('shifts_source','upload') }}
+      </div>
+      {% endif %}
+
+      <div class="slabel">Upload method</div>
+      <div class="tabs">
+        <button class="mtab active" onclick="switchTab('shifts','upload',this)">Upload CSV</button>
+        <button class="mtab" onclick="switchTab('shifts','paste',this)">Paste data</button>
+        <button class="mtab" onclick="switchTab('shifts','guide',this)">POS export guide</button>
+      </div>
+
+      <div class="tab-content active" id="shifts-upload">
+        <div class="upload-zone" id="shifts-drop">
+          <input type="file" accept=".csv" onchange="handleFile('shifts', this)">
+          <div class="upload-icon">📂</div>
+          <div class="upload-label">Drop CSV file here or click to browse</div>
+          <div class="upload-sub">Exported from Toast, Square, Lightspeed, or any POS</div>
+        </div>
+        <div id="shifts-upload-name" style="font-size:12px;color:var(--green);margin-top:8px;display:none"></div>
+        <button class="btn-primary" style="margin-top:12px" onclick="uploadData('shifts','upload')" id="shifts-upload-btn" disabled>Upload shifts data</button>
+        <div class="result-msg" id="shifts-upload-result"></div>
+      </div>
+
+      <div class="tab-content" id="shifts-paste">
+        <div class="slabel">Required CSV columns</div>
+        <div class="format-box">date,day,shift,employee,role,scheduled_hours,actual_hours,sales_that_day</div>
+        <div style="margin:10px 0 6px;font-size:11px;color:var(--ink3)">Paste your data below:</div>
+        <textarea class="textarea" id="shifts-paste-content" placeholder="date,day,shift,employee,role,scheduled_hours,actual_hours,sales_that_day&#10;2026-05-01,Thursday,dinner,Maria G.,server,5,5.5,3200&#10;..."></textarea>
+        <button class="btn-primary" style="margin-top:10px" onclick="uploadData('shifts','manual')">Save shifts data</button>
+        <div class="result-msg" id="shifts-paste-result"></div>
+      </div>
+
+      <div class="tab-content" id="shifts-guide">
+        <div class="slabel">How to export from your POS</div>
+        <div class="pos-grid">
+          <div class="pos-card">
+            <div class="pos-name">🍞 Toast</div>
+            <div class="pos-steps">Reports → Labor → Timesheets → Export CSV<br>Date range: last 2-4 weeks</div>
+          </div>
+          <div class="pos-card">
+            <div class="pos-name">⬛ Square</div>
+            <div class="pos-steps">Dashboard → Reports → Team → Timecards → Export</div>
+          </div>
+          <div class="pos-card">
+            <div class="pos-name">⚡ Lightspeed</div>
+            <div class="pos-steps">Reports → Staff → Time Tracking → Export CSV</div>
+          </div>
+          <div class="pos-card">
+            <div class="pos-name">🔷 Aloha</div>
+            <div class="pos-steps">Manager → Reports → Labor Detail → Export</div>
+          </div>
+          <div class="pos-card">
+            <div class="pos-name">🔶 Clover</div>
+            <div class="pos-steps">Reporting → Employees → Time Cards → Export</div>
+          </div>
+          <div class="pos-card">
+            <div class="pos-name">📋 Manual/Other</div>
+            <div class="pos-steps">Use the Paste tab and enter data in the required format</div>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--ink3);margin-top:4px">
+          After exporting, the column names may differ — use the Paste tab to reformat into the required columns if needed.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- INVENTORY MODULE -->
+  <div class="module-card">
+    <div class="module-hdr">
+      <div class="module-title">Inventory & Food Waste</div>
+      <span class="module-status {{'status-live' if data.get('inventory_source') in ('upload','manual') else 'status-sample'}}">
+        {{'Live data' if data.get('inventory_source') in ('upload','manual') else 'Using sample data'}}
+      </span>
+    </div>
+    <div class="module-body">
+      {% if data.get('inventory_csv') %}
+      <div class="current-data">
+        ✓ Real data loaded — uploaded {{ data.get('updated_at','')[:10] }} via {{ data.get('inventory_source','upload') }}
+      </div>
+      {% endif %}
+
+      <div class="slabel">Upload method</div>
+      <div class="tabs">
+        <button class="mtab active" onclick="switchTab('inv','upload',this)">Upload CSV</button>
+        <button class="mtab" onclick="switchTab('inv','paste',this)">Paste data</button>
+        <button class="mtab" onclick="switchTab('inv','guide',this)">Format guide</button>
+      </div>
+
+      <div class="tab-content active" id="inv-upload">
+        <div class="upload-zone">
+          <input type="file" accept=".csv" onchange="handleFile('inv', this)">
+          <div class="upload-icon">📦</div>
+          <div class="upload-label">Drop inventory CSV here or click to browse</div>
+          <div class="upload-sub">Exported from your inventory system or POS</div>
+        </div>
+        <div id="inv-upload-name" style="font-size:12px;color:var(--green);margin-top:8px;display:none"></div>
+        <button class="btn-primary" style="margin-top:12px" onclick="uploadData('inv','upload')" id="inv-upload-btn" disabled>Upload inventory data</button>
+        <div class="result-msg" id="inv-upload-result"></div>
+      </div>
+
+      <div class="tab-content" id="inv-paste">
+        <div class="slabel">Required CSV columns</div>
+        <div class="format-box">item,category,unit,par_level,current_stock,unit_cost,avg_daily_usage,last_ordered,last_order_qty,waste_last_week</div>
+        <div style="margin:10px 0 6px;font-size:11px;color:var(--ink3)">Paste your data below:</div>
+        <textarea class="textarea" id="inv-paste-content" placeholder="item,category,unit,par_level,current_stock,unit_cost,avg_daily_usage,last_ordered,last_order_qty,waste_last_week&#10;Salmon fillet,protein,lb,20,18,14.50,3.2,2026-05-01,30,5.0&#10;..."></textarea>
+        <button class="btn-primary" style="margin-top:10px" onclick="uploadData('inv','manual')">Save inventory data</button>
+        <div class="result-msg" id="inv-paste-result"></div>
+      </div>
+
+      <div class="tab-content" id="inv-guide">
+        <div class="slabel">Column reference</div>
+        <div class="format-box">item            — Item name (e.g. "Salmon fillet")
+category        — protein / dairy / produce / dry / beverage
+unit            — lb / oz / unit / case / liter / qt
+par_level       — Your target stock level
+current_stock   — What you have right now
+unit_cost       — Cost per unit in dollars
+avg_daily_usage — Average units used per day
+last_ordered    — Date of last order (YYYY-MM-DD)
+last_order_qty  — Units ordered last time
+waste_last_week — Units wasted in the last 7 days</div>
+        <div style="font-size:12px;color:var(--ink3);margin-top:10px">
+          Most inventory systems can export a product list. You may need to add the waste_last_week column manually based on your waste log.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const restaurantId = {{ restaurant.id }};
+const fileData = {shifts: null, inv: null};
+
+function switchTab(module, tab, btn) {
+  const prefix = module === 'shifts' ? 'shifts' : 'inv';
+  document.querySelectorAll(`#${prefix}-upload, #${prefix}-paste, #${prefix}-guide`).forEach(el => el.classList.remove('active'));
+  document.getElementById(`${prefix}-${tab}`).classList.add('active');
+  btn.closest('.tabs').querySelectorAll('.mtab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function handleFile(module, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    fileData[module] = e.target.result;
+    const nameEl = document.getElementById(module + '-upload-name');
+    nameEl.textContent = '✓ ' + file.name + ' (' + (file.size/1024).toFixed(1) + ' KB)';
+    nameEl.style.display = 'block';
+    document.getElementById(module + '-upload-btn').disabled = false;
+  };
+  reader.readAsText(file);
+}
+
+async function uploadData(module, source) {
+  const dataType = module === 'shifts' ? 'shifts' : 'inventory';
+  const resultId = module + '-' + (source === 'upload' ? 'upload' : 'paste') + '-result';
+  const resultEl = document.getElementById(resultId);
+
+  let csvContent = '';
+  if (source === 'upload') {
+    csvContent = fileData[module];
+    if (!csvContent) { showResult(resultEl, false, 'No file selected'); return; }
+  } else {
+    csvContent = document.getElementById(module + '-paste-content').value;
+    if (!csvContent.trim()) { showResult(resultEl, false, 'No data entered'); return; }
+  }
+
+  const form = new FormData();
+  form.append('data_type', dataType);
+  form.append('source', source);
+  form.append('csv_content', csvContent);
+
+  const res = await fetch('/admin/upload-data/' + restaurantId, {method:'POST', body: form});
+  const data = await res.json();
+  if (data.ok) {
+    showResult(resultEl, true, '✓ ' + data.rows + ' rows saved successfully. Refresh to see updated status.');
+    setTimeout(() => location.reload(), 2000);
+  } else {
+    showResult(resultEl, false, data.error || 'Upload failed');
+  }
+}
+
+function showResult(el, ok, msg) {
+  el.style.display = 'block';
+  el.className = 'result-msg ' + (ok ? 'result-ok' : 'result-err');
+  el.textContent = msg;
+}
+</script>
+</body>
+</html>"""
+
 ADMIN_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -580,7 +852,7 @@ input:focus,select:focus{border-color:var(--ember)}
   <div class="section-title">Active client accounts</div>
   <div class="card" style="padding:0;overflow:hidden">
     <table class="tbl">
-      <thead><tr><th>Restaurant</th><th>Username</th><th>Email</th><th>Created</th><th>Last login</th><th>Status</th></tr></thead>
+      <thead><tr><th>Restaurant</th><th>Username</th><th>Email</th><th>Created</th><th>Last login</th><th>Status</th><th>Data</th></tr></thead>
       <tbody>
       {% for user in users %}
       <tr>
@@ -606,9 +878,17 @@ input:focus,select:focus{border-color:var(--ember)}
           </button>
         {% endif %}
       </td>
+      <td>
+        {% if not user.is_admin %}
+        <a href="/admin/client-data/{{ user.restaurant_id }}"
+           style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid var(--paper3);background:white;color:var(--ink2);text-decoration:none;font-family:'DM Sans',sans-serif">
+          Manage data
+        </a>
+        {% else %}—{% endif %}
+      </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" style="color:var(--ink3);font-style:italic;padding:16px">No clients yet — create one above.</td></tr>
+      <tr><td colspan="7" style="color:var(--ink3);font-style:italic;padding:16px">No clients yet — create one above.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -766,8 +1046,10 @@ def index(current_user):
     restaurant = get_restaurant(rid)
     rstats  = get_review_stats(rid)
     reviews = get_reviews_data(rid, rfilter, rsearch)
-    labor   = analyse_shifts(load_shifts())
-    inv     = analyse_inventory(load_inventory())
+    from labor import load_shifts_for_restaurant
+    from inventory import load_inventory_for_restaurant
+    labor   = analyse_shifts(load_shifts_for_restaurant(rid))
+    inv     = analyse_inventory(load_inventory_for_restaurant(rid))
     return render_template_string(DASHBOARD_HTML,
         current_user=current_user, restaurant=restaurant,
         rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch,
@@ -889,6 +1171,49 @@ def reactivate_client(user_id, current_user):
     conn.execute("UPDATE users SET is_active=1 WHERE id=?", (user_id,))
     conn.commit(); conn.close()
     return jsonify(ok=True)
+
+@app.route("/admin/client-data/<int:restaurant_id>")
+@admin_required
+def client_data_page(restaurant_id, current_user):
+    from models import get_client_data
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return "Restaurant not found", 404
+    data = get_client_data(restaurant_id) or {}
+    return render_template_string(CLIENT_DATA_HTML,
+        current_user=current_user,
+        restaurant=restaurant,
+        data=data)
+
+@app.route("/admin/upload-data/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def upload_data(restaurant_id, current_user):
+    from models import save_client_data
+    data_type = request.form.get("data_type")  # "shifts" or "inventory"
+    source     = request.form.get("source", "upload")
+
+    if source == "upload":
+        f = request.files.get("csv_file")
+        if not f:
+            return jsonify(ok=False, error="No file uploaded")
+        csv_content = f.read().decode("utf-8")
+    else:
+        csv_content = request.form.get("csv_content", "")
+
+    if not csv_content.strip():
+        return jsonify(ok=False, error="No data provided")
+
+    # Validate it parses correctly
+    import io, csv as _csv
+    try:
+        rows = list(_csv.DictReader(io.StringIO(csv_content)))
+        if not rows:
+            return jsonify(ok=False, error="CSV appears empty")
+    except Exception as e:
+        return jsonify(ok=False, error=f"Could not parse CSV: {e}")
+
+    save_client_data(restaurant_id, data_type, csv_content, source)
+    return jsonify(ok=True, rows=len(rows))
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
