@@ -676,20 +676,28 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
-  <!-- Module access -->
+  <!-- Service tier -->
   <div class="section-card">
-    <div class="section-hdr"><div class="section-title">Module access</div></div>
+    <div class="section-hdr"><div class="section-title">Service tier</div></div>
     <div class="section-body">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-        {% for mod, label in [("reviews","Review Intelligence"),("labor","Labor Optimizer"),("inventory","Inventory Control"),("marketing","Marketing Autopilot")] %}
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px">
-          <span style="font-size:13px;font-weight:500">{{ label }}</span>
-          <button class="toggle {{'on' if restaurant['module_'+mod] else ''}}"
-                  id="mod-{{ mod }}" onclick="toggleMod('{{ mod }}', this)"></button>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Plan</label>
+          <select id="service_tier" onchange="updateTierPreview(this.value)">
+            <option value="trial" {{"selected" if restaurant.service_tier == "trial"}}>Trial — all modules (demo)</option>
+            <option value="starter_reviews" {{"selected" if restaurant.service_tier == "starter_reviews"}}>Starter — Review Intelligence only</option>
+            <option value="starter_labor" {{"selected" if restaurant.service_tier == "starter_labor"}}>Starter — Labor Optimizer only</option>
+            <option value="starter_inventory" {{"selected" if restaurant.service_tier == "starter_inventory"}}>Starter — Inventory Control only</option>
+            <option value="starter_marketing" {{"selected" if restaurant.service_tier == "starter_marketing"}}>Starter — Marketing Autopilot only</option>
+            <option value="full" {{"selected" if restaurant.service_tier == "full"}}>Full System — all 4 modules</option>
+          </select>
+          <div class="hint">Module tabs update automatically when you save. No manual toggles needed.</div>
         </div>
-        {% endfor %}
+        <div style="background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;padding:12px 14px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3);margin-bottom:8px">Active modules</div>
+          <div id="tier-preview" style="display:flex;flex-direction:column;gap:5px;font-size:12px"></div>
+        </div>
       </div>
-      <div style="font-size:11px;color:var(--ink3);margin-top:8px">Disabled modules are hidden from the client dashboard.</div>
     </div>
   </div>
 
@@ -742,11 +750,7 @@ textarea{resize:vertical;min-height:60px}
 
 <script>
 let reviewsLive = {{ 'true' if restaurant.reviews_live else 'false' }};
-// Initialize module toggles from DB values
-moduleMods.reviews   = {{ restaurant.module_reviews or 1 }};
-moduleMods.labor     = {{ restaurant.module_labor or 1 }};
-moduleMods.inventory = {{ restaurant.module_inventory or 1 }};
-moduleMods.marketing = {{ restaurant.module_marketing or 1 }};
+
 
 function toggleReviewsLive(btn) {
   reviewsLive = !reviewsLive;
@@ -757,11 +761,30 @@ function toggleReviewsLive(btn) {
     : 'Using sample review data — add Place ID and enable to go live';
 }
 
-const moduleMods = {reviews:1, labor:1, inventory:1, marketing:1};
-function toggleMod(mod, btn) {
-  moduleMods[mod] = moduleMods[mod] ? 0 : 1;
-  btn.classList.toggle('on', !!moduleMods[mod]);
+const TIER_MODULES = {
+  "trial":             {reviews:1,labor:1,inventory:1,marketing:1},
+  "starter_reviews":   {reviews:1,labor:0,inventory:0,marketing:0},
+  "starter_labor":     {reviews:0,labor:1,inventory:0,marketing:0},
+  "starter_inventory": {reviews:0,labor:0,inventory:1,marketing:0},
+  "starter_marketing": {reviews:0,labor:0,inventory:0,marketing:1},
+  "full":              {reviews:1,labor:1,inventory:1,marketing:1},
+};
+const MODULE_LABELS = {
+  reviews:"Review Intelligence",labor:"Labor Optimizer",
+  inventory:"Inventory Control",marketing:"Marketing Autopilot"
+};
+function updateTierPreview(tier) {
+  const mods = TIER_MODULES[tier] || TIER_MODULES["trial"];
+  const el = document.getElementById("tier-preview");
+  el.innerHTML = Object.entries(mods).map(([k,v]) =>
+    `<div style="display:flex;align-items:center;gap:6px">
+      <span style="width:8px;height:8px;border-radius:50%;background:${v?"#2d6a4f":"#e0dbd0"}"></span>
+      <span style="color:${v?"#0e0c0a":"#7a736a"}">${MODULE_LABELS[k]}</span>
+    </div>`
+  ).join("");
 }
+// Init preview on load
+updateTierPreview(document.getElementById("service_tier").value);
 
 async function resetPassword() {
   const btn = event.target;
@@ -805,10 +828,7 @@ async function saveSettings() {
     hourly_rate:     parseFloat(document.getElementById('hourly_rate').value),
     billing_status:  document.getElementById('billing_status').value,
     internal_notes:  document.getElementById('internal_notes').value,
-    module_reviews:  moduleMods.reviews,
-    module_labor:    moduleMods.labor,
-    module_inventory:moduleMods.inventory,
-    module_marketing:moduleMods.marketing,
+    service_tier:    document.getElementById('service_tier').value,
   };
   const res = await fetch(window.location.pathname, {
     method: 'POST',
@@ -1161,6 +1181,17 @@ input:focus,select:focus{border-color:var(--ember)}
       <div class="form-group"><label>Google Place ID (optional)</label><input type="text" id="r-google" placeholder="ChIJ..."></div>
       <div class="form-group"><label>Yelp Business ID (optional)</label><input type="text" id="r-yelp" placeholder="restaurant-name-chicago"></div>
       <div class="form-group full"><label>Owner voice notes (for AI drafting)</label><input type="text" id="r-voice" placeholder="Warm, casual tone. Always invite guests back. Never sound corporate."></div>
+      <div class="form-group">
+        <label>Service tier</label>
+        <select id="r-tier">
+          <option value="trial">Trial — all modules (demo)</option>
+          <option value="starter_reviews">Starter — Review Intelligence</option>
+          <option value="starter_labor">Starter — Labor Optimizer</option>
+          <option value="starter_inventory">Starter — Inventory Control</option>
+          <option value="starter_marketing">Starter — Marketing Autopilot</option>
+          <option value="full">Full System — all 4 modules</option>
+        </select>
+      </div>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-top:14px;margin-bottom:0">
       <input type="checkbox" id="send-email" checked style="width:16px;height:16px;accent-color:#c84b2f;cursor:pointer">
@@ -1243,6 +1274,7 @@ async function createClient() {
     google_place_id: document.getElementById('r-google').value,
     yelp_business_id:document.getElementById('r-yelp').value,
     voice_notes:     document.getElementById('r-voice').value,
+    service_tier:    document.getElementById('r-tier').value,
     send_email:      document.getElementById('send-email').checked,
   };
   const res = await fetch('/admin/create-client', {
@@ -1494,6 +1526,10 @@ def create_client(current_user):
             email=data["owner_email"],
             password=data["password"],
         )
+        # Auto-set service tier if provided
+        if data.get("service_tier"):
+            from models import set_service_tier
+            set_service_tier(rid, data["service_tier"])
         # Send welcome email if requested
         if data.get("send_email") and RESEND_API_KEY:
             try:
@@ -1587,6 +1623,11 @@ def save_client_settings(restaurant_id, current_user):
     from models import update_restaurant
     data = request.get_json()
     try:
+        from models import set_service_tier
+        tier = data.get("service_tier","trial")
+        # Set tier first (auto-configures modules)
+        set_service_tier(restaurant_id, tier)
+        # Then save all other fields
         update_restaurant(restaurant_id, {
             "name":            data.get("name","").strip(),
             "owner_email":     data.get("owner_email","").strip(),
@@ -1601,6 +1642,8 @@ def save_client_settings(restaurant_id, current_user):
             "hourly_rate":     float(data.get("hourly_rate") or 26.0),
             "pos_system":      data.get("pos_system","").strip() or None,
             "reviews_live":    int(bool(data.get("reviews_live"))),
+            "billing_status":  data.get("billing_status","trial"),
+            "internal_notes":  data.get("internal_notes","").strip() or None,
         })
         return jsonify(ok=True)
     except Exception as e:

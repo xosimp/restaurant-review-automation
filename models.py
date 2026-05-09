@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS restaurants (
     -- Admin
     billing_status  TEXT    DEFAULT 'trial',  -- trial/active/paused/churned
     internal_notes  TEXT,                      -- private notes for Will only
-    -- Module access (1=enabled, 0=disabled)
+    -- Service tier drives module access automatically
+    service_tier    TEXT    DEFAULT 'trial',  -- trial/starter_reviews/starter_labor/starter_inventory/starter_marketing/full
+    -- Module access (auto-set by service_tier, can override)
     module_reviews  INTEGER DEFAULT 1,
     module_labor    INTEGER DEFAULT 1,
     module_inventory INTEGER DEFAULT 1,
@@ -123,6 +125,7 @@ class Restaurant:
     reviews_live: int               = 0
     billing_status: str             = "trial"
     internal_notes: Optional[str]   = None
+    service_tier: str               = "trial"   # trial / starter_reviews / starter_labor / starter_inventory / starter_marketing / full
     module_reviews: int             = 1
     module_labor: int               = 1
     module_inventory: int           = 1
@@ -193,6 +196,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN reviews_live INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN billing_status TEXT DEFAULT 'trial'",
         "ALTER TABLE restaurants ADD COLUMN internal_notes TEXT",
+        "ALTER TABLE restaurants ADD COLUMN service_tier TEXT DEFAULT 'trial'",
         "ALTER TABLE restaurants ADD COLUMN module_reviews INTEGER DEFAULT 1",
         "ALTER TABLE restaurants ADD COLUMN module_labor INTEGER DEFAULT 1",
         "ALTER TABLE restaurants ADD COLUMN module_inventory INTEGER DEFAULT 1",
@@ -220,13 +224,14 @@ def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
         INSERT INTO restaurants (name, owner_email, google_place_id, yelp_business_id,
             voice_notes, neighborhood, vibe, known_for, sign_off_name, never_say,
             hourly_rate, pos_system, reviews_live, billing_status,
-            module_reviews, module_labor, module_inventory, module_marketing,
+            service_tier, module_reviews, module_labor, module_inventory, module_marketing,
             created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (r.name, r.owner_email, r.google_place_id, r.yelp_business_id,
           r.voice_notes, r.neighborhood, r.vibe, r.known_for,
           r.sign_off_name, r.never_say, r.hourly_rate,
           r.pos_system, r.reviews_live, r.billing_status,
+          r.service_tier,
           r.module_reviews, r.module_labor, r.module_inventory,
           r.module_marketing, r.created_at))
     conn.commit()
@@ -241,7 +246,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
         "hourly_rate","pos_system","reviews_live","billing_status","internal_notes",
-        "module_reviews","module_labor","module_inventory","module_marketing",
+        "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity"
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
@@ -275,6 +280,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         reviews_live=row["reviews_live"] if "reviews_live" in row.keys() else 0,
         billing_status=row["billing_status"] if "billing_status" in row.keys() else "trial",
         internal_notes=row["internal_notes"] if "internal_notes" in row.keys() else None,
+        service_tier=row["service_tier"] if "service_tier" in row.keys() else "trial",
         module_reviews=row["module_reviews"] if "module_reviews" in row.keys() else 1,
         module_labor=row["module_labor"] if "module_labor" in row.keys() else 1,
         module_inventory=row["module_inventory"] if "module_inventory" in row.keys() else 1,
@@ -525,3 +531,28 @@ def log_activity(restaurant_id: int, tab: str,
     """, (tab, datetime.now(timezone.utc).isoformat(), restaurant_id))
     conn.commit()
     conn.close()
+
+
+# ── Service tier → module access ──────────────────────────────────────────────
+
+TIER_MODULES = {
+    "trial":              {"reviews":1,"labor":1,"inventory":1,"marketing":1},
+    "starter_reviews":    {"reviews":1,"labor":0,"inventory":0,"marketing":0},
+    "starter_labor":      {"reviews":0,"labor":1,"inventory":0,"marketing":0},
+    "starter_inventory":  {"reviews":0,"labor":0,"inventory":1,"marketing":0},
+    "starter_marketing":  {"reviews":0,"labor":0,"inventory":0,"marketing":1},
+    "full":               {"reviews":1,"labor":1,"inventory":1,"marketing":1},
+}
+
+
+def set_service_tier(restaurant_id: int, tier: str,
+                     db_path: str = DB_PATH):
+    """Set service tier and auto-configure module access."""
+    modules = TIER_MODULES.get(tier, TIER_MODULES["trial"])
+    update_restaurant(restaurant_id, {
+        "service_tier":    tier,
+        "module_reviews":  modules["reviews"],
+        "module_labor":    modules["labor"],
+        "module_inventory":modules["inventory"],
+        "module_marketing":modules["marketing"],
+    }, db_path)
