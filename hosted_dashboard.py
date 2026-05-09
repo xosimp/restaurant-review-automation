@@ -503,6 +503,17 @@ function changePassword(){
   if(nw!==conf){st.style.display='block';st.style.color='var(--red)';st.textContent='Passwords do not match';return}
   if(nw.length<8){st.style.display='block';st.style.color='var(--red)';st.textContent='Password must be at least 8 characters';return}
   fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(r=>r.json()).then(d=>{st.style.display='block';if(d.ok){st.style.color='var(--green)';st.textContent='Password updated';document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-confirm').value='';}else{st.style.color='var(--red)';st.textContent=d.error||'Update failed'}})}
+async function deactivateClient(id, name) {
+  if (!confirm('Deactivate ' + name + '? They will lose dashboard access immediately.')) return;
+  const res = await fetch('/admin/deactivate-client/' + id, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) { location.reload(); }
+}
+async function reactivateClient(id, name) {
+  const res = await fetch('/admin/reactivate-client/' + id, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) { location.reload(); }
+}
 </script>
 </body>
 </html>"""
@@ -588,7 +599,23 @@ input:focus,select:focus{border-color:var(--ember)}
         <td>{{user.email}}</td>
         <td>{{user.created_at[:10]}}</td>
         <td>{{user.last_login[:10] if user.last_login else '—'}}</td>
-        <td><span class="badge-active">{{'Active' if user.is_active else 'Inactive'}}</span></td>
+        <td>
+        {% if user.is_active %}
+          <span class="badge-active">Active</span>
+          {% if not user.is_admin %}
+          <button onclick="deactivateClient({{user.id}}, '{{user.restaurant_name}}')"
+            style="margin-left:8px;font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #f5c6c2;background:#fdf0ef;color:#c0392b;cursor:pointer;font-family:'DM Sans',sans-serif">
+            Deactivate
+          </button>
+          {% endif %}
+        {% else %}
+          <span style="background:#f3f4f6;color:#6b7280;font-size:10px;padding:2px 7px;border-radius:20px;font-weight:500">Inactive</span>
+          <button onclick="reactivateClient({{user.id}}, '{{user.restaurant_name}}')"
+            style="margin-left:8px;font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #b7dfca;background:#eaf2ed;color:#2d5a3d;cursor:pointer;font-family:'DM Sans',sans-serif">
+            Reactivate
+          </button>
+        {% endif %}
+      </td>
       </tr>
       {% else %}
       <tr><td colspan="6" style="color:var(--ink3);font-style:italic;padding:16px">No clients yet — create one above.</td></tr>
@@ -834,6 +861,22 @@ def create_client(current_user):
         return jsonify(ok=True, restaurant_id=rid)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
+
+@app.route("/admin/deactivate-client/<int:user_id>", methods=["POST"])
+@admin_required
+def deactivate_client(user_id, current_user):
+    conn = get_conn()
+    conn.execute("UPDATE users SET is_active=0 WHERE id=? AND is_admin=0", (user_id,))
+    conn.commit(); conn.close()
+    return jsonify(ok=True)
+
+@app.route("/admin/reactivate-client/<int:user_id>", methods=["POST"])
+@admin_required
+def reactivate_client(user_id, current_user):
+    conn = get_conn()
+    conn.execute("UPDATE users SET is_active=1 WHERE id=?", (user_id,))
+    conn.commit(); conn.close()
+    return jsonify(ok=True)
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
