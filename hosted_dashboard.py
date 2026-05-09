@@ -564,7 +564,13 @@ input:focus,select:focus{border-color:var(--ember)}
       <div class="form-group"><label>Yelp Business ID (optional)</label><input type="text" id="r-yelp" placeholder="restaurant-name-chicago"></div>
       <div class="form-group full"><label>Owner voice notes (for AI drafting)</label><input type="text" id="r-voice" placeholder="Warm, casual tone. Always invite guests back. Never sound corporate."></div>
     </div>
-    <button class="btn btn-primary" style="margin-top:14px" onclick="createClient()">Create client account</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:14px;margin-bottom:0">
+      <input type="checkbox" id="send-email" checked style="width:16px;height:16px;accent-color:#c84b2f;cursor:pointer">
+      <label for="send-email" style="font-size:13px;color:#3a3530;cursor:pointer;letter-spacing:0;text-transform:none;font-weight:400">
+        Send welcome email to owner with login credentials
+      </label>
+    </div>
+    <button class="btn btn-primary" style="margin-top:12px" onclick="createClient()">Create client account</button>
     <div class="status-msg" id="create-status"></div>
   </div>
 
@@ -603,6 +609,7 @@ async function createClient() {
     google_place_id: document.getElementById('r-google').value,
     yelp_business_id:document.getElementById('r-yelp').value,
     voice_notes:     document.getElementById('r-voice').value,
+    send_email:      document.getElementById('send-email').checked,
   };
   const res = await fetch('/admin/create-client', {
     method: 'POST',
@@ -613,7 +620,7 @@ async function createClient() {
   status.style.display = 'block';
   if (data.ok) {
     status.className = 'status-msg status-ok';
-    status.textContent = `✓ Client created — username: ${payload.username}`;
+    status.textContent = `✓ Client created — username: ${payload.username}${payload.send_email ? ". Welcome email sent to " + payload.owner_email : ""}`;
     setTimeout(() => location.reload(), 1500);
   } else {
     status.className = 'status-msg status-err';
@@ -624,6 +631,53 @@ async function createClient() {
 </script>
 </body>
 </html>"""
+
+
+def send_welcome_email(to_email, restaurant_name, username, password):
+    """Send branded welcome email to new client with their login credentials."""
+    import resend as _resend
+    _resend.api_key = RESEND_API_KEY
+    html = f"""
+<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+  <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
+    <h2 style="font-family:Georgia,serif;font-size:22px;font-weight:400;margin:0 0 4px">
+      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    </h2>
+    <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
+      Restaurant Intelligence Dashboard
+    </p>
+  </div>
+  <p style="font-size:15px;line-height:1.6;margin-bottom:16px">
+    Hi — your Cavnar AI dashboard for <strong>{restaurant_name}</strong> is live and ready to use.
+  </p>
+  <div style="background:#f7f4ef;border-radius:8px;padding:16px 20px;margin-bottom:20px">
+    <p style="font-size:13px;color:#7a736a;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;font-weight:600">Your login details</p>
+    <p style="font-size:14px;margin:0 0 6px"><strong>URL:</strong> <a href="https://dashboard.cavnar.ai" style="color:#c84b2f">dashboard.cavnar.ai</a></p>
+    <p style="font-size:14px;margin:0 0 6px"><strong>Username:</strong> {username}</p>
+    <p style="font-size:14px;margin:0"><strong>Temporary password:</strong> {password}</p>
+  </div>
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:12px">
+    Once you log in, go to the <strong>Account</strong> tab to set your own password.
+    Your dashboard includes four modules — Reviews, Labor, Inventory, and Marketing —
+    all set up specifically for {restaurant_name}.
+  </p>
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:24px">
+    Any questions, just reply to this email. I check it daily.
+  </p>
+  <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
+  <p style="font-size:12px;color:#7a736a;margin:0">
+    Will Cavnar &nbsp;·&nbsp; Cavnar AI<br/>
+    <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
+    &nbsp;·&nbsp;
+    <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
+  </p>
+</div>"""
+    _resend.Emails.send({
+        "from": f"Will Cavnar <{FROM_EMAIL}>",
+        "to": [to_email],
+        "subject": f"Your Cavnar AI dashboard is live — {restaurant_name}",
+        "html": html,
+    })
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -764,6 +818,17 @@ def create_client(current_user):
             email=data["owner_email"],
             password=data["password"],
         )
+        # Send welcome email if requested
+        if data.get("send_email") and RESEND_API_KEY:
+            try:
+                send_welcome_email(
+                    to_email=data["owner_email"],
+                    restaurant_name=data["restaurant_name"],
+                    username=data["username"],
+                    password=data["password"],
+                )
+            except Exception as mail_err:
+                print(f"Welcome email failed: {mail_err}")
         return jsonify(ok=True, restaurant_id=rid)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
