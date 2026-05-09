@@ -24,6 +24,8 @@ app.secret_key = os.getenv("SECRET_KEY", os.urandom(32).hex())
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "will")
 PORT           = int(os.getenv("PORT", 8080))
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+FROM_EMAIL     = os.getenv("FROM_EMAIL", "will@cavnar.ai")
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
