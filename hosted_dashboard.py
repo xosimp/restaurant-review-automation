@@ -24,8 +24,10 @@ app.secret_key = os.getenv("SECRET_KEY", os.urandom(32).hex())
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "will")
 PORT           = int(os.getenv("PORT", 8080))
-RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-FROM_EMAIL     = os.getenv("FROM_EMAIL", "will@cavnar.ai")
+RESEND_API_KEY          = os.getenv("RESEND_API_KEY", "")
+FROM_EMAIL              = os.getenv("FROM_EMAIL", "will@cavnar.ai")
+STRIPE_WEBHOOK_SECRET   = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+WILL_EMAIL              = os.getenv("WILL_EMAIL", "will@cavnar.ai")
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
@@ -1712,6 +1714,97 @@ def log_activity_route(current_user):
     from models import log_activity
     data = request.get_json()
     log_activity(current_user["restaurant_id"], data.get("tab",""))
+    return jsonify(ok=True)
+
+@app.route("/stripe-webhook", methods=["POST"])
+def stripe_webhook():
+    import stripe
+    payload = request.get_data()
+    sig_header = request.headers.get("Stripe-Signature","")
+
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, STRIPE_WEBHOOK_SECRET
+        )
+    except Exception as e:
+        print(f"Webhook error: {e}")
+        return jsonify(error=str(e)), 400
+
+    def send_alert(subject, body):
+        """Send alert email to Will."""
+        if not RESEND_API_KEY:
+            print(f"ALERT: {subject}\n{body}")
+            return
+        try:
+            import resend as _resend
+            _resend.api_key = RESEND_API_KEY
+            _resend.Emails.send({
+                "from": f"Cavnar AI Alerts <{FROM_EMAIL}>",
+                "to": [WILL_EMAIL],
+                "subject": subject,
+                "html": f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+                    <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
+                        <h3 style="color:#0e0c0a;margin:0">Cavnar AI — Payment Alert</h3>
+                    </div>
+                    <p style="font-size:15px;line-height:1.6">{body}</p>
+                    <hr style="border:none;border-top:1px solid #e0dbd0;margin:20px 0"/>
+                    <p style="font-size:11px;color:#7a736a">
+                        Manage clients at
+                        <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">
+                            dashboard.cavnar.ai/admin
+                        </a>
+                    </p>
+                </div>"""
+            })
+        except Exception as e:
+            print(f"Alert email failed: {e}")
+
+    # ── Handle events ──────────────────────────────────────────────────────
+    if event["type"] == "invoice.payment_failed":
+        inv     = event["data"]["object"]
+        email   = inv.get("customer_email","unknown")
+        amount  = inv.get("amount_due", 0) / 100
+        attempt = inv.get("attempt_count", 1)
+        next_attempt = inv.get("next_payment_attempt")
+        next_str = ""
+        if next_attempt:
+            from datetime import datetime
+            next_str = f" Stripe will retry on {datetime.fromtimestamp(next_attempt).strftime('%B %d')}."
+
+        send_alert(
+            f"⚠ Payment failed — {email}",
+            f"""A client payment has failed and needs your attention.<br><br>
+            <strong>Customer:</strong> {email}<br>
+            <strong>Amount:</strong> ${amount:.2f}<br>
+            <strong>Attempt:</strong> #{attempt}<br>
+            <strong>Action needed:</strong> Contact the client to update their payment method.{next_str}<br><br>
+            If payment doesn't resolve within 3 days, consider pausing their dashboard access."""
+        )
+
+    elif event["type"] == "customer.subscription.deleted":
+        sub   = event["data"]["object"]
+        email = sub.get("customer_email","unknown") if "customer_email" in sub else "unknown"
+        # Try to get customer email from customer ID
+        customer_id = sub.get("customer","")
+        reason = sub.get("cancellation_details",{}).get("reason","unknown")
+
+        send_alert(
+            f"📋 Subscription cancelled — {customer_id}",
+            f"""A client subscription has been cancelled.<br><br>
+            <strong>Customer ID:</strong> {customer_id}<br>
+            <strong>Reason:</strong> {reason}<br>
+            <strong>Action needed:</strong> If this was unintentional, contact the client.
+            If they are churning, deactivate their dashboard access at
+            <a href="https://dashboard.cavnar.ai/admin">dashboard.cavnar.ai/admin</a>."""
+        )
+
+    elif event["type"] == "invoice.paid":
+        # Payment succeeded — log it (no action needed)
+        inv   = event["data"]["object"]
+        email = inv.get("customer_email","unknown")
+        amount = inv.get("amount_paid", 0) / 100
+        print(f"Payment received: {email} — ${amount:.2f}")
+
     return jsonify(ok=True)
 
 # ── Startup ───────────────────────────────────────────────────────────────────
