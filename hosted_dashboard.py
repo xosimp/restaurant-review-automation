@@ -594,6 +594,10 @@ textarea{resize:vertical;min-height:60px}
           </select>
         </div>
         <div class="form-group">
+          <label>Owner phone number</label>
+          <input type="text" id="owner_phone" value="{{ restaurant.owner_phone or '' }}" placeholder="(312) 555-0100">
+        </div>
+        <div class="form-group">
           <label>Sign-off name (for emails & responses)</label>
           <input type="text" id="sign_off_name" value="{{ restaurant.sign_off_name or '' }}" placeholder="e.g. Sarah, or The Maplewood Team">
         </div>
@@ -817,6 +821,7 @@ async function saveSettings() {
   const payload = {
     name:            document.getElementById('name').value,
     owner_email:     document.getElementById('owner_email').value,
+    owner_phone:     document.getElementById('owner_phone').value,
     pos_system:      document.getElementById('pos_system').value,
     sign_off_name:   document.getElementById('sign_off_name').value,
     google_place_id: document.getElementById('google_place_id').value,
@@ -1182,6 +1187,7 @@ input:focus,select:focus{border-color:var(--ember)}
       <div class="form-group"><label>Temporary password</label><input type="text" id="u-password" placeholder="Set a temp password"></div>
       <div class="form-group"><label>Google Place ID (optional)</label><input type="text" id="r-google" placeholder="ChIJ..."></div>
       <div class="form-group"><label>Yelp Business ID (optional)</label><input type="text" id="r-yelp" placeholder="restaurant-name-chicago"></div>
+      <div class="form-group"><label>Owner phone number</label><input type="text" id="r-phone" placeholder="(312) 555-0100"></div>
       <div class="form-group full"><label>Owner voice notes (for AI drafting)</label><input type="text" id="r-voice" placeholder="Warm, casual tone. Always invite guests back. Never sound corporate."></div>
       <div class="form-group">
         <label>Service tier</label>
@@ -1208,13 +1214,14 @@ input:focus,select:focus{border-color:var(--ember)}
   <div class="section-title">Active client accounts</div>
   <div class="card" style="padding:0;overflow:hidden">
     <table class="tbl">
-      <thead><tr><th>Restaurant</th><th>Username</th><th>Email</th><th>Billing</th><th>Last login</th><th>Last tab</th><th>Status</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Restaurant</th><th>Username</th><th>Email</th><th>Phone</th><th>Billing</th><th>Last login</th><th>Last tab</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>
       {% for user in users %}
       <tr>
         <td><strong>{{user.restaurant_name}}</strong></td>
         <td><code style="font-size:12px">{{user.username}}</code></td>
         <td>{{user.email}}</td>
+        <td style="font-size:12px;color:var(--ink3)">{{user.phone or '—'}}</td>
         <td>
           {% set bc = {'trial':'#b7791f','active':'#2d6a4f','paused':'#6b7280','churned':'#c0392b'} %}
           <span style="font-size:10px;font-weight:500;padding:2px 8px;border-radius:20px;background:{% if user.billing_status == 'active' %}var(--green-bg){% elif user.billing_status == 'trial' %}var(--amber-bg){% else %}#f3f4f6{% endif %};color:{{ bc.get(user.billing_status,'#6b7280') }}">
@@ -1251,6 +1258,12 @@ input:focus,select:focus{border-color:var(--ember)}
              style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid var(--paper3);background:white;color:var(--ink2);text-decoration:none;font-family:'DM Sans',sans-serif">
             Data
           </a>
+          {% if not user.is_admin and user.is_active %}
+          <button onclick="resendPayment({{user.restaurant_id}}, '{{user.email}}', '{{user.billing_status}}')"
+             style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #b7dfca;background:#eaf2ed;color:#2d6a4f;cursor:pointer;font-family:'DM Sans',sans-serif">
+            Resend payment
+          </button>
+          {% endif %}
         </div>
         {% else %}—{% endif %}
       </td>
@@ -1276,6 +1289,7 @@ async function createClient() {
     google_place_id: document.getElementById('r-google').value,
     yelp_business_id:document.getElementById('r-yelp').value,
     voice_notes:     document.getElementById('r-voice').value,
+    owner_phone:     document.getElementById('r-phone').value,
     service_tier:    document.getElementById('r-tier').value,
     send_email:      document.getElementById('send-email').checked,
   };
@@ -1298,6 +1312,21 @@ async function createClient() {
     status.textContent = data.error || 'Something went wrong';
   }
   btn.textContent = 'Create client account'; btn.disabled = false;
+}
+async function resendPayment(restaurantId, email, billing) {
+  const btn = event.target;
+  btn.textContent = 'Sending…'; btn.disabled = true;
+  const res = await fetch('/admin/resend-payment/' + restaurantId, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) {
+    btn.textContent = '✓ Sent';
+    btn.style.background = '#eaf2ed';
+    setTimeout(() => { btn.textContent = 'Resend payment'; btn.disabled = false; }, 3000);
+  } else {
+    btn.textContent = 'Error';
+    btn.disabled = false;
+    console.error(data.error);
+  }
 }
 async function deactivateClient(id, name) {
   const btn = event.target;
@@ -1614,6 +1643,7 @@ def admin(current_user):
         u["billing_status"] = r.billing_status if r else "trial"
         u["last_active_tab"] = r.last_active_tab if r else None
         u["internal_notes"] = r.internal_notes if r else None
+        u["phone"] = r.owner_phone if r else None
         enriched.append(u)
     return render_template_string(ADMIN_HTML,
         current_user=current_user, users=enriched)
@@ -1631,6 +1661,7 @@ def create_client(current_user):
             google_place_id=data.get("google_place_id") or None,
             yelp_business_id=data.get("yelp_business_id") or None,
             voice_notes=data.get("voice_notes") or None,
+            owner_phone=data.get("owner_phone") or None,
         ))
         # Create user
         create_user(
@@ -1765,6 +1796,7 @@ def save_client_settings(restaurant_id, current_user):
             "never_say":       data.get("never_say","").strip() or None,
             "hourly_rate":     float(data.get("hourly_rate") or 26.0),
             "pos_system":      data.get("pos_system","").strip() or None,
+            "owner_phone":     data.get("owner_phone","").strip() or None,
             "reviews_live":    int(bool(data.get("reviews_live"))),
             "billing_status":  data.get("billing_status","trial"),
             "internal_notes":  data.get("internal_notes","").strip() or None,
@@ -1928,6 +1960,22 @@ def stripe_webhook():
         print(f"Payment received: {email} — ${amount:.2f}")
 
     return jsonify(ok=True)
+
+@app.route("/admin/resend-payment/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def resend_payment(restaurant_id, current_user):
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found")
+    try:
+        send_payment_email(
+            to_email=restaurant.owner_email,
+            restaurant_name=restaurant.name,
+            tier=restaurant.service_tier or "trial",
+        )
+        return jsonify(ok=True)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
