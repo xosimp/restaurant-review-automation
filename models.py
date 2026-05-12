@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS restaurants (
     -- Labor settings
     hourly_rate     REAL DEFAULT 26.0,
     labor_target_pct REAL DEFAULT 30.0,  -- owner's custom labor % target
+    stripe_customer_id TEXT,              -- Stripe customer ID for billing lookup
     -- Tech info
     pos_system      TEXT,          -- Toast / Square / Lightspeed / etc
     owner_name      TEXT,              -- owner/GM name for personalization
@@ -128,6 +129,7 @@ class Restaurant:
     never_say: Optional[str]        = None
     hourly_rate: float              = 26.0
     labor_target_pct: float         = 30.0
+    stripe_customer_id: Optional[str] = None
     pos_system: Optional[str]       = None
     owner_name: Optional[str]       = None
     owner_phone: Optional[str]      = None
@@ -207,6 +209,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN pos_system TEXT",
         "ALTER TABLE restaurants ADD COLUMN owner_name TEXT",
         "ALTER TABLE restaurants ADD COLUMN labor_target_pct REAL DEFAULT 30.0",
+        "ALTER TABLE restaurants ADD COLUMN stripe_customer_id TEXT",
         "ALTER TABLE restaurants ADD COLUMN owner_phone TEXT",
         "ALTER TABLE restaurants ADD COLUMN digest_day TEXT DEFAULT 'monday'",
         "ALTER TABLE restaurants ADD COLUMN digest_enabled INTEGER DEFAULT 1",
@@ -241,14 +244,14 @@ def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
     cur = conn.execute("""
         INSERT INTO restaurants (name, owner_email, google_place_id, yelp_business_id,
             voice_notes, neighborhood, vibe, known_for, sign_off_name, never_say,
-            hourly_rate, labor_target_pct, pos_system, reviews_live, billing_status,
+            hourly_rate, labor_target_pct, stripe_customer_id, pos_system, reviews_live, billing_status,
             service_tier, module_reviews, module_labor, module_inventory, module_marketing,
             owner_name, owner_phone, digest_day, digest_enabled, created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (r.name, r.owner_email, r.google_place_id, r.yelp_business_id,
           r.voice_notes, r.neighborhood, r.vibe, r.known_for,
           r.sign_off_name, r.never_say, r.hourly_rate, r.labor_target_pct,
-          r.pos_system, r.reviews_live, r.billing_status,
+          r.stripe_customer_id, r.pos_system, r.reviews_live, r.billing_status,
           r.service_tier,
           r.module_reviews, r.module_labor, r.module_inventory,
           r.module_marketing, r.owner_name, r.owner_phone,
@@ -264,7 +267,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","pos_system","reviews_live","billing_status","internal_notes",
+        "hourly_rate","labor_target_pct","stripe_customer_id","pos_system","reviews_live","billing_status","internal_notes",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled"
     }
@@ -296,6 +299,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         never_say=row["never_say"] if "never_say" in row.keys() else None,
         hourly_rate=row["hourly_rate"] if "hourly_rate" in row.keys() else 26.0,
         labor_target_pct=row["labor_target_pct"] if "labor_target_pct" in row.keys() else 30.0,
+        stripe_customer_id=row["stripe_customer_id"] if "stripe_customer_id" in row.keys() else None,
         pos_system=row["pos_system"] if "pos_system" in row.keys() else None,
         reviews_live=row["reviews_live"] if "reviews_live" in row.keys() else 0,
         billing_status=row["billing_status"] if "billing_status" in row.keys() else "trial",

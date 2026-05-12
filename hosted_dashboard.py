@@ -654,24 +654,63 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
         </p>
       </div>
 
-      <!-- Cancel / billing -->
-      <div class="slabel">Billing & cancellation</div>
-      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
-        <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:10px">
-          Your subscription is managed through Stripe. You can cancel anytime — 
-          your access remains active until the end of your current billing period.
-        </p>
+      <!-- Weekly digest -->
+      <div class="slabel">Weekly digest email</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
         <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
-          To cancel or make changes to your subscription, email Will directly and 
-          it will be handled within one business day.
+          Your weekly review summary is emailed every
+          <strong id="digest-day-current">{{restaurant.digest_day|title}}</strong>
+          at 9am.
         </p>
-        <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%20I%20would%20like%20to%20cancel%20my%20Cavnar%20AI%20subscription%20for%20{{restaurant.name}}."
-           style="display:inline-block;padding:9px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;border:1px solid var(--paper3);color:var(--ink2)">
-          Request cancellation
-        </a>
-        <p style="font-size:11px;color:var(--ink3);margin-top:10px">
-          No cancellation fees. Cancel before your next billing date to avoid the next charge.
-        </p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="digest-day-select" style="padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px">
+            {% for d in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
+            <option value="{{d}}" {{"selected" if restaurant.digest_day==d}}>{{d|title}}</option>
+            {% endfor %}
+          </select>
+          <select id="digest-enabled-select" style="padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px">
+            <option value="1" {{"selected" if restaurant.digest_enabled}}>Enabled</option>
+            <option value="0" {{"selected" if not restaurant.digest_enabled}}>Disabled</option>
+          </select>
+          <button onclick="saveDigestDay()"
+            style="padding:7px 16px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer">
+            Save
+          </button>
+          <span id="digest-save-status" style="font-size:12px;display:none"></span>
+        </div>
+      </div>
+
+      <!-- Billing -->
+      <div class="slabel">Billing</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px" id="billing-card">
+        <div id="billing-loading" style="font-size:13px;color:var(--ink3)">Loading billing info…</div>
+        <div id="billing-content" style="display:none">
+          <table style="font-size:13px;width:100%;margin-bottom:12px">
+            <tr><td style="color:var(--ink3);padding:4px 0;width:140px">Status</td>
+                <td id="billing-status" style="font-weight:500"></td></tr>
+            <tr><td style="color:var(--ink3);padding:4px 0">Next charge</td>
+                <td id="billing-next" style="font-weight:500"></td></tr>
+            <tr><td style="color:var(--ink3);padding:4px 0">Amount</td>
+                <td id="billing-amount" style="font-weight:500"></td></tr>
+            <tr><td style="color:var(--ink3);padding:4px 0">Payment</td>
+                <td id="billing-pm" style="font-weight:500"></td></tr>
+          </table>
+          <a id="billing-portal-link" href="#" target="_blank"
+             style="display:inline-block;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;background:var(--paper2);border:1px solid var(--paper3);color:var(--ink2);margin-right:8px">
+            Manage payment method →
+          </a>
+          <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%20I%20would%20like%20to%20cancel%20for%20{{restaurant.name}}."
+             style="display:inline-block;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid var(--paper3);color:var(--ink3)">
+            Request cancellation
+          </a>
+          <p style="font-size:11px;color:var(--ink3);margin-top:10px">
+            No cancellation fees. Cancel before your next billing date to avoid the next charge.
+          </p>
+        </div>
+        <div id="billing-no-sub" style="display:none;font-size:13px;color:var(--ink3)">
+          No active subscription found.
+          <a href="mailto:will@cavnar.ai" style="color:var(--ember)">Contact Will</a> for help.
+        </div>
       </div>
     </div>
   </div>
@@ -740,6 +779,7 @@ function switchTab(n,btn){
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor')renderBars();
+  if(n==='account')loadBillingInfo();
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
 }
 // Auto-load data for whichever tab is active on page load
@@ -752,6 +792,7 @@ window.addEventListener('DOMContentLoaded', function() {
     setTimeout(renderBars, 100);
   }
   if(id==='inventory'&&!invLoaded){loadInvInsight();}
+  if(id==='account'){loadBillingInfo();}
 });
 let rfilter='{{rfilter}}';
 function setRF(f,btn){rfilter=f;document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active','active-red'));btn.classList.add(f==='urgent'?'active-red':'active');filterReviews()}
@@ -875,6 +916,38 @@ let selCt='{{ctypes[0].id if ctypes}}';
 function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(b=>b.classList.remove('selected'));el.classList.add('selected')}
 function genContent(){const topic=document.getElementById('mktopic').value.trim();if(!topic){toast('Enter a topic');return}const box=document.getElementById('mkoutput');box.style.fontStyle='italic';box.style.color='var(--ink3)';box.textContent='Generating…';fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic})}).then(r=>r.json()).then(d=>{box.style.fontStyle='normal';box.style.color='var(--ink2)';box.textContent=d.content})}
 function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}g.innerHTML=d.ideas.map(i=>`<div class="cal-day"><div class="cal-day-name">${i.day}</div><div class="cal-platform">${i.platform||''}</div><div>${i.angle||''}</div></div>`).join('')})}
+async function saveDigestDay() {
+  const day     = document.getElementById('digest-day-select').value;
+  const enabled = document.getElementById('digest-enabled-select').value;
+  const status  = document.getElementById('digest-save-status');
+  const res = await fetch('/api/update-digest-day', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({day, enabled: parseInt(enabled)})
+  });
+  const data = await res.json();
+  status.style.display='inline';
+  if(data.ok) {
+    status.style.color='var(--green)'; status.textContent='✓ Saved';
+    document.getElementById('digest-day-current').textContent=day.charAt(0).toUpperCase()+day.slice(1);
+    setTimeout(()=>{status.style.display='none';},2500);
+  } else { status.style.color='var(--red)'; status.textContent='Save failed'; }
+}
+function loadBillingInfo() {
+  fetch('/api/billing-info').then(r=>r.json()).then(d=>{
+    document.getElementById('billing-loading').style.display='none';
+    if(!d.ok || d.status==='inactive') {
+      document.getElementById('billing-no-sub').style.display='block'; return;
+    }
+    document.getElementById('billing-content').style.display='block';
+    const statusMap={active:'Active',trialing:'Trial period',past_due:'⚠ Payment past due',canceled:'Canceled'};
+    document.getElementById('billing-status').textContent=statusMap[d.status]||d.status;
+    document.getElementById('billing-next').textContent=d.trial_end?'Trial ends '+d.trial_end:(d.next_date||'—');
+    document.getElementById('billing-amount').textContent=d.amount||'—';
+    document.getElementById('billing-pm').textContent=d.payment_method||'—';
+    if(d.portal_url) document.getElementById('billing-portal-link').href=d.portal_url;
+    else document.getElementById('billing-portal-link').style.display='none';
+  }).catch(()=>{document.getElementById('billing-loading').textContent='Billing info unavailable.';});
+}
 function changePassword(){
   const cur=document.getElementById('pw-current').value;
   const nw=document.getElementById('pw-new').value;
@@ -2670,11 +2743,25 @@ def stripe_webhook():
         )
 
     elif event["type"] == "invoice.paid":
-        # Payment succeeded — log it (no action needed)
-        inv   = event["data"]["object"]
-        email = inv.get("customer_email","unknown")
-        amount = inv.get("amount_paid", 0) / 100
+        inv         = event["data"]["object"]
+        customer_id = inv.get("customer","")
+        email       = inv.get("customer_email","unknown")
+        amount      = inv.get("amount_paid", 0) / 100
         print(f"Payment received: {email} — ${amount:.2f}")
+        # Save stripe_customer_id to restaurant record
+        if customer_id and email:
+            try:
+                conn = get_conn()
+                row = conn.execute(
+                    "SELECT r.id FROM restaurants r JOIN users u ON u.restaurant_id=r.id WHERE u.email=? LIMIT 1",
+                    (email,)
+                ).fetchone()
+                conn.close()
+                if row:
+                    update_restaurant(row["id"], {"stripe_customer_id": customer_id})
+                    print(f"Saved Stripe customer {customer_id} for {email}")
+            except Exception as e:
+                print(f"Failed to save Stripe customer ID: {e}")
 
     return jsonify(ok=True)
 
@@ -2966,6 +3053,95 @@ def download_schedule(current_user):
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify(ok=False, error=str(e)), 500
+
+@app.route("/api/billing-info")
+@login_required
+def billing_info(current_user):
+    """Fetch billing status from Stripe for the current client."""
+    import stripe as _stripe
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    if not restaurant or not restaurant.stripe_customer_id:
+        return jsonify(ok=False, reason="no_customer")
+
+    stripe_key = os.getenv("STRIPE_SECRET_KEY","")
+    if not stripe_key:
+        return jsonify(ok=False, reason="no_key")
+
+    try:
+        _stripe.api_key = stripe_key
+        # Get active subscriptions for this customer
+        subs = _stripe.Subscription.list(
+            customer=restaurant.stripe_customer_id,
+            status="active",
+            limit=5
+        )
+        if not subs.data:
+            # Check for trialing
+            subs = _stripe.Subscription.list(
+                customer=restaurant.stripe_customer_id,
+                status="trialing",
+                limit=5
+            )
+
+        if not subs.data:
+            return jsonify(ok=True, status="inactive", message="No active subscription found")
+
+        sub = subs.data[0]
+        from datetime import datetime
+        next_date = datetime.fromtimestamp(sub.current_period_end).strftime("%-m/%-d/%Y")
+        amount    = sum(i.price.unit_amount for i in sub["items"].data) / 100
+        status    = sub.status  # active, trialing, past_due, canceled
+
+        # Get payment method
+        pm_desc = "Card on file"
+        try:
+            customer = _stripe.Customer.retrieve(
+                restaurant.stripe_customer_id,
+                expand=["invoice_settings.default_payment_method"]
+            )
+            pm = customer.invoice_settings.default_payment_method
+            if pm and pm.card:
+                pm_desc = f"{pm.card.brand.title()} ending {pm.card.last4}"
+        except Exception:
+            pass
+
+        # Customer portal link
+        try:
+            portal = _stripe.billing_portal.Session.create(
+                customer=restaurant.stripe_customer_id,
+                return_url="https://dashboard.cavnar.ai"
+            )
+            portal_url = portal.url
+        except Exception:
+            portal_url = None
+
+        return jsonify(
+            ok=True,
+            status=status,
+            next_date=next_date,
+            amount=f"${amount:,.0f}/mo",
+            payment_method=pm_desc,
+            portal_url=portal_url,
+            trial_end=datetime.fromtimestamp(sub.trial_end).strftime("%-m/%-d/%Y") if sub.trial_end else None,
+        )
+    except Exception as e:
+        print(f"Stripe billing info error: {e}")
+        return jsonify(ok=False, reason="stripe_error", error=str(e))
+
+@app.route("/api/update-digest-day", methods=["POST"])
+@login_required
+def update_digest_day(current_user):
+    """Let client update their own weekly digest day."""
+    data = request.get_json()
+    day  = data.get("day","monday").lower()
+    valid = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
+    if day not in valid:
+        return jsonify(ok=False, error="Invalid day")
+    update_restaurant(current_user["restaurant_id"], {
+        "digest_day": day,
+        "digest_enabled": int(data.get("enabled", 1))
+    })
+    return jsonify(ok=True)
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
