@@ -1389,10 +1389,7 @@ input:focus,select:focus{border-color:var(--ember)}
              style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #b7dfca;background:#eaf2ed;color:#2d6a4f;cursor:pointer;font-family:'DM Sans',sans-serif">
             Seed reviews
           </button>
-          <button onclick="testUrgentAlert({{user.restaurant_id}})"
-             style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #f5c6c2;background:#fdf0ef;color:#c84b2f;cursor:pointer;font-family:'DM Sans',sans-serif">
-            Test urgent alert
-          </button>
+
 
           {% endif %}
         </div>
@@ -1459,18 +1456,7 @@ async function resendPayment(restaurantId, email, billing) {
     console.error(data.error);
   }
 }
-async function testUrgentAlert(restaurantId) {
-  const btn = event.target;
-  btn.textContent = 'Sending…'; btn.disabled = true;
-  const res = await fetch('/admin/test-urgent-alert/' + restaurantId, {method:'POST'});
-  const data = await res.json();
-  if (data.ok) {
-    btn.textContent = '✓ Sent to ' + data.sent_to;
-    setTimeout(() => { btn.textContent = 'Test urgent alert'; btn.disabled = false; }, 4000);
-  } else {
-    btn.textContent = data.error || 'Error'; btn.disabled = false;
-  }
-}
+
 async function seedReviews(restaurantId) {
   const btn = event.target;
   btn.textContent = 'Seeding…'; btn.disabled = true;
@@ -2325,36 +2311,6 @@ def save_draft(review_id, current_user):
     conn.execute("UPDATE reviews SET response_status='drafted' WHERE id=?", (review_id,))
     conn.commit(); conn.close()
     return jsonify(ok=True)
-
-@app.route("/admin/test-urgent-alert/<int:restaurant_id>", methods=["POST"])
-@admin_required
-def test_urgent_alert(restaurant_id, current_user):
-    """Manually trigger urgent alert for any existing urgent reviews — for testing."""
-    from models import get_conn, get_restaurant
-    from scheduler import send_urgent_alert, get_owner_email
-
-    restaurant = get_restaurant(restaurant_id)
-    if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found")
-
-    conn = get_conn()
-    urgent = conn.execute("""
-        SELECT * FROM reviews
-        WHERE restaurant_id=? AND urgency='high'
-        AND response_status NOT IN ('posted','approved')
-        LIMIT 5
-    """, (restaurant_id,)).fetchall()
-    conn.close()
-
-    if not urgent:
-        return jsonify(ok=False, error="No urgent reviews found — seed reviews first")
-
-    owner_email = get_owner_email(restaurant_id)
-    if not owner_email:
-        return jsonify(ok=False, error="No owner email found")
-
-    send_urgent_alert(restaurant.name, owner_email, [dict(r) for r in urgent])
-    return jsonify(ok=True, sent_to=owner_email, urgent_count=len(urgent))
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 

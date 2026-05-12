@@ -244,19 +244,19 @@ _last_digest_date = None
 
 def scheduler_loop():
     global _last_fetch_date, _last_digest_date
-    log.info("Scheduler started — daily fetch 7am, digests 8am on client's chosen day")
+    log.info("Scheduler started — daily fetch 8am, digests 9am on client's chosen day")
 
     while True:
         try:
             now   = datetime.now()
             today = now.date()
 
-            if now.hour == 7 and _last_fetch_date != today:
+            if now.hour == 8 and _last_fetch_date != today:
                 _last_fetch_date = today
                 log.info("Running daily fetch + urgent alert check...")
                 run_daily_fetch()
 
-            if now.hour == 8 and _last_digest_date != today:
+            if now.hour == 9 and _last_digest_date != today:
                 _last_digest_date = today
                 log.info("Running weekly digest check...")
                 run_weekly_digests()
