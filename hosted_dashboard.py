@@ -2082,14 +2082,7 @@ async function deleteNote(noteId) {
 </html>"""
 
 
-PAYMENT_LINKS = {
-    "trial":             None,
-    "starter_reviews":   "https://checkout.cavnar.ai/b/5kQ9AV4Fh5Z68VadU74Ni04",
-    "starter_labor":     "https://checkout.cavnar.ai/b/5kQ9AV4Fh5Z68VadU74Ni04",
-    "starter_inventory": "https://checkout.cavnar.ai/b/5kQ9AV4Fh5Z68VadU74Ni04",
-    "starter_marketing": "https://checkout.cavnar.ai/b/5kQ9AV4Fh5Z68VadU74Ni04",
-    "full":              "https://checkout.cavnar.ai/b/aFa00l4Fhcnu9Ze03h4Ni05",
-}
+
 
 TIER_LABELS = {
     "trial":             "Trial",
@@ -2110,32 +2103,122 @@ TIER_PRICES = {
 }
 
 
-def send_payment_email(to_email, restaurant_name, tier,
+def create_stripe_checkout(module_count: int, owner_email: str,
+                            restaurant_name: str) -> str | None:
+    """
+    Dynamically create a Stripe checkout session for any module count.
+    Returns the checkout URL or None on failure.
+    Pricing: $500/module setup (one-time) + $300/mo/module retainer (30-day trial).
+    """
+    import stripe as _stripe
+    stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
+    if not stripe_key or module_count == 0:
+        return None
+
+    _stripe.api_key = stripe_key
+    setup_amount   = module_count * 500 * 100   # in cents
+    monthly_amount = module_count * 300 * 100   # in cents
+
+    try:
+        # Ensure products exist (create once, reuse by name)
+        def get_or_create_price(product_name, unit_amount, recurring=False):
+            # Search for existing product
+            products = _stripe.Product.search(query=f'name:"{product_name}"', limit=1)
+            if products.data:
+                product_id = products.data[0].id
+            else:
+                product_id = _stripe.Product.create(name=product_name).id
+
+            # Create a fresh price each time (amount may vary)
+            kwargs = dict(
+                product=product_id,
+                unit_amount=unit_amount,
+                currency="usd",
+            )
+            if recurring:
+                kwargs["recurring"] = {"interval": "month"}
+            return _stripe.Price.create(**kwargs).id
+
+        setup_price_id   = get_or_create_price(
+            f"Cavnar AI Setup — {module_count} Module{'s' if module_count>1 else ''}",
+            setup_amount
+        )
+        retainer_price_id = get_or_create_price(
+            f"Cavnar AI Retainer — {module_count} Module{'s' if module_count>1 else ''}",
+            monthly_amount,
+            recurring=True
+        )
+
+        session = _stripe.checkout.Session.create(
+            customer_email=owner_email,
+            payment_method_types=["card"],
+            line_items=[
+                {"price": setup_price_id,    "quantity": 1},
+                {"price": retainer_price_id, "quantity": 1},
+            ],
+            mode="subscription",
+            subscription_data={
+                "trial_period_days": 30,
+                "metadata": {
+                    "restaurant": restaurant_name,
+                    "modules": str(module_count),
+                }
+            },
+            success_url="https://dashboard.cavnar.ai?payment=success",
+            cancel_url="https://dashboard.cavnar.ai?payment=cancelled",
+            custom_text={
+                "submit": {"message": f"Pay ${module_count*500} setup today. ${module_count*300}/mo starts in 30 days."}
+            },
+            metadata={"restaurant": restaurant_name, "modules": str(module_count)},
+        )
+        return session.url
+
+    except Exception as e:
+        print(f"Stripe checkout creation failed: {e}")
+        return None
+
+
+def send_payment_email(to_email, restaurant_name, tier=None,
                        module_count: int = None):
-    """Send setup + retainer payment links. Handles custom module counts."""
+    """Send payment email with a dynamically generated Stripe checkout link."""
     if not RESEND_API_KEY:
         return
 
-    # Determine prices based on module count
-    if module_count and module_count not in (1, 4):
-        # Custom package — calculate pricing
-        setup_price    = f"${module_count * 500:,}"
-        retainer_price = f"${module_count * 300:,}/mo"
-        label          = f"{module_count}-Module Package"
-        link           = None  # Will be handled below with instructions
-    else:
-        link           = PAYMENT_LINKS.get(tier)
-        prices         = TIER_PRICES.get(tier, {})
-        label          = TIER_LABELS.get(tier, tier)
-        setup_price    = prices.get("setup", "")
-        retainer_price = prices.get("retainer", "")
+    # Determine module count
+    if module_count is None:
+        tier_counts = {
+            "starter_reviews": 1, "starter_labor": 1,
+            "starter_inventory": 1, "starter_marketing": 1,
+            "full": 4,
+        }
+        module_count = tier_counts.get(tier, 0)
 
-    if not setup_price:
-        return  # No modules selected
+    if module_count == 0:
+        return  # Trial — no payment needed
+
+    setup_price    = f"${module_count * 500:,}"
+    retainer_price = f"${module_count * 300:,}/mo"
+    label = (
+        "1 Module" if module_count == 1 else
+        "Full System — 4 Modules" if module_count == 4 else
+        f"{module_count} Modules"
+    )
+
+    # Generate dynamic Stripe checkout link
+    checkout_url = create_stripe_checkout(module_count, to_email, restaurant_name)
+
+    # Fallback message if Stripe key not configured
+    if not checkout_url:
+        checkout_url = None
 
     try:
         import resend as _resend
         _resend.api_key = RESEND_API_KEY
+        btn_html = (
+            f'<a href="{checkout_url}" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">Complete payment →</a>'
+            if checkout_url else
+            '<p style="font-size:13px;color:#3a3530;margin-top:8px">Will will send your payment link shortly.</p>'
+        )
         _resend.Emails.send({
             "from": f"Will Cavnar <{FROM_EMAIL}>",
             "to": [to_email],
@@ -2150,21 +2233,17 @@ def send_payment_email(to_email, restaurant_name, tier,
       Restaurant Intelligence Dashboard
     </p>
   </div>
-
   <p style="font-size:15px;line-height:1.6;margin-bottom:8px">
     Hi — excited to get started with <strong>{restaurant_name}</strong>.
     Here is your payment link for the <strong>{label}</strong> plan.
   </p>
-
   <p style="font-size:14px;color:#3a3530;line-height:1.6;margin-bottom:20px">
-    One checkout handles everything — your {setup_price} setup fee today,
-    then your {retainer_price} retainer starts automatically in 30 days.
-    No second step needed.
+    One checkout handles everything — {setup_price} setup today,
+    then {retainer_price} starts automatically in 30 days. No second step needed.
   </p>
-
   <div style="background:#f7f4ef;border-radius:8px;padding:20px 22px;margin-bottom:24px;border-left:3px solid #c84b2f">
     <p style="font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin:0 0 6px">{label}</p>
-    <div style="display:flex;gap:20px;margin-bottom:12px">
+    <div style="display:flex;gap:20px;margin-bottom:14px;flex-wrap:wrap">
       <div>
         <p style="font-size:18px;font-weight:600;color:#0e0c0a;margin:0;font-family:Georgia,serif">{setup_price}</p>
         <p style="font-size:11px;color:#7a736a;margin:0">today</p>
@@ -2175,15 +2254,12 @@ def send_payment_email(to_email, restaurant_name, tier,
         <p style="font-size:11px;color:#7a736a;margin:0">starting day 31</p>
       </div>
     </div>
-    {"" if not link else f'<a href="{link}" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">Complete payment →</a>'}
-    {"" if link else '<p style="font-size:13px;color:#3a3530;line-height:1.6;margin-top:8px"><strong>Custom package:</strong> Will will send you a payment link shortly for the correct amount.</p>'}
+    {btn_html}
   </div>
-
   <p style="font-size:13px;color:#7a736a;line-height:1.6;margin-bottom:24px">
     I'll have your dashboard live within 24 hours of payment clearing.
     Any questions, just reply here.
   </p>
-
   <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
   <p style="font-size:12px;color:#7a736a;margin:0">
     Will Cavnar &nbsp;·&nbsp; Cavnar AI<br/>
@@ -2195,7 +2271,6 @@ def send_payment_email(to_email, restaurant_name, tier,
         })
     except Exception as e:
         print(f"Payment email failed: {e}")
-
 
 def send_welcome_email(to_email, restaurant_name, username, password):
     """Send branded welcome email to new client with their login credentials."""
