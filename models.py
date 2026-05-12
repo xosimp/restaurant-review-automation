@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS restaurants (
     -- Tech info
     pos_system      TEXT,          -- Toast / Square / Lightspeed / etc
     owner_phone     TEXT,              -- owner phone number
+    digest_day      TEXT DEFAULT 'monday',  -- day of week for weekly digest email
+    digest_enabled  INTEGER DEFAULT 1,        -- 1 = send weekly digest
     -- Status
     reviews_live    INTEGER DEFAULT 0,  -- 1 = pulling real reviews
     -- Admin
@@ -124,6 +126,8 @@ class Restaurant:
     hourly_rate: float              = 26.0
     pos_system: Optional[str]       = None
     owner_phone: Optional[str]      = None
+    digest_day: str                 = "monday"
+    digest_enabled: int             = 1
     reviews_live: int               = 0
     billing_status: str             = "trial"
     internal_notes: Optional[str]   = None
@@ -196,6 +200,8 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN hourly_rate REAL DEFAULT 26.0",
         "ALTER TABLE restaurants ADD COLUMN pos_system TEXT",
         "ALTER TABLE restaurants ADD COLUMN owner_phone TEXT",
+        "ALTER TABLE restaurants ADD COLUMN digest_day TEXT DEFAULT 'monday'",
+        "ALTER TABLE restaurants ADD COLUMN digest_enabled INTEGER DEFAULT 1",
         "ALTER TABLE restaurants ADD COLUMN reviews_live INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN billing_status TEXT DEFAULT 'trial'",
         "ALTER TABLE restaurants ADD COLUMN internal_notes TEXT",
@@ -228,15 +234,16 @@ def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
             voice_notes, neighborhood, vibe, known_for, sign_off_name, never_say,
             hourly_rate, pos_system, reviews_live, billing_status,
             service_tier, module_reviews, module_labor, module_inventory, module_marketing,
-            owner_phone, created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            owner_phone, digest_day, digest_enabled, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (r.name, r.owner_email, r.google_place_id, r.yelp_business_id,
           r.voice_notes, r.neighborhood, r.vibe, r.known_for,
           r.sign_off_name, r.never_say, r.hourly_rate,
           r.pos_system, r.reviews_live, r.billing_status,
           r.service_tier,
           r.module_reviews, r.module_labor, r.module_inventory,
-          r.module_marketing, r.owner_phone, r.created_at))
+          r.module_marketing, r.owner_phone,
+          r.digest_day, r.digest_enabled, r.created_at))
     conn.commit()
     rid = cur.lastrowid
     conn.close()
@@ -250,7 +257,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "neighborhood","vibe","known_for","sign_off_name","never_say",
         "hourly_rate","pos_system","reviews_live","billing_status","internal_notes",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
-        "last_active_tab","last_activity","owner_phone"
+        "last_active_tab","last_activity","owner_phone","digest_day","digest_enabled"
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -291,6 +298,8 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         last_active_tab=row["last_active_tab"] if "last_active_tab" in row.keys() else None,
         last_activity=row["last_activity"] if "last_activity" in row.keys() else None,
         owner_phone=row["owner_phone"] if "owner_phone" in row.keys() else None,
+        digest_day=row["digest_day"] if "digest_day" in row.keys() else "monday",
+        digest_enabled=row["digest_enabled"] if "digest_enabled" in row.keys() else 1,
     )
 
 
@@ -560,3 +569,16 @@ def set_service_tier(restaurant_id: int, tier: str,
         "module_inventory":modules["inventory"],
         "module_marketing":modules["marketing"],
     }, db_path)
+
+
+def get_restaurants_for_digest(day: str, db_path: str = DB_PATH) -> list:
+    """Get all restaurants scheduled for digest on a given day of week."""
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT r.*, u.email as contact_email
+        FROM restaurants r
+        JOIN users u ON u.restaurant_id = r.id AND u.is_admin = 0
+        WHERE r.digest_day=? AND r.digest_enabled=1
+    """, (day.lower(),)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
