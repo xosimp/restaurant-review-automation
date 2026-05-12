@@ -661,16 +661,7 @@ textarea{resize:vertical;min-height:60px}
 .action-menu{position:relative;display:inline-block}
 .action-menu-btn{padding:4px 10px;border-radius:4px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;color:var(--ink2);transition:all .15s;white-space:nowrap}
 .action-menu-btn:hover{background:var(--ink);color:white;border-color:var(--ink)}
-.action-menu{position:relative;display:inline-block}
-.action-dropdown{display:none;position:absolute;right:0;top:calc(100% + 4px);background:white;border:1px solid var(--paper3);border-radius:6px;box-shadow:0 4px 16px rgba(14,12,10,.12);min-width:170px;z-index:999;overflow:hidden}
-.action-dropdown.open{display:block}
-.action-item{display:block;width:100%;box-sizing:border-box;text-align:left;padding:8px 14px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink2);text-decoration:none;background:none;border:none;cursor:pointer;transition:background .1s;white-space:nowrap}
-.action-item:hover{background:var(--paper2);color:var(--ink)}
-.action-item-danger{color:#c0392b !important}
-.action-item-danger:hover{background:#fdf0ef !important;color:#c0392b !important}
-.action-item-success{color:var(--green) !important}
-.action-item-success:hover{background:var(--green-bg) !important}
-.action-divider{height:1px;background:var(--paper3);margin:2px 0}
+
 </style>
 </head>
 <body>
@@ -1300,6 +1291,18 @@ input:focus,select:focus{border-color:var(--ember)}
 .status-msg{padding:10px 14px;border-radius:6px;font-size:13px;margin-top:10px;display:none}
 .status-ok{background:var(--green-bg);color:var(--green);border:1px solid #b7dfca}
 .status-err{background:#fdf0ef;color:var(--ember);border:1px solid #f5c6c2}
+.action-menu{position:relative;display:inline-block}
+.action-menu-btn{padding:5px 12px;border-radius:4px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;color:var(--ink2);white-space:nowrap}
+.action-menu-btn:hover{background:var(--ink);color:white;border-color:var(--ink)}
+.action-dropdown{display:none;position:absolute;right:0;top:calc(100% + 4px);background:white;border:1px solid var(--paper3);border-radius:6px;box-shadow:0 6px 20px rgba(14,12,10,.15);min-width:175px;z-index:9999}
+.action-dropdown.open{display:block}
+.action-item{display:block;width:100%;box-sizing:border-box;text-align:left;padding:9px 14px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink2);background:white;border:none;border-bottom:1px solid var(--paper3);cursor:pointer;white-space:nowrap}
+.action-item:last-child{border-bottom:none}
+.action-item:hover{background:var(--paper2);color:var(--ink)}
+.action-item-danger{color:#c0392b}
+.action-item-danger:hover{background:#fdf0ef;color:#c0392b}
+.action-item-success{color:var(--green)}
+.action-item-success:hover{background:var(--green-bg);color:var(--green)}
 </style>
 </head>
 <body>
@@ -1377,8 +1380,8 @@ input:focus,select:focus{border-color:var(--ember)}
         <div class="action-menu" id="menu-wrap-{{user.id}}">
           <button class="action-menu-btn" onclick="toggleMenu({{user.id}})">Actions ▾</button>
           <div class="action-dropdown" id="menu-{{user.id}}">
-            <a href="/admin/client-settings/{{ user.restaurant_id }}" class="action-item">Settings</a>
-            <a href="/admin/client-data/{{ user.restaurant_id }}" class="action-item">Manage data</a>
+            <button class="action-item" onclick="window.location='/admin/client-settings/{{user.restaurant_id}}'">Settings</button>
+            <button class="action-item" onclick="window.location='/admin/client-data/{{user.restaurant_id}}'">Manage data</button>
             {% if user.is_active %}
             <div class="action-divider"></div>
             <button class="action-item" onclick="resendPayment({{user.restaurant_id}},'{{user.email}}','{{user.billing_status}}');closeMenu({{user.id}})">Resend payment link</button>
