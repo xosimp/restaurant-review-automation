@@ -403,7 +403,15 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
   <!-- Hero metric — dollar gap -->
   <div id="labor-gap-banner" style="background:var(--ink);border-radius:var(--r);padding:20px 24px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>
-      <div style="font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">Monthly labor cost vs target</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+        <div style="font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Monthly labor cost vs target</div>
+        {% if labor.date_range and labor.date_range.start %}
+        <div style="font-size:10px;color:var(--ink3)">
+          Data: {{labor.date_range.start|replace('-0','-')|replace('-0','-')}} — {{labor.date_range.end|replace('-0','-')|replace('-0','-')}}
+          ({{labor.date_range.days}} days)
+        </div>
+        {% endif %}
+      </div>
       <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
         <div>
           <span id="gap-current-pct" style="font-family:'DM Serif Display',serif;font-size:48px;color:var(--paper);line-height:1">{{labor.overall_labor_pct}}%</span>
@@ -427,6 +435,11 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
   </div>
 
   <!-- Stats row -->
+  {% if restaurant.last_fetched_at %}
+  <div style="font-size:11px;color:var(--ink3);margin-bottom:10px">
+    Last updated: {{restaurant.last_fetched_at[:10]}}
+  </div>
+  {% endif %}
   <div class="stat-row">
     <div class="stat"><div class="stat-n">${{labor.total_sales|int|format_num}}</div><div class="stat-l">Revenue (2 wks)</div></div>
     <div class="stat warn"><div class="stat-n">${{labor.total_labor_cost|int|format_num}}</div><div class="stat-l">Labor cost (2 wks)</div></div>
@@ -1038,6 +1051,48 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
+  <!-- Staff scheduling constraints -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Staff scheduling constraints</div></div>
+    <div class="section-body">
+      <p style="font-size:13px;color:var(--ink2);margin-bottom:14px;line-height:1.6">
+        Add constraints per staff member — fixed days, availability limits, guaranteed hours.
+        These apply automatically every time an optimized schedule is generated.
+      </p>
+      {% if staff_notes %}
+      <div style="margin-bottom:14px">
+        {% for note in staff_notes %}
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;margin-bottom:6px">
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:13px">{{note.employee_name}}</div>
+            <div style="font-size:12px;color:var(--ink3);margin-top:2px">{{note.notes}}</div>
+          </div>
+          <button onclick="deleteNote({{note.id}})"
+            style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid #f5c6c2;background:white;color:#c0392b;cursor:pointer;font-family:'DM Sans',sans-serif">
+            Remove
+          </button>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Employee name</label>
+          <input type="text" id="staff-name" placeholder="e.g. Marcus G.">
+        </div>
+        <div class="form-group">
+          <label>Constraint</label>
+          <input type="text" id="staff-constraint" placeholder="e.g. Always Fri/Sat/Sun, never before 5pm">
+        </div>
+      </div>
+      <button class="btn-save" style="padding:9px 16px;margin-top:4px" onclick="addStaffNote()">Add constraint</button>
+      <div style="font-size:11px;color:var(--ink3);margin-top:8px;line-height:1.6">
+        Examples: "Always works Mon/Wed/Fri" · "Can't work after 9pm" · "Guaranteed 30h/week" · "Part-time, max 20h"
+      </div>
+      <div style="font-size:12px;margin-top:8px;display:none" id="staff-note-result"></div>
+    </div>
+  </div>
+
   <!-- Service tier -->
   <div class="section-card">
     <div class="section-hdr"><div class="section-title">Service tier</div></div>
@@ -1170,6 +1225,30 @@ async function resetPassword() {
   btn.textContent = 'Reset password'; btn.disabled = false;
 }
 
+async function addStaffNote() {
+  const name = document.getElementById('staff-name').value.trim();
+  const notes = document.getElementById('staff-constraint').value.trim();
+  const result = document.getElementById('staff-note-result');
+  if(!name || !notes) { result.style.display='block'; result.style.color='var(--ember)'; result.textContent='Enter both a name and constraint'; return; }
+  const form = new FormData();
+  form.append('employee_name', name);
+  form.append('notes', notes);
+  const res = await fetch('/admin/staff-notes/{{restaurant.id}}', {method:'POST', body:form});
+  const data = await res.json();
+  if(data.ok) {
+    result.style.display='block'; result.style.color='var(--green)';
+    result.textContent='✓ Saved';
+    setTimeout(()=>location.reload(), 800);
+  } else {
+    result.style.display='block'; result.style.color='var(--ember)';
+    result.textContent=data.error||'Save failed';
+  }
+}
+async function deleteNote(noteId) {
+  const res = await fetch('/admin/staff-notes/'+noteId+'/delete', {method:'POST'});
+  const data = await res.json();
+  if(data.ok) location.reload();
+}
 async function saveSettings() {
   const btn = document.querySelector('.btn-save');
   const status = document.getElementById('save-status');
@@ -1449,60 +1528,7 @@ waste_last_week — Units wasted in the last 7 days</div>
   </div>
 </div>
 
-  <!-- STAFF NOTES -->
-  <div class="module-card">
-    <div class="module-hdr">
-      <div class="module-title">Staff scheduling constraints</div>
-      <span class="module-status status-live" id="staff-notes-status">
-        {{staff_notes|length}} note{{"s" if staff_notes|length != 1}}
-      </span>
-    </div>
-    <div class="module-body">
-      <p style="font-size:13px;color:var(--ink2);margin-bottom:14px;line-height:1.6">
-        Add scheduling constraints for specific staff members — fixed days, availability restrictions,
-        guaranteed hours, or anything the AI should know when building the optimized schedule.
-        You enter this once; it applies automatically to every schedule generated.
-      </p>
 
-      {% if staff_notes %}
-      <div style="margin-bottom:14px">
-        {% for note in staff_notes %}
-        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;margin-bottom:6px">
-          <div style="flex:1">
-            <div style="font-weight:600;font-size:13px">{{note.employee_name}}</div>
-            <div style="font-size:12px;color:var(--ink3);margin-top:2px">{{note.notes}}</div>
-          </div>
-          <button onclick="deleteNote({{note.id}})"
-            style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid #f5c6c2;background:white;color:#c0392b;cursor:pointer;font-family:'DM Sans',sans-serif">
-            Remove
-          </button>
-        </div>
-        {% endfor %}
-      </div>
-      {% endif %}
-
-      <div class="slabel">Add staff constraint</div>
-      <div style="display:grid;grid-template-columns:1fr 2fr auto;gap:8px;align-items:start;margin-top:8px">
-        <div class="form-group">
-          <label>Employee name</label>
-          <input class="form-input" type="text" id="staff-name" placeholder="e.g. Marcus G.">
-        </div>
-        <div class="form-group">
-          <label>Constraint notes</label>
-          <input class="form-input" type="text" id="staff-constraint"
-            placeholder="e.g. Always Fri/Sat/Sun, never before 5pm">
-        </div>
-        <div style="padding-top:18px">
-          <button class="btn-primary" onclick="addStaffNote()">Add</button>
-        </div>
-      </div>
-      <div style="font-size:11px;color:var(--ink3);margin-top:6px;line-height:1.5">
-        Examples: "Always works Mon/Wed/Fri" · "Can't work after 9pm" · "Guaranteed 30h/week" ·
-        "Head chef — never change weekend shifts" · "Part-time, max 20h/week"
-      </div>
-      <div class="result-msg" id="staff-note-result"></div>
-    </div>
-  </div>
 
 <script>
 const restaurantId = {{ restaurant.id }};
@@ -2364,10 +2390,13 @@ def client_settings_page(restaurant_id, current_user):
         return "Restaurant not found", 404
     from models import get_client_data
     client_data = get_client_data(restaurant_id) or {}
+    from models import get_staff_notes
+    staff_notes = get_staff_notes(restaurant_id)
     return render_template_string(CLIENT_SETTINGS_HTML,
         current_user=current_user,
         restaurant=restaurant,
-        client_data=client_data)
+        client_data=client_data,
+        staff_notes=staff_notes)
 
 @app.route("/admin/client-settings/<int:restaurant_id>", methods=["POST"])
 @admin_required

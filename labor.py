@@ -193,6 +193,11 @@ def analyse_shifts(shifts: list[dict],
                    for k, v in by_day.items()},
         "employee_hours": {k: dict(v) for k, v in by_employee.items()},
         "labor_target": LABOR_TARGET,
+        "date_range": {
+            "start": min(by_day.keys()) if by_day else None,
+            "end":   max(by_day.keys()) if by_day else None,
+            "days":  len(by_day),
+        },
     }
 
 
