@@ -1811,6 +1811,7 @@ input:focus,select:focus{border-color:var(--ember)}
       <div class="form-group"><label>Restaurant name</label><input type="text" id="r-name" placeholder="Maplewood Kitchen"></div>
       <div class="form-group"><label>Owner email</label><input type="email" id="r-email" placeholder="owner@restaurant.com"></div>
       <div class="form-group"><label>Dashboard username</label><input type="text" id="u-username" placeholder="maplewoodkitchen"></div>
+      <div class="form-group"><label>Owner / GM name</label><input type="text" id="r-owner-name" placeholder="e.g. Sarah"></div>
       <div class="form-group">
         <label>Temporary password</label>
         <div style="display:flex;gap:6px;align-items:center">
@@ -1825,7 +1826,6 @@ input:focus,select:focus{border-color:var(--ember)}
           </button>
         </div>
       </div>
-      <div class="form-group"><label>Owner / GM name</label><input type="text" id="r-owner-name" placeholder="e.g. Sarah"></div>
       <div class="form-group"><label>Owner phone number</label><input type="text" id="r-phone" placeholder="(312) 555-0100"></div>
       <div class="form-group"><label>Google Place ID (optional)</label><input type="text" id="r-google" placeholder="ChIJ..."></div>
       <div class="form-group"><label>Yelp Business ID (optional)</label><input type="text" id="r-yelp" placeholder="restaurant-name-chicago"></div>
@@ -1850,11 +1850,7 @@ input:focus,select:focus{border-color:var(--ember)}
             Marketing Autopilot — $300/mo
           </label>
         </div>
-        <div style="font-size:11px;color:var(--ink3);margin-top:8px;line-height:1.6">
-          <strong>Pricing:</strong> $500 setup per module · $300/mo per module · 30-day free trial on retainer<br>
-          2 modules = $1,000 setup + $600/mo &nbsp;·&nbsp; 3 modules = $1,500 + $900/mo &nbsp;·&nbsp; 4 modules = $2,000 + $1,200/mo<br>
-          <em>For custom packages, create a one-time Stripe link at the right amount.</em>
-        </div>
+
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-top:14px;margin-bottom:0">
