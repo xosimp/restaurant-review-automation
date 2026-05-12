@@ -767,7 +767,7 @@ function loadLaborInsight(){
     document.getElementById('gap-amount').textContent='—';
     document.getElementById('gap-dollar').textContent='Unable to load gap data.';
   });
-}}
+}
 async function downloadSchedule(btn) {
   btn.textContent = 'Generating… (30 sec)';
   btn.disabled = true;
