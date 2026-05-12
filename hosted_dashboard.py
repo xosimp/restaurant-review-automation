@@ -452,7 +452,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
           <td>${{d.sales|int|format_num}}</td>
           <td>${{d.labor_cost|format_num}}</td>
           <td><span class="pill {{'pill-red' if d.labor_pct>35 else 'pill-amber'}}">{{d.labor_pct}}%</span></td>
-          <td style="color:var(--red);font-size:11px;font-weight:500">+{{(d.labor_pct - 30)|round(1)}}% over target</td>
+          {% set diff = (d.labor_pct - labor.labor_target)|round(1) %}
+          {% if diff > 0 %}
+          <td style="color:var(--red);font-size:11px;font-weight:500">+{{diff}}% over</td>
+          {% else %}
+          <td style="color:var(--green);font-size:11px;font-weight:500">{{diff}}% under ✓</td>
+          {% endif %}
         </tr>
         {% else %}
         <tr><td colspan="6" style="color:var(--ink3);font-style:italic;padding:10px">No overstaffed days — great work!</td></tr>
@@ -734,15 +739,16 @@ function loadLaborInsight(){
     const gapEl = document.getElementById('gap-amount');
     const msgEl = document.getElementById('gap-dollar');
     const pctEl = document.getElementById('gap-current-pct');
+    const target = {{labor_target}};
     if(d.over_target && d.monthly_gap > 0) {
-      gapEl.textContent = '$' + d.monthly_gap.toLocaleString();
+      gapEl.textContent = '$' + Math.round(d.monthly_gap).toLocaleString();
       gapEl.style.color = 'var(--ember2)';
-      msgEl.textContent = 'You are ' + d.current_pct + '% — ' + d.monthly_gap.toLocaleString(undefined,{style:"currency",currency:"USD",maximumFractionDigits:0}) + '/mo above the 30% target. Optimizing scheduling could recover this.';
+      msgEl.textContent = 'You're at ' + d.current_pct + '% vs your ' + target + '% target — that gap is costing around $' + Math.round(d.monthly_gap).toLocaleString() + '/mo. An optimized schedule can help close it.';
       pctEl.style.color = '#ef9f27';
     } else {
-      gapEl.textContent = 'On target';
+      gapEl.textContent = 'On target ✓';
       gapEl.style.color = '#6fcf97';
-      msgEl.textContent = 'Your labor % is within the 28-32% target range. Keep it up.';
+      msgEl.textContent = 'Your labor % is at or below your ' + target + '% target. Great work — keep an eye on any individual days that spike.';
       pctEl.style.color = '#6fcf97';
     }
   });
@@ -786,6 +792,29 @@ function changePassword(){
   if(nw.length<8){st.style.display='block';st.style.color='var(--red)';st.textContent='Password must be at least 8 characters';return}
   fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(r=>r.json()).then(d=>{st.style.display='block';if(d.ok){st.style.color='var(--green)';st.textContent='Password updated';document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-confirm').value='';}else{st.style.color='var(--red)';st.textContent=d.error||'Update failed'}})}
 
+
+async function addStaffNote() {
+  const name = document.getElementById('staff-name').value.trim();
+  const notes = document.getElementById('staff-constraint').value.trim();
+  const result = document.getElementById('staff-note-result');
+  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
+  const form = new FormData();
+  form.append('employee_name', name);
+  form.append('notes', notes);
+  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
+  const data = await res.json();
+  if(data.ok) {
+    showResult(result, true, '✓ Constraint saved');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showResult(result, false, data.error || 'Save failed');
+  }
+}
+async function deleteNote(noteId) {
+  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
+  const data = await res.json();
+  if(data.ok) location.reload();
+}
 </script>
 </body>
 </html>"""
@@ -985,6 +1014,11 @@ textarea{resize:vertical;min-height:60px}
           <input type="number" id="hourly_rate" value="{{ restaurant.hourly_rate or 26.0 }}" min="10" max="60" step="0.50">
           <div class="hint">Used to calculate actual labor cost from hours worked. Industry average $22–28/hr blended.</div>
         </div>
+        <div class="form-group">
+          <label>Labor % target</label>
+          <input type="number" id="labor_target_pct" value="{{ restaurant.labor_target_pct or 30.0 }}" min="15" max="50" step="0.5">
+          <div class="hint">Default is 30%. Adjust if this restaurant has a different target (e.g. fine dining may run 35%, fast casual may target 25%).</div>
+        </div>
       </div>
     </div>
   </div>
@@ -1142,7 +1176,8 @@ async function saveSettings() {
     vibe:            document.getElementById('vibe').value,
     voice_notes:     document.getElementById('voice_notes').value,
     never_say:       document.getElementById('never_say').value,
-    hourly_rate:     parseFloat(document.getElementById('hourly_rate').value),
+    hourly_rate:        parseFloat(document.getElementById('hourly_rate').value),
+    labor_target_pct:   parseFloat(document.getElementById('labor_target_pct').value) || 30.0,
     billing_status:  document.getElementById('billing_status').value,
     internal_notes:  document.getElementById('internal_notes').value,
     service_tier:    document.getElementById('service_tier').value,
@@ -1163,6 +1198,29 @@ async function saveSettings() {
     status.textContent = data.error || 'Save failed';
   }
   btn.textContent = 'Save all settings'; btn.disabled = false;
+}
+
+async function addStaffNote() {
+  const name = document.getElementById('staff-name').value.trim();
+  const notes = document.getElementById('staff-constraint').value.trim();
+  const result = document.getElementById('staff-note-result');
+  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
+  const form = new FormData();
+  form.append('employee_name', name);
+  form.append('notes', notes);
+  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
+  const data = await res.json();
+  if(data.ok) {
+    showResult(result, true, '✓ Constraint saved');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showResult(result, false, data.error || 'Save failed');
+  }
+}
+async function deleteNote(noteId) {
+  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
+  const data = await res.json();
+  if(data.ok) location.reload();
 }
 </script>
 </body>
@@ -1376,6 +1434,61 @@ waste_last_week — Units wasted in the last 7 days</div>
   </div>
 </div>
 
+  <!-- STAFF NOTES -->
+  <div class="module-card">
+    <div class="module-hdr">
+      <div class="module-title">Staff scheduling constraints</div>
+      <span class="module-status status-live" id="staff-notes-status">
+        {{staff_notes|length}} note{{"s" if staff_notes|length != 1}}
+      </span>
+    </div>
+    <div class="module-body">
+      <p style="font-size:13px;color:var(--ink2);margin-bottom:14px;line-height:1.6">
+        Add scheduling constraints for specific staff members — fixed days, availability restrictions,
+        guaranteed hours, or anything the AI should know when building the optimized schedule.
+        You enter this once; it applies automatically to every schedule generated.
+      </p>
+
+      {% if staff_notes %}
+      <div style="margin-bottom:14px">
+        {% for note in staff_notes %}
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;margin-bottom:6px">
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:13px">{{note.employee_name}}</div>
+            <div style="font-size:12px;color:var(--ink3);margin-top:2px">{{note.notes}}</div>
+          </div>
+          <button onclick="deleteNote({{note.id}})"
+            style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid #f5c6c2;background:white;color:#c0392b;cursor:pointer;font-family:'DM Sans',sans-serif">
+            Remove
+          </button>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div class="slabel">Add staff constraint</div>
+      <div style="display:grid;grid-template-columns:1fr 2fr auto;gap:8px;align-items:start;margin-top:8px">
+        <div class="form-group">
+          <label>Employee name</label>
+          <input class="form-input" type="text" id="staff-name" placeholder="e.g. Marcus G.">
+        </div>
+        <div class="form-group">
+          <label>Constraint notes</label>
+          <input class="form-input" type="text" id="staff-constraint"
+            placeholder="e.g. Always Fri/Sat/Sun, never before 5pm">
+        </div>
+        <div style="padding-top:18px">
+          <button class="btn-primary" onclick="addStaffNote()">Add</button>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--ink3);margin-top:6px;line-height:1.5">
+        Examples: "Always works Mon/Wed/Fri" · "Can't work after 9pm" · "Guaranteed 30h/week" ·
+        "Head chef — never change weekend shifts" · "Part-time, max 20h/week"
+      </div>
+      <div class="result-msg" id="staff-note-result"></div>
+    </div>
+  </div>
+
 <script>
 const restaurantId = {{ restaurant.id }};
 const fileData = {shifts: null, inv: null};
@@ -1435,6 +1548,29 @@ function showResult(el, ok, msg) {
   el.style.display = 'block';
   el.className = 'result-msg ' + (ok ? 'result-ok' : 'result-err');
   el.textContent = msg;
+}
+
+async function addStaffNote() {
+  const name = document.getElementById('staff-name').value.trim();
+  const notes = document.getElementById('staff-constraint').value.trim();
+  const result = document.getElementById('staff-note-result');
+  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
+  const form = new FormData();
+  form.append('employee_name', name);
+  form.append('notes', notes);
+  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
+  const data = await res.json();
+  if(data.ok) {
+    showResult(result, true, '✓ Constraint saved');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showResult(result, false, data.error || 'Save failed');
+  }
+}
+async function deleteNote(noteId) {
+  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
+  const data = await res.json();
+  if(data.ok) location.reload();
 }
 </script>
 </body>
@@ -1731,6 +1867,29 @@ async function reactivateClient(id, name) {
     else { btn.textContent = 'Error'; console.error(data); }
   } catch(e) { btn.textContent = 'Error'; console.error(e); }
 }
+
+async function addStaffNote() {
+  const name = document.getElementById('staff-name').value.trim();
+  const notes = document.getElementById('staff-constraint').value.trim();
+  const result = document.getElementById('staff-note-result');
+  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
+  const form = new FormData();
+  form.append('employee_name', name);
+  form.append('notes', notes);
+  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
+  const data = await res.json();
+  if(data.ok) {
+    showResult(result, true, '✓ Constraint saved');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showResult(result, false, data.error || 'Save failed');
+  }
+}
+async function deleteNote(noteId) {
+  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
+  const data = await res.json();
+  if(data.ok) location.reload();
+}
 </script>
 </body>
 </html>"""
@@ -1950,7 +2109,8 @@ def index(current_user):
         mod_inventory=restaurant.module_inventory,
         mod_marketing=restaurant.module_marketing,
         now=datetime.now().strftime("%b %d, %Y"),
-        viewing_as=current_user.get("is_admin", 0))
+        viewing_as=current_user.get("is_admin", 0),
+        labor_target=restaurant.labor_target_pct if restaurant else 30.0)
 
 @app.route("/approve/<int:rid>", methods=["POST"])
 @login_required
@@ -2108,15 +2268,35 @@ def reactivate_client(user_id, current_user):
 @app.route("/admin/client-data/<int:restaurant_id>")
 @admin_required
 def client_data_page(restaurant_id, current_user):
-    from models import get_client_data
+    from models import get_client_data, get_staff_notes
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
         return "Restaurant not found", 404
-    data = get_client_data(restaurant_id) or {}
+    data        = get_client_data(restaurant_id) or {}
+    staff_notes = get_staff_notes(restaurant_id)
     return render_template_string(CLIENT_DATA_HTML,
         current_user=current_user,
         restaurant=restaurant,
-        data=data)
+        data=data,
+        staff_notes=staff_notes)
+
+@app.route("/admin/staff-notes/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def save_staff_note_route(restaurant_id, current_user):
+    from models import save_staff_note
+    name  = request.form.get("employee_name","").strip()
+    notes = request.form.get("notes","").strip()
+    if not name or not notes:
+        return jsonify(ok=False, error="Name and notes required")
+    save_staff_note(restaurant_id, name, notes)
+    return jsonify(ok=True)
+
+@app.route("/admin/staff-notes/<int:note_id>/delete", methods=["POST"])
+@admin_required
+def delete_staff_note_route(note_id, current_user):
+    from models import delete_staff_note
+    delete_staff_note(note_id)
+    return jsonify(ok=True)
 
 @app.route("/admin/upload-data/<int:restaurant_id>", methods=["POST"])
 @admin_required
@@ -2184,6 +2364,7 @@ def save_client_settings(restaurant_id, current_user):
             "sign_off_name":   data.get("sign_off_name","").strip() or None,
             "never_say":       data.get("never_say","").strip() or None,
             "hourly_rate":     float(data.get("hourly_rate") or 26.0),
+            "labor_target_pct": float(data.get("labor_target_pct") or 30.0),
             "pos_system":      data.get("pos_system","").strip() or None,
             "owner_name":      data.get("owner_name","").strip() or None,
             "owner_phone":     data.get("owner_phone","").strip() or None,
@@ -2612,11 +2793,16 @@ def download_schedule(current_user):
         analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
         rate     = get_hourly_rate(current_user["restaurant_id"])
         owner    = restaurant.owner_name if restaurant and restaurant.owner_name else None
+        target   = restaurant.labor_target_pct if restaurant else 30.0
+        from models import get_staff_notes
+        staff_notes = get_staff_notes(current_user["restaurant_id"])
         csv_text = generate_optimized_schedule(
             analysis, shifts,
             restaurant_name=restaurant.name if restaurant else "Restaurant",
             hourly_rate=rate,
-            owner_name=owner
+            owner_name=owner,
+            staff_notes=staff_notes if staff_notes else None,
+            labor_target=target
         )
         # Clean up any markdown Claude might add
         lines = [l for l in csv_text.split("\n") if l.strip() and not l.startswith("#") and not l.startswith("```")]
@@ -2637,6 +2823,8 @@ def download_schedule(current_user):
 if __name__ == "__main__":
     init_db()
     init_auth()
+    from models import init_staff_notes
+    init_staff_notes()
 
     # Start background scheduler for digests and review fetching
     from scheduler import start_scheduler

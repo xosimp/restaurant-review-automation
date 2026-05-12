@@ -38,17 +38,31 @@ def get_hourly_rate(restaurant_id: int) -> float:
         return DEFAULT_HOURLY_RATE
 
 
+def get_labor_target(restaurant_id: int) -> float:
+    """Get per-client labor target % from DB."""
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        return r.labor_target_pct if r and r.labor_target_pct else 30.0
+    except Exception:
+        return 30.0
+
+
 def analyse_shifts_for_restaurant(restaurant_id: int) -> dict:
-    """Load shifts and analyse with client-specific hourly rate."""
+    """Load shifts and analyse with client-specific hourly rate and target."""
     shifts = load_shifts_for_restaurant(restaurant_id)
     rate   = get_hourly_rate(restaurant_id)
-    return analyse_shifts(shifts, hourly_rate=rate)
+    target = get_labor_target(restaurant_id)
+    return analyse_shifts(shifts, hourly_rate=rate, labor_target=target)
 
 
 def analyse_shifts(shifts: list[dict],
-                   hourly_rate: float = DEFAULT_HOURLY_RATE) -> dict:
+                   hourly_rate: float = DEFAULT_HOURLY_RATE,
+                   labor_target: float = 30.0) -> dict:
     """Compute labor metrics from raw shift data."""
-    HOURLY_RATE = hourly_rate
+    HOURLY_RATE  = hourly_rate
+    LABOR_TARGET = labor_target
+    OVERSTAFF_THRESHOLD = labor_target + 5  # flag days >target+5%
     by_day = defaultdict(lambda: {"scheduled": 0, "actual": 0, "sales": 0, "shifts": []})
     by_employee = defaultdict(lambda: {"scheduled": 0, "actual": 0, "shifts": 0})
     by_dayofweek = defaultdict(lambda: {"labor_cost": 0, "sales": 0, "count": 0})
@@ -84,7 +98,7 @@ def analyse_shifts(shifts: list[dict],
         labor_pct  = (labor_cost / d["sales"] * 100) if d["sales"] else 0
         d["labor_cost"] = round(labor_cost, 2)
         d["labor_pct"]  = round(labor_pct, 1)
-        if labor_pct > 20:
+        if labor_pct > OVERSTAFF_THRESHOLD:
             # Format date as M/D/YY
             try:
                 from datetime import datetime as _dt
@@ -151,7 +165,8 @@ def analyse_shifts(shifts: list[dict],
     total_sales  = sum(float(s["sales_that_day"]) for s in
                        {s["date"]: s for s in shifts}.values())
     overall_pct  = round(total_labor / total_sales * 100, 1) if total_sales else 0
-    potential_savings = round(total_labor * 0.12, 2)  # industry benchmark: 12% reducible
+    target_labor_cost = total_sales * (LABOR_TARGET / 100)
+    potential_savings = round(max(0, total_labor - target_labor_cost) * 2, 2)  # x2 to project monthly
 
     return {
         "total_labor_cost": round(total_labor, 2),
@@ -165,6 +180,7 @@ def analyse_shifts(shifts: list[dict],
         "by_day": {k: {kk: vv for kk, vv in v.items() if kk != "shifts"}
                    for k, v in by_day.items()},
         "employee_hours": {k: dict(v) for k, v in by_employee.items()},
+        "labor_target": LABOR_TARGET,
     }
 
 
@@ -213,7 +229,9 @@ Write in plain paragraphs only. No special characters."""
 def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  restaurant_name: str = "Restaurant",
                                  hourly_rate: float = DEFAULT_HOURLY_RATE,
-                                 owner_name: str = None) -> str:
+                                 owner_name: str = None,
+                                 staff_notes: list = None,
+                                 labor_target: float = 30.0) -> str:
     """Use Claude to generate an optimized weekly schedule as CSV."""
     from datetime import datetime, timedelta
 
@@ -231,16 +249,24 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     week_dates = [(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
     week_days  = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
 
+    # Build staff constraints string
+    constraints = ""
+    if staff_notes:
+        constraints = "\nStaff scheduling constraints (MUST be respected):\n"
+        for note in staff_notes:
+            constraints += f"- {note['employee_name']}: {note['notes']}\n"
+
     prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate a realistic, optimized schedule for next week.
 
 Current labor data:
-- Overall labor ratio: {analysis["overall_labor_pct"]}% (target: 28-32%)
+- Overall labor ratio: {analysis["overall_labor_pct"]}% (target: {labor_target}%)
 - Monthly labor overspend: ${analysis.get("potential_savings",0):,.0f} estimated recoverable
 - Overstaffed patterns: {[d["day"] + " avg " + str(d["labor_pct"]) + "%" for d in overstaffed]}
 - Understaffed patterns: {[d["day"] for d in understaffed]}
 - Labor % by day: {dow}
 - Blended hourly rate: ${hourly_rate}/hr
 - Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}
+{constraints}
 
 Schedule dates for next week:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
@@ -253,7 +279,8 @@ Requirements:
 - Use real employee names from the staff list
 - Reduce coverage on historically overstaffed days by 10-15%
 - Maintain full coverage on high-volume days (Fri/Sat typically)
-- No employee over 38 hours for the week
+- No employee over 40 hours for the week (overtime threshold)
+- Target labor ratio for each day: {labor_target}%
 - Servers: typically 4-6h shifts, bartenders: 5-7h shifts
 - Notes: one brief phrase explaining any change from normal (e.g. "reduced - slow Monday pattern" or "full coverage - high volume Friday")
 - Include 6-10 shifts per day
@@ -274,7 +301,7 @@ def calculate_monthly_gap(analysis: dict) -> dict:
     current_pct = analysis["overall_labor_pct"]
     total_sales  = analysis["total_sales"]
     total_labor  = analysis["total_labor_cost"]
-    target_pct   = 30.0  # midpoint of 28-32% target
+    target_pct   = analysis.get("labor_target", 30.0)
 
     # Extrapolate to monthly (data covers ~2 weeks)
     monthly_sales = total_sales * 2
