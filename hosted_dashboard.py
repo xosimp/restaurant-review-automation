@@ -1285,7 +1285,7 @@ input:focus,select:focus{border-color:var(--ember)}
 .btn-primary:hover{background:#a83d25}
 .tbl{width:100%;border-collapse:collapse;font-size:13px}
 .tbl th{text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--ink3);padding:8px 12px;border-bottom:1px solid var(--paper3);background:var(--paper2)}
-.tbl td{padding:10px 12px;border-bottom:1px solid var(--paper3)}
+.tbl td{padding:10px 12px;border-bottom:1px solid var(--paper3);overflow:visible}
 .tbl tr:last-child td{border-bottom:none}
 .badge-active{background:var(--green-bg);color:var(--green);font-size:10px;padding:2px 7px;border-radius:20px;font-weight:500}
 .status-msg{padding:10px 14px;border-radius:6px;font-size:13px;margin-top:10px;display:none}
@@ -1349,7 +1349,7 @@ input:focus,select:focus{border-color:var(--ember)}
   </div>
 
   <div class="section-title">Active client accounts</div>
-  <div class="card" style="padding:0;overflow:hidden">
+  <div class="card" style="padding:0;overflow:visible">
     <table class="tbl">
       <thead><tr><th>Restaurant</th><th>Username</th><th>Email</th><th>Phone</th><th>Billing</th><th>Last login</th><th>Last tab</th><th>Last fetched</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>
