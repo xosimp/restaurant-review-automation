@@ -127,33 +127,46 @@ def analyse_shifts(shifts: list[dict],
     }
 
 
-def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant") -> str:
-    """Ask Claude to narrate the findings like a restaurant consultant."""
-    prompt = f"""You are an expert restaurant labor consultant reviewing two weeks of shift data for {restaurant_name}.
+def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant",
+                        owner_name: str = None) -> str:
+    """Ask Claude to narrate labor findings in a warm, direct consultant tone."""
+    greeting = f"{owner_name}," if owner_name else "Hi,"
+    prompt = f"""You are the Cavnar AI Consultant — a friendly, experienced restaurant labor advisor.
+You are writing a weekly labor summary for {owner_name or "the owner"} of {restaurant_name}.
 
-Here is the analysis:
+Data:
 - Overall labor cost: ${analysis['total_labor_cost']:,.0f} on ${analysis['total_sales']:,.0f} in sales ({analysis['overall_labor_pct']}% labor ratio)
 - Industry target: 28-32% labor ratio
-- Overstaffed days (labor > 35%): {json.dumps(analysis['overstaffed_days'][:3])}
+- Overstaffed days: {json.dumps(analysis['overstaffed_days'][:3])}
 - Understaffed days: {json.dumps(analysis['understaffed_days'][:2])}
 - Overtime risk: {json.dumps(analysis['overtime_risk'])}
 - Labor % by day of week: {json.dumps(analysis['dow_summary'])}
-- Estimated savings with optimized scheduling: ${analysis['potential_savings']:,.0f}/month
+- Estimated monthly savings with optimized scheduling: ${analysis['potential_savings']:,.0f}
 
-Write a concise, direct consultant report (4-6 short paragraphs) that:
-1. Leads with the most important number (the overall labor % vs target)
-2. Calls out the 2-3 most specific problems with dates and dollars
-3. Gives 3 concrete scheduling fixes the owner can implement this week
-4. Ends with the monthly savings opportunity
+Write a short, warm, and direct consultant note (3-5 paragraphs) that:
+1. Opens with "{greeting}" then gives the honest overall picture — good or bad — with the key number
+2. Calls out 1-2 specific problem areas with actual dates and dollars, but frames them as opportunities not failures
+3. Gives 2-3 concrete, actionable scheduling suggestions the owner can use this week
+4. Closes on an encouraging note with the savings opportunity
 
-Write like a sharp consultant who respects the owner's time. No fluff, no bullet points — short punchy paragraphs. Use specific numbers throughout."""
+Tone: warm, direct, and human — like a trusted advisor who knows the restaurant business.
+Use the owner's name naturally once or twice. Be specific with numbers.
+Do NOT use markdown, asterisks, bold formatting, bullet points, or headers.
+Write in plain paragraphs only. No special characters."""
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
         max_tokens=600,
         messages=[{"role": "user", "content": prompt}],
     )
-    return msg.content[0].text.strip()
+    # Strip any markdown that slips through
+    import re
+    text = msg.content[0].text.strip()
+    text = re.sub(r'\*\*(.+?)\*\*', r'', text)  # remove bold
+    text = re.sub(r'\*(.+?)\*', r'', text)        # remove italic
+    text = re.sub(r'#{1,6}\s', '', text)            # remove headers
+    text = re.sub(r'^\s*[-•]\s', '', text, flags=re.MULTILINE)  # remove bullets
+    return text
 
 
 def generate_optimized_schedule(analysis: dict, shifts: list[dict],

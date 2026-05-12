@@ -436,7 +436,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
   </div>
 
   <!-- AI insight -->
-  <div class="insight"><div class="insight-lbl">AI scheduling consultant</div><div class="insight-text insight-loading" id="labor-insight">Loading analysis…</div></div>
+  <div class="insight"><div class="insight-lbl">Cavnar AI Consultant</div><div class="insight-text insight-loading" id="labor-insight">Loading analysis…</div></div>
 
   <!-- Two col: overstaffed table + bar chart -->
   <div class="two-col">
@@ -840,6 +840,11 @@ textarea{resize:vertical;min-height:60px}
           </select>
         </div>
         <div class="form-group">
+          <label>Owner / GM name</label>
+          <input type="text" id="owner_name" value="{{ restaurant.owner_name or '' }}" placeholder="e.g. Sarah">
+          <div class="hint">Used to personalize AI reports and communications</div>
+        </div>
+        <div class="form-group">
           <label>Owner phone number</label>
           <input type="text" id="owner_phone" value="{{ restaurant.owner_phone or '' }}" placeholder="(312) 555-0100">
         </div>
@@ -1087,6 +1092,7 @@ async function saveSettings() {
   const payload = {
     name:            document.getElementById('name').value,
     owner_email:     document.getElementById('owner_email').value,
+    owner_name:      document.getElementById('owner_name').value,
     owner_phone:     document.getElementById('owner_phone').value,
     digest_day:      document.getElementById('digest_day').value,
     digest_enabled:  parseInt(document.getElementById('digest_enabled').value),
@@ -1480,6 +1486,7 @@ input:focus,select:focus{border-color:var(--ember)}
       </div>
       <div class="form-group"><label>Google Place ID (optional)</label><input type="text" id="r-google" placeholder="ChIJ..."></div>
       <div class="form-group"><label>Yelp Business ID (optional)</label><input type="text" id="r-yelp" placeholder="restaurant-name-chicago"></div>
+      <div class="form-group"><label>Owner / GM name</label><input type="text" id="r-owner-name" placeholder="e.g. Sarah"></div>
       <div class="form-group"><label>Owner phone number</label><input type="text" id="r-phone" placeholder="(312) 555-0100"></div>
       <div class="form-group full"><label>Owner voice notes (for AI drafting)</label><input type="text" id="r-voice" placeholder="Warm, casual tone. Always invite guests back. Never sound corporate."></div>
       <div class="form-group">
@@ -1611,6 +1618,7 @@ async function createClient() {
     password:        document.getElementById('u-password').value,
     google_place_id: document.getElementById('r-google').value,
     yelp_business_id:document.getElementById('r-yelp').value,
+    owner_name:      document.getElementById('r-owner-name') ? document.getElementById('r-owner-name').value : '',
     voice_notes:     document.getElementById('r-voice').value,
     owner_phone:     document.getElementById('r-phone').value,
     service_tier:    document.getElementById('r-tier').value,
@@ -1929,8 +1937,9 @@ def labor_insight_api(current_user):
     from models import get_restaurant
     restaurant = get_restaurant(current_user["restaurant_id"])
     name = restaurant.name if restaurant else "your restaurant"
+    owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
     analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
-    insight = get_claude_insights(analysis, restaurant_name=name)
+    insight = get_claude_insights(analysis, restaurant_name=name, owner_name=owner)
     return jsonify(insight=insight)
 
 @app.route("/api/inv-insight")
@@ -2005,6 +2014,7 @@ def create_client(current_user):
             yelp_business_id=data.get("yelp_business_id") or None,
             voice_notes=data.get("voice_notes") or None,
             owner_phone=data.get("owner_phone") or None,
+            owner_name=data.get("owner_name") or None,
         ))
         # Create user
         create_user(
@@ -2139,6 +2149,7 @@ def save_client_settings(restaurant_id, current_user):
             "never_say":       data.get("never_say","").strip() or None,
             "hourly_rate":     float(data.get("hourly_rate") or 26.0),
             "pos_system":      data.get("pos_system","").strip() or None,
+            "owner_name":      data.get("owner_name","").strip() or None,
             "owner_phone":     data.get("owner_phone","").strip() or None,
             "digest_day":      data.get("digest_day","monday"),
             "digest_enabled":  int(data.get("digest_enabled",1)),
