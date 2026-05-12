@@ -334,19 +334,48 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       <div class="rtext">{{r.text}}</div>
       {% if r.categories %}<div class="cats">{% for c in r.categories %}<span class="cat">{{c.replace('_',' ')}}</span>{% endfor %}</div>{% endif %}
       {% if r.draft_response %}
-      <div class="draft-box">
+      <div class="draft-box" id="draft-box-{{r.id}}">
         <div class="draft-lbl">Suggested response</div>
-        <div class="draft-txt">{{r.draft_response}}</div>
-        <div class="draft-actions">
+        <div class="draft-txt" id="draft-txt-{{r.id}}">{{r.draft_response}}</div>
+        <div class="draft-actions" id="draft-actions-{{r.id}}">
           {% if r.response_status=='posted' %}
             <span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>
           {% elif r.response_status=='approved' %}
             <span class="btn btn-approved">✓ Approved</span>
-            <button class="btn btn-skip" onclick="skipR({{r.id}})">Skip</button>
+            <button class="btn btn-skip" onclick="skipR({{r.id}})">Edit</button>
+          {% elif r.response_status=='skipped' %}
+            <button class="btn btn-approve" onclick="approveR({{r.id}})">✓ Approve</button>
+            <button class="btn btn-skip" onclick="openEditor({{r.id}})">Edit response</button>
+            <button class="btn btn-skip" onclick="regenDraft({{r.id}})">↻ Regenerate</button>
           {% else %}
             <button class="btn btn-approve" onclick="approveR({{r.id}})">✓ Approve</button>
             <button class="btn btn-skip" onclick="skipR({{r.id}})">Skip</button>
           {% endif %}
+        </div>
+        <!-- Response editor (hidden by default) -->
+        <div class="response-editor" id="editor-{{r.id}}" style="display:none;margin-top:10px">
+          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your own response…">{{r.draft_response}}</textarea>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn btn-approve" onclick="saveDraft({{r.id}})">Save & approve</button>
+            <button class="btn btn-skip" onclick="regenDraft({{r.id}})">↻ Regenerate AI draft</button>
+            <button class="btn btn-skip" onclick="closeEditor({{r.id}})">Cancel</button>
+          </div>
+        </div>
+      </div>
+      {% elif r.response_status != 'posted' %}
+      <!-- No draft yet — show write/generate buttons -->
+      <div class="draft-box" id="draft-box-{{r.id}}" style="background:var(--paper)">
+        <div class="draft-lbl" style="color:var(--ink3)">No response drafted yet</div>
+        <div class="draft-actions" style="margin-top:8px">
+          <button class="btn btn-approve" onclick="regenDraft({{r.id}})">Generate AI response</button>
+          <button class="btn btn-skip" onclick="openEditor({{r.id}})">Write my own</button>
+        </div>
+        <div class="response-editor" id="editor-{{r.id}}" style="display:none;margin-top:10px">
+          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your response here…"></textarea>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn btn-approve" onclick="saveDraft({{r.id}})">Save & approve</button>
+            <button class="btn btn-skip" onclick="closeEditor({{r.id}})">Cancel</button>
+          </div>
         </div>
       </div>
       {% endif %}
@@ -478,6 +507,58 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 <div class="toast" id="toast"></div>
 
 <script>
+function openEditor(id) {
+  document.getElementById('editor-'+id).style.display='block';
+  document.getElementById('draft-actions-'+id).style.display='none';
+}
+function closeEditor(id) {
+  document.getElementById('editor-'+id).style.display='none';
+  document.getElementById('draft-actions-'+id).style.display='flex';
+}
+async function regenDraft(id) {
+  const box = document.getElementById('draft-box-'+id);
+  const txtEl = document.getElementById('draft-txt-'+id);
+  const editorEl = document.getElementById('editor-text-'+id);
+  if (txtEl) txtEl.textContent = 'Generating new response…';
+  const res = await fetch('/api/regenerate-draft/'+id, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) {
+    if (txtEl) txtEl.textContent = data.draft;
+    if (editorEl) editorEl.value = data.draft;
+    document.getElementById('draft-actions-'+id).innerHTML =
+      `<button class="btn btn-approve" onclick="approveR(${id})">✓ Approve</button>
+       <button class="btn btn-skip" onclick="skipR(${id})">Skip</button>`;
+    document.getElementById('draft-actions-'+id).style.display='flex';
+    document.getElementById('editor-'+id).style.display='none';
+    toast('New draft generated');
+  } else {
+    if (txtEl) txtEl.textContent = 'Error generating — try again';
+    toast('Error: ' + (data.error||'unknown'));
+  }
+}
+async function saveDraft(id) {
+  const editorEl = document.getElementById('editor-text-'+id);
+  const draft = editorEl ? editorEl.value.trim() : '';
+  if (!draft) { toast('Response cannot be empty'); return; }
+  const save = await fetch('/api/save-draft/'+id, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({draft})
+  });
+  const sd = await save.json();
+  if (!sd.ok) { toast('Save failed'); return; }
+  // Then approve
+  const approve = await fetch('/approve/'+id, {method:'POST'});
+  const ad = await approve.json();
+  if (ad.ok) {
+    const txtEl = document.getElementById('draft-txt-'+id);
+    if (txtEl) txtEl.textContent = draft;
+    document.getElementById('editor-'+id).style.display='none';
+    document.getElementById('draft-actions-'+id).innerHTML =
+      '<span class="btn btn-approved">✓ Approved</span>';
+    document.getElementById('draft-actions-'+id).style.display='flex';
+    toast('Response saved and approved');
+  }
+}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)}
 function switchTab(n,btn){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
@@ -589,21 +670,6 @@ textarea{resize:vertical;min-height:60px}
           <input type="email" id="owner_email" value="{{ restaurant.owner_email }}">
         </div>
         <div class="form-group">
-          <label>Weekly digest day</label>
-          <select id="digest_day">
-            {% for day in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
-            <option value="{{ day }}" {{"selected" if restaurant.digest_day == day}}>{{ day|title }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Weekly digest email</label>
-          <select id="digest_enabled">
-            <option value="1" {{"selected" if restaurant.digest_enabled}}>Enabled — send weekly</option>
-            <option value="0" {{"selected" if not restaurant.digest_enabled}}>Disabled</option>
-          </select>
-        </div>
-        <div class="form-group">
           <label>POS system</label>
           <select id="pos_system">
             <option value="">Unknown / not set</option>
@@ -649,6 +715,26 @@ textarea{resize:vertical;min-height:60px}
           </div>
           <button class="toggle {{'on' if restaurant.reviews_live}}" id="reviews-live-toggle"
                   onclick="toggleReviewsLive(this)" title="Toggle live reviews"></button>
+        </div>
+      </div>
+      <div style="margin-top:14px">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Weekly digest day</label>
+            <select id="digest_day">
+              {% for day in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
+              <option value="{{ day }}" {{"selected" if restaurant.digest_day == day}}>{{ day|title }}</option>
+              {% endfor %}
+            </select>
+            <div class="hint">Owner receives their weekly review summary on this day at 8am</div>
+          </div>
+          <div class="form-group">
+            <label>Weekly digest email</label>
+            <select id="digest_enabled">
+              <option value="1" {{"selected" if restaurant.digest_enabled}}>Enabled — send automatically</option>
+              <option value="0" {{"selected" if not restaurant.digest_enabled}}>Disabled</option>
+            </select>
+          </div>
         </div>
       </div>
     </div>
@@ -2156,6 +2242,71 @@ def fetch_reviews_now(restaurant_id, current_user):
                 errors.append(f"Draft error: {e}")
 
     return jsonify(ok=True, new_reviews=new_count, errors=errors)
+
+@app.route("/api/regenerate-draft/<int:review_id>", methods=["POST"])
+@login_required
+def regenerate_draft(review_id, current_user):
+    """Regenerate AI draft for a review."""
+    from models import get_conn, update_draft
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM reviews WHERE id=? AND restaurant_id=?",
+                       (review_id, current_user["restaurant_id"])).fetchone()
+    conn.close()
+    if not row:
+        return jsonify(ok=False, error="Review not found")
+    r = dict(row)
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    try:
+        import anthropic
+        client = anthropic.Anthropic()
+        sentiment_note = {"positive":"positive","negative":"negative","neutral":"neutral"}.get(r.get("sentiment","neutral"),"neutral")
+        prompt = f"""Write a professional, warm restaurant response to this {sentiment_note} review.
+
+Restaurant: {restaurant.name}
+Voice guidance: {restaurant.voice_notes or "Warm, genuine, never corporate. Always invite guests back."}
+Sign off as: {restaurant.sign_off_name or restaurant.name}
+Never use: {restaurant.never_say or ""}
+
+Review (rating: {r["rating"]}/5):
+{r["text"]}
+
+Write ONLY the response, no preamble. Keep it under 100 words. Sound like a real person, not a PR firm."""
+
+        msg = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            messages=[{"role":"user","content":prompt}]
+        )
+        new_draft = msg.content[0].text.strip()
+        update_draft(review_id, new_draft)
+        # Reset status to drafted
+        conn = get_conn()
+        conn.execute("UPDATE reviews SET response_status='drafted' WHERE id=?", (review_id,))
+        conn.commit(); conn.close()
+        return jsonify(ok=True, draft=new_draft)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
+@app.route("/api/save-draft/<int:review_id>", methods=["POST"])
+@login_required
+def save_draft(review_id, current_user):
+    """Save a manually edited draft."""
+    from models import update_draft
+    data = request.get_json()
+    draft = data.get("draft","").strip()
+    if not draft:
+        return jsonify(ok=False, error="Draft cannot be empty")
+    conn = get_conn()
+    row = conn.execute("SELECT id FROM reviews WHERE id=? AND restaurant_id=?",
+                       (review_id, current_user["restaurant_id"])).fetchone()
+    conn.close()
+    if not row:
+        return jsonify(ok=False, error="Review not found")
+    update_draft(review_id, draft)
+    conn = get_conn()
+    conn.execute("UPDATE reviews SET response_status='drafted' WHERE id=?", (review_id,))
+    conn.commit(); conn.close()
+    return jsonify(ok=True)
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
