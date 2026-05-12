@@ -654,7 +654,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
         </p>
       </div>
 
-      <!-- Weekly digest -->
+      <!-- Weekly digest — only shown if reviews module is active -->
+      {% if mod_reviews %}
       <div class="slabel">Weekly digest email</div>
       <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
         <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
@@ -679,6 +680,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
           <span id="digest-save-status" style="font-size:12px;display:none"></span>
         </div>
       </div>
+      {% endif %}
 
       <!-- Billing -->
       <div class="slabel">Billing</div>
