@@ -589,6 +589,21 @@ textarea{resize:vertical;min-height:60px}
           <input type="email" id="owner_email" value="{{ restaurant.owner_email }}">
         </div>
         <div class="form-group">
+          <label>Weekly digest day</label>
+          <select id="digest_day">
+            {% for day in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
+            <option value="{{ day }}" {{"selected" if restaurant.digest_day == day}}>{{ day|title }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Weekly digest email</label>
+          <select id="digest_enabled">
+            <option value="1" {{"selected" if restaurant.digest_enabled}}>Enabled — send weekly</option>
+            <option value="0" {{"selected" if not restaurant.digest_enabled}}>Disabled</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label>POS system</label>
           <select id="pos_system">
             <option value="">Unknown / not set</option>
@@ -826,6 +841,8 @@ async function saveSettings() {
     name:            document.getElementById('name').value,
     owner_email:     document.getElementById('owner_email').value,
     owner_phone:     document.getElementById('owner_phone').value,
+    digest_day:      document.getElementById('digest_day').value,
+    digest_enabled:  parseInt(document.getElementById('digest_enabled').value),
     pos_system:      document.getElementById('pos_system').value,
     sign_off_name:   document.getElementById('sign_off_name').value,
     google_place_id: document.getElementById('google_place_id').value,
@@ -1833,6 +1850,8 @@ def save_client_settings(restaurant_id, current_user):
             "hourly_rate":     float(data.get("hourly_rate") or 26.0),
             "pos_system":      data.get("pos_system","").strip() or None,
             "owner_phone":     data.get("owner_phone","").strip() or None,
+            "digest_day":      data.get("digest_day","monday"),
+            "digest_enabled":  int(data.get("digest_enabled",1)),
             "reviews_live":    int(bool(data.get("reviews_live"))),
             "billing_status":  data.get("billing_status","trial"),
             "internal_notes":  data.get("internal_notes","").strip() or None,
@@ -2017,9 +2036,7 @@ def resend_payment(restaurant_id, current_user):
 @admin_required
 def seed_reviews(restaurant_id, current_user):
     """Seed sample reviews for a restaurant so client can see the dashboard working."""
-    from models import save_reviews, get_pending_analysis
-    from models import update_analysis, update_draft, get_pending_drafts
-    import json as _json
+    from models import save_reviews, get_pending_analysis, update_analysis, update_draft, get_pending_drafts, Review
     from datetime import datetime, timedelta
 
     # Generate 12 realistic sample reviews
@@ -2061,7 +2078,6 @@ def seed_reviews(restaurant_id, current_user):
             review_date=review_date,
         ))
 
-    from models import Review
     new_count = save_reviews(reviews)
 
     # Analyse and draft all of them
@@ -2146,6 +2162,10 @@ def fetch_reviews_now(restaurant_id, current_user):
 if __name__ == "__main__":
     init_db()
     init_auth()
+
+    # Start background scheduler for digests and review fetching
+    from scheduler import start_scheduler
+    start_scheduler()
 
     # Create your admin account if it doesn't exist
     from models import create_restaurant, Restaurant, get_conn as gc
