@@ -452,7 +452,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
           <td>${{d.sales|int|format_num}}</td>
           <td>${{d.labor_cost|format_num}}</td>
           <td><span class="pill {{'pill-red' if d.labor_pct>35 else 'pill-amber'}}">{{d.labor_pct}}%</span></td>
-          {% set diff = (d.labor_pct - labor.labor_target)|round(1) %}
+          {% set diff = (d.labor_pct - (labor.labor_target if labor.labor_target is defined else labor_target))|round(1) %}
           {% if diff > 0 %}
           <td style="color:var(--red);font-size:11px;font-weight:500">+{{diff}}% over</td>
           {% else %}
@@ -680,7 +680,10 @@ window.addEventListener('DOMContentLoaded', function() {
   const activePanel = document.querySelector('.panel.active');
   if(!activePanel) return;
   const id = activePanel.id.replace('panel-','');
-  if(id==='labor'&&!laborLoaded){loadLaborInsight();renderBars();}
+  if(id==='labor'&&!laborLoaded){
+    loadLaborInsight();
+    setTimeout(renderBars, 100);
+  }
   if(id==='inventory'&&!invLoaded){loadInvInsight();}
 });
 let rfilter='{{rfilter}}';
@@ -2098,8 +2101,8 @@ def logout():
 def index(current_user):
     if current_user["is_admin"]:
         return redirect("/admin")
-    from labor import load_shifts, analyse_shifts
-    from inventory import load_inventory, analyse_inventory
+    from labor import analyse_shifts_for_restaurant
+    from inventory import load_inventory_for_restaurant, analyse_inventory
     from marketing import CONTENT_TYPES
     rid     = current_user["restaurant_id"]
     rfilter = request.args.get("filter","all")
@@ -2107,11 +2110,20 @@ def index(current_user):
     restaurant = get_restaurant(rid)
     rstats  = get_review_stats(rid)
     reviews = get_reviews_data(rid, rfilter, rsearch)
-    from labor import analyse_shifts_for_restaurant
-    from inventory import load_inventory_for_restaurant, analyse_inventory
-    labor   = analyse_shifts_for_restaurant(rid)
-    inv     = analyse_inventory(load_inventory_for_restaurant(rid))
-    from marketing import CONTENT_TYPES
+    try:
+        labor = analyse_shifts_for_restaurant(rid)
+    except Exception as e:
+        print(f"Labor analysis error: {e}")
+        labor = {"total_labor_cost":0,"total_sales":0,"overall_labor_pct":0,
+                 "overstaffed_days":[],"understaffed_days":[],"overtime_risk":[],
+                 "dow_summary":{},"potential_savings":0,"labor_target":30.0,
+                 "by_day":{},"employee_hours":{}}
+    try:
+        inv = analyse_inventory(load_inventory_for_restaurant(rid))
+    except Exception as e:
+        print(f"Inventory analysis error: {e}")
+        inv = {"total_waste_cost_week":0,"monthly_waste_projection":0,
+               "recoverable_monthly":0,"waste_items":[],"overstock":[],"critical_low":[]}
     return render_template_string(DASHBOARD_HTML,
         current_user=current_user, restaurant=restaurant,
         rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch,
