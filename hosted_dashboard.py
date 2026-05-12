@@ -1081,6 +1081,15 @@ textarea{resize:vertical;min-height:60px}
           <input type="text" id="owner_phone" value="{{ restaurant.owner_phone or '' }}" placeholder="(312) 555-0100">
         </div>
         <div class="form-group">
+          <label>Location group (multi-location)</label>
+          <input type="text" id="location_group" value="{{ restaurant.location_group or '' }}" placeholder="e.g. Syrup">
+          <div class="hint">Group name shared across all locations of the same brand</div>
+        </div>
+        <div class="form-group">
+          <label>Location name</label>
+          <input type="text" id="location_name" value="{{ restaurant.location_name or '' }}" placeholder="e.g. Lincoln Park">
+        </div>
+        <div class="form-group">
           <label>Sign-off name (for emails & responses)</label>
           <input type="text" id="sign_off_name" value="{{ restaurant.sign_off_name or '' }}" placeholder="e.g. Sarah, or The Maplewood Team">
         </div>
@@ -1383,6 +1392,8 @@ async function saveSettings() {
     owner_email:     document.getElementById('owner_email').value,
     owner_name:      document.getElementById('owner_name').value,
     owner_phone:     document.getElementById('owner_phone').value,
+    location_group:  document.getElementById('location_group').value,
+    location_name:   document.getElementById('location_name').value,
     digest_day:      document.getElementById('digest_day').value,
     digest_enabled:  parseInt(document.getElementById('digest_enabled').value),
     pos_system:      document.getElementById('pos_system').value,
@@ -1793,6 +1804,8 @@ input:focus,select:focus{border-color:var(--ember)}
 .action-item-danger:hover{background:#fdf0ef;color:#c0392b}
 .action-item-success{color:var(--green)}
 .action-item-success:hover{background:var(--green-bg);color:var(--green)}
+.group-filter-btn{padding:3px 10px;border-radius:20px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;cursor:pointer;color:var(--ink2);transition:all .15s}
+.group-filter-btn:hover,.group-filter-btn.active{background:var(--ink);color:white;border-color:var(--ink)}
 </style>
 </head>
 <body>
@@ -1827,6 +1840,8 @@ input:focus,select:focus{border-color:var(--ember)}
         </div>
       </div>
       <div class="form-group"><label>Owner phone number</label><input type="text" id="r-phone" placeholder="(312) 555-0100"></div>
+      <div class="form-group"><label>Location group (optional)</label><input type="text" id="r-group" placeholder="e.g. Syrup" list="existing-groups"><datalist id="existing-groups">{% for g in location_groups %}<option value="{{g}}">{% endfor %}</datalist></div>
+      <div class="form-group"><label>Location name (optional)</label><input type="text" id="r-location" placeholder="e.g. Lincoln Park"></div>
       <div class="form-group"><label>Google Place ID (optional)</label><input type="text" id="r-google" placeholder="ChIJ..."></div>
       <div class="form-group"><label>Yelp Business ID (optional)</label><input type="text" id="r-yelp" placeholder="restaurant-name-chicago"></div>
       <div class="form-group full"><label>Owner voice notes (for AI drafting)</label><input type="text" id="r-voice" placeholder="Warm, casual tone. Always invite guests back. Never sound corporate."></div>
@@ -1863,14 +1878,32 @@ input:focus,select:focus{border-color:var(--ember)}
     <div class="status-msg" id="create-status"></div>
   </div>
 
-  <div class="section-title">Active client accounts</div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+    <div class="section-title" style="margin-bottom:0">Active client accounts</div>
+    {% if location_groups %}
+    <div style="display:flex;gap:6px;align-items:center">
+      <span style="font-size:11px;color:var(--ink3)">Filter:</span>
+      <button onclick="filterGroup('')" class="group-filter-btn active" id="filter-all">All</button>
+      {% for g in location_groups %}
+      <button onclick="filterGroup('{{g}}')" class="group-filter-btn" id="filter-{{g|replace(' ','-')}}">{{g}}</button>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
   <div class="card" style="padding:0;overflow:visible">
     <table class="tbl">
       <thead><tr><th>Restaurant</th><th>Username</th><th>Email</th><th>Phone</th><th>Billing</th><th>Last login</th><th>Last tab</th><th>Last fetched</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>
       {% for user in users %}
-      <tr>
-        <td><strong>{{user.restaurant_name}}</strong></td>
+      <tr class="client-row" data-group="{{user.location_group or ''}}">
+        <td>
+          <strong>{{user.restaurant_name}}</strong>
+          {% if user.location_group %}
+          <div style="font-size:10px;color:var(--ink3);margin-top:1px">
+            {{user.location_group}}{% if user.location_name %} · {{user.location_name}}{% endif %}
+          </div>
+          {% endif %}
+        </td>
         <td><code style="font-size:12px">{{user.username}}</code></td>
         <td>{{user.email}}</td>
         <td style="font-size:12px;color:var(--ink3)">{{user.phone or '—'}}</td>
@@ -1922,6 +1955,15 @@ input:focus,select:focus{border-color:var(--ember)}
 </div>
 
 <script>
+function filterGroup(group) {
+  document.querySelectorAll('.group-filter-btn').forEach(b=>b.classList.remove('active'));
+  const activeBtn = group ? document.getElementById('filter-'+group.replace(/ /g,'-')) : document.getElementById('filter-all');
+  if(activeBtn) activeBtn.classList.add('active');
+  document.querySelectorAll('.client-row').forEach(row=>{
+    if(!group || row.dataset.group===group) row.style.display='';
+    else row.style.display='none';
+  });
+}
 function genPassword() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
   let pw = '';
@@ -1973,6 +2015,8 @@ async function createClient() {
     owner_name:      document.getElementById('r-owner-name') ? document.getElementById('r-owner-name').value : '',
     voice_notes:     document.getElementById('r-voice').value,
     owner_phone:     document.getElementById('r-phone').value,
+    location_group:  document.getElementById('r-group') ? document.getElementById('r-group').value : '',
+    location_name:   document.getElementById('r-location') ? document.getElementById('r-location').value : '',
     module_reviews:  document.getElementById('mod-reviews').checked ? 1 : 0,
     module_labor:    document.getElementById('mod-labor').checked ? 1 : 0,
     module_inventory:document.getElementById('mod-inventory').checked ? 1 : 0,
@@ -2475,9 +2519,14 @@ def admin(current_user):
         u["internal_notes"] = r.internal_notes if r else None
         u["phone"] = r.owner_phone if r else None
         u["last_fetched_at"] = r.last_fetched_at[:10] if r and r.last_fetched_at else None
+        u["location_group"] = r.location_group if r else None
+        u["location_name"]  = r.location_name if r else None
         enriched.append(u)
+    from models import get_all_location_groups
+    location_groups = get_all_location_groups()
     return render_template_string(ADMIN_HTML,
-        current_user=current_user, users=enriched)
+        current_user=current_user, users=enriched,
+        location_groups=location_groups)
 
 @app.route("/admin/create-client", methods=["POST"])
 @admin_required
@@ -2494,6 +2543,8 @@ def create_client(current_user):
             voice_notes=data.get("voice_notes") or None,
             owner_phone=data.get("owner_phone") or None,
             owner_name=data.get("owner_name") or None,
+            location_group=data.get("location_group","").strip() or None,
+            location_name=data.get("location_name","").strip() or None,
         ))
         # Create user
         create_user(
@@ -2663,6 +2714,8 @@ def save_client_settings(restaurant_id, current_user):
             "module_marketing":int(data.get("module_marketing", 0)),
             "owner_name":      data.get("owner_name","").strip() or None,
             "owner_phone":     data.get("owner_phone","").strip() or None,
+            "location_group":  data.get("location_group","").strip() or None,
+            "location_name":   data.get("location_name","").strip() or None,
             "digest_day":      data.get("digest_day","monday"),
             "digest_enabled":  int(data.get("digest_enabled",1)),
             "reviews_live":    int(bool(data.get("reviews_live"))),
