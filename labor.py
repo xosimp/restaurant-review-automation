@@ -62,7 +62,7 @@ def analyse_shifts(shifts: list[dict],
     """Compute labor metrics from raw shift data."""
     HOURLY_RATE  = hourly_rate
     LABOR_TARGET = labor_target
-    OVERSTAFF_THRESHOLD = labor_target + 5  # flag days >target+5%
+    OVERSTAFF_THRESHOLD = labor_target  # flag any day over target
     by_day = defaultdict(lambda: {"scheduled": 0, "actual": 0, "sales": 0, "shifts": []})
     by_employee = defaultdict(lambda: {"scheduled": 0, "actual": 0, "shifts": 0})
     by_dayofweek = defaultdict(lambda: {"labor_cost": 0, "sales": 0, "count": 0})
