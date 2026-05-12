@@ -1331,7 +1331,20 @@ input:focus,select:focus{border-color:var(--ember)}
       <div class="form-group"><label>Restaurant name</label><input type="text" id="r-name" placeholder="Maplewood Kitchen"></div>
       <div class="form-group"><label>Owner email</label><input type="email" id="r-email" placeholder="owner@restaurant.com"></div>
       <div class="form-group"><label>Dashboard username</label><input type="text" id="u-username" placeholder="maplewoodkitchen"></div>
-      <div class="form-group"><label>Temporary password</label><input type="text" id="u-password" placeholder="Set a temp password"></div>
+      <div class="form-group">
+        <label>Temporary password</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="text" id="u-password" placeholder="Click Generate →" style="flex:1">
+          <button type="button" onclick="genPassword()"
+            style="padding:9px 12px;background:#c84b2f;color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">
+            Generate
+          </button>
+          <button type="button" onclick="copyPassword()" id="copy-pw-btn"
+            style="padding:9px 12px;background:white;color:var(--ink2);border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0">
+            Copy
+          </button>
+        </div>
+      </div>
       <div class="form-group"><label>Google Place ID (optional)</label><input type="text" id="r-google" placeholder="ChIJ..."></div>
       <div class="form-group"><label>Yelp Business ID (optional)</label><input type="text" id="r-yelp" placeholder="restaurant-name-chicago"></div>
       <div class="form-group"><label>Owner phone number</label><input type="text" id="r-phone" placeholder="(312) 555-0100"></div>
@@ -1417,6 +1430,25 @@ input:focus,select:focus{border-color:var(--ember)}
 </div>
 
 <script>
+function genPassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  let pw = '';
+  for(let i=0;i<10;i++) pw += chars[Math.floor(Math.random()*chars.length)];
+  document.getElementById('u-password').value = pw;
+  const btn = document.getElementById('copy-pw-btn');
+  btn.textContent = 'Copy';
+  btn.style.color = 'var(--ink2)';
+}
+function copyPassword() {
+  const pw = document.getElementById('u-password').value;
+  if(!pw) { return; }
+  navigator.clipboard.writeText(pw).then(() => {
+    const btn = document.getElementById('copy-pw-btn');
+    btn.textContent = '✓ Copied';
+    btn.style.color = 'var(--green)';
+    setTimeout(() => { btn.textContent = 'Copy'; btn.style.color = 'var(--ink2)'; }, 2000);
+  });
+}
 function toggleMenu(id) {
   event.stopPropagation();
   const menu = document.getElementById('menu-'+id);
