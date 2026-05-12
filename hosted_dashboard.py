@@ -285,16 +285,16 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 </header>
 <div style="background:var(--ink);padding:0 28px">
   <nav style="display:flex;gap:0">
-    {% if mod_reviews %}<button class="tab active" onclick="switchTab('reviews',this)">Reviews <span class="badge">{{rstats.total}}</span></button>{% endif %}
-    {% if mod_labor %}<button class="tab" onclick="switchTab('labor',this)">Labor</button>{% endif %}
-    {% if mod_inventory %}<button class="tab" onclick="switchTab('inventory',this)">Inventory</button>{% endif %}
-    {% if mod_marketing %}<button class="tab" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
-    <button class="tab {{'active' if not mod_reviews}}" onclick="switchTab('account',this)">Account</button>
+    {% if mod_reviews %}<button class="tab {{'active' if mod_reviews}}" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews <span class="badge">{{rstats.total}}</span></button>{% endif %}
+    {% if mod_labor %}<button class="tab {{'active' if not mod_reviews and mod_labor}}" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
+    {% if mod_inventory %}<button class="tab {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="tab-inventory" onclick="switchTab('inventory',this)">Inventory</button>{% endif %}
+    {% if mod_marketing %}<button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
+    <button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" onclick="switchTab('account',this)">Account</button>
   </nav>
 </div>
 
 <!-- REVIEWS -->
-<div class="panel active" id="panel-reviews">
+<div class="panel {{'active' if mod_reviews}}" id="panel-reviews">
   <div class="stat-row">
     <div class="stat"><div class="stat-n">{{rstats.avg_rating}}</div><div class="stat-l">Avg rating</div></div>
     <div class="stat"><div class="stat-n">{{rstats.total}}</div><div class="stat-l">Total</div></div>
@@ -398,7 +398,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 </div>
 
 <!-- LABOR -->
-<div class="panel" id="panel-labor">
+<div class="panel {{'active' if not mod_reviews and mod_labor}}" id="panel-labor">
 
   <!-- Hero metric — dollar gap -->
   <div id="labor-gap-banner" style="background:var(--ink);border-radius:var(--r);padding:20px 24px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
@@ -511,7 +511,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 </div>
 
 <!-- INVENTORY -->
-<div class="panel" id="panel-inventory">
+<div class="panel {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="panel-inventory">
   <div class="stat-row">
     <div class="stat hi"><div class="stat-n">${{inv.total_waste_cost_week|format_num}}</div><div class="stat-l">Waste/week</div></div>
     <div class="stat hi"><div class="stat-n">${{inv.monthly_waste_projection|int|format_num}}</div><div class="stat-l">Projected/mo</div></div>
@@ -552,7 +552,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 </div>
 
 <!-- MARKETING -->
-<div class="panel" id="panel-marketing">
+<div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing">
   <div class="slabel">Content type</div>
   <div class="ct-grid">{% for ct in ctypes %}
     <div class="ct-btn {{'selected' if loop.first}}" onclick="selectCt('{{ct.id}}',this)">
@@ -578,7 +578,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 </div>
 
 <!-- ACCOUNT -->
-<div class="panel" id="panel-account">
+<div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account">
   <div class="slabel">Restaurant details</div>
   <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px;max-width:500px">
     <table style="font-size:13px;width:100%">
@@ -661,9 +661,16 @@ function switchTab(n,btn){
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor')renderBars();
-  // Log activity
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
 }
+// Auto-load data for whichever tab is active on page load
+window.addEventListener('DOMContentLoaded', function() {
+  const activePanel = document.querySelector('.panel.active');
+  if(!activePanel) return;
+  const id = activePanel.id.replace('panel-','');
+  if(id==='labor'&&!laborLoaded){loadLaborInsight();renderBars();}
+  if(id==='inventory'&&!invLoaded){loadInvInsight();}
+});
 let rfilter='{{rfilter}}';
 function setRF(f,btn){rfilter=f;document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active','active-red'));btn.classList.add(f==='urgent'?'active-red':'active');filterReviews()}
 function filterReviews(){const q=document.getElementById('rsearch').value;window.location='/?filter='+rfilter+'&search='+encodeURIComponent(q)}
