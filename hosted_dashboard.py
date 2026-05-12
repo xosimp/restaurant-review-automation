@@ -720,20 +720,28 @@ function loadLaborInsight(){
   });
 }
 async function downloadSchedule(btn) {
-  btn.textContent = 'Generating…';
+  btn.textContent = 'Generating… (30 sec)';
   btn.disabled = true;
   try {
     const res = await fetch('/api/download-schedule');
-    if(!res.ok) { btn.textContent = 'Error — try again'; btn.disabled=false; return; }
+    const contentType = res.headers.get('content-type') || '';
+    if(contentType.includes('json')) {
+      const data = await res.json();
+      btn.textContent = data.error || 'Error — try again';
+      setTimeout(()=>{btn.textContent='Download optimized schedule ↓';btn.disabled=false;},4000);
+      return;
+    }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = 'optimized_schedule.csv'; a.click();
+    a.href = url;
+    a.download = 'optimized_schedule.csv';
+    a.click();
     btn.textContent = '✓ Downloaded';
     setTimeout(()=>{btn.textContent='Download optimized schedule ↓';btn.disabled=false;},3000);
   } catch(e) {
     btn.textContent = 'Error — try again';
-    btn.disabled = false;
+    setTimeout(()=>{btn.textContent='Download optimized schedule ↓';btn.disabled=false;},4000);
   }
 }
 function loadInvInsight(){invLoaded=true;fetch('/api/inv-insight').then(r=>r.json()).then(d=>{const el=document.getElementById('inv-insight');el.textContent=d.insight;el.classList.remove('insight-loading')})}
@@ -2564,25 +2572,37 @@ def labor_gap_api(current_user):
 @app.route("/api/download-schedule")
 @login_required
 def download_schedule(current_user):
-    from labor import (analyse_shifts_for_restaurant, load_shifts_for_restaurant,
-                       generate_optimized_schedule, get_hourly_rate)
-    from models import get_restaurant
     import io
-    restaurant = get_restaurant(current_user["restaurant_id"])
-    shifts   = load_shifts_for_restaurant(current_user["restaurant_id"])
-    analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
-    rate     = get_hourly_rate(current_user["restaurant_id"])
-    csv_text = generate_optimized_schedule(
-        analysis, shifts,
-        restaurant_name=restaurant.name if restaurant else "Restaurant",
-        hourly_rate=rate
-    )
-    return send_file(
-        io.BytesIO(csv_text.encode()),
-        mimetype="text/csv",
-        as_attachment=True,
-        download_name=f"optimized_schedule_{restaurant.name.replace(' ','_')}.csv"
-    )
+    try:
+        from labor import (analyse_shifts_for_restaurant, load_shifts_for_restaurant,
+                           generate_optimized_schedule, get_hourly_rate)
+        from models import get_restaurant
+        restaurant = get_restaurant(current_user["restaurant_id"])
+        shifts   = load_shifts_for_restaurant(current_user["restaurant_id"])
+        if not shifts:
+            return jsonify(ok=False, error="No shift data available — upload shifts CSV first"), 400
+        analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
+        rate     = get_hourly_rate(current_user["restaurant_id"])
+        owner    = restaurant.owner_name if restaurant and restaurant.owner_name else None
+        csv_text = generate_optimized_schedule(
+            analysis, shifts,
+            restaurant_name=restaurant.name if restaurant else "Restaurant",
+            hourly_rate=rate,
+            owner_name=owner
+        )
+        # Clean up any markdown Claude might add
+        lines = [l for l in csv_text.split("\n") if l.strip() and not l.startswith("#") and not l.startswith("```")]
+        csv_clean = "\n".join(lines)
+        name = (restaurant.name if restaurant else "Restaurant").replace(" ","_")
+        return send_file(
+            io.BytesIO(csv_clean.encode()),
+            mimetype="text/csv",
+            as_attachment=True,
+            download_name=f"optimized_schedule_{name}.csv"
+        )
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify(ok=False, error=str(e)), 500
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 

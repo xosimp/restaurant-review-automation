@@ -171,40 +171,58 @@ Write in plain paragraphs only. No special characters."""
 
 def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  restaurant_name: str = "Restaurant",
-                                 hourly_rate: float = DEFAULT_HOURLY_RATE) -> str:
+                                 hourly_rate: float = DEFAULT_HOURLY_RATE,
+                                 owner_name: str = None) -> str:
     """Use Claude to generate an optimized weekly schedule as CSV."""
-    # Get unique roles and employees
-    roles = list({s["role"] for s in shifts})
+    from datetime import datetime, timedelta
+
+    # Get unique roles and employees with their typical hours
+    emp_hours = analysis.get("employee_hours", {})
     employees = list({s["employee"]: s["role"] for s in shifts}.items())
     overstaffed = analysis.get("overstaffed_days", [])[:5]
+    understaffed = analysis.get("understaffed_days", [])[:3]
     dow = analysis.get("dow_summary", {})
 
-    prompt = f"""You are a restaurant scheduling expert. Generate an optimized 7-day schedule for {restaurant_name}.
+    # Next Monday as schedule start
+    today = datetime.now()
+    days_ahead = (7 - today.weekday()) % 7 or 7
+    monday = today + timedelta(days=days_ahead)
+    week_dates = [(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    week_days  = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
 
-Current situation:
-- Labor ratio: {analysis["overall_labor_pct"]}% (target: 28-32%)
-- Overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
-- Labor by day of week: {dow}
-- Hourly rate: ${hourly_rate}/hr blended
-- Staff and roles: {[e[0] + " (" + e[1] + ")" for e in employees[:12]]}
+    prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate a realistic, optimized schedule for next week.
 
-Generate a CSV schedule with these exact columns:
+Current labor data:
+- Overall labor ratio: {analysis["overall_labor_pct"]}% (target: 28-32%)
+- Monthly labor overspend: ${analysis.get("potential_savings",0):,.0f} estimated recoverable
+- Overstaffed patterns: {[d["day"] + " avg " + str(d["labor_pct"]) + "%" for d in overstaffed]}
+- Understaffed patterns: {[d["day"] for d in understaffed]}
+- Labor % by day: {dow}
+- Blended hourly rate: ${hourly_rate}/hr
+- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}
+
+Schedule dates for next week:
+{chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
+
+Generate a CSV with these EXACT columns (no other text, no markdown, just CSV):
 date,day,employee,role,shift_start,shift_end,scheduled_hours,notes
 
-Rules:
-- Reduce hours on overstaffed days by 10-20%
-- Keep coverage adequate on high-sales days
-- No employee over 40 hours/week
-- Include 5-8 shifts per day depending on day volume
-- Use actual employee names from the list above
-- Notes column: brief reason for any changes (e.g. "reduced from 6h - slow Monday pattern")
-- Generate exactly 7 days starting Monday
+Requirements:
+- Use the exact dates listed above
+- Use real employee names from the staff list
+- Reduce coverage on historically overstaffed days by 10-15%
+- Maintain full coverage on high-volume days (Fri/Sat typically)
+- No employee over 38 hours for the week
+- Servers: typically 4-6h shifts, bartenders: 5-7h shifts
+- Notes: one brief phrase explaining any change from normal (e.g. "reduced - slow Monday pattern" or "full coverage - high volume Friday")
+- Include 6-10 shifts per day
+- Start times between 10:00 and 18:00, end times between 15:00 and 23:00
 
-Return ONLY the CSV, no explanation, no markdown."""
+Output ONLY the CSV rows including header. No explanation."""
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-        max_tokens=2000,
+        max_tokens=2500,
         messages=[{"role": "user", "content": prompt}],
     )
     return msg.content[0].text.strip()
