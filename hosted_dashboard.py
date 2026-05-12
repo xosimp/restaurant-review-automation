@@ -399,29 +399,113 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 
 <!-- LABOR -->
 <div class="panel" id="panel-labor">
-  <div class="stat-row">
-    <div class="stat warn"><div class="stat-n">${{labor.total_labor_cost|int|format_num}}</div><div class="stat-l">Labor (2 wks)</div></div>
-    <div class="stat"><div class="stat-n">${{labor.total_sales|int|format_num}}</div><div class="stat-l">Revenue (2 wks)</div></div>
-    <div class="stat {{'hi' if labor.overall_labor_pct>32 else 'ok'}}"><div class="stat-n">{{labor.overall_labor_pct}}%</div><div class="stat-l">Labor %</div></div>
-    <div class="stat ok"><div class="stat-n">${{labor.potential_savings|int|format_num}}</div><div class="stat-l">Saveable/mo</div></div>
-    <div class="stat hi"><div class="stat-n">{{labor.overstaffed_days|length}}</div><div class="stat-l">Overstaffed</div></div>
+
+  <!-- Hero metric — dollar gap -->
+  <div id="labor-gap-banner" style="background:var(--ink);border-radius:var(--r);padding:20px 24px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <div style="font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">Monthly labor cost vs target</div>
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+        <div>
+          <span id="gap-current-pct" style="font-family:'DM Serif Display',serif;font-size:48px;color:var(--paper);line-height:1">{{labor.overall_labor_pct}}%</span>
+          <span style="font-size:13px;color:var(--ink3);margin-left:6px">current</span>
+        </div>
+        <div style="color:var(--ink3);font-size:20px">→</div>
+        <div>
+          <span style="font-family:'DM Serif Display',serif;font-size:32px;color:#6fcf97;line-height:1">30%</span>
+          <span style="font-size:13px;color:var(--ink3);margin-left:4px">target</span>
+        </div>
+      </div>
+      <div id="gap-dollar" style="font-size:13px;color:var(--ember2);margin-top:6px;font-weight:500">Loading cost gap…</div>
+    </div>
+    <div style="text-align:right">
+      <div id="gap-amount" style="font-family:'DM Serif Display',serif;font-size:36px;color:var(--ember2);line-height:1">—</div>
+      <div style="font-size:11px;color:var(--ink3);margin-top:4px">estimated monthly overspend</div>
+      <button onclick="downloadSchedule(this)" style="margin-top:12px;padding:9px 18px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#a83d25'" onmouseout="this.style.background='var(--ember)'">
+        Download optimized schedule ↓
+      </button>
+    </div>
   </div>
-  <div class="insight"><div class="insight-lbl">AI consultant analysis</div><div class="insight-text insight-loading" id="labor-insight">Loading analysis…</div></div>
+
+  <!-- Stats row -->
+  <div class="stat-row">
+    <div class="stat"><div class="stat-n">${{labor.total_sales|int|format_num}}</div><div class="stat-l">Revenue (2 wks)</div></div>
+    <div class="stat warn"><div class="stat-n">${{labor.total_labor_cost|int|format_num}}</div><div class="stat-l">Labor cost (2 wks)</div></div>
+    <div class="stat {{'hi' if labor.overall_labor_pct>32 else 'ok'}}"><div class="stat-n">{{labor.overall_labor_pct}}%</div><div class="stat-l">Labor %</div></div>
+    <div class="stat hi"><div class="stat-n">{{labor.overstaffed_days|length}}</div><div class="stat-l">Overstaffed days</div></div>
+    <div class="stat warn"><div class="stat-n">{{labor.overtime_risk|length}}</div><div class="stat-l">Overtime risk</div></div>
+  </div>
+
+  <!-- AI insight -->
+  <div class="insight"><div class="insight-lbl">AI scheduling consultant</div><div class="insight-text insight-loading" id="labor-insight">Loading analysis…</div></div>
+
+  <!-- Two col: overstaffed table + bar chart -->
   <div class="two-col">
     <div>
-      <div class="slabel">Overstaffed days</div>
+      <div class="slabel">Overstaffed days — where the money is going</div>
       <div class="card"><table class="tbl">
-        <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor</th><th>%</th></tr></thead>
-        <tbody>{% for d in labor.overstaffed_days %}<tr><td>{{d.date}}</td><td>{{d.day}}</td><td>${{d.sales|int|format_num}}</td><td>${{d.labor_cost|format_num}}</td><td><span class="pill pill-red">{{d.labor_pct}}%</span></td></tr>
-        {% else %}<tr><td colspan="5" style="color:var(--ink3);font-style:italic;padding:10px">None flagged</td></tr>{% endfor %}
-        </tbody></table></div>
+        <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor cost</th><th>Labor %</th><th>Over target</th></tr></thead>
+        <tbody>
+        {% for d in labor.overstaffed_days %}
+        <tr>
+          <td>{{d.date}}</td>
+          <td style="font-weight:500">{{d.day}}</td>
+          <td>${{d.sales|int|format_num}}</td>
+          <td>${{d.labor_cost|format_num}}</td>
+          <td><span class="pill {{'pill-red' if d.labor_pct>35 else 'pill-amber'}}">{{d.labor_pct}}%</span></td>
+          <td style="color:var(--red);font-size:11px;font-weight:500">+{{(d.labor_pct - 30)|round(1)}}pp</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" style="color:var(--ink3);font-style:italic;padding:10px">No overstaffed days — great work!</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+
+      {% if labor.overtime_risk %}
+      <div class="slabel" style="margin-top:14px">Overtime risk</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Employee</th><th>Hours (2 wks)</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for emp in labor.overtime_risk %}
+        <tr>
+          <td style="font-weight:500">{{emp.employee}}</td>
+          <td>{{emp.hours}}h</td>
+          <td><span class="pill pill-amber">Near overtime</span></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% endif %}
     </div>
+
     <div>
-      <div class="slabel">Labor % by day</div>
-      <div class="card" style="padding:14px"><div class="day-bars" id="day-bars"></div>
-        <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--ink3)">{% for d in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}<span>{{d}}</span>{% endfor %}</div>
-        <div style="margin-top:6px;font-size:10px;color:var(--ink3)">Target 28–32% · <span style="color:var(--red)">Red = over</span></div>
+      <div class="slabel">Labor % by day of week</div>
+      <div class="card" style="padding:16px">
+        <div class="day-bars" id="day-bars"></div>
+        <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--ink3);margin-top:4px">
+          {% for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] %}<span>{{d}}</span>{% endfor %}
+        </div>
+        <div style="margin-top:8px;display:flex;gap:12px;font-size:10px;color:var(--ink3)">
+          <span><span style="color:var(--red)">■</span> Over 32%</span>
+          <span><span style="color:#ef9f27">■</span> 28–32%</span>
+          <span><span style="color:#6fcf97">■</span> Under 28%</span>
+        </div>
       </div>
+
+      <div class="slabel" style="margin-top:14px">Understaffed days</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor %</th></tr></thead>
+        <tbody>
+        {% for d in labor.understaffed_days %}
+        <tr>
+          <td>{{d.date}}</td><td style="font-weight:500">{{d.day}}</td>
+          <td>${{d.sales|int|format_num}}</td>
+          <td><span class="pill pill-green">{{d.labor_pct}}%</span></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" style="color:var(--ink3);font-style:italic;padding:10px">None flagged</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
     </div>
   </div>
 </div>
@@ -574,7 +658,7 @@ function switchTab(n,btn){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('panel-'+n).classList.add('active');btn.classList.add('active');
-  if(n==='labor'&&!laborLoaded)loadLaborInsight();
+  if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor')renderBars();
   // Log activity
@@ -602,7 +686,49 @@ function skipR(id){
 const dowData={{labor.dow_summary|tojson}};
 function renderBars(){const days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];const vals=days.map(d=>dowData[d]||0);const mx=Math.max(...vals,40);const c=document.getElementById('day-bars');if(!c)return;c.innerHTML=days.map(d=>{const pct=dowData[d]||0;const h=Math.round((pct/mx)*72);const col=pct>32?'var(--red)':pct>26?'var(--amber)':'var(--green)';return`<div class="day-bar-wrap"><div class="day-bar" style="height:${h}px;background:${col}" title="${d}: ${pct}%"></div></div>`}).join('')}
 let laborLoaded=false,invLoaded=false;
-function loadLaborInsight(){laborLoaded=true;fetch('/api/labor-insight').then(r=>r.json()).then(d=>{const el=document.getElementById('labor-insight');el.textContent=d.insight;el.classList.remove('insight-loading')})}
+function loadLaborInsight(){
+  laborLoaded=true;
+  // Load AI insight
+  fetch('/api/labor-insight').then(r=>r.json()).then(d=>{
+    const el=document.getElementById('labor-insight');
+    el.textContent=d.insight;
+    el.classList.remove('insight-loading');
+  });
+  // Load dollar gap
+  fetch('/api/labor-gap').then(r=>r.json()).then(d=>{
+    const gapEl = document.getElementById('gap-amount');
+    const msgEl = document.getElementById('gap-dollar');
+    const pctEl = document.getElementById('gap-current-pct');
+    if(d.over_target && d.monthly_gap > 0) {
+      gapEl.textContent = '$' + d.monthly_gap.toLocaleString();
+      gapEl.style.color = 'var(--ember2)';
+      msgEl.textContent = 'You are ' + d.current_pct + '% — ' + d.monthly_gap.toLocaleString(undefined,{style:"currency",currency:"USD",maximumFractionDigits:0}) + '/mo above the 30% target. Optimizing scheduling could recover this.';
+      pctEl.style.color = '#ef9f27';
+    } else {
+      gapEl.textContent = 'On target';
+      gapEl.style.color = '#6fcf97';
+      msgEl.textContent = 'Your labor % is within the 28-32% target range. Keep it up.';
+      pctEl.style.color = '#6fcf97';
+    }
+  });
+}
+async function downloadSchedule(btn) {
+  btn.textContent = 'Generating…';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/download-schedule');
+    if(!res.ok) { btn.textContent = 'Error — try again'; btn.disabled=false; return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'optimized_schedule.csv'; a.click();
+    btn.textContent = '✓ Downloaded';
+    setTimeout(()=>{btn.textContent='Download optimized schedule ↓';btn.disabled=false;},3000);
+  } catch(e) {
+    btn.textContent = 'Error — try again';
+    btn.disabled = false;
+  }
+}
 function loadInvInsight(){invLoaded=true;fetch('/api/inv-insight').then(r=>r.json()).then(d=>{const el=document.getElementById('inv-insight');el.textContent=d.insight;el.classList.remove('insight-loading')})}
 let selCt='{{ctypes[0].id if ctypes}}';
 function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(b=>b.classList.remove('selected'));el.classList.add('selected')}
@@ -1792,8 +1918,12 @@ def skip(rid, current_user):
 @app.route("/api/labor-insight")
 @login_required
 def labor_insight_api(current_user):
-    from labor import load_shifts, analyse_shifts, get_claude_insights
-    insight = get_claude_insights(analyse_shifts(load_shifts()))
+    from labor import analyse_shifts_for_restaurant, get_claude_insights
+    from models import get_restaurant
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    name = restaurant.name if restaurant else "your restaurant"
+    analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
+    insight = get_claude_insights(analysis, restaurant_name=name)
     return jsonify(insight=insight)
 
 @app.route("/api/inv-insight")
@@ -2404,6 +2534,37 @@ def stop_viewing():
     resp = make_response(redirect("/login?next=/admin"))
     resp.delete_cookie("session_token")
     return resp
+
+@app.route("/api/labor-gap")
+@login_required
+def labor_gap_api(current_user):
+    from labor import analyse_shifts_for_restaurant, calculate_monthly_gap
+    analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
+    gap = calculate_monthly_gap(analysis)
+    return jsonify(gap)
+
+@app.route("/api/download-schedule")
+@login_required
+def download_schedule(current_user):
+    from labor import (analyse_shifts_for_restaurant, load_shifts_for_restaurant,
+                       generate_optimized_schedule, get_hourly_rate)
+    from models import get_restaurant
+    import io
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    shifts   = load_shifts_for_restaurant(current_user["restaurant_id"])
+    analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
+    rate     = get_hourly_rate(current_user["restaurant_id"])
+    csv_text = generate_optimized_schedule(
+        analysis, shifts,
+        restaurant_name=restaurant.name if restaurant else "Restaurant",
+        hourly_rate=rate
+    )
+    return send_file(
+        io.BytesIO(csv_text.encode()),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=f"optimized_schedule_{restaurant.name.replace(' ','_')}.csv"
+    )
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 

@@ -127,9 +127,9 @@ def analyse_shifts(shifts: list[dict],
     }
 
 
-def get_claude_insights(analysis: dict) -> str:
+def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant") -> str:
     """Ask Claude to narrate the findings like a restaurant consultant."""
-    prompt = f"""You are an expert restaurant labor consultant reviewing two weeks of shift data for Maplewood Kitchen, a busy Lincoln Park restaurant.
+    prompt = f"""You are an expert restaurant labor consultant reviewing two weeks of shift data for {restaurant_name}.
 
 Here is the analysis:
 - Overall labor cost: ${analysis['total_labor_cost']:,.0f} on ${analysis['total_sales']:,.0f} in sales ({analysis['overall_labor_pct']}% labor ratio)
@@ -154,3 +154,68 @@ Write like a sharp consultant who respects the owner's time. No fluff, no bullet
         messages=[{"role": "user", "content": prompt}],
     )
     return msg.content[0].text.strip()
+
+
+def generate_optimized_schedule(analysis: dict, shifts: list[dict],
+                                 restaurant_name: str = "Restaurant",
+                                 hourly_rate: float = DEFAULT_HOURLY_RATE) -> str:
+    """Use Claude to generate an optimized weekly schedule as CSV."""
+    # Get unique roles and employees
+    roles = list({s["role"] for s in shifts})
+    employees = list({s["employee"]: s["role"] for s in shifts}.items())
+    overstaffed = analysis.get("overstaffed_days", [])[:5]
+    dow = analysis.get("dow_summary", {})
+
+    prompt = f"""You are a restaurant scheduling expert. Generate an optimized 7-day schedule for {restaurant_name}.
+
+Current situation:
+- Labor ratio: {analysis["overall_labor_pct"]}% (target: 28-32%)
+- Overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
+- Labor by day of week: {dow}
+- Hourly rate: ${hourly_rate}/hr blended
+- Staff and roles: {[e[0] + " (" + e[1] + ")" for e in employees[:12]]}
+
+Generate a CSV schedule with these exact columns:
+date,day,employee,role,shift_start,shift_end,scheduled_hours,notes
+
+Rules:
+- Reduce hours on overstaffed days by 10-20%
+- Keep coverage adequate on high-sales days
+- No employee over 40 hours/week
+- Include 5-8 shifts per day depending on day volume
+- Use actual employee names from the list above
+- Notes column: brief reason for any changes (e.g. "reduced from 6h - slow Monday pattern")
+- Generate exactly 7 days starting Monday
+
+Return ONLY the CSV, no explanation, no markdown."""
+
+    msg = client.messages.create(
+        model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+        max_tokens=2000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return msg.content[0].text.strip()
+
+
+def calculate_monthly_gap(analysis: dict) -> dict:
+    """Calculate the dollar gap between current and target labor %."""
+    current_pct = analysis["overall_labor_pct"]
+    total_sales  = analysis["total_sales"]
+    total_labor  = analysis["total_labor_cost"]
+    target_pct   = 30.0  # midpoint of 28-32% target
+
+    # Extrapolate to monthly (data covers ~2 weeks)
+    monthly_sales = total_sales * 2
+    monthly_labor = total_labor * 2
+    target_labor  = monthly_sales * (target_pct / 100)
+    gap           = max(0, monthly_labor - target_labor)
+
+    return {
+        "current_pct":   current_pct,
+        "target_pct":    target_pct,
+        "monthly_labor": round(monthly_labor, 0),
+        "monthly_sales": round(monthly_sales, 0),
+        "target_labor":  round(target_labor, 0),
+        "monthly_gap":   round(gap, 0),
+        "over_target":   current_pct > target_pct,
+    }
