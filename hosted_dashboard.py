@@ -603,22 +603,77 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 
 <!-- ACCOUNT -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account">
-  <div class="slabel">Restaurant details</div>
-  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px;max-width:500px">
-    <table style="font-size:13px;width:100%">
-      <tr><td style="color:var(--ink3);padding:5px 0;width:140px">Restaurant</td><td style="font-weight:500">{{restaurant.name}}</td></tr>
-      <tr><td style="color:var(--ink3);padding:5px 0">Owner email</td><td>{{restaurant.owner_email}}</td></tr>
-      <tr><td style="color:var(--ink3);padding:5px 0">Support</td><td><a href="mailto:will@cavnar.ai" style="color:var(--ember);text-decoration:none">will@cavnar.ai</a></td></tr>
-      <tr><td style="color:var(--ink3);padding:5px 0">Powered by</td><td><a href="https://cavnar.ai" target="_blank" style="color:var(--ember);text-decoration:none">cavnar.ai</a></td></tr>
-    </table>
-  </div>
-  <div class="slabel">Change password</div>
-  <div class="change-pw-section">
-    <div class="form-group"><label class="form-label">Current password</label><input class="form-input" type="password" id="pw-current" placeholder="••••••••"></div>
-    <div class="form-group"><label class="form-label">New password</label><input class="form-input" type="password" id="pw-new" placeholder="min 8 characters"></div>
-    <div class="form-group"><label class="form-label">Confirm new password</label><input class="form-input" type="password" id="pw-confirm" placeholder="••••••••"></div>
-    <button class="btn-primary" onclick="changePassword()">Update password</button>
-    <div id="pw-status" style="font-size:12px;margin-top:8px;display:none"></div>
+
+  <!-- Account overview -->
+  <div class="two-col" style="margin-bottom:0">
+    <div>
+      <div class="slabel">Your account</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
+        <table style="font-size:13px;width:100%">
+          <tr><td style="color:var(--ink3);padding:5px 0;width:140px">Restaurant</td><td style="font-weight:500">{{restaurant.name}}</td></tr>
+          <tr><td style="color:var(--ink3);padding:5px 0">Email</td><td>{{restaurant.owner_email}}</td></tr>
+          <tr><td style="color:var(--ink3);padding:5px 0">Username</td><td>{{current_user.username}}</td></tr>
+          <tr><td style="color:var(--ink3);padding:5px 0">Active modules</td>
+            <td>
+              {% set active = [] %}
+              {% if mod_reviews %}{% set _ = active.append("Reviews") %}{% endif %}
+              {% if mod_labor %}{% set _ = active.append("Labor") %}{% endif %}
+              {% if mod_inventory %}{% set _ = active.append("Inventory") %}{% endif %}
+              {% if mod_marketing %}{% set _ = active.append("Marketing") %}{% endif %}
+              <span style="font-weight:500">{{active|join(", ") or "None"}}</span>
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <!-- Change password -->
+      <div class="slabel">Change password</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
+        <div class="form-group"><label class="form-label">Current password</label><input class="form-input" type="password" id="pw-current" placeholder="••••••••"></div>
+        <div class="form-group"><label class="form-label">New password</label><input class="form-input" type="password" id="pw-new" placeholder="min 8 characters"></div>
+        <div class="form-group"><label class="form-label">Confirm new password</label><input class="form-input" type="password" id="pw-confirm" placeholder="••••••••"></div>
+        <button class="btn-primary" onclick="changePassword()">Update password</button>
+        <div id="pw-status" style="font-size:12px;margin-top:8px;display:none"></div>
+      </div>
+    </div>
+
+    <div>
+      <!-- Support -->
+      <div class="slabel">Support</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
+        <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
+          Questions, requests, or anything not working as expected — reach out directly.
+        </p>
+        <a href="mailto:will@cavnar.ai"
+           style="display:inline-block;background:var(--ember);color:white;padding:9px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">
+          Email Will →
+        </a>
+        <p style="font-size:11px;color:var(--ink3);margin-top:10px">
+          Typical response time: same business day.<br>
+          <a href="https://cavnar.ai" target="_blank" style="color:var(--ember);text-decoration:none">cavnar.ai</a>
+        </p>
+      </div>
+
+      <!-- Cancel / billing -->
+      <div class="slabel">Billing & cancellation</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
+        <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:10px">
+          Your subscription is managed through Stripe. You can cancel anytime — 
+          your access remains active until the end of your current billing period.
+        </p>
+        <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
+          To cancel or make changes to your subscription, email Will directly and 
+          it will be handled within one business day.
+        </p>
+        <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%20I%20would%20like%20to%20cancel%20my%20Cavnar%20AI%20subscription%20for%20{{restaurant.name}}."
+           style="display:inline-block;padding:9px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;border:1px solid var(--paper3);color:var(--ink2)">
+          Request cancellation
+        </a>
+        <p style="font-size:11px;color:var(--ink3);margin-top:10px">
+          No cancellation fees. Cancel before your next billing date to avoid the next charge.
+        </p>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1695,10 +1750,10 @@ input:focus,select:focus{border-color:var(--ember)}
           </button>
         </div>
       </div>
-      <div class="form-group"><label>Google Place ID (optional)</label><input type="text" id="r-google" placeholder="ChIJ..."></div>
-      <div class="form-group"><label>Yelp Business ID (optional)</label><input type="text" id="r-yelp" placeholder="restaurant-name-chicago"></div>
       <div class="form-group"><label>Owner / GM name</label><input type="text" id="r-owner-name" placeholder="e.g. Sarah"></div>
       <div class="form-group"><label>Owner phone number</label><input type="text" id="r-phone" placeholder="(312) 555-0100"></div>
+      <div class="form-group"><label>Google Place ID (optional)</label><input type="text" id="r-google" placeholder="ChIJ..."></div>
+      <div class="form-group"><label>Yelp Business ID (optional)</label><input type="text" id="r-yelp" placeholder="restaurant-name-chicago"></div>
       <div class="form-group full"><label>Owner voice notes (for AI drafting)</label><input type="text" id="r-voice" placeholder="Warm, casual tone. Always invite guests back. Never sound corporate."></div>
       <div class="form-group full">
         <label>Modules (check all that apply)</label>
