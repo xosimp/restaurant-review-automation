@@ -2104,7 +2104,7 @@ TIER_PRICES = {
 
 
 def create_stripe_checkout(module_count: int, owner_email: str,
-                            restaurant_name: str) -> str | None:
+                            restaurant_name: str):
     """
     Dynamically create a Stripe checkout session for any module count.
     Returns the checkout URL or None on failure.
@@ -2112,7 +2112,10 @@ def create_stripe_checkout(module_count: int, owner_email: str,
     """
     import stripe as _stripe
     stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
-    if not stripe_key or module_count == 0:
+    if not stripe_key:
+        print("[STRIPE ERROR] STRIPE_SECRET_KEY not set in environment")
+        return None
+    if module_count == 0:
         return None
 
     _stripe.api_key = stripe_key
@@ -2174,7 +2177,9 @@ def create_stripe_checkout(module_count: int, owner_email: str,
         return session.url
 
     except Exception as e:
-        print(f"Stripe checkout creation failed: {e}")
+        import traceback
+        print(f"[STRIPE ERROR] Checkout creation failed for {restaurant_name}: {e}")
+        traceback.print_exc()
         return None
 
 
