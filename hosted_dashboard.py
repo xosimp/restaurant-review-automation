@@ -452,7 +452,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
           <td>${{d.sales|int|format_num}}</td>
           <td>${{d.labor_cost|format_num}}</td>
           <td><span class="pill {{'pill-red' if d.labor_pct>35 else 'pill-amber'}}">{{d.labor_pct}}%</span></td>
-          {% set diff = (d.labor_pct - (labor.labor_target if labor.labor_target is defined else labor_target))|round(1) %}
+          {% set diff = (d.labor_pct - (labor.labor_target|default(30.0)))|round(1) %}
           {% if diff > 0 %}
           <td style="color:var(--red);font-size:11px;font-weight:500">+{{diff}}% over</td>
           {% else %}
@@ -746,7 +746,7 @@ function loadLaborInsight(){
     const gapEl = document.getElementById('gap-amount');
     const msgEl = document.getElementById('gap-dollar');
     const pctEl = document.getElementById('gap-current-pct');
-    const target = {{labor_target}};
+    const target = {{labor_target|default(30.0)}};
     if(!d || d.ok === false) {
       gapEl.textContent = '—';
       msgEl.textContent = 'Unable to calculate gap. Upload shift data to see this.';
@@ -2134,7 +2134,7 @@ def index(current_user):
         mod_marketing=restaurant.module_marketing,
         now=datetime.now().strftime("%b %d, %Y"),
         viewing_as=current_user.get("is_admin", 0),
-        labor_target=restaurant.labor_target_pct if restaurant else 30.0)
+        labor_target=float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0)
 
 @app.route("/approve/<int:rid>", methods=["POST"])
 @login_required
