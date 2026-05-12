@@ -263,6 +263,16 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 </style>
 </head>
 <body>
+{% if current_user.is_admin %}
+<div style="background:#b7791f;padding:8px 28px;display:flex;align-items:center;justify-content:space-between">
+  <span style="font-size:12px;color:white;font-weight:500">
+    👁 Viewing as client — {{ restaurant.name }}. This is exactly what they see.
+  </span>
+  <a href="/admin/stop-viewing" style="font-size:11px;color:rgba(255,255,255,.8);text-decoration:none;padding:3px 10px;border:1px solid rgba(255,255,255,.4);border-radius:4px">
+    ← Back to admin
+  </a>
+</div>
+{% endif %}
 <header class="hdr">
   <div class="hdr-left">
     <div class="hdr-logo">Cavnar <em>AI</em></div>
@@ -1382,6 +1392,7 @@ input:focus,select:focus{border-color:var(--ember)}
           <div class="action-dropdown" id="menu-{{user.id}}">
             <button class="action-item" onclick="window.location='/admin/client-settings/{{user.restaurant_id}}'">Settings</button>
             <button class="action-item" onclick="window.location='/admin/client-data/{{user.restaurant_id}}'">Manage data</button>
+            <button class="action-item" onclick="window.location='/admin/view-as/{{user.restaurant_id}}'">View as client</button>
             {% if user.is_active %}
             <div class="action-divider"></div>
             <button class="action-item" onclick="resendPayment({{user.restaurant_id}},'{{user.email}}','{{user.billing_status}}');closeMenu({{user.id}})">Resend payment link</button>
@@ -1729,7 +1740,8 @@ def index(current_user):
         mod_labor=restaurant.module_labor,
         mod_inventory=restaurant.module_inventory,
         mod_marketing=restaurant.module_marketing,
-        now=datetime.now().strftime("%b %d, %Y"))
+        now=datetime.now().strftime("%b %d, %Y"),
+        viewing_as=current_user.get("is_admin", 0))
 
 @app.route("/approve/<int:rid>", methods=["POST"])
 @login_required
@@ -2330,6 +2342,36 @@ def save_draft(review_id, current_user):
     conn.execute("UPDATE reviews SET response_status='drafted' WHERE id=?", (review_id,))
     conn.commit(); conn.close()
     return jsonify(ok=True)
+
+@app.route("/admin/view-as/<int:restaurant_id>")
+@admin_required
+def view_as_client(restaurant_id, current_user):
+    """Log in as a client to see exactly what they see."""
+    from models import get_conn
+    conn = get_conn()
+    user_row = conn.execute(
+        "SELECT * FROM users WHERE restaurant_id=? AND is_admin=0 LIMIT 1",
+        (restaurant_id,)
+    ).fetchone()
+    conn.close()
+    if not user_row:
+        return "No client user found for this restaurant", 404
+    # Create a short-lived session for that user
+    token = create_session(dict(user_row)["id"], days=1)
+    resp = make_response(redirect("/"))
+    resp.set_cookie("session_token", token, max_age=86400,
+                    httponly=True, samesite="Lax")
+    return resp
+
+@app.route("/admin/stop-viewing")
+def stop_viewing():
+    """Return to admin — delete current session and redirect to admin login."""
+    token = request.cookies.get("session_token")
+    if token:
+        delete_session(token)
+    resp = make_response(redirect("/login?next=/admin"))
+    resp.delete_cookie("session_token")
+    return resp
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
