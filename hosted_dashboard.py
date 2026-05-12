@@ -452,7 +452,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
           <td>${{d.sales|int|format_num}}</td>
           <td>${{d.labor_cost|format_num}}</td>
           <td><span class="pill {{'pill-red' if d.labor_pct>35 else 'pill-amber'}}">{{d.labor_pct}}%</span></td>
-          <td style="color:var(--red);font-size:11px;font-weight:500">+{{(d.labor_pct - 30)|round(1)}}pp</td>
+          <td style="color:var(--red);font-size:11px;font-weight:500">+{{(d.labor_pct - 30)|round(1)}}% over target</td>
         </tr>
         {% else %}
         <tr><td colspan="6" style="color:var(--ink3);font-style:italic;padding:10px">No overstaffed days — great work!</td></tr>
