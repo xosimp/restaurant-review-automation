@@ -85,18 +85,59 @@ def analyse_shifts(shifts: list[dict],
         d["labor_cost"] = round(labor_cost, 2)
         d["labor_pct"]  = round(labor_pct, 1)
         if labor_pct > 20:
-            overstaffed.append({"date": date, "day": d["shifts"][0]["day"],
+            # Format date as M/D/YY
+            try:
+                from datetime import datetime as _dt
+                fmt_date = _dt.strptime(date, "%Y-%m-%d").strftime("%-m/%-d/%y")
+            except Exception:
+                fmt_date = date
+            overstaffed.append({"date": fmt_date, "day": d["shifts"][0]["day"],
                                  "labor_pct": round(labor_pct, 1),
                                  "labor_cost": round(labor_cost, 2),
                                  "sales": d["sales"]})
         elif labor_pct < 12 and d["sales"] > 4000:
-            understaffed.append({"date": date, "day": d["shifts"][0]["day"],
+            try:
+                from datetime import datetime as _dt
+                fmt_date = _dt.strptime(date, "%Y-%m-%d").strftime("%-m/%-d/%y")
+            except Exception:
+                fmt_date = date
+            understaffed.append({"date": fmt_date, "day": d["shifts"][0]["day"],
                                   "labor_pct": round(labor_pct, 1), "sales": d["sales"]})
 
-    # Overtime risk (>40h/week employee)
-    for emp, d in by_employee.items():
-        if d["actual"] > 38:
-            overtime_flags.append({"employee": emp, "hours": round(d["actual"], 1)})
+    # Overtime risk — bucket by week, flag anyone who hit 40h in any single week
+    weekly_hours = {}  # {employee: {week_num: hours}}
+    for s in shifts:
+        emp    = s["employee"]
+        actual = float(s["actual_hours"])
+        try:
+            from datetime import datetime as _dt
+            week_num = _dt.strptime(s["date"], "%Y-%m-%d").isocalendar()[1]
+        except Exception:
+            week_num = 0
+        if emp not in weekly_hours:
+            weekly_hours[emp] = {}
+        weekly_hours[emp][week_num] = weekly_hours[emp].get(week_num, 0) + actual
+
+    for emp, weeks in weekly_hours.items():
+        for wk, hrs in weeks.items():
+            if hrs > 40:
+                overtime_flags.append({
+                    "employee": emp,
+                    "hours": round(hrs, 1),
+                    "week": f"Week {wk}",
+                    "status": "overtime"
+                })
+                break  # only flag once per employee
+        else:
+            # Check if any week is close (37-40h)
+            max_hrs = max(weeks.values())
+            if 37 <= max_hrs <= 40:
+                overtime_flags.append({
+                    "employee": emp,
+                    "hours": round(max_hrs, 1),
+                    "week": f"Week {max(weeks, key=weeks.get)}",
+                    "status": "near"
+                })
 
     # Weekly avg labor % by day of week
     dow_summary = {}

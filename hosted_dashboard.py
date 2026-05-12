@@ -461,15 +461,22 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       </table></div>
 
       {% if labor.overtime_risk %}
-      <div class="slabel" style="margin-top:14px">Overtime risk</div>
+      <div class="slabel" style="margin-top:14px">Overtime alerts</div>
       <div class="card"><table class="tbl">
-        <thead><tr><th>Employee</th><th>Hours (2 wks)</th><th>Status</th></tr></thead>
+        <thead><tr><th>Employee</th><th>Hours that week</th><th>Week</th><th>Status</th></tr></thead>
         <tbody>
         {% for emp in labor.overtime_risk %}
         <tr>
           <td style="font-weight:500">{{emp.employee}}</td>
           <td>{{emp.hours}}h</td>
-          <td><span class="pill pill-amber">Near overtime</span></td>
+          <td style="font-size:11px;color:var(--ink3)">{{emp.week}}</td>
+          <td>
+            {% if emp.status == "overtime" %}
+              <span class="pill pill-red">Overtime — review pay</span>
+            {% else %}
+              <span class="pill pill-amber">Near limit</span>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
         </tbody>
@@ -481,7 +488,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       <div class="slabel">Labor % by day of week</div>
       <div class="card" style="padding:16px">
         <div class="day-bars" id="day-bars"></div>
-        <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--ink3);margin-top:4px">
+        <div style="display:flex;justify-content:space-around;font-size:9px;color:var(--ink3);margin-top:3px">
           {% for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] %}<span>{{d}}</span>{% endfor %}
         </div>
         <div style="margin-top:8px;display:flex;gap:12px;font-size:10px;color:var(--ink3)">
@@ -691,7 +698,28 @@ function skipR(id){
   });
 }
 const dowData={{labor.dow_summary|tojson}};
-function renderBars(){const days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];const vals=days.map(d=>dowData[d]||0);const mx=Math.max(...vals,40);const c=document.getElementById('day-bars');if(!c)return;c.innerHTML=days.map(d=>{const pct=dowData[d]||0;const h=Math.round((pct/mx)*72);const col=pct>32?'var(--red)':pct>26?'var(--amber)':'var(--green)';return`<div class="day-bar-wrap"><div class="day-bar" style="height:${h}px;background:${col}" title="${d}: ${pct}%"></div></div>`}).join('')}
+function renderBars(){
+  const days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  const vals=days.map(d=>dowData[d]||0);
+  const filled=vals.filter(v=>v>0);
+  if(!filled.length)return;
+  const dataMin=Math.max(0,Math.min(...filled)-8);
+  const dataMax=Math.max(...filled)+5;
+  const range=dataMax-dataMin||1;
+  const c=document.getElementById('day-bars');
+  if(!c)return;
+  const maxH=72;
+  c.innerHTML=days.map(d=>{
+    const pct=dowData[d]||0;
+    const h=pct>0?Math.max(6,Math.round(((pct-dataMin)/range)*maxH)):0;
+    const col=pct>32?'var(--red)':pct>=28?'#ef9f27':'#6fcf97';
+    const lbl=pct>0?pct+'%':'';
+    return`<div class="day-bar-wrap" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px">
+      <span style="font-size:9px;color:${col};font-weight:600;line-height:1">${lbl}</span>
+      <div style="width:75%;height:${h}px;background:${col};border-radius:3px 3px 0 0" title="${d}: ${pct}%"></div>
+    </div>`;
+  }).join('');
+}
 let laborLoaded=false,invLoaded=false;
 function loadLaborInsight(){
   laborLoaded=true;
