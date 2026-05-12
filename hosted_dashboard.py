@@ -406,9 +406,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
         <div style="font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Monthly labor cost vs target</div>
         {% if labor.date_range and labor.date_range.start %}
-        <div style="font-size:10px;color:var(--ink3)">
-          Data: {{labor.date_range.start|replace('-0','-')|replace('-0','-')}} — {{labor.date_range.end|replace('-0','-')|replace('-0','-')}}
-          ({{labor.date_range.days}} days)
+        <div style="font-size:10px;color:var(--ink3)" id="labor-period">
+          Data period loading…
         </div>
         {% endif %}
       </div>
@@ -719,6 +718,16 @@ function skipR(id){
   });
 }
 const dowData={{labor.dow_summary|tojson}};
+const laborDateRange={{labor.date_range|tojson if labor.date_range else 'null'}};
+(function(){
+  const el=document.getElementById('labor-period');
+  if(!el||!laborDateRange||!laborDateRange.start)return;
+  function fmt(d){
+    const p=d.split('-');
+    return parseInt(p[1])+'/'+parseInt(p[2])+'/'+p[0].slice(2);
+  }
+  el.textContent='Data: '+fmt(laborDateRange.start)+' — '+fmt(laborDateRange.end)+' ('+laborDateRange.days+' days)';
+})();
 function renderBars(){
   const days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
   const vals=days.map(d=>dowData[d]||0);
@@ -1093,27 +1102,36 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
-  <!-- Service tier -->
+  <!-- Module access -->
   <div class="section-card">
-    <div class="section-hdr"><div class="section-title">Service tier</div></div>
+    <div class="section-hdr"><div class="section-title">Module access</div></div>
     <div class="section-body">
-      <div class="form-grid">
-        <div class="form-group">
-          <label>Plan</label>
-          <select id="service_tier" onchange="updateTierPreview(this.value)">
-            <option value="trial" {{"selected" if restaurant.service_tier == "trial"}}>Trial — all modules (demo)</option>
-            <option value="starter_reviews" {{"selected" if restaurant.service_tier == "starter_reviews"}}>Starter — Review Intelligence only</option>
-            <option value="starter_labor" {{"selected" if restaurant.service_tier == "starter_labor"}}>Starter — Labor Optimizer only</option>
-            <option value="starter_inventory" {{"selected" if restaurant.service_tier == "starter_inventory"}}>Starter — Inventory Control only</option>
-            <option value="starter_marketing" {{"selected" if restaurant.service_tier == "starter_marketing"}}>Starter — Marketing Autopilot only</option>
-            <option value="full" {{"selected" if restaurant.service_tier == "full"}}>Full System — all 4 modules</option>
-          </select>
-          <div class="hint">Module tabs update automatically when you save. No manual toggles needed.</div>
-        </div>
-        <div style="background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;padding:12px 14px">
-          <div style="font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3);margin-bottom:8px">Active modules</div>
-          <div id="tier-preview" style="display:flex;flex-direction:column;gap:5px;font-size:12px"></div>
-        </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        {% for mod_id, label, price in [
+          ("reviews","Review Intelligence","$300/mo"),
+          ("labor","Labor Optimizer","$300/mo"),
+          ("inventory","Inventory Control","$300/mo"),
+          ("marketing","Marketing Autopilot","$300/mo")
+        ] %}
+        <label style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
+          <input type="checkbox" id="setting-mod-{{mod_id}}"
+            {% if mod_id == "reviews" and restaurant.module_reviews %}checked
+            {% elif mod_id == "labor" and restaurant.module_labor %}checked
+            {% elif mod_id == "inventory" and restaurant.module_inventory %}checked
+            {% elif mod_id == "marketing" and restaurant.module_marketing %}checked
+            {% endif %}
+            style="width:14px;height:14px;accent-color:#c84b2f">
+          <div>
+            <div style="font-size:13px;font-weight:500;color:var(--ink)">{{label}}</div>
+            <div style="font-size:11px;color:var(--ink3)">{{price}}</div>
+          </div>
+        </label>
+        {% endfor %}
+      </div>
+      <div style="font-size:11px;color:var(--ink3);line-height:1.6">
+        <strong>Pricing:</strong> $500 setup per module · $300/mo per module<br>
+        2 modules = $1,000 + $600/mo &nbsp;·&nbsp; 3 modules = $1,500 + $900/mo &nbsp;·&nbsp; 4 modules = $2,000 + $1,200/mo<br>
+        Checked modules appear as tabs in the client dashboard. Save to apply.
       </div>
     </div>
   </div>
@@ -1178,30 +1196,7 @@ function toggleReviewsLive(btn) {
     : 'Using sample review data — add Place ID and enable to go live';
 }
 
-const TIER_MODULES = {
-  "trial":             {reviews:1,labor:1,inventory:1,marketing:1},
-  "starter_reviews":   {reviews:1,labor:0,inventory:0,marketing:0},
-  "starter_labor":     {reviews:0,labor:1,inventory:0,marketing:0},
-  "starter_inventory": {reviews:0,labor:0,inventory:1,marketing:0},
-  "starter_marketing": {reviews:0,labor:0,inventory:0,marketing:1},
-  "full":              {reviews:1,labor:1,inventory:1,marketing:1},
-};
-const MODULE_LABELS = {
-  reviews:"Review Intelligence",labor:"Labor Optimizer",
-  inventory:"Inventory Control",marketing:"Marketing Autopilot"
-};
-function updateTierPreview(tier) {
-  const mods = TIER_MODULES[tier] || TIER_MODULES["trial"];
-  const el = document.getElementById("tier-preview");
-  el.innerHTML = Object.entries(mods).map(([k,v]) =>
-    `<div style="display:flex;align-items:center;gap:6px">
-      <span style="width:8px;height:8px;border-radius:50%;background:${v?"#2d6a4f":"#e0dbd0"}"></span>
-      <span style="color:${v?"#0e0c0a":"#7a736a"}">${MODULE_LABELS[k]}</span>
-    </div>`
-  ).join("");
-}
-// Init preview on load
-updateTierPreview(document.getElementById("service_tier").value);
+
 
 async function resetPassword() {
   const btn = event.target;
@@ -1274,7 +1269,10 @@ async function saveSettings() {
     labor_target_pct:   parseFloat(document.getElementById('labor_target_pct').value) || 30.0,
     billing_status:  document.getElementById('billing_status').value,
     internal_notes:  document.getElementById('internal_notes').value,
-    service_tier:    document.getElementById('service_tier').value,
+    module_reviews:  document.getElementById('setting-mod-reviews').checked ? 1 : 0,
+    module_labor:    document.getElementById('setting-mod-labor').checked ? 1 : 0,
+    module_inventory:document.getElementById('setting-mod-inventory').checked ? 1 : 0,
+    module_marketing:document.getElementById('setting-mod-marketing').checked ? 1 : 0,
   };
   const res = await fetch(window.location.pathname, {
     method: 'POST',
@@ -1702,16 +1700,31 @@ input:focus,select:focus{border-color:var(--ember)}
       <div class="form-group"><label>Owner / GM name</label><input type="text" id="r-owner-name" placeholder="e.g. Sarah"></div>
       <div class="form-group"><label>Owner phone number</label><input type="text" id="r-phone" placeholder="(312) 555-0100"></div>
       <div class="form-group full"><label>Owner voice notes (for AI drafting)</label><input type="text" id="r-voice" placeholder="Warm, casual tone. Always invite guests back. Never sound corporate."></div>
-      <div class="form-group">
-        <label>Service tier</label>
-        <select id="r-tier">
-          <option value="trial">Trial — all modules (demo)</option>
-          <option value="starter_reviews">Starter — Review Intelligence</option>
-          <option value="starter_labor">Starter — Labor Optimizer</option>
-          <option value="starter_inventory">Starter — Inventory Control</option>
-          <option value="starter_marketing">Starter — Marketing Autopilot</option>
-          <option value="full">Full System — all 4 modules</option>
-        </select>
+      <div class="form-group full">
+        <label>Modules (check all that apply)</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
+          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;letter-spacing:0;text-transform:none">
+            <input type="checkbox" id="mod-reviews" value="reviews" checked style="width:14px;height:14px;accent-color:#c84b2f">
+            Review Intelligence — $300/mo
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;letter-spacing:0;text-transform:none">
+            <input type="checkbox" id="mod-labor" value="labor" style="width:14px;height:14px;accent-color:#c84b2f">
+            Labor Optimizer — $300/mo
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;letter-spacing:0;text-transform:none">
+            <input type="checkbox" id="mod-inventory" value="inventory" style="width:14px;height:14px;accent-color:#c84b2f">
+            Inventory Control — $300/mo
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;letter-spacing:0;text-transform:none">
+            <input type="checkbox" id="mod-marketing" value="marketing" style="width:14px;height:14px;accent-color:#c84b2f">
+            Marketing Autopilot — $300/mo
+          </label>
+        </div>
+        <div style="font-size:11px;color:var(--ink3);margin-top:8px;line-height:1.6">
+          <strong>Pricing:</strong> $500 setup per module · $300/mo per module · 30-day free trial on retainer<br>
+          2 modules = $1,000 setup + $600/mo &nbsp;·&nbsp; 3 modules = $1,500 + $900/mo &nbsp;·&nbsp; 4 modules = $2,000 + $1,200/mo<br>
+          <em>For custom packages, create a one-time Stripe link at the right amount.</em>
+        </div>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-top:14px;margin-bottom:0">
@@ -1834,7 +1847,10 @@ async function createClient() {
     owner_name:      document.getElementById('r-owner-name') ? document.getElementById('r-owner-name').value : '',
     voice_notes:     document.getElementById('r-voice').value,
     owner_phone:     document.getElementById('r-phone').value,
-    service_tier:    document.getElementById('r-tier').value,
+    module_reviews:  document.getElementById('mod-reviews').checked ? 1 : 0,
+    module_labor:    document.getElementById('mod-labor').checked ? 1 : 0,
+    module_inventory:document.getElementById('mod-inventory').checked ? 1 : 0,
+    module_marketing:document.getElementById('mod-marketing').checked ? 1 : 0,
     send_email:      document.getElementById('send-email').checked,
   };
   const res = await fetch('/admin/create-client', {
@@ -1964,19 +1980,28 @@ TIER_PRICES = {
 }
 
 
-def send_payment_email(to_email, restaurant_name, tier):
-    """Send setup + retainer payment links based on service tier."""
+def send_payment_email(to_email, restaurant_name, tier,
+                       module_count: int = None):
+    """Send setup + retainer payment links. Handles custom module counts."""
     if not RESEND_API_KEY:
         return
-    link   = PAYMENT_LINKS.get(tier)
-    prices = TIER_PRICES.get(tier, {})
-    label  = TIER_LABELS.get(tier, tier)
 
-    if not link:
-        return  # Trial — no payment needed
+    # Determine prices based on module count
+    if module_count and module_count not in (1, 4):
+        # Custom package — calculate pricing
+        setup_price    = f"${module_count * 500:,}"
+        retainer_price = f"${module_count * 300:,}/mo"
+        label          = f"{module_count}-Module Package"
+        link           = None  # Will be handled below with instructions
+    else:
+        link           = PAYMENT_LINKS.get(tier)
+        prices         = TIER_PRICES.get(tier, {})
+        label          = TIER_LABELS.get(tier, tier)
+        setup_price    = prices.get("setup", "")
+        retainer_price = prices.get("retainer", "")
 
-    setup_price    = prices.get("setup", "")
-    retainer_price = prices.get("retainer", "")
+    if not setup_price:
+        return  # No modules selected
 
     try:
         import resend as _resend
@@ -2020,10 +2045,8 @@ def send_payment_email(to_email, restaurant_name, tier):
         <p style="font-size:11px;color:#7a736a;margin:0">starting day 31</p>
       </div>
     </div>
-    <a href="{link}"
-       style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">
-      Complete payment →
-    </a>
+    {"" if not link else f'<a href="{link}" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">Complete payment →</a>'}
+    {"" if link else '<p style="font-size:13px;color:#3a3530;line-height:1.6;margin-top:8px"><strong>Custom package:</strong> Will will send you a payment link shortly for the correct amount.</p>'}
   </div>
 
   <p style="font-size:13px;color:#7a736a;line-height:1.6;margin-bottom:24px">
@@ -2154,10 +2177,10 @@ def index(current_user):
         current_user=current_user, restaurant=restaurant,
         rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch,
         labor=labor, inv=inv, ctypes=CONTENT_TYPES,
-        mod_reviews=restaurant.module_reviews,
-        mod_labor=restaurant.module_labor,
-        mod_inventory=restaurant.module_inventory,
-        mod_marketing=restaurant.module_marketing,
+        mod_reviews=int(restaurant.module_reviews or 0),
+        mod_labor=int(restaurant.module_labor or 0),
+        mod_inventory=int(restaurant.module_inventory or 0),
+        mod_marketing=int(restaurant.module_marketing or 0),
         now=datetime.now().strftime("%b %d, %Y"),
         viewing_as=current_user.get("is_admin", 0),
         labor_target=float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0)
@@ -2273,10 +2296,14 @@ def create_client(current_user):
             email=data["owner_email"],
             password=data["password"],
         )
-        # Auto-set service tier if provided
-        if data.get("service_tier"):
-            from models import set_service_tier
-            set_service_tier(rid, data["service_tier"])
+        # Set module access directly from checkboxes
+        from models import update_restaurant
+        update_restaurant(rid, {
+            "module_reviews":  int(data.get("module_reviews", 1)),
+            "module_labor":    int(data.get("module_labor", 0)),
+            "module_inventory":int(data.get("module_inventory", 0)),
+            "module_marketing":int(data.get("module_marketing", 0)),
+        })
         # Send welcome email if requested
         if data.get("send_email") and RESEND_API_KEY:
             try:
@@ -2288,14 +2315,17 @@ def create_client(current_user):
                 )
             except Exception as mail_err:
                 print(f"Welcome email failed: {mail_err}")
-        # Always send payment email (unless trial)
-        tier = data.get("service_tier","trial")
-        if tier != "trial" and RESEND_API_KEY:
+        # Send payment email based on module count
+        mods = (int(data.get("module_reviews",0)) + int(data.get("module_labor",0)) +
+                int(data.get("module_inventory",0)) + int(data.get("module_marketing",0)))
+        if mods > 0 and RESEND_API_KEY:
             try:
+                tier = "full" if mods == 4 else f"custom_{mods}"
                 send_payment_email(
                     to_email=data["owner_email"],
                     restaurant_name=data["restaurant_name"],
                     tier=tier,
+                    module_count=mods,
                 )
             except Exception as mail_err:
                 print(f"Payment email failed: {mail_err}")
@@ -2406,9 +2436,7 @@ def save_client_settings(restaurant_id, current_user):
     try:
         from models import set_service_tier
         tier = data.get("service_tier","trial")
-        # Set tier first (auto-configures modules)
-        set_service_tier(restaurant_id, tier)
-        # Then save all other fields
+        # Set modules directly from checkboxes
         update_restaurant(restaurant_id, {
             "name":            data.get("name","").strip(),
             "owner_email":     data.get("owner_email","").strip(),
@@ -2423,6 +2451,10 @@ def save_client_settings(restaurant_id, current_user):
             "hourly_rate":     float(data.get("hourly_rate") or 26.0),
             "labor_target_pct": float(data.get("labor_target_pct") or 30.0),
             "pos_system":      data.get("pos_system","").strip() or None,
+            "module_reviews":  int(data.get("module_reviews", 1)),
+            "module_labor":    int(data.get("module_labor", 0)),
+            "module_inventory":int(data.get("module_inventory", 0)),
+            "module_marketing":int(data.get("module_marketing", 0)),
             "owner_name":      data.get("owner_name","").strip() or None,
             "owner_phone":     data.get("owner_phone","").strip() or None,
             "digest_day":      data.get("digest_day","monday"),
