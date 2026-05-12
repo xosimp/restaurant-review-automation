@@ -731,7 +731,11 @@ function loadLaborInsight(){
   // Load AI insight
   fetch('/api/labor-insight').then(r=>r.json()).then(d=>{
     const el=document.getElementById('labor-insight');
-    el.textContent=d.insight;
+    el.textContent=d.insight||'Analysis unavailable.';
+    el.classList.remove('insight-loading');
+  }).catch(e=>{
+    const el=document.getElementById('labor-insight');
+    el.textContent='Analysis unavailable — check back shortly.';
     el.classList.remove('insight-loading');
   });
   // Load dollar gap
@@ -740,6 +744,11 @@ function loadLaborInsight(){
     const msgEl = document.getElementById('gap-dollar');
     const pctEl = document.getElementById('gap-current-pct');
     const target = {{labor_target}};
+    if(!d || d.ok === false) {
+      gapEl.textContent = '—';
+      msgEl.textContent = 'Unable to calculate gap. Upload shift data to see this.';
+      return;
+    }
     if(d.over_target && d.monthly_gap > 0) {
       gapEl.textContent = '$' + Math.round(d.monthly_gap).toLocaleString();
       gapEl.style.color = 'var(--ember2)';
@@ -748,11 +757,14 @@ function loadLaborInsight(){
     } else {
       gapEl.textContent = 'On target ✓';
       gapEl.style.color = '#6fcf97';
-      msgEl.textContent = 'Your labor % is at or below your ' + target + '% target. Great work — keep an eye on any individual days that spike.';
+      msgEl.textContent = 'Your labor is at ' + d.current_pct + '% — at or below your ' + target + '% target. Great work. Keep an eye on individual days that spike.';
       pctEl.style.color = '#6fcf97';
     }
+  }).catch(e=>{
+    document.getElementById('gap-amount').textContent='—';
+    document.getElementById('gap-dollar').textContent='Unable to load gap data.';
   });
-}
+}}
 async function downloadSchedule(btn) {
   btn.textContent = 'Generating… (30 sec)';
   btn.disabled = true;
@@ -2129,14 +2141,18 @@ def skip(rid, current_user):
 @app.route("/api/labor-insight")
 @login_required
 def labor_insight_api(current_user):
-    from labor import analyse_shifts_for_restaurant, get_claude_insights
-    from models import get_restaurant
-    restaurant = get_restaurant(current_user["restaurant_id"])
-    name = restaurant.name if restaurant else "your restaurant"
-    owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
-    analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
-    insight = get_claude_insights(analysis, restaurant_name=name, owner_name=owner)
-    return jsonify(insight=insight)
+    try:
+        from labor import analyse_shifts_for_restaurant, get_claude_insights
+        from models import get_restaurant
+        restaurant = get_restaurant(current_user["restaurant_id"])
+        name  = restaurant.name if restaurant else "your restaurant"
+        owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
+        analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
+        insight = get_claude_insights(analysis, restaurant_name=name, owner_name=owner)
+        return jsonify(insight=insight)
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify(insight=f"Unable to load analysis. Error: {str(e)[:100]}")
 
 @app.route("/api/inv-insight")
 @login_required
@@ -2773,10 +2789,15 @@ def stop_viewing():
 @app.route("/api/labor-gap")
 @login_required
 def labor_gap_api(current_user):
-    from labor import analyse_shifts_for_restaurant, calculate_monthly_gap
-    analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
-    gap = calculate_monthly_gap(analysis)
-    return jsonify(gap)
+    try:
+        from labor import analyse_shifts_for_restaurant, calculate_monthly_gap
+        analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
+        gap = calculate_monthly_gap(analysis)
+        return jsonify(gap)
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify(ok=False, error=str(e), over_target=False, monthly_gap=0,
+                      current_pct=0, target_pct=30)
 
 @app.route("/api/download-schedule")
 @login_required

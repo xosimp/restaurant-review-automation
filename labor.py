@@ -153,12 +153,24 @@ def analyse_shifts(shifts: list[dict],
                     "status": "near"
                 })
 
-    # Weekly avg labor % by day of week
+    # Avg labor % by day of week — average across all occurrences of each day
     dow_summary = {}
-    for dow, d in by_dayofweek.items():
-        weeks = d["count"] / 10  # rough shift-to-day ratio
-        avg_labor_pct = (d["labor_cost"] / d["sales"] * 100) if d["sales"] else 0
-        dow_summary[dow] = round(avg_labor_pct, 1)
+    dow_daily = {}  # accumulate per-day labor and sales
+    for date, d in by_day.items():
+        day_name = d["shifts"][0]["day"] if d.get("shifts") else None
+        if not day_name:
+            continue
+        labor_cost = d["actual"] * HOURLY_RATE
+        sales = d["sales"]
+        if day_name not in dow_daily:
+            dow_daily[day_name] = {"labor": 0, "sales": 0, "count": 0}
+        dow_daily[day_name]["labor"] += labor_cost
+        dow_daily[day_name]["sales"] += sales
+        dow_daily[day_name]["count"] += 1
+
+    for day_name, d in dow_daily.items():
+        avg_pct = (d["labor"] / d["sales"] * 100) if d["sales"] else 0
+        dow_summary[day_name] = round(avg_pct, 1)
 
     total_labor  = sum(s["actual"] * HOURLY_RATE for s in
                        [{"actual": float(x["actual_hours"])} for x in shifts])
