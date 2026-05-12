@@ -755,12 +755,12 @@ function loadLaborInsight(){
     if(d.over_target && d.monthly_gap > 0) {
       gapEl.textContent = '$' + Math.round(d.monthly_gap).toLocaleString();
       gapEl.style.color = 'var(--ember2)';
-      msgEl.textContent = 'You're at ' + d.current_pct + '% vs your ' + target + '% target — that gap is costing around $' + Math.round(d.monthly_gap).toLocaleString() + '/mo. An optimized schedule can help close it.';
+      msgEl.textContent = 'You are at ' + d.current_pct + '% vs your ' + target + '% target \u2014 that gap is costing around $' + Math.round(d.monthly_gap).toLocaleString() + '/mo. An optimized schedule can help close it.';
       pctEl.style.color = '#ef9f27';
     } else {
       gapEl.textContent = 'On target ✓';
       gapEl.style.color = '#6fcf97';
-      msgEl.textContent = 'Your labor is at ' + d.current_pct + '% — at or below your ' + target + '% target. Great work. Keep an eye on individual days that spike.';
+      msgEl.textContent = 'Your labor is at ' + d.current_pct + '% \u2014 at or below your ' + target + '% target. Great work. Keep an eye on individual days that spike.';
       pctEl.style.color = '#6fcf97';
     }
   }).catch(e=>{
