@@ -574,7 +574,21 @@ let rfilter='{{rfilter}}';
 function setRF(f,btn){rfilter=f;document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active','active-red'));btn.classList.add(f==='urgent'?'active-red':'active');filterReviews()}
 function filterReviews(){const q=document.getElementById('rsearch').value;window.location='/?filter='+rfilter+'&search='+encodeURIComponent(q)}
 function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.ok){document.getElementById('rc-'+id).classList.add('approved');document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="btn btn-approved">✓ Approved</span>';toast('Response approved')}})}
-function skipR(id){fetch('/skip/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.ok){document.getElementById('rc-'+id).style.opacity='.4';toast('Skipped')}})}
+function skipR(id){
+  fetch('/skip/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.ok){
+      const actions = document.getElementById('draft-actions-'+id);
+      if(actions) {
+        actions.innerHTML = `
+          <button class="btn btn-approve" onclick="approveR(${id})">✓ Approve</button>
+          <button class="btn btn-skip" onclick="openEditor(${id})">Edit response</button>
+          <button class="btn btn-skip" onclick="regenDraft(${id})">↻ Regenerate</button>`;
+        actions.style.display='flex';
+      }
+      toast('Skipped — edit or regenerate below');
+    }
+  });
+}
 const dowData={{labor.dow_summary|tojson}};
 function renderBars(){const days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];const vals=days.map(d=>dowData[d]||0);const mx=Math.max(...vals,40);const c=document.getElementById('day-bars');if(!c)return;c.innerHTML=days.map(d=>{const pct=dowData[d]||0;const h=Math.round((pct/mx)*72);const col=pct>32?'var(--red)':pct>26?'var(--amber)':'var(--green)';return`<div class="day-bar-wrap"><div class="day-bar" style="height:${h}px;background:${col}" title="${d}: ${pct}%"></div></div>`}).join('')}
 let laborLoaded=false,invLoaded=false;
