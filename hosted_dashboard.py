@@ -1327,12 +1327,12 @@ async function reactivateClient(id, name) {
 
 
 PAYMENT_LINKS = {
-    "trial":             {"setup": None, "retainer": None},
-    "starter_reviews":   {"setup": "https://buy.stripe.com/28E9AV5Jldry9Ze6rF4Ni00", "retainer": "https://buy.stripe.com/4gM7sNgnZbjqgnCg2f4Ni01"},
-    "starter_labor":     {"setup": "https://buy.stripe.com/28E9AV5Jldry9Ze6rF4Ni00", "retainer": "https://buy.stripe.com/4gM7sNgnZbjqgnCg2f4Ni01"},
-    "starter_inventory": {"setup": "https://buy.stripe.com/28E9AV5Jldry9Ze6rF4Ni00", "retainer": "https://buy.stripe.com/4gM7sNgnZbjqgnCg2f4Ni01"},
-    "starter_marketing": {"setup": "https://buy.stripe.com/28E9AV5Jldry9Ze6rF4Ni00", "retainer": "https://buy.stripe.com/4gM7sNgnZbjqgnCg2f4Ni01"},
-    "full":              {"setup": "https://buy.stripe.com/14A3cx1t5evC4EU5nB4Ni02", "retainer": "https://buy.stripe.com/dRmdRb8Vxcnu8VabLZ4Ni03"},
+    "trial":             None,
+    "starter_reviews":   "https://checkout.cavnar.ai/b/5kQ9AV4Fh5Z68VadU74Ni04",
+    "starter_labor":     "https://checkout.cavnar.ai/b/5kQ9AV4Fh5Z68VadU74Ni04",
+    "starter_inventory": "https://checkout.cavnar.ai/b/5kQ9AV4Fh5Z68VadU74Ni04",
+    "starter_marketing": "https://checkout.cavnar.ai/b/5kQ9AV4Fh5Z68VadU74Ni04",
+    "full":              "https://checkout.cavnar.ai/b/aFa00l4Fhcnu9Ze03h4Ni05",
 }
 
 TIER_LABELS = {
@@ -1345,12 +1345,12 @@ TIER_LABELS = {
 }
 
 TIER_PRICES = {
-    "trial":             {"setup": None,    "retainer": None},
-    "starter_reviews":   {"setup": "$500",  "retainer": "$300/mo"},
-    "starter_labor":     {"setup": "$500",  "retainer": "$300/mo"},
-    "starter_inventory": {"setup": "$500",  "retainer": "$300/mo"},
-    "starter_marketing": {"setup": "$500",  "retainer": "$300/mo"},
-    "full":              {"setup": "$2,000","retainer": "$1,500/mo"},
+    "trial":             {"setup": None,     "retainer": None},
+    "starter_reviews":   {"setup": "$500",   "retainer": "$300/mo"},
+    "starter_labor":     {"setup": "$500",   "retainer": "$300/mo"},
+    "starter_inventory": {"setup": "$500",   "retainer": "$300/mo"},
+    "starter_marketing": {"setup": "$500",   "retainer": "$300/mo"},
+    "full":              {"setup": "$2,000", "retainer": "$1,500/mo"},
 }
 
 
@@ -1358,17 +1358,15 @@ def send_payment_email(to_email, restaurant_name, tier):
     """Send setup + retainer payment links based on service tier."""
     if not RESEND_API_KEY:
         return
-    links  = PAYMENT_LINKS.get(tier, {})
+    link   = PAYMENT_LINKS.get(tier)
     prices = TIER_PRICES.get(tier, {})
     label  = TIER_LABELS.get(tier, tier)
 
-    if not links.get("setup"):
+    if not link:
         return  # Trial — no payment needed
 
-    setup_link   = links["setup"]
-    retainer_link= links["retainer"]
-    setup_price  = prices["setup"]
-    retainer_price = prices["retainer"]
+    setup_price    = prices.get("setup", "")
+    retainer_price = prices.get("retainer", "")
 
     try:
         import resend as _resend
@@ -1376,7 +1374,7 @@ def send_payment_email(to_email, restaurant_name, tier):
         _resend.Emails.send({
             "from": f"Will Cavnar <{FROM_EMAIL}>",
             "to": [to_email],
-            "subject": f"Your Cavnar AI payment links — {restaurant_name}",
+            "subject": f"Your Cavnar AI payment link — {restaurant_name}",
             "html": f"""
 <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
@@ -1390,42 +1388,37 @@ def send_payment_email(to_email, restaurant_name, tier):
 
   <p style="font-size:15px;line-height:1.6;margin-bottom:8px">
     Hi — excited to get started with <strong>{restaurant_name}</strong>.
-    Here are your payment links for the <strong>{label}</strong> plan.
+    Here is your payment link for the <strong>{label}</strong> plan.
   </p>
 
   <p style="font-size:14px;color:#3a3530;line-height:1.6;margin-bottom:20px">
-    Complete the setup payment first, then set up your monthly retainer.
-    Both take about 2 minutes.
+    One checkout handles everything — your {setup_price} setup fee today,
+    then your {retainer_price} retainer starts automatically in 30 days.
+    No second step needed.
   </p>
 
-  <!-- Step 1: Setup -->
-  <div style="background:#f7f4ef;border-radius:8px;padding:18px 20px;margin-bottom:14px;border-left:3px solid #c84b2f">
-    <p style="font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin:0 0 6px">Step 1 — One-time setup fee</p>
-    <p style="font-size:22px;font-weight:600;color:#0e0c0a;margin:0 0 10px;font-family:Georgia,serif">{setup_price}</p>
-    <p style="font-size:13px;color:#3a3530;margin:0 0 12px;line-height:1.5">
-      Covers your full system setup, POS integration, dashboard configuration, and onboarding session.
-    </p>
-    <a href="{setup_link}"
-       style="display:inline-block;background:#c84b2f;color:white;padding:11px 22px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">
-      Pay setup fee →
-    </a>
-  </div>
-
-  <!-- Step 2: Retainer -->
-  <div style="background:#f7f4ef;border-radius:8px;padding:18px 20px;margin-bottom:24px;border-left:3px solid #2d6a4f">
-    <p style="font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin:0 0 6px">Step 2 — Monthly retainer</p>
-    <p style="font-size:22px;font-weight:600;color:#0e0c0a;margin:0 0 10px;font-family:Georgia,serif">{retainer_price}</p>
-    <p style="font-size:13px;color:#3a3530;margin:0 0 12px;line-height:1.5">
-      Covers ongoing system maintenance, monthly reporting, support, and continuous improvements. Cancel anytime.
-    </p>
-    <a href="{retainer_link}"
-       style="display:inline-block;background:#2d6a4f;color:white;padding:11px 22px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">
-      Set up monthly retainer →
+  <div style="background:#f7f4ef;border-radius:8px;padding:20px 22px;margin-bottom:24px;border-left:3px solid #c84b2f">
+    <p style="font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin:0 0 6px">{label}</p>
+    <div style="display:flex;gap:20px;margin-bottom:12px">
+      <div>
+        <p style="font-size:18px;font-weight:600;color:#0e0c0a;margin:0;font-family:Georgia,serif">{setup_price}</p>
+        <p style="font-size:11px;color:#7a736a;margin:0">today</p>
+      </div>
+      <div style="color:#e0dbd0;font-size:20px;line-height:1.8">+</div>
+      <div>
+        <p style="font-size:18px;font-weight:600;color:#0e0c0a;margin:0;font-family:Georgia,serif">{retainer_price}</p>
+        <p style="font-size:11px;color:#7a736a;margin:0">starting day 31</p>
+      </div>
+    </div>
+    <a href="{link}"
+       style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">
+      Complete payment →
     </a>
   </div>
 
   <p style="font-size:13px;color:#7a736a;line-height:1.6;margin-bottom:24px">
-    Any questions before paying, just reply to this email. I'll have your dashboard live within 24 hours of the setup payment clearing.
+    I'll have your dashboard live within 24 hours of payment clearing.
+    Any questions, just reply here.
   </p>
 
   <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
