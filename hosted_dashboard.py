@@ -661,15 +661,16 @@ textarea{resize:vertical;min-height:60px}
 .action-menu{position:relative;display:inline-block}
 .action-menu-btn{padding:4px 10px;border-radius:4px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;color:var(--ink2);transition:all .15s;white-space:nowrap}
 .action-menu-btn:hover{background:var(--ink);color:white;border-color:var(--ink)}
-.action-dropdown{display:none;position:absolute;right:0;top:calc(100% + 4px);background:white;border:1px solid var(--paper3);border-radius:6px;box-shadow:0 4px 16px rgba(14,12,10,.12);min-width:180px;z-index:200;overflow:hidden}
+.action-menu{position:relative;display:inline-block}
+.action-dropdown{display:none;position:absolute;right:0;top:calc(100% + 4px);background:white;border:1px solid var(--paper3);border-radius:6px;box-shadow:0 4px 16px rgba(14,12,10,.12);min-width:170px;z-index:999;overflow:hidden}
 .action-dropdown.open{display:block}
-.action-item{display:block;width:100%;text-align:left;padding:8px 14px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink2);text-decoration:none;background:none;border:none;cursor:pointer;transition:background .1s;white-space:nowrap}
-.action-item:hover{background:var(--paper2)}
+.action-item{display:block;width:100%;box-sizing:border-box;text-align:left;padding:8px 14px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink2);text-decoration:none;background:none;border:none;cursor:pointer;transition:background .1s;white-space:nowrap}
+.action-item:hover{background:var(--paper2);color:var(--ink)}
 .action-item-danger{color:#c0392b !important}
-.action-item-danger:hover{background:#fdf0ef !important}
+.action-item-danger:hover{background:#fdf0ef !important;color:#c0392b !important}
 .action-item-success{color:var(--green) !important}
 .action-item-success:hover{background:var(--green-bg) !important}
-.action-divider{height:1px;background:var(--paper3);margin:3px 0}
+.action-divider{height:1px;background:var(--paper3);margin:2px 0}
 </style>
 </head>
 <body>
@@ -1376,17 +1377,17 @@ input:focus,select:focus{border-color:var(--ember)}
         <div class="action-menu" id="menu-wrap-{{user.id}}">
           <button class="action-menu-btn" onclick="toggleMenu({{user.id}})">Actions ▾</button>
           <div class="action-dropdown" id="menu-{{user.id}}">
-            <a href="/admin/client-settings/{{ user.restaurant_id }}" class="action-item">⚙ Settings</a>
-            <a href="/admin/client-data/{{ user.restaurant_id }}" class="action-item">📂 Manage data</a>
+            <a href="/admin/client-settings/{{ user.restaurant_id }}" class="action-item">Settings</a>
+            <a href="/admin/client-data/{{ user.restaurant_id }}" class="action-item">Manage data</a>
             {% if user.is_active %}
             <div class="action-divider"></div>
-            <button class="action-item" onclick="resendPayment({{user.restaurant_id}},'{{user.email}}','{{user.billing_status}}');closeMenu({{user.id}})">✉ Resend payment link</button>
-            <button class="action-item" onclick="seedReviews({{user.restaurant_id}});closeMenu({{user.id}})">🌱 Seed sample reviews</button>
+            <button class="action-item" onclick="resendPayment({{user.restaurant_id}},'{{user.email}}','{{user.billing_status}}');closeMenu({{user.id}})">Resend payment link</button>
+            <button class="action-item" onclick="seedReviews({{user.restaurant_id}});closeMenu({{user.id}})">Seed sample reviews</button>
             <div class="action-divider"></div>
-            <button class="action-item action-item-danger" onclick="deactivateClient({{user.id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">⊘ Deactivate</button>
+            <button class="action-item action-item-danger" onclick="deactivateClient({{user.id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Deactivate</button>
             {% else %}
             <div class="action-divider"></div>
-            <button class="action-item action-item-success" onclick="reactivateClient({{user.id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">✓ Reactivate</button>
+            <button class="action-item action-item-success" onclick="reactivateClient({{user.id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Reactivate</button>
             {% endif %}
           </div>
         </div>
@@ -1403,16 +1404,18 @@ input:focus,select:focus{border-color:var(--ember)}
 
 <script>
 function toggleMenu(id) {
+  event.stopPropagation();
   const menu = document.getElementById('menu-'+id);
-  const allMenus = document.querySelectorAll('.action-dropdown');
-  allMenus.forEach(m => { if(m.id !== 'menu-'+id) m.classList.remove('open'); });
-  menu.classList.toggle('open');
+  const isOpen = menu.classList.contains('open');
+  document.querySelectorAll('.action-dropdown').forEach(m => m.classList.remove('open'));
+  if(!isOpen) menu.classList.add('open');
 }
 function closeMenu(id) {
-  const menu = document.getElementById('menu-'+id);
-  if(menu) menu.classList.remove('open');
+  setTimeout(() => {
+    const menu = document.getElementById('menu-'+id);
+    if(menu) menu.classList.remove('open');
+  }, 100);
 }
-// Close menus when clicking outside
 document.addEventListener('click', function(e) {
   if(!e.target.closest('.action-menu')) {
     document.querySelectorAll('.action-dropdown').forEach(m => m.classList.remove('open'));
