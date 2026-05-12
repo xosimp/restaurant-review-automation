@@ -1335,7 +1335,7 @@ input:focus,select:focus{border-color:var(--ember)}
   <div class="section-title">Active client accounts</div>
   <div class="card" style="padding:0;overflow:hidden">
     <table class="tbl">
-      <thead><tr><th>Restaurant</th><th>Username</th><th>Email</th><th>Phone</th><th>Billing</th><th>Last login</th><th>Last tab</th><th>Status</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Restaurant</th><th>Username</th><th>Email</th><th>Phone</th><th>Billing</th><th>Last login</th><th>Last tab</th><th>Last fetched</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>
       {% for user in users %}
       <tr>
@@ -1351,6 +1351,7 @@ input:focus,select:focus{border-color:var(--ember)}
         </td>
         <td style="font-size:12px">{{user.last_login[:10] if user.last_login else '—'}}</td>
         <td style="font-size:11px;color:var(--ink3)">{{user.last_active_tab or '—'}}</td>
+        <td style="font-size:11px;color:var(--ink3)">{{user.last_fetched_at or 'never'}}</td>
         <td>
         {% if user.is_active %}
           <span class="badge-active">Active</span>
@@ -1388,10 +1389,7 @@ input:focus,select:focus{border-color:var(--ember)}
              style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #b7dfca;background:#eaf2ed;color:#2d6a4f;cursor:pointer;font-family:'DM Sans',sans-serif">
             Seed reviews
           </button>
-          <button onclick="fetchReviews({{user.restaurant_id}})"
-             style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid var(--paper3);background:white;color:var(--ink2);cursor:pointer;font-family:'DM Sans',sans-serif">
-            Fetch now
-          </button>
+
           {% endif %}
         </div>
         {% else %}—{% endif %}
@@ -1469,18 +1467,7 @@ async function seedReviews(restaurantId) {
     btn.textContent = 'Error'; btn.disabled = false;
   }
 }
-async function fetchReviews(restaurantId) {
-  const btn = event.target;
-  btn.textContent = 'Fetching…'; btn.disabled = true;
-  const res = await fetch('/admin/fetch-reviews/' + restaurantId, {method:'POST'});
-  const data = await res.json();
-  if (data.ok) {
-    btn.textContent = '✓ ' + data.new_reviews + ' new';
-    setTimeout(() => { btn.textContent = 'Fetch now'; btn.disabled = false; }, 3000);
-  } else {
-    btn.textContent = data.error || 'Error'; btn.disabled = false;
-  }
-}
+
 async function deactivateClient(id, name) {
   const btn = event.target;
   btn.textContent = 'Deactivating...';
@@ -1797,6 +1784,7 @@ def admin(current_user):
         u["last_active_tab"] = r.last_active_tab if r else None
         u["internal_notes"] = r.internal_notes if r else None
         u["phone"] = r.owner_phone if r else None
+        u["last_fetched_at"] = r.last_fetched_at[:10] if r and r.last_fetched_at else None
         enriched.append(u)
     return render_template_string(ADMIN_HTML,
         current_user=current_user, users=enriched)

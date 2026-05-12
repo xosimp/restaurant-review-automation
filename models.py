@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS restaurants (
     owner_phone     TEXT,              -- owner phone number
     digest_day      TEXT DEFAULT 'monday',  -- day of week for weekly digest email
     digest_enabled  INTEGER DEFAULT 1,        -- 1 = send weekly digest
+    last_fetched_at TEXT,                     -- when reviews were last fetched
     -- Status
     reviews_live    INTEGER DEFAULT 0,  -- 1 = pulling real reviews
     -- Admin
@@ -128,6 +129,7 @@ class Restaurant:
     owner_phone: Optional[str]      = None
     digest_day: str                 = "monday"
     digest_enabled: int             = 1
+    last_fetched_at: Optional[str]  = None
     reviews_live: int               = 0
     billing_status: str             = "trial"
     internal_notes: Optional[str]   = None
@@ -202,6 +204,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN owner_phone TEXT",
         "ALTER TABLE restaurants ADD COLUMN digest_day TEXT DEFAULT 'monday'",
         "ALTER TABLE restaurants ADD COLUMN digest_enabled INTEGER DEFAULT 1",
+        "ALTER TABLE restaurants ADD COLUMN last_fetched_at TEXT",
         "ALTER TABLE restaurants ADD COLUMN reviews_live INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN billing_status TEXT DEFAULT 'trial'",
         "ALTER TABLE restaurants ADD COLUMN internal_notes TEXT",
@@ -300,6 +303,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         owner_phone=row["owner_phone"] if "owner_phone" in row.keys() else None,
         digest_day=row["digest_day"] if "digest_day" in row.keys() else "monday",
         digest_enabled=row["digest_enabled"] if "digest_enabled" in row.keys() else 1,
+        last_fetched_at=row["last_fetched_at"] if "last_fetched_at" in row.keys() else None,
     )
 
 
@@ -582,3 +586,13 @@ def get_restaurants_for_digest(day: str, db_path: str = DB_PATH) -> list:
     """, (day.lower(),)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def update_last_fetched(restaurant_id: int, db_path: str = DB_PATH):
+    """Record when reviews were last fetched for a restaurant."""
+    from datetime import datetime, timezone
+    conn = get_conn(db_path)
+    conn.execute("UPDATE restaurants SET last_fetched_at=? WHERE id=?",
+                 (datetime.now(timezone.utc).isoformat(), restaurant_id))
+    conn.commit()
+    conn.close()
