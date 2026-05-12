@@ -293,6 +293,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <div class="stat hi"><div class="stat-n">{{rstats.negative}}</div><div class="stat-l">Negative</div></div>
     <div class="stat hi"><div class="stat-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
     <div class="stat warn"><div class="stat-n">{{rstats.awaiting_approval}}</div><div class="stat-l">To approve</div></div>
+  <div class="stat {{'ok' if restaurant.reviews_live else 'warn'}}">
+    <div class="stat-n" style="font-size:14px;margin-top:4px">{{'Live' if restaurant.reviews_live else 'Demo'}}</div>
+    <div class="stat-l">Review source</div>
+  </div>
   </div>
   <div class="toolbar">
     <div class="search-wrap">
@@ -1263,6 +1267,14 @@ input:focus,select:focus{border-color:var(--ember)}
              style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #b7dfca;background:#eaf2ed;color:#2d6a4f;cursor:pointer;font-family:'DM Sans',sans-serif">
             Resend payment
           </button>
+          <button onclick="seedReviews({{user.restaurant_id}})"
+             style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid #b7dfca;background:#eaf2ed;color:#2d6a4f;cursor:pointer;font-family:'DM Sans',sans-serif">
+            Seed reviews
+          </button>
+          <button onclick="fetchReviews({{user.restaurant_id}})"
+             style="font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid var(--paper3);background:white;color:var(--ink2);cursor:pointer;font-family:'DM Sans',sans-serif">
+            Fetch now
+          </button>
           {% endif %}
         </div>
         {% else %}—{% endif %}
@@ -1326,6 +1338,30 @@ async function resendPayment(restaurantId, email, billing) {
     btn.textContent = 'Error';
     btn.disabled = false;
     console.error(data.error);
+  }
+}
+async function seedReviews(restaurantId) {
+  const btn = event.target;
+  btn.textContent = 'Seeding…'; btn.disabled = true;
+  const res = await fetch('/admin/seed-reviews/' + restaurantId, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) {
+    btn.textContent = '✓ Seeded ' + data.seeded + ' reviews';
+    setTimeout(() => { btn.textContent = 'Seed reviews'; btn.disabled = false; }, 3000);
+  } else {
+    btn.textContent = 'Error'; btn.disabled = false;
+  }
+}
+async function fetchReviews(restaurantId) {
+  const btn = event.target;
+  btn.textContent = 'Fetching…'; btn.disabled = true;
+  const res = await fetch('/admin/fetch-reviews/' + restaurantId, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) {
+    btn.textContent = '✓ ' + data.new_reviews + ' new';
+    setTimeout(() => { btn.textContent = 'Fetch now'; btn.disabled = false; }, 3000);
+  } else {
+    btn.textContent = data.error || 'Error'; btn.disabled = false;
   }
 }
 async function deactivateClient(id, name) {
@@ -1976,6 +2012,134 @@ def resend_payment(restaurant_id, current_user):
         return jsonify(ok=True)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
+
+@app.route("/admin/seed-reviews/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def seed_reviews(restaurant_id, current_user):
+    """Seed sample reviews for a restaurant so client can see the dashboard working."""
+    from models import save_reviews, get_pending_analysis
+    from models import update_analysis, update_draft, get_pending_drafts
+    import json as _json
+    from datetime import datetime, timedelta
+
+    # Generate 12 realistic sample reviews
+    sample = [
+        ("Jennifer M.","google","r_s001",5,"Absolutely love this place. The food was incredible and our server was attentive without being intrusive. Will be back every month.",4),
+        ("Tom K.","yelp","r_s002",2,"Waited 45 minutes for a table even though we had a reservation. Food was fine when it arrived but the experience was frustrating.",1),
+        ("Aisha R.","google","r_s003",5,"Best spot in the neighborhood. The seasonal menu is always exciting and the cocktails are outstanding. Came three weekends in a row.",4),
+        ("Derek S.","google","r_s004",1,"Found a hair in my food. Server was unapologetic. Manager offered a 10% discount which felt insulting. Health department should know.",4),
+        ("Priya N.","yelp","r_s005",4,"Really good neighborhood spot. Salmon was perfectly cooked. Docked one star because the cocktail menu feels dated.",3),
+        ("Carlos B.","google","r_s006",5,"Took my parents here for their anniversary and the staff went completely above and beyond. My mom is still talking about it.",5),
+        ("Rachel W.","yelp","r_s007",3,"Mixed experience. Appetizers were excellent but the main courses took over an hour. Would try again on a quieter evening.",2),
+        ("Mike T.","google","r_s008",5,"The happy hour deal is unreal. Half price on all small plates and the bartender is hilarious. Told everyone at work.",6),
+        ("Sandra L.","yelp","r_s009",2,"Gluten-free options listed on the menu but staff seemed unsure whether dishes were actually safe for celiac. Need better training.",7),
+        ("James O.","google","r_s010",5,"Took a date here and it couldn't have gone better. Warm atmosphere, great wine pairing suggestions. Already booked for next month.",8),
+        ("Beth C.","google","r_s011",1,"Ordered takeout and it arrived 35 minutes late and completely cold. Called to complain and was offered nothing. Lost a loyal customer.",9),
+        ("Olivia T.","yelp","r_s012",5,"Been a regular for two years and the kitchen keeps getting better. New menu just launched and it's an instant classic.",10),
+    ]
+
+    sentiments = {5:"positive",4:"positive",3:"neutral",2:"negative",1:"negative"}
+    categories_map = [
+        ["food_quality","service"],["service","reservation"],["food_quality","ambiance"],
+        ["cleanliness","service"],["food_quality","value"],["service","ambiance"],
+        ["food_quality","service"],["value","ambiance"],["service","cleanliness"],
+        ["ambiance","service"],["takeout_delivery","service"],["food_quality"],
+    ]
+    urgencies = ["normal","normal","normal","high","normal","normal","normal",
+                 "normal","normal","normal","normal","normal"]
+
+    reviews = []
+    for i, (author, platform, ext_id, rating, text, days_ago) in enumerate(sample):
+        review_date = (datetime.now() - timedelta(days=days_ago*3)).isoformat()
+        reviews.append(Review(
+            restaurant_id=restaurant_id,
+            platform=platform,
+            external_id=f"{restaurant_id}_{ext_id}",
+            author=author,
+            rating=rating,
+            text=text,
+            review_date=review_date,
+        ))
+
+    from models import Review
+    new_count = save_reviews(reviews)
+
+    # Analyse and draft all of them
+    pending = get_pending_analysis(restaurant_id, limit=50)
+    for i, r in enumerate(pending):
+        sent = sentiments.get(r.rating, "neutral")
+        cats = categories_map[i % len(categories_map)]
+        urg  = urgencies[i % len(urgencies)]
+        summary = f"Guest {'praised' if sent=='positive' else 'criticized'} the experience."
+        update_analysis(r.id, sent, cats, summary, urg)
+
+    pending_drafts = get_pending_drafts(restaurant_id, limit=50)
+    restaurant = get_restaurant(restaurant_id)
+    voice = restaurant.voice_notes or "Warm, genuine tone. Always invite guests back."
+    for r in pending_drafts:
+        if r.sentiment == "positive":
+            draft = f"Thank you so much, {r.author}! It means the world to us to hear this — we hope to see you again soon."
+        elif r.sentiment == "negative":
+            draft = f"We're genuinely sorry to hear about your experience, {r.author}. This isn't the standard we hold ourselves to and we'd love the chance to make it right. Please reach out to us directly."
+        else:
+            draft = f"Thank you for taking the time to share your feedback, {r.author}. We appreciate your honesty and hope to see you again."
+        update_draft(r.id, draft)
+
+    return jsonify(ok=True, seeded=new_count)
+
+@app.route("/admin/fetch-reviews/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def fetch_reviews_now(restaurant_id, current_user):
+    """Manually trigger a review fetch for a specific restaurant."""
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found")
+
+    from fetcher import fetch_google, fetch_yelp, save_reviews
+    reviews = []
+    errors = []
+
+    if restaurant.google_place_id and restaurant.reviews_live:
+        try:
+            reviews += fetch_google(restaurant.google_place_id, restaurant_id)
+        except Exception as e:
+            errors.append(f"Google: {e}")
+
+    if restaurant.yelp_business_id and restaurant.reviews_live:
+        try:
+            reviews += fetch_yelp(restaurant.yelp_business_id, restaurant_id)
+        except Exception as e:
+            errors.append(f"Yelp: {e}")
+
+    if not reviews and not errors:
+        return jsonify(ok=False, error="No platform IDs configured or reviews_live is off")
+
+    new_count = save_reviews(reviews) if reviews else 0
+
+    # Analyse new reviews
+    from models import get_pending_analysis
+    pending = get_pending_analysis(restaurant_id, limit=50)
+    if pending:
+        from analyser import analyse_review
+        for r in pending:
+            try:
+                analyse_review(r.id, r.rating, r.text)
+            except Exception as e:
+                errors.append(f"Analysis error: {e}")
+
+    # Draft responses
+    from models import get_pending_drafts
+    pending_drafts = get_pending_drafts(restaurant_id)
+    if pending_drafts:
+        from drafter import draft_response
+        for r in pending_drafts:
+            try:
+                draft_response(r.id, r.rating, r.text, r.sentiment,
+                              restaurant.name, restaurant.voice_notes or "")
+            except Exception as e:
+                errors.append(f"Draft error: {e}")
+
+    return jsonify(ok=True, new_reviews=new_count, errors=errors)
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
