@@ -1912,6 +1912,17 @@ input:focus,select:focus{border-color:var(--ember)}
           <span style="font-size:10px;font-weight:500;padding:2px 8px;border-radius:20px;background:{% if user.billing_status == 'active' %}var(--green-bg){% elif user.billing_status == 'trial' %}var(--amber-bg){% else %}#f3f4f6{% endif %};color:{{ bc.get(user.billing_status,'#6b7280') }}">
             {{(user.billing_status or 'trial')|title}}
           </span>
+          {% if not user.is_admin %}
+          <div style="margin-top:3px">
+            {% if user.contract_status == 'signed' %}
+            <span style="font-size:9px;color:#2d6a4f;font-weight:600">✓ Signed</span>
+            {% elif user.contract_status == 'sent' %}
+            <span style="font-size:9px;color:#b7791f;font-weight:600">⏳ Awaiting signature</span>
+            {% else %}
+            <span style="font-size:9px;color:#9ca3af">No contract</span>
+            {% endif %}
+          </div>
+          {% endif %}
         </td>
         <td style="font-size:12px">{{user.last_login[:10] if user.last_login else '—'}}</td>
         <td style="font-size:11px;color:var(--ink3)">{{user.last_active_tab or '—'}}</td>
@@ -2519,8 +2530,10 @@ def admin(current_user):
         u["internal_notes"] = r.internal_notes if r else None
         u["phone"] = r.owner_phone if r else None
         u["last_fetched_at"] = r.last_fetched_at[:10] if r and r.last_fetched_at else None
-        u["location_group"] = r.location_group if r else None
-        u["location_name"]  = r.location_name if r else None
+        u["location_group"]    = r.location_group if r else None
+        u["location_name"]     = r.location_name if r else None
+        u["contract_status"]   = r.contract_status if r else "pending"
+        u["envelope_id"]       = r.docusign_envelope_id if r else None
         enriched.append(u)
     from models import get_all_location_groups
     location_groups = get_all_location_groups()
@@ -2561,20 +2574,39 @@ def create_client(current_user):
             "module_inventory":int(data.get("module_inventory", 0)),
             "module_marketing":int(data.get("module_marketing", 0)),
         })
-        # Send welcome email if requested
-        if data.get("send_email") and RESEND_API_KEY:
-            try:
-                send_welcome_email(
-                    to_email=data["owner_email"],
-                    restaurant_name=data["restaurant_name"],
-                    username=data["username"],
-                    password=data["password"],
-                )
-            except Exception as mail_err:
-                print(f"Welcome email failed: {mail_err}")
-        # Send payment email based on module count
         mods = (int(data.get("module_reviews",0)) + int(data.get("module_labor",0)) +
                 int(data.get("module_inventory",0)) + int(data.get("module_marketing",0)))
+        module_names = []
+        if int(data.get("module_reviews",0)): module_names.append("Review Intelligence")
+        if int(data.get("module_labor",0)):   module_names.append("Labor Optimizer")
+        if int(data.get("module_inventory",0)): module_names.append("Inventory Control")
+        if int(data.get("module_marketing",0)): module_names.append("Marketing Autopilot")
+        modules_list = ", ".join(module_names)
+
+        # Step 1: Send DocuSign contract first
+        envelope_id = None
+        if mods > 0 and data.get("owner_email") and data.get("owner_name"):
+            try:
+                from docusign_helper import send_contract
+                result = send_contract(
+                    owner_email=data["owner_email"],
+                    owner_name=data.get("owner_name",""),
+                    restaurant_name=data["restaurant_name"],
+                    module_count=mods,
+                    modules_list=modules_list,
+                )
+                envelope_id = result.get("envelope_id")
+                if envelope_id:
+                    update_restaurant(rid, {
+                        "docusign_envelope_id": envelope_id,
+                        "contract_status": "sent",
+                    })
+                    print(f"DocuSign contract sent: {envelope_id}")
+            except Exception as e:
+                print(f"DocuSign send failed: {e}")
+                import traceback; traceback.print_exc()
+
+        # Step 2: Send payment email
         if mods > 0 and RESEND_API_KEY:
             try:
                 tier = "full" if mods == 4 else f"custom_{mods}"
@@ -2586,7 +2618,20 @@ def create_client(current_user):
                 )
             except Exception as mail_err:
                 print(f"Payment email failed: {mail_err}")
-        return jsonify(ok=True, restaurant_id=rid)
+
+        # Step 3: Send welcome email
+        if data.get("send_email") and RESEND_API_KEY:
+            try:
+                send_welcome_email(
+                    to_email=data["owner_email"],
+                    restaurant_name=data["restaurant_name"],
+                    username=data["username"],
+                    password=data["password"],
+                )
+            except Exception as mail_err:
+                print(f"Welcome email failed: {mail_err}")
+
+        return jsonify(ok=True, restaurant_id=rid, envelope_id=envelope_id)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
@@ -3273,6 +3318,31 @@ def update_digest_day(current_user):
         "digest_enabled": int(data.get("enabled", 1))
     })
     return jsonify(ok=True)
+
+@app.route("/docusign/webhook", methods=["POST"])
+def docusign_webhook():
+    """Receive DocuSign connect notifications when envelope status changes."""
+    try:
+        data = request.get_json(force=True) or {}
+        envelope_id = (data.get("envelopeId") or
+                      data.get("data",{}).get("envelopeId",""))
+        status = (data.get("status") or
+                 data.get("data",{}).get("envelopeSummary",{}).get("status",""))
+
+        if envelope_id and status == "completed":
+            conn = get_conn()
+            conn.execute(
+                "UPDATE restaurants SET contract_status='signed' WHERE docusign_envelope_id=?",
+                (envelope_id,)
+            )
+            conn.commit()
+            conn.close()
+            print(f"Contract signed: {envelope_id}")
+
+        return jsonify(ok=True)
+    except Exception as e:
+        print(f"DocuSign webhook error: {e}")
+        return jsonify(ok=True)  # Always return 200 to DocuSign
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
