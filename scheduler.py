@@ -236,6 +236,85 @@ def run_weekly_digests():
         log.error(f"Weekly digest error: {e}")
 
 
+def check_stale_inventory():
+    """Alert Will when a client's inventory data is more than 7 days old."""
+    if not RESEND_API_KEY:
+        return
+    try:
+        from models import get_all_restaurants
+        from datetime import datetime, timedelta
+        import resend as _resend
+
+        restaurants = get_all_restaurants()
+        stale = []
+
+        for r in restaurants:
+            if not r.module_inventory or not r.is_active:
+                continue
+            # Check updated_at on inventory data
+            conn = __import__('models').get_conn()
+            row = conn.execute(
+                "SELECT updated_at, inventory_source FROM restaurant_data WHERE restaurant_id=? LIMIT 1",
+                (r.id,)
+            ).fetchone()
+            conn.close()
+
+            if not row or not row["updated_at"]:
+                stale.append((r.name, "never uploaded"))
+                continue
+
+            updated = datetime.fromisoformat(row["updated_at"])
+            days_old = (datetime.now() - updated).days
+            if days_old >= 7:
+                stale.append((r.name, f"{days_old} days old"))
+
+        if not stale:
+            return
+
+        stale_html = "".join([
+            f'<tr><td style="padding:6px 12px;border-bottom:1px solid #f0ece6"><strong>{name}</strong></td>'            f'<td style="padding:6px 12px;border-bottom:1px solid #f0ece6;color:#c84b2f">{status}</td></tr>'
+            for name, status in stale
+        ])
+
+        _resend.api_key = RESEND_API_KEY
+        _resend.Emails.send({
+            "from": f"Cavnar AI <{FROM_EMAIL}>",
+            "to": ["will@cavnar.ai"],
+            "subject": f"⚠ Stale inventory data — {len(stale)} client(s) need updating",
+            "html": f"""
+<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+  <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
+    <h2 style="font-family:Georgia,serif;font-size:20px;font-weight:400;margin:0 0 4px">
+      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    </h2>
+    <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
+      Weekly Inventory Check
+    </p>
+  </div>
+  <p style="font-size:14px;line-height:1.6;margin-bottom:16px">
+    The following clients have inventory data that needs updating.
+    Follow up to get a fresh CSV export from them this week.
+  </p>
+  <table style="width:100%;border-collapse:collapse;font-size:13px;background:white;border:1px solid #e0dbd0;border-radius:6px;overflow:hidden">
+    <thead>
+      <tr style="background:#f7f4ef">
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#7a736a;font-weight:600">RESTAURANT</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:#7a736a;font-weight:600">STATUS</th>
+      </tr>
+    </thead>
+    <tbody>{stale_html}</tbody>
+  </table>
+  <p style="font-size:12px;color:#7a736a;margin-top:16px">
+    Update inventory data at <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">dashboard.cavnar.ai/admin</a>
+    → client → Manage Data.
+  </p>
+</div>"""
+        })
+        log.info(f"Stale inventory alert sent for {len(stale)} client(s)")
+    except Exception as e:
+        log.error(f"Stale inventory check error: {e}")
+
+
 # ── Scheduler loop ────────────────────────────────────────────────────────────
 
 _last_fetch_date  = None
@@ -260,6 +339,11 @@ def scheduler_loop():
                 _last_digest_date = today
                 log.info("Running weekly digest check...")
                 run_weekly_digests()
+
+            if now.hour == 10 and now.weekday() == 0 and _last_digest_date != today:
+                # Monday 10am — check for stale inventory data
+                log.info("Running stale inventory check...")
+                check_stale_inventory()
 
         except Exception as e:
             log.error(f"Scheduler loop error: {e}")

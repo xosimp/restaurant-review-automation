@@ -544,6 +544,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <div class="stat hi"><div class="stat-n">{{inv.critical_low|length}}</div><div class="stat-l">Critical low</div></div>
   </div>
   <div class="insight"><div class="insight-lbl">AI food cost analysis</div><div class="insight-text insight-loading" id="inv-insight">Loading analysis…</div></div>
+  <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#2d6a4f;line-height:1.6">
+    <strong>How this works:</strong> Your inventory data is managed and updated by Will Cavnar weekly.
+    To get the most accurate analysis, export your inventory or waste log from your POS system
+    and send it to <a href="mailto:will@cavnar.ai" style="color:#2d6a4f;font-weight:600">will@cavnar.ai</a> each week.
+    Will handles all the setup and updates — nothing for you to configure.
+  </div>
   <div class="two-col">
     <div>
       <div class="slabel">Top waste offenders</div>
@@ -1619,6 +1625,19 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       </div>
       {% endif %}
 
+      <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#2d6a4f;line-height:1.6">
+        <strong>How this works:</strong> You manage inventory data on behalf of your client.
+        Ask them to export a weekly CSV from their POS or inventory system (Toast, Square, Sysco, etc.)
+        and email/send it to you. Upload it here and their dashboard updates automatically.
+        Clients with no existing system get the template below to fill out manually each week.
+      </div>
+      <div style="margin-bottom:14px">
+        <a href="/admin/inventory-template" download
+           style="display:inline-block;padding:7px 14px;background:white;border:1px solid var(--paper3);border-radius:6px;font-size:12px;font-weight:600;color:var(--ink2);text-decoration:none">
+          ⬇ Download CSV template
+        </a>
+        <span style="font-size:11px;color:var(--ink3);margin-left:8px">Send this to clients who don't have an inventory system</span>
+      </div>
       <div class="slabel">Upload method</div>
       <div class="tabs">
         <button class="mtab active" onclick="switchTab('inv','upload',this)">Upload CSV</button>
@@ -2583,27 +2602,21 @@ def create_client(current_user):
         if int(data.get("module_marketing",0)): module_names.append("Marketing Autopilot")
         modules_list = ", ".join(module_names)
 
-        # Step 1: Send DocuSign contract first
+        # Step 1: Send contract PDF via email
         envelope_id = None
-        if mods > 0 and data.get("owner_email") and data.get("owner_name"):
+        if mods > 0 and data.get("owner_email") and RESEND_API_KEY:
             try:
-                from docusign_helper import send_contract
-                result = send_contract(
-                    owner_email=data["owner_email"],
+                send_contract_email(
+                    to_email=data["owner_email"],
                     owner_name=data.get("owner_name",""),
                     restaurant_name=data["restaurant_name"],
                     module_count=mods,
                     modules_list=modules_list,
                 )
-                envelope_id = result.get("envelope_id")
-                if envelope_id:
-                    update_restaurant(rid, {
-                        "docusign_envelope_id": envelope_id,
-                        "contract_status": "sent",
-                    })
-                    print(f"DocuSign contract sent: {envelope_id}")
+                update_restaurant(rid, {"contract_status": "sent"})
+                print(f"Contract email sent to {data['owner_email']}")
             except Exception as e:
-                print(f"DocuSign send failed: {e}")
+                print(f"Contract email failed: {e}")
                 import traceback; traceback.print_exc()
 
         # Step 2: Send payment email
@@ -3343,6 +3356,31 @@ def docusign_webhook():
     except Exception as e:
         print(f"DocuSign webhook error: {e}")
         return jsonify(ok=True)  # Always return 200 to DocuSign
+
+@app.route("/admin/inventory-template")
+@admin_required
+def inventory_template(current_user):
+    """Download a pre-filled CSV template for inventory data."""
+    import io
+    template = """item,category,unit,par_level,current_stock,unit_cost,avg_daily_usage,last_ordered,last_order_qty,waste_last_week
+Salmon fillet,protein,lb,20,18,14.50,3.2,2026-05-12,30,5.0
+Chicken breast,protein,lb,30,25,4.20,5.0,2026-05-12,40,3.0
+Romaine lettuce,produce,case,8,6,18.00,1.5,2026-05-12,10,1.5
+Roma tomatoes,produce,lb,15,12,2.10,2.8,2026-05-12,20,2.0
+Heavy cream,dairy,qt,12,10,3.80,2.0,2026-05-12,15,1.0
+Pasta dried,dry,lb,25,22,1.20,4.0,2026-05-12,30,2.0
+Olive oil,dry,liter,6,5,12.00,0.8,2026-05-12,8,0.5
+House red wine,beverage,bottle,24,20,8.50,3.5,2026-05-12,30,2.0
+"""
+    buf = io.BytesIO(template.strip().encode())
+    buf.seek(0)
+    from flask import send_file
+    return send_file(
+        buf,
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name="cavnar_ai_inventory_template.csv"
+    )
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
