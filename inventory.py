@@ -109,7 +109,7 @@ def analyse_inventory(items: list[dict]) -> dict:
         "waste_items":    waste_items[:6],
         "overstock":      overstock[:5],
         "critical_low":   critical_low[:4],
-        "reorder_soon":   reorder_soon[:4],
+        "reorder_soon":   reorder_soon[:6],
         "total_items":    len(items),
         "week_start":     fmt(week_start_dt),
         "week_end":       fmt(week_end_dt),

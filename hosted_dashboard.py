@@ -542,6 +542,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <div class="stat ok"><div class="stat-n">${{inv.recoverable_monthly|int|format_num}}</div><div class="stat-l">Recoverable</div></div>
     <div class="stat warn"><div class="stat-n">{{inv.waste_items|length}}</div><div class="stat-l">Waste items</div></div>
     <div class="stat hi"><div class="stat-n">{{inv.critical_low|length}}</div><div class="stat-l">Critical low</div></div>
+    <div class="stat"><div class="stat-n">${{inv.total_stock_value|int|format_num}}</div><div class="stat-l">Inventory value</div></div>
   </div>
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
     <div style="font-size:13px;font-weight:600;color:var(--ink)">
@@ -566,7 +567,19 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
         <tbody>{% for item in inv.waste_items %}<tr>
           <td><strong>{{item.item}}</strong></td><td>{{item.waste_last_week}} {{item.unit}}</td>
           <td><span class="pill pill-red">${{item.waste_cost}}</span></td><td>{{item.waste_pct}}%</td>
+        </tr>{% else %}<tr><td colspan="4" style="color:#2d6a4f;font-style:italic;padding:12px;text-align:center">
+          ✓ No significant waste flagged this week — great job.
+        </td></tr>{% endfor %}</tbody></table></div>
+      {% if inv.reorder_soon %}
+      <div class="slabel" style="margin-top:12px">Order this week</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Item</th><th>Days left</th><th>Current stock</th></tr></thead>
+        <tbody>{% for item in inv.reorder_soon %}<tr>
+          <td><strong>{{item.item}}</strong></td>
+          <td><span class="pill pill-amber">{{item.days_remaining}}d</span></td>
+          <td>{{item.current_stock}} {{item.unit}}</td>
         </tr>{% endfor %}</tbody></table></div>
+      {% endif %}
     </div>
     <div>
       <div class="slabel">Overstocked</div>
@@ -575,7 +588,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
         <tbody>{% for item in inv.overstock %}<tr>
           <td><strong>{{item.item}}</strong></td><td>{{item.current_stock}}</td>
           <td>{{item.par_level}}</td><td><span class="pill pill-amber">${{item.overstock_cost}}</span></td>
-        </tr>{% else %}<tr><td colspan="4" style="color:var(--ink3);font-style:italic;padding:10px">None flagged</td></tr>{% endfor %}</tbody></table></div>
+        </tr>{% else %}<tr><td colspan="4" style="color:#2d6a4f;font-style:italic;padding:12px;text-align:center">✓ Nothing overstocked this week.</td></tr>{% endfor %}</tbody></table></div>
       {% if inv.critical_low %}
       <div class="slabel" style="margin-top:12px">Critical low — order today</div>
       <div class="card"><table class="tbl">
@@ -2498,7 +2511,8 @@ def index(current_user):
     except Exception as e:
         print(f"Inventory analysis error: {e}")
         inv = {"total_waste_cost_week":0,"monthly_waste_projection":0,
-               "recoverable_monthly":0,"waste_items":[],"overstock":[],"critical_low":[],
+               "recoverable_monthly":0,"total_stock_value":0,
+               "waste_items":[],"overstock":[],"critical_low":[],
                "reorder_soon":[],"total_items":0,
                "week_start":"—","week_end":"—","last_updated":"—"}
     return render_template_string(DASHBOARD_HTML,
