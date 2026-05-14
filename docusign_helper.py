@@ -28,17 +28,21 @@ def get_access_token() -> str:
         raise ValueError("DOCUSIGN_PRIVATE_KEY is not set or invalid")
 
     now = int(time.time())
+    # For demo: account-d.docusign.com, for prod: account.docusign.com
+    is_demo = "demo" in BASE_URL
+    auth_domain = "account-d.docusign.com" if is_demo else "account.docusign.com"
+
     payload = {
         "iss": INTEGRATION_KEY,
         "sub": USER_ID,
-        "aud": BASE_URL.replace("https://", "").replace("http://", ""),
+        "aud": auth_domain,
         "iat": now,
         "exp": now + 3600,
         "scope": "signature impersonation",
     }
 
     token = jwt.encode(payload, private_key, algorithm="RS256")
-    auth_url = f"{BASE_URL}/oauth/token"
+    auth_url = f"https://{auth_domain}/oauth/token"
     resp = requests.post(auth_url, data={
         "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
         "assertion": token,
