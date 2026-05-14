@@ -83,9 +83,13 @@ def analyse_inventory(items: list[dict]) -> dict:
     }
 
 
-def get_claude_insights(analysis: dict) -> str:
+def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name: str = None) -> str:
     """Claude narrates inventory findings like a food cost consultant."""
-    prompt = f"""You are a restaurant food cost consultant reviewing inventory data for Maplewood Kitchen in Chicago.
+    name_line = f"Owner name: {owner_name}" if owner_name else ""
+    rest_line  = f"Restaurant: {restaurant_name}" if restaurant_name else ""
+    prompt = f"""You are a food cost consultant reviewing weekly inventory data for a restaurant.
+{rest_line}
+{name_line}
 
 Key findings:
 - Waste this week: ${analysis['total_waste_cost_week']:,.2f}
@@ -102,14 +106,15 @@ Overstocked items:
 Critical low stock:
 {json.dumps([{"item": x["item"], "days_remaining": x["days_remaining"]} for x in analysis["critical_low"]], indent=2)}
 
-Write a sharp 4-5 paragraph consultant report that:
-1. Opens with the monthly waste number — make the owner feel it
-2. Names the 3 worst offenders specifically (item name, dollars wasted, why it's likely happening)
-3. Calls out the overstock problem with dollar amounts tied up
-4. Gives 3 specific ordering changes to make immediately
-5. Closes with the monthly savings if they fix the top 3 issues
-
-Be direct and specific. Use real numbers. No fluff."""
+Write a 4-5 sentence food cost summary. Rules:
+- No markdown, no bullet points, no bold text, no asterisks whatsoever
+- Write in plain flowing prose, one paragraph
+- Open with the monthly waste projection — make it feel real with the dollar amount
+- Name the 2-3 worst offenders specifically with their dollar amounts
+- Call out the biggest overstock issue if there is one
+- End with one concrete ordering change they can make this week and the dollar impact
+- Friendly and direct — like a trusted advisor giving a quick honest take, not a formal report
+- Address the owner by first name ({owner_name if owner_name else "the owner"}) naturally in the text, not at the start"""
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),

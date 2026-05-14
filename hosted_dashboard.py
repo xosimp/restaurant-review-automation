@@ -543,7 +543,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <div class="stat warn"><div class="stat-n">{{inv.waste_items|length}}</div><div class="stat-l">Waste items</div></div>
     <div class="stat hi"><div class="stat-n">{{inv.critical_low|length}}</div><div class="stat-l">Critical low</div></div>
   </div>
-  <div class="insight"><div class="insight-lbl">AI food cost analysis</div><div class="insight-text insight-loading" id="inv-insight">Loading analysis…</div></div>
+  <div class="insight"><div class="insight-lbl">Cavnar AI Food Cost Analysis</div><div class="insight-text insight-loading" id="inv-insight">Loading analysis…</div></div>
   <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#2d6a4f;line-height:1.6">
     <strong>How this works:</strong> Your inventory data is managed and updated by Will Cavnar weekly.
     To get the most accurate analysis, export your inventory or waste log from your POS system
@@ -2536,8 +2536,12 @@ def labor_insight_api(current_user):
 @app.route("/api/inv-insight")
 @login_required
 def inv_insight_api(current_user):
-    from inventory import load_inventory, analyse_inventory, get_claude_insights
-    insight = get_claude_insights(analyse_inventory(load_inventory()))
+    from inventory import load_inventory_for_restaurant, analyse_inventory, get_claude_insights
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    items    = load_inventory_for_restaurant(current_user["restaurant_id"])
+    analysis = analyse_inventory(items)
+    owner_name = restaurant.owner_name if restaurant else None
+    insight  = get_claude_insights(analysis, owner_name=owner_name, restaurant_name=restaurant.name if restaurant else None)
     return jsonify(insight=insight)
 
 @app.route("/api/generate-content", methods=["POST"])
