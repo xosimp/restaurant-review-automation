@@ -40,7 +40,18 @@ def analyse_inventory(items: list[dict]) -> dict:
         days_remaining  = (item["current_stock"] / item["avg_daily_usage"]
                            if item["avg_daily_usage"] > 0 else 99)
         waste_cost      = item["waste_last_week"] * item["unit_cost"]
-        overstock_units = max(0, item["current_stock"] - item["par_level"] * 1.5)
+        # Category-specific overstock thresholds (industry standard)
+        # Proteins/dairy: flag at 110% of par (perishable, high cost)
+        # Produce: flag at 120% of par
+        # All others (dry, beverage): flag at 130% of par
+        category = (item.get("category") or "").lower()
+        if category in ("protein", "dairy"):
+            overstock_multiplier = 1.10
+        elif category == "produce":
+            overstock_multiplier = 1.20
+        else:
+            overstock_multiplier = 1.30
+        overstock_units = max(0, item["current_stock"] - item["par_level"] * overstock_multiplier)
         overstock_cost  = overstock_units * item["unit_cost"]
         stock_value     = item["current_stock"] * item["unit_cost"]
         waste_pct       = (item["waste_last_week"] / item["last_order_qty"] * 100
@@ -56,7 +67,7 @@ def analyse_inventory(items: list[dict]) -> dict:
 
         if waste_pct > 20:
             waste_items.append(item)
-        if overstock_units > 3:
+        if overstock_units > 0:
             overstock.append(item)
         if days_remaining <= 2 and item["current_stock"] < item["par_level"]:
             critical_low.append(item)
@@ -70,6 +81,26 @@ def analyse_inventory(items: list[dict]) -> dict:
     monthly_waste_projection = total_waste_cost * 4.3
     recoverable = monthly_waste_projection * 0.65
 
+    from datetime import datetime, timedelta
+    # Derive week range from last_ordered dates in items, or use current week
+    ordered_dates = []
+    for item in items:
+        lo = item.get("last_ordered","")
+        if lo:
+            try:
+                ordered_dates.append(datetime.strptime(lo[:10], "%Y-%m-%d"))
+            except Exception:
+                pass
+    if ordered_dates:
+        latest = max(ordered_dates)
+        week_end_dt   = latest
+        week_start_dt = latest - timedelta(days=6)
+    else:
+        week_end_dt   = datetime.now()
+        week_start_dt = week_end_dt - timedelta(days=6)
+
+    def fmt(dt): return dt.strftime("%-m/%-d/%y")
+
     return {
         "total_waste_cost_week": round(total_waste_cost, 2),
         "monthly_waste_projection": round(monthly_waste_projection, 2),
@@ -80,6 +111,9 @@ def analyse_inventory(items: list[dict]) -> dict:
         "critical_low":   critical_low[:4],
         "reorder_soon":   reorder_soon[:4],
         "total_items":    len(items),
+        "week_start":     fmt(week_start_dt),
+        "week_end":       fmt(week_end_dt),
+        "last_updated":   fmt(datetime.now()),
     }
 
 
