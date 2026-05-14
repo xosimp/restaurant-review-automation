@@ -34,6 +34,10 @@ CREATE TABLE IF NOT EXISTS restaurants (
     contract_status TEXT DEFAULT 'pending', -- pending/sent/signed
     location_group  TEXT,                 -- group name for multi-location clients (e.g. "Syrup")
     location_name   TEXT,                 -- specific location name (e.g. "Lincoln Park")
+    inventory_frequency TEXT DEFAULT 'weekly', -- how often to request inventory data
+    inventory_notes TEXT,                 -- admin notes on how to get data from this client
+    food_cost_target REAL DEFAULT 30.0,  -- target food cost % of revenue
+    inventory_updated_at TEXT,            -- last time inventory data was uploaded
     -- Tech info
     pos_system      TEXT,          -- Toast / Square / Lightspeed / etc
     owner_name      TEXT,              -- owner/GM name for personalization
@@ -136,8 +140,12 @@ class Restaurant:
     stripe_customer_id: Optional[str]    = None
     docusign_envelope_id: Optional[str]  = None
     contract_status: str                 = "pending"
-    location_group: Optional[str]   = None
-    location_name: Optional[str]    = None
+    location_group: Optional[str]        = None
+    location_name: Optional[str]         = None
+    inventory_frequency: str             = "weekly"
+    inventory_notes: Optional[str]       = None
+    food_cost_target: float              = 30.0
+    inventory_updated_at: Optional[str]  = None
     pos_system: Optional[str]       = None
     owner_name: Optional[str]       = None
     owner_phone: Optional[str]      = None
@@ -222,6 +230,10 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN contract_status TEXT DEFAULT 'pending'",
         "ALTER TABLE restaurants ADD COLUMN location_group TEXT",
         "ALTER TABLE restaurants ADD COLUMN location_name TEXT",
+        "ALTER TABLE restaurants ADD COLUMN inventory_frequency TEXT DEFAULT 'weekly'",
+        "ALTER TABLE restaurants ADD COLUMN inventory_notes TEXT",
+        "ALTER TABLE restaurants ADD COLUMN food_cost_target REAL DEFAULT 30.0",
+        "ALTER TABLE restaurants ADD COLUMN inventory_updated_at TEXT",
         "ALTER TABLE restaurants ADD COLUMN owner_phone TEXT",
         "ALTER TABLE restaurants ADD COLUMN digest_day TEXT DEFAULT 'monday'",
         "ALTER TABLE restaurants ADD COLUMN digest_enabled INTEGER DEFAULT 1",
@@ -280,7 +292,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","reviews_live","billing_status","internal_notes",
+        "hourly_rate","labor_target_pct","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","reviews_live","billing_status","internal_notes",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled"
     }
@@ -317,6 +329,10 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         contract_status=row["contract_status"] if "contract_status" in row.keys() else "pending",
         location_group=row["location_group"] if "location_group" in row.keys() else None,
         location_name=row["location_name"] if "location_name" in row.keys() else None,
+        inventory_frequency=row["inventory_frequency"] if "inventory_frequency" in row.keys() else "weekly",
+        inventory_notes=row["inventory_notes"] if "inventory_notes" in row.keys() else None,
+        food_cost_target=row["food_cost_target"] if "food_cost_target" in row.keys() else 30.0,
+        inventory_updated_at=row["inventory_updated_at"] if "inventory_updated_at" in row.keys() else None,
         pos_system=row["pos_system"] if "pos_system" in row.keys() else None,
         reviews_live=row["reviews_live"] if "reviews_live" in row.keys() else 0,
         billing_status=row["billing_status"] if "billing_status" in row.keys() else "trial",

@@ -265,7 +265,9 @@ def check_stale_inventory():
 
             updated = datetime.fromisoformat(row["updated_at"])
             days_old = (datetime.now() - updated).days
-            if days_old >= 7:
+            freq = getattr(r, 'inventory_frequency', 'weekly')
+            threshold = 7 if freq == 'weekly' else (14 if freq == 'biweekly' else 30)
+            if days_old >= threshold:
                 stale.append((r.name, f"{days_old} days old"))
 
         if not stale:

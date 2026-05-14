@@ -1068,15 +1068,7 @@ textarea{resize:vertical;min-height:60px}
           <label>Owner email</label>
           <input type="email" id="owner_email" value="{{ restaurant.owner_email }}">
         </div>
-        <div class="form-group">
-          <label>POS system</label>
-          <select id="pos_system">
-            <option value="">Unknown / not set</option>
-            {% for pos in ['Toast','Square','Lightspeed','Aloha / NCR','Clover','Revel','TouchBistro','Other / Manual'] %}
-            <option value="{{ pos }}" {{'selected' if restaurant.pos_system == pos}}>{{ pos }}</option>
-            {% endfor %}
-          </select>
-        </div>
+
         <div class="form-group">
           <label>Owner / GM name</label>
           <input type="text" id="owner_name" value="{{ restaurant.owner_name or '' }}" placeholder="e.g. Sarah">
@@ -1247,6 +1239,49 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
+  <!-- Inventory settings -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Inventory settings</div></div>
+    <div class="section-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>POS system</label>
+          <select id="pos_system">
+            <option value="">Unknown / not set</option>
+            {% for pos in ['Toast','Square','Lightspeed','Aloha / NCR','Clover','Revel','TouchBistro','Other / Manual'] %}
+            <option value="{{ pos }}" {{'selected' if restaurant.pos_system == pos}}>{{ pos }}</option>
+            {% endfor %}
+          </select>
+          <div class="hint">Used to plan direct POS integration for automated data pulls</div>
+        </div>
+        <div class="form-group">
+          <label>Inventory update frequency</label>
+          <select id="inventory_frequency">
+            <option value="weekly" {{'selected' if (restaurant.inventory_frequency or 'weekly') == 'weekly'}}>Weekly</option>
+            <option value="biweekly" {{'selected' if restaurant.inventory_frequency == 'biweekly'}}>Every 2 weeks</option>
+            <option value="monthly" {{'selected' if restaurant.inventory_frequency == 'monthly'}}>Monthly</option>
+          </select>
+          <div class="hint">How often to request a fresh data export from this client</div>
+        </div>
+        <div class="form-group full">
+          <label>Inventory export instructions</label>
+          <textarea id="inventory_notes" rows="3" placeholder="e.g. Client exports from Toast — go to Back Office → Menu → Items → Export. Ask Sarah every Monday morning.">{{ restaurant.inventory_notes or '' }}</textarea>
+          <div class="hint">Notes for yourself on how to get data from this client each week</div>
+        </div>
+        <div class="form-group">
+          <label>Food cost target %</label>
+          <input type="number" id="food_cost_target" value="{{ restaurant.food_cost_target or 30 }}" min="10" max="50" step="1">
+          <div class="hint">Target food cost as % of revenue (typically 28–35%)</div>
+        </div>
+        <div class="form-group">
+          <label>Last inventory update</label>
+          <input type="text" value="{{ restaurant.inventory_updated_at[:10] if restaurant.inventory_updated_at else 'Never' }}" disabled style="background:var(--paper2);color:var(--ink3)">
+          <div class="hint">Updated automatically when you upload new data</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Module access -->
   <div class="section-card">
     <div class="section-hdr"><div class="section-title">Module access</div></div>
@@ -1398,8 +1433,11 @@ async function saveSettings() {
     owner_email:     document.getElementById('owner_email').value,
     owner_name:      document.getElementById('owner_name').value,
     owner_phone:     document.getElementById('owner_phone').value,
-    location_group:  document.getElementById('location_group').value,
-    location_name:   document.getElementById('location_name').value,
+    location_group:       document.getElementById('location_group').value,
+    location_name:        document.getElementById('location_name').value,
+    inventory_frequency:  document.getElementById('inventory_frequency') ? document.getElementById('inventory_frequency').value : 'weekly',
+    inventory_notes:      document.getElementById('inventory_notes') ? document.getElementById('inventory_notes').value : '',
+    food_cost_target:     document.getElementById('food_cost_target') ? document.getElementById('food_cost_target').value : 30,
     digest_day:      document.getElementById('digest_day').value,
     digest_enabled:  parseInt(document.getElementById('digest_enabled').value),
     pos_system:      document.getElementById('pos_system').value,
@@ -2772,8 +2810,11 @@ def save_client_settings(restaurant_id, current_user):
             "module_marketing":int(data.get("module_marketing", 0)),
             "owner_name":      data.get("owner_name","").strip() or None,
             "owner_phone":     data.get("owner_phone","").strip() or None,
-            "location_group":  data.get("location_group","").strip() or None,
-            "location_name":   data.get("location_name","").strip() or None,
+            "location_group":        data.get("location_group","").strip() or None,
+            "location_name":         data.get("location_name","").strip() or None,
+            "inventory_frequency":   data.get("inventory_frequency","weekly"),
+            "inventory_notes":       data.get("inventory_notes","").strip() or None,
+            "food_cost_target":      float(data.get("food_cost_target", 30) or 30),
             "digest_day":      data.get("digest_day","monday"),
             "digest_enabled":  int(data.get("digest_enabled",1)),
             "reviews_live":    int(bool(data.get("reviews_live"))),
