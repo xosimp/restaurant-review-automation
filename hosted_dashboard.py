@@ -543,6 +543,14 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <div class="stat warn"><div class="stat-n">{{inv.waste_items|length}}</div><div class="stat-l">Waste items</div></div>
     <div class="stat hi"><div class="stat-n">{{inv.critical_low|length}}</div><div class="stat-l">Critical low</div></div>
   </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+    <div style="font-size:13px;font-weight:600;color:var(--ink)">
+      Week of {{inv.week_start}} – {{inv.week_end}}
+    </div>
+    <div style="font-size:11px;color:var(--ink3)">
+      Last updated: {{inv.last_updated}}
+    </div>
+  </div>
   <div class="insight"><div class="insight-lbl">Cavnar AI Food Cost Analysis</div><div class="insight-text insight-loading" id="inv-insight">Loading analysis…</div></div>
   <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#2d6a4f;line-height:1.6">
     <strong>How this works:</strong> Your inventory data is managed and updated by Will Cavnar weekly.
@@ -2490,7 +2498,9 @@ def index(current_user):
     except Exception as e:
         print(f"Inventory analysis error: {e}")
         inv = {"total_waste_cost_week":0,"monthly_waste_projection":0,
-               "recoverable_monthly":0,"waste_items":[],"overstock":[],"critical_low":[]}
+               "recoverable_monthly":0,"waste_items":[],"overstock":[],"critical_low":[],
+               "reorder_soon":[],"total_items":0,
+               "week_start":"—","week_end":"—","last_updated":"—"}
     return render_template_string(DASHBOARD_HTML,
         current_user=current_user, restaurant=restaurant,
         rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch,

@@ -140,19 +140,27 @@ Overstocked items:
 Critical low stock:
 {json.dumps([{"item": x["item"], "days_remaining": x["days_remaining"]} for x in analysis["critical_low"]], indent=2)}
 
-Write a 4-5 sentence food cost summary. Rules:
+Write a food cost analysis in two parts. Rules that apply to everything:
 - No markdown, no bullet points, no bold text, no asterisks whatsoever
-- Write in plain flowing prose, one paragraph
-- Open with the monthly waste projection — make it feel real with the dollar amount
-- Name the 2-3 worst offenders specifically with their dollar amounts
-- Call out the biggest overstock issue if there is one
-- End with one concrete ordering change they can make this week and the dollar impact
-- Friendly and direct — like a trusted advisor giving a quick honest take, not a formal report
-- Address the owner by first name ({owner_name if owner_name else "the owner"}) naturally in the text, not at the start"""
+- Plain flowing prose throughout — no line that starts with a dash or number
+- Friendly and direct — like a trusted advisor, not a formal report
+
+Part 1 — one paragraph of 3-4 sentences:
+- Open with the monthly waste projection dollar amount, make it feel real and personal
+- Name the 2 worst waste offenders by item name with their dollar amounts and a brief reason why it is likely happening
+- Call out the biggest overstock issue with the dollar amount tied up, if any
+
+Part 2 — three recommendations, each as its own sentence separated by a line break:
+- Each must directly save money this week or next week
+- Specific to the actual items in the data, never generic
+- Never suggest anything that hurts guest experience, reduces quality, or cuts portions
+- Focus on ordering frequency, quantity adjustments, or par level changes
+- Include estimated dollar savings for each
+- Use the owner first name naturally in at least one recommendation if provided"""
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-        max_tokens=600,
+        max_tokens=900,
         messages=[{"role": "user", "content": prompt}],
     )
     return msg.content[0].text.strip()
