@@ -996,7 +996,34 @@ function loadInvInsight(){
 }
 let selCt='{{ctypes[0].id if ctypes}}';
 function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(b=>b.classList.remove('selected'));el.classList.add('selected')}
-function genContent(){const topic=document.getElementById('mktopic').value.trim();if(!topic){toast('Enter a topic');return}const box=document.getElementById('mkoutput');box.style.fontStyle='italic';box.style.color='var(--ink3)';box.textContent='Generating…';fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic})}).then(r=>r.json()).then(d=>{box.style.fontStyle='normal';box.style.color='var(--ink2)';box.textContent=d.content})}
+function genContent(){
+  const topic=document.getElementById('mktopic').value.trim();
+  if(!topic){toast('Enter a topic');return;}
+  const box=document.getElementById('mkoutput');
+  box.style.fontStyle='italic';
+  box.style.color='var(--ink3)';
+  box.textContent='Generating…';
+  fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic})})
+    .then(r=>r.json())
+    .then(d=>{
+      box.style.fontStyle='normal';
+      box.style.color='var(--ink2)';
+      box.textContent=d.content||'Generation failed — try again.';
+      const isSms=document.querySelector('.ct-btn.selected')?.dataset?.type==='loyalty_nudge';
+      const counter=document.getElementById('sms-counter');
+      if(isSms){
+        const charCount=(d.content||'').length;
+        document.getElementById('sms-char-count').textContent=charCount;
+        document.getElementById('sms-over').style.display=charCount>160?'inline':'none';
+        counter.style.display='block';
+      } else { counter.style.display='none'; }
+    })
+    .catch(e=>{
+      box.style.color='var(--red)';
+      box.style.fontStyle='italic';
+      box.textContent='Content generation unavailable — check back shortly.';
+    });
+}
 function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}g.innerHTML=d.ideas.map((i,idx)=>{
     window._calIdeas=window._calIdeas||[];
     window._calIdeas[idx]=i;
@@ -1014,12 +1041,7 @@ function generateFromCal(type, topic) {
   document.getElementById('mktopic').value = topic;
   document.getElementById('mkoutput').scrollIntoView({behavior:'smooth', block:'nearest'});
   genContent();
-  }).catch(e=>{
-    box.style.color='var(--red)';
-    box.style.fontStyle='italic';
-    box.textContent='Content generation unavailable — check back shortly.';
-  });
-}}
+}
 async function saveDigestDay() {
   const day     = document.getElementById('digest-day-select').value;
   const enabled = document.getElementById('digest-enabled-select').value;
