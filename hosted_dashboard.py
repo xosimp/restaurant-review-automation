@@ -885,8 +885,8 @@ function skipR(id){
 const dowData={{labor.dow_summary|tojson}};
 const laborDateRange={{labor.date_range|tojson if labor.date_range else 'null'}};
 (function(){
-  const el=document.getElementById('labor-period');
-  if(!el||!laborDateRange||!laborDateRange.start)return;
+  const elPeriod=document.getElementById('labor-period');
+  if(!elPeriod||!laborDateRange||!laborDateRange.start)return;
   function fmt(d){
     const p=d.split('-');
     return parseInt(p[1])+'/'+parseInt(p[2])+'/'+p[0].slice(2);
@@ -919,16 +919,16 @@ let laborLoaded=false,invLoaded=false;
 function loadLaborInsight(){
   laborLoaded=true;
   fetch('/api/labor-insight').then(r=>r.json()).then(d=>{
-    const el=document.getElementById('labor-insight');
-    el.textContent=d.insight||'Analysis unavailable — check back shortly.';
-    el.classList.remove('insight-loading');
+    const elLaborInsight=document.getElementById('labor-insight');
+    elLaborInsight.textContent=d.insight||'Analysis unavailable — check back shortly.';
+    elLaborInsight.classList.remove('insight-loading');
   }).catch(e=>{
-    const el=document.getElementById('labor-insight');
-    el.textContent='Analysis unavailable — check back shortly.';
-    el.classList.remove('insight-loading');
-    const el=document.getElementById('labor-insight');
-    el.textContent='Analysis unavailable — check back shortly.';
-    el.classList.remove('insight-loading');
+    const elLaborErr=document.getElementById('labor-insight');
+    elLaborErr.textContent='Analysis unavailable — check back shortly.';
+    elLaborErr.classList.remove('insight-loading');
+    const elLaborErr2=document.getElementById('labor-insight');
+    elLaborErr2.textContent='Analysis unavailable — check back shortly.';
+    elLaborErr2.classList.remove('insight-loading');
   });
   // Load dollar gap
   fetch('/api/labor-gap').then(r=>r.json()).then(d=>{
@@ -985,13 +985,13 @@ async function downloadSchedule(btn) {
 function loadInvInsight(){
   invLoaded=true;
   fetch('/api/inv-insight').then(r=>r.json()).then(d=>{
-    const el=document.getElementById('inv-insight');
-    el.textContent=d.insight||'Analysis unavailable — check back shortly.';
-    el.classList.remove('insight-loading');
+    const elInvInsight=document.getElementById('inv-insight');
+    elInvInsight.textContent=d.insight||'Analysis unavailable — check back shortly.';
+    elInvInsight.classList.remove('insight-loading');
   }).catch(e=>{
-    const el=document.getElementById('inv-insight');
-    el.textContent='Analysis unavailable — check back shortly.';
-    el.classList.remove('insight-loading');
+    const elInvErr=document.getElementById('inv-insight');
+    elInvErr.textContent='Analysis unavailable — check back shortly.';
+    elInvErr.classList.remove('insight-loading');
   });
 }
 let selCt='{{ctypes[0].id if ctypes}}';
