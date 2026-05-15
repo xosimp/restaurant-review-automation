@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy — Cavnar AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --ink:    #0e0c0a;
+      --ink2:   #3a3530;
+      --ink3:   #7a736a;
+      --ember:  #c84b2f;
+      --paper:  #f7f4ef;
+      --paper2: #ede9e2;
+      --paper3: #e0dbd0;
+      --white:  #ffffff;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--paper);
+      color: var(--ink);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 15px;
+      line-height: 1.75;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--ink);
+      padding: 18px 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      font-family: 'DM Serif Display', serif;
+      font-size: 22px;
+      color: white;
+      text-decoration: none;
+    }
+    .logo span { color: var(--ember); font-style: italic; }
+    header nav a {
+      color: #a09890;
+      text-decoration: none;
+      font-size: 13px;
+      margin-left: 24px;
+      transition: color .15s;
+    }
+    header nav a:hover { color: white; }
+
+    /* ── Hero ── */
+    .hero {
+      background: var(--ink);
+      padding: 64px 40px 56px;
+      border-bottom: 3px solid var(--ember);
+    }
+    .hero-inner {
+      max-width: 760px;
+      margin: 0 auto;
+    }
+    .pill {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--ember);
+      border: 1px solid #3a2820;
+      padding: 4px 12px;
+      border-radius: 20px;
+      margin-bottom: 18px;
+    }
+    .hero h1 {
+      font-family: 'DM Serif Display', serif;
+      font-size: 42px;
+      color: white;
+      line-height: 1.15;
+      margin-bottom: 14px;
+    }
+    .hero h1 em { color: var(--ember); font-style: italic; }
+    .hero-meta {
+      font-size: 13px;
+      color: #7a736a;
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    /* ── Layout ── */
+    .layout {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 60px 40px;
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 60px;
+      align-items: start;
+    }
+
+    /* ── TOC ── */
+    .toc {
+      position: sticky;
+      top: 32px;
+    }
+    .toc-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--ink3);
+      margin-bottom: 12px;
+    }
+    .toc a {
+      display: block;
+      font-size: 13px;
+      color: var(--ink3);
+      text-decoration: none;
+      padding: 5px 0;
+      border-left: 2px solid var(--paper3);
+      padding-left: 12px;
+      transition: all .15s;
+      line-height: 1.4;
+    }
+    .toc a:hover {
+      color: var(--ember);
+      border-left-color: var(--ember);
+    }
+
+    /* ── Content ── */
+    .content { min-width: 0; }
+
+    .section {
+      margin-bottom: 52px;
+      padding-bottom: 52px;
+      border-bottom: 1px solid var(--paper3);
+    }
+    .section:last-child { border-bottom: none; margin-bottom: 0; }
+
+    .section-number {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--ember);
+      margin-bottom: 8px;
+    }
+
+    h2 {
+      font-family: 'DM Serif Display', serif;
+      font-size: 26px;
+      color: var(--ink);
+      margin-bottom: 18px;
+      line-height: 1.2;
+    }
+
+    h3 {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--ink2);
+      margin: 24px 0 10px;
+    }
+
+    p {
+      color: var(--ink2);
+      margin-bottom: 14px;
+    }
+
+    ul, ol {
+      margin: 0 0 14px 0;
+      padding-left: 20px;
+      color: var(--ink2);
+    }
+    li { margin-bottom: 6px; }
+
+    .callout {
+      background: white;
+      border-left: 3px solid var(--ember);
+      border-radius: 0 6px 6px 0;
+      padding: 16px 20px;
+      margin: 20px 0;
+      font-size: 14px;
+      color: var(--ink2);
+    }
+    .callout strong { color: var(--ink); }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin: 16px 0;
+      background: white;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--paper3);
+    }
+    .data-table th {
+      background: var(--ink);
+      color: white;
+      text-align: left;
+      padding: 10px 14px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .data-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--paper2);
+      color: var(--ink2);
+      vertical-align: top;
+    }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:nth-child(even) td { background: var(--paper); }
+
+    a { color: var(--ember); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Footer ── */
+    footer {
+      background: var(--ink);
+      padding: 32px 40px;
+      text-align: center;
+    }
+    footer p {
+      font-size: 12px;
+      color: #7a736a;
+      margin: 0;
+    }
+    footer a { color: #a09890; }
+
+    @media (max-width: 720px) {
+      .layout { grid-template-columns: 1fr; gap: 32px; padding: 40px 20px; }
+      .toc { display: none; }
+      header { padding: 16px 20px; }
+      .hero { padding: 40px 20px 36px; }
+      .hero h1 { font-size: 30px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <a href="https://cavnar.ai" class="logo">Cavnar <span>AI</span></a>
+  <nav>
+    <a href="https://cavnar.ai">Home</a>
+    <a href="https://dashboard.cavnar.ai">Dashboard</a>
+    <a href="mailto:will@cavnar.ai">Contact</a>
+  </nav>
+</header>
+
+<div class="hero">
+  <div class="hero-inner">
+    <div class="pill">Legal</div>
+    <h1>Privacy <em>Policy</em></h1>
+    <div class="hero-meta">
+      <span>Cavnar AI LLC</span>
+      <span>Effective: May 14, 2026</span>
+      <span>Last updated: May 14, 2026</span>
+    </div>
+  </div>
+</div>
+
+<div class="layout">
+
+  <!-- Table of Contents -->
+  <aside class="toc">
+    <div class="toc-label">Contents</div>
+    <a href="#overview">Overview</a>
+    <a href="#information-collected">Information We Collect</a>
+    <a href="#how-we-use">How We Use Information</a>
+    <a href="#third-party-sharing">Third-Party Sharing</a>
+    <a href="#meta-instagram">Meta & Instagram Data</a>
+    <a href="#data-retention">Data Retention</a>
+    <a href="#data-security">Data Security</a>
+    <a href="#your-rights">Your Rights</a>
+    <a href="#data-deletion">Data Deletion</a>
+    <a href="#cookies">Cookies</a>
+    <a href="#children">Children's Privacy</a>
+    <a href="#california">California Residents</a>
+    <a href="#changes">Policy Changes</a>
+    <a href="#contact">Contact Us</a>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="content">
+
+    <div class="section" id="overview">
+      <div class="section-number">01 — Overview</div>
+      <h2>Our commitment to your privacy</h2>
+      <p>Cavnar AI LLC ("Cavnar AI", "we", "us", or "our") operates an AI-powered restaurant intelligence platform accessible at <a href="https://dashboard.cavnar.ai">dashboard.cavnar.ai</a> and through our services at <a href="https://cavnar.ai">cavnar.ai</a>. This Privacy Policy describes how we collect, use, store, and protect information when you use our services.</p>
+      <p>We provide AI-powered tools to independent restaurant operators, including review response drafting, labor cost optimization, inventory analysis, and marketing content generation. In providing these services, we access certain data about your restaurant and its operations on your behalf.</p>
+      <div class="callout">
+        <strong>Plain English summary:</strong> We collect the information you give us to run your dashboard. We use it only to provide your service. We don't sell your data, and we never will.
+      </div>
+      <p>By using Cavnar AI services, you agree to the collection and use of information as described in this policy. If you do not agree, please discontinue use of our services.</p>
+    </div>
+
+    <div class="section" id="information-collected">
+      <div class="section-number">02 — Information We Collect</div>
+      <h2>What information we collect</h2>
+      <p>We collect information in three ways: information you provide directly, information collected automatically through your use of the service, and information obtained from third-party platforms you connect to our service.</p>
+
+      <h3>Information you provide directly</h3>
+      <ul>
+        <li>Restaurant name, address, and contact information</li>
+        <li>Owner and GM name, email address, and phone number</li>
+        <li>Dashboard login credentials (username and password — passwords are stored hashed and never readable)</li>
+        <li>Restaurant profile information: neighborhood, vibe, brand voice notes, menu highlights</li>
+        <li>Labor data: shift records, employee hours, sales figures uploaded by you or your operator</li>
+        <li>Inventory data: item names, quantities, unit costs, par levels, and waste records uploaded by you or your operator</li>
+        <li>Payment information: processed through Stripe — we do not store credit card numbers or financial account details</li>
+      </ul>
+
+      <h3>Information collected automatically</h3>
+      <ul>
+        <li>Dashboard activity logs: which tabs you visit, when you last logged in, feature usage patterns</li>
+        <li>System information: IP address, browser type, operating system (used for security and troubleshooting only)</li>
+        <li>AI interaction logs: content generation requests and outputs (used to improve service quality)</li>
+      </ul>
+
+      <h3>Information from third-party platforms</h3>
+      <p>When you connect third-party accounts to Cavnar AI — including Google Business Profile, Yelp, Instagram, or Facebook — we collect:</p>
+      <ul>
+        <li>Business profile information (name, address, category, hours)</li>
+        <li>Review content: text, ratings, dates, and reviewer display names from Google and Yelp</li>
+        <li>Social media content: posts, captions, and engagement metrics from connected Instagram and Facebook Business accounts</li>
+        <li>OAuth access tokens required to retrieve and publish data on your behalf — stored encrypted</li>
+      </ul>
+
+      <table class="data-table">
+        <thead>
+          <tr><th>Data Type</th><th>Source</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Restaurant reviews</td><td>Google, Yelp</td><td>AI review response drafting</td></tr>
+          <tr><td>Labor/sales records</td><td>You (CSV upload)</td><td>Labor cost analysis and scheduling</td></tr>
+          <tr><td>Inventory records</td><td>You (CSV upload)</td><td>Food cost and waste analysis</td></tr>
+          <tr><td>Social media content</td><td>Instagram, Facebook</td><td>Marketing content generation and posting</td></tr>
+          <tr><td>Payment data</td><td>Stripe</td><td>Subscription billing</td></tr>
+          <tr><td>Login credentials</td><td>You</td><td>Dashboard authentication</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section" id="how-we-use">
+      <div class="section-number">03 — How We Use Information</div>
+      <h2>How we use your information</h2>
+      <p>We use the information we collect exclusively to provide, maintain, and improve your Cavnar AI service. Specifically:</p>
+
+      <h3>Service delivery</h3>
+      <ul>
+        <li>Generating AI-drafted responses to your Google and Yelp reviews</li>
+        <li>Analyzing your labor data to identify cost-saving opportunities and generate optimized schedules</li>
+        <li>Analyzing your inventory data to identify waste, overstock, and ordering recommendations</li>
+        <li>Generating marketing content — social media posts, emails, and promotional copy — in your restaurant's voice</li>
+        <li>Publishing approved content to your connected Instagram and Facebook Business accounts</li>
+        <li>Sending you weekly digest emails and urgent alert notifications</li>
+      </ul>
+
+      <h3>Service operations</h3>
+      <ul>
+        <li>Processing payments through Stripe</li>
+        <li>Sending transactional emails (welcome, payment confirmation, contract)</li>
+        <li>Authenticating your account and maintaining security</li>
+        <li>Troubleshooting technical issues</li>
+      </ul>
+
+      <h3>What we never do with your data</h3>
+      <ul>
+        <li>Sell, rent, or trade your information to any third party</li>
+        <li>Use your restaurant data to train AI models for other customers</li>
+        <li>Use your information for advertising purposes</li>
+        <li>Share your data with marketing companies or data brokers</li>
+        <li>Aggregate your data into industry reports without explicit written consent</li>
+      </ul>
+    </div>
+
+    <div class="section" id="third-party-sharing">
+      <div class="section-number">04 — Third-Party Sharing</div>
+      <h2>Third parties we work with</h2>
+      <p>We share your data with a limited number of service providers strictly for the purpose of operating Cavnar AI. These providers are contractually prohibited from using your data for any other purpose.</p>
+
+      <table class="data-table">
+        <thead>
+          <tr><th>Provider</th><th>Purpose</th><th>Data Shared</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Anthropic</strong></td>
+            <td>AI model API (Claude) — powers review responses, labor analysis, and marketing content generation</td>
+            <td>Review text, restaurant profile, operational data included in AI prompts. Anthropic's <a href="https://www.anthropic.com/privacy">privacy policy</a> applies.</td>
+          </tr>
+          <tr>
+            <td><strong>Stripe</strong></td>
+            <td>Payment processing and subscription management</td>
+            <td>Email address, billing information. Stripe's <a href="https://stripe.com/privacy">privacy policy</a> applies.</td>
+          </tr>
+          <tr>
+            <td><strong>Resend</strong></td>
+            <td>Transactional email delivery</td>
+            <td>Email address, email content. Resend's privacy policy applies.</td>
+          </tr>
+          <tr>
+            <td><strong>Railway</strong></td>
+            <td>Application hosting and infrastructure</td>
+            <td>All application data stored on Railway servers in the United States.</td>
+          </tr>
+          <tr>
+            <td><strong>Meta (Facebook/Instagram)</strong></td>
+            <td>Content publishing via Instagram Graph API and Facebook Pages API</td>
+            <td>OAuth tokens and post content shared with Meta only at the time of publishing actions you initiate. Meta's <a href="https://www.facebook.com/privacy/policy/">privacy policy</a> applies.</td>
+          </tr>
+          <tr>
+            <td><strong>Google</strong></td>
+            <td>Review data retrieval via Google Places API</td>
+            <td>Google Place ID used to retrieve public review data. Google's <a href="https://policies.google.com/privacy">privacy policy</a> applies.</td>
+          </tr>
+          <tr>
+            <td><strong>DocuSign</strong></td>
+            <td>Electronic service agreement signing</td>
+            <td>Name, email address, and contract content. DocuSign's <a href="https://www.docusign.com/company/privacy-policy">privacy policy</a> applies.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>We do not share your information with any other third parties except as required by law, to protect our rights, or in connection with a merger or acquisition (in which case you will be notified in advance).</p>
+    </div>
+
+    <div class="section" id="meta-instagram">
+      <div class="section-number">05 — Meta & Instagram Data</div>
+      <h2>How we handle Meta and Instagram data</h2>
+      <p>This section applies specifically to users who connect their Instagram Business or Creator accounts and Facebook Business Pages to Cavnar AI for the Marketing Autopilot module.</p>
+
+      <div class="callout">
+        <strong>Important:</strong> Cavnar AI only requests access to Instagram and Facebook accounts that you explicitly connect and authorize. We never access personal (non-business) Instagram accounts. Only Business and Creator accounts connected to a Facebook Page can be integrated.
+      </div>
+
+      <h3>What Meta data we access</h3>
+      <ul>
+        <li>Basic business profile information (name, about, category)</li>
+        <li>Your published posts and their performance metrics (likes, comments, reach) — used only to inform content recommendations</li>
+        <li>The ability to publish new posts to your Instagram Business account and Facebook Page on your behalf, only when you explicitly initiate a post from your Cavnar AI dashboard</li>
+      </ul>
+
+      <h3>What Meta permissions we request</h3>
+      <ul>
+        <li><strong>instagram_basic</strong> — Read basic profile information</li>
+        <li><strong>instagram_content_publish</strong> — Publish media to your Instagram Business account</li>
+        <li><strong>pages_manage_posts</strong> — Publish and manage posts on your connected Facebook Page</li>
+        <li><strong>pages_read_engagement</strong> — Read engagement metrics on your Page posts</li>
+      </ul>
+
+      <h3>How we store Meta credentials</h3>
+      <ul>
+        <li>OAuth access tokens are stored encrypted in our database</li>
+        <li>Tokens are never logged or transmitted to any third party except Meta's servers during API calls</li>
+        <li>Long-lived tokens are refreshed automatically and securely</li>
+        <li>We do not store your Facebook or Instagram password at any point</li>
+      </ul>
+
+      <h3>How to revoke Meta access</h3>
+      <p>You can revoke Cavnar AI's access to your Instagram and Facebook accounts at any time by:</p>
+      <ul>
+        <li>Going to your Facebook Settings → Security and Login → Apps and Websites → removing Cavnar AI</li>
+        <li>Contacting us at <a href="mailto:will@cavnar.ai">will@cavnar.ai</a> and requesting disconnection</li>
+      </ul>
+      <p>Revoking access will immediately disable the Marketing Autopilot module's ability to post to your accounts. Previously published content will not be affected.</p>
+
+      <h3>Meta data use limitations</h3>
+      <p>We strictly comply with Meta's Platform Terms and Developer Policies. Specifically:</p>
+      <ul>
+        <li>We do not use Meta data to build audience profiles or targeting data</li>
+        <li>We do not share Meta data with advertisers or data brokers</li>
+        <li>We do not use Meta data for any purpose other than operating your Cavnar AI marketing features</li>
+        <li>We do not transfer Meta data to any third-party analytics platform</li>
+        <li>We retain Meta-sourced data only as long as your account is active (see Data Retention section)</li>
+      </ul>
+    </div>
+
+    <div class="section" id="data-retention">
+      <div class="section-number">06 — Data Retention</div>
+      <h2>How long we keep your data</h2>
+      <p>We retain your data for as long as your Cavnar AI account is active or as needed to provide services. Specifically:</p>
+
+      <table class="data-table">
+        <thead>
+          <tr><th>Data Type</th><th>Retention Period</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Account and profile information</td><td>Duration of active account + 30 days after cancellation</td></tr>
+          <tr><td>Restaurant operational data (labor, inventory)</td><td>Duration of active account + 30 days after cancellation</td></tr>
+          <tr><td>Review data and AI-drafted responses</td><td>Duration of active account + 30 days after cancellation</td></tr>
+          <tr><td>Meta OAuth tokens</td><td>Until revoked by you or account cancellation</td></tr>
+          <tr><td>Marketing content generated</td><td>Duration of active account + 30 days after cancellation</td></tr>
+          <tr><td>Payment records</td><td>7 years (required for tax and legal compliance)</td></tr>
+          <tr><td>Service agreements / contracts</td><td>7 years (required for legal compliance)</td></tr>
+          <tr><td>System logs</td><td>90 days</td></tr>
+        </tbody>
+      </table>
+
+      <p>Upon account cancellation, we will delete your operational data within 30 days, unless retention is required by law. Payment records and executed contracts are retained for 7 years as required by applicable law.</p>
+    </div>
+
+    <div class="section" id="data-security">
+      <div class="section-number">07 — Data Security</div>
+      <h2>How we protect your data</h2>
+      <p>We implement industry-standard security measures to protect your information against unauthorized access, alteration, disclosure, or destruction:</p>
+      <ul>
+        <li>All data is transmitted over HTTPS with TLS encryption</li>
+        <li>Passwords are hashed using bcrypt — we cannot retrieve your plain-text password</li>
+        <li>OAuth tokens and API keys are stored encrypted at rest</li>
+        <li>Our application infrastructure is hosted on Railway, which provides enterprise-grade security and SOC 2 compliance</li>
+        <li>Database access is restricted to application-level credentials with principle of least privilege</li>
+        <li>We conduct regular reviews of access controls and security practices</li>
+      </ul>
+      <p>While we take significant steps to protect your data, no method of internet transmission or electronic storage is 100% secure. If you believe your account security has been compromised, contact us immediately at <a href="mailto:will@cavnar.ai">will@cavnar.ai</a>.</p>
+      <p>In the event of a data breach that affects your personal information, we will notify you within 72 hours of becoming aware of the breach, in accordance with applicable law.</p>
+    </div>
+
+    <div class="section" id="your-rights">
+      <div class="section-number">08 — Your Rights</div>
+      <h2>Your rights and choices</h2>
+      <p>You have the following rights with respect to your personal information:</p>
+
+      <h3>Access and portability</h3>
+      <p>You may request a copy of all personal data we hold about you and your restaurant. We will provide this in a machine-readable format within 30 days of your request.</p>
+
+      <h3>Correction</h3>
+      <p>You may update or correct your account information at any time through your dashboard settings, or by contacting us at <a href="mailto:will@cavnar.ai">will@cavnar.ai</a>.</p>
+
+      <h3>Deletion</h3>
+      <p>You may request deletion of your personal data. See the Data Deletion section below for full instructions.</p>
+
+      <h3>Restriction and objection</h3>
+      <p>You may object to or request restriction of certain processing activities. We will honor these requests where technically feasible and not prohibited by law.</p>
+
+      <h3>Withdraw consent</h3>
+      <p>Where processing is based on consent (such as connecting Instagram), you may withdraw consent at any time without affecting the lawfulness of prior processing.</p>
+
+      <p>To exercise any of these rights, contact us at <a href="mailto:will@cavnar.ai">will@cavnar.ai</a> with the subject line "Privacy Request." We will respond within 30 days.</p>
+    </div>
+
+    <div class="section" id="data-deletion">
+      <div class="section-number">09 — Data Deletion</div>
+      <h2>How to delete your data</h2>
+      <p>You can request deletion of your Cavnar AI account and associated data at any time using any of the following methods:</p>
+
+      <div class="callout">
+        <strong>Quickest method:</strong> Email <a href="mailto:will@cavnar.ai?subject=Delete my Cavnar AI account and data">will@cavnar.ai</a> with subject line "Delete my account and data." Include your restaurant name and the email address on your account. We will confirm deletion within 5 business days.
+      </div>
+
+      <p>Upon receiving a verified deletion request, we will:</p>
+      <ol>
+        <li>Delete your dashboard account and login credentials</li>
+        <li>Delete all restaurant operational data (labor, inventory, reviews)</li>
+        <li>Delete all AI-generated content associated with your account</li>
+        <li>Revoke and delete all stored OAuth tokens for connected platforms</li>
+        <li>Remove your information from all active systems within 30 days</li>
+        <li>Confirm deletion by email once complete</li>
+      </ol>
+
+      <p>Note: Payment records and executed service agreements are retained for 7 years as required by applicable tax and contract law, even after account deletion. These records do not contain sensitive operational data about your restaurant.</p>
+
+      <h3>Instagram and Facebook data deletion</h3>
+      <p>If you connect your Instagram or Facebook account to Cavnar AI and later request deletion, we will:</p>
+      <ul>
+        <li>Immediately revoke our access to your Instagram and Facebook accounts</li>
+        <li>Delete all stored OAuth tokens associated with your Meta accounts</li>
+        <li>Delete any cached social media data retrieved during your service period</li>
+      </ul>
+      <p>You can also independently remove Cavnar AI's access at any time via Facebook Settings → Security and Login → Apps and Websites.</p>
+    </div>
+
+    <div class="section" id="cookies">
+      <div class="section-number">10 — Cookies</div>
+      <h2>Cookies and tracking</h2>
+      <p>Cavnar AI uses a minimal number of cookies necessary for the service to function. We do not use advertising cookies, tracking pixels, or third-party analytics services.</p>
+
+      <table class="data-table">
+        <thead>
+          <tr><th>Cookie</th><th>Purpose</th><th>Duration</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>session</td><td>Maintains your logged-in state on the dashboard</td><td>Until you log out or session expires</td></tr>
+          <tr><td>csrf_token</td><td>Prevents cross-site request forgery attacks</td><td>Session</td></tr>
+        </tbody>
+      </table>
+
+      <p>We do not use Google Analytics, Facebook Pixel, or any third-party tracking tools on dashboard.cavnar.ai. Our main website (cavnar.ai) may use basic analytics to understand visitor traffic — this data is never linked to your dashboard account.</p>
+    </div>
+
+    <div class="section" id="children">
+      <div class="section-number">11 — Children's Privacy</div>
+      <h2>Children's privacy</h2>
+      <p>Cavnar AI is a business-to-business service intended solely for restaurant owners, operators, and their designated staff. Our services are not directed to individuals under the age of 18. We do not knowingly collect personal information from anyone under 18. If we become aware that we have inadvertently collected information from a minor, we will delete it promptly. Contact us at <a href="mailto:will@cavnar.ai">will@cavnar.ai</a> if you believe this has occurred.</p>
+    </div>
+
+    <div class="section" id="california">
+      <div class="section-number">12 — California Residents</div>
+      <h2>California residents (CCPA)</h2>
+      <p>If you are a California resident, you have additional rights under the California Consumer Privacy Act (CCPA):</p>
+      <ul>
+        <li><strong>Right to know:</strong> You may request information about the personal data we collect, use, disclose, and sell (we do not sell personal data)</li>
+        <li><strong>Right to delete:</strong> You may request deletion of your personal data as described in the Data Deletion section above</li>
+        <li><strong>Right to opt-out of sale:</strong> We do not sell personal data. No opt-out is necessary.</li>
+        <li><strong>Right to non-discrimination:</strong> We will not discriminate against you for exercising your CCPA rights</li>
+      </ul>
+      <p>To exercise your California privacy rights, email <a href="mailto:will@cavnar.ai">will@cavnar.ai</a> with subject line "California Privacy Request."</p>
+    </div>
+
+    <div class="section" id="changes">
+      <div class="section-number">13 — Policy Changes</div>
+      <h2>Changes to this policy</h2>
+      <p>We may update this Privacy Policy from time to time to reflect changes in our practices, technology, legal requirements, or other factors. When we make material changes, we will:</p>
+      <ul>
+        <li>Update the "Last updated" date at the top of this page</li>
+        <li>Send an email notification to all active account holders</li>
+        <li>Post a notice in your dashboard for 30 days after the change takes effect</li>
+      </ul>
+      <p>Your continued use of Cavnar AI services after a policy update constitutes acceptance of the updated policy. If you do not agree to the updated policy, you may cancel your account at any time.</p>
+    </div>
+
+    <div class="section" id="contact">
+      <div class="section-number">14 — Contact</div>
+      <h2>Contact us</h2>
+      <p>If you have questions, concerns, or requests related to this Privacy Policy or your personal data, please contact us:</p>
+
+      <div class="callout">
+        <strong>Will Cavnar</strong><br>
+        Cavnar AI LLC<br>
+        South Elgin, Illinois, United States<br>
+        Email: <a href="mailto:will@cavnar.ai">will@cavnar.ai</a><br>
+        Website: <a href="https://cavnar.ai">cavnar.ai</a>
+      </div>
+
+      <p>We take privacy requests seriously and will respond within 30 days. For urgent security concerns, include "URGENT" in your subject line.</p>
+      <p>This Privacy Policy was written by Will Cavnar for Cavnar AI LLC. It is governed by the laws of the State of Illinois, United States.</p>
+    </div>
+
+  </main>
+</div>
+
+<footer>
+  <p>© 2026 Cavnar AI LLC · <a href="https://cavnar.ai">cavnar.ai</a> · <a href="mailto:will@cavnar.ai">will@cavnar.ai</a></p>
+</footer>
+
+</body>
+</html>
