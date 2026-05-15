@@ -3515,7 +3515,14 @@ House red wine,beverage,bottle,24,20,8.50,3.5,2026-05-12,30,2.0
 def privacy_page():
     """Serve the Cavnar AI privacy policy page."""
     from flask import Response
-    return Response(PRIVACY_HTML, mimetype="text/html")
+    import os as _os
+    try:
+        html_path = _os.path.join(_os.path.dirname(__file__), "privacy.html")
+        with open(html_path, "r") as f:
+            html = f.read()
+    except FileNotFoundError:
+        html = "<h1>Privacy Policy</h1><p>Coming soon. Contact will@cavnar.ai</p>"
+    return Response(html, mimetype="text/html")
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
