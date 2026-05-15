@@ -135,3 +135,13 @@ def delete_session(token: str, db_path: str = DB_PATH):
     conn.execute("DELETE FROM sessions WHERE token=?", (token,))
     conn.commit()
     conn.close()
+
+def update_last_login(user_id: int, db_path: str = DB_PATH):
+    """Update last_login timestamp for a user."""
+    conn = get_conn(db_path)
+    conn.execute(
+        "UPDATE users SET last_login=? WHERE id=?",
+        (datetime.now(timezone.utc).isoformat(), user_id)
+    )
+    conn.commit()
+    conn.close()

@@ -306,6 +306,11 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 
 <!-- REVIEWS -->
 <div class="panel {{'active' if mod_reviews}}" id="panel-reviews">
+  {% if not restaurant.reviews_live %}
+  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#8a6a00;display:flex;align-items:center;gap:8px">
+    <span>⚠</span><span><strong>Sample data</strong> — example reviews to show how the dashboard works. Will is connecting your live Google and Yelp reviews.</span>
+  </div>
+  {% endif %}
   <div class="stat-row">
     <div class="stat"><div class="stat-n">{{rstats.avg_rating}}</div><div class="stat-l">Avg rating</div></div>
     <div class="stat"><div class="stat-n">{{rstats.total}}</div><div class="stat-l">Total</div></div>
@@ -410,6 +415,11 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 
 <!-- LABOR -->
 <div class="panel {{'active' if not mod_reviews and mod_labor}}" id="panel-labor">
+  {% if not labor.is_live %}
+  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#8a6a00;display:flex;align-items:center;gap:8px">
+    <span>⚠</span><span><strong>Sample data</strong> — example figures showing how the labor analysis works. Send your shift data to will@cavnar.ai to activate live data.</span>
+  </div>
+  {% endif %}
 
   <!-- Hero metric — dollar gap -->
   <div id="labor-gap-banner" style="background:var(--ink);border-radius:var(--r);padding:20px 24px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
@@ -987,15 +997,21 @@ function loadInvInsight(){
 let selCt='{{ctypes[0].id if ctypes}}';
 function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(b=>b.classList.remove('selected'));el.classList.add('selected')}
 function genContent(){const topic=document.getElementById('mktopic').value.trim();if(!topic){toast('Enter a topic');return}const box=document.getElementById('mkoutput');box.style.fontStyle='italic';box.style.color='var(--ink3)';box.textContent='Generating…';fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic})}).then(r=>r.json()).then(d=>{box.style.fontStyle='normal';box.style.color='var(--ink2)';box.textContent=d.content})}
-function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}g.innerHTML=d.ideas.map(i=>`<div class="cal-card"><div class="cal-day-name">${i.day}</div><div class="cal-platform" style="font-size:10px;color:var(--ink3);margin:2px 0 4px">${i.platform||''}</div><div style="font-size:12px;line-height:1.5">${i.angle||''}</div><button onclick="generateFromCal('${i.type||'instagram_post'}','${(i.angle||'').replace(/'/g,"\\'")}')" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;width:100%">Generate →</button></div>`).join('')})}
+function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}g.innerHTML=d.ideas.map((i,idx)=>{
+    window._calIdeas=window._calIdeas||[];
+    window._calIdeas[idx]=i;
+    return `<div class="cal-card"><div class="cal-day-name">${i.day}</div><div class="cal-platform" style="font-size:10px;color:var(--ink3);margin:2px 0 4px">${i.platform||''}</div><div style="font-size:12px;line-height:1.5">${i.angle||''}</div><button data-idx="${idx}" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;width:100%">Generate →</button></div>`;
+  }).join('')})}
+function generateFromCalIdx(idx) {
+  const i = window._calIdeas && window._calIdeas[idx];
+  if (!i) return;
+  generateFromCal(i.type || 'instagram_post', i.angle || '');
+}
 function generateFromCal(type, topic) {
-  // Select the matching content type button
   document.querySelectorAll('.ct-btn').forEach(b=>{
     if(b.dataset.type===type) { b.click(); }
   });
-  // Set the topic
   document.getElementById('mktopic').value = topic;
-  // Scroll to output and generate
   document.getElementById('mkoutput').scrollIntoView({behavior:'smooth', block:'nearest'});
   genContent();
   }).catch(e=>{
@@ -2625,8 +2641,10 @@ def index(current_user):
                "reorder_soon":[],"total_items":0,
                "week_start":"—","week_end":"—","last_updated":"—",
                "is_live":False}
-    # Show welcome banner on first login (not for admin impersonation)
-    show_welcome = not current_user.get("is_admin") and session.get(f'first_login_{current_user["id"]}', False)
+    # Show welcome banner if user has never logged in before (last_login is None)
+    from auth import get_user_by_id
+    _user_row = get_user_by_id(current_user["id"]) if not current_user.get("is_admin") else None
+    show_welcome = bool(_user_row and not _user_row.get("last_login"))
     return render_template_string(DASHBOARD_HTML,
         show_welcome=show_welcome,
         current_user=current_user, restaurant=restaurant,
@@ -3580,7 +3598,9 @@ def privacy_page():
 @app.route("/api/dismiss-welcome", methods=["POST"])
 @login_required
 def dismiss_welcome(current_user):
-    session.pop(f'first_login_{current_user["id"]}', None)
+    """Mark user as having seen welcome banner by updating last_login."""
+    from auth import update_last_login
+    update_last_login(current_user["id"])
     return jsonify(ok=True)
 
 @app.errorhandler(404)
