@@ -3511,6 +3511,12 @@ House red wine,beverage,bottle,24,20,8.50,3.5,2026-05-12,30,2.0
         download_name="cavnar_ai_inventory_template.csv"
     )
 
+@app.route("/privacy")
+def privacy_page():
+    """Serve the Cavnar AI privacy policy page."""
+    from flask import Response
+    return Response(PRIVACY_HTML, mimetype="text/html")
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
