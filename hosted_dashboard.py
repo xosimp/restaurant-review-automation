@@ -9,7 +9,7 @@ import os, json
 from datetime import datetime
 from functools import wraps
 from flask import (Flask, render_template_string, request,
-                   jsonify, redirect, url_for, make_response, send_file)
+                   jsonify, redirect, url_for, make_response, send_file, session)
 from models import (init_db, get_conn, approve_response,
                     get_reviews_since, get_restaurant)
 from auth import (init_auth, verify_password, create_session,
