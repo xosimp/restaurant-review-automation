@@ -50,10 +50,13 @@ def get_labor_target(restaurant_id: int) -> float:
 
 def analyse_shifts_for_restaurant(restaurant_id: int) -> dict:
     """Load shifts and analyse with client-specific hourly rate and target."""
+    from models import get_client_data
+    client_data = get_client_data(restaurant_id)
+    is_live = bool(client_data and client_data.get("labor_csv"))
     shifts = load_shifts_for_restaurant(restaurant_id)
     rate   = get_hourly_rate(restaurant_id)
     target = get_labor_target(restaurant_id)
-    return analyse_shifts(shifts, hourly_rate=rate, labor_target=target)
+    result = analyse_shifts(shifts, hourly_rate=rate, labor_target=target)
 
 
 def analyse_shifts(shifts: list[dict],

@@ -173,10 +173,10 @@ Finally, on a new line, write one short warm closing sentence:
     return msg.content[0].text.strip()
 
 
-def load_inventory_for_restaurant(restaurant_id: int) -> list[dict]:
-    """Load real client data if available, otherwise use sample data."""
+def load_inventory_for_restaurant(restaurant_id: int):
+    """Load real client data if available, otherwise use sample data. Returns (items, is_live)."""
     from models import get_client_data
     data = get_client_data(restaurant_id)
     if data and data.get("inventory_csv"):
-        return load_inventory(csv_string=data["inventory_csv"])
-    return load_inventory()  # fallback to sample
+        return load_inventory(csv_string=data["inventory_csv"]), True
+    return load_inventory(), False  # fallback to sample

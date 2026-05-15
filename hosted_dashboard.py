@@ -546,6 +546,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <div class="stat hi"><div class="stat-n">{{inv.critical_low|length}}</div><div class="stat-l">Critical low</div></div>
     <div class="stat"><div class="stat-n">${{inv.total_stock_value|int|format_num}}</div><div class="stat-l">Inventory value</div></div>
   </div>
+  {% if not inv.is_live %}
+  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#8a6a00;display:flex;align-items:center;gap:8px">
+    <span>⚠</span>
+    <span><strong>Sample data</strong> — this is example inventory data. Will will update this with your real numbers after your first weekly export.</span>
+  </div>
+  {% endif %}
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
     <div style="font-size:13px;font-weight:600;color:var(--ink)">
       Week of {{inv.week_start}} – {{inv.week_end}}
@@ -606,10 +612,14 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 
 <!-- MARKETING -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing">
-  <div style="background:#f0f4fa;border:1px solid #b3c5e0;border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#2d4a6a;line-height:1.6">
+  <div style="background:#f0f4fa;border:1px solid #b3c5e0;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#2d4a6a;line-height:1.6">
     <strong>How this works:</strong> Pick a content type, add a topic or occasion, and hit Generate.
     Copy the result straight to Instagram, your email tool, or Google Business Profile.
     The more specific your topic, the better the output.
+  </div>
+  <div style="background:#fdf8f4;border:1px solid var(--paper3);border-radius:6px;padding:8px 14px;margin-bottom:14px;font-size:12px;color:var(--ink3);line-height:1.5">
+    The AI writes in your restaurant's voice. If something doesn't sound right or you want to update your brand voice,
+    <a href="mailto:will@cavnar.ai?subject=Update my marketing voice profile — {{restaurant.name}}" style="color:var(--ember)">email Will</a> and it'll be updated within one business day.
   </div>
   <div class="slabel">Content type</div>
   <div class="ct-grid">{% for ct in ctypes %}
@@ -889,12 +899,14 @@ function renderBars(){
 let laborLoaded=false,invLoaded=false;
 function loadLaborInsight(){
   laborLoaded=true;
-  // Load AI insight
   fetch('/api/labor-insight').then(r=>r.json()).then(d=>{
     const el=document.getElementById('labor-insight');
-    el.textContent=d.insight||'Analysis unavailable.';
+    el.textContent=d.insight||'Analysis unavailable — check back shortly.';
     el.classList.remove('insight-loading');
   }).catch(e=>{
+    const el=document.getElementById('labor-insight');
+    el.textContent='Analysis unavailable — check back shortly.';
+    el.classList.remove('insight-loading');
     const el=document.getElementById('labor-insight');
     el.textContent='Analysis unavailable — check back shortly.';
     el.classList.remove('insight-loading');
@@ -951,7 +963,18 @@ async function downloadSchedule(btn) {
     setTimeout(()=>{btn.textContent='Download optimized schedule ↓';btn.disabled=false;},4000);
   }
 }
-function loadInvInsight(){invLoaded=true;fetch('/api/inv-insight').then(r=>r.json()).then(d=>{const el=document.getElementById('inv-insight');el.textContent=d.insight;el.classList.remove('insight-loading')})}
+function loadInvInsight(){
+  invLoaded=true;
+  fetch('/api/inv-insight').then(r=>r.json()).then(d=>{
+    const el=document.getElementById('inv-insight');
+    el.textContent=d.insight||'Analysis unavailable — check back shortly.';
+    el.classList.remove('insight-loading');
+  }).catch(e=>{
+    const el=document.getElementById('inv-insight');
+    el.textContent='Analysis unavailable — check back shortly.';
+    el.classList.remove('insight-loading');
+  });
+}
 let selCt='{{ctypes[0].id if ctypes}}';
 function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(b=>b.classList.remove('selected'));el.classList.add('selected')}
 function genContent(){const topic=document.getElementById('mktopic').value.trim();if(!topic){toast('Enter a topic');return}const box=document.getElementById('mkoutput');box.style.fontStyle='italic';box.style.color='var(--ink3)';box.textContent='Generating…';fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic})}).then(r=>r.json()).then(d=>{box.style.fontStyle='normal';box.style.color='var(--ink2)';box.textContent=d.content})}
@@ -966,7 +989,12 @@ function generateFromCal(type, topic) {
   // Scroll to output and generate
   document.getElementById('mkoutput').scrollIntoView({behavior:'smooth', block:'nearest'});
   genContent();
-}
+  }).catch(e=>{
+    box.style.color='var(--red)';
+    box.style.fontStyle='italic';
+    box.textContent='Content generation unavailable — check back shortly.';
+  });
+}}
 async function saveDigestDay() {
   const day     = document.getElementById('digest-day-select').value;
   const enabled = document.getElementById('digest-enabled-select').value;
@@ -998,6 +1026,10 @@ function loadBillingInfo() {
     if(d.portal_url) document.getElementById('billing-portal-link').href=d.portal_url;
     else document.getElementById('billing-portal-link').style.display='none';
   }).catch(()=>{document.getElementById('billing-loading').textContent='Billing info unavailable.';});
+}
+function dismissWelcome(){
+  document.getElementById('welcome-banner').style.display='none';
+  fetch('/api/dismiss-welcome', {method:'POST'});
 }
 function changePassword(){
   const cur=document.getElementById('pw-current').value;
@@ -2567,14 +2599,17 @@ def index(current_user):
                  "dow_summary":{},"potential_savings":0,"labor_target":30.0,
                  "by_day":{},"employee_hours":{}}
     try:
-        inv = analyse_inventory(load_inventory_for_restaurant(rid))
+        _inv_items, _inv_live = load_inventory_for_restaurant(rid)
+        inv = analyse_inventory(_inv_items)
+        inv['is_live'] = _inv_live
     except Exception as e:
         print(f"Inventory analysis error: {e}")
         inv = {"total_waste_cost_week":0,"monthly_waste_projection":0,
                "recoverable_monthly":0,"total_stock_value":0,
                "waste_items":[],"overstock":[],"critical_low":[],
                "reorder_soon":[],"total_items":0,
-               "week_start":"—","week_end":"—","last_updated":"—"}
+               "week_start":"—","week_end":"—","last_updated":"—",
+               "is_live":False}
     return render_template_string(DASHBOARD_HTML,
         current_user=current_user, restaurant=restaurant,
         rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch,
@@ -3523,6 +3558,74 @@ def privacy_page():
     except FileNotFoundError:
         html = "<h1>Privacy Policy</h1><p>Coming soon. Contact will@cavnar.ai</p>"
     return Response(html, mimetype="text/html")
+
+@app.route("/api/dismiss-welcome", methods=["POST"])
+@login_required
+def dismiss_welcome(current_user):
+    session.pop(f'first_login_{current_user["id"]}', None)
+    return jsonify(ok=True)
+
+@app.errorhandler(404)
+def page_not_found(e):
+    from flask import Response
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Page Not Found — Cavnar AI</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body{margin:0;background:#f7f4ef;font-family:'DM Sans',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}
+    .wrap{max-width:420px;padding:40px 24px}
+    .logo{font-family:'DM Serif Display',serif;font-size:28px;color:#0e0c0a;margin-bottom:32px}
+    .logo span{color:#c84b2f;font-style:italic}
+    h1{font-family:'DM Serif Display',serif;font-size:64px;color:#0e0c0a;margin:0 0 8px;line-height:1}
+    p{font-size:15px;color:#7a736a;line-height:1.6;margin:0 0 24px}
+    a.btn{display:inline-block;background:#c84b2f;color:white;padding:10px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="logo">Cavnar <span>AI</span></div>
+    <h1>404</h1>
+    <p>This page doesn't exist. If you think something's wrong, email <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a>.</p>
+    <a href="/" class="btn">Back to dashboard</a>
+  </div>
+</body>
+</html>"""
+    return Response(html, status=404, mimetype="text/html")
+
+@app.errorhandler(500)
+def server_error(e):
+    from flask import Response
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Something went wrong — Cavnar AI</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body{margin:0;background:#f7f4ef;font-family:'DM Sans',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}
+    .wrap{max-width:420px;padding:40px 24px}
+    .logo{font-family:'DM Serif Display',serif;font-size:28px;color:#0e0c0a;margin-bottom:32px}
+    .logo span{color:#c84b2f;font-style:italic}
+    h1{font-family:'DM Serif Display',serif;font-size:40px;color:#0e0c0a;margin:0 0 8px}
+    p{font-size:15px;color:#7a736a;line-height:1.6;margin:0 0 24px}
+    a.btn{display:inline-block;background:#c84b2f;color:white;padding:10px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="logo">Cavnar <span>AI</span></div>
+    <h1>Something went wrong</h1>
+    <p>The server ran into an issue. It's been logged and Will will look into it. Email <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a> if it keeps happening.</p>
+    <a href="/" class="btn">Back to dashboard</a>
+  </div>
+</body>
+</html>"""
+    return Response(html, status=500, mimetype="text/html")
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
