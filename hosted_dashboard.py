@@ -246,6 +246,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 .topic-input:focus{border-color:var(--ember)}
 .output-box{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px;min-height:100px;font-size:12px;line-height:1.7;color:var(--ink2);white-space:pre-wrap}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-top:10px}
+
+.cal-card{background:white;border:1px solid var(--paper3);border-radius:6px;padding:12px;font-size:12px;display:flex;flex-direction:column}
 .cal-day{background:white;border:1px solid var(--paper3);border-radius:6px;padding:8px 6px;font-size:10px}
 .cal-day-name{font-weight:500;color:var(--ink2);margin-bottom:3px}
 .cal-platform{font-size:8px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);margin-bottom:2px}
@@ -604,9 +606,14 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 
 <!-- MARKETING -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing">
+  <div style="background:#f0f4fa;border:1px solid #b3c5e0;border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#2d4a6a;line-height:1.6">
+    <strong>How this works:</strong> Pick a content type, add a topic or occasion, and hit Generate.
+    Copy the result straight to Instagram, your email tool, or Google Business Profile.
+    The more specific your topic, the better the output.
+  </div>
   <div class="slabel">Content type</div>
   <div class="ct-grid">{% for ct in ctypes %}
-    <div class="ct-btn {{'selected' if loop.first}}" onclick="selectCt('{{ct.id}}',this)">
+    <div class="ct-btn {{'selected' if loop.first}}" data-type="{{ct.id}}" onclick="selectCt('{{ct.id}}',this)">
       <div class="ct-label">{{ct.label}}</div><div class="ct-desc">{{ct.description}}</div>
     </div>{% endfor %}
   </div>
@@ -615,6 +622,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <button class="btn-primary" onclick="genContent()">Generate ↗</button>
   </div>
   <div class="output-box" id="mkoutput" style="color:var(--ink3);font-style:italic">Select a type and click Generate.</div>
+  <div id="sms-counter" style="display:none;font-size:11px;margin-top:4px;color:var(--ink3)">
+    <span id="sms-char-count">0</span>/160 characters
+    <span id="sms-over" style="color:var(--red);display:none"> — over limit, trim before sending</span>
+  </div>
   <div style="display:flex;gap:6px;margin-top:8px">
     <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').textContent).then(()=>toast('Copied'))">Copy</button>
     <button class="btn-secondary" onclick="genContent()">Regenerate</button>
@@ -944,7 +955,18 @@ function loadInvInsight(){invLoaded=true;fetch('/api/inv-insight').then(r=>r.jso
 let selCt='{{ctypes[0].id if ctypes}}';
 function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(b=>b.classList.remove('selected'));el.classList.add('selected')}
 function genContent(){const topic=document.getElementById('mktopic').value.trim();if(!topic){toast('Enter a topic');return}const box=document.getElementById('mkoutput');box.style.fontStyle='italic';box.style.color='var(--ink3)';box.textContent='Generating…';fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic})}).then(r=>r.json()).then(d=>{box.style.fontStyle='normal';box.style.color='var(--ink2)';box.textContent=d.content})}
-function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}g.innerHTML=d.ideas.map(i=>`<div class="cal-day"><div class="cal-day-name">${i.day}</div><div class="cal-platform">${i.platform||''}</div><div>${i.angle||''}</div></div>`).join('')})}
+function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}g.innerHTML=d.ideas.map(i=>`<div class="cal-card"><div class="cal-day-name">${i.day}</div><div class="cal-platform" style="font-size:10px;color:var(--ink3);margin:2px 0 4px">${i.platform||''}</div><div style="font-size:12px;line-height:1.5">${i.angle||''}</div><button onclick="generateFromCal('${i.type||'instagram_post'}','${(i.angle||'').replace(/'/g,"\\'")}')" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;width:100%">Generate →</button></div>`).join('')})}
+function generateFromCal(type, topic) {
+  // Select the matching content type button
+  document.querySelectorAll('.ct-btn').forEach(b=>{
+    if(b.dataset.type===type) { b.click(); }
+  });
+  // Set the topic
+  document.getElementById('mktopic').value = topic;
+  // Scroll to output and generate
+  document.getElementById('mkoutput').scrollIntoView({behavior:'smooth', block:'nearest'});
+  genContent();
+}
 async function saveDigestDay() {
   const day     = document.getElementById('digest-day-select').value;
   const enabled = document.getElementById('digest-enabled-select').value;
@@ -1257,6 +1279,44 @@ textarea{resize:vertical;min-height:60px}
         Examples: "Always works Mon/Wed/Fri" · "Can't work after 9pm" · "Guaranteed 30h/week" · "Part-time, max 20h"
       </div>
       <div style="font-size:12px;margin-top:8px;display:none" id="staff-note-result"></div>
+    </div>
+  </div>
+
+  <!-- Marketing settings -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Marketing profile</div></div>
+    <div class="section-body">
+      <div style="font-size:12px;color:var(--ink3);line-height:1.6;margin-bottom:12px">
+        This profile shapes how the AI writes content for this restaurant. The more detail here, the better the output.
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Neighborhood</label>
+          <input type="text" id="neighborhood" value="{{ restaurant.neighborhood or '' }}" placeholder="e.g. Lincoln Park, Chicago">
+        </div>
+        <div class="form-group">
+          <label>Restaurant vibe</label>
+          <input type="text" id="vibe" value="{{ restaurant.vibe or '' }}" placeholder="e.g. warm neighborhood bistro, serious about food">
+        </div>
+        <div class="form-group full">
+          <label>Known for</label>
+          <input type="text" id="known_for" value="{{ restaurant.known_for or '' }}" placeholder="e.g. short rib pasta, brunch, house-baked bread, craft cocktails">
+        </div>
+        <div class="form-group full">
+          <label>Brand voice notes</label>
+          <textarea id="voice_notes" rows="2" placeholder="e.g. genuine and warm, a little witty, never corporate, speaks like a person not a brand">{{ restaurant.voice_notes or '' }}</textarea>
+        </div>
+        <div class="form-group">
+          <label>Sign-off name</label>
+          <input type="text" id="sign_off_name" value="{{ restaurant.sign_off_name or '' }}" placeholder="e.g. Sarah, or The Maple Team">
+          <div class="hint">Used at the end of emails and responses</div>
+        </div>
+        <div class="form-group">
+          <label>Never say (words/phrases to avoid)</label>
+          <input type="text" id="never_say" value="{{ restaurant.never_say or '' }}" placeholder="e.g. culinary journey, indulge, delightful">
+          <div class="hint">Comma-separated — AI will never use these</div>
+        </div>
+      </div>
     </div>
   </div>
 
