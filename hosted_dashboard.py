@@ -285,6 +285,15 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <a href="/logout" class="logout-btn">Sign out</a>
   </div>
 </header>
+{% if show_welcome %}
+<div id="welcome-banner" style="background:linear-gradient(135deg,#1a1410,#2a1f1a);border-bottom:2px solid var(--ember);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;gap:16px">
+  <div>
+    <div style="color:white;font-size:13px;font-weight:600;margin-bottom:2px">Welcome to Cavnar <span style="color:var(--ember);font-style:italic">AI</span> 👋</div>
+    <div style="color:#a09890;font-size:12px;line-height:1.5">Your dashboard is live. Sample data is shown until Will connects your real data — usually within 24 hours. Questions? <a href="mailto:will@cavnar.ai" style="color:var(--ember)">will@cavnar.ai</a></div>
+  </div>
+  <button onclick="dismissWelcome()" style="background:transparent;border:1px solid #3a3530;color:#7a736a;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px;white-space:nowrap;font-family:'DM Sans',sans-serif">Got it ✕</button>
+</div>
+{% endif %}
 <div style="background:var(--ink);padding:0 28px">
   <nav style="display:flex;gap:0">
     {% if mod_reviews %}<button class="tab {{'active' if mod_reviews}}" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews <span class="badge">{{rstats.total}}</span></button>{% endif %}
@@ -2299,10 +2308,15 @@ async function deleteNote(noteId) {
   if(data.ok) location.reload();
 }
 </script>
+<footer style="background:var(--ink);padding:14px 28px;display:flex;align-items:center;justify-content:space-between">
+  <span style="font-size:11px;color:#4a4540">© 2026 Cavnar AI LLC</span>
+  <div style="display:flex;gap:16px;align-items:center">
+    <a href="https://cavnar.ai/privacy" target="_blank" style="font-size:11px;color:#4a4540;text-decoration:none">Privacy Policy</a>
+    <a href="https://cavnar.ai" target="_blank" style="font-size:11px;color:#4a4540;text-decoration:none">cavnar.ai</a>
+  </div>
+</footer>
 </body>
 </html>"""
-
-
 
 
 TIER_LABELS = {
@@ -2577,9 +2591,9 @@ def logout():
     return resp
 
 @app.route("/")
-@login_required
+@login_required  
 def index(current_user):
-    if current_user["is_admin"]:
+    if current_user.get("is_admin"):
         return redirect("/admin")
     from labor import analyse_shifts_for_restaurant
     from inventory import load_inventory_for_restaurant, analyse_inventory
@@ -2594,7 +2608,7 @@ def index(current_user):
         labor = analyse_shifts_for_restaurant(rid)
     except Exception as e:
         print(f"Labor analysis error: {e}")
-        labor = {"total_labor_cost":0,"total_sales":0,"overall_labor_pct":0,
+        labor = {"is_live":False,"total_labor_cost":0,"total_sales":0,"overall_labor_pct":0,
                  "overstaffed_days":[],"understaffed_days":[],"overtime_risk":[],
                  "dow_summary":{},"potential_savings":0,"labor_target":30.0,
                  "by_day":{},"employee_hours":{}}
@@ -2610,7 +2624,10 @@ def index(current_user):
                "reorder_soon":[],"total_items":0,
                "week_start":"—","week_end":"—","last_updated":"—",
                "is_live":False}
+    # Show welcome banner on first login (not for admin impersonation)
+    show_welcome = not current_user.get("is_admin") and session.get(f'first_login_{current_user["id"]}', False)
     return render_template_string(DASHBOARD_HTML,
+        show_welcome=show_welcome,
         current_user=current_user, restaurant=restaurant,
         rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch,
         labor=labor, inv=inv, ctypes=CONTENT_TYPES,
@@ -3590,7 +3607,7 @@ def page_not_found(e):
     <div class="logo">Cavnar <span>AI</span></div>
     <h1>404</h1>
     <p>This page doesn't exist. If you think something's wrong, email <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a>.</p>
-    <a href="/" class="btn">Back to dashboard</a>
+    <a href="/login" class="btn">Back to dashboard</a>
   </div>
 </body>
 </html>"""
@@ -3621,7 +3638,7 @@ def server_error(e):
     <div class="logo">Cavnar <span>AI</span></div>
     <h1>Something went wrong</h1>
     <p>The server ran into an issue. It's been logged and Will will look into it. Email <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a> if it keeps happening.</p>
-    <a href="/" class="btn">Back to dashboard</a>
+    <a href="/login" class="btn">Back to dashboard</a>
   </div>
 </body>
 </html>"""

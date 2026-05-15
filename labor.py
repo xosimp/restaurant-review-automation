@@ -56,7 +56,9 @@ def analyse_shifts_for_restaurant(restaurant_id: int) -> dict:
     shifts = load_shifts_for_restaurant(restaurant_id)
     rate   = get_hourly_rate(restaurant_id)
     target = get_labor_target(restaurant_id)
-    result = analyse_shifts(shifts, hourly_rate=rate, labor_target=target)
+    result = analyse_shifts(shifts, hourly_rate=rate, labor_target_pct=target)
+    result['is_live'] = is_live
+    return result
 
 
 def analyse_shifts(shifts: list[dict],
