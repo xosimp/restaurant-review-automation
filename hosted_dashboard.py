@@ -1037,7 +1037,8 @@ function loadBillingInfo() {
   }).catch(()=>{document.getElementById('billing-loading').textContent='Billing info unavailable.';});
 }
 function dismissWelcome(){
-  document.getElementById('welcome-banner').style.display='none';
+  const b=document.getElementById('welcome-banner');
+  if(b) b.style.display='none';
   fetch('/api/dismiss-welcome', {method:'POST'});
 }
 function changePassword(){
