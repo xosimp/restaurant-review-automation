@@ -140,29 +140,30 @@ Overstocked items:
 Critical low stock:
 {json.dumps([{"item": x["item"], "days_remaining": x["days_remaining"]} for x in analysis["critical_low"]], indent=2)}
 
-Write a food cost analysis in two parts. Rules that apply to everything:
+Write a food cost analysis. Rules that apply to everything:
 - No markdown, no bullet points, no bold text, no asterisks whatsoever
+- Do NOT label sections or write "Part 1", "Part 2", "Recommendations", or any headers
 - Plain flowing prose throughout — no line that starts with a dash or number
 - Friendly and direct — like a trusted advisor, not a formal report
 
-Part 1 — one paragraph of 3-4 sentences:
+First, write one paragraph of 3-4 sentences:
 - Open with the monthly waste projection dollar amount, make it feel real and personal
 - Name the 2 worst waste offenders by item name with their dollar amounts and a brief reason why it is likely happening
 - Call out the biggest overstock issue with the dollar amount tied up, if any
 
-Part 2 — recommendations, each as its own sentence on a new line:
+Then, on new lines after the paragraph, write 1-3 recommendations:
 - Only include recommendations where there is a genuine, specific opportunity — do not pad to three if the data does not support it
 - Maximum of three, minimum of one, ranked by dollar impact (highest first)
+- Each as its own sentence on its own line
 - Each must directly save money this week or next week with an estimated dollar amount
 - Specific to the actual items in the data — never generic advice
 - Never suggest anything that hurts guest experience, reduces quality, or cuts portions
 - Focus on ordering frequency, quantity reductions, or par level adjustments
 - Do not use the owner name anywhere in the recommendations
 
-Part 3 — one short closing sentence:
-- Warm and brief — something about finishing the week strong, keeping momentum, or a small encouragement
-- Never generic filler — tie it loosely to how the week looks (good week = celebrate it, rough week = encouragement)
-- No more than one sentence"""
+Finally, on a new line, write one short warm closing sentence:
+- Tied loosely to how the week looks — good week gets a small celebration, rough week gets encouragement
+- Never generic filler, no more than one sentence"""
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
