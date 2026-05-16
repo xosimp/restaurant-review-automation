@@ -2483,11 +2483,14 @@ TIER_PRICES = {
 
 
 def create_stripe_checkout(module_count: int, owner_email: str,
-                            restaurant_name: str):
+                            restaurant_name: str,
+                            billing_period: str = "monthly"):
     """
     Dynamically create a Stripe checkout session for any module count.
     Returns the checkout URL or None on failure.
-    Pricing: $500/module setup (one-time) + $300/mo/module retainer (30-day trial).
+    Pricing:
+      Monthly: $500/module setup (one-time) + $300/mo/module retainer (30-day trial).
+      Annual:  $500/module setup (one-time) + $3,000/yr/module retainer (30-day trial).
     """
     import stripe as _stripe
     stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
@@ -2498,12 +2501,21 @@ def create_stripe_checkout(module_count: int, owner_email: str,
         return None
 
     _stripe.api_key = stripe_key
-    setup_amount   = module_count * 500 * 100   # in cents
-    monthly_amount = module_count * 300 * 100   # in cents
+    setup_amount = module_count * 500 * 100   # in cents (same for both plans)
+    # Annual = $3,000/module/yr (equivalent to $250/mo — 2 months free)
+    # Monthly = $300/module/mo
+    if billing_period == "annual":
+        retainer_amount   = module_count * 3000 * 100  # annual in cents
+        retainer_interval = "year"
+        trial_days        = 30
+    else:
+        retainer_amount   = module_count * 300 * 100   # monthly in cents
+        retainer_interval = "month"
+        trial_days        = 30
 
     try:
         # Ensure products exist (create once, reuse by name)
-        def get_or_create_price(product_name, unit_amount, recurring=False):
+        def get_or_create_price(product_name, unit_amount, recurring=False, interval="month"):
             # Search for existing product
             products = _stripe.Product.search(query=f'name:"{product_name}"', limit=1)
             if products.data:
@@ -2518,17 +2530,19 @@ def create_stripe_checkout(module_count: int, owner_email: str,
                 currency="usd",
             )
             if recurring:
-                kwargs["recurring"] = {"interval": "month"}
+                kwargs["recurring"] = {"interval": interval}
             return _stripe.Price.create(**kwargs).id
 
+        period_label = "Annual" if billing_period == "annual" else "Monthly"
         setup_price_id   = get_or_create_price(
             f"Cavnar AI Setup — {module_count} Module{'s' if module_count>1 else ''}",
             setup_amount
         )
         retainer_price_id = get_or_create_price(
-            f"Cavnar AI Retainer — {module_count} Module{'s' if module_count>1 else ''}",
-            monthly_amount,
-            recurring=True
+            f"Cavnar AI Retainer {period_label} — {module_count} Module{'s' if module_count>1 else ''}",
+            retainer_amount,
+            recurring=True,
+            interval=retainer_interval
         )
 
         session = _stripe.checkout.Session.create(
@@ -2540,10 +2554,11 @@ def create_stripe_checkout(module_count: int, owner_email: str,
             ],
             mode="subscription",
             subscription_data={
-                "trial_period_days": 30,
+                "trial_period_days": trial_days,
                 "metadata": {
                     "restaurant": restaurant_name,
                     "modules": str(module_count),
+                    "billing_period": billing_period,
                 }
             },
             success_url="https://dashboard.cavnar.ai?payment=success",
@@ -2588,21 +2603,37 @@ def send_payment_email(to_email, restaurant_name, tier=None,
         f"{module_count} Modules"
     )
 
-    # Generate dynamic Stripe checkout link
-    checkout_url = create_stripe_checkout(module_count, to_email, restaurant_name)
+    # Generate dynamic Stripe checkout links — both monthly and annual
+    checkout_monthly = create_stripe_checkout(module_count, to_email, restaurant_name, "monthly")
+    checkout_annual  = create_stripe_checkout(module_count, to_email, restaurant_name, "annual")
 
-    # Fallback message if Stripe key not configured
-    if not checkout_url:
-        checkout_url = None
+    annual_price    = f"${module_count * 3000:,}/yr"
+    annual_monthly  = f"${module_count * 250:,}/mo"
 
     try:
         import resend as _resend
         _resend.api_key = RESEND_API_KEY
-        btn_html = (
-            f'<a href="{checkout_url}" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">Complete payment →</a>'
-            if checkout_url else
-            '<p style="font-size:13px;color:#3a3530;margin-top:8px">Will will send your payment link shortly.</p>'
-        )
+        if checkout_monthly and checkout_annual:
+            btn_html = f"""
+<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:4px">
+  <div style="flex:1;min-width:200px;background:white;border:2px solid #c84b2f;border-radius:8px;padding:16px">
+    <div style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin-bottom:4px">Monthly</div>
+    <div style="font-size:20px;font-weight:600;color:#0e0c0a;font-family:Georgia,serif;margin-bottom:2px">{retainer_price}</div>
+    <div style="font-size:11px;color:#7a736a;margin-bottom:12px">Cancel anytime</div>
+    <a href="{checkout_monthly}" style="display:block;text-align:center;background:#c84b2f;color:white;padding:10px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Choose monthly →</a>
+  </div>
+  <div style="flex:1;min-width:200px;background:#fdf8f6;border:2px solid #2d6a4f;border-radius:8px;padding:16px;position:relative">
+    <div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:#2d6a4f;color:white;font-size:10px;font-weight:600;padding:3px 10px;border-radius:20px;white-space:nowrap">2 MONTHS FREE</div>
+    <div style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin-bottom:4px">Annual</div>
+    <div style="font-size:20px;font-weight:600;color:#0e0c0a;font-family:Georgia,serif;margin-bottom:2px">{annual_price}</div>
+    <div style="font-size:11px;color:#2d6a4f;font-weight:500;margin-bottom:12px">{annual_monthly}/mo — save ${{module_count*600:,}}</div>
+    <a href="{checkout_annual}" style="display:block;text-align:center;background:#2d6a4f;color:white;padding:10px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Choose annual →</a>
+  </div>
+</div>"""
+        elif checkout_monthly:
+            btn_html = f'<a href="{checkout_monthly}" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">Complete payment →</a>'
+        else:
+            btn_html = '<p style="font-size:13px;color:#3a3530;margin-top:8px">Will will send your payment link shortly.</p>' 
         _resend.Emails.send({
             "from": f"Will Cavnar <{FROM_EMAIL}>",
             "to": [to_email],
