@@ -994,7 +994,6 @@ function loadInvInsight(){
     elInvErr.classList.remove('insight-loading');
   });
 }
-let selCt='{{ctypes[0].id if ctypes}}';
 function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(b=>b.classList.remove('selected'));el.classList.add('selected')}
 function genContent(){
   const topic=document.getElementById('mktopic').value.trim();
@@ -2162,6 +2161,7 @@ input:focus,select:focus{border-color:var(--ember)}
             <button class="action-item" onclick="window.location='/admin/view-as/{{user.restaurant_id}}'">View as client</button>
             {% if user.is_active %}
             <div class="action-divider"></div>
+            <button class="action-item" onclick="resendContract({{user.restaurant_id}},'{{user.email}}','{{user.contract_status}}');closeMenu({{user.id}})">Resend contract</button>
             <button class="action-item" onclick="resendPayment({{user.restaurant_id}},'{{user.email}}','{{user.billing_status}}');closeMenu({{user.id}})">Resend payment link</button>
             <button class="action-item" onclick="seedReviews({{user.restaurant_id}});closeMenu({{user.id}})">Seed sample reviews</button>
             <div class="action-divider"></div>
