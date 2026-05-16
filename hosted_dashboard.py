@@ -2653,8 +2653,9 @@ def send_payment_email(to_email, restaurant_name, tier=None,
     Here is your payment link for the <strong>{label}</strong> plan.
   </p>
   <p style="font-size:14px;color:#3a3530;line-height:1.6;margin-bottom:20px">
-    One checkout handles everything — {setup_price} setup today,
-    then {retainer_price} starts automatically in 30 days. No second step needed.
+    Pick your plan below — {setup_price} setup is the same either way.
+    Monthly at {retainer_price}, or save ${module_count*600:,} by going annual.
+    30-day free trial on both — no charge until day 31.
   </p>
   <div style="background:#f7f4ef;border-radius:8px;padding:20px 22px;margin-bottom:24px;border-left:3px solid #c84b2f">
     <p style="font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin:0 0 6px">{label}</p>
@@ -2687,10 +2688,25 @@ def send_payment_email(to_email, restaurant_name, tier=None,
     except Exception as e:
         print(f"Payment email failed: {e}")
 
-def send_welcome_email(to_email, restaurant_name, username, password):
+def send_welcome_email(to_email, restaurant_name, username, password,
+                       module_reviews=0, module_labor=0,
+                       module_inventory=0, module_marketing=0):
     """Send branded welcome email to new client with their login credentials."""
     import resend as _resend
     _resend.api_key = RESEND_API_KEY
+    # Build module list
+    active_modules = []
+    if module_reviews:  active_modules.append("Review Intelligence")
+    if module_labor:    active_modules.append("Labor Optimizer")
+    if module_inventory: active_modules.append("Inventory Control")
+    if module_marketing: active_modules.append("Marketing Autopilot")
+    if not active_modules:
+        active_modules = ["Review Intelligence"]  # fallback
+    modules_count = len(active_modules)
+    if modules_count == 1:
+        modules_text = f"one module — {active_modules[0]}"
+    else:
+        modules_text = f"{modules_count} modules — " + ", ".join(active_modules[:-1]) + f", and {active_modules[-1]}"
     html = f"""
 <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
@@ -2712,8 +2728,7 @@ def send_welcome_email(to_email, restaurant_name, username, password):
   </div>
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:12px">
     Once you log in, go to the <strong>Account</strong> tab to set your own password.
-    Your dashboard includes four modules — Reviews, Labor, Inventory, and Marketing —
-    all set up specifically for {restaurant_name}.
+    Your dashboard includes {modules_text}, all set up specifically for {restaurant_name}.
   </p>
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:24px">
     Any questions, just reply to this email. I check it daily.
@@ -2994,6 +3009,10 @@ def create_client(current_user):
                     to_email=data["owner_email"],
                     restaurant_name=data["restaurant_name"],
                     username=data["username"],
+                    module_reviews=int(data.get("module_reviews",0)),
+                    module_labor=int(data.get("module_labor",0)),
+                    module_inventory=int(data.get("module_inventory",0)),
+                    module_marketing=int(data.get("module_marketing",0)),
                     password=data["password"],
                 )
             except Exception as mail_err:
