@@ -2142,7 +2142,7 @@ input:focus,select:focus{border-color:var(--ember)}
           </div>
           {% endif %}
         </td>
-        <td style="font-size:12px">{{user.last_login[:10] if user.last_login else '—'}}</td>
+        <td style="font-size:12px">{% if user.last_login %}{% set d=user.last_login[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}—{% endif %}</td>
         <td style="font-size:11px;color:var(--ink3)">{{user.last_active_tab or '—'}}</td>
         <td style="font-size:11px;color:var(--ink3)">{{user.last_fetched_at or 'never'}}</td>
         <td>
@@ -3183,13 +3183,22 @@ def resend_payment(restaurant_id, current_user):
     if not restaurant:
         return jsonify(ok=False, error="Restaurant not found")
     try:
+        mods = sum([
+            1 if restaurant.module_reviews else 0,
+            1 if restaurant.module_labor else 0,
+            1 if restaurant.module_inventory else 0,
+            1 if restaurant.module_marketing else 0,
+        ])
+        if mods == 0:
+            return jsonify(ok=False, error="No modules active for this client")
         send_payment_email(
             to_email=restaurant.owner_email,
             restaurant_name=restaurant.name,
-            tier=restaurant.service_tier or "trial",
+            module_count=mods,
         )
         return jsonify(ok=True)
     except Exception as e:
+        print(f"Resend payment error: {e}")
         return jsonify(ok=False, error=str(e))
 
 @app.route("/admin/seed-reviews/<int:restaurant_id>", methods=["POST"])
