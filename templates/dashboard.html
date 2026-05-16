@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ restaurant.name }} — Cavnar AI</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--ember2:#e8956a;--green:#2d6a4f;--green-bg:#eaf4ee;--red:#c0392b;--red-bg:#fdf0ef;--amber:#b7791f;--amber-bg:#fef9ec;--blue:#1a56cc;--blue-bg:#e8f0fe;--r:8px}
+body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);font-size:14px;line-height:1.6}
+.hdr{background:var(--ink);height:56px;display:flex;align-items:center;padding:0 28px;justify-content:space-between;position:sticky;top:0;z-index:100}
+.hdr-left{display:flex;align-items:center;gap:16px}
+.hdr-logo{font-family:'DM Serif Display',serif;font-size:16px;color:var(--paper)}
+.hdr-logo em{color:var(--ember2);font-style:italic}
+.hdr-restaurant{font-size:12px;color:var(--ink3);padding-left:16px;border-left:1px solid #2a2520}
+.hdr-right{display:flex;align-items:center;gap:16px}
+.hdr-user{font-size:12px;color:var(--ink3)}
+.logout-btn{font-size:11px;color:var(--ink3);text-decoration:none;padding:5px 10px;border:1px solid #2a2520;border-radius:4px;transition:all .15s}
+.logout-btn:hover{color:var(--paper);border-color:var(--paper)}
+.tabs{display:flex;gap:2px;padding:0 28px;background:var(--ink);border-top:1px solid #1a1714}
+.tab{padding:8px 16px;border-radius:0;border:none;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;color:rgba(250,248,245,.45);background:transparent;transition:all .2s;border-bottom:2px solid transparent}
+.tab:hover{color:var(--paper)}
+.tab.active{color:var(--paper);border-bottom-color:var(--ember)}
+.tab .badge{font-size:10px;padding:1px 5px;border-radius:10px;background:rgba(255,255,255,.1);margin-left:4px}
+.panel{display:none;padding:24px 28px;max-width:1080px}
+.panel.active{display:block}
+.slabel{font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:8px}
+.stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:20px}
+.stat{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:12px;text-align:center}
+.stat.hi{background:var(--red-bg);border-color:#f5c6c2}
+.stat.ok{background:var(--green-bg);border-color:#b7dfca}
+.stat.warn{background:var(--amber-bg);border-color:#f6d860}
+.stat-n{font-family:'DM Serif Display',serif;font-size:26px;line-height:1}
+.stat-l{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
+.stat.hi .stat-n{color:var(--red)}
+.stat.ok .stat-n{color:var(--green)}
+.stat.warn .stat-n{color:var(--amber)}
+.card{background:white;border:1px solid var(--paper3);border-radius:var(--r);overflow:hidden;margin-bottom:10px;box-shadow:0 1px 3px rgba(14,12,10,.05)}
+.card.urgent{border-left:3px solid var(--red)}
+.card.approved{border-left:3px solid var(--green)}
+.card-hd{display:flex;align-items:flex-start;gap:10px;padding:12px 14px 8px}
+.avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'DM Serif Display',serif;font-size:13px;color:white;flex-shrink:0}
+.card-meta{flex:1;min-width:0}
+.card-author{font-weight:500;font-size:13px}
+.card-sub{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink3);margin-top:1px;flex-wrap:wrap}
+.stars{color:#d4a017;letter-spacing:1px;font-size:12px}
+.pbadge{font-size:9px;font-weight:500;padding:1px 5px;border-radius:8px;text-transform:uppercase}
+.pg{background:var(--blue-bg);color:var(--blue)}
+.py{background:var(--red-bg);color:var(--red)}
+.schip{font-size:9px;font-weight:500;padding:2px 7px;border-radius:20px;text-transform:uppercase;margin-left:auto;flex-shrink:0}
+.sp{background:var(--green-bg);color:var(--green)}
+.sn{background:var(--red-bg);color:var(--red)}
+.su{background:var(--amber-bg);color:var(--amber)}
+.ubanner{background:var(--red-bg);border-top:1px solid #f5c6c2;padding:5px 14px;font-size:11px;font-weight:500;color:var(--red)}
+.card-body{padding:0 14px 12px}
+.rtext{font-size:12px;color:var(--ink2);line-height:1.6;border-left:2px solid var(--paper3);padding-left:8px;margin-bottom:8px}
+.cats{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:8px}
+.cat{font-size:9px;padding:2px 6px;border-radius:20px;background:var(--paper2);color:var(--ink3);text-transform:capitalize}
+.draft-box{background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;padding:8px 10px}
+.draft-lbl{font-size:9px;font-weight:500;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}
+.draft-txt{font-size:12px;color:var(--ink);line-height:1.55;font-style:italic}
+.draft-actions{display:flex;gap:6px;margin-top:7px}
+.btn{padding:6px 14px;border-radius:6px;border:none;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:4px}
+.btn-approve{background:var(--green);color:white}
+.btn-approve:hover{background:#1f5c40}
+.btn-skip{background:transparent;color:var(--ink3);border:1px solid var(--paper3)}
+.btn-skip:hover{background:var(--paper2)}
+.btn-approved{background:var(--green-bg);color:var(--green);border:1px solid #b7dfca;cursor:default}
+.toolbar{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.search-wrap{position:relative;max-width:260px}
+.search-ico{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--ink3);pointer-events:none;width:12px;height:12px}
+.search-input{width:100%;padding:7px 10px 7px 28px;border:1px solid var(--paper3);border-radius:var(--r);font-family:'DM Sans',sans-serif;font-size:12px;background:white;outline:none}
+.search-input:focus{border-color:var(--ember)}
+.filter-pills{display:flex;gap:4px;flex-wrap:wrap}
+.fpill{padding:4px 10px;border-radius:20px;border:1px solid var(--paper3);font-size:11px;cursor:pointer;background:white;font-family:'DM Sans',sans-serif;transition:all .15s}
+.fpill:hover{background:var(--paper2)}
+.fpill.active{background:var(--ink);color:white;border-color:var(--ink)}
+.fpill.active-red{background:var(--red);color:white;border-color:var(--red)}
+.count-lbl{margin-left:auto;font-size:11px;color:var(--ink3)}
+.no-data{text-align:center;padding:40px;color:var(--ink3);font-family:'DM Serif Display',serif;font-style:italic;font-size:15px}
+.insight{background:var(--ink);border-radius:var(--r);padding:16px 18px;margin-bottom:16px}
+.insight-lbl{font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}
+.insight-text{font-size:12px;line-height:1.7;color:rgba(250,248,245,.85);white-space:pre-wrap}
+.insight-loading{color:var(--ink3);font-style:italic;font-size:12px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
+.tbl{width:100%;border-collapse:collapse;font-size:12px}
+.tbl th{text-align:left;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--ink3);padding:7px 10px;border-bottom:1px solid var(--paper3);background:var(--paper2)}
+.tbl td{padding:8px 10px;border-bottom:1px solid var(--paper3);vertical-align:top}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr:hover td{background:var(--paper2)}
+.pill{display:inline-block;font-size:9px;padding:2px 7px;border-radius:20px;font-weight:500}
+.pill-red{background:var(--red-bg);color:var(--red)}
+.pill-amber{background:var(--amber-bg);color:var(--amber)}
+.pill-green{background:var(--green-bg);color:var(--green)}
+.day-bars{display:flex;align-items:flex-end;gap:6px;height:80px;margin:8px 0 3px}
+.day-bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center}
+.day-bar{width:100%;border-radius:3px 3px 0 0;min-height:3px}
+.ct-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px;margin-bottom:16px}
+.ct-btn{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:12px 10px;cursor:pointer;transition:all .2s;text-align:left}
+.ct-btn:hover,.ct-btn.selected{border-color:var(--ember);background:#fdf0ef}
+.ct-label{font-weight:600;font-size:12px;margin-bottom:2px}
+.ct-desc{font-size:10px;color:var(--ink3);line-height:1.4}
+.topic-row{display:flex;gap:8px;margin-bottom:12px;align-items:center}
+.topic-input{flex:1;padding:8px 12px;border:1px solid var(--paper3);border-radius:var(--r);font-family:'DM Sans',sans-serif;font-size:12px;background:white;outline:none}
+.topic-input:focus{border-color:var(--ember)}
+.output-box{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px;min-height:100px;font-size:12px;line-height:1.7;color:var(--ink2);white-space:pre-wrap}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-top:10px}
+
+.cal-card{background:white;border:1px solid var(--paper3);border-radius:6px;padding:12px;font-size:12px;display:flex;flex-direction:column}
+.cal-day{background:white;border:1px solid var(--paper3);border-radius:6px;padding:8px 6px;font-size:10px}
+.cal-day-name{font-weight:500;color:var(--ink2);margin-bottom:3px}
+.cal-platform{font-size:8px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);margin-bottom:2px}
+.btn-primary{background:var(--ember);color:white;padding:8px 16px;border-radius:var(--r);font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:background .15s}
+.btn-primary:hover{background:#a83d25}
+.btn-secondary{background:white;color:var(--ink2);border:1px solid var(--paper3);padding:8px 16px;border-radius:var(--r);font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:all .15s}
+.btn-secondary:hover{background:var(--paper2)}
+.toast{position:fixed;bottom:20px;right:20px;background:var(--ink);color:var(--paper);padding:9px 16px;border-radius:7px;font-size:12px;z-index:999;opacity:0;transform:translateY(5px);transition:all .3s;pointer-events:none}
+.toast.show{opacity:1;transform:translateY(0)}
+.change-pw-section{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px;margin-bottom:16px;max-width:400px}
+.form-group{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
+.form-label{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3)}
+.form-input{padding:9px 12px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;color:var(--ink);background:white;outline:none;transition:border .15s}
+.form-input:focus{border-color:var(--ember)}
+</style>
+</head>
+<body>
+{% if current_user.is_admin %}
+<div style="background:#b7791f;padding:8px 28px;display:flex;align-items:center;justify-content:space-between">
+  <span style="font-size:12px;color:white;font-weight:500">
+    👁 Viewing as client — {{ restaurant.name }}. This is exactly what they see.
+  </span>
+  <a href="/admin/stop-viewing" style="font-size:11px;color:rgba(255,255,255,.8);text-decoration:none;padding:3px 10px;border:1px solid rgba(255,255,255,.4);border-radius:4px">
+    ← Back to admin
+  </a>
+</div>
+{% endif %}
+<header class="hdr">
+  <div class="hdr-left">
+    <div class="hdr-logo">Cavnar <em>AI</em></div>
+    <div class="hdr-restaurant">{{ restaurant.name }}</div>
+  </div>
+  <div class="hdr-right">
+    <span class="hdr-user">{{ current_user.username }}</span>
+    <a href="/logout" class="logout-btn">Sign out</a>
+  </div>
+</header>
+{% if show_welcome %}
+<div id="welcome-banner" style="background:linear-gradient(135deg,#1a1410,#2a1f1a);border-bottom:2px solid var(--ember);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;gap:16px">
+  <div>
+    <div style="color:white;font-size:13px;font-weight:600;margin-bottom:2px">Welcome to Cavnar <span style="color:var(--ember);font-style:italic">AI</span> 👋</div>
+    <div style="color:#a09890;font-size:12px;line-height:1.5">Your dashboard is live. Sample data is shown until Will connects your real data — usually within 24 hours. Questions? <a href="mailto:will@cavnar.ai" style="color:var(--ember)">will@cavnar.ai</a></div>
+  </div>
+  <button onclick="dismissWelcome()" style="background:transparent;border:1px solid #3a3530;color:#7a736a;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px;white-space:nowrap;font-family:'DM Sans',sans-serif">Got it ✕</button>
+</div>
+{% endif %}
+<div style="background:var(--ink);padding:0 28px">
+  <nav style="display:flex;gap:0">
+    {% if mod_reviews %}<button class="tab {{'active' if mod_reviews}}" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews <span class="badge">{{rstats.total}}</span></button>{% endif %}
+    {% if mod_labor %}<button class="tab {{'active' if not mod_reviews and mod_labor}}" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
+    {% if mod_inventory %}<button class="tab {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="tab-inventory" onclick="switchTab('inventory',this)">Inventory</button>{% endif %}
+    {% if mod_marketing %}<button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
+    <button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" onclick="switchTab('account',this)">Account</button>
+  </nav>
+</div>
+
+<!-- REVIEWS -->
+<div class="panel {{'active' if mod_reviews}}" id="panel-reviews">
+  {% if not restaurant.reviews_live %}
+  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#8a6a00;display:flex;align-items:center;gap:8px">
+    <span>⚠</span><span><strong>Sample data</strong> — example reviews to show how the dashboard works. Will is connecting your live Google and Yelp reviews.</span>
+  </div>
+  {% endif %}
+  <div class="stat-row">
+    <div class="stat"><div class="stat-n">{{rstats.avg_rating}}</div><div class="stat-l">Avg rating</div></div>
+    <div class="stat"><div class="stat-n">{{rstats.total}}</div><div class="stat-l">Total</div></div>
+    <div class="stat ok"><div class="stat-n">{{rstats.positive}}</div><div class="stat-l">Positive</div></div>
+    <div class="stat warn"><div class="stat-n">{{rstats.neutral}}</div><div class="stat-l">Neutral</div></div>
+    <div class="stat hi"><div class="stat-n">{{rstats.negative}}</div><div class="stat-l">Negative</div></div>
+    <div class="stat hi"><div class="stat-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
+    <div class="stat warn"><div class="stat-n">{{rstats.awaiting_approval}}</div><div class="stat-l">To approve</div></div>
+  <div class="stat {{'ok' if restaurant.reviews_live else 'warn'}}">
+    <div class="stat-n" style="font-size:14px;margin-top:4px">{{'Live' if restaurant.reviews_live else 'Demo'}}</div>
+    <div class="stat-l">Review source</div>
+  </div>
+  </div>
+  <div class="toolbar">
+    <div class="search-wrap">
+      <svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input class="search-input" id="rsearch" placeholder="Search reviews…" value="{{rsearch}}" onkeydown="if(event.key==='Enter')filterReviews()">
+    </div>
+    <div class="filter-pills">
+      <button class="fpill {{'active' if rfilter=='all'}}" onclick="setRF('all',this)">All</button>
+      <button class="fpill {{'active-red' if rfilter=='urgent'}}" onclick="setRF('urgent',this)">Urgent</button>
+      <button class="fpill {{'active' if rfilter=='pending'}}" onclick="setRF('pending',this)">To approve</button>
+      <button class="fpill {{'active' if rfilter=='negative'}}" onclick="setRF('negative',this)">Negative</button>
+      <button class="fpill {{'active' if rfilter=='positive'}}" onclick="setRF('positive',this)">Positive</button>
+    </div>
+    <span class="count-lbl">{{reviews|length}} review{{'s' if reviews|length!=1}}</span>
+  </div>
+  {% if reviews %}
+  {% set colors=['#c84b2f','#2d6a4f','#b7791f','#1a56cc','#6b4fa0','#1e7a8c'] %}
+  {% for r in reviews %}
+  {% set col=colors[loop.index0%colors|length] %}
+  <div class="card {{'urgent' if r.urgency=='high'}} {{'approved' if r.response_status=='approved'}}" id="rc-{{r.id}}">
+    {% if r.urgency=='high' %}<div class="ubanner">⚠ Needs immediate attention</div>{% endif %}
+    <div class="card-hd">
+      <div class="avatar" style="background:{{col}}">{{r.author[0].upper()}}</div>
+      <div class="card-meta">
+        <div class="card-author">{{r.author}}</div>
+        <div class="card-sub">
+          <span class="stars">{% for i in range(5) %}{{('★' if i<r.rating else '☆')}}{% endfor %}</span>
+          <span class="pbadge {{'pg' if r.platform=='google' else 'py'}}">{{r.platform}}</span>
+          {% if r.review_date %}<span>{{r.review_date[:10]}}</span>{% endif %}
+        </div>
+      </div>
+      <span class="schip {{'sp' if r.sentiment=='positive' else ('sn' if r.sentiment=='negative' else 'su')}}">{{r.sentiment or 'neutral'}}</span>
+    </div>
+    <div class="card-body">
+      <div class="rtext">{{r.text}}</div>
+      {% if r.categories %}<div class="cats">{% for c in r.categories %}<span class="cat">{{c.replace('_',' ')}}</span>{% endfor %}</div>{% endif %}
+      {% if r.draft_response %}
+      <div class="draft-box" id="draft-box-{{r.id}}">
+        <div class="draft-lbl">Suggested response</div>
+        <div class="draft-txt" id="draft-txt-{{r.id}}">{{r.draft_response}}</div>
+        <div class="draft-actions" id="draft-actions-{{r.id}}">
+          {% if r.response_status=='posted' %}
+            <span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>
+          {% elif r.response_status=='approved' %}
+            <span class="btn btn-approved">✓ Approved</span>
+            <button class="btn btn-skip" onclick="skipR({{r.id}})">Edit</button>
+          {% elif r.response_status=='skipped' %}
+            <button class="btn btn-approve" onclick="approveR({{r.id}})">✓ Approve</button>
+            <button class="btn btn-skip" onclick="openEditor({{r.id}})">Edit response</button>
+            <button class="btn btn-skip" onclick="regenDraft({{r.id}})">↻ Regenerate</button>
+          {% else %}
+            <button class="btn btn-approve" onclick="approveR({{r.id}})">✓ Approve</button>
+            <button class="btn btn-skip" onclick="skipR({{r.id}})">Skip</button>
+          {% endif %}
+        </div>
+        <!-- Response editor (hidden by default) -->
+        <div class="response-editor" id="editor-{{r.id}}" style="display:none;margin-top:10px">
+          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your own response…">{{r.draft_response}}</textarea>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn btn-approve" onclick="saveDraft({{r.id}})">Save & approve</button>
+            <button class="btn btn-skip" onclick="regenDraft({{r.id}})">↻ Regenerate AI draft</button>
+            <button class="btn btn-skip" onclick="closeEditor({{r.id}})">Cancel</button>
+          </div>
+        </div>
+      </div>
+      {% elif r.response_status != 'posted' %}
+      <!-- No draft yet — show write/generate buttons -->
+      <div class="draft-box" id="draft-box-{{r.id}}" style="background:var(--paper)">
+        <div class="draft-lbl" style="color:var(--ink3)">No response drafted yet</div>
+        <div class="draft-actions" style="margin-top:8px">
+          <button class="btn btn-approve" onclick="regenDraft({{r.id}})">Generate AI response</button>
+          <button class="btn btn-skip" onclick="openEditor({{r.id}})">Write my own</button>
+        </div>
+        <div class="response-editor" id="editor-{{r.id}}" style="display:none;margin-top:10px">
+          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your response here…"></textarea>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn btn-approve" onclick="saveDraft({{r.id}})">Save & approve</button>
+            <button class="btn btn-skip" onclick="closeEditor({{r.id}})">Cancel</button>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="no-data">No reviews match this filter.</div>
+  {% endif %}
+</div>
+
+<!-- LABOR -->
+<div class="panel {{'active' if not mod_reviews and mod_labor}}" id="panel-labor">
+  {% if not labor.is_live %}
+  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#8a6a00;display:flex;align-items:center;gap:8px">
+    <span>⚠</span><span><strong>Sample data</strong> — example figures showing how the labor analysis works. Send your shift data to will@cavnar.ai to activate live data.</span>
+  </div>
+  {% endif %}
+
+  <!-- Hero metric — dollar gap -->
+  <div id="labor-gap-banner" style="background:var(--ink);border-radius:var(--r);padding:20px 24px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+        <div style="font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Monthly labor cost vs target</div>
+        {% if labor.date_range and labor.date_range.start %}
+        <div style="font-size:10px;color:var(--ink3)" id="labor-period">
+          Data period loading…
+        </div>
+        {% endif %}
+      </div>
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+        <div>
+          <span id="gap-current-pct" style="font-family:'DM Serif Display',serif;font-size:48px;color:var(--paper);line-height:1">{{labor.overall_labor_pct}}%</span>
+          <span style="font-size:13px;color:var(--ink3);margin-left:6px">current</span>
+        </div>
+        <div style="color:var(--ink3);font-size:20px">→</div>
+        <div>
+          <span style="font-family:'DM Serif Display',serif;font-size:32px;color:#6fcf97;line-height:1">30%</span>
+          <span style="font-size:13px;color:var(--ink3);margin-left:4px">target</span>
+        </div>
+      </div>
+      <div id="gap-dollar" style="font-size:13px;color:var(--ember2);margin-top:6px;font-weight:500">Loading cost gap…</div>
+    </div>
+    <div style="text-align:right">
+      <div id="gap-amount" style="font-family:'DM Serif Display',serif;font-size:36px;color:var(--ember2);line-height:1">—</div>
+      <div style="font-size:11px;color:var(--ink3);margin-top:4px">estimated monthly overspend</div>
+      <button onclick="downloadSchedule(this)" style="margin-top:12px;padding:9px 18px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#a83d25'" onmouseout="this.style.background='var(--ember)'">
+        Download optimized schedule ↓
+      </button>
+    </div>
+  </div>
+
+  <!-- Stats row -->
+  {% if restaurant.last_fetched_at %}
+  <div style="font-size:11px;color:var(--ink3);margin-bottom:10px">
+    Last updated: {{restaurant.last_fetched_at[:10]}}
+  </div>
+  {% endif %}
+  <div class="stat-row">
+    <div class="stat"><div class="stat-n">${{labor.total_sales|int|format_num}}</div><div class="stat-l">Revenue (2 wks)</div></div>
+    <div class="stat warn"><div class="stat-n">${{labor.total_labor_cost|int|format_num}}</div><div class="stat-l">Labor cost (2 wks)</div></div>
+    <div class="stat {{'hi' if labor.overall_labor_pct>32 else 'ok'}}"><div class="stat-n">{{labor.overall_labor_pct}}%</div><div class="stat-l">Labor %</div></div>
+    <div class="stat hi"><div class="stat-n">{{labor.overstaffed_days|length}}</div><div class="stat-l">Overstaffed days</div></div>
+    <div class="stat warn"><div class="stat-n">{{labor.overtime_risk|length}}</div><div class="stat-l">Overtime risk</div></div>
+  </div>
+
+  <!-- AI insight -->
+  <div class="insight"><div class="insight-lbl">Cavnar AI Consultant</div><div class="insight-text insight-loading" id="labor-insight">Loading analysis…</div></div>
+
+  <!-- Two col: overstaffed table + bar chart -->
+  <div class="two-col">
+    <div>
+      <div class="slabel">Overstaffed days — where the money is going</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor cost</th><th>Labor %</th><th>Over target</th></tr></thead>
+        <tbody>
+        {% for d in labor.overstaffed_days %}
+        <tr>
+          <td>{{d.date}}</td>
+          <td style="font-weight:500">{{d.day}}</td>
+          <td>${{d.sales|int|format_num}}</td>
+          <td>${{d.labor_cost|format_num}}</td>
+          <td><span class="pill {{'pill-red' if d.labor_pct>35 else 'pill-amber'}}">{{d.labor_pct}}%</span></td>
+          {% set diff = (d.labor_pct - (labor.labor_target|default(30.0)))|round(1) %}
+          {% if diff > 0 %}
+          <td style="color:var(--red);font-size:11px;font-weight:500">+{{diff}}% over</td>
+          {% else %}
+          <td style="color:var(--green);font-size:11px;font-weight:500">{{diff}}% under ✓</td>
+          {% endif %}
+        </tr>
+        {% else %}
+        <tr><td colspan="6" style="color:var(--ink3);font-style:italic;padding:10px">No overstaffed days — great work!</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+
+      {% if labor.overtime_risk %}
+      <div class="slabel" style="margin-top:14px">Overtime alerts</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Employee</th><th>Hours that week</th><th>Week</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for emp in labor.overtime_risk %}
+        <tr>
+          <td style="font-weight:500">{{emp.employee}}</td>
+          <td>{{emp.hours}}h</td>
+          <td style="font-size:11px;color:var(--ink3)">{{emp.week}}</td>
+          <td>
+            {% if emp.status == "overtime" %}
+              <span class="pill pill-red">Overtime — review pay</span>
+            {% else %}
+              <span class="pill pill-amber">Near limit</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% endif %}
+    </div>
+
+    <div>
+      <div class="slabel">Labor % by day of week</div>
+      <div class="card" style="padding:16px">
+        <div class="day-bars" id="day-bars"></div>
+        <div style="display:flex;justify-content:space-around;font-size:9px;color:var(--ink3);margin-top:3px">
+          {% for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] %}<span>{{d}}</span>{% endfor %}
+        </div>
+        <div style="margin-top:8px;display:flex;gap:12px;font-size:10px;color:var(--ink3)">
+          <span><span style="color:var(--red)">■</span> Over 32%</span>
+          <span><span style="color:#ef9f27">■</span> 28–32%</span>
+          <span><span style="color:#6fcf97">■</span> Under 28%</span>
+        </div>
+      </div>
+
+      <div class="slabel" style="margin-top:14px">Understaffed days</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor %</th></tr></thead>
+        <tbody>
+        {% for d in labor.understaffed_days %}
+        <tr>
+          <td>{{d.date}}</td><td style="font-weight:500">{{d.day}}</td>
+          <td>${{d.sales|int|format_num}}</td>
+          <td><span class="pill pill-green">{{d.labor_pct}}%</span></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" style="color:var(--ink3);font-style:italic;padding:10px">None flagged</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+
+<!-- INVENTORY -->
+<div class="panel {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="panel-inventory">
+  <div class="stat-row">
+    <div class="stat hi"><div class="stat-n">${{inv.total_waste_cost_week|format_num}}</div><div class="stat-l">Waste/week</div></div>
+    <div class="stat hi"><div class="stat-n">${{inv.monthly_waste_projection|int|format_num}}</div><div class="stat-l">Projected/mo</div></div>
+    <div class="stat ok"><div class="stat-n">${{inv.recoverable_monthly|int|format_num}}</div><div class="stat-l">Recoverable</div></div>
+    <div class="stat warn"><div class="stat-n">{{inv.waste_items|length}}</div><div class="stat-l">Waste items</div></div>
+    <div class="stat hi"><div class="stat-n">{{inv.critical_low|length}}</div><div class="stat-l">Critical low</div></div>
+    <div class="stat"><div class="stat-n">${{inv.total_stock_value|int|format_num}}</div><div class="stat-l">Inventory value</div></div>
+  </div>
+  {% if not inv.is_live %}
+  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#8a6a00;display:flex;align-items:center;gap:8px">
+    <span>⚠</span>
+    <span><strong>Sample data</strong> — this is example inventory data. Will will update this with your real numbers after your first weekly export.</span>
+  </div>
+  {% endif %}
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+    <div style="font-size:13px;font-weight:600;color:var(--ink)">
+      Week of {{inv.week_start}} – {{inv.week_end}}
+    </div>
+    <div style="font-size:11px;color:var(--ink3)">
+      Last updated: {{inv.last_updated}}
+    </div>
+  </div>
+  <div class="insight"><div class="insight-lbl">Cavnar AI Food Cost Analysis</div><div class="insight-text insight-loading" id="inv-insight">Loading analysis…</div></div>
+  <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#2d6a4f;line-height:1.6">
+    <strong>How this works:</strong> Your inventory data is managed and updated by Will Cavnar weekly.
+    To get the most accurate analysis, export your inventory or waste log from your POS system
+    and send it to <a href="mailto:will@cavnar.ai" style="color:#2d6a4f;font-weight:600">will@cavnar.ai</a> each week.
+    Will handles all the setup and updates — nothing for you to configure.
+  </div>
+  <div class="two-col">
+    <div>
+      <div class="slabel">Top waste offenders</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Item</th><th>Wasted</th><th>Cost</th><th>%</th></tr></thead>
+        <tbody>{% for item in inv.waste_items %}<tr>
+          <td><strong>{{item.item}}</strong></td><td>{{item.waste_last_week}} {{item.unit}}</td>
+          <td><span class="pill pill-red">${{item.waste_cost}}</span></td><td>{{item.waste_pct}}%</td>
+        </tr>{% else %}<tr><td colspan="4" style="color:#2d6a4f;font-style:italic;padding:12px;text-align:center">
+          ✓ No significant waste flagged this week — great job.
+        </td></tr>{% endfor %}</tbody></table></div>
+      {% if inv.reorder_soon %}
+      <div class="slabel" style="margin-top:12px">Order this week</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Item</th><th>Days left</th><th>Current stock</th></tr></thead>
+        <tbody>{% for item in inv.reorder_soon %}<tr>
+          <td><strong>{{item.item}}</strong></td>
+          <td><span class="pill pill-amber">{{item.days_remaining}}d</span></td>
+          <td>{{item.current_stock}} {{item.unit}}</td>
+        </tr>{% endfor %}</tbody></table></div>
+      {% endif %}
+    </div>
+    <div>
+      <div class="slabel">Overstocked</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Item</th><th>Stock</th><th>Par</th><th>Excess</th></tr></thead>
+        <tbody>{% for item in inv.overstock %}<tr>
+          <td><strong>{{item.item}}</strong></td><td>{{item.current_stock}}</td>
+          <td>{{item.par_level}}</td><td><span class="pill pill-amber">${{item.overstock_cost}}</span></td>
+        </tr>{% else %}<tr><td colspan="4" style="color:#2d6a4f;font-style:italic;padding:12px;text-align:center">✓ Nothing overstocked this week.</td></tr>{% endfor %}</tbody></table></div>
+      {% if inv.critical_low %}
+      <div class="slabel" style="margin-top:12px">Critical low — order today</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Item</th><th>Days left</th><th>Action</th></tr></thead>
+        <tbody>{% for item in inv.critical_low %}<tr>
+          <td><strong>{{item.item}}</strong></td><td>{{item.days_remaining}}d</td>
+          <td><span class="pill pill-red">Order now</span></td>
+        </tr>{% endfor %}</tbody></table></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- MARKETING -->
+<div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing">
+  <div style="background:#f0f4fa;border:1px solid #b3c5e0;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#2d4a6a;line-height:1.6">
+    <strong>How this works:</strong> Pick a content type, add a topic or occasion, and hit Generate.
+    Copy the result straight to Instagram, your email tool, or Google Business Profile.
+    The more specific your topic, the better the output.
+  </div>
+  <div style="background:#fdf8f4;border:1px solid var(--paper3);border-radius:6px;padding:8px 14px;margin-bottom:14px;font-size:12px;color:var(--ink3);line-height:1.5">
+    The AI writes in your restaurant's voice. If something doesn't sound right or you want to update your brand voice,
+    <a href="mailto:will@cavnar.ai?subject=Update my marketing voice profile — {{restaurant.name}}" style="color:var(--ember)">email Will</a> and it'll be updated within one business day.
+  </div>
+  <div class="slabel">Content type</div>
+  <div class="ct-grid">{% for ct in ctypes %}
+    <div class="ct-btn {{'selected' if loop.first}}" data-type="{{ct.id}}" onclick="selectCt('{{ct.id}}',this)">
+      <div class="ct-label">{{ct.label}}</div><div class="ct-desc">{{ct.description}}</div>
+    </div>{% endfor %}
+  </div>
+  <div class="topic-row">
+    <input class="topic-input" id="mktopic" placeholder="Topic or occasion — e.g. new spring menu, Mother's Day brunch…" value="New spring menu launch">
+    <button class="btn-primary" onclick="genContent()">Generate ↗</button>
+  </div>
+  <div class="output-box" id="mkoutput" style="color:var(--ink3);font-style:italic">Select a type and click Generate.</div>
+  <div id="sms-counter" style="display:none;font-size:11px;margin-top:4px;color:var(--ink3)">
+    <span id="sms-char-count">0</span>/160 characters
+    <span id="sms-over" style="color:var(--red);display:none"> — over limit, trim before sending</span>
+  </div>
+  <div style="display:flex;gap:6px;margin-top:8px">
+    <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').textContent).then(()=>toast('Copied'))">Copy</button>
+    <button class="btn-secondary" onclick="genContent()">Regenerate</button>
+  </div>
+  <div style="margin-top:24px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div class="slabel" style="margin:0">Content calendar</div>
+      <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week ↗</button>
+    </div>
+    <div class="cal-grid" id="cal-grid"><div class="no-data" style="grid-column:1/-1;padding:20px">Click "Generate week" for content ideas.</div></div>
+  </div>
+</div>
+
+<!-- ACCOUNT -->
+<div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account">
+
+  <!-- Account overview -->
+  <div class="two-col" style="margin-bottom:0">
+    <div>
+      <div class="slabel">Your account</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
+        <table style="font-size:13px;width:100%">
+          <tr><td style="color:var(--ink3);padding:5px 0;width:140px">Restaurant</td><td style="font-weight:500">{{restaurant.name}}</td></tr>
+          <tr><td style="color:var(--ink3);padding:5px 0">Email</td><td>{{restaurant.owner_email}}</td></tr>
+          <tr><td style="color:var(--ink3);padding:5px 0">Username</td><td>{{current_user.username}}</td></tr>
+          <tr><td style="color:var(--ink3);padding:5px 0">Active modules</td>
+            <td>
+              {% set active = [] %}
+              {% if mod_reviews %}{% set _ = active.append("Reviews") %}{% endif %}
+              {% if mod_labor %}{% set _ = active.append("Labor") %}{% endif %}
+              {% if mod_inventory %}{% set _ = active.append("Inventory") %}{% endif %}
+              {% if mod_marketing %}{% set _ = active.append("Marketing") %}{% endif %}
+              <span style="font-weight:500">{{active|join(", ") or "None"}}</span>
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <!-- Change password -->
+      <div class="slabel">Change password</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
+        <div class="form-group"><label class="form-label">Current password</label><input class="form-input" type="password" id="pw-current" placeholder="••••••••"></div>
+        <div class="form-group"><label class="form-label">New password</label><input class="form-input" type="password" id="pw-new" placeholder="min 8 characters"></div>
+        <div class="form-group"><label class="form-label">Confirm new password</label><input class="form-input" type="password" id="pw-confirm" placeholder="••••••••"></div>
+        <button class="btn-primary" onclick="changePassword()">Update password</button>
+        <div id="pw-status" style="font-size:12px;margin-top:8px;display:none"></div>
+      </div>
+    </div>
+
+    <div>
+      <!-- Support -->
+      <div class="slabel">Support</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
+        <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
+          Questions, requests, or anything not working as expected — reach out directly.
+        </p>
+        <a href="mailto:will@cavnar.ai"
+           style="display:inline-block;background:var(--ember);color:white;padding:9px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">
+          Email Will →
+        </a>
+        <p style="font-size:11px;color:var(--ink3);margin-top:10px">
+          Typical response time: same business day.<br>
+          <a href="https://cavnar.ai" target="_blank" style="color:var(--ember);text-decoration:none">cavnar.ai</a>
+        </p>
+      </div>
+
+      <!-- Weekly digest — only shown if reviews module is active -->
+      {% if mod_reviews %}
+      <div class="slabel">Weekly digest email</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
+        <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
+          Your weekly review summary is emailed every
+          <strong id="digest-day-current">{{restaurant.digest_day|title}}</strong>
+          at 9am.
+        </p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="digest-day-select" style="padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px">
+            {% for d in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
+            <option value="{{d}}" {{"selected" if restaurant.digest_day==d}}>{{d|title}}</option>
+            {% endfor %}
+          </select>
+          <select id="digest-enabled-select" style="padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px">
+            <option value="1" {{"selected" if restaurant.digest_enabled}}>Enabled</option>
+            <option value="0" {{"selected" if not restaurant.digest_enabled}}>Disabled</option>
+          </select>
+          <button onclick="saveDigestDay()"
+            style="padding:7px 16px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer">
+            Save
+          </button>
+          <span id="digest-save-status" style="font-size:12px;display:none"></span>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Billing -->
+      <div class="slabel">Billing</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px" id="billing-card">
+        <div id="billing-loading" style="font-size:13px;color:var(--ink3)">Loading billing info…</div>
+        <div id="billing-content" style="display:none">
+          <table style="font-size:13px;width:100%;margin-bottom:12px">
+            <tr><td style="color:var(--ink3);padding:4px 0;width:140px">Status</td>
+                <td id="billing-status" style="font-weight:500"></td></tr>
+            <tr><td style="color:var(--ink3);padding:4px 0">Next charge</td>
+                <td id="billing-next" style="font-weight:500"></td></tr>
+            <tr><td style="color:var(--ink3);padding:4px 0">Amount</td>
+                <td id="billing-amount" style="font-weight:500"></td></tr>
+            <tr><td style="color:var(--ink3);padding:4px 0">Payment</td>
+                <td id="billing-pm" style="font-weight:500"></td></tr>
+          </table>
+          <a id="billing-portal-link" href="#" target="_blank"
+             style="display:inline-block;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;background:var(--paper2);border:1px solid var(--paper3);color:var(--ink2);margin-right:8px">
+            Manage payment method →
+          </a>
+          <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%20I%20would%20like%20to%20cancel%20for%20{{restaurant.name}}."
+             style="display:inline-block;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid var(--paper3);color:var(--ink3)">
+            Request cancellation
+          </a>
+          <p style="font-size:11px;color:var(--ink3);margin-top:10px">
+            No cancellation fees. Cancel before your next billing date to avoid the next charge.
+          </p>
+        </div>
+        <div id="billing-no-sub" style="display:none;font-size:13px;color:var(--ink3)">
+          No active subscription found.
+          <a href="mailto:will@cavnar.ai" style="color:var(--ember)">Contact Will</a> for help.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Global state variables ────────────────────────────────────────────────────
+let laborLoaded = false, invLoaded = false;
+let selCt = '{{ctypes[0].id if ctypes}}';
+
+function openEditor(id) {
+  document.getElementById('editor-'+id).style.display='block';
+  document.getElementById('draft-actions-'+id).style.display='none';
+}
+function closeEditor(id) {
+  document.getElementById('editor-'+id).style.display='none';
+  document.getElementById('draft-actions-'+id).style.display='flex';
+}
+async function regenDraft(id) {
+  const box = document.getElementById('draft-box-'+id);
+  const txtEl = document.getElementById('draft-txt-'+id);
+  const editorEl = document.getElementById('editor-text-'+id);
+  if (txtEl) txtEl.textContent = 'Generating new response…';
+  const res = await fetch('/api/regenerate-draft/'+id, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) {
+    if (txtEl) txtEl.textContent = data.draft;
+    if (editorEl) editorEl.value = data.draft;
+    document.getElementById('draft-actions-'+id).innerHTML =
+      `<button class="btn btn-approve" onclick="approveR(${id})">✓ Approve</button>
+       <button class="btn btn-skip" onclick="skipR(${id})">Skip</button>`;
+    document.getElementById('draft-actions-'+id).style.display='flex';
+    document.getElementById('editor-'+id).style.display='none';
+    toast('New draft generated');
+  } else {
+    if (txtEl) txtEl.textContent = 'Error generating — try again';
+    toast('Error: ' + (data.error||'unknown'));
+  }
+}
+async function saveDraft(id) {
+  const editorEl = document.getElementById('editor-text-'+id);
+  const draft = editorEl ? editorEl.value.trim() : '';
+  if (!draft) { toast('Response cannot be empty'); return; }
+  const save = await fetch('/api/save-draft/'+id, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({draft})
+  });
+  const sd = await save.json();
+  if (!sd.ok) { toast('Save failed'); return; }
+  // Then approve
+  const approve = await fetch('/approve/'+id, {method:'POST'});
+  const ad = await approve.json();
+  if (ad.ok) {
+    const txtEl = document.getElementById('draft-txt-'+id);
+    if (txtEl) txtEl.textContent = draft;
+    document.getElementById('editor-'+id).style.display='none';
+    document.getElementById('draft-actions-'+id).innerHTML =
+      '<span class="btn btn-approved">✓ Approved</span>';
+    document.getElementById('draft-actions-'+id).style.display='flex';
+    toast('Response saved and approved');
+  }
+}
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)}
+function switchTab(n,btn){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('panel-'+n).classList.add('active');btn.classList.add('active');
+  if(n==='labor'&&!laborLoaded){loadLaborInsight();}
+  if(n==='inventory'&&!invLoaded)loadInvInsight();
+  if(n==='labor')renderBars();
+  if(n==='account')loadBillingInfo();
+  fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
+}
+// Auto-load data for whichever tab is active on page load
+window.addEventListener('DOMContentLoaded', function() {
+  const activePanel = document.querySelector('.panel.active');
+  if(!activePanel) return;
+  const id = activePanel.id.replace('panel-','');
+  if(id==='labor'&&!laborLoaded){
+    loadLaborInsight();
+    setTimeout(renderBars, 100);
+  }
+  if(id==='inventory'&&!invLoaded){loadInvInsight();}
+  if(id==='account'){loadBillingInfo();}
+});
+let rfilter='{{rfilter}}';
+function setRF(f,btn){rfilter=f;document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active','active-red'));btn.classList.add(f==='urgent'?'active-red':'active');filterReviews()}
+function filterReviews(){const q=document.getElementById('rsearch').value;window.location='/?filter='+rfilter+'&search='+encodeURIComponent(q)}
+function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.ok){document.getElementById('rc-'+id).classList.add('approved');document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="btn btn-approved">✓ Approved</span>';toast('Response approved')}})}
+function skipR(id){
+  fetch('/skip/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.ok){
+      const actions = document.getElementById('draft-actions-'+id);
+      if(actions) {
+        actions.innerHTML = `
+          <button class="btn btn-approve" onclick="approveR(${id})">✓ Approve</button>
+          <button class="btn btn-skip" onclick="openEditor(${id})">Edit response</button>
+          <button class="btn btn-skip" onclick="regenDraft(${id})">↻ Regenerate</button>`;
+        actions.style.display='flex';
+      }
+      toast('Skipped — edit or regenerate below');
+    }
+  });
+}
+const dowData={{labor.dow_summary|tojson}};
+const laborDateRange={{labor.date_range|tojson if labor.date_range else 'null'}};
+(function(){
+  const elPeriod=document.getElementById('labor-period');
+  if(!elPeriod||!laborDateRange||!laborDateRange.start)return;
+  function fmt(d){
+    const p=d.split('-');
+    return parseInt(p[1])+'/'+parseInt(p[2])+'/'+p[0].slice(2);
+  }
+  elPeriod.textContent='Data: '+fmt(laborDateRange.start)+' — '+fmt(laborDateRange.end)+' ('+laborDateRange.days+' days)';
+})();
+function renderBars(){
+  const days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  const vals=days.map(d=>dowData[d]||0);
+  const filled=vals.filter(v=>v>0);
+  if(!filled.length)return;
+  const dataMin=Math.max(0,Math.min(...filled)-8);
+  const dataMax=Math.max(...filled)+5;
+  const range=dataMax-dataMin||1;
+  const c=document.getElementById('day-bars');
+  if(!c)return;
+  const maxH=72;
+  c.innerHTML=days.map(d=>{
+    const pct=dowData[d]||0;
+    const h=pct>0?Math.max(6,Math.round(((pct-dataMin)/range)*maxH)):0;
+    const col=pct>32?'var(--red)':pct>=28?'#ef9f27':'#6fcf97';
+    const lbl=pct>0?pct+'%':'';
+    return`<div class="day-bar-wrap" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px">
+      <span style="font-size:9px;color:${col};font-weight:600;line-height:1">${lbl}</span>
+      <div style="width:75%;height:${h}px;background:${col};border-radius:3px 3px 0 0" title="${d}: ${pct}%"></div>
+    </div>`;
+  }).join('');
+}
+function loadLaborInsight(){
+  laborLoaded=true;
+  fetch('/api/labor-insight').then(r=>r.json()).then(d=>{
+    const elLaborInsight=document.getElementById('labor-insight');
+    elLaborInsight.textContent=d.insight||'Analysis unavailable — check back shortly.';
+    elLaborInsight.classList.remove('insight-loading');
+  }).catch(e=>{
+    const elLaborErr=document.getElementById('labor-insight');
+    elLaborErr.textContent='Analysis unavailable — check back shortly.';
+    elLaborErr.classList.remove('insight-loading');
+    const elLaborErr2=document.getElementById('labor-insight');
+    elLaborErr2.textContent='Analysis unavailable — check back shortly.';
+    elLaborErr2.classList.remove('insight-loading');
+  });
+  // Load dollar gap
+  fetch('/api/labor-gap').then(r=>r.json()).then(d=>{
+    const gapEl = document.getElementById('gap-amount');
+    const msgEl = document.getElementById('gap-dollar');
+    const pctEl = document.getElementById('gap-current-pct');
+    const target = {{labor_target|default(30.0)}};
+    if(!d || d.ok === false) {
+      gapEl.textContent = '—';
+      msgEl.textContent = 'Unable to calculate gap. Upload shift data to see this.';
+      return;
+    }
+    if(d.over_target && d.monthly_gap > 0) {
+      gapEl.textContent = '$' + Math.round(d.monthly_gap).toLocaleString();
+      gapEl.style.color = 'var(--ember2)';
+      msgEl.textContent = 'You are at ' + d.current_pct + '% vs your ' + target + '% target \u2014 that gap is costing around $' + Math.round(d.monthly_gap).toLocaleString() + '/mo. An optimized schedule can help close it.';
+      pctEl.style.color = '#ef9f27';
+    } else {
+      gapEl.textContent = 'On target ✓';
+      gapEl.style.color = '#6fcf97';
+      msgEl.textContent = 'Your labor is at ' + d.current_pct + '% \u2014 at or below your ' + target + '% target. Great work. Keep an eye on individual days that spike.';
+      pctEl.style.color = '#6fcf97';
+    }
+  }).catch(e=>{
+    document.getElementById('gap-amount').textContent='—';
+    document.getElementById('gap-dollar').textContent='Unable to load gap data.';
+  });
+}
+async function downloadSchedule(btn) {
+  btn.textContent = 'Generating… (30 sec)';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/download-schedule');
+    const contentType = res.headers.get('content-type') || '';
+    if(contentType.includes('json')) {
+      const data = await res.json();
+      btn.textContent = data.error || 'Error — try again';
+      setTimeout(()=>{btn.textContent='Download optimized schedule ↓';btn.disabled=false;},4000);
+      return;
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'optimized_schedule.csv';
+    a.click();
+    btn.textContent = '✓ Downloaded';
+    setTimeout(()=>{btn.textContent='Download optimized schedule ↓';btn.disabled=false;},3000);
+  } catch(e) {
+    btn.textContent = 'Error — try again';
+    setTimeout(()=>{btn.textContent='Download optimized schedule ↓';btn.disabled=false;},4000);
+  }
+}
+function loadInvInsight(){
+  invLoaded=true;
+  fetch('/api/inv-insight').then(r=>r.json()).then(d=>{
+    const elInvInsight=document.getElementById('inv-insight');
+    elInvInsight.textContent=d.insight||'Analysis unavailable — check back shortly.';
+    elInvInsight.classList.remove('insight-loading');
+  }).catch(e=>{
+    const elInvErr=document.getElementById('inv-insight');
+    elInvErr.textContent='Analysis unavailable — check back shortly.';
+    elInvErr.classList.remove('insight-loading');
+  });
+}
+function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(b=>b.classList.remove('selected'));el.classList.add('selected')}
+function genContent(){
+  const topic=document.getElementById('mktopic').value.trim();
+  if(!topic){toast('Enter a topic');return;}
+  const box=document.getElementById('mkoutput');
+  box.style.fontStyle='italic';
+  box.style.color='var(--ink3)';
+  box.textContent='Generating…';
+  fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic})})
+    .then(r=>r.json())
+    .then(d=>{
+      box.style.fontStyle='normal';
+      box.style.color='var(--ink2)';
+      box.textContent=d.content||'Generation failed — try again.';
+      const isSms=document.querySelector('.ct-btn.selected')?.dataset?.type==='loyalty_nudge';
+      const counter=document.getElementById('sms-counter');
+      if(isSms){
+        const charCount=(d.content||'').length;
+        document.getElementById('sms-char-count').textContent=charCount;
+        document.getElementById('sms-over').style.display=charCount>160?'inline':'none';
+        counter.style.display='block';
+      } else { counter.style.display='none'; }
+    })
+    .catch(e=>{
+      box.style.color='var(--red)';
+      box.style.fontStyle='italic';
+      box.textContent='Content generation unavailable — check back shortly.';
+    });
+}
+function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}g.innerHTML=d.ideas.map((i,idx)=>{
+    window._calIdeas=window._calIdeas||[];
+    window._calIdeas[idx]=i;
+    return `<div class="cal-card"><div class="cal-day-name">${i.day}</div><div class="cal-platform" style="font-size:10px;color:var(--ink3);margin:2px 0 4px">${i.platform||''}</div><div style="font-size:12px;line-height:1.5">${i.angle||''}</div><button data-idx="${idx}" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;width:100%">Generate →</button></div>`;
+  }).join('')})}
+function generateFromCalIdx(idx) {
+  const i = window._calIdeas && window._calIdeas[idx];
+  if (!i) return;
+  generateFromCal(i.type || 'instagram_post', i.angle || '');
+}
+function generateFromCal(type, topic) {
+  document.querySelectorAll('.ct-btn').forEach(b=>{
+    if(b.dataset.type===type) { b.click(); }
+  });
+  document.getElementById('mktopic').value = topic;
+  document.getElementById('mkoutput').scrollIntoView({behavior:'smooth', block:'nearest'});
+  genContent();
+}
+async function saveDigestDay() {
+  const day     = document.getElementById('digest-day-select').value;
+  const enabled = document.getElementById('digest-enabled-select').value;
+  const status  = document.getElementById('digest-save-status');
+  const res = await fetch('/api/update-digest-day', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({day, enabled: parseInt(enabled)})
+  });
+  const data = await res.json();
+  status.style.display='inline';
+  if(data.ok) {
+    status.style.color='var(--green)'; status.textContent='✓ Saved';
+    document.getElementById('digest-day-current').textContent=day.charAt(0).toUpperCase()+day.slice(1);
+    setTimeout(()=>{status.style.display='none';},2500);
+  } else { status.style.color='var(--red)'; status.textContent='Save failed'; }
+}
+function loadBillingInfo() {
+  fetch('/api/billing-info').then(r=>r.json()).then(d=>{
+    document.getElementById('billing-loading').style.display='none';
+    if(!d.ok || d.status==='inactive') {
+      document.getElementById('billing-no-sub').style.display='block'; return;
+    }
+    document.getElementById('billing-content').style.display='block';
+    const statusMap={active:'Active',trialing:'Trial period',past_due:'⚠ Payment past due',canceled:'Canceled'};
+    document.getElementById('billing-status').textContent=statusMap[d.status]||d.status;
+    document.getElementById('billing-next').textContent=d.trial_end?'Trial ends '+d.trial_end:(d.next_date||'—');
+    document.getElementById('billing-amount').textContent=d.amount||'—';
+    document.getElementById('billing-pm').textContent=d.payment_method||'—';
+    if(d.portal_url) document.getElementById('billing-portal-link').href=d.portal_url;
+    else document.getElementById('billing-portal-link').style.display='none';
+  }).catch(()=>{document.getElementById('billing-loading').textContent='Billing info unavailable.';});
+}
+function dismissWelcome(){
+  const b=document.getElementById('welcome-banner');
+  if(b) b.style.display='none';
+  fetch('/api/dismiss-welcome', {method:'POST'});
+}
+function changePassword(){
+  const cur=document.getElementById('pw-current').value;
+  const nw=document.getElementById('pw-new').value;
+  const conf=document.getElementById('pw-confirm').value;
+  const st=document.getElementById('pw-status');
+  if(nw!==conf){st.style.display='block';st.style.color='var(--red)';st.textContent='Passwords do not match';return}
+  if(nw.length<8){st.style.display='block';st.style.color='var(--red)';st.textContent='Password must be at least 8 characters';return}
+  fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(r=>r.json()).then(d=>{st.style.display='block';if(d.ok){st.style.color='var(--green)';st.textContent='Password updated';document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-confirm').value='';}else{st.style.color='var(--red)';st.textContent=d.error||'Update failed'}})}
+
+
+async function addStaffNote() {
+  const name = document.getElementById('staff-name').value.trim();
+  const notes = document.getElementById('staff-constraint').value.trim();
+  const result = document.getElementById('staff-note-result');
+  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
+  const form = new FormData();
+  form.append('employee_name', name);
+  form.append('notes', notes);
+  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
+  const data = await res.json();
+  if(data.ok) {
+    showResult(result, true, '✓ Constraint saved');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showResult(result, false, data.error || 'Save failed');
+  }
+}
+async function deleteNote(noteId) {
+  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
+  const data = await res.json();
+  if(data.ok) location.reload();
+}
+</script>
+</body>
+</html>
