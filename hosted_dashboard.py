@@ -671,26 +671,124 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 <!-- ACCOUNT -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account">
 
-  <!-- Account overview -->
+  <!-- Your consultant -->
+  <div class="slabel">Your consultant</div>
+  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:20px;display:flex;align-items:center;gap:16px">
+    <div style="width:48px;height:48px;border-radius:50%;background:var(--ink);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+      <span style="font-family:'DM Serif Display',serif;font-size:18px;color:var(--ember);font-style:italic">W</span>
+    </div>
+    <div style="flex:1">
+      <div style="font-weight:600;font-size:14px;margin-bottom:2px">Will Cavnar</div>
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:8px">Founder, Cavnar AI — manages your dashboard, data, and setup</div>
+      <a href="mailto:will@cavnar.ai" style="font-size:12px;color:var(--ember);text-decoration:none;font-weight:600">will@cavnar.ai</a>
+      <span style="color:var(--paper3);margin:0 8px">·</span>
+      <span style="font-size:12px;color:var(--ink3)">Same-day response</span>
+    </div>
+  </div>
+
   <div class="two-col" style="margin-bottom:0">
     <div>
+
+      <!-- Account overview -->
       <div class="slabel">Your account</div>
       <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
         <table style="font-size:13px;width:100%">
           <tr><td style="color:var(--ink3);padding:5px 0;width:140px">Restaurant</td><td style="font-weight:500">{{restaurant.name}}</td></tr>
           <tr><td style="color:var(--ink3);padding:5px 0">Email</td><td>{{restaurant.owner_email}}</td></tr>
           <tr><td style="color:var(--ink3);padding:5px 0">Username</td><td>{{current_user.username}}</td></tr>
-          <tr><td style="color:var(--ink3);padding:5px 0">Active modules</td>
-            <td>
-              {% set active = [] %}
-              {% if mod_reviews %}{% set _ = active.append("Reviews") %}{% endif %}
-              {% if mod_labor %}{% set _ = active.append("Labor") %}{% endif %}
-              {% if mod_inventory %}{% set _ = active.append("Inventory") %}{% endif %}
-              {% if mod_marketing %}{% set _ = active.append("Marketing") %}{% endif %}
-              <span style="font-weight:500">{{active|join(", ") or "None"}}</span>
-            </td>
-          </tr>
         </table>
+      </div>
+
+      <!-- What's included -->
+      <div class="slabel">What's included</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
+        {% if mod_reviews %}
+        <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--paper3)">
+          <span style="font-size:16px;flex-shrink:0">⭐</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--ink)">Review Intelligence</div>
+            <div style="font-size:11px;color:var(--ink3);line-height:1.5;margin-top:2px">AI drafts responses to your Google and Yelp reviews — you approve before anything goes out</div>
+          </div>
+          <span style="margin-left:auto;font-size:10px;font-weight:600;color:var(--green);background:var(--green-bg);padding:2px 8px;border-radius:20px;flex-shrink:0;align-self:center">Active</span>
+        </div>
+        {% endif %}
+        {% if mod_labor %}
+        <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--paper3)">
+          <span style="font-size:16px;flex-shrink:0">📊</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--ink)">Labor Optimizer</div>
+            <div style="font-size:11px;color:var(--ink3);line-height:1.5;margin-top:2px">Weekly analysis of your labor cost vs target with an AI-optimized schedule to download</div>
+          </div>
+          <span style="margin-left:auto;font-size:10px;font-weight:600;color:var(--green);background:var(--green-bg);padding:2px 8px;border-radius:20px;flex-shrink:0;align-self:center">Active</span>
+        </div>
+        {% endif %}
+        {% if mod_inventory %}
+        <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--paper3)">
+          <span style="font-size:16px;flex-shrink:0">📦</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--ink)">Inventory Control</div>
+            <div style="font-size:11px;color:var(--ink3);line-height:1.5;margin-top:2px">Weekly food cost analysis — waste offenders, overstock, and what to order before you run out</div>
+          </div>
+          <span style="margin-left:auto;font-size:10px;font-weight:600;color:var(--green);background:var(--green-bg);padding:2px 8px;border-radius:20px;flex-shrink:0;align-self:center">Active</span>
+        </div>
+        {% endif %}
+        {% if mod_marketing %}
+        <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0">
+          <span style="font-size:16px;flex-shrink:0">📣</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--ink)">Marketing Autopilot</div>
+            <div style="font-size:11px;color:var(--ink3);line-height:1.5;margin-top:2px">AI-written social posts, emails, and promotions in your restaurant's voice — copy and post in seconds</div>
+          </div>
+          <span style="margin-left:auto;font-size:10px;font-weight:600;color:var(--green);background:var(--green-bg);padding:2px 8px;border-radius:20px;flex-shrink:0;align-self:center">Active</span>
+        </div>
+        {% endif %}
+        {% if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing %}
+        <div style="font-size:13px;color:var(--ink3);padding:8px 0">No modules active. Contact Will to get set up.</div>
+        {% endif %}
+      </div>
+
+      <!-- Onboarding status -->
+      <div class="slabel">Setup status</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
+        {% if mod_reviews %}
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13px">
+          {% if restaurant.reviews_live %}
+          <span style="color:var(--green);font-size:14px">✓</span>
+          <span>Reviews connected — pulling live data from Google & Yelp</span>
+          {% else %}
+          <span style="color:var(--amber);font-size:14px">○</span>
+          <span style="color:var(--ink2)">Reviews — Will is connecting your live data</span>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% if mod_labor %}
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13px;border-top:1px solid var(--paper3)">
+          {% if labor.is_live %}
+          <span style="color:var(--green);font-size:14px">✓</span>
+          <span>Labor data connected</span>
+          {% else %}
+          <span style="color:var(--amber);font-size:14px">○</span>
+          <span style="color:var(--ink2)">Labor — send your shift export to <a href="mailto:will@cavnar.ai" style="color:var(--ember)">will@cavnar.ai</a> to activate</span>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% if mod_inventory %}
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13px;border-top:1px solid var(--paper3)">
+          {% if inv.is_live %}
+          <span style="color:var(--green);font-size:14px">✓</span>
+          <span>Inventory data connected</span>
+          {% else %}
+          <span style="color:var(--amber);font-size:14px">○</span>
+          <span style="color:var(--ink2)">Inventory — send your weekly export to <a href="mailto:will@cavnar.ai" style="color:var(--ember)">will@cavnar.ai</a> to activate</span>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% if mod_marketing %}
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13px;border-top:1px solid var(--paper3)">
+          <span style="color:var(--green);font-size:14px">✓</span>
+          <span>Marketing — ready to use now</span>
+        </div>
+        {% endif %}
       </div>
 
       <!-- Change password -->
@@ -705,30 +803,44 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     </div>
 
     <div>
-      <!-- Support -->
-      <div class="slabel">Support</div>
-      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
-        <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
-          Questions, requests, or anything not working as expected — reach out directly.
-        </p>
-        <a href="mailto:will@cavnar.ai"
-           style="display:inline-block;background:var(--ember);color:white;padding:9px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">
-          Email Will →
-        </a>
-        <p style="font-size:11px;color:var(--ink3);margin-top:10px">
-          Typical response time: same business day.<br>
-          <a href="https://cavnar.ai" target="_blank" style="color:var(--ember);text-decoration:none">cavnar.ai</a>
-        </p>
+      <!-- Billing — next charge always visible -->
+      <div class="slabel">Billing</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px" id="billing-card">
+        <div id="billing-loading" style="font-size:13px;color:var(--ink3)">Loading billing info…</div>
+        <div id="billing-content" style="display:none">
+          <div id="billing-next-banner" style="background:var(--paper2);border-radius:6px;padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;font-weight:600;margin-bottom:2px">Next charge</div>
+              <div style="font-size:16px;font-weight:600;color:var(--ink)" id="billing-next-prominent">—</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;font-weight:600;margin-bottom:2px">Amount</div>
+              <div style="font-size:16px;font-weight:600;color:var(--ink)" id="billing-amount-prominent">—</div>
+            </div>
+          </div>
+          <table style="font-size:13px;width:100%;margin-bottom:12px">
+            <tr><td style="color:var(--ink3);padding:4px 0;width:120px">Status</td>
+                <td id="billing-status" style="font-weight:500"></td></tr>
+            <tr><td style="color:var(--ink3);padding:4px 0">Payment</td>
+                <td id="billing-pm" style="font-weight:500"></td></tr>
+          </table>
+          <a id="billing-portal-link" href="#" target="_blank"
+             style="display:inline-block;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;background:var(--paper2);border:1px solid var(--paper3);color:var(--ink2)">
+            Manage payment method →
+          </a>
+        </div>
+        <div id="billing-no-sub" style="display:none;font-size:13px;color:var(--ink3)">
+          No active subscription found. <a href="mailto:will@cavnar.ai" style="color:var(--ember)">Contact Will</a> for help.
+        </div>
       </div>
 
-      <!-- Weekly digest — only shown if reviews module is active -->
+      <!-- Weekly digest -->
       {% if mod_reviews %}
       <div class="slabel">Weekly digest email</div>
       <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
         <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
           Your weekly review summary is emailed every
-          <strong id="digest-day-current">{{restaurant.digest_day|title}}</strong>
-          at 9am.
+          <strong id="digest-day-current">{{restaurant.digest_day|title}}</strong> at 9am.
         </p>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <select id="digest-day-select" style="padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px">
@@ -749,37 +861,28 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       </div>
       {% endif %}
 
-      <!-- Billing -->
-      <div class="slabel">Billing</div>
-      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px" id="billing-card">
-        <div id="billing-loading" style="font-size:13px;color:var(--ink3)">Loading billing info…</div>
-        <div id="billing-content" style="display:none">
-          <table style="font-size:13px;width:100%;margin-bottom:12px">
-            <tr><td style="color:var(--ink3);padding:4px 0;width:140px">Status</td>
-                <td id="billing-status" style="font-weight:500"></td></tr>
-            <tr><td style="color:var(--ink3);padding:4px 0">Next charge</td>
-                <td id="billing-next" style="font-weight:500"></td></tr>
-            <tr><td style="color:var(--ink3);padding:4px 0">Amount</td>
-                <td id="billing-amount" style="font-weight:500"></td></tr>
-            <tr><td style="color:var(--ink3);padding:4px 0">Payment</td>
-                <td id="billing-pm" style="font-weight:500"></td></tr>
-          </table>
-          <a id="billing-portal-link" href="#" target="_blank"
-             style="display:inline-block;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;background:var(--paper2);border:1px solid var(--paper3);color:var(--ink2);margin-right:8px">
-            Manage payment method →
-          </a>
-          <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%20I%20would%20like%20to%20cancel%20for%20{{restaurant.name}}."
-             style="display:inline-block;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid var(--paper3);color:var(--ink3)">
-            Request cancellation
-          </a>
-          <p style="font-size:11px;color:var(--ink3);margin-top:10px">
-            No cancellation fees. Cancel before your next billing date to avoid the next charge.
-          </p>
-        </div>
-        <div id="billing-no-sub" style="display:none;font-size:13px;color:var(--ink3)">
-          No active subscription found.
-          <a href="mailto:will@cavnar.ai" style="color:var(--ember)">Contact Will</a> for help.
-        </div>
+      <!-- Support -->
+      <div class="slabel">Support</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
+        <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
+          Questions, data requests, or anything not working — reach out directly.
+        </p>
+        <a href="mailto:will@cavnar.ai"
+           style="display:inline-block;background:var(--ember);color:white;padding:9px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">
+          Email Will →
+        </a>
+      </div>
+
+      <!-- Cancellation — always visible -->
+      <div class="slabel">Cancel subscription</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
+        <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
+          No cancellation fees. Cancel before your next billing date to avoid the next charge.
+        </p>
+        <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%20I%20would%20like%20to%20cancel%20my%20Cavnar%20AI%20subscription%20for%20{{restaurant.name}}."
+           style="display:inline-block;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid var(--paper3);color:var(--ink3)">
+          Request cancellation
+        </a>
       </div>
     </div>
   </div>
@@ -1065,10 +1168,12 @@ function loadBillingInfo() {
       document.getElementById('billing-no-sub').style.display='block'; return;
     }
     document.getElementById('billing-content').style.display='block';
-    const statusMap={active:'Active',trialing:'Trial period',past_due:'⚠ Payment past due',canceled:'Canceled'};
+    const statusMap={active:'Active',trialing:'Trial period — first charge on day 31',past_due:'⚠ Payment past due',canceled:'Canceled'};
     document.getElementById('billing-status').textContent=statusMap[d.status]||d.status;
-    document.getElementById('billing-next').textContent=d.trial_end?'Trial ends '+d.trial_end:(d.next_date||'—');
-    document.getElementById('billing-amount').textContent=d.amount||'—';
+    // Prominent next charge
+    const nextDate = d.trial_end ? 'Trial ends '+d.trial_end : (d.next_date||'—');
+    document.getElementById('billing-next-prominent').textContent=nextDate;
+    document.getElementById('billing-amount-prominent').textContent=d.amount||'—';
     document.getElementById('billing-pm').textContent=d.payment_method||'—';
     if(d.portal_url) document.getElementById('billing-portal-link').href=d.portal_url;
     else document.getElementById('billing-portal-link').style.display='none';
