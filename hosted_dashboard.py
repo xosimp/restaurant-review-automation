@@ -2820,7 +2820,7 @@ def labor_insight_api(current_user):
 def inv_insight_api(current_user):
     from inventory import load_inventory_for_restaurant, analyse_inventory, get_claude_insights
     restaurant = get_restaurant(current_user["restaurant_id"])
-    items    = load_inventory_for_restaurant(current_user["restaurant_id"])
+    items, _is_live = load_inventory_for_restaurant(current_user["restaurant_id"])
     analysis = analyse_inventory(items)
     owner_name = restaurant.owner_name if restaurant else None
     insight  = get_claude_insights(analysis, owner_name=owner_name, restaurant_name=restaurant.name if restaurant else None)
