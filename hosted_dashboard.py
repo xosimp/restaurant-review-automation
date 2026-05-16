@@ -891,7 +891,7 @@ const laborDateRange={{labor.date_range|tojson if labor.date_range else 'null'}}
     const p=d.split('-');
     return parseInt(p[1])+'/'+parseInt(p[2])+'/'+p[0].slice(2);
   }
-  el.textContent='Data: '+fmt(laborDateRange.start)+' — '+fmt(laborDateRange.end)+' ('+laborDateRange.days+' days)';
+  elPeriod.textContent='Data: '+fmt(laborDateRange.start)+' — '+fmt(laborDateRange.end)+' ('+laborDateRange.days+' days)';
 })();
 function renderBars(){
   const days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
