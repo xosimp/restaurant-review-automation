@@ -1246,6 +1246,39 @@ async function deleteNote(noteId) {
   const data = await res.json();
   if(data.ok) location.reload();
 }
+async function postToIG(platform) {
+  const content = document.getElementById('mkoutput').textContent.trim();
+  if (!content || content === 'Select a type and click Generate.') {
+    toast('Generate content first'); return;
+  }
+  const btn = document.getElementById(platform === 'instagram' ? 'post-ig-btn' : 'post-fb-btn');
+  const status = document.getElementById('post-status');
+  btn.textContent = 'Posting…'; btn.disabled = true;
+  const res = await fetch('/api/post-social', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({platform, content})
+  });
+  const data = await res.json();
+  status.style.display = 'block';
+  if (data.ok) {
+    status.style.color = 'var(--green)';
+    status.textContent = '✓ Posted successfully' + (data.post_id ? ' — ID: ' + data.post_id : '');
+    btn.textContent = platform === 'instagram' ? 'Post to Instagram ↗' : 'Post to Facebook ↗';
+  } else {
+    status.style.color = 'var(--red)';
+    status.textContent = data.error || 'Post failed — try again';
+    btn.textContent = platform === 'instagram' ? 'Post to Instagram ↗' : 'Post to Facebook ↗';
+  }
+  btn.disabled = false;
+}
+async function disconnectIG() {
+  if (!confirm('Disconnect your Instagram & Facebook account?')) return;
+  const res = await fetch('/api/disconnect-instagram', {method: 'POST'});
+  const data = await res.json();
+  if (data.ok) location.reload();
+  else toast('Disconnect failed');
+}
 </script>
 </body>
 </html>"""
@@ -2420,32 +2453,6 @@ async function resendContract(restaurantId, email, contractStatus) {
     btn.textContent = data.error || 'Error';
     btn.disabled = false;
   }
-}
-async function postToIG(platform) {
-  const content = document.getElementById('mkoutput').textContent.trim();
-  if (!content || content === 'Select a type and click Generate.') {
-    toast('Generate content first'); return;
-  }
-  const btn = document.getElementById(platform === 'instagram' ? 'post-ig-btn' : 'post-fb-btn');
-  const status = document.getElementById('post-status');
-  btn.textContent = 'Posting…'; btn.disabled = true;
-  const res = await fetch('/api/post-social', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({platform, content})
-  });
-  const data = await res.json();
-  status.style.display = 'block';
-  if (data.ok) {
-    status.style.color = 'var(--green)';
-    status.textContent = '✓ Posted successfully' + (data.post_id ? ' — ID: ' + data.post_id : '');
-    btn.textContent = platform === 'instagram' ? 'Post to Instagram ↗' : 'Post to Facebook ↗';
-  } else {
-    status.style.color = 'var(--red)';
-    status.textContent = data.error || 'Post failed — try again';
-    btn.textContent = platform === 'instagram' ? 'Post to Instagram ↗' : 'Post to Facebook ↗';
-  }
-  btn.disabled = false;
 }
 async function disconnectIG() {
   if (!confirm('Disconnect your Instagram & Facebook account?')) return;
