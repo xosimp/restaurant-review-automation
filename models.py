@@ -315,6 +315,22 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     conn.close()
 
 
+def get_all_restaurants(db_path: str = DB_PATH) -> list:
+    """Return all restaurants as Restaurant objects."""
+    conn = get_conn(db_path)
+    rows = conn.execute("SELECT * FROM restaurants").fetchall()
+    conn.close()
+    result = []
+    for row in rows:
+        try:
+            r = get_restaurant(row["id"], db_path)
+            if r:
+                result.append(r)
+        except Exception:
+            pass
+    return result
+
+
 def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Restaurant]:
     conn = get_conn(db_path)
     row = conn.execute("SELECT * FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
