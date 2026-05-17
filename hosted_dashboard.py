@@ -97,7 +97,20 @@ LOGIN_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cavnar AI — Sign in</title>
+<title>Cavnar AI — Restaurant Intelligence</title>
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://cavnar.ai">
+<meta property="og:title" content="Cavnar AI — Restaurant Intelligence">
+<meta property="og:description" content="AI-powered reviews, labor, inventory, and marketing for independent restaurants. Fully managed. No learning curve.">
+<meta property="og:image" content="https://dashboard.cavnar.ai/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:site_name" content="Cavnar AI">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Cavnar AI — Restaurant Intelligence">
+<meta name="twitter:description" content="AI-powered reviews, labor, inventory, and marketing for independent restaurants. Fully managed. No learning curve.">
+<meta name="twitter:image" content="https://dashboard.cavnar.ai/og-image.png">
+<meta name="description" content="AI-powered reviews, labor, inventory, and marketing for independent restaurants. Fully managed. No learning curve.">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjx0ZXh0IHg9IjE2IiB5PSIyMyIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtc3R5bGU9Iml0YWxpYyIgZmlsbD0iI2M4NGIyZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+QUk8L3RleHQ+PC9zdmc+">
 <link rel="shortcut icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjx0ZXh0IHg9IjE2IiB5PSIyMyIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtc3R5bGU9Iml0YWxpYyIgZmlsbD0iI2M4NGIyZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+QUk8L3RleHQ+PC9zdmc+">
 <meta name="theme-color" content="#0e0c0a">
