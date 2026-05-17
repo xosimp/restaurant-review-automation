@@ -98,6 +98,9 @@ LOGIN_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Cavnar AI — Sign in</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjx0ZXh0IHg9IjE2IiB5PSIyMyIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtc3R5bGU9Iml0YWxpYyIgZmlsbD0iI2M4NGIyZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+QUk8L3RleHQ+PC9zdmc+">
+<link rel="shortcut icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjx0ZXh0IHg9IjE2IiB5PSIyMyIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtc3R5bGU9Iml0YWxpYyIgZmlsbD0iI2M4NGIyZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+QUk8L3RleHQ+PC9zdmc+">
+<meta name="theme-color" content="#0e0c0a">
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -144,6 +147,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ restaurant.name }} — Cavnar AI</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjx0ZXh0IHg9IjE2IiB5PSIyMyIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtc3R5bGU9Iml0YWxpYyIgZmlsbD0iI2M4NGIyZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+QUk8L3RleHQ+PC9zdmc+">
+<link rel="shortcut icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjx0ZXh0IHg9IjE2IiB5PSIyMyIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtc3R5bGU9Iml0YWxpYyIgZmlsbD0iI2M4NGIyZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+QUk8L3RleHQ+PC9zdmc+">
+<meta name="theme-color" content="#0e0c0a">
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -665,36 +671,6 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week ↗</button>
     </div>
     <div class="cal-grid" id="cal-grid"><div class="no-data" style="grid-column:1/-1;padding:20px">Click "Generate week" for content ideas.</div></div>
-  </div>
-
-  <!-- INSTAGRAM / FACEBOOK CONNECT -->
-  <div style="margin-top:28px;border-top:1px solid var(--paper3);padding-top:20px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div class="slabel" style="margin:0">Post directly to Instagram & Facebook</div>
-    </div>
-    {% if restaurant.ig_access_token %}
-    <div style="background:var(--green-bg);border:1px solid #b7dfca;border-radius:6px;padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
-      <div style="font-size:12px;color:var(--green);font-weight:500">
-        ✓ Connected{% if restaurant.ig_username %} — @{{restaurant.ig_username}}{% endif %}
-      </div>
-      <button onclick="disconnectIG()" style="font-size:11px;padding:4px 10px;border-radius:4px;border:1px solid #b7dfca;background:white;color:var(--green);cursor:pointer;font-family:'DM Sans',sans-serif">Disconnect</button>
-    </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <button class="btn-primary" onclick="postToIG('instagram')" id="post-ig-btn">Post to Instagram ↗</button>
-      <button class="btn-primary" onclick="postToIG('facebook')" id="post-fb-btn" style="background:#1877f2">Post to Facebook ↗</button>
-    </div>
-    <div id="post-status" style="font-size:12px;margin-top:8px;display:none"></div>
-    {% else %}
-    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;display:flex;align-items:center;justify-content:space-between;gap:16px">
-      <div>
-        <div style="font-size:13px;font-weight:500;margin-bottom:4px">Connect your Instagram & Facebook</div>
-        <div style="font-size:12px;color:var(--ink3);line-height:1.5">Generate content above, then post it directly without leaving the dashboard.</div>
-      </div>
-      <a href="/auth/instagram" style="display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888);color:white;padding:10px 18px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600;white-space:nowrap;flex-shrink:0">
-        Connect Instagram →
-      </a>
-    </div>
-    {% endif %}
   </div>
 </div>
 
@@ -1246,39 +1222,6 @@ async function deleteNote(noteId) {
   const data = await res.json();
   if(data.ok) location.reload();
 }
-async function postToIG(platform) {
-  const content = document.getElementById('mkoutput').textContent.trim();
-  if (!content || content === 'Select a type and click Generate.') {
-    toast('Generate content first'); return;
-  }
-  const btn = document.getElementById(platform === 'instagram' ? 'post-ig-btn' : 'post-fb-btn');
-  const status = document.getElementById('post-status');
-  btn.textContent = 'Posting…'; btn.disabled = true;
-  const res = await fetch('/api/post-social', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({platform, content})
-  });
-  const data = await res.json();
-  status.style.display = 'block';
-  if (data.ok) {
-    status.style.color = 'var(--green)';
-    status.textContent = '✓ Posted successfully' + (data.post_id ? ' — ID: ' + data.post_id : '');
-    btn.textContent = platform === 'instagram' ? 'Post to Instagram ↗' : 'Post to Facebook ↗';
-  } else {
-    status.style.color = 'var(--red)';
-    status.textContent = data.error || 'Post failed — try again';
-    btn.textContent = platform === 'instagram' ? 'Post to Instagram ↗' : 'Post to Facebook ↗';
-  }
-  btn.disabled = false;
-}
-async function disconnectIG() {
-  if (!confirm('Disconnect your Instagram & Facebook account?')) return;
-  const res = await fetch('/api/disconnect-instagram', {method: 'POST'});
-  const data = await res.json();
-  if (data.ok) location.reload();
-  else toast('Disconnect failed');
-}
 </script>
 </body>
 </html>"""
@@ -1289,6 +1232,9 @@ CLIENT_SETTINGS_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ restaurant.name }} — Settings</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjx0ZXh0IHg9IjE2IiB5PSIyMyIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtc3R5bGU9Iml0YWxpYyIgZmlsbD0iI2M4NGIyZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+QUk8L3RleHQ+PC9zdmc+">
+<link rel="shortcut icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjx0ZXh0IHg9IjE2IiB5PSIyMyIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtc3R5bGU9Iml0YWxpYyIgZmlsbD0iI2M4NGIyZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+QUk8L3RleHQ+PC9zdmc+">
+<meta name="theme-color" content="#0e0c0a">
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1838,6 +1784,9 @@ CLIENT_DATA_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ restaurant.name }} — Data Setup</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjx0ZXh0IHg9IjE2IiB5PSIyMyIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtc3R5bGU9Iml0YWxpYyIgZmlsbD0iI2M4NGIyZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+QUk8L3RleHQ+PC9zdmc+">
+<link rel="shortcut icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjx0ZXh0IHg9IjE2IiB5PSIyMyIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtc3R5bGU9Iml0YWxpYyIgZmlsbD0iI2M4NGIyZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+QUk8L3RleHQ+PC9zdmc+">
+<meta name="theme-color" content="#0e0c0a">
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -2148,6 +2097,9 @@ ADMIN_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Cavnar AI — Admin</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjx0ZXh0IHg9IjE2IiB5PSIyMyIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtc3R5bGU9Iml0YWxpYyIgZmlsbD0iI2M4NGIyZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+QUk8L3RleHQ+PC9zdmc+">
+<link rel="shortcut icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjx0ZXh0IHg9IjE2IiB5PSIyMyIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtc3R5bGU9Iml0YWxpYyIgZmlsbD0iI2M4NGIyZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+QUk8L3RleHQ+PC9zdmc+">
+<meta name="theme-color" content="#0e0c0a">
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -2439,27 +2391,6 @@ async function createClient() {
     status.textContent = data.error || 'Something went wrong';
   }
   btn.textContent = 'Create client account'; btn.disabled = false;
-}
-async function resendContract(restaurantId, email, contractStatus) {
-  const btn = event.target;
-  btn.textContent = 'Sending…'; btn.disabled = true;
-  const res = await fetch('/admin/resend-contract/' + restaurantId, {method:'POST'});
-  const data = await res.json();
-  if (data.ok) {
-    btn.textContent = '✓ Sent';
-    btn.style.color = 'var(--green)';
-    setTimeout(() => { btn.textContent = 'Resend contract'; btn.disabled = false; btn.style.color = ''; }, 3000);
-  } else {
-    btn.textContent = data.error || 'Error';
-    btn.disabled = false;
-  }
-}
-async function disconnectIG() {
-  if (!confirm('Disconnect your Instagram & Facebook account?')) return;
-  const res = await fetch('/api/disconnect-instagram', {method: 'POST'});
-  const data = await res.json();
-  if (data.ok) location.reload();
-  else toast('Disconnect failed');
 }
 async function resendPayment(restaurantId, email, billing) {
   const btn = event.target;
@@ -3309,206 +3240,6 @@ def log_activity_route(current_user):
     data = request.get_json()
     log_activity(current_user["restaurant_id"], data.get("tab",""))
     return jsonify(ok=True)
-
-@app.route("/auth/instagram")
-@login_required
-def instagram_auth(current_user):
-    """Redirect client to Meta OAuth."""
-    import urllib.parse
-    app_id = os.getenv("META_APP_ID", "1926741024712844")
-    redirect_uri = "https://dashboard.cavnar.ai/auth/instagram/callback"
-    scope = "pages_show_list,pages_read_engagement,pages_manage_posts,business_management,instagram_basic,instagram_content_publish"
-    state = str(current_user["restaurant_id"])
-    params = urllib.parse.urlencode({
-        "client_id": app_id,
-        "redirect_uri": redirect_uri,
-        "scope": scope,
-        "response_type": "code",
-        "state": state,
-    })
-    return redirect(f"https://www.facebook.com/v19.0/dialog/oauth?{params}")
-
-@app.route("/auth/instagram/callback")
-def instagram_callback():
-    """Handle OAuth callback, exchange code for token, save to restaurant."""
-    import urllib.parse, requests as _requests
-    code = request.args.get("code")
-    state = request.args.get("state","")
-    error = request.args.get("error")
-    if error:
-        return redirect("/?ig_error=1")
-    if not code:
-        return redirect("/?ig_error=1")
-    app_id     = os.getenv("META_APP_ID", "1926741024712844")
-    app_secret = os.getenv("META_APP_SECRET", "")
-    redirect_uri = "https://dashboard.cavnar.ai/auth/instagram/callback"
-    try:
-        # Exchange code for short-lived token
-        r = _requests.post("https://graph.facebook.com/v19.0/oauth/access_token", data={
-            "client_id": app_id,
-            "client_secret": app_secret,
-            "redirect_uri": redirect_uri,
-            "code": code,
-        })
-        token_data = r.json()
-        short_token = token_data.get("access_token")
-        if not short_token:
-            print(f"[IG OAuth] Token exchange failed: {token_data}")
-            return redirect("/?ig_error=1")
-        # Exchange for long-lived token (60 days)
-        r2 = _requests.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
-            "grant_type": "fb_exchange_token",
-            "client_id": app_id,
-            "client_secret": app_secret,
-            "fb_exchange_token": short_token,
-        })
-        long_data = r2.json()
-        long_token = long_data.get("access_token", short_token)
-        # Get Instagram business account ID
-        r3 = _requests.get("https://graph.facebook.com/v19.0/me/accounts", params={
-            "access_token": long_token,
-            "fields": "id,name,instagram_business_account"
-        })
-        pages = r3.json().get("data", [])
-        ig_user_id = None
-        ig_username = None
-        page_token = long_token
-        for page in pages:
-            if page.get("instagram_business_account"):
-                ig_user_id = page["instagram_business_account"]["id"]
-                page_token = page.get("access_token", long_token)
-                # Get username
-                r4 = _requests.get(f"https://graph.facebook.com/v19.0/{ig_user_id}", params={
-                    "fields": "username",
-                    "access_token": page_token,
-                })
-                ig_username = r4.json().get("username","")
-                break
-        restaurant_id = int(state) if state.isdigit() else None
-        if restaurant_id:
-            from models import update_restaurant
-            update_restaurant(restaurant_id, {
-                "ig_access_token": long_token,
-                "ig_user_id": ig_user_id or "",
-                "ig_username": ig_username or "",
-                "ig_page_token": page_token,
-            })
-        return redirect("/?ig_connected=1")
-    except Exception as e:
-        print(f"[IG OAuth] Callback error: {e}")
-        import traceback; traceback.print_exc()
-        return redirect("/?ig_error=1")
-
-@app.route("/api/post-social", methods=["POST"])
-@login_required
-def post_social(current_user):
-    """Post content to Instagram or Facebook on behalf of the client."""
-    import requests as _requests
-    data = request.get_json()
-    platform = data.get("platform","instagram")
-    content  = data.get("content","").strip()
-    if not content:
-        return jsonify(ok=False, error="No content to post")
-    restaurant = get_restaurant(current_user["restaurant_id"])
-    if not restaurant or not restaurant.ig_access_token:
-        return jsonify(ok=False, error="Instagram not connected")
-    try:
-        if platform == "instagram":
-            if not restaurant.ig_user_id:
-                return jsonify(ok=False, error="No Instagram business account found. Make sure your Instagram is connected to a Facebook Page.")
-            # Step 1: Create media container
-            r1 = _requests.post(
-                f"https://graph.facebook.com/v19.0/{restaurant.ig_user_id}/media",
-                params={
-                    "caption": content,
-                    "media_type": "TEXT",
-                    "access_token": restaurant.ig_page_token or restaurant.ig_access_token,
-                }
-            )
-            container = r1.json()
-            if "error" in container:
-                return jsonify(ok=False, error=container["error"].get("message","Instagram error"))
-            creation_id = container.get("id")
-            if not creation_id:
-                return jsonify(ok=False, error="Failed to create media container")
-            # Step 2: Publish
-            r2 = _requests.post(
-                f"https://graph.facebook.com/v19.0/{restaurant.ig_user_id}/media_publish",
-                params={
-                    "creation_id": creation_id,
-                    "access_token": restaurant.ig_page_token or restaurant.ig_access_token,
-                }
-            )
-            result = r2.json()
-            if "error" in result:
-                return jsonify(ok=False, error=result["error"].get("message","Publish failed"))
-            return jsonify(ok=True, post_id=result.get("id",""))
-        elif platform == "facebook":
-            # Get the page ID from accounts
-            r_pages = _requests.get("https://graph.facebook.com/v19.0/me/accounts", params={
-                "access_token": restaurant.ig_access_token,
-                "fields": "id,name,access_token"
-            })
-            pages = r_pages.json().get("data",[])
-            if not pages:
-                return jsonify(ok=False, error="No Facebook Pages found. Make sure your Facebook Page is connected.")
-            page = pages[0]
-            page_id = page["id"]
-            page_access_token = page.get("access_token", restaurant.ig_access_token)
-            r = _requests.post(
-                f"https://graph.facebook.com/v19.0/{page_id}/feed",
-                params={
-                    "message": content,
-                    "access_token": page_access_token,
-                }
-            )
-            result = r.json()
-            if "error" in result:
-                return jsonify(ok=False, error=result["error"].get("message","Facebook post failed"))
-            return jsonify(ok=True, post_id=result.get("id",""))
-        else:
-            return jsonify(ok=False, error="Unknown platform")
-    except Exception as e:
-        return jsonify(ok=False, error=str(e))
-
-@app.route("/api/disconnect-instagram", methods=["POST"])
-@login_required
-def disconnect_instagram(current_user):
-    from models import update_restaurant
-    update_restaurant(current_user["restaurant_id"], {
-        "ig_access_token": None,
-        "ig_user_id": None,
-        "ig_username": None,
-        "ig_page_token": None,
-    })
-    return jsonify(ok=True)
-
-@app.route("/admin/resend-contract/<int:restaurant_id>", methods=["POST"])
-@admin_required
-def resend_contract(restaurant_id, current_user):
-    from models import get_restaurant, update_restaurant
-    restaurant = get_restaurant(restaurant_id)
-    if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found")
-    try:
-        mods = (int(restaurant.module_reviews or 0) + int(restaurant.module_labor or 0) +
-                int(restaurant.module_inventory or 0) + int(restaurant.module_marketing or 0))
-        module_names = []
-        if restaurant.module_reviews:   module_names.append("Review Intelligence")
-        if restaurant.module_labor:     module_names.append("Labor Optimizer")
-        if restaurant.module_inventory: module_names.append("Inventory Control")
-        if restaurant.module_marketing: module_names.append("Marketing Autopilot")
-        send_contract_email(
-            to_email=restaurant.owner_email,
-            owner_name=restaurant.owner_name or "",
-            restaurant_name=restaurant.name,
-            module_count=mods,
-            modules_list=", ".join(module_names),
-        )
-        update_restaurant(restaurant_id, {"contract_status": "sent"})
-        return jsonify(ok=True)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e))
 
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
