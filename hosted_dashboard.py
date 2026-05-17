@@ -3866,6 +3866,13 @@ def server_error(e):
 </html>"""
     return Response(html, status=500, mimetype="text/html")
 
+@app.route("/og-image.png")
+def og_image():
+    from flask import send_file
+    import os as _os
+    path = _os.path.join(_os.path.dirname(__file__), "static", "og-image.png")
+    return send_file(path, mimetype="image/png")
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
