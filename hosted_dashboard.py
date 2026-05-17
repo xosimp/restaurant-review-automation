@@ -3310,7 +3310,7 @@ def instagram_auth(current_user):
     import urllib.parse
     app_id = os.getenv("META_APP_ID", "1926741024712844")
     redirect_uri = "https://dashboard.cavnar.ai/auth/instagram/callback"
-    scope = "instagram_business_basic,instagram_content_publish,pages_read_engagement,pages_manage_posts,business_management"
+    scope = "pages_show_list,pages_read_engagement,pages_manage_posts,business_management,instagram_basic,instagram_content_publish"
     state = str(current_user["restaurant_id"])
     params = urllib.parse.urlencode({
         "client_id": app_id,
