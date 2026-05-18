@@ -2224,11 +2224,8 @@ input:focus,select:focus{border-color:var(--ember)}
 
       </div>
     </div>
-    <div style="display:flex;align-items:center;gap:10px;margin-top:14px;margin-bottom:0">
-      <input type="checkbox" id="send-email" checked style="width:16px;height:16px;accent-color:#c84b2f;cursor:pointer">
-      <label for="send-email" style="font-size:13px;color:#3a3530;cursor:pointer;letter-spacing:0;text-transform:none;font-weight:400">
-        Send welcome email to owner with login credentials
-      </label>
+    <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:8px 14px;margin-top:14px;font-size:12px;color:#2d6a4f">
+      ✓ Contract sent automatically on creation. Payment link and welcome email sent automatically after client signs.
     </div>
     <button class="btn btn-primary" style="margin-top:12px" onclick="createClient()">Create client account</button>
     <div class="status-msg" id="create-status"></div>
@@ -2388,7 +2385,7 @@ async function createClient() {
     module_labor:    document.getElementById('mod-labor').checked ? 1 : 0,
     module_inventory:document.getElementById('mod-inventory').checked ? 1 : 0,
     module_marketing:document.getElementById('mod-marketing').checked ? 1 : 0,
-    send_email:      document.getElementById('send-email').checked,
+
   };
   const res = await fetch('/admin/create-client', {
     method: 'POST',
@@ -2984,7 +2981,15 @@ def create_client(current_user):
             location_group=data.get("location_group","").strip() or None,
             location_name=data.get("location_name","").strip() or None,
         ))
-        # Create user
+        # Create user (check for duplicate email/username first)
+        conn_check = get_conn()
+        existing = conn_check.execute(
+            "SELECT id FROM users WHERE email=? OR username=?",
+            (data["owner_email"], data["username"])
+        ).fetchone()
+        conn_check.close()
+        if existing:
+            return jsonify(ok=False, error=f"A user with that email or username already exists")
         create_user(
             restaurant_id=rid,
             username=data["username"],
@@ -3033,7 +3038,6 @@ def create_client(current_user):
 
         # Steps 2 & 3 (payment + welcome emails) fire automatically
         # when the client signs the contract via the DocuSign webhook
-        print(f"Welcome email failed: {mail_err}")
 
         return jsonify(ok=True, restaurant_id=rid, envelope_id=envelope_id)
     except Exception as e:
