@@ -3008,21 +3008,26 @@ def create_client(current_user):
         if int(data.get("module_marketing",0)): module_names.append("Marketing Autopilot")
         modules_list = ", ".join(module_names)
 
-        # Step 1: Send contract PDF via email
+        # Step 1: Send contract via DocuSign
         envelope_id = None
-        if mods > 0 and data.get("owner_email") and RESEND_API_KEY:
+        if mods > 0 and data.get("owner_email"):
             try:
-                send_contract_email(
-                    to_email=data["owner_email"],
-                    owner_name=data.get("owner_name",""),
+                from docusign_helper import send_contract
+                result = send_contract(
+                    owner_email=data["owner_email"],
+                    owner_name=data.get("owner_name","") or data["restaurant_name"],
                     restaurant_name=data["restaurant_name"],
                     module_count=mods,
                     modules_list=modules_list,
                 )
-                update_restaurant(rid, {"contract_status": "sent"})
-                print(f"Contract email sent to {data['owner_email']}")
+                envelope_id = result.get("envelope_id")
+                update_restaurant(rid, {
+                    "contract_status": "sent",
+                    "docusign_envelope_id": envelope_id,
+                })
+                print(f"Contract sent via DocuSign to {data['owner_email']}, envelope: {envelope_id}")
             except Exception as e:
-                print(f"Contract email failed: {e}")
+                print(f"DocuSign contract failed: {e}")
                 import traceback; traceback.print_exc()
 
         # Step 2: Send payment email
