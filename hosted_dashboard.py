@@ -3764,11 +3764,24 @@ def docusign_callback():
 def docusign_webhook():
     """Receive DocuSign connect notifications when envelope status changes."""
     try:
+        raw = request.get_data(as_text=True)
+        print(f"DocuSign webhook received: {raw[:500]}")
         data = request.get_json(force=True) or {}
-        envelope_id = (data.get("envelopeId") or
-                      data.get("data",{}).get("envelopeId",""))
-        status = (data.get("status") or
-                 data.get("data",{}).get("envelopeSummary",{}).get("status",""))
+        print(f"DocuSign webhook parsed keys: {list(data.keys())}")
+        # Try multiple envelope ID locations
+        envelope_id = (
+            data.get("envelopeId") or
+            data.get("data",{}).get("envelopeId","") or
+            data.get("data",{}).get("envelopeSummary",{}).get("envelopeId","")
+        )
+        # Try multiple status locations
+        status = (
+            data.get("status") or
+            data.get("event") or
+            data.get("data",{}).get("envelopeSummary",{}).get("status","") or
+            data.get("data",{}).get("status","")
+        )
+        print(f"DocuSign webhook envelope_id={envelope_id} status={status}")
 
         if envelope_id and status == "completed":
             # Mark contract as signed
