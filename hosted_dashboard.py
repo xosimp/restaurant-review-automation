@@ -3754,6 +3754,26 @@ def update_digest_day(current_user):
     })
     return jsonify(ok=True)
 
+@app.route("/docusign/callback")
+def docusign_callback():
+    """Handle DocuSign OAuth callback — just confirms consent was granted."""
+    code = request.args.get("code")
+    error = request.args.get("error")
+    if error:
+        return f"""<div style="font-family:sans-serif;max-width:500px;margin:60px auto;padding:24px">
+            <h2 style="color:#c84b2f">DocuSign Error</h2>
+            <p>Error: {error}</p>
+            <p><a href="/admin">Back to admin</a></p>
+        </div>"""
+    if code:
+        return """<div style="font-family:sans-serif;max-width:500px;margin:60px auto;padding:24px;text-align:center">
+            <h2 style="color:#2d6a4f">&#10003; DocuSign Connected</h2>
+            <p style="color:#3a3530;margin:12px 0">Production consent granted successfully.<br>
+            Contracts will now send automatically when you create a client.</p>
+            <a href="/admin" style="display:inline-block;margin-top:16px;background:#c84b2f;color:white;padding:10px 24px;border-radius:6px;text-decoration:none;font-weight:600">Back to admin</a>
+        </div>"""
+    return redirect("/admin")
+
 @app.route("/docusign/webhook", methods=["POST"])
 def docusign_webhook():
     """Receive DocuSign connect notifications when envelope status changes."""
