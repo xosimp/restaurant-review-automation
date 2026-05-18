@@ -105,20 +105,20 @@ def send_contract(
                 "roleName":  "Will Cavnar",
                 "name":      "Will Cavnar",
                 "email":     "will@cavnar.ai",
-                "tabs": {
-                    "textTabs": [
-                        {"tabLabel": "setup_fee",       "value": setup_fee},
-                        {"tabLabel": "monthly_fee",     "value": monthly_fee},
-                        {"tabLabel": "restaurant_name", "value": restaurant_name},
-                        {"tabLabel": "owner_name",      "value": owner_name},
-                        {"tabLabel": "owner_email",     "value": owner_email},
-                    ],
-                },
             },
             {
                 "roleName":  "Client",
                 "name":      owner_name,
                 "email":     owner_email,
+                "tabs": {
+                    "textTabs": [
+                        {"tabLabel": "setup_fee",       "value": setup_fee,       "locked": "true"},
+                        {"tabLabel": "monthly_fee",     "value": monthly_fee,     "locked": "true"},
+                        {"tabLabel": "restaurant_name", "value": restaurant_name, "locked": "true"},
+                        {"tabLabel": "owner_name",      "value": owner_name,      "locked": "true"},
+                        {"tabLabel": "owner_email",     "value": owner_email,     "locked": "true"},
+                    ],
+                },
             },
         ],
     }
