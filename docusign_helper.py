@@ -29,8 +29,8 @@ def get_access_token() -> str:
 
     now = int(time.time())
     # For demo: account-d.docusign.com, for prod: account.docusign.com
-    # Integration key lives on developer account (apps-d.docusign.com)
-    # JWT auth always goes through account-d regardless of API base URL
+    # Integration key lives on DocuSign developer account (apps-d.docusign.com)
+    # JWT auth always uses account-d.docusign.com regardless of API base URL
     auth_domain = "account-d.docusign.com"
 
     # Use integration key as sub (works for both demo and production JWT auth)
