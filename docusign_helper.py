@@ -105,6 +105,15 @@ def send_contract(
                 "roleName":  "Will Cavnar",
                 "name":      "Will Cavnar",
                 "email":     "will@cavnar.ai",
+                "tabs": {
+                    "textTabs": [
+                        {"tabLabel": "setup_fee",       "value": setup_fee},
+                        {"tabLabel": "monthly_fee",     "value": monthly_fee},
+                        {"tabLabel": "restaurant_name", "value": restaurant_name},
+                        {"tabLabel": "owner_name",      "value": owner_name},
+                        {"tabLabel": "owner_email",     "value": owner_email},
+                    ],
+                },
             },
             {
                 "roleName":  "Client",
@@ -112,18 +121,6 @@ def send_contract(
                 "email":     owner_email,
             },
         ],
-        "prefillTabs": {
-            "textTabs": [
-                {
-                    "tabLabel": "setup_fee",
-                    "value":    setup_fee,
-                },
-                {
-                    "tabLabel": "monthly_fee",
-                    "value":    monthly_fee,
-                },
-            ],
-        },
     }
 
     resp = requests.post(
