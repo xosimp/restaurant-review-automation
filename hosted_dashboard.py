@@ -2761,6 +2761,9 @@ def send_welcome_email(to_email, restaurant_name, username, password,
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:24px">
     Any questions, just reply to this email. I check it daily.
   </p>
+  <p style="font-size:13px;color:#7a736a;line-height:1.6;margin-bottom:24px;padding:10px 14px;background:#f7f4ef;border-radius:6px;border-left:3px solid #c84b2f">
+    <strong style="color:#3a3530">Note:</strong> This email may land in your Promotions tab. If it did, drag it to your Primary inbox — that way you won't miss any updates from me going forward.
+  </p>
   <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
   <p style="font-size:12px;color:#7a736a;margin:0">
     Will Cavnar &nbsp;·&nbsp; Cavnar AI<br/>
