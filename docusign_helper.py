@@ -29,12 +29,15 @@ def get_access_token() -> str:
 
     now = int(time.time())
     # For demo: account-d.docusign.com, for prod: account.docusign.com
-    is_demo = "demo" in BASE_URL
-    auth_domain = "account-d.docusign.com" if is_demo else "account.docusign.com"
+    # Integration key lives on developer account (apps-d.docusign.com)
+    # JWT auth always goes through account-d regardless of API base URL
+    auth_domain = "account-d.docusign.com"
 
+    # Use integration key as sub (works for both demo and production JWT auth)
+    sub = USER_ID if USER_ID else INTEGRATION_KEY
     payload = {
         "iss": INTEGRATION_KEY,
-        "sub": USER_ID,
+        "sub": sub,
         "aud": auth_domain,
         "iat": now,
         "exp": now + 3600,
