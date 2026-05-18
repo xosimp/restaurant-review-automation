@@ -3823,11 +3823,13 @@ def docusign_webhook():
 
                 # Send welcome email with credentials
                 try:
+                    tmp_pw = r.get("temp_password") or ""
+                    print(f"Welcome email temp_password length: {len(tmp_pw)}, value: '{tmp_pw}'")
                     send_welcome_email(
                         to_email=r["owner_email"],
                         restaurant_name=r["name"],
                         username=r["username"],
-                        password=r.get("temp_password",""),
+                        password=tmp_pw,
                         module_reviews=int(r.get("module_reviews") or 0),
                         module_labor=int(r.get("module_labor") or 0),
                         module_inventory=int(r.get("module_inventory") or 0),
