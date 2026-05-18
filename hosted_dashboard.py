@@ -2998,6 +2998,7 @@ def create_client(current_user):
             "module_labor":    int(data.get("module_labor", 0)),
             "module_inventory":int(data.get("module_inventory", 0)),
             "module_marketing":int(data.get("module_marketing", 0)),
+            "temp_password":   data.get("password",""),
         })
         mods = (int(data.get("module_reviews",0)) + int(data.get("module_labor",0)) +
                 int(data.get("module_inventory",0)) + int(data.get("module_marketing",0)))
@@ -3030,34 +3031,9 @@ def create_client(current_user):
                 print(f"DocuSign contract failed: {e}")
                 import traceback; traceback.print_exc()
 
-        # Step 2: Send payment email
-        if mods > 0 and RESEND_API_KEY:
-            try:
-                tier = "full" if mods == 4 else f"custom_{mods}"
-                send_payment_email(
-                    to_email=data["owner_email"],
-                    restaurant_name=data["restaurant_name"],
-                    tier=tier,
-                    module_count=mods,
-                )
-            except Exception as mail_err:
-                print(f"Payment email failed: {mail_err}")
-
-        # Step 3: Send welcome email
-        if data.get("send_email") and RESEND_API_KEY:
-            try:
-                send_welcome_email(
-                    to_email=data["owner_email"],
-                    restaurant_name=data["restaurant_name"],
-                    username=data["username"],
-                    module_reviews=int(data.get("module_reviews",0)),
-                    module_labor=int(data.get("module_labor",0)),
-                    module_inventory=int(data.get("module_inventory",0)),
-                    module_marketing=int(data.get("module_marketing",0)),
-                    password=data["password"],
-                )
-            except Exception as mail_err:
-                print(f"Welcome email failed: {mail_err}")
+        # Steps 2 & 3 (payment + welcome emails) fire automatically
+        # when the client signs the contract via the DocuSign webhook
+        print(f"Welcome email failed: {mail_err}")
 
         return jsonify(ok=True, restaurant_id=rid, envelope_id=envelope_id)
     except Exception as e:
@@ -3791,7 +3767,15 @@ def docusign_webhook():
                  data.get("data",{}).get("envelopeSummary",{}).get("status",""))
 
         if envelope_id and status == "completed":
+            # Mark contract as signed
             conn = get_conn()
+            row = conn.execute(
+                """SELECT r.*, u.username, u.email
+                   FROM restaurants r
+                   JOIN users u ON u.restaurant_id = r.id AND u.is_admin = 0
+                   WHERE r.docusign_envelope_id = ? LIMIT 1""",
+                (envelope_id,)
+            ).fetchone()
             conn.execute(
                 "UPDATE restaurants SET contract_status='signed' WHERE docusign_envelope_id=?",
                 (envelope_id,)
@@ -3799,6 +3783,48 @@ def docusign_webhook():
             conn.commit()
             conn.close()
             print(f"Contract signed: {envelope_id}")
+
+            if row and RESEND_API_KEY:
+                r = dict(row)
+                mods = sum([
+                    1 if r.get("module_reviews") else 0,
+                    1 if r.get("module_labor") else 0,
+                    1 if r.get("module_inventory") else 0,
+                    1 if r.get("module_marketing") else 0,
+                ])
+
+                # Send payment email
+                try:
+                    send_payment_email(
+                        to_email=r["owner_email"],
+                        restaurant_name=r["name"],
+                        module_count=mods,
+                    )
+                    print(f"Payment email sent to {r['owner_email']} after signing")
+                except Exception as e:
+                    print(f"Payment email failed after signing: {e}")
+
+                # Send welcome email with credentials
+                try:
+                    send_welcome_email(
+                        to_email=r["owner_email"],
+                        restaurant_name=r["name"],
+                        username=r["username"],
+                        password=r.get("temp_password",""),
+                        module_reviews=int(r.get("module_reviews") or 0),
+                        module_labor=int(r.get("module_labor") or 0),
+                        module_inventory=int(r.get("module_inventory") or 0),
+                        module_marketing=int(r.get("module_marketing") or 0),
+                    )
+                    # Clear temp password from DB after sending
+                    try:
+                        from models import update_restaurant
+                        update_restaurant(r["id"], {"temp_password": ""})
+                    except Exception:
+                        pass
+                    print(f"Welcome email sent to {r['owner_email']} after signing")
+                except Exception as e:
+                    print(f"Welcome email failed after signing: {e}")
 
         return jsonify(ok=True)
     except Exception as e:
