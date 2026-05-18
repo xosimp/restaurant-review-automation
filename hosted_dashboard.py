@@ -3760,6 +3760,7 @@ def update_digest_day(current_user):
     return jsonify(ok=True)
 
 @app.route("/docusign/callback")
+@app.route("/docusign/callback2")
 def docusign_callback():
     """Handle DocuSign OAuth callback — just confirms consent was granted."""
     code = request.args.get("code")
