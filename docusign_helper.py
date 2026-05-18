@@ -110,20 +110,20 @@ def send_contract(
                 "roleName":  "Client",
                 "name":      owner_name,
                 "email":     owner_email,
-                "tabs": {
-                    "textTabs": [
-                        {
-                            "tabLabel": "setup_fee",
-                            "value":    setup_fee,
-                        },
-                        {
-                            "tabLabel": "monthly_fee",
-                            "value":    monthly_fee,
-                        },
-                    ],
-                },
             },
         ],
+        "prefillTabs": {
+            "textTabs": [
+                {
+                    "tabLabel": "setup_fee",
+                    "value":    setup_fee,
+                },
+                {
+                    "tabLabel": "monthly_fee",
+                    "value":    monthly_fee,
+                },
+            ],
+        },
     }
 
     resp = requests.post(
