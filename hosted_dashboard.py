@@ -3783,7 +3783,7 @@ def docusign_webhook():
         )
         print(f"DocuSign webhook envelope_id={envelope_id} status={status}")
 
-        if envelope_id and status == "completed":
+        if envelope_id and status in ("completed", "envelope-completed"):
             # Mark contract as signed
             conn = get_conn()
             row = conn.execute(
