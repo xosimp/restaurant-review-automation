@@ -3958,6 +3958,27 @@ def server_error(e):
 </html>"""
     return Response(html, status=500, mimetype="text/html")
 
+@app.route("/sitemap.xml")
+def sitemap():
+    from flask import Response
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://cavnar.ai/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>"""
+    return Response(xml, mimetype='application/xml')
+
+@app.route("/robots.txt")
+def robots():
+    from flask import Response
+    txt = """User-agent: *
+Allow: /
+Sitemap: https://cavnar.ai/sitemap.xml"""
+    return Response(txt, mimetype='text/plain')
+
 @app.route("/og-image.png")
 def og_image():
     from flask import send_file
