@@ -3825,6 +3825,9 @@ def docusign_webhook():
                 try:
                     tmp_pw = r.get("temp_password") or ""
                     print(f"Welcome email temp_password length: {len(tmp_pw)}, value: '{tmp_pw}'")
+                    # Fallback if temp_password wasn't stored
+                    if not tmp_pw:
+                        tmp_pw = "Check your email from Will for your temporary password, or contact will@cavnar.ai"
                     send_welcome_email(
                         to_email=r["owner_email"],
                         restaurant_name=r["name"],
