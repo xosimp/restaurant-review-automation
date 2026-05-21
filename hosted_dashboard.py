@@ -2406,6 +2406,7 @@ async function createClient() {
     status.textContent = data.error || 'Something went wrong';
   }
   btn.textContent = 'Create client account'; btn.disabled = false;
+  status.style.display = 'block';
 }
 async function resendPayment(restaurantId, email, billing) {
   const btn = event.target;
@@ -2969,6 +2970,16 @@ def create_client(current_user):
     from models import create_restaurant, Restaurant
     data = request.get_json()
     try:
+        # Check for duplicate email/username BEFORE creating anything
+        conn_check = get_conn()
+        existing = conn_check.execute(
+            "SELECT id FROM users WHERE email=? OR username=?",
+            (data["owner_email"], data["username"])
+        ).fetchone()
+        conn_check.close()
+        if existing:
+            return jsonify(ok=False, error="A user with that email or username already exists — try a different username or email")
+
         # Create restaurant
         rid = create_restaurant(Restaurant(
             name=data["restaurant_name"],
@@ -2981,15 +2992,6 @@ def create_client(current_user):
             location_group=data.get("location_group","").strip() or None,
             location_name=data.get("location_name","").strip() or None,
         ))
-        # Create user (check for duplicate email/username first)
-        conn_check = get_conn()
-        existing = conn_check.execute(
-            "SELECT id FROM users WHERE email=? OR username=?",
-            (data["owner_email"], data["username"])
-        ).fetchone()
-        conn_check.close()
-        if existing:
-            return jsonify(ok=False, error=f"A user with that email or username already exists")
         create_user(
             restaurant_id=rid,
             username=data["username"],
