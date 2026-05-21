@@ -4107,10 +4107,11 @@ def instagram_connect(current_user):
     return flask_redirect(f"https://www.facebook.com/v19.0/dialog/oauth?{params}")
 
 @app.route("/instagram/callback")
-@login_required
-def instagram_callback(current_user):
+
+def instagram_callback():
     """Handle Meta OAuth callback — exchange code for token, get IG user ID."""
     import requests as _req
+    from flask import redirect as flask_redirect
     code        = request.args.get("code")
     state       = request.args.get("state")
     app_id      = os.getenv("META_APP_ID","")
