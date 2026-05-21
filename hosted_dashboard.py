@@ -4092,19 +4092,18 @@ def favicon_png():
 def instagram_connect(current_user):
     """Redirect client to Meta OAuth to connect their Instagram."""
     import urllib.parse
-    app_id     = os.getenv("META_APP_ID","")
-    base_url   = os.getenv("RAILWAY_PUBLIC_DOMAIN","web-production-5d9dc.up.railway.app")
-    redirect   = f"https://{base_url}/instagram/callback"
-    scope      = "instagram_basic,instagram_content_publish,pages_read_engagement,pages_show_list"
-    state      = str(current_user["restaurant_id"])
+    from flask import redirect as flask_redirect
+    app_id       = os.getenv("META_APP_ID","")
+    redirect_uri = "https://web-production-5d9dc.up.railway.app/instagram/callback"
+    scope        = "instagram_basic,instagram_content_publish,pages_read_engagement,pages_show_list"
+    state        = str(current_user["restaurant_id"])
     params = urllib.parse.urlencode({
         "client_id":     app_id,
-        "redirect_uri":  redirect,
+        "redirect_uri":  redirect_uri,
         "scope":         scope,
         "response_type": "code",
         "state":         state,
     })
-    from flask import redirect as flask_redirect
     return flask_redirect(f"https://www.facebook.com/v19.0/dialog/oauth?{params}")
 
 @app.route("/instagram/callback")
@@ -4116,8 +4115,7 @@ def instagram_callback(current_user):
     state       = request.args.get("state")
     app_id      = os.getenv("META_APP_ID","")
     app_secret  = os.getenv("META_APP_SECRET","")
-    base_url    = os.getenv("RAILWAY_PUBLIC_DOMAIN","web-production-5d9dc.up.railway.app")
-    redirect_uri = f"https://{base_url}/instagram/callback"
+    redirect_uri = "https://web-production-5d9dc.up.railway.app/instagram/callback"
 
     if not code:
         from flask import redirect as flask_redirect
