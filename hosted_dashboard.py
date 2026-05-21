@@ -680,6 +680,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').textContent).then(()=>toast('Copied'))">Copy</button>
     <button class="btn-secondary" onclick="genContent()">Regenerate</button>
     <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none">Post to Instagram ↗</button>
+    <button class="btn-primary" id="fb-post-btn" onclick="postToFacebook()" style="display:none;background:#1877f2">Post to Facebook ↗</button>
   </div>
 
   <div style="margin-top:24px;background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
@@ -699,7 +700,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <a href="/instagram/connect" style="flex-shrink:0;background:var(--ember);color:white;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600;white-space:nowrap">Connect →</a>
   </div>
   <div id="ig-connected-banner" style="margin-top:14px;background:#eaf4ee;border:1px solid #b7dfca;border-radius:var(--r);padding:12px 16px;display:none;align-items:center;justify-content:space-between;gap:12px">
-    <div style="font-size:13px;color:#2d6a4f;font-weight:500">✓ Instagram connected — generate content and click "Post to Instagram"</div>
+    <div>
+      <div style="font-size:13px;color:#2d6a4f;font-weight:500">✓ Instagram &amp; Facebook connected</div>
+      <div style="font-size:11px;color:#2d6a4f;margin-top:2px">Generate content then post to Instagram, Facebook, or both</div>
+    </div>
     <button onclick="disconnectInstagram()" style="font-size:11px;color:#7a736a;background:transparent;border:none;cursor:pointer;text-decoration:underline">Disconnect</button>
   </div>
 </div>
@@ -1234,14 +1238,39 @@ async function checkInstagramStatus() {
   const connectBanner   = document.getElementById('ig-connect-banner');
   const connectedBanner = document.getElementById('ig-connected-banner');
   const postBtn         = document.getElementById('ig-post-btn');
+  const fbBtn = document.getElementById('fb-post-btn');
   if (data.connected) {
     if (connectBanner)   connectBanner.style.display   = 'none';
     if (connectedBanner) connectedBanner.style.display = 'flex';
     if (postBtn)         postBtn.style.display         = 'inline-flex';
+    if (fbBtn)           fbBtn.style.display           = data.fb_connected ? 'inline-flex' : 'none';
   } else {
     if (connectBanner)   connectBanner.style.display   = 'flex';
     if (connectedBanner) connectedBanner.style.display = 'none';
     if (postBtn)         postBtn.style.display         = 'none';
+    if (fbBtn)           fbBtn.style.display           = 'none';
+  }
+}
+async function postToFacebook() {
+  const caption = document.getElementById('mkoutput').textContent.trim();
+  if (!caption || caption === 'Select a type and click Generate.') {
+    toast('Generate content first'); return;
+  }
+  const btn = document.getElementById('fb-post-btn');
+  btn.textContent = 'Posting…'; btn.disabled = true;
+  const res = await fetch('/api/post-to-facebook', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({caption})
+  });
+  const data = await res.json();
+  if (data.ok) {
+    toast('Posted to Facebook ✓');
+    btn.textContent = '✓ Posted';
+    setTimeout(() => { btn.textContent = 'Post to Facebook ↗'; btn.disabled = false; }, 3000);
+  } else {
+    toast('Post failed: ' + (data.error || 'unknown error'));
+    btn.textContent = 'Post to Facebook ↗'; btn.disabled = false;
   }
 }
 async function postToInstagram() {
@@ -4164,8 +4193,13 @@ def instagram_callback():
 
     rid = int(state) if state and state.isdigit() else None
     if rid:
-        _update_r(rid, {"ig_token": page_token, "ig_user_id": ig_user_id})
-        print(f"Instagram connected for restaurant {rid}, ig_user_id={ig_user_id}")
+        update_data = {"ig_token": page_token, "ig_user_id": ig_user_id}
+        # Also save Facebook page token/id if we found a page
+        if pages:
+            update_data["fb_page_token"] = pages[0].get("access_token", long_token)
+            update_data["fb_page_id"]    = pages[0].get("id","")
+        _update_r(rid, update_data)
+        print(f"Instagram+Facebook connected for restaurant {rid}, ig_user_id={ig_user_id}")
 
     return _ig_redirect("/?ig_connected=1")
 
@@ -4225,16 +4259,37 @@ def post_to_instagram(current_user):
 def instagram_status(current_user):
     """Check if Instagram is connected for this restaurant."""
     restaurant = get_restaurant(current_user["restaurant_id"])
-    connected  = bool(restaurant and restaurant.ig_token and restaurant.ig_user_id)
-    return jsonify(connected=connected)
+    connected    = bool(restaurant and restaurant.ig_token and restaurant.ig_user_id)
+    fb_connected = bool(restaurant and restaurant.fb_page_token and restaurant.fb_page_id)
+    return jsonify(connected=connected, fb_connected=fb_connected)
 
 @app.route("/api/instagram-disconnect", methods=["POST"])
 @login_required
 def instagram_disconnect(current_user):
     """Disconnect Instagram from this restaurant."""
     from models import update_restaurant
-    update_restaurant(current_user["restaurant_id"], {"ig_token": "", "ig_user_id": ""})
+    update_restaurant(current_user["restaurant_id"], {"ig_token": "", "ig_user_id": "", "fb_page_token": "", "fb_page_id": ""})
     return jsonify(ok=True)
+
+@app.route("/api/post-to-facebook", methods=["POST"])
+@login_required
+def post_to_facebook(current_user):
+    """Post to Facebook Page."""
+    import requests as _req
+    data       = request.get_json()
+    caption    = data.get("caption","").strip()
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    if not restaurant or not restaurant.fb_page_token or not restaurant.fb_page_id:
+        return jsonify(ok=False, error="Facebook not connected — click Connect Instagram & Facebook first")
+    r = _req.post(f"https://graph.facebook.com/v19.0/{restaurant.fb_page_id}/feed", data={
+        "message":      caption,
+        "access_token": restaurant.fb_page_token,
+    })
+    if r.status_code != 200:
+        err = r.json().get("error",{}).get("message","Unknown error")
+        print(f"FB post failed: {r.text}")
+        return jsonify(ok=False, error=err)
+    return jsonify(ok=True, post_id=r.json().get("id"))
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
