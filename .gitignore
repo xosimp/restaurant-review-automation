@@ -4,3 +4,6 @@ __pycache__/
 *.pyc
 *.db
 *.pem
+hosted_dashboard_condensed_backup.py
+hosted_dashboard_recovered.py
+.DS_Store
