@@ -681,26 +681,24 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <button class="btn-secondary" onclick="genContent()">Regenerate</button>
     <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none">Post to Instagram ↗</button>
   </div>
-
-  <div style="margin-top:24px;background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-      <div class="slabel" style="margin:0">Content calendar</div>
-      <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week ↗</button>
-    </div>
-    <div class="cal-grid" id="cal-grid"><div class="no-data" style="grid-column:1/-1;padding:20px">Click "Generate week" for content ideas.</div></div>
-  </div>
-
   <!-- Instagram connect banner -->
   <div id="ig-connect-banner" style="margin-top:14px;background:linear-gradient(135deg,#1a1410,#2a1f1a);border:1px solid #3a2a20;border-radius:var(--r);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px">
     <div>
-      <div style="font-size:13px;font-weight:600;color:var(--paper);margin-bottom:3px">Connect Instagram &amp; Facebook</div>
-      <div style="font-size:12px;color:#7a736a;line-height:1.5">Connect your Instagram Business account and/or Facebook Business Page to post directly from the dashboard — no copy/paste needed.</div>
+      <div style="font-size:13px;font-weight:600;color:var(--paper);margin-bottom:3px">Connect Instagram</div>
+      <div style="font-size:12px;color:#7a736a;line-height:1.5">Connect your Instagram Business account to post directly from the dashboard — no copy/paste needed.</div>
     </div>
     <a href="/instagram/connect" style="flex-shrink:0;background:var(--ember);color:white;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600;white-space:nowrap">Connect →</a>
   </div>
   <div id="ig-connected-banner" style="margin-top:14px;background:#eaf4ee;border:1px solid #b7dfca;border-radius:var(--r);padding:12px 16px;display:none;align-items:center;justify-content:space-between;gap:12px">
     <div style="font-size:13px;color:#2d6a4f;font-weight:500">✓ Instagram connected — generate content and click "Post to Instagram"</div>
     <button onclick="disconnectInstagram()" style="font-size:11px;color:#7a736a;background:transparent;border:none;cursor:pointer;text-decoration:underline">Disconnect</button>
+  </div>
+  <div style="margin-top:24px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div class="slabel" style="margin:0">Content calendar</div>
+      <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week ↗</button>
+    </div>
+    <div class="cal-grid" id="cal-grid"><div class="no-data" style="grid-column:1/-1;padding:20px">Click "Generate week" for content ideas.</div></div>
   </div>
 </div>
 
@@ -4094,62 +4092,71 @@ def favicon_png():
 def instagram_connect(current_user):
     """Redirect client to Meta OAuth to connect their Instagram."""
     import urllib.parse
-    from flask import redirect as flask_redirect
-    app_id       = os.getenv("META_APP_ID","")
-    redirect_uri = "https://web-production-5d9dc.up.railway.app/instagram/callback"
-    scope        = "instagram_basic,instagram_content_publish,pages_read_engagement,pages_show_list"
-    state        = str(current_user["restaurant_id"])
+    app_id     = os.getenv("META_APP_ID","")
+    base_url   = os.getenv("RAILWAY_PUBLIC_DOMAIN","web-production-5d9dc.up.railway.app")
+    redirect   = f"https://{base_url}/instagram/callback"
+    scope      = "instagram_basic,instagram_content_publish,pages_read_engagement,pages_show_list"
+    state      = str(current_user["restaurant_id"])
     params = urllib.parse.urlencode({
         "client_id":     app_id,
-        "redirect_uri":  redirect_uri,
+        "redirect_uri":  redirect,
         "scope":         scope,
         "response_type": "code",
         "state":         state,
     })
+    from flask import redirect as flask_redirect
     return flask_redirect(f"https://www.facebook.com/v19.0/dialog/oauth?{params}")
 
 @app.route("/instagram/callback")
+
 def instagram_callback():
     """Handle Meta OAuth callback — exchange code for token, get IG user ID."""
     import requests as _req
-    from flask import redirect as _redir
-    from models import update_restaurant as _update_r
-
-    code         = request.args.get("code")
-    state        = request.args.get("state")
-    app_id       = os.getenv("META_APP_ID","")
-    app_secret   = os.getenv("META_APP_SECRET","")
-    redirect_uri = "https://web-production-5d9dc.up.railway.app/instagram/callback"
+    from flask import redirect as flask_redirect
+    code        = request.args.get("code")
+    state       = request.args.get("state")
+    app_id      = os.getenv("META_APP_ID","")
+    app_secret  = os.getenv("META_APP_SECRET","")
+    base_url    = os.getenv("RAILWAY_PUBLIC_DOMAIN","web-production-5d9dc.up.railway.app")
+    redirect_uri = f"https://{base_url}/instagram/callback"
 
     if not code:
-        return _redir("/?ig_error=no_code")
+        return flask_redirect("/?ig_error=no_code")
 
     # Exchange code for short-lived token
     r = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
-        "client_id": app_id, "client_secret": app_secret,
-        "redirect_uri": redirect_uri, "code": code,
+        "client_id":     app_id,
+        "client_secret": app_secret,
+        "redirect_uri":  redirect_uri,
+        "code":          code,
     })
     if r.status_code != 200:
         print(f"IG token exchange failed: {r.text}")
-        return _redir("/?ig_error=token_failed")
+        return redirect("/?ig_error=token_failed")
+
     short_token = r.json().get("access_token")
 
     # Exchange for long-lived token (60 days)
     r2 = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
-        "grant_type": "fb_exchange_token", "client_id": app_id,
-        "client_secret": app_secret, "fb_exchange_token": short_token,
+        "grant_type":        "fb_exchange_token",
+        "client_id":         app_id,
+        "client_secret":     app_secret,
+        "fb_exchange_token": short_token,
     })
     long_token = r2.json().get("access_token", short_token)
 
     # Get Facebook pages
-    r3 = _req.get("https://graph.facebook.com/v19.0/me/accounts", params={"access_token": long_token})
+    r3 = _req.get("https://graph.facebook.com/v19.0/me/accounts", params={
+        "access_token": long_token,
+    })
     pages = r3.json().get("data", [])
     ig_user_id = None
     page_token = long_token
 
+    # Find the Instagram Business Account connected to the first page
     for page in pages:
         r4 = _req.get(f"https://graph.facebook.com/v19.0/{page['id']}", params={
-            "fields": "instagram_business_account",
+            "fields":       "instagram_business_account",
             "access_token": page.get("access_token", long_token),
         })
         ig_data = r4.json().get("instagram_business_account")
@@ -4159,14 +4166,124 @@ def instagram_callback():
             break
 
     if not ig_user_id:
-        print(f"No IG account found. Pages: {r3.json()}")
-        return _redir("/?ig_error=no_ig_account")
+        return redirect("/?ig_error=no_ig_account")
 
-    rid = int(state) if state and state.isdigit() else None
-    if rid:
-        _update_r(rid, {"ig_token": page_token, "ig_user_id": ig_user_id})
-        print(f"Instagram connected for restaurant {rid}, ig_user_id={ig_user_id}")
+    # Save token and IG user ID to restaurant
+    rid = int(state) if state and state.isdigit() else current_user["restaurant_id"]
+    from models import update_restaurant
+    update_restaurant(rid, {
+        "ig_token":   page_token,
+        "ig_user_id": ig_user_id,
+    })
+    print(f"Instagram connected for restaurant {rid}, ig_user_id={ig_user_id}")
+    return redirect("/?ig_connected=1")
 
-    return _redir("/?ig_connected=1")
+@app.route("/api/post-to-instagram", methods=["POST"])
+@login_required
+def post_to_instagram(current_user):
+    """Post a caption to Instagram. Client must have connected their account."""
+    import requests as _req
+    data       = request.get_json()
+    caption    = data.get("caption","").strip()
+    image_url  = data.get("image_url","").strip()  # optional
 
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    if not restaurant or not restaurant.ig_token or not restaurant.ig_user_id:
+        return jsonify(ok=False, error="Instagram not connected — click Connect Instagram first")
 
+    ig_user_id = restaurant.ig_user_id
+    token      = restaurant.ig_token
+
+    if image_url:
+        # Image post
+        r1 = _req.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/media", data={
+            "image_url":    image_url,
+            "caption":      caption,
+            "access_token": token,
+        })
+    else:
+        # Text/caption only — requires a placeholder image or use carousel
+        # For now use a simple image-less post via threads endpoint
+        r1 = _req.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/media", data={
+            "media_type":   "REELS",
+            "caption":      caption,
+            "access_token": token,
+        })
+
+    if r1.status_code != 200:
+        err = r1.json().get("error",{}).get("message","Unknown error")
+        print(f"IG media create failed: {r1.text}")
+        return jsonify(ok=False, error=err)
+
+    creation_id = r1.json().get("id")
+
+    # Publish the media
+    r2 = _req.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/media_publish", data={
+        "creation_id":  creation_id,
+        "access_token": token,
+    })
+
+    if r2.status_code != 200:
+        err = r2.json().get("error",{}).get("message","Publish failed")
+        return jsonify(ok=False, error=err)
+
+    return jsonify(ok=True, post_id=r2.json().get("id"))
+
+@app.route("/api/instagram-status")
+@login_required
+def instagram_status(current_user):
+    """Check if Instagram is connected for this restaurant."""
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    connected  = bool(restaurant and restaurant.ig_token and restaurant.ig_user_id)
+    return jsonify(connected=connected)
+
+@app.route("/api/instagram-disconnect", methods=["POST"])
+@login_required
+def instagram_disconnect(current_user):
+    """Disconnect Instagram from this restaurant."""
+    from models import update_restaurant
+    update_restaurant(current_user["restaurant_id"], {"ig_token": "", "ig_user_id": ""})
+    return jsonify(ok=True)
+
+# ── Startup ───────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    init_db()
+    init_auth()
+    from models import init_staff_notes, ensure_columns
+    init_staff_notes()
+    ensure_columns()
+
+    # Start background scheduler for digests and review fetching
+    from scheduler import start_scheduler
+    start_scheduler()
+
+    # Create your admin account if it doesn't exist
+    from models import create_restaurant, Restaurant, get_conn as gc
+    conn = gc()
+    existing_admin = conn.execute(
+        "SELECT id FROM users WHERE username=?", (ADMIN_USERNAME,)
+    ).fetchone()
+    conn.close()
+
+    if not existing_admin:
+        admin_pw = os.getenv("ADMIN_PASSWORD", "changeme123")
+        # Admin gets restaurant_id=1 (create a placeholder if needed)
+        conn = gc()
+        r = conn.execute("SELECT id FROM restaurants LIMIT 1").fetchone()
+        conn.close()
+        if not r:
+            rid = create_restaurant(Restaurant(
+                name="Cavnar AI Admin",
+                owner_email="will@cavnar.ai",
+            ))
+        else:
+            rid = r[0]
+        create_user(rid, ADMIN_USERNAME, "will@cavnar.ai",
+                    admin_pw, is_admin=True)
+        print(f"\n  Admin account created: {ADMIN_USERNAME} / {admin_pw}")
+        print("  Change your password after first login!\n")
+
+    print(f"\n  Hosted dashboard → http://localhost:{PORT}")
+    print(f"  Admin panel      → http://localhost:{PORT}/admin\n")
+    app.run(host="0.0.0.0", port=PORT, debug=False)
