@@ -681,6 +681,15 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <button class="btn-secondary" onclick="genContent()">Regenerate</button>
     <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none">Post to Instagram ↗</button>
   </div>
+
+  <div style="margin-top:24px;background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div class="slabel" style="margin:0">Content calendar</div>
+      <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week ↗</button>
+    </div>
+    <div class="cal-grid" id="cal-grid"><div class="no-data" style="grid-column:1/-1;padding:20px">Click "Generate week" for content ideas.</div></div>
+  </div>
+
   <!-- Instagram connect banner -->
   <div id="ig-connect-banner" style="margin-top:14px;background:linear-gradient(135deg,#1a1410,#2a1f1a);border:1px solid #3a2a20;border-radius:var(--r);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px">
     <div>
@@ -692,13 +701,6 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
   <div id="ig-connected-banner" style="margin-top:14px;background:#eaf4ee;border:1px solid #b7dfca;border-radius:var(--r);padding:12px 16px;display:none;align-items:center;justify-content:space-between;gap:12px">
     <div style="font-size:13px;color:#2d6a4f;font-weight:500">✓ Instagram connected — generate content and click "Post to Instagram"</div>
     <button onclick="disconnectInstagram()" style="font-size:11px;color:#7a736a;background:transparent;border:none;cursor:pointer;text-decoration:underline">Disconnect</button>
-  </div>
-  <div style="margin-top:24px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-      <div class="slabel" style="margin:0">Content calendar</div>
-      <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week ↗</button>
-    </div>
-    <div class="cal-grid" id="cal-grid"><div class="no-data" style="grid-column:1/-1;padding:20px">Click "Generate week" for content ideas.</div></div>
   </div>
 </div>
 
@@ -4107,11 +4109,10 @@ def instagram_connect(current_user):
     return flask_redirect(f"https://www.facebook.com/v19.0/dialog/oauth?{params}")
 
 @app.route("/instagram/callback")
-
-def instagram_callback():
+@login_required
+def instagram_callback(current_user):
     """Handle Meta OAuth callback — exchange code for token, get IG user ID."""
     import requests as _req
-    from flask import redirect as flask_redirect
     code        = request.args.get("code")
     state       = request.args.get("state")
     app_id      = os.getenv("META_APP_ID","")
@@ -4119,7 +4120,8 @@ def instagram_callback():
     redirect_uri = "https://web-production-5d9dc.up.railway.app/instagram/callback"
 
     if not code:
-        return flask_redirect("/?ig_error=no_code")
+        from flask import redirect as flask_redirect
+    return flask_redirect("/?ig_error=no_code")
 
     # Exchange code for short-lived token
     r = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
