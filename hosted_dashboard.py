@@ -676,9 +676,22 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <span id="sms-char-count">0</span>/160 characters
     <span id="sms-over" style="color:var(--red);display:none"> — over limit, trim before sending</span>
   </div>
-  <div style="display:flex;gap:6px;margin-top:8px">
+  <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
     <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').textContent).then(()=>toast('Copied'))">Copy</button>
     <button class="btn-secondary" onclick="genContent()">Regenerate</button>
+    <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none">Post to Instagram ↗</button>
+  </div>
+  <!-- Instagram connect banner -->
+  <div id="ig-connect-banner" style="margin-top:14px;background:linear-gradient(135deg,#1a1410,#2a1f1a);border:1px solid #3a2a20;border-radius:var(--r);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <div>
+      <div style="font-size:13px;font-weight:600;color:var(--paper);margin-bottom:3px">Connect Instagram</div>
+      <div style="font-size:12px;color:#7a736a;line-height:1.5">Connect your Instagram Business account to post directly from the dashboard — no copy/paste needed.</div>
+    </div>
+    <a href="/instagram/connect" style="flex-shrink:0;background:var(--ember);color:white;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600;white-space:nowrap">Connect →</a>
+  </div>
+  <div id="ig-connected-banner" style="margin-top:14px;background:#eaf4ee;border:1px solid #b7dfca;border-radius:var(--r);padding:12px 16px;display:none;align-items:center;justify-content:space-between;gap:12px">
+    <div style="font-size:13px;color:#2d6a4f;font-weight:500">✓ Instagram connected — generate content and click "Post to Instagram"</div>
+    <button onclick="disconnectInstagram()" style="font-size:11px;color:#7a736a;background:transparent;border:none;cursor:pointer;text-decoration:underline">Disconnect</button>
   </div>
   <div style="margin-top:24px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
@@ -970,6 +983,7 @@ function switchTab(n,btn){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('panel-'+n).classList.add('active');btn.classList.add('active');
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
+  if(n==='marketing'){checkInstagramStatus();}
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor')renderBars();
   if(n==='account')loadBillingInfo();
@@ -977,6 +991,17 @@ function switchTab(n,btn){
 }
 // Auto-load data for whichever tab is active on page load
 window.addEventListener('DOMContentLoaded', function() {
+  // Handle Instagram OAuth result
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('ig_connected') === '1') {
+    toast('Instagram connected successfully ✓');
+    checkInstagramStatus();
+    history.replaceState({}, '', '/');
+  }
+  if (urlParams.get('ig_error')) {
+    toast('Instagram connection failed: ' + urlParams.get('ig_error'));
+    history.replaceState({}, '', '/');
+  }
   const activePanel = document.querySelector('.panel.active');
   if(!activePanel) return;
   const id = activePanel.id.replace('panel-','');
@@ -1200,6 +1225,59 @@ function loadBillingInfo() {
     else document.getElementById('billing-portal-link').style.display='none';
   }).catch(()=>{document.getElementById('billing-loading').textContent='Billing info unavailable.';});
 }
+// Instagram connect/post
+async function checkInstagramStatus() {
+  const res = await fetch('/api/instagram-status');
+  const data = await res.json();
+  const connectBanner   = document.getElementById('ig-connect-banner');
+  const connectedBanner = document.getElementById('ig-connected-banner');
+  const postBtn         = document.getElementById('ig-post-btn');
+  if (data.connected) {
+    if (connectBanner)   connectBanner.style.display   = 'none';
+    if (connectedBanner) connectedBanner.style.display = 'flex';
+    if (postBtn)         postBtn.style.display         = 'inline-flex';
+  } else {
+    if (connectBanner)   connectBanner.style.display   = 'flex';
+    if (connectedBanner) connectedBanner.style.display = 'none';
+    if (postBtn)         postBtn.style.display         = 'none';
+  }
+}
+async function postToInstagram() {
+  const caption = document.getElementById('mkoutput').textContent.trim();
+  if (!caption || caption === 'Select a type and click Generate.') {
+    toast('Generate content first'); return;
+  }
+  const btn = document.getElementById('ig-post-btn');
+  btn.textContent = 'Posting…'; btn.disabled = true;
+  const res = await fetch('/api/post-to-instagram', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({caption})
+  });
+  const data = await res.json();
+  if (data.ok) {
+    toast('Posted to Instagram ✓');
+    btn.textContent = '✓ Posted';
+    setTimeout(() => { btn.textContent = 'Post to Instagram ↗'; btn.disabled = false; }, 3000);
+  } else {
+    toast('Post failed: ' + (data.error || 'unknown error'));
+    btn.textContent = 'Post to Instagram ↗'; btn.disabled = false;
+  }
+}
+async function disconnectInstagram() {
+  await fetch('/api/instagram-disconnect', {method:'POST'});
+  checkInstagramStatus();
+  toast('Instagram disconnected');
+}
+// Check IG status when marketing tab is opened
+const _origSwitchTab = switchTab;
+window.addEventListener('DOMContentLoaded', function() {
+  // Check if already on marketing tab
+  if (document.getElementById('panel-marketing')?.classList.contains('active')) {
+    checkInstagramStatus();
+  }
+});
+
 function dismissWelcome(){
   const b=document.getElementById('welcome-banner');
   if(b) b.style.display='none';
@@ -4006,6 +4084,166 @@ def favicon_png():
     import os as _os
     path = _os.path.join(_os.path.dirname(__file__), "static", "favicon.png")
     return send_file(path, mimetype="image/png")
+
+# ── Instagram / Meta routes ───────────────────────────────────────────────────
+
+@app.route("/instagram/connect")
+@login_required
+def instagram_connect(current_user):
+    """Redirect client to Meta OAuth to connect their Instagram."""
+    import urllib.parse
+    app_id     = os.getenv("META_APP_ID","")
+    base_url   = os.getenv("RAILWAY_PUBLIC_DOMAIN","web-production-5d9dc.up.railway.app")
+    redirect   = f"https://{base_url}/instagram/callback"
+    scope      = "instagram_basic,instagram_content_publish,pages_read_engagement,pages_show_list"
+    state      = str(current_user["restaurant_id"])
+    params = urllib.parse.urlencode({
+        "client_id":     app_id,
+        "redirect_uri":  redirect,
+        "scope":         scope,
+        "response_type": "code",
+        "state":         state,
+    })
+    from flask import redirect as flask_redirect
+    return flask_redirect(f"https://www.facebook.com/v19.0/dialog/oauth?{params}")
+
+@app.route("/instagram/callback")
+@login_required
+def instagram_callback(current_user):
+    """Handle Meta OAuth callback — exchange code for token, get IG user ID."""
+    import requests as _req
+    code        = request.args.get("code")
+    state       = request.args.get("state")
+    app_id      = os.getenv("META_APP_ID","")
+    app_secret  = os.getenv("META_APP_SECRET","")
+    base_url    = os.getenv("RAILWAY_PUBLIC_DOMAIN","web-production-5d9dc.up.railway.app")
+    redirect_uri = f"https://{base_url}/instagram/callback"
+
+    if not code:
+        from flask import redirect as flask_redirect
+    return flask_redirect("/?ig_error=no_code")
+
+    # Exchange code for short-lived token
+    r = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+        "client_id":     app_id,
+        "client_secret": app_secret,
+        "redirect_uri":  redirect_uri,
+        "code":          code,
+    })
+    if r.status_code != 200:
+        print(f"IG token exchange failed: {r.text}")
+        return redirect("/?ig_error=token_failed")
+
+    short_token = r.json().get("access_token")
+
+    # Exchange for long-lived token (60 days)
+    r2 = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+        "grant_type":        "fb_exchange_token",
+        "client_id":         app_id,
+        "client_secret":     app_secret,
+        "fb_exchange_token": short_token,
+    })
+    long_token = r2.json().get("access_token", short_token)
+
+    # Get Facebook pages
+    r3 = _req.get("https://graph.facebook.com/v19.0/me/accounts", params={
+        "access_token": long_token,
+    })
+    pages = r3.json().get("data", [])
+    ig_user_id = None
+    page_token = long_token
+
+    # Find the Instagram Business Account connected to the first page
+    for page in pages:
+        r4 = _req.get(f"https://graph.facebook.com/v19.0/{page['id']}", params={
+            "fields":       "instagram_business_account",
+            "access_token": page.get("access_token", long_token),
+        })
+        ig_data = r4.json().get("instagram_business_account")
+        if ig_data:
+            ig_user_id = ig_data.get("id")
+            page_token = page.get("access_token", long_token)
+            break
+
+    if not ig_user_id:
+        return redirect("/?ig_error=no_ig_account")
+
+    # Save token and IG user ID to restaurant
+    rid = int(state) if state and state.isdigit() else current_user["restaurant_id"]
+    from models import update_restaurant
+    update_restaurant(rid, {
+        "ig_token":   page_token,
+        "ig_user_id": ig_user_id,
+    })
+    print(f"Instagram connected for restaurant {rid}, ig_user_id={ig_user_id}")
+    return redirect("/?ig_connected=1")
+
+@app.route("/api/post-to-instagram", methods=["POST"])
+@login_required
+def post_to_instagram(current_user):
+    """Post a caption to Instagram. Client must have connected their account."""
+    import requests as _req
+    data       = request.get_json()
+    caption    = data.get("caption","").strip()
+    image_url  = data.get("image_url","").strip()  # optional
+
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    if not restaurant or not restaurant.ig_token or not restaurant.ig_user_id:
+        return jsonify(ok=False, error="Instagram not connected — click Connect Instagram first")
+
+    ig_user_id = restaurant.ig_user_id
+    token      = restaurant.ig_token
+
+    if image_url:
+        # Image post
+        r1 = _req.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/media", data={
+            "image_url":    image_url,
+            "caption":      caption,
+            "access_token": token,
+        })
+    else:
+        # Text/caption only — requires a placeholder image or use carousel
+        # For now use a simple image-less post via threads endpoint
+        r1 = _req.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/media", data={
+            "media_type":   "REELS",
+            "caption":      caption,
+            "access_token": token,
+        })
+
+    if r1.status_code != 200:
+        err = r1.json().get("error",{}).get("message","Unknown error")
+        print(f"IG media create failed: {r1.text}")
+        return jsonify(ok=False, error=err)
+
+    creation_id = r1.json().get("id")
+
+    # Publish the media
+    r2 = _req.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/media_publish", data={
+        "creation_id":  creation_id,
+        "access_token": token,
+    })
+
+    if r2.status_code != 200:
+        err = r2.json().get("error",{}).get("message","Publish failed")
+        return jsonify(ok=False, error=err)
+
+    return jsonify(ok=True, post_id=r2.json().get("id"))
+
+@app.route("/api/instagram-status")
+@login_required
+def instagram_status(current_user):
+    """Check if Instagram is connected for this restaurant."""
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    connected  = bool(restaurant and restaurant.ig_token and restaurant.ig_user_id)
+    return jsonify(connected=connected)
+
+@app.route("/api/instagram-disconnect", methods=["POST"])
+@login_required
+def instagram_disconnect(current_user):
+    """Disconnect Instagram from this restaurant."""
+    from models import update_restaurant
+    update_restaurant(current_user["restaurant_id"], {"ig_token": "", "ig_user_id": ""})
+    return jsonify(ok=True)
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
