@@ -693,8 +693,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
   <!-- Instagram connect banner -->
   <div id="ig-connect-banner" style="margin-top:14px;background:linear-gradient(135deg,#1a1410,#2a1f1a);border:1px solid #3a2a20;border-radius:var(--r);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px">
     <div>
-      <div style="font-size:13px;font-weight:600;color:var(--paper);margin-bottom:3px">Connect Instagram</div>
-      <div style="font-size:12px;color:#7a736a;line-height:1.5">Connect your Instagram Business account to post directly from the dashboard — no copy/paste needed.</div>
+      <div style="font-size:13px;font-weight:600;color:var(--paper);margin-bottom:3px">Connect Instagram &amp; Facebook</div>
+      <div style="font-size:12px;color:#7a736a;line-height:1.5">Connect your Instagram Business account and/or Facebook Business Page to post directly from the dashboard — no copy/paste needed.</div>
     </div>
     <a href="/instagram/connect" style="flex-shrink:0;background:var(--ember);color:white;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600;white-space:nowrap">Connect →</a>
   </div>
