@@ -3787,7 +3787,9 @@ def docusign_webhook():
             # Mark contract as signed
             conn = get_conn()
             row = conn.execute(
-                """SELECT r.*, u.username, u.email
+                """SELECT r.id, r.name, r.owner_email, r.temp_password,
+                          r.module_reviews, r.module_labor, r.module_inventory, r.module_marketing,
+                          u.username
                    FROM restaurants r
                    JOIN users u ON u.restaurant_id = r.id AND u.is_admin = 0
                    WHERE r.docusign_envelope_id = ? LIMIT 1""",
