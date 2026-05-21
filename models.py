@@ -146,6 +146,7 @@ class Restaurant:
     inventory_notes: Optional[str]       = None
     food_cost_target: float              = 30.0
     inventory_updated_at: Optional[str]  = None
+    temp_password: Optional[str]         = None
     pos_system: Optional[str]       = None
     owner_name: Optional[str]       = None
     owner_phone: Optional[str]      = None
@@ -162,10 +163,6 @@ class Restaurant:
     module_marketing: int           = 1
     last_active_tab: Optional[str]  = None
     last_activity: Optional[str]    = None
-    ig_access_token: Optional[str]  = None
-    ig_user_id: Optional[str]       = None
-    ig_username: Optional[str]      = None
-    ig_page_token: Optional[str]    = None
     id: Optional[int]               = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -215,6 +212,31 @@ def get_conn(db_path: str = DB_PATH) -> sqlite3.Connection:
     return conn
 
 
+def ensure_columns(db_path: str = DB_PATH):
+    """Ensure all required columns exist — runs on every startup."""
+    conn = get_conn(db_path)
+    columns_to_add = [
+        ("restaurants", "temp_password", "TEXT"),
+        ("restaurants", "docusign_envelope_id", "TEXT"),
+        ("restaurants", "contract_status", "TEXT"),
+        ("restaurants", "stripe_customer_id", "TEXT"),
+        ("restaurants", "location_group", "TEXT"),
+        ("restaurants", "location_name", "TEXT"),
+        ("restaurants", "pos_system", "TEXT"),
+        ("restaurants", "inventory_frequency", "TEXT"),
+        ("restaurants", "inventory_notes", "TEXT"),
+        ("restaurants", "food_cost_target", "REAL"),
+        ("restaurants", "inventory_updated_at", "TEXT"),
+    ]
+    for table, col, col_type in columns_to_add:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+            conn.commit()
+            print(f"Added column {table}.{col}")
+        except Exception:
+            pass  # Column already exists
+    conn.close()
+
 def init_db(db_path: str = DB_PATH):
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
@@ -238,6 +260,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN inventory_notes TEXT",
         "ALTER TABLE restaurants ADD COLUMN food_cost_target REAL DEFAULT 30.0",
         "ALTER TABLE restaurants ADD COLUMN inventory_updated_at TEXT",
+        "ALTER TABLE restaurants ADD COLUMN temp_password TEXT",
         "ALTER TABLE restaurants ADD COLUMN owner_phone TEXT",
         "ALTER TABLE restaurants ADD COLUMN digest_day TEXT DEFAULT 'monday'",
         "ALTER TABLE restaurants ADD COLUMN digest_enabled INTEGER DEFAULT 1",
@@ -254,10 +277,6 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN last_activity TEXT",
         "ALTER TABLE client_data ADD COLUMN shifts_csv TEXT",
         "ALTER TABLE client_data ADD COLUMN inventory_csv TEXT",
-        "ALTER TABLE restaurants ADD COLUMN ig_access_token TEXT",
-        "ALTER TABLE restaurants ADD COLUMN ig_user_id TEXT",
-        "ALTER TABLE restaurants ADD COLUMN ig_username TEXT",
-        "ALTER TABLE restaurants ADD COLUMN ig_page_token TEXT",
     ]
     for m in migrations:
         try:
@@ -300,9 +319,9 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","reviews_live","billing_status","internal_notes",
+        "hourly_rate","labor_target_pct","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","temp_password","reviews_live","billing_status","internal_notes",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
-        "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","ig_access_token","ig_user_id","ig_username","ig_page_token"
+        "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled"
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -313,22 +332,6 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     conn.execute(f"UPDATE restaurants SET {set_clause} WHERE id=?", values)
     conn.commit()
     conn.close()
-
-
-def get_all_restaurants(db_path: str = DB_PATH) -> list:
-    """Return all restaurants as Restaurant objects."""
-    conn = get_conn(db_path)
-    rows = conn.execute("SELECT * FROM restaurants").fetchall()
-    conn.close()
-    result = []
-    for row in rows:
-        try:
-            r = get_restaurant(row["id"], db_path)
-            if r:
-                result.append(r)
-        except Exception:
-            pass
-    return result
 
 
 def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Restaurant]:
@@ -357,6 +360,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         inventory_notes=row["inventory_notes"] if "inventory_notes" in row.keys() else None,
         food_cost_target=row["food_cost_target"] if "food_cost_target" in row.keys() else 30.0,
         inventory_updated_at=row["inventory_updated_at"] if "inventory_updated_at" in row.keys() else None,
+        temp_password=row["temp_password"] if "temp_password" in row.keys() else None,
         pos_system=row["pos_system"] if "pos_system" in row.keys() else None,
         reviews_live=row["reviews_live"] if "reviews_live" in row.keys() else 0,
         billing_status=row["billing_status"] if "billing_status" in row.keys() else "trial",
@@ -373,10 +377,6 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         digest_day=row["digest_day"] if "digest_day" in row.keys() else "monday",
         digest_enabled=row["digest_enabled"] if "digest_enabled" in row.keys() else 1,
         last_fetched_at=row["last_fetched_at"] if "last_fetched_at" in row.keys() else None,
-        ig_access_token=row["ig_access_token"] if "ig_access_token" in row.keys() else None,
-        ig_user_id=row["ig_user_id"] if "ig_user_id" in row.keys() else None,
-        ig_username=row["ig_username"] if "ig_username" in row.keys() else None,
-        ig_page_token=row["ig_page_token"] if "ig_page_token" in row.keys() else None,
     )
 
 

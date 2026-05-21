@@ -4010,8 +4010,9 @@ def favicon_png():
 if __name__ == "__main__":
     init_db()
     init_auth()
-    from models import init_staff_notes
+    from models import init_staff_notes, ensure_columns
     init_staff_notes()
+    ensure_columns()
 
     # Start background scheduler for digests and review fetching
     from scheduler import start_scheduler
