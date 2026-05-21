@@ -4118,8 +4118,7 @@ def instagram_callback(current_user):
     redirect_uri = "https://web-production-5d9dc.up.railway.app/instagram/callback"
 
     if not code:
-        from flask import redirect as flask_redirect
-    return flask_redirect("/?ig_error=no_code")
+        return flask_redirect("/?ig_error=no_code")
 
     # Exchange code for short-lived token
     r = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
