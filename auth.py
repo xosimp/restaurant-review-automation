@@ -180,6 +180,14 @@ def update_last_login(user_id: int, db_path: str = DB_PATH):
     conn.commit()
     conn.close()
 
+def get_current_user():
+    """Get the current logged-in user from session cookie."""
+    from flask import request
+    token = request.cookies.get("session_token")
+    if not token:
+        return None
+    return get_session_user(token)
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
