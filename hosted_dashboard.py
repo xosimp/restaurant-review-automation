@@ -368,7 +368,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <div class="card-hd">
       <div class="avatar" style="background:{{col}}">{{r.author[0].upper()}}</div>
       <div class="card-meta">
-        <div class="card-author">{{r.author|e}}</div>
+        <div class="card-author">{{r.author}}</div>
         <div class="card-sub">
           <span class="stars">{% for i in range(5) %}{{('★' if i<r.rating else '☆')}}{% endfor %}</span>
           <span class="pbadge {{'pg' if r.platform=='google' else 'py'}}">{{r.platform}}</span>
@@ -378,12 +378,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       <span class="schip {{'sp' if r.sentiment=='positive' else ('sn' if r.sentiment=='negative' else 'su')}}">{{r.sentiment or 'neutral'}}</span>
     </div>
     <div class="card-body">
-      <div class="rtext">{{r.text|e}}</div>
+      <div class="rtext">{{r.text}}</div>
       {% if r.categories %}<div class="cats">{% for c in r.categories %}<span class="cat">{{c.replace('_',' ')}}</span>{% endfor %}</div>{% endif %}
       {% if r.draft_response %}
       <div class="draft-box" id="draft-box-{{r.id}}">
         <div class="draft-lbl">Suggested response</div>
-        <div class="draft-txt" id="draft-txt-{{r.id}}">{{r.draft_response|e}}</div>
+        <div class="draft-txt" id="draft-txt-{{r.id}}">{{r.draft_response}}</div>
         <div class="draft-actions" id="draft-actions-{{r.id}}">
           {% if r.response_status=='posted' %}
             <span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>
@@ -401,7 +401,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
         </div>
         <!-- Response editor (hidden by default) -->
         <div class="response-editor" id="editor-{{r.id}}" style="display:none;margin-top:10px">
-          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your own response…">{{r.draft_response|e}}</textarea>
+          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your own response…">{{r.draft_response}}</textarea>
           <div style="display:flex;gap:6px;margin-top:6px">
             <button class="btn btn-approve" onclick="saveDraft({{r.id}})">Save & approve</button>
             <button class="btn btn-skip" onclick="regenDraft({{r.id}})">↻ Regenerate AI draft</button>
@@ -1179,9 +1179,7 @@ function genContent(){
       box.textContent='Content generation unavailable — check back shortly.';
     });
 }
-function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}const calDownBtn=document.getElementById('cal-download-btn');
-  if(calDownBtn) calDownBtn.style.display='inline-block';
-  g.innerHTML=d.ideas.map((i,idx)=>{
+function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}g.innerHTML=d.ideas.map((i,idx)=>{
     window._calIdeas=window._calIdeas||[];
     window._calIdeas[idx]=i;
     return `<div class="cal-card"><div class="cal-day-name">${i.day}</div><div class="cal-platform" style="font-size:10px;color:var(--ink3);margin:2px 0 4px">${i.platform||''}</div><div style="font-size:12px;line-height:1.5">${i.angle||''}</div><button data-idx="${idx}" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;width:100%">Generate →</button></div>`;
@@ -1311,64 +1309,6 @@ window.addEventListener('DOMContentLoaded', function() {
   }
 });
 
-<<<<<<< HEAD
-// Mark as posted
-async function markPosted(id) {
-  const res = await fetch('/api/mark-posted/'+id, {method:'POST'});
-  const data = await res.json();
-  if (data.ok) {
-    const actions = document.getElementById('draft-actions-'+id);
-    if (actions) actions.innerHTML = '<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>';
-    document.getElementById('rc-'+id)?.classList.remove('approved');
-    toast('Marked as posted ✓');
-  }
-}
-
-// Export reviews as CSV
-function exportReviews() {
-  window.location = '/api/export-reviews';
-}
-
-// Download content calendar as CSV
-function downloadCal() {
-  const ideas = window._calIdeas;
-  if (!ideas || !ideas.length) { toast('Generate the calendar first'); return; }
-  const rows = [['Day','Platform','Angle','Type']];
-  ideas.forEach(i => rows.push([i.day||'', i.platform||'', i.angle||'', i.type||'']));
-  const csv = rows.map(r => r.map(v => '"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
-  const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
-  a.download = 'content_calendar.csv';
-  a.click();
-}
-
-// Labor trend chart
-async function loadLaborTrend() {
-  const res = await fetch('/api/labor-trend');
-  const data = await res.json();
-  if (!data.weeks || !data.weeks.length) return;
-  const container = document.getElementById('labor-trend-bars');
-  const labels    = document.getElementById('labor-trend-labels');
-  if (!container) return;
-  const maxPct = Math.max(...data.weeks.map(w => w.pct), 35);
-  const minPct = Math.max(0, Math.min(...data.weeks.map(w => w.pct)) - 5);
-  const range = maxPct - minPct || 1;
-  const maxH = 72;
-  container.innerHTML = data.weeks.map(w => {
-    const h = Math.max(6, Math.round(((w.pct - minPct) / range) * maxH));
-    const col = w.pct > 32 ? 'var(--red)' : w.pct >= 28 ? '#ef9f27' : '#6fcf97';
-    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px">
-      <span style="font-size:10px;color:${col};font-weight:600">${w.pct}%</span>
-      <div style="width:80%;height:${h}px;background:${col};border-radius:3px 3px 0 0"></div>
-    </div>`;
-  }).join('');
-  if (labels) labels.innerHTML = data.weeks.map(w =>
-    `<span style="flex:1;text-align:center">${w.label}</span>`
-  ).join('');
-}
-
-=======
->>>>>>> parent of b03048f (Client dashboard: mark as posted, export reviews CSV, labor trend chart, calendar download)
 function dismissWelcome(){
   const b=document.getElementById('welcome-banner');
   if(b) b.style.display='none';
@@ -1383,6 +1323,29 @@ function changePassword(){
   if(nw.length<8){st.style.display='block';st.style.color='var(--red)';st.textContent='Password must be at least 8 characters';return}
   fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(r=>r.json()).then(d=>{st.style.display='block';if(d.ok){st.style.color='var(--green)';st.textContent='Password updated';document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-confirm').value='';}else{st.style.color='var(--red)';st.textContent=d.error||'Update failed'}})}
 
+
+async function addStaffNote() {
+  const name = document.getElementById('staff-name').value.trim();
+  const notes = document.getElementById('staff-constraint').value.trim();
+  const result = document.getElementById('staff-note-result');
+  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
+  const form = new FormData();
+  form.append('employee_name', name);
+  form.append('notes', notes);
+  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
+  const data = await res.json();
+  if(data.ok) {
+    showResult(result, true, '✓ Constraint saved');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showResult(result, false, data.error || 'Save failed');
+  }
+}
+async function deleteNote(noteId) {
+  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
+  const data = await res.json();
+  if(data.ok) location.reload();
+}
 </script>
 </body>
 </html>"""
@@ -1913,6 +1876,29 @@ async function saveSettings() {
   }
   btn.textContent = 'Save all settings'; btn.disabled = false;
 }
+
+async function addStaffNote() {
+  const name = document.getElementById('staff-name').value.trim();
+  const notes = document.getElementById('staff-constraint').value.trim();
+  const result = document.getElementById('staff-note-result');
+  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
+  const form = new FormData();
+  form.append('employee_name', name);
+  form.append('notes', notes);
+  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
+  const data = await res.json();
+  if(data.ok) {
+    showResult(result, true, '✓ Constraint saved');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showResult(result, false, data.error || 'Save failed');
+  }
+}
+async function deleteNote(noteId) {
+  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
+  const data = await res.json();
+  if(data.ok) location.reload();
+}
 </script>
 </body>
 </html>"""
@@ -2203,6 +2189,29 @@ function showResult(el, ok, msg) {
   el.style.display = 'block';
   el.className = 'result-msg ' + (ok ? 'result-ok' : 'result-err');
   el.textContent = msg;
+}
+
+async function addStaffNote() {
+  const name = document.getElementById('staff-name').value.trim();
+  const notes = document.getElementById('staff-constraint').value.trim();
+  const result = document.getElementById('staff-note-result');
+  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
+  const form = new FormData();
+  form.append('employee_name', name);
+  form.append('notes', notes);
+  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
+  const data = await res.json();
+  if(data.ok) {
+    showResult(result, true, '✓ Constraint saved');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showResult(result, false, data.error || 'Save failed');
+  }
+}
+async function deleteNote(noteId) {
+  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
+  const data = await res.json();
+  if(data.ok) location.reload();
 }
 </script>
 </body>
