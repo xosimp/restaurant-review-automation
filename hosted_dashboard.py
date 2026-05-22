@@ -1036,36 +1036,13 @@ function switchTab(n,btn){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('panel-'+n).classList.add('active');btn.classList.add('active');
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
-  if(n==='marketing'){checkInstagramStatus();}
+
   if(n==='inventory'&&!invLoaded)loadInvInsight();
-  if(n==='labor'){renderBars(); loadLaborTrend();}
+  if(n==='labor'){renderBars();}
   if(n==='account')loadBillingInfo();
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
 }
-// Auto-load data for whichever tab is active on page load
-window.addEventListener('DOMContentLoaded', function() {
-  // Handle Instagram OAuth result
-  const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get('ig_connected') === '1') {
-    toast('Instagram connected successfully ✓');
-    checkInstagramStatus();
-    history.replaceState({}, '', '/');
-  }
-  if (urlParams.get('ig_error')) {
-    toast('Instagram connection failed: ' + urlParams.get('ig_error'));
-    history.replaceState({}, '', '/');
-  }
-  const activePanel = document.querySelector('.panel.active');
-  if(!activePanel) return;
-  const id = activePanel.id.replace('panel-','');
-  if(id==='labor'&&!laborLoaded){
-    loadLaborInsight();
-    setTimeout(renderBars, 100);
-    setTimeout(loadLaborTrend, 200);
-  }
-  if(id==='inventory'&&!invLoaded){loadInvInsight();}
-  if(id==='account'){loadBillingInfo();}
-});
+);
 let rfilter='{{rfilter}}';
 function setRF(f,btn){rfilter=f;document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active','active-red'));btn.classList.add(f==='urgent'?'active-red':'active');filterReviews()}
 function filterReviews(){const q=document.getElementById('rsearch').value;window.location='/?filter='+rfilter+'&search='+encodeURIComponent(q)}
@@ -1281,138 +1258,21 @@ function loadBillingInfo() {
     else document.getElementById('billing-portal-link').style.display='none';
   }).catch(()=>{document.getElementById('billing-loading').textContent='Billing info unavailable.';});
 }
-// Instagram connect/post
-async function checkInstagramStatus() {
-  const res = await fetch('/api/instagram-status');
-  const data = await res.json();
-  const connectBanner   = document.getElementById('ig-connect-banner');
-  const connectedBanner = document.getElementById('ig-connected-banner');
-  const postBtn         = document.getElementById('ig-post-btn');
-  const fbBtn = document.getElementById('fb-post-btn');
-  if (data.connected) {
-    if (connectBanner)   connectBanner.style.display   = 'none';
-    if (connectedBanner) connectedBanner.style.display = 'flex';
-    if (postBtn)         postBtn.style.display         = 'inline-flex';
-    if (fbBtn)           fbBtn.style.display           = data.fb_connected ? 'inline-flex' : 'none';
-  } else {
-    if (connectBanner)   connectBanner.style.display   = 'flex';
-    if (connectedBanner) connectedBanner.style.display = 'none';
-    if (postBtn)         postBtn.style.display         = 'none';
-    if (fbBtn)           fbBtn.style.display           = 'none';
-  }
-}
-async function postToFacebook() {
-  const caption = document.getElementById('mkoutput').textContent.trim();
-  if (!caption || caption === 'Select a type and click Generate.') {
-    toast('Generate content first'); return;
-  }
-  const btn = document.getElementById('fb-post-btn');
-  btn.textContent = 'Posting…'; btn.disabled = true;
-  const res = await fetch('/api/post-to-facebook', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({caption})
-  });
-  const data = await res.json();
-  if (data.ok) {
-    toast('Posted to Facebook ✓');
-    btn.textContent = '✓ Posted';
-    setTimeout(() => { btn.textContent = 'Post to Facebook ↗'; btn.disabled = false; }, 3000);
-  } else {
-    toast('Post failed: ' + (data.error || 'unknown error'));
-    btn.textContent = 'Post to Facebook ↗'; btn.disabled = false;
-  }
-}
-async function postToInstagram() {
-  const caption = document.getElementById('mkoutput').textContent.trim();
-  if (!caption || caption === 'Select a type and click Generate.') {
-    toast('Generate content first'); return;
-  }
-  const btn = document.getElementById('ig-post-btn');
-  btn.textContent = 'Posting…'; btn.disabled = true;
-  const res = await fetch('/api/post-to-instagram', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({caption})
-  });
-  const data = await res.json();
-  if (data.ok) {
-    toast('Posted to Instagram ✓');
-    btn.textContent = '✓ Posted';
-    setTimeout(() => { btn.textContent = 'Post to Instagram ↗'; btn.disabled = false; }, 3000);
-  } else {
-    toast('Post failed: ' + (data.error || 'unknown error'));
-    btn.textContent = 'Post to Instagram ↗'; btn.disabled = false;
-  }
-}
-async function disconnectInstagram() {
-  await fetch('/api/instagram-disconnect', {method:'POST'});
-  checkInstagramStatus();
-  toast('Instagram disconnected');
-}
+
+
+async 
+async 
 // Check IG status when marketing tab is opened
 const _origSwitchTab = switchTab;
-window.addEventListener('DOMContentLoaded', function() {
-  // Check if already on marketing tab
-  if (document.getElementById('panel-marketing')?.classList.contains('active')) {
-    checkInstagramStatus();
-  }
-});
 
-// Mark as posted
-async function markPosted(id) {
-  const res = await fetch('/api/mark-posted/'+id, {method:'POST'});
-  const data = await res.json();
-  if (data.ok) {
-    const actions = document.getElementById('draft-actions-'+id);
-    if (actions) actions.innerHTML = '<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>';
-    document.getElementById('rc-'+id)?.classList.remove('approved');
-    toast('Marked as posted ✓');
-  }
-}
 
-// Export reviews as CSV
-function exportReviews() {
-  window.location = '/api/export-reviews';
-}
 
-// Download content calendar as CSV
-function downloadCal() {
-  const ideas = window._calIdeas;
-  if (!ideas || !ideas.length) { toast('Generate the calendar first'); return; }
-  const rows = [['Day','Platform','Angle','Type']];
-  ideas.forEach(i => rows.push([i.day||'', i.platform||'', i.angle||'', i.type||'']));
-  const csv = rows.map(r => r.map(v => '"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
-  const a = document.createElement('a');
-  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
-  a.download = 'content_calendar.csv';
-  a.click();
-}
 
-// Labor trend chart
-async function loadLaborTrend() {
-  const res = await fetch('/api/labor-trend');
-  const data = await res.json();
-  if (!data.weeks || !data.weeks.length) return;
-  const container = document.getElementById('labor-trend-bars');
-  const labels    = document.getElementById('labor-trend-labels');
-  if (!container) return;
-  const maxPct = Math.max(...data.weeks.map(w => w.pct), 35);
-  const minPct = Math.max(0, Math.min(...data.weeks.map(w => w.pct)) - 5);
-  const range = maxPct - minPct || 1;
-  const maxH = 72;
-  container.innerHTML = data.weeks.map(w => {
-    const h = Math.max(6, Math.round(((w.pct - minPct) / range) * maxH));
-    const col = w.pct > 32 ? 'var(--red)' : w.pct >= 28 ? '#ef9f27' : '#6fcf97';
-    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px">
-      <span style="font-size:10px;color:${col};font-weight:600">${w.pct}%</span>
-      <div style="width:80%;height:${h}px;background:${col};border-radius:3px 3px 0 0"></div>
-    </div>`;
-  }).join('');
-  if (labels) labels.innerHTML = data.weeks.map(w =>
-    `<span style="flex:1;text-align:center">${w.label}</span>`
-  ).join('');
-}
+
+
+
+
+
 
 function dismissWelcome(){
   const b=document.getElementById('welcome-banner');
