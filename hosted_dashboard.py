@@ -345,7 +345,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 {% endif %}
 <div style="background:var(--ink);padding:0 28px">
   <nav style="display:flex;gap:0">
-    {% if mod_reviews %}<button class="tab {{'active' if mod_reviews}}" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews <span class="badge">{{rstats.total}}</span>{% if rstats.urgent > 0 %}<span style="display:inline-flex;align-items:center;justify-content:center;background:#c84b2f;color:white;font-size:9px;font-weight:700;border-radius:10px;min-width:16px;height:16px;padding:0 4px;margin-left:4px;line-height:1">{{rstats.urgent}}</span>{% endif %}</button>{% endif %}
+    {% if mod_reviews %}<button class="tab {{'active' if mod_reviews}}" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews <span class="badge">{{rstats.total}}</span></button>{% endif %}
     {% if mod_labor %}<button class="tab {{'active' if not mod_reviews and mod_labor}}" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
     {% if mod_inventory %}<button class="tab {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="tab-inventory" onclick="switchTab('inventory',this)">Inventory</button>{% endif %}
     {% if mod_marketing %}<button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
