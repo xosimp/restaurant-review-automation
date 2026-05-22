@@ -2568,7 +2568,7 @@ async function deleteNote(noteId) {
 }
 </script>
   <!-- Email Log -->
-  <div>
+  <div style="max-width:860px;margin:0 auto">
   <div style="display:flex;align-items:center;justify-content:space-between;margin:24px 0 8px">
     <div class="section-title" style="margin-bottom:0">Email log</div>
     <span style="font-size:11px;color:var(--ink3)">Last 50 emails sent</span>
