@@ -149,6 +149,8 @@ class Restaurant:
     temp_password: Optional[str]         = None
     ig_token: Optional[str]              = None
     ig_user_id: Optional[str]            = None
+    ig_token_expires: Optional[str]      = None
+    fb_token_expires: Optional[str]      = None
     fb_page_token: Optional[str]         = None
     fb_page_id: Optional[str]            = None
     pos_system: Optional[str]       = None
@@ -223,6 +225,8 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "temp_password", "TEXT"),
         ("restaurants", "ig_token", "TEXT"),
         ("restaurants", "ig_user_id", "TEXT"),
+        ("restaurants", "ig_token_expires", "TEXT"),
+        ("restaurants", "fb_token_expires", "TEXT"),
         ("restaurants", "fb_page_token", "TEXT"),
         ("restaurants", "fb_page_id", "TEXT"),
         ("restaurants", "docusign_envelope_id", "TEXT"),
@@ -271,6 +275,8 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN temp_password TEXT",
         "ALTER TABLE restaurants ADD COLUMN ig_token TEXT",
         "ALTER TABLE restaurants ADD COLUMN ig_user_id TEXT",
+        "ALTER TABLE restaurants ADD COLUMN ig_token_expires TEXT",
+        "ALTER TABLE restaurants ADD COLUMN fb_token_expires TEXT",
         "ALTER TABLE restaurants ADD COLUMN fb_page_token TEXT",
         "ALTER TABLE restaurants ADD COLUMN fb_page_id TEXT",
         "ALTER TABLE restaurants ADD COLUMN owner_phone TEXT",
@@ -331,7 +337,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","reviews_live","billing_status","internal_notes",
+        "hourly_rate","labor_target_pct","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","reviews_live","billing_status","internal_notes",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled"
     }
@@ -375,6 +381,8 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         temp_password=row["temp_password"] if "temp_password" in row.keys() else None,
         ig_token=row["ig_token"] if "ig_token" in row.keys() else None,
         ig_user_id=row["ig_user_id"] if "ig_user_id" in row.keys() else None,
+        ig_token_expires=row["ig_token_expires"] if "ig_token_expires" in row.keys() else None,
+        fb_token_expires=row["fb_token_expires"] if "fb_token_expires" in row.keys() else None,
         fb_page_token=row["fb_page_token"] if "fb_page_token" in row.keys() else None,
         fb_page_id=row["fb_page_id"] if "fb_page_id" in row.keys() else None,
         pos_system=row["pos_system"] if "pos_system" in row.keys() else None,

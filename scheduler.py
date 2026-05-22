@@ -317,6 +317,58 @@ def check_stale_inventory():
         log.error(f"Stale inventory check error: {e}")
 
 
+def refresh_expiring_tokens():
+    """Refresh Instagram and Facebook tokens expiring within 7 days."""
+    try:
+        import requests as _req, os
+        from models import get_all_restaurants, update_restaurant
+        from datetime import datetime, timedelta
+
+        app_id     = os.getenv("META_APP_ID","")
+        app_secret = os.getenv("META_APP_SECRET","")
+        if not app_id or not app_secret:
+            return
+
+        restaurants = get_all_restaurants()
+        soon = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+
+        for r in restaurants:
+            if not r.ig_token:
+                continue
+            expires = r.ig_token_expires or "2000-01-01"
+            if expires > soon:
+                continue  # Not expiring soon
+
+            try:
+                resp = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+                    "grant_type": "fb_exchange_token",
+                    "client_id": app_id, "client_secret": app_secret,
+                    "fb_exchange_token": r.ig_token,
+                })
+                if resp.status_code == 200:
+                    new_token   = resp.json().get("access_token", r.ig_token)
+                    new_expires = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
+                    update_data = {"ig_token": new_token, "ig_token_expires": new_expires}
+                    if r.fb_page_token:
+                        resp2 = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+                            "grant_type": "fb_exchange_token",
+                            "client_id": app_id, "client_secret": app_secret,
+                            "fb_exchange_token": r.fb_page_token,
+                        })
+                        if resp2.status_code == 200:
+                            update_data["fb_page_token"]    = resp2.json().get("access_token", r.fb_page_token)
+                            update_data["fb_token_expires"] = new_expires
+                    update_restaurant(r.id, update_data)
+                    log.info(f"Refreshed IG/FB tokens for {r.name}, new expiry {new_expires}")
+                else:
+                    log.warning(f"Token refresh failed for {r.name}: {resp.text[:100]}")
+            except Exception as e:
+                log.error(f"Token refresh error for {r.name}: {e}")
+
+    except Exception as e:
+        log.error(f"refresh_expiring_tokens error: {e}")
+
+
 # ── Scheduler loop ────────────────────────────────────────────────────────────
 
 _last_fetch_date  = None
@@ -331,6 +383,10 @@ def scheduler_loop():
         try:
             now   = datetime.now()
             today = now.date()
+
+            if now.hour == 7 and _last_fetch_date != today:
+                log.info("Refreshing expiring IG/FB tokens...")
+                refresh_expiring_tokens()
 
             if now.hour == 8 and _last_fetch_date != today:
                 _last_fetch_date = today

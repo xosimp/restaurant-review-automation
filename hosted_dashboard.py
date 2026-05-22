@@ -1824,6 +1824,11 @@ textarea{resize:vertical;min-height:60px}
         <button class="btn-save" style="padding:9px 16px;background:#b7791f" onclick="sendTestUrgent()">
           Send test urgent alert
         </button>
+        {% if restaurant.ig_token %}
+        <button class="btn-save" style="padding:9px 16px;background:#1877f2" onclick="refreshIgToken()">
+          Refresh Instagram tokens
+        </button>
+        {% endif %}
       </div>
       <div style="font-size:12px;margin-top:10px;display:none" id="test-email-status"></div>
     </div>
@@ -1916,6 +1921,16 @@ async function sendTestUrgent() {
   const data = await res.json();
   status.style.color = data.ok ? 'var(--green)' : 'var(--ember)';
   status.textContent = data.ok ? '✓ Urgent alert sent to ' + data.email : 'Error: ' + (data.error || 'failed');
+}
+async function refreshIgToken() {
+  const status = document.getElementById('test-email-status');
+  status.style.display = 'block';
+  status.style.color = 'var(--ink3)';
+  status.textContent = 'Refreshing tokens…';
+  const res = await fetch('/admin/refresh-ig-token/{{ restaurant.id }}', {method:'POST'});
+  const data = await res.json();
+  status.style.color = data.ok ? 'var(--green)' : 'var(--ember)';
+  status.textContent = data.ok ? '✓ Tokens refreshed — new expiry: ' + data.expires : 'Error: ' + (data.error || 'failed');
 }
 async function saveSettings() {
   const btn = document.querySelector('.btn-save');
@@ -4403,13 +4418,20 @@ def instagram_callback():
 
     rid = int(state) if state and state.isdigit() else None
     if rid:
-        update_data = {"ig_token": page_token, "ig_user_id": ig_user_id}
+        from datetime import datetime, timedelta
+        expires = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
+        update_data = {
+            "ig_token": page_token,
+            "ig_user_id": ig_user_id,
+            "ig_token_expires": expires,
+        }
         # Also save Facebook page token/id if we found a page
         if pages:
-            update_data["fb_page_token"] = pages[0].get("access_token", long_token)
-            update_data["fb_page_id"]    = pages[0].get("id","")
+            update_data["fb_page_token"]    = pages[0].get("access_token", long_token)
+            update_data["fb_page_id"]       = pages[0].get("id","")
+            update_data["fb_token_expires"] = expires
         _update_r(rid, update_data)
-        print(f"Instagram+Facebook connected for restaurant {rid}, ig_user_id={ig_user_id}")
+        print(f"Instagram+Facebook connected for restaurant {rid}, expires {expires}")
 
     return _ig_redirect("/?ig_connected=1")
 
@@ -4621,6 +4643,52 @@ def test_urgent(restaurant_id, current_user):
               "text": "This is a test urgent review alert from Cavnar AI admin. Your urgent alert email is working correctly."}]
         )
         return jsonify(ok=True, email=owner_email)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
+@app.route("/admin/refresh-ig-token/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def refresh_ig_token(restaurant_id, current_user):
+    """Manually refresh Instagram + Facebook tokens for a restaurant."""
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant or not restaurant.ig_token:
+        return jsonify(ok=False, error="No Instagram token found")
+    try:
+        import requests as _req
+        from datetime import datetime, timedelta
+        from models import update_restaurant
+        app_secret = os.getenv("META_APP_SECRET","")
+
+        # Refresh IG long-lived token
+        r = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+            "grant_type":        "fb_exchange_token",
+            "client_id":         os.getenv("META_APP_ID",""),
+            "client_secret":     app_secret,
+            "fb_exchange_token": restaurant.ig_token,
+        })
+        if r.status_code != 200:
+            return jsonify(ok=False, error=f"IG refresh failed: {r.text[:200]}")
+
+        new_token   = r.json().get("access_token", restaurant.ig_token)
+        new_expires = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
+
+        update_data = {"ig_token": new_token, "ig_token_expires": new_expires}
+
+        # Refresh FB page token too if we have one
+        if restaurant.fb_page_token:
+            r2 = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+                "grant_type":        "fb_exchange_token",
+                "client_id":         os.getenv("META_APP_ID",""),
+                "client_secret":     app_secret,
+                "fb_exchange_token": restaurant.fb_page_token,
+            })
+            if r2.status_code == 200:
+                update_data["fb_page_token"]    = r2.json().get("access_token", restaurant.fb_page_token)
+                update_data["fb_token_expires"] = new_expires
+
+        update_restaurant(restaurant_id, update_data)
+        print(f"IG/FB tokens refreshed for restaurant {restaurant_id}, expires {new_expires}")
+        return jsonify(ok=True, expires=new_expires)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
