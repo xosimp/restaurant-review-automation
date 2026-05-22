@@ -2643,7 +2643,7 @@ async function deleteNote(noteId) {
 }
 </script>
   <!-- Email Log -->
-  <div style="max-width:900px">
+  <div style="max-width:900px;margin:0 auto">
   <div style="display:flex;align-items:center;justify-content:space-between;margin:24px 0 8px">
     <div class="section-title" style="margin-bottom:0">Email log</div>
     <span style="font-size:11px;color:var(--ink3)">Last 50 emails sent</span>
@@ -3560,18 +3560,24 @@ def stripe_webhook():
         customer_id = inv.get("customer","")
         email       = inv.get("customer_email","unknown")
         amount      = inv.get("amount_paid", 0) / 100
-        print(f"Payment received: {email} — ${amount:.2f}")
-        # Save stripe_customer_id to restaurant record
+        billing_reason = inv.get("billing_reason","")  # subscription_create, subscription_cycle, etc.
+        print(f"Payment received: {email} — ${amount:.2f} ({billing_reason})")
         if customer_id and email:
             try:
                 conn = get_conn()
                 row = conn.execute(
-                    "SELECT r.id FROM restaurants r JOIN users u ON u.restaurant_id=r.id WHERE u.email=? LIMIT 1",
+                    "SELECT r.id, r.billing_status FROM restaurants r JOIN users u ON u.restaurant_id=r.id WHERE u.email=? LIMIT 1",
                     (email,)
                 ).fetchone()
                 conn.close()
                 if row:
-                    update_restaurant(row["id"], {"stripe_customer_id": customer_id})
+                    updates = {"stripe_customer_id": customer_id}
+                    # Auto-activate billing status on first real payment
+                    # (subscription_cycle = recurring charge, subscription_create = first charge after trial)
+                    if billing_reason in ("subscription_cycle", "subscription_create") and dict(row)["billing_status"] != "active":
+                        updates["billing_status"] = "active"
+                        print(f"Auto-activated billing_status for {email}")
+                    update_restaurant(dict(row)["id"], updates)
                     print(f"Saved Stripe customer {customer_id} for {email}")
             except Exception as e:
                 print(f"Failed to save Stripe customer ID: {e}")
