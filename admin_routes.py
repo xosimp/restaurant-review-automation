@@ -13,8 +13,8 @@ from models import (get_conn, get_restaurant, update_restaurant,
                     create_restaurant, Restaurant, get_reviews_data,
                     get_review_stats, get_email_log, log_email, get_all_restaurants)
 from auth import (create_session, get_session_user, delete_session,
-                  verify_password, list_users, create_user, update_password)
-from hosted_dashboard import admin_required, login_required
+                  verify_password, list_users, create_user, update_password,
+                  admin_required, login_required)
 from emails import send_payment_email, send_welcome_email
 
 admin_bp = Blueprint('admin', __name__)

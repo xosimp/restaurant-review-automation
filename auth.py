@@ -177,3 +177,21 @@ def update_last_login(user_id: int, db_path: str = DB_PATH):
     )
     conn.commit()
     conn.close()
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        user = get_current_user()
+        if not user:
+            return redirect(url_for("login", next=request.path))
+        return f(*args, **kwargs, current_user=user)
+    return decorated
+
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        user = get_current_user()
+        if not user or not user["is_admin"]:
+            return redirect(url_for("login"))
+        return f(*args, **kwargs, current_user=user)
+    return decorated
