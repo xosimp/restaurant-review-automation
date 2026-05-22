@@ -12,7 +12,8 @@ from flask import (Flask, render_template_string, request,
                    jsonify, redirect, url_for, make_response, send_file, session)
 from emails import send_payment_email, send_welcome_email
 from models import (init_db, get_conn, approve_response,
-                    get_reviews_since, get_restaurant)
+                    get_reviews_since, get_restaurant,
+                    get_review_stats, get_reviews_data)
 from auth import (init_auth, verify_password, create_session,
                   get_session_user, delete_session, create_user,
                   list_users, update_password)
