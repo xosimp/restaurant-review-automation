@@ -28,11 +28,21 @@ CREATE TABLE IF NOT EXISTS sessions (
     token           TEXT    PRIMARY KEY,
     user_id         INTEGER NOT NULL REFERENCES users(id),
     created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
-    expires_at      TEXT    NOT NULL
+    expires_at      TEXT    NOT NULL,
+    last_active     TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 """
 
 def init_auth(db_path: str = DB_PATH):
+    # Add last_active column if missing (migration)
+    try:
+        import sqlite3 as _sql
+        conn_m = _sql.connect(db_path)
+        conn_m.execute("ALTER TABLE sessions ADD COLUMN last_active TEXT NOT NULL DEFAULT (datetime('now'))")
+        conn_m.commit()
+        conn_m.close()
+    except Exception:
+        pass  # Column already exists
     conn = sqlite3.connect(db_path)
     conn.executescript(AUTH_SCHEMA)
     conn.commit()
@@ -118,17 +128,39 @@ def create_session(user_id: int, days: int = 30,
     conn.close()
     return token
 
+INACTIVITY_HOURS = 8  # Log out after 8 hours of inactivity
+
 def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
     if not token:
         return None
     conn = get_conn(db_path)
     row = conn.execute("""
-        SELECT u.* FROM sessions s
+        SELECT u.*, s.last_active FROM sessions s
         JOIN users u ON s.user_id = u.id
         WHERE s.token=? AND s.expires_at > datetime('now') AND u.is_active=1
     """, (token,)).fetchone()
+    if not row:
+        conn.close()
+        return None
+    # Check inactivity timeout
+    last_active = row["last_active"] or ""
+    if last_active:
+        try:
+            from datetime import datetime, timedelta
+            la = datetime.fromisoformat(last_active.replace("Z",""))
+            if datetime.now() - la > timedelta(hours=INACTIVITY_HOURS):
+                # Session expired due to inactivity — delete it
+                conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+                conn.commit()
+                conn.close()
+                return None
+        except Exception:
+            pass
+    # Update last_active timestamp
+    conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (token,))
+    conn.commit()
     conn.close()
-    return dict(row) if row else None
+    return dict(row)
 
 def delete_session(token: str, db_path: str = DB_PATH):
     conn = get_conn(db_path)
