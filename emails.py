@@ -189,8 +189,3 @@ def send_welcome_email(to_email, restaurant_name, username, password,
     })
 
 # ── Routes ────────────────────────────────────────────────────────────────────
-
-@app.template_filter("format_num")
-def format_num(v):
-    try: return f"{float(v):,.0f}"
-    except: return v

@@ -22,6 +22,11 @@ load_dotenv(pathlib.Path(__file__).parent / ".env")
 
 app = Flask(__name__)
 
+@app.template_filter("format_num")
+def format_num(v):
+    try: return f"{float(v):,.0f}"
+    except: return v
+
 # Register admin blueprint
 from admin_routes import admin_bp
 app.register_blueprint(admin_bp)
