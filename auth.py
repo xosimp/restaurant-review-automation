@@ -1,3 +1,5 @@
+from flask import redirect, url_for, request
+from functools import wraps
 """
 auth.py — User authentication for the Cavnar AI hosted dashboard
 Handles: user table, password hashing, session management, login/logout
