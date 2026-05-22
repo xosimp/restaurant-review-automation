@@ -1199,10 +1199,10 @@ function genContent(){
       box.textContent='Content generation unavailable — check back shortly.';
     });
 }
-function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}g.innerHTML=d.ideas.map((i,idx)=>{
-    const calDownBtn=document.getElementById('cal-download-btn');
+function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}const calDownBtn=document.getElementById('cal-download-btn');
   if(calDownBtn) calDownBtn.style.display='inline-block';
-  window._calIdeas=window._calIdeas||[];
+  g.innerHTML=d.ideas.map((i,idx)=>{
+    window._calIdeas=window._calIdeas||[];
     window._calIdeas[idx]=i;
     return `<div class="cal-card"><div class="cal-day-name">${i.day}</div><div class="cal-platform" style="font-size:10px;color:var(--ink3);margin:2px 0 4px">${i.platform||''}</div><div style="font-size:12px;line-height:1.5">${i.angle||''}</div><button data-idx="${idx}" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;width:100%">Generate →</button></div>`;
   }).join('')})}
@@ -1354,8 +1354,7 @@ function downloadCal() {
   if (!ideas || !ideas.length) { toast('Generate the calendar first'); return; }
   const rows = [['Day','Platform','Angle','Type']];
   ideas.forEach(i => rows.push([i.day||'', i.platform||'', i.angle||'', i.type||'']));
-  const csv = rows.map(r => r.map(v => '"'+String(v).replace(/"/g,'""')+'"').join(',')).join('
-');
+  const csv = rows.map(r => r.map(v => '"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
   a.download = 'content_calendar.csv';
