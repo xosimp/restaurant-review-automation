@@ -775,7 +775,7 @@ def get_restaurants_for_digest(day: str, db_path: str = DB_PATH) -> list:
         SELECT r.*, u.email as contact_email
         FROM restaurants r
         JOIN users u ON u.restaurant_id = r.id AND u.is_admin = 0
-        WHERE r.digest_day=? AND r.digest_enabled=1
+        WHERE r.digest_day=? AND r.digest_enabled=1 AND r.module_reviews=1
     """, (day.lower(),)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
