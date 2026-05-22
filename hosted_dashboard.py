@@ -1401,29 +1401,6 @@ function changePassword(){
   if(nw.length<8){st.style.display='block';st.style.color='var(--red)';st.textContent='Password must be at least 8 characters';return}
   fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(r=>r.json()).then(d=>{st.style.display='block';if(d.ok){st.style.color='var(--green)';st.textContent='Password updated';document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-confirm').value='';}else{st.style.color='var(--red)';st.textContent=d.error||'Update failed'}})}
 
-
-async function addStaffNote() {
-  const name = document.getElementById('staff-name').value.trim();
-  const notes = document.getElementById('staff-constraint').value.trim();
-  const result = document.getElementById('staff-note-result');
-  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
-  const form = new FormData();
-  form.append('employee_name', name);
-  form.append('notes', notes);
-  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
-  const data = await res.json();
-  if(data.ok) {
-    showResult(result, true, '✓ Constraint saved');
-    setTimeout(() => location.reload(), 1000);
-  } else {
-    showResult(result, false, data.error || 'Save failed');
-  }
-}
-async function deleteNote(noteId) {
-  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
-  const data = await res.json();
-  if(data.ok) location.reload();
-}
 </script>
 </body>
 </html>"""
@@ -1954,29 +1931,6 @@ async function saveSettings() {
   }
   btn.textContent = 'Save all settings'; btn.disabled = false;
 }
-
-async function addStaffNote() {
-  const name = document.getElementById('staff-name').value.trim();
-  const notes = document.getElementById('staff-constraint').value.trim();
-  const result = document.getElementById('staff-note-result');
-  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
-  const form = new FormData();
-  form.append('employee_name', name);
-  form.append('notes', notes);
-  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
-  const data = await res.json();
-  if(data.ok) {
-    showResult(result, true, '✓ Constraint saved');
-    setTimeout(() => location.reload(), 1000);
-  } else {
-    showResult(result, false, data.error || 'Save failed');
-  }
-}
-async function deleteNote(noteId) {
-  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
-  const data = await res.json();
-  if(data.ok) location.reload();
-}
 </script>
 </body>
 </html>"""
@@ -2267,29 +2221,6 @@ function showResult(el, ok, msg) {
   el.style.display = 'block';
   el.className = 'result-msg ' + (ok ? 'result-ok' : 'result-err');
   el.textContent = msg;
-}
-
-async function addStaffNote() {
-  const name = document.getElementById('staff-name').value.trim();
-  const notes = document.getElementById('staff-constraint').value.trim();
-  const result = document.getElementById('staff-note-result');
-  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
-  const form = new FormData();
-  form.append('employee_name', name);
-  form.append('notes', notes);
-  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
-  const data = await res.json();
-  if(data.ok) {
-    showResult(result, true, '✓ Constraint saved');
-    setTimeout(() => location.reload(), 1000);
-  } else {
-    showResult(result, false, data.error || 'Save failed');
-  }
-}
-async function deleteNote(noteId) {
-  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
-  const data = await res.json();
-  if(data.ok) location.reload();
 }
 </script>
 </body>
