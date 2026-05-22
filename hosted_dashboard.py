@@ -23,34 +23,6 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", os.urandom(32).hex())
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "will")
-
-# ── Login rate limiting ────────────────────────────────────────────────────────
-# Tracks failed login attempts per IP: {ip: [timestamp, timestamp, ...]}
-_login_attempts = {}
-_MAX_ATTEMPTS   = 5      # max failures before lockout
-_LOCKOUT_SECS   = 300    # 5 minute lockout
-
-def _get_client_ip():
-    """Get real client IP, respecting Railway's proxy headers."""
-    return (request.headers.get("X-Forwarded-For","").split(",")[0].strip()
-            or request.remote_addr or "unknown")
-
-def _is_rate_limited(ip):
-    """Return True if IP has exceeded failed login attempts."""
-    import time
-    now = time.time()
-    attempts = _login_attempts.get(ip, [])
-    # Keep only attempts within lockout window
-    recent = [t for t in attempts if now - t < _LOCKOUT_SECS]
-    _login_attempts[ip] = recent
-    return len(recent) >= _MAX_ATTEMPTS
-
-def _record_failed_attempt(ip):
-    import time
-    _login_attempts.setdefault(ip, []).append(time.time())
-
-def _clear_attempts(ip):
-    _login_attempts.pop(ip, None)
 PORT           = int(os.getenv("PORT", 8080))
 RESEND_API_KEY          = os.getenv("RESEND_API_KEY", "")
 FROM_EMAIL              = os.getenv("FROM_EMAIL", "will@cavnar.ai")
@@ -386,7 +358,6 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       <button class="fpill {{'active' if rfilter=='positive'}}" onclick="setRF('positive',this)">Positive</button>
     </div>
     <span class="count-lbl">{{reviews|length}} review{{'s' if reviews|length!=1}}</span>
-    <button class="btn btn-skip" style="margin-left:auto" onclick="exportReviews()">Export CSV ↓</button>
   </div>
   {% if reviews %}
   {% set colors=['#c84b2f','#2d6a4f','#b7791f','#1a56cc','#6b4fa0','#1e7a8c'] %}
@@ -397,7 +368,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <div class="card-hd">
       <div class="avatar" style="background:{{col}}">{{r.author[0].upper()}}</div>
       <div class="card-meta">
-        <div class="card-author">{{r.author|e}}</div>
+        <div class="card-author">{{r.author}}</div>
         <div class="card-sub">
           <span class="stars">{% for i in range(5) %}{{('★' if i<r.rating else '☆')}}{% endfor %}</span>
           <span class="pbadge {{'pg' if r.platform=='google' else 'py'}}">{{r.platform}}</span>
@@ -407,19 +378,18 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       <span class="schip {{'sp' if r.sentiment=='positive' else ('sn' if r.sentiment=='negative' else 'su')}}">{{r.sentiment or 'neutral'}}</span>
     </div>
     <div class="card-body">
-      <div class="rtext">{{r.text|e}}</div>
+      <div class="rtext">{{r.text}}</div>
       {% if r.categories %}<div class="cats">{% for c in r.categories %}<span class="cat">{{c.replace('_',' ')}}</span>{% endfor %}</div>{% endif %}
       {% if r.draft_response %}
       <div class="draft-box" id="draft-box-{{r.id}}">
         <div class="draft-lbl">Suggested response</div>
-        <div class="draft-txt" id="draft-txt-{{r.id}}">{{r.draft_response|e}}</div>
+        <div class="draft-txt" id="draft-txt-{{r.id}}">{{r.draft_response}}</div>
         <div class="draft-actions" id="draft-actions-{{r.id}}">
           {% if r.response_status=='posted' %}
             <span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>
           {% elif r.response_status=='approved' %}
             <span class="btn btn-approved">✓ Approved</span>
             <button class="btn btn-skip" onclick="skipR({{r.id}})">Edit</button>
-            <button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px" onclick="markPosted({{r.id}})">Mark as posted</button>
           {% elif r.response_status=='skipped' %}
             <button class="btn btn-approve" onclick="approveR({{r.id}})">✓ Approve</button>
             <button class="btn btn-skip" onclick="openEditor({{r.id}})">Edit response</button>
@@ -431,7 +401,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
         </div>
         <!-- Response editor (hidden by default) -->
         <div class="response-editor" id="editor-{{r.id}}" style="display:none;margin-top:10px">
-          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your own response…">{{r.draft_response|e}}</textarea>
+          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your own response…">{{r.draft_response}}</textarea>
           <div style="display:flex;gap:6px;margin-top:6px">
             <button class="btn btn-approve" onclick="saveDraft({{r.id}})">Save & approve</button>
             <button class="btn btn-skip" onclick="regenDraft({{r.id}})">↻ Regenerate AI draft</button>
@@ -604,20 +574,6 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       </table></div>
     </div>
   </div>
-  <!-- Labor trend chart -->
-  <div class="slabel" style="margin-top:16px">Labor % trend — last 4 weeks</div>
-  <div class="card" style="padding:16px">
-    <div id="labor-trend-bars" style="display:flex;align-items:flex-end;gap:12px;height:80px;margin-bottom:6px">
-      <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading trend data…</div>
-    </div>
-    <div id="labor-trend-labels" style="display:flex;gap:12px;font-size:10px;color:var(--ink3)"></div>
-    <div style="margin-top:8px;display:flex;gap:12px;font-size:10px;color:var(--ink3)">
-      <span><span style="color:var(--red)">■</span> Over 32%</span>
-      <span><span style="color:#ef9f27">■</span> 28–32%</span>
-      <span><span style="color:#6fcf97">■</span> Under 28%</span>
-      <span style="margin-left:auto;color:var(--ink3)">Target: 30%</span>
-    </div>
-  </div>
 </div>
 
 <!-- INVENTORY -->
@@ -730,10 +686,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
   <div style="margin-top:24px;background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
       <div class="slabel" style="margin:0">Content calendar</div>
-      <div style="display:flex;gap:6px">
-        <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week ↗</button>
-        <button class="btn-secondary" style="font-size:10px;padding:5px 10px" id="cal-download-btn" onclick="downloadCal()" style="display:none">Download CSV ↓</button>
-      </div>
+      <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week ↗</button>
     </div>
     <div class="cal-grid" id="cal-grid"><div class="no-data" style="grid-column:1/-1;padding:20px">Click "Generate week" for content ideas.</div></div>
   </div>
@@ -1036,13 +989,35 @@ function switchTab(n,btn){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('panel-'+n).classList.add('active');btn.classList.add('active');
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
-
+  if(n==='marketing'){checkInstagramStatus();}
   if(n==='inventory'&&!invLoaded)loadInvInsight();
-  if(n==='labor'){renderBars();}
+  if(n==='labor')renderBars();
   if(n==='account')loadBillingInfo();
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
 }
-);
+// Auto-load data for whichever tab is active on page load
+window.addEventListener('DOMContentLoaded', function() {
+  // Handle Instagram OAuth result
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('ig_connected') === '1') {
+    toast('Instagram connected successfully ✓');
+    checkInstagramStatus();
+    history.replaceState({}, '', '/');
+  }
+  if (urlParams.get('ig_error')) {
+    toast('Instagram connection failed: ' + urlParams.get('ig_error'));
+    history.replaceState({}, '', '/');
+  }
+  const activePanel = document.querySelector('.panel.active');
+  if(!activePanel) return;
+  const id = activePanel.id.replace('panel-','');
+  if(id==='labor'&&!laborLoaded){
+    loadLaborInsight();
+    setTimeout(renderBars, 100);
+  }
+  if(id==='inventory'&&!invLoaded){loadInvInsight();}
+  if(id==='account'){loadBillingInfo();}
+});
 let rfilter='{{rfilter}}';
 function setRF(f,btn){rfilter=f;document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active','active-red'));btn.classList.add(f==='urgent'?'active-red':'active');filterReviews()}
 function filterReviews(){const q=document.getElementById('rsearch').value;window.location='/?filter='+rfilter+'&search='+encodeURIComponent(q)}
@@ -1204,9 +1179,7 @@ function genContent(){
       box.textContent='Content generation unavailable — check back shortly.';
     });
 }
-function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}const calDownBtn=document.getElementById('cal-download-btn');
-  if(calDownBtn) calDownBtn.style.display='inline-block';
-  g.innerHTML=d.ideas.map((i,idx)=>{
+function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}g.innerHTML=d.ideas.map((i,idx)=>{
     window._calIdeas=window._calIdeas||[];
     window._calIdeas[idx]=i;
     return `<div class="cal-card"><div class="cal-day-name">${i.day}</div><div class="cal-platform" style="font-size:10px;color:var(--ink3);margin:2px 0 4px">${i.platform||''}</div><div style="font-size:12px;line-height:1.5">${i.angle||''}</div><button data-idx="${idx}" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;width:100%">Generate →</button></div>`;
@@ -1258,21 +1231,83 @@ function loadBillingInfo() {
     else document.getElementById('billing-portal-link').style.display='none';
   }).catch(()=>{document.getElementById('billing-loading').textContent='Billing info unavailable.';});
 }
-
-
-async 
-async 
+// Instagram connect/post
+async function checkInstagramStatus() {
+  const res = await fetch('/api/instagram-status');
+  const data = await res.json();
+  const connectBanner   = document.getElementById('ig-connect-banner');
+  const connectedBanner = document.getElementById('ig-connected-banner');
+  const postBtn         = document.getElementById('ig-post-btn');
+  const fbBtn = document.getElementById('fb-post-btn');
+  if (data.connected) {
+    if (connectBanner)   connectBanner.style.display   = 'none';
+    if (connectedBanner) connectedBanner.style.display = 'flex';
+    if (postBtn)         postBtn.style.display         = 'inline-flex';
+    if (fbBtn)           fbBtn.style.display           = data.fb_connected ? 'inline-flex' : 'none';
+  } else {
+    if (connectBanner)   connectBanner.style.display   = 'flex';
+    if (connectedBanner) connectedBanner.style.display = 'none';
+    if (postBtn)         postBtn.style.display         = 'none';
+    if (fbBtn)           fbBtn.style.display           = 'none';
+  }
+}
+async function postToFacebook() {
+  const caption = document.getElementById('mkoutput').textContent.trim();
+  if (!caption || caption === 'Select a type and click Generate.') {
+    toast('Generate content first'); return;
+  }
+  const btn = document.getElementById('fb-post-btn');
+  btn.textContent = 'Posting…'; btn.disabled = true;
+  const res = await fetch('/api/post-to-facebook', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({caption})
+  });
+  const data = await res.json();
+  if (data.ok) {
+    toast('Posted to Facebook ✓');
+    btn.textContent = '✓ Posted';
+    setTimeout(() => { btn.textContent = 'Post to Facebook ↗'; btn.disabled = false; }, 3000);
+  } else {
+    toast('Post failed: ' + (data.error || 'unknown error'));
+    btn.textContent = 'Post to Facebook ↗'; btn.disabled = false;
+  }
+}
+async function postToInstagram() {
+  const caption = document.getElementById('mkoutput').textContent.trim();
+  if (!caption || caption === 'Select a type and click Generate.') {
+    toast('Generate content first'); return;
+  }
+  const btn = document.getElementById('ig-post-btn');
+  btn.textContent = 'Posting…'; btn.disabled = true;
+  const res = await fetch('/api/post-to-instagram', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({caption})
+  });
+  const data = await res.json();
+  if (data.ok) {
+    toast('Posted to Instagram ✓');
+    btn.textContent = '✓ Posted';
+    setTimeout(() => { btn.textContent = 'Post to Instagram ↗'; btn.disabled = false; }, 3000);
+  } else {
+    toast('Post failed: ' + (data.error || 'unknown error'));
+    btn.textContent = 'Post to Instagram ↗'; btn.disabled = false;
+  }
+}
+async function disconnectInstagram() {
+  await fetch('/api/instagram-disconnect', {method:'POST'});
+  checkInstagramStatus();
+  toast('Instagram disconnected');
+}
 // Check IG status when marketing tab is opened
 const _origSwitchTab = switchTab;
-
-
-
-
-
-
-
-
-
+window.addEventListener('DOMContentLoaded', function() {
+  // Check if already on marketing tab
+  if (document.getElementById('panel-marketing')?.classList.contains('active')) {
+    checkInstagramStatus();
+  }
+});
 
 function dismissWelcome(){
   const b=document.getElementById('welcome-banner');
@@ -1288,6 +1323,29 @@ function changePassword(){
   if(nw.length<8){st.style.display='block';st.style.color='var(--red)';st.textContent='Password must be at least 8 characters';return}
   fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(r=>r.json()).then(d=>{st.style.display='block';if(d.ok){st.style.color='var(--green)';st.textContent='Password updated';document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-confirm').value='';}else{st.style.color='var(--red)';st.textContent=d.error||'Update failed'}})}
 
+
+async function addStaffNote() {
+  const name = document.getElementById('staff-name').value.trim();
+  const notes = document.getElementById('staff-constraint').value.trim();
+  const result = document.getElementById('staff-note-result');
+  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
+  const form = new FormData();
+  form.append('employee_name', name);
+  form.append('notes', notes);
+  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
+  const data = await res.json();
+  if(data.ok) {
+    showResult(result, true, '✓ Constraint saved');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showResult(result, false, data.error || 'Save failed');
+  }
+}
+async function deleteNote(noteId) {
+  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
+  const data = await res.json();
+  if(data.ok) location.reload();
+}
 </script>
 </body>
 </html>"""
@@ -1698,30 +1756,6 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
-  <!-- Test email triggers -->
-  <div class="section-card">
-    <div class="section-hdr"><div class="section-title">Test email triggers</div></div>
-    <div class="section-body">
-      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:14px">
-        Send a test email to this client's address to verify delivery and appearance.
-      </p>
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <button class="btn-save" style="padding:9px 16px;background:#2d6a4f" onclick="sendTestDigest()">
-          Send test digest email
-        </button>
-        <button class="btn-save" style="padding:9px 16px;background:#b7791f" onclick="sendTestUrgent()">
-          Send test urgent alert
-        </button>
-        {% if restaurant.ig_token %}
-        <button class="btn-save" style="padding:9px 16px;background:#1877f2" onclick="refreshIgToken()">
-          Refresh Instagram tokens
-        </button>
-        {% endif %}
-      </div>
-      <div style="font-size:12px;margin-top:10px;display:none" id="test-email-status"></div>
-    </div>
-  </div>
-
   <div class="save-bar">
     <button class="btn-save" onclick="saveSettings()">Save all settings</button>
     <a href="/admin/client-data/{{ restaurant.id }}" class="btn-data">Manage data →</a>
@@ -1790,36 +1824,6 @@ async function deleteNote(noteId) {
   const data = await res.json();
   if(data.ok) location.reload();
 }
-async function sendTestDigest() {
-  const status = document.getElementById('test-email-status');
-  status.style.display = 'block';
-  status.style.color = 'var(--ink3)';
-  status.textContent = 'Sending digest…';
-  const res = await fetch('/admin/test-digest/{{ restaurant.id }}', {method:'POST'});
-  const data = await res.json();
-  status.style.color = data.ok ? 'var(--green)' : 'var(--ember)';
-  status.textContent = data.ok ? '✓ Digest sent to ' + data.email : 'Error: ' + (data.error || 'failed');
-}
-async function sendTestUrgent() {
-  const status = document.getElementById('test-email-status');
-  status.style.display = 'block';
-  status.style.color = 'var(--ink3)';
-  status.textContent = 'Sending urgent alert…';
-  const res = await fetch('/admin/test-urgent/{{ restaurant.id }}', {method:'POST'});
-  const data = await res.json();
-  status.style.color = data.ok ? 'var(--green)' : 'var(--ember)';
-  status.textContent = data.ok ? '✓ Urgent alert sent to ' + data.email : 'Error: ' + (data.error || 'failed');
-}
-async function refreshIgToken() {
-  const status = document.getElementById('test-email-status');
-  status.style.display = 'block';
-  status.style.color = 'var(--ink3)';
-  status.textContent = 'Refreshing tokens…';
-  const res = await fetch('/admin/refresh-ig-token/{{ restaurant.id }}', {method:'POST'});
-  const data = await res.json();
-  status.style.color = data.ok ? 'var(--green)' : 'var(--ember)';
-  status.textContent = data.ok ? '✓ Tokens refreshed — new expiry: ' + data.expires : 'Error: ' + (data.error || 'failed');
-}
 async function saveSettings() {
   const btn = document.querySelector('.btn-save');
   const status = document.getElementById('save-status');
@@ -1871,6 +1875,29 @@ async function saveSettings() {
     status.textContent = data.error || 'Save failed';
   }
   btn.textContent = 'Save all settings'; btn.disabled = false;
+}
+
+async function addStaffNote() {
+  const name = document.getElementById('staff-name').value.trim();
+  const notes = document.getElementById('staff-constraint').value.trim();
+  const result = document.getElementById('staff-note-result');
+  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
+  const form = new FormData();
+  form.append('employee_name', name);
+  form.append('notes', notes);
+  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
+  const data = await res.json();
+  if(data.ok) {
+    showResult(result, true, '✓ Constraint saved');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showResult(result, false, data.error || 'Save failed');
+  }
+}
+async function deleteNote(noteId) {
+  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
+  const data = await res.json();
+  if(data.ok) location.reload();
 }
 </script>
 </body>
@@ -2162,6 +2189,29 @@ function showResult(el, ok, msg) {
   el.style.display = 'block';
   el.className = 'result-msg ' + (ok ? 'result-ok' : 'result-err');
   el.textContent = msg;
+}
+
+async function addStaffNote() {
+  const name = document.getElementById('staff-name').value.trim();
+  const notes = document.getElementById('staff-constraint').value.trim();
+  const result = document.getElementById('staff-note-result');
+  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
+  const form = new FormData();
+  form.append('employee_name', name);
+  form.append('notes', notes);
+  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
+  const data = await res.json();
+  if(data.ok) {
+    showResult(result, true, '✓ Constraint saved');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showResult(result, false, data.error || 'Save failed');
+  }
+}
+async function deleteNote(noteId) {
+  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
+  const data = await res.json();
+  if(data.ok) location.reload();
 }
 </script>
 </body>
@@ -2946,17 +2996,11 @@ def format_num(v):
 @app.route("/login", methods=["GET","POST"])
 def login():
     if request.method == "POST":
-        ip = _get_client_ip()
-        if _is_rate_limited(ip):
-            return render_template_string(LOGIN_HTML,
-                error="Too many failed attempts. Please wait 5 minutes and try again.")
         username = request.form.get("username","").strip()
         password = request.form.get("password","")
         user = verify_password(username, password)
         if not user:
-            _record_failed_attempt(ip)
             return render_template_string(LOGIN_HTML, error="Invalid username or password")
-        _clear_attempts(ip)
         token = create_session(user["id"])
         next_url = request.args.get("next", "/admin" if user["is_admin"] else "/")
         resp = make_response(redirect(next_url))
@@ -4312,20 +4356,13 @@ def instagram_callback():
 
     rid = int(state) if state and state.isdigit() else None
     if rid:
-        from datetime import datetime, timedelta
-        expires = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
-        update_data = {
-            "ig_token": page_token,
-            "ig_user_id": ig_user_id,
-            "ig_token_expires": expires,
-        }
+        update_data = {"ig_token": page_token, "ig_user_id": ig_user_id}
         # Also save Facebook page token/id if we found a page
         if pages:
-            update_data["fb_page_token"]    = pages[0].get("access_token", long_token)
-            update_data["fb_page_id"]       = pages[0].get("id","")
-            update_data["fb_token_expires"] = expires
+            update_data["fb_page_token"] = pages[0].get("access_token", long_token)
+            update_data["fb_page_id"]    = pages[0].get("id","")
         _update_r(rid, update_data)
-        print(f"Instagram+Facebook connected for restaurant {rid}, expires {expires}")
+        print(f"Instagram+Facebook connected for restaurant {rid}, ig_user_id={ig_user_id}")
 
     return _ig_redirect("/?ig_connected=1")
 
@@ -4417,198 +4454,6 @@ def post_to_facebook(current_user):
         return jsonify(ok=False, error=err)
     return jsonify(ok=True, post_id=r.json().get("id"))
 
-@app.route("/api/mark-posted/<int:review_id>", methods=["POST"])
-@login_required
-def mark_posted(review_id, current_user):
-    conn = get_conn()
-    conn.execute("UPDATE reviews SET response_status='posted' WHERE id=? AND restaurant_id=?",
-                 (review_id, current_user["restaurant_id"]))
-    conn.commit(); conn.close()
-    return jsonify(ok=True)
-
-@app.route("/api/export-reviews")
-@login_required
-def export_reviews(current_user):
-    import io, csv as _csv
-    restaurant = get_restaurant(current_user["restaurant_id"])
-    reviews = get_reviews_data(current_user["restaurant_id"])
-    buf = io.StringIO()
-    w = _csv.writer(buf)
-    w.writerow(["Date","Author","Platform","Rating","Sentiment","Urgency","Review","Draft Response","Status"])
-    for r in reviews:
-        w.writerow([
-            r.get("review_date","")[:10] if r.get("review_date") else "",
-            r.get("author",""),
-            r.get("platform",""),
-            r.get("rating",""),
-            r.get("sentiment",""),
-            r.get("urgency",""),
-            r.get("text",""),
-            r.get("draft_response",""),
-            r.get("response_status",""),
-        ])
-    name = (restaurant.name if restaurant else "restaurant").replace(" ","_")
-    from flask import Response
-    return Response(
-        buf.getvalue(),
-        mimetype="text/csv",
-        headers={"Content-Disposition": f"attachment;filename={name}_reviews.csv"}
-    )
-
-@app.route("/api/labor-trend")
-@login_required
-def labor_trend_api(current_user):
-    """Return labor % for the last 4 weeks for trend chart."""
-    try:
-        from labor import load_shifts_for_restaurant
-        from models import get_restaurant
-        restaurant = get_restaurant(current_user["restaurant_id"])
-        target = float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0
-        shifts = load_shifts_for_restaurant(current_user["restaurant_id"])
-        if not shifts:
-            return jsonify(weeks=[])
-
-        from datetime import datetime, timedelta
-        from collections import defaultdict
-
-        # Group shifts into 4 weekly buckets
-        today = datetime.now().date()
-        weeks = []
-        for w in range(3, -1, -1):
-            week_end   = today - timedelta(days=today.weekday()) - timedelta(weeks=w-1)
-            week_start = week_end - timedelta(days=6)
-            sales_total = 0
-            labor_total = 0
-            for s in shifts:
-                try:
-                    d = datetime.strptime(str(s.get("date",""))[:10], "%Y-%m-%d").date()
-                    if week_start <= d <= week_end:
-                        sales_total += float(s.get("sales_that_day") or 0)
-                        hours = float(s.get("actual_hours") or s.get("scheduled_hours") or 0)
-                        rate = float(restaurant.hourly_rate or 26.0) if restaurant else 26.0
-                        labor_total += hours * rate
-                except Exception:
-                    continue
-            pct = round(labor_total / sales_total * 100, 1) if sales_total > 0 else 0
-            label = f"Wk {4-w}"
-            weeks.append({"label": label, "pct": pct, "target": target})
-
-        return jsonify(weeks=weeks)
-    except Exception as e:
-        print(f"Labor trend error: {e}")
-        return jsonify(weeks=[])
-
-@app.route("/admin/test-digest/<int:restaurant_id>", methods=["POST"])
-@admin_required
-def test_digest(restaurant_id, current_user):
-    restaurant = get_restaurant(restaurant_id)
-    if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found")
-    try:
-        from reporter import build_report_from_db, render_html
-        import resend as _resend
-        owner_email = restaurant.owner_email
-        report = build_report_from_db(restaurant_id, restaurant.name, days=7)
-        html = render_html(report, restaurant.name)
-        _resend.api_key = RESEND_API_KEY
-        _resend.Emails.send({
-            "from": f"Cavnar AI <{FROM_EMAIL}>",
-            "to": [owner_email],
-            "subject": f"[TEST] Your weekly review digest — {restaurant.name}",
-            "html": html,
-        })
-        return jsonify(ok=True, email=owner_email)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e))
-
-@app.route("/admin/test-urgent/<int:restaurant_id>", methods=["POST"])
-@admin_required
-def test_urgent(restaurant_id, current_user):
-    restaurant = get_restaurant(restaurant_id)
-    if not restaurant:
-        return jsonify(ok=False, error="Restaurant not found")
-    try:
-        from scheduler import send_urgent_alert
-        owner_email = restaurant.owner_email
-        send_urgent_alert(
-            restaurant.name,
-            owner_email,
-            [{"author": "Test Customer", "platform": "google", "rating": 1,
-              "text": "This is a test urgent review alert from Cavnar AI admin. Your urgent alert email is working correctly."}]
-        )
-        return jsonify(ok=True, email=owner_email)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e))
-
-@app.route("/admin/refresh-ig-token/<int:restaurant_id>", methods=["POST"])
-@admin_required
-def refresh_ig_token(restaurant_id, current_user):
-    """Manually refresh Instagram + Facebook tokens for a restaurant."""
-    restaurant = get_restaurant(restaurant_id)
-    if not restaurant or not restaurant.ig_token:
-        return jsonify(ok=False, error="No Instagram token found")
-    try:
-        import requests as _req
-        from datetime import datetime, timedelta
-        from models import update_restaurant
-        app_secret = os.getenv("META_APP_SECRET","")
-
-        # Refresh IG long-lived token
-        r = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
-            "grant_type":        "fb_exchange_token",
-            "client_id":         os.getenv("META_APP_ID",""),
-            "client_secret":     app_secret,
-            "fb_exchange_token": restaurant.ig_token,
-        })
-        if r.status_code != 200:
-            return jsonify(ok=False, error=f"IG refresh failed: {r.text[:200]}")
-
-        new_token   = r.json().get("access_token", restaurant.ig_token)
-        new_expires = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
-
-        update_data = {"ig_token": new_token, "ig_token_expires": new_expires}
-
-        # Refresh FB page token too if we have one
-        if restaurant.fb_page_token:
-            r2 = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
-                "grant_type":        "fb_exchange_token",
-                "client_id":         os.getenv("META_APP_ID",""),
-                "client_secret":     app_secret,
-                "fb_exchange_token": restaurant.fb_page_token,
-            })
-            if r2.status_code == 200:
-                update_data["fb_page_token"]    = r2.json().get("access_token", restaurant.fb_page_token)
-                update_data["fb_token_expires"] = new_expires
-
-        update_restaurant(restaurant_id, update_data)
-        print(f"IG/FB tokens refreshed for restaurant {restaurant_id}, expires {new_expires}")
-        return jsonify(ok=True, expires=new_expires)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e))
-
-# ── Module-level init (runs under gunicorn/Railway AND direct python) ────────
-
-try:
-    from models import ensure_columns as _ec, init_email_log as _iel
-    _ec()
-    _iel()
-    print("DB init OK")
-except Exception as _e:
-    print(f"DB init error: {_e}")
-
-try:
-    from scheduler import start_scheduler as _ss
-    _ss()
-    print("Scheduler started OK")
-except Exception as _e:
-    print(f"Scheduler start error: {_e}")
-
-# Enable WAL mode for concurrent access
-try:
-    from models import get_conn as _gc
-    _wc = _gc(); _wc.execute("PRAGMA journal_mode=WAL"); _wc.commit(); _wc.close()
-except Exception: pass
-
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -4646,7 +4491,8 @@ if __name__ == "__main__":
             rid = r[0]
         create_user(rid, ADMIN_USERNAME, "will@cavnar.ai",
                     admin_pw, is_admin=True)
-        print(f"\n  Admin account created: {ADMIN_USERNAME} (password set from env)\n")
+        print(f"\n  Admin account created: {ADMIN_USERNAME} / {admin_pw}")
+        print("  Change your password after first login!\n")
 
     print(f"\n  Hosted dashboard → http://localhost:{PORT}")
     print(f"  Admin panel      → http://localhost:{PORT}/admin\n")
