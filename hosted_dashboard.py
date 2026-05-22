@@ -1810,6 +1810,25 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
+  <!-- Test email triggers -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Test email triggers</div></div>
+    <div class="section-body">
+      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:14px">
+        Send a test email to this client's address to verify delivery and appearance.
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn-save" style="padding:9px 16px;background:#2d6a4f" onclick="sendTestDigest()">
+          Send test digest email
+        </button>
+        <button class="btn-save" style="padding:9px 16px;background:#b7791f" onclick="sendTestUrgent()">
+          Send test urgent alert
+        </button>
+      </div>
+      <div style="font-size:12px;margin-top:10px;display:none" id="test-email-status"></div>
+    </div>
+  </div>
+
   <div class="save-bar">
     <button class="btn-save" onclick="saveSettings()">Save all settings</button>
     <a href="/admin/client-data/{{ restaurant.id }}" class="btn-data">Manage data →</a>
@@ -1877,6 +1896,26 @@ async function deleteNote(noteId) {
   const res = await fetch('/admin/staff-notes/'+noteId+'/delete', {method:'POST'});
   const data = await res.json();
   if(data.ok) location.reload();
+}
+async function sendTestDigest() {
+  const status = document.getElementById('test-email-status');
+  status.style.display = 'block';
+  status.style.color = 'var(--ink3)';
+  status.textContent = 'Sending digest…';
+  const res = await fetch('/admin/test-digest/{{ restaurant.id }}', {method:'POST'});
+  const data = await res.json();
+  status.style.color = data.ok ? 'var(--green)' : 'var(--ember)';
+  status.textContent = data.ok ? '✓ Digest sent to ' + data.email : 'Error: ' + (data.error || 'failed');
+}
+async function sendTestUrgent() {
+  const status = document.getElementById('test-email-status');
+  status.style.display = 'block';
+  status.style.color = 'var(--ink3)';
+  status.textContent = 'Sending urgent alert…';
+  const res = await fetch('/admin/test-urgent/{{ restaurant.id }}', {method:'POST'});
+  const data = await res.json();
+  status.style.color = data.ok ? 'var(--green)' : 'var(--ember)';
+  status.textContent = data.ok ? '✓ Urgent alert sent to ' + data.email : 'Error: ' + (data.error || 'failed');
 }
 async function saveSettings() {
   const btn = document.querySelector('.btn-save');
@@ -4542,6 +4581,48 @@ def labor_trend_api(current_user):
     except Exception as e:
         print(f"Labor trend error: {e}")
         return jsonify(weeks=[])
+
+@app.route("/admin/test-digest/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def test_digest(restaurant_id, current_user):
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found")
+    try:
+        from reporter import build_report_from_db, render_html
+        import resend as _resend
+        owner_email = restaurant.owner_email
+        report = build_report_from_db(restaurant_id, restaurant.name, days=7)
+        html = render_html(report, restaurant.name)
+        _resend.api_key = RESEND_API_KEY
+        _resend.Emails.send({
+            "from": f"Cavnar AI <{FROM_EMAIL}>",
+            "to": [owner_email],
+            "subject": f"[TEST] Your weekly review digest — {restaurant.name}",
+            "html": html,
+        })
+        return jsonify(ok=True, email=owner_email)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
+@app.route("/admin/test-urgent/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def test_urgent(restaurant_id, current_user):
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found")
+    try:
+        from scheduler import send_urgent_alert
+        owner_email = restaurant.owner_email
+        send_urgent_alert(
+            restaurant.name,
+            owner_email,
+            [{"author": "Test Customer", "platform": "google", "rating": 1,
+              "text": "This is a test urgent review alert from Cavnar AI admin. Your urgent alert email is working correctly."}]
+        )
+        return jsonify(ok=True, email=owner_email)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
