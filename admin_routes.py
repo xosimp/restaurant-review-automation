@@ -155,6 +155,9 @@ def create_client(current_user):
                     "docusign_envelope_id": envelope_id,
                 })
                 print(f"Contract sent via DocuSign to {data['owner_email']}, envelope: {envelope_id}")
+                try:
+                    log_email(rid, "contract", data["owner_email"], f"Service Agreement — {data['restaurant_name']}")
+                except Exception: pass
             except Exception as e:
                 print(f"DocuSign contract failed: {e}")
                 import traceback; traceback.print_exc()
@@ -785,6 +788,9 @@ def docusign_webhook():
                         module_count=mods,
                     )
                     print(f"Payment email sent to {r['owner_email']} after signing")
+                    try:
+                        log_email(rid, "payment", r["owner_email"], f"Payment link — {r['name']}")
+                    except Exception: pass
                 except Exception as e:
                     print(f"Payment email failed after signing: {e}")
 
@@ -812,6 +818,9 @@ def docusign_webhook():
                     except Exception:
                         pass
                     print(f"Welcome email sent to {r['owner_email']} after signing")
+                    try:
+                        log_email(rid, "welcome", r["owner_email"], f"Welcome — {r['name']}")
+                    except Exception: pass
                 except Exception as e:
                     print(f"Welcome email failed after signing: {e}")
 
