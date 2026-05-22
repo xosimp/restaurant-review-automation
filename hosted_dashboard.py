@@ -4580,8 +4580,7 @@ if __name__ == "__main__":
             rid = r[0]
         create_user(rid, ADMIN_USERNAME, "will@cavnar.ai",
                     admin_pw, is_admin=True)
-        print(f"\n  Admin account created: {ADMIN_USERNAME} / {admin_pw}")
-        print("  Change your password after first login!\n")
+        print(f"\n  Admin account created: {ADMIN_USERNAME} (password set from env)\n")
 
     print(f"\n  Hosted dashboard → http://localhost:{PORT}")
     print(f"  Admin panel      → http://localhost:{PORT}/admin\n")
