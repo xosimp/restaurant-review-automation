@@ -4692,6 +4692,29 @@ def refresh_ig_token(restaurant_id, current_user):
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
+# ── Module-level init (runs under gunicorn/Railway AND direct python) ────────
+
+try:
+    from models import ensure_columns as _ec, init_email_log as _iel
+    _ec()
+    _iel()
+    print("DB init OK")
+except Exception as _e:
+    print(f"DB init error: {_e}")
+
+try:
+    from scheduler import start_scheduler as _ss
+    _ss()
+    print("Scheduler started OK")
+except Exception as _e:
+    print(f"Scheduler start error: {_e}")
+
+# Enable WAL mode for concurrent access
+try:
+    from models import get_conn as _gc
+    _wc = _gc(); _wc.execute("PRAGMA journal_mode=WAL"); _wc.commit(); _wc.close()
+except Exception: pass
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
