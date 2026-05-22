@@ -9,11 +9,12 @@ from datetime import datetime
 from functools import wraps
 
 # Import everything needed from the main app
-from models import (get_conn, get_restaurant, update_restaurant, list_users,
-                    create_restaurant, Restaurant, create_user, get_reviews_data,
+from models import (get_conn, get_restaurant, update_restaurant,
+                    create_restaurant, Restaurant, get_reviews_data,
                     get_review_stats, get_email_log, log_email, get_all_restaurants)
 from auth import (admin_required, login_required, create_session,
-                  get_session_user, delete_session, verify_password)
+                  get_session_user, delete_session, verify_password,
+                  list_users, create_user, update_password)
 from emails import send_payment_email, send_welcome_email
 
 admin_bp = Blueprint('admin', __name__)
