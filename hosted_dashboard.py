@@ -358,6 +358,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       <button class="fpill {{'active' if rfilter=='positive'}}" onclick="setRF('positive',this)">Positive</button>
     </div>
     <span class="count-lbl">{{reviews|length}} review{{'s' if reviews|length!=1}}</span>
+    <button class="btn btn-skip" style="margin-left:auto" onclick="exportReviews()">Export CSV ↓</button>
   </div>
   {% if reviews %}
   {% set colors=['#c84b2f','#2d6a4f','#b7791f','#1a56cc','#6b4fa0','#1e7a8c'] %}
@@ -368,7 +369,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <div class="card-hd">
       <div class="avatar" style="background:{{col}}">{{r.author[0].upper()}}</div>
       <div class="card-meta">
-        <div class="card-author">{{r.author}}</div>
+        <div class="card-author">{{r.author|e}}</div>
         <div class="card-sub">
           <span class="stars">{% for i in range(5) %}{{('★' if i<r.rating else '☆')}}{% endfor %}</span>
           <span class="pbadge {{'pg' if r.platform=='google' else 'py'}}">{{r.platform}}</span>
@@ -378,18 +379,19 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       <span class="schip {{'sp' if r.sentiment=='positive' else ('sn' if r.sentiment=='negative' else 'su')}}">{{r.sentiment or 'neutral'}}</span>
     </div>
     <div class="card-body">
-      <div class="rtext">{{r.text}}</div>
+      <div class="rtext">{{r.text|e}}</div>
       {% if r.categories %}<div class="cats">{% for c in r.categories %}<span class="cat">{{c.replace('_',' ')}}</span>{% endfor %}</div>{% endif %}
       {% if r.draft_response %}
       <div class="draft-box" id="draft-box-{{r.id}}">
         <div class="draft-lbl">Suggested response</div>
-        <div class="draft-txt" id="draft-txt-{{r.id}}">{{r.draft_response}}</div>
+        <div class="draft-txt" id="draft-txt-{{r.id}}">{{r.draft_response|e}}</div>
         <div class="draft-actions" id="draft-actions-{{r.id}}">
           {% if r.response_status=='posted' %}
             <span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>
           {% elif r.response_status=='approved' %}
             <span class="btn btn-approved">✓ Approved</span>
             <button class="btn btn-skip" onclick="skipR({{r.id}})">Edit</button>
+            <button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px" onclick="markPosted({{r.id}})">Mark as posted</button>
           {% elif r.response_status=='skipped' %}
             <button class="btn btn-approve" onclick="approveR({{r.id}})">✓ Approve</button>
             <button class="btn btn-skip" onclick="openEditor({{r.id}})">Edit response</button>
@@ -401,7 +403,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
         </div>
         <!-- Response editor (hidden by default) -->
         <div class="response-editor" id="editor-{{r.id}}" style="display:none;margin-top:10px">
-          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your own response…">{{r.draft_response}}</textarea>
+          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your own response…">{{r.draft_response|e}}</textarea>
           <div style="display:flex;gap:6px;margin-top:6px">
             <button class="btn btn-approve" onclick="saveDraft({{r.id}})">Save & approve</button>
             <button class="btn btn-skip" onclick="regenDraft({{r.id}})">↻ Regenerate AI draft</button>
@@ -574,6 +576,20 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       </table></div>
     </div>
   </div>
+  <!-- Labor trend chart -->
+  <div class="slabel" style="margin-top:16px">Labor % trend — last 4 weeks</div>
+  <div class="card" style="padding:16px">
+    <div id="labor-trend-bars" style="display:flex;align-items:flex-end;gap:12px;height:80px;margin-bottom:6px">
+      <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading trend data…</div>
+    </div>
+    <div id="labor-trend-labels" style="display:flex;gap:12px;font-size:10px;color:var(--ink3)"></div>
+    <div style="margin-top:8px;display:flex;gap:12px;font-size:10px;color:var(--ink3)">
+      <span><span style="color:var(--red)">■</span> Over 32%</span>
+      <span><span style="color:#ef9f27">■</span> 28–32%</span>
+      <span><span style="color:#6fcf97">■</span> Under 28%</span>
+      <span style="margin-left:auto;color:var(--ink3)">Target: 30%</span>
+    </div>
+  </div>
 </div>
 
 <!-- INVENTORY -->
@@ -686,7 +702,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
   <div style="margin-top:24px;background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
       <div class="slabel" style="margin:0">Content calendar</div>
-      <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week ↗</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week ↗</button>
+        <button class="btn-secondary" style="font-size:10px;padding:5px 10px" id="cal-download-btn" onclick="downloadCal()" style="display:none">Download CSV ↓</button>
+      </div>
     </div>
     <div class="cal-grid" id="cal-grid"><div class="no-data" style="grid-column:1/-1;padding:20px">Click "Generate week" for content ideas.</div></div>
   </div>
@@ -991,7 +1010,7 @@ function switchTab(n,btn){
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='marketing'){checkInstagramStatus();}
   if(n==='inventory'&&!invLoaded)loadInvInsight();
-  if(n==='labor')renderBars();
+  if(n==='labor'){renderBars(); loadLaborTrend();}
   if(n==='account')loadBillingInfo();
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
 }
@@ -1014,6 +1033,7 @@ window.addEventListener('DOMContentLoaded', function() {
   if(id==='labor'&&!laborLoaded){
     loadLaborInsight();
     setTimeout(renderBars, 100);
+    setTimeout(loadLaborTrend, 200);
   }
   if(id==='inventory'&&!invLoaded){loadInvInsight();}
   if(id==='account'){loadBillingInfo();}
@@ -1179,7 +1199,9 @@ function genContent(){
       box.textContent='Content generation unavailable — check back shortly.';
     });
 }
-function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}g.innerHTML=d.ideas.map((i,idx)=>{
+function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}const calDownBtn=document.getElementById('cal-download-btn');
+  if(calDownBtn) calDownBtn.style.display='inline-block';
+  g.innerHTML=d.ideas.map((i,idx)=>{
     window._calIdeas=window._calIdeas||[];
     window._calIdeas[idx]=i;
     return `<div class="cal-card"><div class="cal-day-name">${i.day}</div><div class="cal-platform" style="font-size:10px;color:var(--ink3);margin:2px 0 4px">${i.platform||''}</div><div style="font-size:12px;line-height:1.5">${i.angle||''}</div><button data-idx="${idx}" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;width:100%">Generate →</button></div>`;
@@ -1309,6 +1331,61 @@ window.addEventListener('DOMContentLoaded', function() {
   }
 });
 
+// Mark as posted
+async function markPosted(id) {
+  const res = await fetch('/api/mark-posted/'+id, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) {
+    const actions = document.getElementById('draft-actions-'+id);
+    if (actions) actions.innerHTML = '<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>';
+    document.getElementById('rc-'+id)?.classList.remove('approved');
+    toast('Marked as posted ✓');
+  }
+}
+
+// Export reviews as CSV
+function exportReviews() {
+  window.location = '/api/export-reviews';
+}
+
+// Download content calendar as CSV
+function downloadCal() {
+  const ideas = window._calIdeas;
+  if (!ideas || !ideas.length) { toast('Generate the calendar first'); return; }
+  const rows = [['Day','Platform','Angle','Type']];
+  ideas.forEach(i => rows.push([i.day||'', i.platform||'', i.angle||'', i.type||'']));
+  const csv = rows.map(r => r.map(v => '"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'content_calendar.csv';
+  a.click();
+}
+
+// Labor trend chart
+async function loadLaborTrend() {
+  const res = await fetch('/api/labor-trend');
+  const data = await res.json();
+  if (!data.weeks || !data.weeks.length) return;
+  const container = document.getElementById('labor-trend-bars');
+  const labels    = document.getElementById('labor-trend-labels');
+  if (!container) return;
+  const maxPct = Math.max(...data.weeks.map(w => w.pct), 35);
+  const minPct = Math.max(0, Math.min(...data.weeks.map(w => w.pct)) - 5);
+  const range = maxPct - minPct || 1;
+  const maxH = 72;
+  container.innerHTML = data.weeks.map(w => {
+    const h = Math.max(6, Math.round(((w.pct - minPct) / range) * maxH));
+    const col = w.pct > 32 ? 'var(--red)' : w.pct >= 28 ? '#ef9f27' : '#6fcf97';
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px">
+      <span style="font-size:10px;color:${col};font-weight:600">${w.pct}%</span>
+      <div style="width:80%;height:${h}px;background:${col};border-radius:3px 3px 0 0"></div>
+    </div>`;
+  }).join('');
+  if (labels) labels.innerHTML = data.weeks.map(w =>
+    `<span style="flex:1;text-align:center">${w.label}</span>`
+  ).join('');
+}
+
 function dismissWelcome(){
   const b=document.getElementById('welcome-banner');
   if(b) b.style.display='none';
@@ -1323,29 +1400,6 @@ function changePassword(){
   if(nw.length<8){st.style.display='block';st.style.color='var(--red)';st.textContent='Password must be at least 8 characters';return}
   fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(r=>r.json()).then(d=>{st.style.display='block';if(d.ok){st.style.color='var(--green)';st.textContent='Password updated';document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-confirm').value='';}else{st.style.color='var(--red)';st.textContent=d.error||'Update failed'}})}
 
-
-async function addStaffNote() {
-  const name = document.getElementById('staff-name').value.trim();
-  const notes = document.getElementById('staff-constraint').value.trim();
-  const result = document.getElementById('staff-note-result');
-  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
-  const form = new FormData();
-  form.append('employee_name', name);
-  form.append('notes', notes);
-  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
-  const data = await res.json();
-  if(data.ok) {
-    showResult(result, true, '✓ Constraint saved');
-    setTimeout(() => location.reload(), 1000);
-  } else {
-    showResult(result, false, data.error || 'Save failed');
-  }
-}
-async function deleteNote(noteId) {
-  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
-  const data = await res.json();
-  if(data.ok) location.reload();
-}
 </script>
 </body>
 </html>"""
@@ -1876,29 +1930,6 @@ async function saveSettings() {
   }
   btn.textContent = 'Save all settings'; btn.disabled = false;
 }
-
-async function addStaffNote() {
-  const name = document.getElementById('staff-name').value.trim();
-  const notes = document.getElementById('staff-constraint').value.trim();
-  const result = document.getElementById('staff-note-result');
-  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
-  const form = new FormData();
-  form.append('employee_name', name);
-  form.append('notes', notes);
-  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
-  const data = await res.json();
-  if(data.ok) {
-    showResult(result, true, '✓ Constraint saved');
-    setTimeout(() => location.reload(), 1000);
-  } else {
-    showResult(result, false, data.error || 'Save failed');
-  }
-}
-async function deleteNote(noteId) {
-  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
-  const data = await res.json();
-  if(data.ok) location.reload();
-}
 </script>
 </body>
 </html>"""
@@ -2189,29 +2220,6 @@ function showResult(el, ok, msg) {
   el.style.display = 'block';
   el.className = 'result-msg ' + (ok ? 'result-ok' : 'result-err');
   el.textContent = msg;
-}
-
-async function addStaffNote() {
-  const name = document.getElementById('staff-name').value.trim();
-  const notes = document.getElementById('staff-constraint').value.trim();
-  const result = document.getElementById('staff-note-result');
-  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
-  const form = new FormData();
-  form.append('employee_name', name);
-  form.append('notes', notes);
-  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
-  const data = await res.json();
-  if(data.ok) {
-    showResult(result, true, '✓ Constraint saved');
-    setTimeout(() => location.reload(), 1000);
-  } else {
-    showResult(result, false, data.error || 'Save failed');
-  }
-}
-async function deleteNote(noteId) {
-  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
-  const data = await res.json();
-  if(data.ok) location.reload();
 }
 </script>
 </body>
@@ -4453,6 +4461,87 @@ def post_to_facebook(current_user):
         print(f"FB post failed: {r.text}")
         return jsonify(ok=False, error=err)
     return jsonify(ok=True, post_id=r.json().get("id"))
+
+@app.route("/api/mark-posted/<int:review_id>", methods=["POST"])
+@login_required
+def mark_posted(review_id, current_user):
+    conn = get_conn()
+    conn.execute("UPDATE reviews SET response_status='posted' WHERE id=? AND restaurant_id=?",
+                 (review_id, current_user["restaurant_id"]))
+    conn.commit(); conn.close()
+    return jsonify(ok=True)
+
+@app.route("/api/export-reviews")
+@login_required
+def export_reviews(current_user):
+    import io, csv as _csv
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    reviews = get_reviews_data(current_user["restaurant_id"])
+    buf = io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(["Date","Author","Platform","Rating","Sentiment","Urgency","Review","Draft Response","Status"])
+    for r in reviews:
+        w.writerow([
+            r.get("review_date","")[:10] if r.get("review_date") else "",
+            r.get("author",""),
+            r.get("platform",""),
+            r.get("rating",""),
+            r.get("sentiment",""),
+            r.get("urgency",""),
+            r.get("text",""),
+            r.get("draft_response",""),
+            r.get("response_status",""),
+        ])
+    name = (restaurant.name if restaurant else "restaurant").replace(" ","_")
+    from flask import Response
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment;filename={name}_reviews.csv"}
+    )
+
+@app.route("/api/labor-trend")
+@login_required
+def labor_trend_api(current_user):
+    """Return labor % for the last 4 weeks for trend chart."""
+    try:
+        from labor import load_shifts_for_restaurant
+        from models import get_restaurant
+        restaurant = get_restaurant(current_user["restaurant_id"])
+        target = float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0
+        shifts = load_shifts_for_restaurant(current_user["restaurant_id"])
+        if not shifts:
+            return jsonify(weeks=[])
+
+        from datetime import datetime, timedelta
+        from collections import defaultdict
+
+        # Group shifts into 4 weekly buckets
+        today = datetime.now().date()
+        weeks = []
+        for w in range(3, -1, -1):
+            week_end   = today - timedelta(days=today.weekday()) - timedelta(weeks=w-1)
+            week_start = week_end - timedelta(days=6)
+            sales_total = 0
+            labor_total = 0
+            for s in shifts:
+                try:
+                    d = datetime.strptime(str(s.get("date",""))[:10], "%Y-%m-%d").date()
+                    if week_start <= d <= week_end:
+                        sales_total += float(s.get("sales_that_day") or 0)
+                        hours = float(s.get("actual_hours") or s.get("scheduled_hours") or 0)
+                        rate = float(restaurant.hourly_rate or 26.0) if restaurant else 26.0
+                        labor_total += hours * rate
+                except Exception:
+                    continue
+            pct = round(labor_total / sales_total * 100, 1) if sales_total > 0 else 0
+            label = f"Wk {4-w}"
+            weeks.append({"label": label, "pct": pct, "target": target})
+
+        return jsonify(weeks=weeks)
+    except Exception as e:
+        print(f"Labor trend error: {e}")
+        return jsonify(weeks=[])
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 

@@ -753,6 +753,21 @@ def set_service_tier(restaurant_id: int, tier: str,
     }, db_path)
 
 
+def get_all_restaurants(db_path: str = DB_PATH) -> list:
+    """Get all active restaurant records."""
+    conn = get_conn(db_path)
+    rows = conn.execute(
+        "SELECT * FROM restaurants WHERE id > 0 ORDER BY id"
+    ).fetchall()
+    conn.close()
+    result = []
+    for row in rows:
+        try:
+            result.append(row_to_restaurant(row))
+        except Exception:
+            pass
+    return result
+
 def get_restaurants_for_digest(day: str, db_path: str = DB_PATH) -> list:
     """Get all restaurants scheduled for digest on a given day of week."""
     conn = get_conn(db_path)
