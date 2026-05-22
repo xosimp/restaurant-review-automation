@@ -2283,6 +2283,26 @@ input:focus,select:focus{border-color:var(--ember)}
 </header>
 <div class="container">
 
+  <!-- MRR Stats Bar -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:24px">
+    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Active Clients</div>
+      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:var(--paper)">{{users|selectattr('is_active')|list|length}}</div>
+    </div>
+    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">MRR</div>
+      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:#6fcf97">${{mrr|default(0)|int|format_num}}</div>
+    </div>
+    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Annual Run Rate</div>
+      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:#6fcf97">${{(mrr|default(0)*12)|int|format_num}}</div>
+    </div>
+    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Contracts Signed</div>
+      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:var(--ember)">{{users|selectattr('contract_status','equalto','signed')|list|length}} / {{users|selectattr('is_active')|list|length}}</div>
+    </div>
+  </div>
+
   <div class="section-title">Create new client account</div>
   <div class="card">
     <div class="form-grid">
@@ -2338,26 +2358,6 @@ input:focus,select:focus{border-color:var(--ember)}
     </div>
     <button class="btn btn-primary" style="margin-top:12px" onclick="createClient()">Create client account</button>
     <div class="status-msg" id="create-status"></div>
-  </div>
-
-  <!-- MRR Stats Bar -->
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px">
-    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
-      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Active Clients</div>
-      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:var(--paper)" id="stat-clients">{{users|selectattr('is_active')|list|length}}</div>
-    </div>
-    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
-      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">MRR</div>
-      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:#6fcf97" id="stat-mrr">${{mrr|default(0)|int|format_num}}</div>
-    </div>
-    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
-      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Annual Run Rate</div>
-      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:#6fcf97">${{(mrr|default(0)*12)|int|format_num}}</div>
-    </div>
-    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
-      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Contracts Signed</div>
-      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:var(--ember)">{{users|selectattr('contract_status','equalto','signed')|list|length}} / {{users|selectattr('is_active')|list|length}}</div>
-    </div>
   </div>
 
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
@@ -2643,6 +2643,7 @@ async function deleteNote(noteId) {
 }
 </script>
   <!-- Email Log -->
+  <div style="max-width:900px">
   <div style="display:flex;align-items:center;justify-content:space-between;margin:24px 0 8px">
     <div class="section-title" style="margin-bottom:0">Email log</div>
     <span style="font-size:11px;color:var(--ink3)">Last 50 emails sent</span>
@@ -2673,6 +2674,7 @@ async function deleteNote(noteId) {
       {% endfor %}
       </tbody>
     </table>
+  </div>
   </div>
 </div>
 
