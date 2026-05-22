@@ -2568,7 +2568,7 @@ async function deleteNote(noteId) {
 }
 </script>
   <!-- Email Log -->
-  <div style="max-width:900px;margin:0 auto">
+  <div>
   <div style="display:flex;align-items:center;justify-content:space-between;margin:24px 0 8px">
     <div class="section-title" style="margin-bottom:0">Email log</div>
     <span style="font-size:11px;color:var(--ink3)">Last 50 emails sent</span>
@@ -2581,7 +2581,7 @@ async function deleteNote(noteId) {
       <tr>
         <td style="font-size:11px;color:var(--ink3);white-space:nowrap">
           {% set d=log.sent_at[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}
-          <span style="color:var(--paper3)"> · </span>{{log.sent_at[11:16]}}
+          <span style="color:var(--paper3)"> · </span>{% set hr=log.sent_at[11:13]|int %}{% set mn=log.sent_at[14:16] %}{% set ampm='am' if hr < 12 else 'pm' %}{% set hr12=hr if hr <= 12 else hr-12 %}{% set hr12=12 if hr12==0 else hr12 %}{{hr12}}:{{mn}}{{ampm}}
         </td>
         <td style="font-size:12px">{{log.restaurant_name or '—'}}</td>
         <td>
