@@ -818,3 +818,38 @@ def get_all_location_groups(db_path: str = DB_PATH) -> list:
     ).fetchall()
     conn.close()
     return [r["location_group"] for r in rows]
+
+def get_review_stats(restaurant_id):
+    conn = get_conn()
+    total   = conn.execute("SELECT COUNT(*) FROM reviews WHERE processed=1 AND restaurant_id=?", (restaurant_id,)).fetchone()[0]
+    pos     = conn.execute("SELECT COUNT(*) FROM reviews WHERE sentiment='positive' AND restaurant_id=?", (restaurant_id,)).fetchone()[0]
+    neg     = conn.execute("SELECT COUNT(*) FROM reviews WHERE sentiment='negative' AND restaurant_id=?", (restaurant_id,)).fetchone()[0]
+    neu     = conn.execute("SELECT COUNT(*) FROM reviews WHERE sentiment='neutral' AND restaurant_id=?", (restaurant_id,)).fetchone()[0]
+    urgent  = conn.execute("SELECT COUNT(*) FROM reviews WHERE urgency='high' AND response_status NOT IN ('posted','skipped') AND restaurant_id=?", (restaurant_id,)).fetchone()[0]
+    avg_row = conn.execute("SELECT AVG(rating) FROM reviews WHERE processed=1 AND restaurant_id=?", (restaurant_id,)).fetchone()[0]
+    drafted = conn.execute("SELECT COUNT(*) FROM reviews WHERE response_status='drafted' AND restaurant_id=?", (restaurant_id,)).fetchone()[0]
+    conn.close()
+    return dict(total=total, positive=pos, negative=neg, neutral=neu,
+                urgent=urgent, avg_rating=round(avg_row or 0, 1),
+                awaiting_approval=drafted)
+
+def get_reviews_data(restaurant_id, filter_by="all", search=""):
+    conn = get_conn()
+    where = ["processed=1", f"restaurant_id={restaurant_id}"]
+    if filter_by == "urgent":    where.append("urgency='high'")
+    elif filter_by in ("positive","neutral","negative"): where.append(f"sentiment='{filter_by}'")
+    elif filter_by == "pending": where.append("response_status='drafted'")
+    if search:
+        s = search.replace("'","''")
+        where.append(f"(author LIKE '%{s}%' OR text LIKE '%{s}%')")
+    rows = conn.execute(f"""SELECT * FROM reviews WHERE {' AND '.join(where)}
+        ORDER BY CASE urgency WHEN 'high' THEN 0 ELSE 1 END,
+        CASE sentiment WHEN 'negative' THEN 0 WHEN 'neutral' THEN 1 ELSE 2 END,
+        fetched_at DESC""").fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["categories"] = json.loads(d["categories"] or "[]")
+        result.append(d)
+    return result
