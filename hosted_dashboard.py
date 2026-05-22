@@ -2340,17 +2340,39 @@ input:focus,select:focus{border-color:var(--ember)}
     <div class="status-msg" id="create-status"></div>
   </div>
 
+  <!-- MRR Stats Bar -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px">
+    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Active Clients</div>
+      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:var(--paper)" id="stat-clients">{{users|selectattr('is_active')|list|length}}</div>
+    </div>
+    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">MRR</div>
+      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:#6fcf97" id="stat-mrr">${{mrr|default(0)|int|format_num}}</div>
+    </div>
+    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Annual Run Rate</div>
+      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:#6fcf97">${{(mrr|default(0)*12)|int|format_num}}</div>
+    </div>
+    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Contracts Signed</div>
+      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:var(--ember)">{{users|selectattr('contract_status','equalto','signed')|list|length}} / {{users|selectattr('is_active')|list|length}}</div>
+    </div>
+  </div>
+
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
     <div class="section-title" style="margin-bottom:0">Active client accounts</div>
-    {% if location_groups %}
-    <div style="display:flex;gap:6px;align-items:center">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <input type="text" id="client-search" placeholder="Search clients…" oninput="searchClients(this.value)"
+        style="padding:6px 12px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;width:200px;outline:none">
+      {% if location_groups %}
       <span style="font-size:11px;color:var(--ink3)">Filter:</span>
       <button onclick="filterGroup('')" class="group-filter-btn active" id="filter-all">All</button>
       {% for g in location_groups %}
       <button onclick="filterGroup('{{g}}')" class="group-filter-btn" id="filter-{{g|replace(' ','-')}}">{{g}}</button>
       {% endfor %}
+      {% endif %}
     </div>
-    {% endif %}
   </div>
   <div class="card" style="padding:0;overflow:visible">
     <table class="tbl">
@@ -2359,7 +2381,12 @@ input:focus,select:focus{border-color:var(--ember)}
       {% for user in users %}
       <tr class="client-row" data-group="{{user.location_group or ''}}">
         <td>
-          <strong>{{user.restaurant_name}}</strong>
+          <div style="display:flex;align-items:center;gap:6px">
+            <strong>{{user.restaurant_name}}</strong>
+            {% if user.internal_notes %}
+            <span title="{{user.internal_notes}}" style="cursor:help;font-size:10px;background:var(--amber-bg);color:var(--amber);padding:1px 5px;border-radius:10px;font-weight:500">note</span>
+            {% endif %}
+          </div>
           {% if user.location_group %}
           <div style="font-size:10px;color:var(--ink3);margin-top:1px">
             {{user.location_group}}{% if user.location_name %} · {{user.location_name}}{% endif %}
@@ -2407,6 +2434,7 @@ input:focus,select:focus{border-color:var(--ember)}
             {% if user.is_active %}
             <div class="action-divider"></div>
             <button class="action-item" onclick="resendPayment({{user.restaurant_id}},'{{user.email}}','{{user.billing_status}}');closeMenu({{user.id}})">Resend payment link</button>
+            <button class="action-item" onclick="resendContract({{user.restaurant_id}});closeMenu({{user.id}})">Resend contract</button>
             <button class="action-item" onclick="seedReviews({{user.restaurant_id}});closeMenu({{user.id}})">Seed sample reviews</button>
             <div class="action-divider"></div>
             <button class="action-item action-item-danger" onclick="deactivateClient({{user.id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Deactivate</button>
@@ -2517,6 +2545,28 @@ async function createClient() {
   btn.textContent = 'Create client account'; btn.disabled = false;
   status.style.display = 'block';
 }
+function searchClients(query) {
+  const q = query.toLowerCase();
+  document.querySelectorAll('.client-row').forEach(row => {
+    const text = row.textContent.toLowerCase();
+    row.style.display = (!q || text.includes(q)) ? '' : 'none';
+  });
+}
+
+async function resendContract(restaurantId) {
+  const btn = event.target;
+  btn.textContent = 'Sending…'; btn.disabled = true;
+  const res = await fetch('/admin/resend-contract/' + restaurantId, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) {
+    btn.textContent = '✓ Sent';
+    setTimeout(() => { btn.textContent = 'Resend contract'; btn.disabled = false; }, 3000);
+  } else {
+    btn.textContent = 'Error: ' + (data.error || 'failed');
+    btn.disabled = false;
+  }
+}
+
 async function resendPayment(restaurantId, email, billing) {
   const btn = event.target;
   btn.textContent = 'Sending…'; btn.disabled = true;
@@ -2592,6 +2642,40 @@ async function deleteNote(noteId) {
   if(data.ok) location.reload();
 }
 </script>
+  <!-- Email Log -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin:24px 0 8px">
+    <div class="section-title" style="margin-bottom:0">Email log</div>
+    <span style="font-size:11px;color:var(--ink3)">Last 50 emails sent</span>
+  </div>
+  <div class="card" style="padding:0;overflow:auto;margin-bottom:32px">
+    <table class="tbl">
+      <thead><tr><th>Time</th><th>Client</th><th>Type</th><th>To</th></tr></thead>
+      <tbody>
+      {% for log in email_log %}
+      <tr>
+        <td style="font-size:11px;color:var(--ink3);white-space:nowrap">
+          {% set d=log.sent_at[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}
+          <span style="color:var(--paper3)"> · </span>{{log.sent_at[11:16]}}
+        </td>
+        <td style="font-size:12px">{{log.restaurant_name or '—'}}</td>
+        <td>
+          {% set type_colors = {'welcome':'#2d6a4f','payment':'#b7791f','contract':'#1a56cc','digest':'#7a736a'} %}
+          <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;
+            background:{{'#eaf4ee' if log.email_type=='welcome' else ('#fef9ec' if log.email_type=='payment' else ('#e8f0fe' if log.email_type=='contract' else '#f3f4f6'))}};
+            color:{{type_colors.get(log.email_type,'#6b7280')}}">
+            {{log.email_type|title}}
+          </span>
+        </td>
+        <td style="font-size:12px;color:var(--ink3)">{{log.to_email}}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" style="color:var(--ink3);font-style:italic;padding:16px">No emails logged yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <footer style="background:var(--ink);padding:14px 28px;display:flex;align-items:center;justify-content:space-between">
   <span style="font-size:11px;color:#4a4540">© 2026 Cavnar AI LLC</span>
   <div style="display:flex;gap:16px;align-items:center">
@@ -2827,6 +2911,15 @@ def send_payment_email(to_email, restaurant_name, tier=None,
         })
     except Exception as e:
         print(f"Payment email failed: {e}")
+
+def _log_payment_email(to_email, restaurant_name, module_count):
+    try:
+        from models import log_email as _log_email, get_conn as _get_conn
+        conn = _get_conn()
+        row = conn.execute("SELECT id FROM restaurants WHERE owner_email=? LIMIT 1", (to_email,)).fetchone()
+        conn.close()
+        if row: _log_email(row[0], "payment", to_email, f"Your Cavnar AI payment link — {restaurant_name}")
+    except Exception: pass
 
 def send_welcome_email(to_email, restaurant_name, username, password,
                        module_reviews=0, module_labor=0,
@@ -3069,9 +3162,29 @@ def admin(current_user):
         enriched.append(u)
     from models import get_all_location_groups
     location_groups = get_all_location_groups()
+    # Calculate MRR from active clients
+    mrr = 0
+    for u in enriched:
+        if u.get("is_active") and u.get("billing_status") == "active":
+            r = get_restaurant(u["restaurant_id"])
+            if r:
+                mods = sum([
+                    1 if r.module_reviews else 0,
+                    1 if r.module_labor else 0,
+                    1 if r.module_inventory else 0,
+                    1 if r.module_marketing else 0,
+                ])
+                mrr += mods * 300
+
+    # Get email log
+    from models import get_email_log
+    email_log = get_email_log(limit=50)
+
     return render_template_string(ADMIN_HTML,
         current_user=current_user, users=enriched,
-        location_groups=location_groups)
+        location_groups=location_groups,
+        mrr=mrr,
+        email_log=email_log)
 
 @app.route("/admin/create-client", methods=["POST"])
 @admin_required
@@ -3462,6 +3575,48 @@ def stripe_webhook():
                 print(f"Failed to save Stripe customer ID: {e}")
 
     return jsonify(ok=True)
+
+@app.route("/admin/resend-contract/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def resend_contract(restaurant_id, current_user):
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found")
+    try:
+        mods = sum([
+            1 if restaurant.module_reviews else 0,
+            1 if restaurant.module_labor else 0,
+            1 if restaurant.module_inventory else 0,
+            1 if restaurant.module_marketing else 0,
+        ])
+        module_names = []
+        if restaurant.module_reviews:  module_names.append("Review Intelligence")
+        if restaurant.module_labor:    module_names.append("Labor Optimizer")
+        if restaurant.module_inventory: module_names.append("Inventory Control")
+        if restaurant.module_marketing: module_names.append("Marketing Autopilot")
+        from docusign_helper import send_contract
+        result = send_contract(
+            owner_email=restaurant.owner_email,
+            owner_name=restaurant.owner_name or restaurant.name,
+            restaurant_name=restaurant.name,
+            module_count=mods,
+            modules_list=", ".join(module_names),
+        )
+        envelope_id = result.get("envelope_id")
+        from models import update_restaurant
+        update_restaurant(restaurant_id, {
+            "contract_status": "sent",
+            "docusign_envelope_id": envelope_id,
+        })
+        # Log it
+        try:
+            from models import log_email
+            log_email(restaurant_id, "contract", restaurant.owner_email, f"Service Agreement — {restaurant.name}")
+        except Exception: pass
+        return jsonify(ok=True)
+    except Exception as e:
+        print(f"Resend contract error: {e}")
+        return jsonify(ok=False, error=str(e))
 
 @app.route("/admin/resend-payment/<int:restaurant_id>", methods=["POST"])
 @admin_required
@@ -4296,9 +4451,10 @@ def post_to_facebook(current_user):
 if __name__ == "__main__":
     init_db()
     init_auth()
-    from models import init_staff_notes, ensure_columns
+    from models import init_staff_notes, ensure_columns, init_email_log
     init_staff_notes()
     ensure_columns()
+    init_email_log()
 
     # Start background scheduler for digests and review fetching
     from scheduler import start_scheduler

@@ -591,6 +591,48 @@ CREATE TABLE IF NOT EXISTS staff_notes (
 );
 """
 
+def init_email_log(db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS email_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id INTEGER,
+        email_type TEXT,
+        to_email TEXT,
+        subject TEXT,
+        sent_at TEXT DEFAULT (datetime('now')),
+        status TEXT DEFAULT 'sent'
+    )""")
+    conn.commit()
+    conn.close()
+
+def log_email(restaurant_id, email_type, to_email, subject, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute(
+        "INSERT INTO email_log (restaurant_id, email_type, to_email, subject) VALUES (?,?,?,?)",
+        (restaurant_id, email_type, to_email, subject)
+    )
+    conn.commit()
+    conn.close()
+
+def get_email_log(restaurant_id=None, limit=100, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    if restaurant_id:
+        rows = conn.execute(
+            """SELECT e.*, r.name as restaurant_name FROM email_log e
+               LEFT JOIN restaurants r ON r.id = e.restaurant_id
+               WHERE e.restaurant_id=? ORDER BY e.sent_at DESC LIMIT ?""",
+            (restaurant_id, limit)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT e.*, r.name as restaurant_name FROM email_log e
+               LEFT JOIN restaurants r ON r.id = e.restaurant_id
+               ORDER BY e.sent_at DESC LIMIT ?""",
+            (limit,)
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
 def init_staff_notes(db_path: str = DB_PATH):
     conn = sqlite3.connect(db_path)
     conn.executescript(STAFF_NOTES_SCHEMA)
