@@ -23,6 +23,34 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", os.urandom(32).hex())
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "will")
+
+# ── Login rate limiting ────────────────────────────────────────────────────────
+# Tracks failed login attempts per IP: {ip: [timestamp, timestamp, ...]}
+_login_attempts = {}
+_MAX_ATTEMPTS   = 5      # max failures before lockout
+_LOCKOUT_SECS   = 300    # 5 minute lockout
+
+def _get_client_ip():
+    """Get real client IP, respecting Railway's proxy headers."""
+    return (request.headers.get("X-Forwarded-For","").split(",")[0].strip()
+            or request.remote_addr or "unknown")
+
+def _is_rate_limited(ip):
+    """Return True if IP has exceeded failed login attempts."""
+    import time
+    now = time.time()
+    attempts = _login_attempts.get(ip, [])
+    # Keep only attempts within lockout window
+    recent = [t for t in attempts if now - t < _LOCKOUT_SECS]
+    _login_attempts[ip] = recent
+    return len(recent) >= _MAX_ATTEMPTS
+
+def _record_failed_attempt(ip):
+    import time
+    _login_attempts.setdefault(ip, []).append(time.time())
+
+def _clear_attempts(ip):
+    _login_attempts.pop(ip, None)
 PORT           = int(os.getenv("PORT", 8080))
 RESEND_API_KEY          = os.getenv("RESEND_API_KEY", "")
 FROM_EMAIL              = os.getenv("FROM_EMAIL", "will@cavnar.ai")
@@ -3058,11 +3086,17 @@ def format_num(v):
 @app.route("/login", methods=["GET","POST"])
 def login():
     if request.method == "POST":
+        ip = _get_client_ip()
+        if _is_rate_limited(ip):
+            return render_template_string(LOGIN_HTML,
+                error="Too many failed attempts. Please wait 5 minutes and try again.")
         username = request.form.get("username","").strip()
         password = request.form.get("password","")
         user = verify_password(username, password)
         if not user:
+            _record_failed_attempt(ip)
             return render_template_string(LOGIN_HTML, error="Invalid username or password")
+        _clear_attempts(ip)
         token = create_session(user["id"])
         next_url = request.args.get("next", "/admin" if user["is_admin"] else "/")
         resp = make_response(redirect(next_url))
