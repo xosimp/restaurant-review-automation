@@ -369,7 +369,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <div class="card-hd">
       <div class="avatar" style="background:{{col}}">{{r.author[0].upper()}}</div>
       <div class="card-meta">
-        <div class="card-author">{{r.author}}</div>
+        <div class="card-author">{{r.author|e}}</div>
         <div class="card-sub">
           <span class="stars">{% for i in range(5) %}{{('★' if i<r.rating else '☆')}}{% endfor %}</span>
           <span class="pbadge {{'pg' if r.platform=='google' else 'py'}}">{{r.platform}}</span>
@@ -379,12 +379,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       <span class="schip {{'sp' if r.sentiment=='positive' else ('sn' if r.sentiment=='negative' else 'su')}}">{{r.sentiment or 'neutral'}}</span>
     </div>
     <div class="card-body">
-      <div class="rtext">{{r.text}}</div>
+      <div class="rtext">{{r.text|e}}</div>
       {% if r.categories %}<div class="cats">{% for c in r.categories %}<span class="cat">{{c.replace('_',' ')}}</span>{% endfor %}</div>{% endif %}
       {% if r.draft_response %}
       <div class="draft-box" id="draft-box-{{r.id}}">
         <div class="draft-lbl">Suggested response</div>
-        <div class="draft-txt" id="draft-txt-{{r.id}}">{{r.draft_response}}</div>
+        <div class="draft-txt" id="draft-txt-{{r.id}}">{{r.draft_response|e}}</div>
         <div class="draft-actions" id="draft-actions-{{r.id}}">
           {% if r.response_status=='posted' %}
             <span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>
@@ -403,7 +403,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
         </div>
         <!-- Response editor (hidden by default) -->
         <div class="response-editor" id="editor-{{r.id}}" style="display:none;margin-top:10px">
-          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your own response…">{{r.draft_response}}</textarea>
+          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your own response…">{{r.draft_response|e}}</textarea>
           <div style="display:flex;gap:6px;margin-top:6px">
             <button class="btn btn-approve" onclick="saveDraft({{r.id}})">Save & approve</button>
             <button class="btn btn-skip" onclick="regenDraft({{r.id}})">↻ Regenerate AI draft</button>
