@@ -1075,7 +1075,7 @@ function loadLaborInsight(){
   laborLoaded=true;
   fetch('/api/labor-insight').then(r=>r.json()).then(d=>{
     const elLaborInsight=document.getElementById('labor-insight');
-    elLaborInsight.textContent=d.insight||'Analysis unavailable — check back shortly.';
+    elLaborInsight.innerHTML=d.insight||'Analysis unavailable.';
     elLaborInsight.classList.remove('insight-loading');
   }).catch(e=>{
     const elLaborErr=document.getElementById('labor-insight');
@@ -1141,7 +1141,7 @@ function loadInvInsight(){
   invLoaded=true;
   fetch('/api/inv-insight').then(r=>r.json()).then(d=>{
     const elInvInsight=document.getElementById('inv-insight');
-    elInvInsight.textContent=d.insight||'Analysis unavailable — check back shortly.';
+    elInvInsight.innerHTML=d.insight||'Analysis unavailable.';
     elInvInsight.classList.remove('insight-loading');
   }).catch(e=>{
     const elInvErr=document.getElementById('inv-insight');
@@ -2824,6 +2824,30 @@ def skip(rid, current_user):
     conn.commit(); conn.close()
     return jsonify(ok=True)
 
+def format_insight_html(text):
+    import re as _re
+    if not text:
+        return 'Analysis unavailable.'
+    parts = _re.split(r'(?i)recommendations?:', text, maxsplit=1)
+    if len(parts) < 2:
+        return '<p style="margin:0;line-height:1.7">' + text + '</p>'
+    intro = parts[0].strip()
+    recs_raw = parts[1].strip()
+    recs = [r.strip() for r in _re.split(r'\n+', recs_raw) if r.strip()]
+    html = ''
+    if intro:
+        html += '<p style="margin:0 0 10px 0;line-height:1.7">' + intro + '</p>'
+    html += '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c84b2f;margin-bottom:8px">Recommendations</div>'
+    for i, rec in enumerate(recs, 1):
+        clean = _re.sub(r'^[\d.\-*]+\s*', '', rec).strip()
+        if not clean:
+            continue
+        html += ('<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">'
+            '<span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:#c84b2f;color:white;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">'
+            + str(i) +
+            '</span><span style="line-height:1.6;color:#3a3530">' + clean + '</span></div>')
+    return html
+
 @app.route("/api/labor-insight")
 @login_required
 def labor_insight_api(current_user):
@@ -2835,7 +2859,7 @@ def labor_insight_api(current_user):
         owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
         analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
         insight = get_claude_insights(analysis, restaurant_name=name, owner_name=owner)
-        return jsonify(insight=insight)
+        return jsonify(insight=format_insight_html(insight))
     except Exception as e:
         import traceback; traceback.print_exc()
         return jsonify(insight=f"Unable to load analysis. Error: {str(e)[:100]}")
@@ -2849,7 +2873,7 @@ def inv_insight_api(current_user):
     analysis = analyse_inventory(items)
     owner_name = restaurant.owner_name if restaurant else None
     insight  = get_claude_insights(analysis, owner_name=owner_name, restaurant_name=restaurant.name if restaurant else None)
-    return jsonify(insight=insight)
+    return jsonify(insight=format_insight_html(insight))
 
 @app.route("/api/generate-content", methods=["POST"])
 @login_required
