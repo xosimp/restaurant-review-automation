@@ -222,16 +222,19 @@ Data:
 - Labor % by day of week: {json.dumps(analysis['dow_summary'])}
 - Estimated monthly savings with optimized scheduling: ${analysis['potential_savings']:,.0f}
 
-Write a short, warm, and direct consultant note (3-5 paragraphs) that:
-1. Opens with "{greeting}" then gives the honest overall picture — good or bad — with the key number
-2. Calls out 1-2 specific problem areas with actual dates and dollars, but frames them as opportunities not failures
-3. Gives 2-3 concrete, actionable scheduling suggestions the owner can use this week
-4. Closes on an encouraging note with the savings opportunity
+Write a short consultant note structured exactly like this:
+
+Opening paragraph: Start with "{greeting}" then give the honest overall picture with the key number. Call out 1-2 specific problem areas with actual dates and dollars, framed as opportunities.
+
+Recommendations:
+1. [First concrete actionable scheduling suggestion for this week]
+2. [Second concrete actionable scheduling suggestion]
+3. [Third concrete actionable suggestion with the savings opportunity]
 
 Tone: warm, direct, and human — like a trusted advisor who knows the restaurant business.
 Use the owner's name naturally once or twice. Be specific with numbers.
-Do NOT use markdown, asterisks, bold formatting, bullet points, or headers.
-Write in plain paragraphs only. No special characters."""
+Do NOT use markdown, asterisks, bold formatting, or special characters.
+The Recommendations section must start with exactly the word "Recommendations:" on its own line."""
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),

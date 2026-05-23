@@ -2828,24 +2828,46 @@ def format_insight_html(text):
     import re as _re
     if not text:
         return 'Analysis unavailable.'
+    # Try splitting on explicit Recommendations: heading first
     parts = _re.split(r'(?i)recommendations?:', text, maxsplit=1)
-    if len(parts) < 2:
-        return '<p style="margin:0;line-height:1.7">' + text + '</p>'
-    intro = parts[0].strip()
-    recs_raw = parts[1].strip()
-    recs = [r.strip() for r in _re.split(r'\n+', recs_raw) if r.strip()]
+    if len(parts) == 2:
+        intro = parts[0].strip()
+        recs_raw = parts[1].strip()
+        recs = [r.strip() for r in _re.split(r'\n+', recs_raw) if r.strip()]
+    else:
+        # Look for lines that start with 1. 2. 3. or are standalone short sentences after a paragraph
+        lines = text.strip().split('\n')
+        para_lines = []
+        rec_lines = []
+        in_recs = False
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            if _re.match(r'^[123][\.\)]\s+', line):
+                in_recs = True
+            if in_recs:
+                rec_lines.append(line)
+            else:
+                para_lines.append(line)
+        if not rec_lines:
+            return '<p style="margin:0;line-height:1.7">' + text + '</p>'
+        intro = ' '.join(para_lines).strip()
+        recs = rec_lines
     html = ''
     if intro:
         html += '<p style="margin:0 0 10px 0;line-height:1.7">' + intro + '</p>'
     html += '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c84b2f;margin-bottom:8px">Recommendations</div>'
-    for i, rec in enumerate(recs, 1):
-        clean = _re.sub(r'^[\d.\-*]+\s*', '', rec).strip()
+    num = 1
+    for rec in recs:
+        clean = _re.sub(r'^[\d.\-)]+\s*', '', rec).strip()
         if not clean:
             continue
         html += ('<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">'
             '<span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:#c84b2f;color:white;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">'
-            + str(i) +
+            + str(num) +
             '</span><span style="line-height:1.6;color:#3a3530">' + clean + '</span></div>')
+        num += 1
     return html
 
 @app.route("/api/labor-insight")
