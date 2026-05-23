@@ -1071,33 +1071,11 @@ function renderBars(){
   }).join('');
 }
 let laborLoaded=false,invLoaded=false;
-
-function formatInsight(text) {
-  if (!text) return 'Analysis unavailable — check back shortly.';
-  // Split on Recommendations section
-  const parts = text.split(/recommendations?:/i);
-  if (parts.length < 2) return '<p style="margin:0;line-height:1.7">' + text + '</p>';
-  const intro = parts[0].trim();
-  const recsRaw = parts[1].trim();
-  // Split recs by newline or numbered pattern
-  const recs = recsRaw.split(/\n+/).filter(r => r.trim().length > 0);
-  let html = intro ? '<p style="margin:0 0 10px 0;line-height:1.7">' + intro + '</p>' : '';
-  html += '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ember);margin-bottom:8px">Recommendations</div>';
-  recs.forEach((rec, i) => {
-    const clean = rec.replace(/^[\d\.\-\*]+\s*/, '').trim();
-    if (!clean) return;
-    html += '<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">' +
-      '<span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:var(--ember);color:white;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">' + (i+1) + '</span>' +
-      '<span style="line-height:1.6;color:var(--ink)">' + clean + '</span>' +
-    '</div>';
-  });
-  return html;
-}
 function loadLaborInsight(){
   laborLoaded=true;
   fetch('/api/labor-insight').then(r=>r.json()).then(d=>{
     const elLaborInsight=document.getElementById('labor-insight');
-    elLaborInsight.innerHTML=formatInsight(d.insight);
+    elLaborInsight.textContent=d.insight||'Analysis unavailable — check back shortly.';
     elLaborInsight.classList.remove('insight-loading');
   }).catch(e=>{
     const elLaborErr=document.getElementById('labor-insight');
@@ -1163,7 +1141,7 @@ function loadInvInsight(){
   invLoaded=true;
   fetch('/api/inv-insight').then(r=>r.json()).then(d=>{
     const elInvInsight=document.getElementById('inv-insight');
-    elInvInsight.innerHTML=formatInsight(d.insight);
+    elInvInsight.textContent=d.insight||'Analysis unavailable — check back shortly.';
     elInvInsight.classList.remove('insight-loading');
   }).catch(e=>{
     const elInvErr=document.getElementById('inv-insight');
