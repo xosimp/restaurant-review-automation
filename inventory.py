@@ -154,7 +154,7 @@ First, write one paragraph of 3-4 sentences:
 Then, on new lines after the paragraph, write 1-3 recommendations:
 - Only include recommendations where there is a genuine, specific opportunity — do not pad to three if the data does not support it
 - Maximum of three, minimum of one, ranked by dollar impact (highest first)
-- Each as its own sentence on its own line
+- Number each one: start with "1. ", "2. ", "3. " 
 - Each must directly save money this week or next week with an estimated dollar amount
 - Specific to the actual items in the data — never generic advice
 - Never suggest anything that hurts guest experience, reduces quality, or cuts portions
