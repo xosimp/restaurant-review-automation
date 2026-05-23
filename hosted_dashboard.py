@@ -2866,7 +2866,7 @@ def format_insight_html(text):
         html += ('<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">'
             '<span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:#c84b2f;color:white;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">'
             + str(num) +
-            '</span><span style="line-height:1.6;color:#3a3530">' + clean + '</span></div>')
+            '</span><span style="line-height:1.6;color:#b7791f;font-weight:500">' + clean + '</span></div>')
         num += 1
     return html
 
