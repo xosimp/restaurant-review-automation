@@ -1145,12 +1145,25 @@ def labor_trend_api(current_user):
         from datetime import datetime, timedelta
         from collections import defaultdict
 
-        # Group shifts into 4 weekly buckets
-        today = datetime.now().date()
+        # Find the latest date in the data and work backwards 4 weeks
+        dates = []
+        for s in shifts:
+            try:
+                d = datetime.strptime(str(s.get("date",""))[:10], "%Y-%m-%d").date()
+                dates.append(d)
+            except Exception:
+                continue
+        if not dates:
+            return jsonify(weeks=[])
+
+        latest = max(dates)
+        # Align to Monday of latest week
+        latest_monday = latest - timedelta(days=latest.weekday())
+
         weeks = []
         for w in range(3, -1, -1):
-            week_end   = today - timedelta(days=today.weekday()) - timedelta(weeks=w-1)
-            week_start = week_end - timedelta(days=6)
+            week_start = latest_monday - timedelta(weeks=w)
+            week_end   = week_start + timedelta(days=6)
             sales_total = 0
             labor_total = 0
             for s in shifts:
