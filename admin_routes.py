@@ -1166,11 +1166,15 @@ def labor_trend_api(current_user):
             week_end   = week_start + timedelta(days=6)
             sales_total = 0
             labor_total = 0
+            seen_dates = set()
             for s in shifts:
                 try:
                     d = datetime.strptime(str(s.get("date",""))[:10], "%Y-%m-%d").date()
                     if week_start <= d <= week_end:
-                        sales_total += float(s.get("sales_that_day") or 0)
+                        # Only count sales once per date
+                        if d not in seen_dates:
+                            sales_total += float(s.get("sales_that_day") or 0)
+                            seen_dates.add(d)
                         hours = float(s.get("actual_hours") or s.get("scheduled_hours") or 0)
                         rate = float(restaurant.hourly_rate or 26.0) if restaurant else 26.0
                         labor_total += hours * rate
