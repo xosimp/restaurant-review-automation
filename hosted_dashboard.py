@@ -1014,7 +1014,7 @@ function switchTab(n,btn){
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
 
   if(n==='inventory'&&!invLoaded)loadInvInsight();
-  if(n==='labor'){renderBars();}
+  if(n==='labor'){renderBars();loadLaborTrend();}
   if(n==='account')loadBillingInfo();
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
 }
