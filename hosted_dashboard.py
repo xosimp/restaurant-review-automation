@@ -1249,6 +1249,36 @@ const _origSwitchTab = switchTab;
 
 
 
+function loadLaborTrend(){
+  var container=document.getElementById('labor-trend-bars');
+  var labels=document.getElementById('labor-trend-labels');
+  if(!container)return;
+  fetch('/api/labor-trend').then(function(r){return r.json();}).then(function(data){
+    if(!data.weeks||!data.weeks.length){
+      container.innerHTML='<div style="color:var(--ink3);font-size:12px;font-style:italic">No shift data available yet.</div>';
+      return;
+    }
+    var maxPct=0;
+    for(var i=0;i<data.weeks.length;i++){if(data.weeks[i].pct>maxPct)maxPct=data.weeks[i].pct;}
+    maxPct=Math.max(maxPct,35);
+    var html='';
+    var lblHtml='';
+    for(var i=0;i<data.weeks.length;i++){
+      var w=data.weeks[i];
+      var h=Math.max(6,Math.round((w.pct/maxPct)*72));
+      var col=w.pct>32?'var(--red)':w.pct>=28?'#ef9f27':'#6fcf97';
+      html+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px">';
+      html+='<span style="font-size:10px;color:'+col+';font-weight:600">'+w.pct+'%</span>';
+      html+='<div style="width:80%;height:'+h+'px;background:'+col+';border-radius:3px 3px 0 0"></div>';
+      html+='</div>';
+      lblHtml+='<span style="flex:1;text-align:center">'+w.label+'</span>';
+    }
+    container.innerHTML=html;
+    if(labels)labels.innerHTML=lblHtml;
+  }).catch(function(){
+    container.innerHTML='<div style="color:var(--ink3);font-size:12px;font-style:italic">Trend data unavailable.</div>';
+  });
+}
 function dismissWelcome(){
   const b=document.getElementById('welcome-banner');
   if(b) b.style.display='none';
