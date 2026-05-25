@@ -227,16 +227,13 @@ Write a short consultant note structured exactly like this:
 Opening paragraph: Start with "{greeting}" then give the honest overall picture with the key number. Call out 1-2 specific problem areas with actual dates and dollars, framed as opportunities.
 
 Recommendations:
-1. [First concrete actionable scheduling suggestion for this week]
-2. [Second concrete actionable scheduling suggestion]
-3. [Third concrete actionable suggestion with the savings opportunity]
+1. [First concrete actionable scheduling suggestion for this week — one sentence]
+2. [Second concrete actionable scheduling suggestion — one sentence]
+3. [Third actionable suggestion. End this recommendation with one short warm closing sentence on the same line, separated by a space. Do not add a 4th item.]
 
-Then on a new line with NO number, write one short warm closing sentence tied to the week.
-
-Tone: warm, direct, and human — like a trusted advisor who knows the restaurant business.
-Use the owner's name naturally once or twice. Be specific with numbers.
-Do NOT use markdown, asterisks, bold formatting, or special characters.
-Do NOT number the closing sentence.
+Tone: warm, direct, human. Use the owner name once or twice. Be specific with numbers.
+Do NOT use markdown, asterisks, bold, or special characters.
+There must be EXACTLY 3 numbered recommendations and nothing after number 3.
 The Recommendations section must start with exactly the word "Recommendations:" on its own line."""
 
     msg = client.messages.create(
