@@ -2846,8 +2846,13 @@ def format_insight_html(text):
                 continue
             if _re.match(r'^[123][\.\)]\s+', line):
                 in_recs = True
-            if in_recs:
                 rec_lines.append(line)
+            elif in_recs and _re.match(r'^[0-9][\.\)]\s+', line):
+                rec_lines.append(line)
+            elif in_recs:
+                # Stop - closing sentence or non-numbered line after recs
+                in_recs = False
+                para_lines.append(line)
             else:
                 para_lines.append(line)
         if not rec_lines:
