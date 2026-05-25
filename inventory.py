@@ -161,9 +161,10 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
 - Focus on ordering frequency, quantity reductions, or par level adjustments
 - Do not use the owner name anywhere in the recommendations
 
-Finally, on a new line, write one short warm closing sentence:
+Finally, on a new line with NO number, write one short warm closing sentence:
 - Tied loosely to how the week looks — good week gets a small celebration, rough week gets encouragement
-- Never generic filler, no more than one sentence"""
+- Never generic filler, no more than one sentence
+- Do NOT start it with a number"""
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),

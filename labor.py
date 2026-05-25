@@ -231,9 +231,12 @@ Recommendations:
 2. [Second concrete actionable scheduling suggestion]
 3. [Third concrete actionable suggestion with the savings opportunity]
 
+Then on a new line with NO number, write one short warm closing sentence tied to the week.
+
 Tone: warm, direct, and human — like a trusted advisor who knows the restaurant business.
 Use the owner's name naturally once or twice. Be specific with numbers.
 Do NOT use markdown, asterisks, bold formatting, or special characters.
+Do NOT number the closing sentence.
 The Recommendations section must start with exactly the word "Recommendations:" on its own line."""
 
     msg = client.messages.create(
