@@ -614,10 +614,13 @@ def init_email_log(db_path: str = DB_PATH):
     conn.close()
 
 def log_email(restaurant_id, email_type, to_email, subject, db_path: str = DB_PATH):
+    from datetime import datetime, timezone, timedelta
+    # Store in US/Chicago time (UTC-5 standard, UTC-6 daylight — use local system time)
+    local_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn(db_path)
     conn.execute(
-        "INSERT INTO email_log (restaurant_id, email_type, to_email, subject) VALUES (?,?,?,?)",
-        (restaurant_id, email_type, to_email, subject)
+        "INSERT INTO email_log (restaurant_id, email_type, to_email, subject, sent_at) VALUES (?,?,?,?,?)",
+        (restaurant_id, email_type, to_email, subject, local_now)
     )
     conn.commit()
     conn.close()

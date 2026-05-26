@@ -1213,6 +1213,9 @@ def test_digest(restaurant_id, current_user):
             "subject": f"[TEST] Your weekly review digest — {restaurant.name}",
             "html": html,
         })
+        try:
+            log_email(restaurant_id, "digest", owner_email, f"[TEST] Weekly digest — {restaurant.name}")
+        except Exception: pass
         return jsonify(ok=True, email=owner_email)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
