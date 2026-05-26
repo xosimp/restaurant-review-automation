@@ -1454,39 +1454,6 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
-  <!-- Marketing profile -->
-  <div class="section-card">
-    <div class="section-hdr"><div class="section-title">Marketing profile</div></div>
-    <div class="section-body">
-      <div class="form-grid">
-        <div class="form-group">
-          <label>Neighborhood</label>
-          <input type="text" id="neighborhood" value="{{ restaurant.neighborhood or '' }}" placeholder="Lincoln Park, Chicago">
-        </div>
-        <div class="form-group">
-          <label>Known for</label>
-          <input type="text" id="known_for" value="{{ restaurant.known_for or '' }}" placeholder="short rib pasta, brunch, craft cocktails">
-          <div class="hint">Comma-separated list of signature items</div>
-        </div>
-        <div class="form-group full">
-          <label>Restaurant vibe</label>
-          <input type="text" id="vibe" value="{{ restaurant.vibe or '' }}" placeholder="warm neighborhood bistro, serious about food without being precious">
-          <div class="hint">How you'd describe the restaurant's personality in one sentence</div>
-        </div>
-        <div class="form-group full">
-          <label>Brand voice / tone notes</label>
-          <textarea id="voice_notes" placeholder="e.g. Warm and genuine, a little witty, never corporate. Always invite guests back. Never sound like a PR firm.">{{ restaurant.voice_notes or '' }}</textarea>
-          <div class="hint">Claude uses this to write review responses and marketing content in the owner's voice</div>
-        </div>
-        <div class="form-group full">
-          <label>Never use these words or phrases</label>
-          <input type="text" id="never_say" value="{{ restaurant.never_say or '' }}" placeholder="e.g. culinary journey, indulge, we strive to, it is our goal">
-          <div class="hint">Comma-separated — Claude will avoid these in all generated content</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- Labor settings -->
   <div class="section-card">
     <div class="section-hdr"><div class="section-title">Labor settings</div></div>
