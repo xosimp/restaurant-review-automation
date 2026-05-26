@@ -1279,6 +1279,7 @@ function loadLaborTrend(){
     container.innerHTML='<div style="color:var(--ink3);font-size:12px;font-style:italic">Trend data unavailable.</div>';
   });
 }
+function exportReviews(){window.location='/api/export-reviews';}
 function dismissWelcome(){
   const b=document.getElementById('welcome-banner');
   if(b) b.style.display='none';
