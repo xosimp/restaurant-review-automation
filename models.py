@@ -615,8 +615,14 @@ def init_email_log(db_path: str = DB_PATH):
 
 def log_email(restaurant_id, email_type, to_email, subject, db_path: str = DB_PATH):
     from datetime import datetime, timezone, timedelta
-    # Store in US/Chicago time (UTC-5 standard, UTC-6 daylight — use local system time)
-    local_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Convert UTC to US/Chicago time
+    try:
+        import zoneinfo
+        chicago = zoneinfo.ZoneInfo("America/Chicago")
+        local_now = datetime.now(timezone.utc).astimezone(chicago).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        # Fallback: manual UTC-5 offset
+        local_now = (datetime.now(timezone.utc) - timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn(db_path)
     conn.execute(
         "INSERT INTO email_log (restaurant_id, email_type, to_email, subject, sent_at) VALUES (?,?,?,?,?)",
