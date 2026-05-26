@@ -934,7 +934,6 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     </div>
   </div>
 
-  <--demo Cancel subscription -->
   <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:14px">
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Cancel subscription</div>
     <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">No cancellation fees. Cancel before your next billing date to avoid the next charge.</p>
