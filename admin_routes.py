@@ -546,6 +546,9 @@ def resend_payment(restaurant_id, current_user):
             restaurant_name=restaurant.name,
             module_count=mods,
         )
+        try:
+            log_email(restaurant_id, "payment", restaurant.owner_email, f"Payment link — {restaurant.name}")
+        except Exception: pass
         return jsonify(ok=True)
     except Exception as e:
         print(f"Resend payment error: {e}")
