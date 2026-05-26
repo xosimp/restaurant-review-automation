@@ -189,3 +189,97 @@ def send_welcome_email(to_email, restaurant_name, username, password,
     })
 
 # ── Routes ────────────────────────────────────────────────────────────────────
+
+def create_stripe_checkout(module_count: int, owner_email: str,
+                            restaurant_name: str,
+                            billing_period: str = "monthly"):
+    """
+    Dynamically create a Stripe checkout session for any module count.
+    Returns the checkout URL or None on failure.
+    Pricing:
+      Monthly: $500/module setup (one-time) + $300/mo/module retainer (30-day trial).
+      Annual:  $500/module setup (one-time) + $3,000/yr/module retainer (30-day trial).
+    """
+    import stripe as _stripe
+    stripe_key = os.getenv("STRIPE_SECRET_KEY", "")
+    if not stripe_key:
+        print("[STRIPE ERROR] STRIPE_SECRET_KEY not set in environment")
+        return None
+    if module_count == 0:
+        return None
+
+    _stripe.api_key = stripe_key
+    setup_amount = module_count * 500 * 100   # in cents (same for both plans)
+    # Annual = $3,000/module/yr (equivalent to $250/mo — 2 months free)
+    # Monthly = $300/module/mo
+    if billing_period == "annual":
+        retainer_amount   = module_count * 3000 * 100  # annual in cents
+        retainer_interval = "year"
+        trial_days        = 30
+    else:
+        retainer_amount   = module_count * 300 * 100   # monthly in cents
+        retainer_interval = "month"
+        trial_days        = 30
+
+    try:
+        # Ensure products exist (create once, reuse by name)
+        def get_or_create_price(product_name, unit_amount, recurring=False, interval="month"):
+            # Search for existing product
+            products = _stripe.Product.search(query=f'name:"{product_name}"', limit=1)
+            if products.data:
+                product_id = products.data[0].id
+            else:
+                product_id = _stripe.Product.create(name=product_name).id
+
+            # Create a fresh price each time (amount may vary)
+            kwargs = dict(
+                product=product_id,
+                unit_amount=unit_amount,
+                currency="usd",
+            )
+            if recurring:
+                kwargs["recurring"] = {"interval": interval}
+            return _stripe.Price.create(**kwargs).id
+
+        period_label = "Annual" if billing_period == "annual" else "Monthly"
+        setup_price_id   = get_or_create_price(
+            f"Cavnar AI Setup — {module_count} Module{'s' if module_count>1 else ''}",
+            setup_amount
+        )
+        retainer_price_id = get_or_create_price(
+            f"Cavnar AI Retainer {period_label} — {module_count} Module{'s' if module_count>1 else ''}",
+            retainer_amount,
+            recurring=True,
+            interval=retainer_interval
+        )
+
+        session = _stripe.checkout.Session.create(
+            customer_email=owner_email,
+            payment_method_types=["card"],
+            line_items=[
+                {"price": setup_price_id,    "quantity": 1},
+                {"price": retainer_price_id, "quantity": 1},
+            ],
+            mode="subscription",
+            subscription_data={
+                "trial_period_days": trial_days,
+                "metadata": {
+                    "restaurant": restaurant_name,
+                    "modules": str(module_count),
+                    "billing_period": billing_period,
+                }
+            },
+            success_url="https://dashboard.cavnar.ai?payment=success",
+            cancel_url="https://dashboard.cavnar.ai?payment=cancelled",
+            custom_text={
+                "submit": {"message": f"Pay ${module_count*500} setup today. ${module_count*300}/mo starts in 30 days."}
+            },
+            metadata={"restaurant": restaurant_name, "modules": str(module_count)},
+        )
+        return session.url
+
+    except Exception as e:
+        import traceback
+        print(f"[STRIPE ERROR] Checkout creation failed for {restaurant_name}: {e}")
+        traceback.print_exc()
+        return None
