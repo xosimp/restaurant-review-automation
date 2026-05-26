@@ -54,16 +54,6 @@ def _review_card(r) -> str:
         f'<span style="color:#374151">{r.draft_response}</span></div>'
     ) if r.draft_response else ""
 
-    ai_summary = generate_ai_digest_summary(report, restaurant_name, owner_name)
-    if ai_summary:
-        ai_summary_block = (
-            '<div style="background:linear-gradient(135deg,#1a1410,#2a1f1a);border-radius:8px;padding:16px 20px;margin-bottom:20px">' +
-            '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#c84b2f;margin-bottom:8px">Cavnar AI Consultant</div>' +
-            '<p style="font-size:14px;color:#f0ebe0;line-height:1.7;margin:0">' + ai_summary + '</p></div>'
-        )
-    else:
-        ai_summary_block = ''
-
     return f"""
 <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin:8px 0">
   {urgency_banner}
@@ -133,6 +123,16 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
         f'font-size:12px;margin-right:6px">{cat.replace("_"," ")} ({n})</span>'
         for cat, n in report.top_issues
     ) if report.top_issues else "<em>—</em>"
+
+    ai_summary = generate_ai_digest_summary(report, restaurant_name, owner_name)
+    if ai_summary:
+        ai_summary_block = (
+            '<div style="background:linear-gradient(135deg,#1a1410,#2a1f1a);border-radius:8px;padding:16px 20px;margin-bottom:20px">' +
+            '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#c84b2f;margin-bottom:8px">Cavnar AI Consultant</div>' +
+            '<p style="font-size:14px;color:#f0ebe0;line-height:1.7;margin:0">' + ai_summary + '</p></div>'
+        )
+    else:
+        ai_summary_block = ''
 
     return f"""
 <html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
