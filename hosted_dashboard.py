@@ -936,6 +936,25 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
         </a>
       </div>
 
+      <!-- Refer a restaurant -->
+      <div class="slabel">Refer a restaurant</div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
+        <div style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
+          Know another restaurant owner who could use this? Send them an intro. If they sign up, you get <strong>one free month ($300 credit)</strong> applied to your next invoice.
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;gap:8px">
+            <input type="text" id="referral-name" placeholder="Restaurant name" style="flex:1;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none">
+            <input type="email" id="referral-email" placeholder="Owner email" style="flex:1;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none">
+          </div>
+          <textarea id="referral-note" rows="2" placeholder="Optional note — e.g. Hey Sarah, I use this for my restaurant and it saves me hours every week." style="padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none;resize:vertical"></textarea>
+          <div style="display:flex;align-items:center;gap:10px">
+            <button onclick="sendReferral()" style="background:var(--ember);color:white;border:none;padding:8px 18px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer">Send referral</button>
+            <span id="referral-status" style="font-size:12px;display:none"></span>
+          </div>
+        </div>
+      </div>
+
       <!-- Cancellation — always visible -->
       <div class="slabel">Cancel subscription</div>
       <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
@@ -1280,6 +1299,24 @@ function loadLaborTrend(){
   });
 }
 function exportReviews(){window.location='/api/export-reviews';}
+async function sendReferral(){
+  var name = document.getElementById('referral-name').value.trim();
+  var email = document.getElementById('referral-email').value.trim();
+  var note = document.getElementById('referral-note').value.trim();
+  var status = document.getElementById('referral-status');
+  if(!name || !email){status.style.display='inline';status.style.color='var(--red)';status.textContent='Enter restaurant name and email';return;}
+  status.style.display='inline';status.style.color='var(--ink3)';status.textContent='Sending…';
+  var res = await fetch('/api/send-referral',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,email:email,note:note})});
+  var data = await res.json();
+  if(data.ok){
+    status.style.color='var(--green)';status.textContent='Referral sent!';
+    document.getElementById('referral-name').value='';
+    document.getElementById('referral-email').value='';
+    document.getElementById('referral-note').value='';
+  } else {
+    status.style.color='var(--red)';status.textContent=data.error||'Failed to send';
+  }
+}
 function dismissWelcome(){
   const b=document.getElementById('welcome-banner');
   if(b) b.style.display='none';

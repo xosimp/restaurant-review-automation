@@ -1288,3 +1288,51 @@ def refresh_ig_token(restaurant_id, current_user):
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
+
+@admin_bp.route("/api/send-referral", methods=["POST"])
+@login_required
+def send_referral(current_user):
+    import resend as _resend
+    data = request.get_json()
+    ref_name  = data.get("name","").strip()
+    ref_email = data.get("email","").strip()
+    note      = data.get("note","").strip()
+    if not ref_name or not ref_email:
+        return jsonify(ok=False, error="Name and email required")
+    try:
+        restaurant = get_restaurant(current_user["restaurant_id"])
+        referrer   = restaurant.name if restaurant else "A Cavnar AI client"
+        owner_name = restaurant.owner_name or "Your colleague"
+        note_block = f"<p style=\"margin:0 0 16px 0;font-style:italic;color:#4a4540\">\"{note}\"</p>" if note else ""
+        html = f"""
+<div style="font-family:-apple-system,sans-serif;max-width:540px;margin:0 auto;padding:32px 24px;background:#fdf8f4">
+  <div style="font-family:'Georgia',serif;font-size:22px;color:#0e0c0a;margin-bottom:4px">Cavnar <span style="color:#c84b2f;font-style:italic">AI</span></div>
+  <div style="font-size:10px;color:#7a736a;letter-spacing:.1em;text-transform:uppercase;margin-bottom:24px">Restaurant Intelligence</div>
+  <p style="margin:0 0 16px 0;font-size:15px;color:#0e0c0a;line-height:1.7">Hi — {owner_name} from {referrer} thought you might find this useful.</p>
+  {note_block}
+  <p style="margin:0 0 16px 0;font-size:14px;color:#3a3530;line-height:1.7">Cavnar AI is a fully managed dashboard that handles the operational side of running a restaurant — review responses, labor cost analysis, inventory tracking, and marketing content. It runs quietly in the background and takes about 30 minutes a week of your time.</p>
+  <p style="margin:0 0 24px 0;font-size:14px;color:#3a3530;line-height:1.7">If you want to see what it looks like for your restaurant, book a free 30-minute call below.</p>
+  <a href="https://calendly.com/will-cavnar/30min" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:4px;text-decoration:none;font-size:13px;font-weight:600">Book a free call</a>
+  <p style="margin:24px 0 0 0;font-size:12px;color:#7a736a">Will Cavnar · Cavnar AI · <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a></p>
+</div>"""
+        _resend.api_key = RESEND_API_KEY
+        _resend.Emails.send({
+            "from": f"Will Cavnar <{FROM_EMAIL}>",
+            "to": [ref_email],
+            "subject": f"{owner_name} thinks you should check out Cavnar AI",
+            "html": html,
+        })
+        # Notify Will
+        _resend.Emails.send({
+            "from": f"Cavnar AI <{FROM_EMAIL}>",
+            "to": [FROM_EMAIL],
+            "subject": f"New referral from {referrer} — {ref_name}",
+            "html": f"<p>{referrer} referred {ref_name} ({ref_email}).</p><p>Note: {note or 'none'}</p>",
+        })
+        try:
+            log_email(current_user["restaurant_id"], "referral", ref_email, f"Referral to {ref_name}")
+        except Exception: pass
+        return jsonify(ok=True)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
