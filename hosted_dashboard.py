@@ -742,7 +742,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
   <!-- Your consultant -->
   <div class="slabel">Your consultant</div>
   <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:20px;display:flex;align-items:center;gap:16px">
-    <img src="/static/will.png" style="width:48px;height:48px;border-radius:50%;object-fit:cover;flex-shrink:0">
+    <div style="width:52px;height:52px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 3px #c84b2f33,0 0 16px 4px #c84b2f22;overflow:hidden;background:var(--ink)"><img src="/static/will.png" style="width:100%;height:110%;object-fit:cover;object-position:center 20%"></div>
     <div style="flex:1">
       <div style="font-weight:600;font-size:14px;margin-bottom:2px">Will Cavnar</div>
       <div style="font-size:12px;color:var(--ink3);margin-bottom:8px">Founder, Cavnar AI — manages your dashboard, data, and setup</div>
