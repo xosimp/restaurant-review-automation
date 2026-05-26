@@ -771,6 +771,11 @@ def docusign_webhook():
             conn.close()
             print(f"Contract signed: {envelope_id}")
 
+            if not row:
+                print(f"WARNING: No restaurant found for envelope {envelope_id} - emails not sent")
+            elif not RESEND_API_KEY:
+                print(f"WARNING: No RESEND_API_KEY - emails not sent")
+
             if row and RESEND_API_KEY:
                 r = dict(row)
                 mods = sum([
@@ -789,7 +794,7 @@ def docusign_webhook():
                     )
                     print(f"Payment email sent to {r['owner_email']} after signing")
                     try:
-                        log_email(rid, "payment", r["owner_email"], f"Payment link — {r['name']}")
+                        log_email(r["id"], "payment", r["owner_email"], f"Payment link — {r['name']}")
                     except Exception: pass
                 except Exception as e:
                     print(f"Payment email failed after signing: {e}")
@@ -819,7 +824,7 @@ def docusign_webhook():
                         pass
                     print(f"Welcome email sent to {r['owner_email']} after signing")
                     try:
-                        log_email(rid, "welcome", r["owner_email"], f"Welcome — {r['name']}")
+                        log_email(r["id"], "welcome", r["owner_email"], f"Welcome — {r['name']}")
                     except Exception: pass
                 except Exception as e:
                     print(f"Welcome email failed after signing: {e}")
