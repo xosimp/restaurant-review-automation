@@ -1540,11 +1540,6 @@ textarea{resize:vertical;min-height:60px}
           <textarea id="voice_notes" rows="2" placeholder="e.g. genuine and warm, a little witty, never corporate, speaks like a person not a brand">{{ restaurant.voice_notes or '' }}</textarea>
         </div>
         <div class="form-group">
-          <label>Sign-off name</label>
-          <input type="text" id="sign_off_name" value="{{ restaurant.sign_off_name or '' }}" placeholder="e.g. Sarah, or The Maple Team">
-          <div class="hint">Used at the end of emails and responses</div>
-        </div>
-        <div class="form-group">
           <label>Never say (words/phrases to avoid)</label>
           <input type="text" id="never_say" value="{{ restaurant.never_say or '' }}" placeholder="e.g. culinary journey, indulge, delightful">
           <div class="hint">Comma-separated — AI will never use these</div>
