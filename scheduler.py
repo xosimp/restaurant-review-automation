@@ -30,10 +30,38 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
         import resend as _resend
         _resend.api_key = RESEND_API_KEY
 
+        # Look up draft responses for these reviews
+        try:
+            from models import get_conn as _gc
+            _conn = _gc()
+            draft_map = {}
+            for r in urgent_reviews:
+                if r.get("id"):
+                    row = _conn.execute("SELECT draft_response FROM reviews WHERE id=?", (r["id"],)).fetchone()
+                    if row and row["draft_response"]:
+                        draft_map[r["id"]] = row["draft_response"]
+            _conn.close()
+        except Exception:
+            draft_map = {}
+
         reviews_html = ""
         for r in urgent_reviews:
             rating = r.get("rating", 1)
             stars  = "★" * rating + "☆" * (5 - rating)
+            draft  = draft_map.get(r.get("id"), "")
+            draft_html = f"""
+<div style="background:#f0faf4;border-left:3px solid #2d6a4f;border-radius:4px;
+            padding:12px 14px;margin-top:8px">
+  <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
+              color:#2d6a4f;margin-bottom:6px">AI Draft Response</div>
+  <div style="font-size:13px;color:#1a1714;line-height:1.7">{draft}</div>
+  <div style="font-size:11px;color:#7a736a;margin-top:8px">
+    Log in to approve, edit, or regenerate this response →
+  </div>
+</div>""" if draft else """
+<div style="font-size:11px;color:#7a736a;margin-top:8px;font-style:italic">
+  Draft response being prepared — log in to view it.
+</div>"""
             reviews_html += f"""
 <div style="background:#fff5f5;border-left:3px solid #c84b2f;border-radius:4px;
             padding:12px 14px;margin-bottom:10px">
@@ -41,6 +69,7 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
     {stars} — {r.get("author","Guest")} via {r.get("platform","").title()}
   </div>
   <div style="font-size:13px;color:#1a1714;line-height:1.6">{r.get("text","")}</div>
+  {draft_html}
 </div>"""
 
         _resend.Emails.send({
@@ -63,7 +92,7 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
     that {"needs" if len(urgent_reviews)==1 else "need"} immediate attention.
   </p>
   <p style="font-size:13px;color:#7a736a;margin-bottom:16px">
-    A draft response has been prepared. Please log in and approve it as soon as possible.
+    {"A draft response is included below." if len(urgent_reviews)==1 else "Draft responses are included below."} Log in to approve or edit before posting.
   </p>
   {reviews_html}
   <div style="margin-top:20px">
