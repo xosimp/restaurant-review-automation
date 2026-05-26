@@ -54,6 +54,12 @@ def _review_card(r) -> str:
         f'<span style="color:#374151">{r.draft_response}</span></div>'
     ) if r.draft_response else ""
 
+    ai_summary = generate_ai_digest_summary(report, restaurant_name, owner_name)
+    ai_summary_block = f'''<div style="background:linear-gradient(135deg,#1a1410,#2a1f1a);border-radius:8px;padding:16px 20px;margin-bottom:20px">
+  <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#c84b2f;margin-bottom:8px">Cavnar AI Consultant</div>
+  <p style="font-size:14px;color:#f0ebe0;line-height:1.7;margin:0">{ai_summary}</p>
+</div>''' if ai_summary else ''
+
     return f"""
 <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin:8px 0">
   {urgency_banner}
@@ -68,7 +74,44 @@ def _review_card(r) -> str:
 </div>"""
 
 
-def render_html(report: WeeklyReport, restaurant_name: str) -> str:
+def generate_ai_digest_summary(report, restaurant_name, owner_name=None):
+    """Generate a short AI summary paragraph for the weekly digest."""
+    try:
+        import anthropic, os
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
+        reviews = getattr(report, "_reviews", [])
+        pos = report.sentiment.get("positive", 0)
+        neg = report.sentiment.get("negative", 0)
+        urgent_count = sum(1 for r in reviews if r.urgency == "high")
+        top_themes = ", ".join(cat.replace("_"," ") for cat, n in (report.top_issues or [])[:3])
+        greeting = f"Hi {owner_name}" if owner_name else "Hi"
+        prompt = f"""You are the Cavnar AI Consultant writing a brief weekly summary for {restaurant_name}.
+
+This week's data:
+- Total reviews: {report.total_reviews}
+- Average rating: {report.avg_rating}/5
+- Positive: {pos}, Negative: {neg}
+- Urgent reviews needing attention: {urgent_count}
+- Top themes: {top_themes or "nothing notable"}
+- Period: {report.period_start} to {report.period_end}
+
+Write 2-3 sentences starting with "{greeting}," that:
+1. Give the honest overall picture with the key number
+2. Call out the most important thing to act on this week (urgent review, trending theme, or celebrate a win)
+3. End with one specific, actionable suggestion
+
+Tone: warm, direct, like a trusted advisor. No markdown, no bullet points, plain sentences only."""
+
+        msg = client.messages.create(
+            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+            max_tokens=200,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return msg.content[0].text.strip()
+    except Exception as e:
+        return ""
+
+def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = None) -> str:
     reviews = getattr(report, "_reviews", [])
     urgent  = [r for r in reviews if r.urgency == "high"]
     normal  = [r for r in reviews if r.urgency != "high"]
@@ -91,10 +134,15 @@ def render_html(report: WeeklyReport, restaurant_name: str) -> str:
 <html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   max-width:620px;margin:0 auto;color:#111827;padding:20px">
 
-<h2 style="border-bottom:2px solid #f3f4f6;padding-bottom:12px;margin-bottom:4px">
-  Weekly review digest</h2>
-<p style="color:#6b7280;margin:0 0 20px">{restaurant_name} &nbsp;·&nbsp;
-  {report.period_start} – {report.period_end}</p>
+<div style="border-bottom:2px solid #f3f4f6;padding-bottom:12px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">
+  <h2 style="margin:0;font-family:Georgia,serif;font-size:22px;font-weight:400">
+    Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+  </h2>
+  <span style="font-size:11px;color:#9ca3af;letter-spacing:.08em;text-transform:uppercase">Weekly Review Digest</span>
+</div>
+<p style="color:#6b7280;margin:0 0 16px;font-size:13px">{restaurant_name} &nbsp;·&nbsp; {report.period_start} – {report.period_end}</p>
+
+{ai_summary_block}
 
 <div style="display:flex;gap:12px;margin-bottom:20px">
   <div style="flex:1;background:#f9fafb;border-radius:8px;padding:12px;text-align:center">
