@@ -739,24 +739,204 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 <!-- ACCOUNT -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account">
 
-  <!-- Your consultant -->
-  <div class="slabel">Your consultant</div>
-  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:20px;display:flex;align-items:center;gap:16px">
-    <div style="width:52px;height:52px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 3px #c84b2f33,0 0 16px 4px #c84b2f22;overflow:hidden;background:var(--ink)"><img src="/static/will.png" style="width:100%;height:110%;object-fit:cover;object-position:center 20%"></div>
+  <!-- Hero consultant banner -->
+  <div style="background:var(--ink);border-radius:var(--r);padding:20px 24px;margin-bottom:24px;display:flex;align-items:center;gap:20px">
+    <div style="width:60px;height:60px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 3px #c84b2f55,0 0 20px 6px #c84b2f22;overflow:hidden;background:#1a1410">
+      <img src="/static/will.png" style="width:100%;height:110%;object-fit:cover;object-position:center 20%">
+    </div>
     <div style="flex:1">
-      <div style="font-weight:600;font-size:14px;margin-bottom:2px">Will Cavnar</div>
-      <div style="font-size:12px;color:var(--ink3);margin-bottom:8px">Founder, Cavnar AI — manages your dashboard, data, and setup</div>
-      <a href="mailto:will@cavnar.ai" style="font-size:12px;color:var(--ember);text-decoration:none;font-weight:600">will@cavnar.ai</a>
-      <span style="color:var(--paper3);margin:0 8px">·</span>
-      <span style="font-size:12px;color:var(--ink3)">Same-day response</span>
+      <div style="font-family:'DM Serif Display',serif;font-size:18px;color:var(--paper);margin-bottom:2px">Will Cavnar</div>
+      <div style="font-size:12px;color:#7a736a;margin-bottom:10px">Founder, Cavnar AI · Your dedicated restaurant intelligence consultant</div>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <a href="mailto:will@cavnar.ai" style="font-size:12px;color:var(--ember);text-decoration:none;font-weight:600">will@cavnar.ai</a>
+        <span style="color:#2a2520">·</span>
+        <span style="font-size:12px;color:#5a5450">Same-day response</span>
+        <span style="color:#2a2520">·</span>
+        <a href="https://calendly.com/will-cavnar/30min" target="_blank" style="font-size:12px;color:#7a736a;text-decoration:none">Book a call</a>
+      </div>
+    </div>
+    <div style="text-align:right;flex-shrink:0">
+      <div style="font-size:10px;color:#4a4540;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Restaurant</div>
+      <div style="font-size:14px;font-weight:600;color:var(--paper)">{{restaurant.name}}</div>
     </div>
   </div>
 
-  <div class="two-col" style="margin-bottom:0">
-    <div>
+  <!-- Three column top row -->
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px">
 
-      <!-- Account overview -->
-      <div class="slabel">Your account</div>
+    <!-- Account info -->
+    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Account</div>
+      <table style="font-size:13px;width:100%">
+        <tr><td style="color:var(--ink3);padding:4px 0;width:80px">Email</td><td style="font-weight:500;font-size:12px">{{restaurant.owner_email}}</td></tr>
+        <tr><td style="color:var(--ink3);padding:4px 0">Username</td><td style="font-weight:500">{{current_user.username}}</td></tr>
+      </table>
+    </div>
+
+    <!-- Billing -->
+    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px" id="billing-card">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Billing</div>
+      <div id="billing-loading" style="font-size:13px;color:var(--ink3)">Loading…</div>
+      <div id="billing-content" style="display:none">
+        <div style="margin-bottom:8px">
+          <div style="font-size:10px;color:var(--ink3);margin-bottom:2px">Next charge</div>
+          <div style="font-size:15px;font-weight:600;color:var(--ink)" id="billing-next-prominent">—</div>
+        </div>
+        <div style="font-size:10px;color:var(--ink3);margin-bottom:2px">Amount</div>
+        <div style="font-size:15px;font-weight:600;color:var(--ink);margin-bottom:8px" id="billing-amount-prominent">—</div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:4px" id="billing-status"></div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:10px" id="billing-pm"></div>
+        <a id="billing-portal-link" href="#" target="_blank" style="font-size:12px;color:var(--ember);text-decoration:none;font-weight:600">Manage payment →</a>
+      </div>
+      <div id="billing-no-sub" style="display:none;font-size:12px;color:var(--ink3)">
+        No active subscription. <a href="mailto:will@cavnar.ai" style="color:var(--ember)">Contact Will</a>
+      </div>
+    </div>
+
+    <!-- Setup status -->
+    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Setup status</div>
+      {% if mod_reviews %}
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px">
+        {% if restaurant.reviews_live %}<span style="color:var(--green)">✓</span><span>Reviews live</span>
+        {% else %}<span style="color:#ef9f27">○</span><span style="color:var(--ink3)">Reviews pending</span>{% endif %}
+      </div>
+      {% endif %}
+      {% if mod_labor %}
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px">
+        {% if labor.is_live %}<span style="color:var(--green)">✓</span><span>Labor live</span>
+        {% else %}<span style="color:#ef9f27">○</span><span style="color:var(--ink3)">Labor pending</span>{% endif %}
+      </div>
+      {% endif %}
+      {% if mod_inventory %}
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px">
+        {% if inv.is_live %}<span style="color:var(--green)">✓</span><span>Inventory live</span>
+        {% else %}<span style="color:#ef9f27">○</span><span style="color:var(--ink3)">Inventory pending</span>{% endif %}
+      </div>
+      {% endif %}
+      {% if mod_marketing %}
+      <div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px">
+        <span style="color:var(--green)">✓</span><span>Marketing ready</span>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Two column second row -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+
+    <!-- What's included -->
+    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">What's included</div>
+      {% if mod_reviews %}
+      <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--paper3)">
+        <span style="font-size:14px">⭐</span>
+        <div style="flex:1">
+          <div style="font-size:12px;font-weight:600">Review Intelligence</div>
+          <div style="font-size:11px;color:var(--ink3)">AI drafts responses — you approve</div>
+        </div>
+        <span style="font-size:10px;font-weight:600;color:var(--green);background:var(--green-bg);padding:2px 7px;border-radius:20px">Active</span>
+      </div>
+      {% endif %}
+      {% if mod_labor %}
+      <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--paper3)">
+        <span style="font-size:14px">📊</span>
+        <div style="flex:1">
+          <div style="font-size:12px;font-weight:600">Labor Optimizer</div>
+          <div style="font-size:11px;color:var(--ink3)">Weekly labor cost analysis</div>
+        </div>
+        <span style="font-size:10px;font-weight:600;color:var(--green);background:var(--green-bg);padding:2px 7px;border-radius:20px">Active</span>
+      </div>
+      {% endif %}
+      {% if mod_inventory %}
+      <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--paper3)">
+        <span style="font-size:14px">📦</span>
+        <div style="flex:1">
+          <div style="font-size:12px;font-weight:600">Inventory Control</div>
+          <div style="font-size:11px;color:var(--ink3)">Food cost & waste analysis</div>
+        </div>
+        <span style="font-size:10px;font-weight:600;color:var(--green);background:var(--green-bg);padding:2px 7px;border-radius:20px">Active</span>
+      </div>
+      {% endif %}
+      {% if mod_marketing %}
+      <div style="display:flex;align-items:center;gap:10px;padding:6px 0">
+        <span style="font-size:14px">📣</span>
+        <div style="flex:1">
+          <div style="font-size:12px;font-weight:600">Marketing Autopilot</div>
+          <div style="font-size:11px;color:var(--ink3)">AI content in your voice</div>
+        </div>
+        <span style="font-size:10px;font-weight:600;color:var(--green);background:var(--green-bg);padding:2px 7px;border-radius:20px">Active</span>
+      </div>
+      {% endif %}
+      {% if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing %}
+      <div style="font-size:12px;color:var(--ink3)">No modules active. Contact Will.</div>
+      {% endif %}
+    </div>
+
+    <!-- Change password + digest -->
+    <div style="display:flex;flex-direction:column;gap:14px">
+      {% if mod_reviews %}
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Weekly digest email</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="digest-day-select" style="padding:6px 8px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px">
+            {% for d in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
+            <option value="{{d}}" {{"selected" if restaurant.digest_day==d}}>{{d|title}}</option>
+            {% endfor %}
+          </select>
+          <select id="digest-enabled-select" style="padding:6px 8px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px">
+            <option value="1" {{"selected" if restaurant.digest_enabled}}>Enabled</option>
+            <option value="0" {{"selected" if not restaurant.digest_enabled}}>Disabled</option>
+          </select>
+          <button onclick="saveDigestDay()" style="padding:6px 14px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer">Save</button>
+          <span id="digest-save-status" style="font-size:11px;display:none"></span>
+        </div>
+      </div>
+      {% endif %}
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Change password</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <input class="form-input" type="password" id="pw-current" placeholder="Current password" style="font-size:12px">
+          <input class="form-input" type="password" id="pw-new" placeholder="New password (min 8 chars)" style="font-size:12px">
+          <input class="form-input" type="password" id="pw-confirm" placeholder="Confirm new password" style="font-size:12px">
+          <button class="btn-primary" onclick="changePassword()" style="font-size:12px;padding:8px 16px;width:fit-content">Update password</button>
+          <div id="pw-status" style="font-size:11px;margin-top:2px;display:none"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Full width bottom row -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+
+    <!-- Support -->
+    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Support</div>
+      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">Questions, data requests, or anything not working — reach out directly.</p>
+      <a href="mailto:will@cavnar.ai" style="display:inline-block;background:var(--ember);color:white;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600">Email Will →</a>
+    </div>
+
+    <!-- Refer a restaurant -->
+    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Refer a restaurant</div>
+      <div style="font-size:12px;color:var(--ink2);line-height:1.6;margin-bottom:10px">Know another owner? Send an intro — get <strong>one free month ($300)</strong> if they sign up.</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;gap:6px">
+          <input type="text" id="referral-name" placeholder="Restaurant name" style="flex:1;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none">
+          <input type="email" id="referral-email" placeholder="Owner email" style="flex:1;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none">
+        </div>
+        <textarea id="referral-note" rows="2" placeholder="Optional personal note…" style="padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none;resize:vertical"></textarea>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button onclick="sendReferral()" style="background:var(--ember);color:white;border:none;padding:7px 16px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer">Send referral</button>
+          <span id="referral-status" style="font-size:11px;display:none"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cancel subscription -->
+  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:14px">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Cancel subscription</div>
       <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
         <table style="font-size:13px;width:100%">
           <tr><td style="color:var(--ink3);padding:5px 0;width:140px">Restaurant</td><td style="font-weight:500">{{restaurant.name}}</td></tr>
@@ -922,53 +1102,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
             style="padding:7px 16px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer">
             Save
           </button>
-          <span id="digest-save-status" style="font-size:12px;display:none"></span>
+          <span id="digest-save-status" style="font-size:11px;display:none"></span>
         </div>
       </div>
       {% endif %}
-
-      <!-- Support -->
-      <div class="slabel">Support</div>
-      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
-        <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
-          Questions, data requests, or anything not working — reach out directly.
-        </p>
-        <a href="mailto:will@cavnar.ai"
-           style="display:inline-block;background:var(--ember);color:white;padding:9px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">
-          Email Will →
-        </a>
-      </div>
-
-      <!-- Refer a restaurant -->
-      <div class="slabel">Refer a restaurant</div>
-      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:16px">
-        <div style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
-          Know another restaurant owner who could use this? Send them an intro. If they sign up, you get <strong>one free month ($300 credit)</strong> applied to your next invoice.
-        </div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-          <div style="display:flex;gap:8px">
-            <input type="text" id="referral-name" placeholder="Restaurant name" style="flex:1;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none">
-            <input type="email" id="referral-email" placeholder="Owner email" style="flex:1;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none">
-          </div>
-          <textarea id="referral-note" rows="2" placeholder="Optional note — e.g. Hey Sarah, I use this for my restaurant and it saves me hours every week." style="padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none;resize:vertical"></textarea>
-          <div style="display:flex;align-items:center;gap:10px">
-            <button onclick="sendReferral()" style="background:var(--ember);color:white;border:none;padding:8px 18px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer">Send referral</button>
-            <span id="referral-status" style="font-size:12px;display:none"></span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Cancellation — always visible -->
-      <div class="slabel">Cancel subscription</div>
-      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
-        <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
-          No cancellation fees. Cancel before your next billing date to avoid the next charge.
-        </p>
-        <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%20I%20would%20like%20to%20cancel%20my%20Cavnar%20AI%20subscription%20for%20{{restaurant.name}}."
-           style="display:inline-block;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid var(--paper3);color:var(--ink3)">
-          Request cancellation
-        </a>
-      </div>
     </div>
   </div>
 </div>
