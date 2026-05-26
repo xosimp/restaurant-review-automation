@@ -16,6 +16,7 @@ from auth import (create_session, get_session_user, delete_session,
                   verify_password, list_users, create_user, update_password,
                   admin_required, login_required)
 from emails import send_payment_email, send_welcome_email
+from hosted_dashboard import create_stripe_checkout
 
 admin_bp = Blueprint('admin', __name__)
 
