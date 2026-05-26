@@ -83,6 +83,13 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
 </div>"""
         })
         log.info(f"Urgent alert sent to {owner_email} for {restaurant_name}")
+        try:
+            from models import log_email as _le, get_conn as _gc
+            _c = _gc()
+            _row = _c.execute("SELECT id FROM restaurants WHERE owner_email=? LIMIT 1", (owner_email,)).fetchone()
+            _c.close()
+            if _row: _le(_row[0], "urgent", owner_email, f"Urgent review alert — {restaurant_name}")
+        except Exception: pass
     except Exception as e:
         log.error(f"Urgent alert failed for {restaurant_name}: {e}")
 
@@ -229,6 +236,10 @@ def run_weekly_digests():
                     "html": html,
                 })
                 log.info(f"Digest sent to {owner_email} for {restaurant.name}")
+                try:
+                    from models import log_email as _le
+                    _le(restaurant.id, "digest", owner_email, f"Weekly digest — {restaurant.name}")
+                except Exception: pass
             except Exception as e:
                 log.error(f"Digest failed for {restaurant.name}: {e}")
 
@@ -313,6 +324,13 @@ def check_stale_inventory():
 </div>"""
         })
         log.info(f"Stale inventory alert sent for {len(stale)} client(s)")
+        try:
+            from models import log_email as _le, get_conn as _gc
+            _c = _gc()
+            _wrow = _c.execute("SELECT r.id FROM restaurants r JOIN users u ON u.restaurant_id=r.id WHERE u.email='will@cavnar.ai' AND u.is_admin=1 LIMIT 1").fetchone()
+            _c.close()
+            if _wrow: _le(_wrow[0], "stale_inventory", "will@cavnar.ai", f"Stale inventory — {len(stale)} client(s)")
+        except Exception: pass
     except Exception as e:
         log.error(f"Stale inventory check error: {e}")
 
