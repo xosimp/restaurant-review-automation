@@ -323,8 +323,71 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 .form-input{padding:9px 12px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;color:var(--ink);background:white;outline:none;transition:border .15s}
 .form-input:focus{border-color:var(--ember)}
 </style>
+<script>
+function clientUpload(dataType, input) {
+  var resultEl = document.getElementById(dataType + '-inline-result');
+  if (!input || !input.files || !input.files[0]) return;
+
+  // Show branded loading overlay
+  var overlay = document.getElementById('upload-loading-overlay');
+  if (overlay) overlay.style.display = 'flex';
+  if (resultEl) { resultEl.style.display = 'none'; }
+
+  var form = new FormData();
+  form.append('data_type', dataType === 'inventory' ? 'inventory' : 'shifts');
+  form.append('csv_file', input.files[0]);
+
+  fetch('/client/upload-data', {method:'POST', body: form})
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+      if (overlay) overlay.style.display = 'none';
+      if (data.ok) {
+        if (resultEl) {
+          resultEl.style.display = 'inline';
+          resultEl.style.color = '#2d6a4f';
+          resultEl.textContent = '✓ ' + data.rows + ' rows loaded — refreshing…';
+        }
+        setTimeout(function() { location.reload(); }, 1200);
+      } else {
+        if (resultEl) {
+          resultEl.style.display = 'inline';
+          resultEl.style.color = '#c84b2f';
+          resultEl.textContent = '✗ ' + (data.error || 'Upload failed');
+        }
+      }
+    })
+    .catch(function() {
+      if (overlay) overlay.style.display = 'none';
+      if (resultEl) {
+        resultEl.style.display = 'inline';
+        resultEl.style.color = '#c84b2f';
+        resultEl.textContent = '✗ Network error — try again';
+      }
+    });
+}
+</script>
 </head>
 <body>
+
+<!-- Branded upload loading overlay -->
+<div id="upload-loading-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.85);align-items:center;justify-content:center;flex-direction:column">
+  <div style="text-align:center">
+    <div style="font-family:Georgia,serif;font-size:32px;font-weight:400;color:#f0ebe0;margin-bottom:4px">
+      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    </div>
+    <div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#7a736a;margin-bottom:32px">Restaurant Intelligence</div>
+    <div style="display:flex;gap:10px;justify-content:center;margin-bottom:16px">
+      <div style="width:10px;height:10px;border-radius:50%;background:#c84b2f;animation:upulse 1.1s ease-in-out infinite"></div>
+      <div style="width:10px;height:10px;border-radius:50%;background:#c84b2f;animation:upulse 1.1s ease-in-out .18s infinite"></div>
+      <div style="width:10px;height:10px;border-radius:50%;background:#c84b2f;animation:upulse 1.1s ease-in-out .36s infinite"></div>
+    </div>
+    <div style="font-size:13px;color:#a09890;letter-spacing:.02em">Loading your data…</div>
+  </div>
+</div>
+<style>
+@keyframes upulse{0%,100%{opacity:.2;transform:scale(.75)}50%{opacity:1;transform:scale(1.15)}}
+</style>
+
 {% if current_user.is_admin %}
 <div style="background:#b7791f;padding:8px 28px;display:flex;align-items:center;justify-content:space-between">
   <span style="font-size:12px;color:white;font-weight:500">
@@ -495,7 +558,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <label style="display:inline-flex;align-items:center;gap:8px;background:#c84b2f;color:white;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">
         📂 Upload shifts CSV
-        <input type="file" accept=".csv" style="display:none" id="shifts-inline-input">
+        <input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)">
       </label>
       <span id="shifts-inline-result" style="font-size:12px;color:#2d6a4f;display:none"></span>
     </div>
@@ -686,7 +749,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <label style="display:inline-flex;align-items:center;gap:8px;background:#2d6a4f;color:white;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">
         📂 Upload inventory CSV
-        <input type="file" accept=".csv" style="display:none" id="inventory-inline-input">
+        <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
       </label>
       <span id="inventory-inline-result" style="font-size:12px;color:#2d6a4f;display:none"></span>
     </div>
@@ -2318,40 +2381,7 @@ function showResult(el, ok, msg) {
   el.textContent = msg;
 }
 
-// Attach inline upload listeners after DOM is ready
-document.addEventListener('DOMContentLoaded', function() {
-  ['shifts','inventory'].forEach(function(dt) {
-    var el = document.getElementById(dt + '-inline-input');
-    if (el) el.addEventListener('change', function() { clientUpload(dt, this); });
-  });
-});
 
-async function clientUpload(dataType, input) {
-  // Inline upload button in labor/inventory panels for clients
-  const resultEl = document.getElementById(dataType + '-inline-result');
-  if (!input.files[0]) return;
-  resultEl.style.display = 'inline';
-  resultEl.style.color = '#8a6a00';
-  resultEl.textContent = 'Uploading…';
-  const form = new FormData();
-  form.append('data_type', dataType === 'inventory' ? 'inventory' : 'shifts');
-  form.append('csv_file', input.files[0]);
-  try {
-    const res = await fetch('/client/upload-data', {method:'POST', body: form});
-    const data = await res.json();
-    if (data.ok) {
-      resultEl.style.color = '#2d6a4f';
-      resultEl.textContent = '✓ ' + data.rows + ' rows loaded — refreshing…';
-      setTimeout(() => location.reload(), 1500);
-    } else {
-      resultEl.style.color = '#c84b2f';
-      resultEl.textContent = '✗ ' + (data.error || 'Upload failed');
-    }
-  } catch(e) {
-    resultEl.style.color = '#c84b2f';
-    resultEl.textContent = '✗ Network error — try again';
-  }
-}
 </script>
 </body>
 </html>"""
