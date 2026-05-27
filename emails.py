@@ -289,7 +289,7 @@ def create_stripe_checkout(module_count: int, owner_email: str,
 
 def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = None,
                           modules: list = None):
-    """Day 2 — Getting started: how to read reviews + dashboard link."""
+    """Day 2 — Getting started: highlight their primary module, not always reviews."""
     if not RESEND_API_KEY:
         return
     try:
@@ -298,6 +298,56 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
         first = owner_name.split()[0] if owner_name else "there"
         modules = modules or ["Review Intelligence"]
         modules_text = " and ".join(modules) if len(modules) <= 2 else ", ".join(modules[:-1]) + f", and {modules[-1]}"
+
+        # Build the callout block based on their primary module
+        has_reviews   = "Review Intelligence" in modules
+        has_labor     = "Labor Optimizer" in modules
+        has_inventory = "Inventory Control" in modules
+        has_marketing = "Marketing Autopilot" in modules
+
+        if has_reviews:
+            callout = """
+  <div style="background:#f7f4ef;border-radius:8px;padding:18px 22px;margin-bottom:20px;border-left:3px solid #c84b2f;border-top-left-radius:0;border-bottom-left-radius:0">
+    <p style="font-size:14px;color:#0e0c0a;line-height:1.7;margin:0 0 10px">
+      <strong>Reviews tab</strong> — Every new review gets pulled in automatically, analyzed for sentiment, and given a suggested response.
+      Your job is just to review the draft, edit if needed, and approve it. Takes about 5 minutes a week.
+    </p>
+    <p style="font-size:13px;color:#7a736a;margin:0">
+      Urgent reviews (1-2 stars) show up at the top in red so you never miss one.
+    </p>
+  </div>"""
+        elif has_labor:
+            callout = """
+  <div style="background:#f7f4ef;border-radius:8px;padding:18px 22px;margin-bottom:20px;border-left:3px solid #c84b2f;border-top-left-radius:0;border-bottom-left-radius:0">
+    <p style="font-size:14px;color:#0e0c0a;line-height:1.7;margin:0 0 10px">
+      <strong>Labor tab</strong> — Upload your shift schedule CSV and the dashboard will calculate your labor cost percentage, flag overstaffed days, and surface overtime risk automatically.
+    </p>
+    <p style="font-size:13px;color:#7a736a;margin:0">
+      The target is 28-32% labor ratio. The dashboard shows you exactly where you're over and by how much.
+    </p>
+  </div>"""
+        elif has_inventory:
+            callout = """
+  <div style="background:#f7f4ef;border-radius:8px;padding:18px 22px;margin-bottom:20px;border-left:3px solid #c84b2f;border-top-left-radius:0;border-bottom-left-radius:0">
+    <p style="font-size:14px;color:#0e0c0a;line-height:1.7;margin:0 0 10px">
+      <strong>Inventory tab</strong> — Upload your weekly inventory count and the dashboard tracks your food cost percentage, flags waste, and gives AI-powered ordering recommendations.
+    </p>
+    <p style="font-size:13px;color:#7a736a;margin:0">
+      The target is 28-32% food cost. You'll see exactly where the money is going.
+    </p>
+  </div>"""
+        elif has_marketing:
+            callout = """
+  <div style="background:#f7f4ef;border-radius:8px;padding:18px 22px;margin-bottom:20px;border-left:3px solid #c84b2f;border-top-left-radius:0;border-bottom-left-radius:0">
+    <p style="font-size:14px;color:#0e0c0a;line-height:1.7;margin:0 0 10px">
+      <strong>Marketing tab</strong> — Generate Instagram captions, weekly emails, Google posts, and re-engagement texts in your restaurant's voice in seconds.
+    </p>
+    <p style="font-size:13px;color:#7a736a;margin:0">
+      Just pick a content type, describe what you want to promote, and the AI does the writing.
+    </p>
+  </div>"""
+        else:
+            callout = ""
 
         _resend.Emails.send({
             "from": f"Will Cavnar <{FROM_EMAIL}>",
@@ -316,15 +366,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
     Your dashboard for <strong>{restaurant_name}</strong> has been live for a day now.
     Here's the most important thing to know about {modules_text}:
   </p>
-  <div style="background:#f7f4ef;border-radius:8px;padding:18px 22px;margin-bottom:20px;border-left:3px solid #c84b2f">
-    <p style="font-size:14px;color:#0e0c0a;line-height:1.7;margin:0 0 10px">
-      <strong>Reviews tab</strong> — Every new review gets pulled in automatically, analyzed for sentiment, and given a suggested response.
-      Your job is just to review the draft, edit if needed, and approve it. Takes about 5 minutes a week.
-    </p>
-    <p style="font-size:13px;color:#7a736a;margin:0">
-      Urgent reviews (1-2 stars) show up at the top in red so you never miss one.
-    </p>
-  </div>
+  {callout}
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:20px">
     Log in anytime at <a href="https://dashboard.cavnar.ai" style="color:#c84b2f;text-decoration:none">dashboard.cavnar.ai</a>.
     If anything looks off or you have questions, just reply here.
