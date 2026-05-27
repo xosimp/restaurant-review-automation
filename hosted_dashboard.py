@@ -3399,11 +3399,6 @@ except Exception: pass
 def sentry_test():
     division_by_zero = 1 / 0
 
-# ── Sentry test route ────────────────────────────────────────────────────────
-@app.route("/sentry-test")
-def sentry_test():
-    division_by_zero = 1 / 0
-
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
