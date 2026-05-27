@@ -2085,6 +2085,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       </div>
 
       <div class="tab-content active" id="shifts-upload">
+        <div style="background:var(--paper2);border-radius:var(--r);padding:12px 14px;margin-bottom:12px;font-size:12px;color:var(--ink2);line-height:1.7">
+          <strong style="color:var(--ink1)">How to export your shift data:</strong><br>
+          <span style="color:var(--ember)">Toast:</span> Reports → Labor → Timesheets → Export CSV &nbsp;·&nbsp;
+          <span style="color:var(--ember)">Square:</span> Dashboard → Team → Timecards → Export &nbsp;·&nbsp;
+          <span style="color:var(--ember)">Lightspeed:</span> Reports → Employees → Time Clock → Export
+        </div>
         <div class="upload-zone" id="shifts-drop">
           <input type="file" accept=".csv" onchange="handleFile('shifts', this)">
           <div class="upload-icon">📂</div>
@@ -2176,6 +2182,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       </div>
 
       <div class="tab-content active" id="inv-upload">
+        <div style="background:var(--paper2);border-radius:var(--r);padding:12px 14px;margin-bottom:12px;font-size:12px;color:var(--ink2);line-height:1.7">
+          <strong style="color:var(--ink1)">How to export your inventory data:</strong><br>
+          <span style="color:var(--ember)">Toast:</span> Inventory → Items → Export CSV &nbsp;·&nbsp;
+          <span style="color:var(--ember)">Square:</span> Items → Inventory → Export &nbsp;·&nbsp;
+          <span style="color:var(--ember)">Other:</span> Any CSV with item name, quantity, unit cost columns works
+        </div>
         <div class="upload-zone">
           <input type="file" accept=".csv" onchange="handleFile('inv', this)">
           <div class="upload-icon">📦</div>
@@ -2249,25 +2261,29 @@ async function uploadData(module, source) {
   const resultId = module + '-' + (source === 'upload' ? 'upload' : 'paste') + '-result';
   const resultEl = document.getElementById(resultId);
 
-  let csvContent = '';
-  if (source === 'upload') {
-    csvContent = fileData[module];
-    if (!csvContent) { showResult(resultEl, false, 'No file selected'); return; }
-  } else {
-    csvContent = document.getElementById(module + '-paste-content').value;
-    if (!csvContent.trim()) { showResult(resultEl, false, 'No data entered'); return; }
-  }
-
   const form = new FormData();
   form.append('data_type', dataType);
   form.append('source', source);
-  form.append('csv_content', csvContent);
 
-  const res = await fetch('/admin/upload-data/' + restaurantId, {method:'POST', body: form});
+  if (source === 'upload') {
+    const fileInput = document.querySelector('#' + module + '-drop input[type=file]');
+    if (!fileInput || !fileInput.files[0]) {
+      showResult(resultEl, false, 'No file selected'); return;
+    }
+    form.append('csv_file', fileInput.files[0]);
+  } else {
+    // paste/manual — wrap as a blob so the server receives it as csv_file
+    const csvContent = document.getElementById(module + '-paste-content').value;
+    if (!csvContent.trim()) { showResult(resultEl, false, 'No data entered'); return; }
+    form.append('csv_file', new Blob([csvContent], {type:'text/csv'}), 'data.csv');
+  }
+
+  // Use client route (works for both admins and regular clients)
+  const res = await fetch('/client/upload-data', {method:'POST', body: form});
   const data = await res.json();
   if (data.ok) {
-    showResult(resultEl, true, '✓ ' + data.rows + ' rows saved successfully. Refresh to see updated status.');
-    setTimeout(() => location.reload(), 2000);
+    showResult(resultEl, true, '✓ ' + data.rows + ' rows loaded. Refreshing dashboard...');
+    setTimeout(() => location.reload(), 1800);
   } else {
     showResult(resultEl, false, data.error || 'Upload failed');
   }
@@ -3394,6 +3410,71 @@ try:
     from models import get_conn as _gc
     _wc = _gc(); _wc.execute("PRAGMA journal_mode=WAL"); _wc.commit(); _wc.close()
 except Exception: pass
+
+# ── Client self-serve data upload ────────────────────────────────────────────
+@app.route("/client/upload-data", methods=["POST"])
+@login_required
+def client_upload_data(current_user):
+    """
+    Client-facing upload endpoint. Validates CSV, saves it, triggers re-analysis.
+    login_required (not admin_required) so clients can upload their own data.
+    """
+    import io, csv as _csv
+    from models import save_client_data, log_email
+
+    restaurant_id = current_user["restaurant_id"]
+    data_type     = request.form.get("data_type")  # "shifts" or "inventory"
+
+    if data_type not in ("shifts", "inventory"):
+        return jsonify(ok=False, error="Invalid data type")
+
+    f = request.files.get("csv_file")
+    if not f:
+        return jsonify(ok=False, error="No file uploaded")
+
+    try:
+        csv_content = f.read().decode("utf-8")
+    except Exception:
+        return jsonify(ok=False, error="Could not read file — make sure it's a CSV")
+
+    if not csv_content.strip():
+        return jsonify(ok=False, error="File appears empty")
+
+    # Validate it parses
+    try:
+        rows = list(_csv.DictReader(io.StringIO(csv_content)))
+        if not rows:
+            return jsonify(ok=False, error="CSV has no data rows")
+    except Exception as e:
+        return jsonify(ok=False, error=f"Could not parse CSV: {e}")
+
+    # Save it
+    save_client_data(restaurant_id, data_type, csv_content, source="upload")
+
+    # Trigger immediate re-analysis so dashboard reflects new data right away
+    try:
+        if data_type == "shifts":
+            from labor import analyse_shifts_for_restaurant
+            analyse_shifts_for_restaurant(restaurant_id)
+        elif data_type == "inventory":
+            from models import get_restaurant
+            r = get_restaurant(restaurant_id)
+            if r:
+                pass  # inventory analysis runs on next dashboard load
+    except Exception as e:
+        pass  # non-fatal — data is saved, analysis will run on next load
+
+    # Log it
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        label = "Labor CSV upload" if data_type == "shifts" else "Inventory CSV upload"
+        log_email(restaurant_id, label, current_user.get("email",""), f"{label} — {r.name if r else ''}")
+    except Exception:
+        pass
+
+    return jsonify(ok=True, rows=len(rows), message=f"{len(rows)} rows loaded successfully")
+
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
