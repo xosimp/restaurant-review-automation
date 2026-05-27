@@ -283,3 +283,189 @@ def create_stripe_checkout(module_count: int, owner_email: str,
         print(f"[STRIPE ERROR] Checkout creation failed for {restaurant_name}: {e}")
         traceback.print_exc()
         return None
+
+
+# ── Onboarding email sequence ─────────────────────────────────────────────────
+
+def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = None,
+                          modules: list = None):
+    """Day 2 — Getting started: how to read reviews + dashboard link."""
+    if not RESEND_API_KEY:
+        return
+    try:
+        import resend as _resend
+        _resend.api_key = RESEND_API_KEY
+        first = owner_name.split()[0] if owner_name else "there"
+        modules = modules or ["Review Intelligence"]
+        modules_text = " and ".join(modules) if len(modules) <= 2 else ", ".join(modules[:-1]) + f", and {modules[-1]}"
+
+        _resend.Emails.send({
+            "from": f"Will Cavnar <{FROM_EMAIL}>",
+            "to": [to_email],
+            "subject": f"Getting started with your Cavnar AI dashboard",
+            "html": f"""
+<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+  <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
+    <h2 style="font-family:Georgia,serif;font-size:22px;font-weight:400;margin:0 0 4px">
+      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    </h2>
+    <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
+  </div>
+  <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:16px">
+    Your dashboard for <strong>{restaurant_name}</strong> has been live for a day now.
+    Here's the most important thing to know about {modules_text}:
+  </p>
+  <div style="background:#f7f4ef;border-radius:8px;padding:18px 22px;margin-bottom:20px;border-left:3px solid #c84b2f">
+    <p style="font-size:14px;color:#0e0c0a;line-height:1.7;margin:0 0 10px">
+      <strong>Reviews tab</strong> — Every new review gets pulled in automatically, analyzed for sentiment, and given a suggested response.
+      Your job is just to review the draft, edit if needed, and approve it. Takes about 5 minutes a week.
+    </p>
+    <p style="font-size:13px;color:#7a736a;margin:0">
+      Urgent reviews (1-2 stars) show up at the top in red so you never miss one.
+    </p>
+  </div>
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:20px">
+    Log in anytime at <a href="https://dashboard.cavnar.ai" style="color:#c84b2f;text-decoration:none">dashboard.cavnar.ai</a>.
+    If anything looks off or you have questions, just reply here.
+  </p>
+  <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
+  <p style="font-size:12px;color:#7a736a;margin:0">
+    Will Cavnar &nbsp;·&nbsp; Cavnar AI<br/>
+    <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
+    &nbsp;·&nbsp;
+    <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
+  </p>
+</div>"""
+        })
+        print(f"Onboarding day 2 sent to {to_email}")
+    except Exception as e:
+        print(f"send_onboarding_day2 failed: {e}")
+
+
+def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = None,
+                          has_labor: bool = False, has_inventory: bool = False):
+    """Day 7 — First week check-in + prompt to upload CSV data if relevant."""
+    if not RESEND_API_KEY:
+        return
+    try:
+        import resend as _resend
+        _resend.api_key = RESEND_API_KEY
+        first = owner_name.split()[0] if owner_name else "there"
+
+        # Build upload prompt only if they have labor or inventory modules
+        upload_block = ""
+        if has_labor or has_inventory:
+            items = []
+            if has_labor:    items.append("shift schedule CSV (export from your POS or scheduling app)")
+            if has_inventory: items.append("inventory count CSV")
+            items_html = "".join(f"<li style='margin-bottom:6px'>{i}</li>" for i in items)
+            upload_block = f"""
+  <div style="background:#f7f4ef;border-radius:8px;padding:18px 22px;margin-bottom:20px;border-left:3px solid #c84b2f">
+    <p style="font-size:13px;font-weight:600;color:#0e0c0a;margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em">One thing to do this week</p>
+    <p style="font-size:14px;color:#3a3530;line-height:1.7;margin:0 0 10px">
+      To unlock your full dashboard, send me your data files and I'll get them loaded in:
+    </p>
+    <ul style="font-size:13px;color:#3a3530;line-height:1.7;padding-left:18px;margin:0">
+      {items_html}
+    </ul>
+    <p style="font-size:13px;color:#7a736a;margin:10px 0 0">
+      Just reply to this email with the files attached.
+    </p>
+  </div>"""
+
+        _resend.Emails.send({
+            "from": f"Will Cavnar <{FROM_EMAIL}>",
+            "to": [to_email],
+            "subject": f"One week in — how's the dashboard feeling?",
+            "html": f"""
+<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+  <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
+    <h2 style="font-family:Georgia,serif;font-size:22px;font-weight:400;margin:0 0 4px">
+      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    </h2>
+    <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
+  </div>
+  <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:16px">
+    It's been one week since {restaurant_name} went live on Cavnar AI.
+    The review monitoring has been running quietly in the background — any new reviews that came in this week are already in your dashboard with draft responses ready to go.
+  </p>
+  {upload_block}
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:20px">
+    Any questions or anything feeling off? Just reply here — I check this daily.
+  </p>
+  <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
+  <p style="font-size:12px;color:#7a736a;margin:0">
+    Will Cavnar &nbsp;·&nbsp; Cavnar AI<br/>
+    <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
+    &nbsp;·&nbsp;
+    <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
+  </p>
+</div>"""
+        })
+        print(f"Onboarding day 7 sent to {to_email}")
+    except Exception as e:
+        print(f"send_onboarding_day7 failed: {e}")
+
+
+def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str = None,
+                           modules: list = None):
+    """Day 30 — 30-day check-in, celebrate milestone, soft feedback ask."""
+    if not RESEND_API_KEY:
+        return
+    try:
+        import resend as _resend
+        _resend.api_key = RESEND_API_KEY
+        first = owner_name.split()[0] if owner_name else "there"
+        modules = modules or []
+
+        # Suggest unused modules if they don't have all 4
+        all_modules = ["Review Intelligence", "Labor Optimizer", "Inventory Control", "Marketing Autopilot"]
+        unused = [m for m in all_modules if m not in modules]
+        upsell_block = ""
+        if unused:
+            unused_text = " and ".join(unused) if len(unused) <= 2 else ", ".join(unused[:-1]) + f", and {unused[-1]}"
+            upsell_block = f"""
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:20px">
+    One thing worth knowing: you're not currently using <strong>{unused_text}</strong>.
+    If you ever want to expand what the dashboard covers, just reply here and I'll walk you through what's included.
+  </p>"""
+
+        _resend.Emails.send({
+            "from": f"Will Cavnar <{FROM_EMAIL}>",
+            "to": [to_email],
+            "subject": f"30 days of Cavnar AI — a quick check-in",
+            "html": f"""
+<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+  <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
+    <h2 style="font-family:Georgia,serif;font-size:22px;font-weight:400;margin:0 0 4px">
+      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    </h2>
+    <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
+  </div>
+  <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:16px">
+    <strong>{restaurant_name}</strong> has been on Cavnar AI for 30 days.
+    That's a full month of reviews monitored, responses drafted, and data working quietly in the background for you.
+  </p>
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:16px">
+    I'd love to hear how it's feeling — is the dashboard saving you time? Anything that could work better?
+    A one-line reply is totally fine.
+  </p>
+  {upsell_block}
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:20px">
+    Thanks for being an early client — it genuinely means a lot.
+  </p>
+  <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
+  <p style="font-size:12px;color:#7a736a;margin:0">
+    Will Cavnar &nbsp;·&nbsp; Cavnar AI<br/>
+    <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
+    &nbsp;·&nbsp;
+    <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
+  </p>
+</div>"""
+        })
+        print(f"Onboarding day 30 sent to {to_email}")
+    except Exception as e:
+        print(f"send_onboarding_day30 failed: {e}")

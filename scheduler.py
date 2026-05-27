@@ -4,6 +4,7 @@ Runs as a daemon thread inside hosted_dashboard.py on Railway.
 
 Jobs:
   2:00am daily  — backup reviews.db and email to will@cavnar.ai
+  10:00am daily — onboarding email sequence (day 2, 7, 30)
   7:00am daily  — fetch new reviews for all live clients
                 — analyse & draft responses automatically
                 — send IMMEDIATE urgent alert to owner if critical review found
@@ -485,6 +486,98 @@ def backup_db():
         log.error(f"backup_db failed: {e}")
 
 
+
+
+def run_onboarding_sequence():
+    """
+    Check all active clients and send the right onboarding email based on days since signup.
+    Runs daily at 10am. Skips clients who already received each email (UNIQUE constraint).
+    Only sends to clients with billing_status in ('trial', 'active').
+    """
+    from datetime import datetime, timedelta
+    from models import get_all_restaurants, get_onboarding_sent, mark_onboarding_sent, log_email
+    from emails import send_onboarding_day2, send_onboarding_day7, send_onboarding_day30
+
+    try:
+        restaurants = get_all_restaurants()
+    except Exception as e:
+        log.error(f"run_onboarding_sequence: could not load restaurants: {e}")
+        return
+
+    now = datetime.now()
+
+    for r in restaurants:
+        # Only send to trial or active clients
+        if getattr(r, "billing_status", "trial") not in ("trial", "active"):
+            continue
+        # Need an email address
+        if not r.owner_email:
+            continue
+        # Need a signup date
+        if not r.created_at:
+            continue
+
+        try:
+            created = datetime.fromisoformat(r.created_at.replace("Z", ""))
+        except Exception:
+            continue
+
+        days_since = (now - created).days
+        already_sent = get_onboarding_sent(r.id)
+
+        # Build module list for context
+        modules = []
+        if r.module_reviews:  modules.append("Review Intelligence")
+        if r.module_labor:    modules.append("Labor Optimizer")
+        if r.module_inventory: modules.append("Inventory Control")
+        if r.module_marketing: modules.append("Marketing Autopilot")
+
+        # Day 2 — send on day 2 or 3 (small buffer in case scheduler runs slightly late)
+        if days_since >= 2 and "day_2" not in already_sent:
+            try:
+                send_onboarding_day2(
+                    to_email=r.owner_email,
+                    restaurant_name=r.name,
+                    owner_name=r.owner_name,
+                    modules=modules,
+                )
+                mark_onboarding_sent(r.id, "day_2")
+                log_email(r.id, "onboarding_day2", r.owner_email, f"Getting started — {r.name}")
+                log.info(f"Onboarding day 2 sent to {r.owner_email} ({r.name})")
+            except Exception as e:
+                log.error(f"Onboarding day 2 failed for {r.name}: {e}")
+
+        # Day 7 — send on day 7, 8, or 9
+        elif days_since >= 7 and "day_7" not in already_sent:
+            try:
+                send_onboarding_day7(
+                    to_email=r.owner_email,
+                    restaurant_name=r.name,
+                    owner_name=r.owner_name,
+                    has_labor=bool(r.module_labor),
+                    has_inventory=bool(r.module_inventory),
+                )
+                mark_onboarding_sent(r.id, "day_7")
+                log_email(r.id, "onboarding_day7", r.owner_email, f"One week in — {r.name}")
+                log.info(f"Onboarding day 7 sent to {r.owner_email} ({r.name})")
+            except Exception as e:
+                log.error(f"Onboarding day 7 failed for {r.name}: {e}")
+
+        # Day 30 — send on day 30+
+        elif days_since >= 30 and "day_30" not in already_sent:
+            try:
+                send_onboarding_day30(
+                    to_email=r.owner_email,
+                    restaurant_name=r.name,
+                    owner_name=r.owner_name,
+                    modules=modules,
+                )
+                mark_onboarding_sent(r.id, "day_30")
+                log_email(r.id, "onboarding_day30", r.owner_email, f"30-day check-in — {r.name}")
+                log.info(f"Onboarding day 30 sent to {r.owner_email} ({r.name})")
+            except Exception as e:
+                log.error(f"Onboarding day 30 failed for {r.name}: {e}")
+
 def scheduler_loop():
     global _last_fetch_date, _last_digest_date
     log.info("Scheduler started — daily fetch 8am, digests 9am on client's chosen day")
@@ -533,6 +626,11 @@ def scheduler_loop():
                 # Monday 10am — check for stale inventory data
                 log.info("Running stale inventory check...")
                 check_stale_inventory()
+
+            if now.hour == 10 and _last_digest_date != today:
+                # 10am daily — onboarding email sequence
+                log.info("Running onboarding sequence check...")
+                run_onboarding_sequence()
 
         except Exception as e:
             log.error(f"Scheduler loop error: {e}")

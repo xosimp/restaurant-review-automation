@@ -3374,9 +3374,10 @@ def server_error(e):
 # ── Module-level init (runs under gunicorn/Railway AND direct python) ────────
 
 try:
-    from models import ensure_columns as _ec, init_email_log as _iel
+    from models import ensure_columns as _ec, init_email_log as _iel, init_onboarding_emails as _ioe
     _ec()
     _iel()
+    _ioe()
     print("DB init OK")
 except Exception as _e:
     print(f"DB init error: {_e}")
@@ -3399,10 +3400,11 @@ except Exception: pass
 if __name__ == "__main__":
     init_db()
     init_auth()
-    from models import init_staff_notes, ensure_columns, init_email_log
+    from models import init_staff_notes, ensure_columns, init_email_log, init_onboarding_emails
     init_staff_notes()
     ensure_columns()
     init_email_log()
+    init_onboarding_emails()
 
     # Start background scheduler for digests and review fetching
     from scheduler import start_scheduler

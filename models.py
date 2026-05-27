@@ -868,3 +868,45 @@ def get_reviews_data(restaurant_id, filter_by="all", search=""):
         d["categories"] = json.loads(d["categories"] or "[]")
         result.append(d)
     return result
+
+
+# ── Onboarding email tracking ─────────────────────────────────────────────────
+
+ONBOARDING_SCHEMA = """
+CREATE TABLE IF NOT EXISTS onboarding_emails (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+    email_type      TEXT    NOT NULL,  -- 'day_2', 'day_7', 'day_30'
+    sent_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(restaurant_id, email_type)
+);
+"""
+
+def init_onboarding_emails(db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.executescript(ONBOARDING_SCHEMA)
+    conn.commit()
+    conn.close()
+
+def get_onboarding_sent(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """Return list of email_types already sent to this restaurant."""
+    conn = get_conn(db_path)
+    rows = conn.execute(
+        "SELECT email_type FROM onboarding_emails WHERE restaurant_id=?",
+        (restaurant_id,)
+    ).fetchall()
+    conn.close()
+    return [r["email_type"] for r in rows]
+
+def mark_onboarding_sent(restaurant_id: int, email_type: str, db_path: str = DB_PATH):
+    """Record that an onboarding email was sent. UNIQUE constraint prevents duplicates."""
+    try:
+        conn = get_conn(db_path)
+        conn.execute(
+            "INSERT OR IGNORE INTO onboarding_emails (restaurant_id, email_type) VALUES (?,?)",
+            (restaurant_id, email_type)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"mark_onboarding_sent error: {e}")
