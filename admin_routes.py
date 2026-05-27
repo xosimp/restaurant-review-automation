@@ -19,6 +19,18 @@ from emails import send_payment_email, send_welcome_email, create_stripe_checkou
 
 admin_bp = Blueprint('admin', __name__)
 
+def sanitize(value, max_len=1000):
+    """Strip HTML tags and limit length to prevent XSS."""
+    if not value:
+        return value
+    import re
+    # Remove HTML tags
+    value = re.sub(r'<[^>]+>', '', str(value))
+    # Remove javascript: protocol
+    value = re.sub(r'(?i)javascript\s*:', '', value)
+    # Truncate
+    return value[:max_len].strip() or None
+
 # HTML templates - imported lazily to avoid circular imports
 def _get_templates():
     import hosted_dashboard as _hd
@@ -278,12 +290,12 @@ def save_client_settings(restaurant_id, current_user):
             "owner_email":     data.get("owner_email","").strip(),
             "google_place_id": data.get("google_place_id","").strip() or None,
             "yelp_business_id":data.get("yelp_business_id","").strip() or None,
-            "voice_notes":     data.get("voice_notes","").strip() or None,
+            "voice_notes":     sanitize(data.get("voice_notes","")),
             "neighborhood":    data.get("neighborhood","").strip() or None,
-            "vibe":            data.get("vibe","").strip() or None,
-            "known_for":       data.get("known_for","").strip() or None,
+            "vibe":            sanitize(data.get("vibe","")),
+            "known_for":       sanitize(data.get("known_for","")),
             "sign_off_name":   data.get("sign_off_name","").strip() or None,
-            "never_say":       data.get("never_say","").strip() or None,
+            "never_say":       sanitize(data.get("never_say","")),
             "hourly_rate":     float(data.get("hourly_rate") or 26.0),
             "labor_target_pct": float(data.get("labor_target_pct") or 30.0),
             "pos_system":      data.get("pos_system","").strip() or None,
@@ -291,18 +303,18 @@ def save_client_settings(restaurant_id, current_user):
             "module_labor":    int(data.get("module_labor", 0)),
             "module_inventory":int(data.get("module_inventory", 0)),
             "module_marketing":int(data.get("module_marketing", 0)),
-            "owner_name":      data.get("owner_name","").strip() or None,
+            "owner_name":      sanitize(data.get("owner_name","")),
             "owner_phone":     data.get("owner_phone","").strip() or None,
             "location_group":        data.get("location_group","").strip() or None,
             "location_name":         data.get("location_name","").strip() or None,
             "inventory_frequency":   data.get("inventory_frequency","weekly"),
-            "inventory_notes":       data.get("inventory_notes","").strip() or None,
+            "inventory_notes":       sanitize(data.get("inventory_notes","")),
             "food_cost_target":      float(data.get("food_cost_target", 30) or 30),
             "digest_day":      data.get("digest_day","monday"),
             "digest_enabled":  int(data.get("digest_enabled",1)),
             "reviews_live":    int(bool(data.get("reviews_live"))),
             "billing_status":  data.get("billing_status","trial"),
-            "internal_notes":  data.get("internal_notes","").strip() or None,
+            "internal_notes":  sanitize(data.get("internal_notes","")),
         })
         return jsonify(ok=True)
     except Exception as e:
