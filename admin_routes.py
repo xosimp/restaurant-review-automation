@@ -1396,7 +1396,7 @@ def test_onboarding(current_user):
         # Day 2
         try:
             send_onboarding_day2(TEST_EMAIL, TEST_RESTAURANT, TEST_NAME, TEST_MODULES)
-            log_email(TEST_RID, "onboarding_day2", TEST_EMAIL, f"Getting started — {TEST_RESTAURANT}")
+            log_email(TEST_RID, "Onboarding Day 2", TEST_EMAIL, f"Getting started — {TEST_RESTAURANT}")
             results.append("day_2: sent + logged")
         except Exception as e:
             results.append(f"day_2 FAILED: {e}")
@@ -1405,7 +1405,7 @@ def test_onboarding(current_user):
         try:
             send_onboarding_day7(TEST_EMAIL, TEST_RESTAURANT, TEST_NAME,
                                   has_labor=True, has_inventory=True)
-            log_email(TEST_RID, "onboarding_day7", TEST_EMAIL, f"One week in — {TEST_RESTAURANT}")
+            log_email(TEST_RID, "Onboarding Day 7", TEST_EMAIL, f"One week in — {TEST_RESTAURANT}")
             results.append("day_7: sent + logged")
         except Exception as e:
             results.append(f"day_7 FAILED: {e}")
@@ -1413,7 +1413,7 @@ def test_onboarding(current_user):
         # Day 30 — missing Inventory + Marketing (upsell block shows)
         try:
             send_onboarding_day30(TEST_EMAIL, TEST_RESTAURANT, TEST_NAME, TEST_MODULES)
-            log_email(TEST_RID, "onboarding_day30", TEST_EMAIL, f"30-day check-in — {TEST_RESTAURANT}")
+            log_email(TEST_RID, "Onboarding Day 30", TEST_EMAIL, f"30-day check-in — {TEST_RESTAURANT}")
             results.append("day_30: sent + logged")
         except Exception as e:
             results.append(f"day_30 FAILED: {e}")
