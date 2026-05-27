@@ -1415,3 +1415,125 @@ def send_referral(current_user):
         return jsonify(ok=True)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
+
+# ── Admin notification test (remove after confirming all 3 fire) ──────────────
+@admin_bp.route("/admin/test-notifications", methods=["POST"])
+@admin_required
+def test_notifications(current_user):
+    """Fire all 3 admin notification emails to will@cavnar.ai."""
+    import os as _os
+    import resend as _resend
+    from models import log_email
+
+    RESEND_KEY  = _os.getenv("RESEND_API_KEY", "")
+    WILL_EMAIL  = _os.getenv("WILL_EMAIL", "will@cavnar.ai")
+    FROM_EMAIL  = _os.getenv("FROM_EMAIL", "will@cavnar.ai")
+    TEST_RID    = current_user["restaurant_id"]
+    TEST_NAME   = "Maplewood Kitchen (TEST)"
+
+    if not RESEND_KEY:
+        return jsonify(ok=False, error="No RESEND_API_KEY set")
+
+    _resend.api_key = RESEND_KEY
+    results = []
+
+    # 1. First payment notification
+    try:
+        _resend.Emails.send({
+            "from": f"Cavnar AI Alerts <{FROM_EMAIL}>",
+            "to": [WILL_EMAIL],
+            "subject": f"💳 New paying client — {TEST_NAME}",
+            "html": f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+                <div style="border-top:3px solid #2d6a4f;padding-top:20px;margin-bottom:16px">
+                    <h3 style="color:#0e0c0a;margin:0">New paying client</h3>
+                </div>
+                <p style="font-size:15px;line-height:1.6">
+                    <strong>{TEST_NAME}</strong> just converted from trial to paid.<br><br>
+                    <strong>Email:</strong> owner@maplewoodkitchen.com<br>
+                    <strong>Amount:</strong> $500.00<br>
+                    <strong>Billing:</strong> Subscription Create
+                </p>
+                <hr style="border:none;border-top:1px solid #e0dbd0;margin:16px 0"/>
+                <p style="font-size:11px;color:#7a736a">
+                    <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">View in admin →</a>
+                </p>
+            </div>"""
+        })
+        log_email(TEST_RID, "Admin Alert", WILL_EMAIL, f"TEST: New paying client — {TEST_NAME}")
+        results.append("payment_notification: sent")
+    except Exception as e:
+        results.append(f"payment_notification FAILED: {e}")
+
+    # 2. CSV upload notification
+    try:
+        _resend.Emails.send({
+            "from": f"Cavnar AI Alerts <{FROM_EMAIL}>",
+            "to": [WILL_EMAIL],
+            "subject": f"📂 {TEST_NAME} just uploaded their shift schedule data",
+            "html": f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+                <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:16px">
+                    <h3 style="color:#0e0c0a;margin:0">Client data uploaded</h3>
+                </div>
+                <p style="font-size:15px;line-height:1.6">
+                    <strong>{TEST_NAME}</strong> just uploaded their shift schedule CSV (84 rows).<br><br>
+                    Good time to check their dashboard looks right and send a quick note.
+                </p>
+                <hr style="border:none;border-top:1px solid #e0dbd0;margin:16px 0"/>
+                <p style="font-size:11px;color:#7a736a">
+                    <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">View in admin →</a>
+                </p>
+            </div>"""
+        })
+        log_email(TEST_RID, "Admin Alert", WILL_EMAIL, f"TEST: CSV upload — {TEST_NAME}")
+        results.append("csv_upload_notification: sent")
+    except Exception as e:
+        results.append(f"csv_upload_notification FAILED: {e}")
+
+    # 3. Inactive client notification
+    try:
+        _resend.Emails.send({
+            "from": f"Cavnar AI Alerts <{FROM_EMAIL}>",
+            "to": [WILL_EMAIL],
+            "subject": f"👋 2 inactive clients — check in this week",
+            "html": f"""<div style="font-family:sans-serif;max-width:580px;margin:0 auto">
+                <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:16px">
+                    <h3 style="color:#0e0c0a;margin:0">Inactive clients</h3>
+                    <p style="font-size:12px;color:#7a736a;margin:4px 0 0">Clients who haven't logged in for 14+ days</p>
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:13px">
+                    <thead><tr style="background:#f7f4ef">
+                        <th style="padding:8px 12px;text-align:left">Client</th>
+                        <th style="padding:8px 12px;text-align:left">Email</th>
+                        <th style="padding:8px 12px;text-align:left">Last login</th>
+                        <th style="padding:8px 12px;text-align:left">Gap</th>
+                    </tr></thead>
+                    <tbody>
+                        <tr>
+                            <td style="padding:6px 12px;border-bottom:1px solid #e0dbd0"><strong>{TEST_NAME}</strong></td>
+                            <td style="padding:6px 12px;border-bottom:1px solid #e0dbd0">owner@maplewoodkitchen.com</td>
+                            <td style="padding:6px 12px;border-bottom:1px solid #e0dbd0;color:#c84b2f">May 10</td>
+                            <td style="padding:6px 12px;border-bottom:1px solid #e0dbd0">17d ago</td>
+                        </tr>
+                        <tr>
+                            <td style="padding:6px 12px;border-bottom:1px solid #e0dbd0"><strong>The Rustic Table (TEST)</strong></td>
+                            <td style="padding:6px 12px;border-bottom:1px solid #e0dbd0">owner@rustictable.com</td>
+                            <td style="padding:6px 12px;border-bottom:1px solid #e0dbd0;color:#c84b2f">Never logged in</td>
+                            <td style="padding:6px 12px;border-bottom:1px solid #e0dbd0">21d ago</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p style="font-size:13px;color:#3a3530;margin-top:16px;line-height:1.6">
+                    Worth a quick personal email or text to each of these — early churn usually shows up as disengagement first.
+                </p>
+                <hr style="border:none;border-top:1px solid #e0dbd0;margin:16px 0"/>
+                <p style="font-size:11px;color:#7a736a">
+                    <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">Manage clients →</a>
+                </p>
+            </div>"""
+        })
+        log_email(TEST_RID, "Admin Alert", WILL_EMAIL, "TEST: Inactive clients check")
+        results.append("inactive_notification: sent")
+    except Exception as e:
+        results.append(f"inactive_notification FAILED: {e}")
+
+    return jsonify(ok=True, results=results)
