@@ -1314,7 +1314,7 @@ function loadCompetitorIntel(){
       // No data yet - auto-trigger refresh
       loading.textContent='Fetching competitor data for the first time...';
       fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d2){
-        if(d2.ok){loadCompetitorIntel();}
+        if(d2.ok){setTimeout(function(){loadCompetitorIntel();},500);}
         else{loading.style.display='none';empty.style.display='block';}
       }).catch(function(){loading.style.display='none';empty.style.display='block';});
       return;
