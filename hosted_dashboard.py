@@ -1310,7 +1310,15 @@ function loadCompetitorIntel(){
   loading.style.display='block';comp.style.display='none';empty.style.display='none';
   fetch('/api/competitor-intel').then(function(r){return r.json();}).then(function(d){
     loading.style.display='none';
-    if(!d.ok||!d.data){loading.style.display='none';empty.style.display='block';return;}
+    if(!d.ok||!d.data){
+      // No data yet - auto-trigger refresh
+      loading.textContent='Fetching competitor data for the first time...';
+      fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d2){
+        if(d2.ok){loadCompetitorIntel();}
+        else{loading.style.display='none';empty.style.display='block';}
+      }).catch(function(){loading.style.display='none';empty.style.display='block';});
+      return;
+    }
     comp.style.display='block';
     var insight=document.getElementById('comp-insight');
     if(insight)insight.textContent=d.data.insight||'';
