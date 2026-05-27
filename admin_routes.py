@@ -1375,3 +1375,49 @@ def send_referral(current_user):
         return jsonify(ok=True)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
+
+# ── Onboarding email test (remove after confirming emails fire + log correctly) ─
+@admin_bp.route("/admin/test-onboarding", methods=["POST"])
+@admin_required
+def test_onboarding(current_user):
+    """Send all 3 onboarding emails to will@cavnar.ai with sample data and log them."""
+    try:
+        from emails import send_onboarding_day2, send_onboarding_day7, send_onboarding_day30
+        from models import log_email
+
+        TEST_EMAIL      = "will@cavnar.ai"
+        TEST_RESTAURANT = "Maplewood Kitchen (TEST)"
+        TEST_NAME       = "Will"
+        TEST_MODULES    = ["Review Intelligence", "Labor Optimizer"]
+        TEST_RID        = current_user["restaurant_id"]
+
+        results = []
+
+        # Day 2
+        try:
+            send_onboarding_day2(TEST_EMAIL, TEST_RESTAURANT, TEST_NAME, TEST_MODULES)
+            log_email(TEST_RID, "onboarding_day2", TEST_EMAIL, f"Getting started — {TEST_RESTAURANT}")
+            results.append("day_2: sent + logged")
+        except Exception as e:
+            results.append(f"day_2 FAILED: {e}")
+
+        # Day 7 — with labor + inventory upload prompt
+        try:
+            send_onboarding_day7(TEST_EMAIL, TEST_RESTAURANT, TEST_NAME,
+                                  has_labor=True, has_inventory=True)
+            log_email(TEST_RID, "onboarding_day7", TEST_EMAIL, f"One week in — {TEST_RESTAURANT}")
+            results.append("day_7: sent + logged")
+        except Exception as e:
+            results.append(f"day_7 FAILED: {e}")
+
+        # Day 30 — missing Inventory + Marketing (upsell block shows)
+        try:
+            send_onboarding_day30(TEST_EMAIL, TEST_RESTAURANT, TEST_NAME, TEST_MODULES)
+            log_email(TEST_RID, "onboarding_day30", TEST_EMAIL, f"30-day check-in — {TEST_RESTAURANT}")
+            results.append("day_30: sent + logged")
+        except Exception as e:
+            results.append(f"day_30 FAILED: {e}")
+
+        return jsonify(ok=True, results=results)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
