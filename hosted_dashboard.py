@@ -1011,7 +1011,7 @@ function clientUpload(dataType, input) {
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Google Business — Auto-post replies</div>
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
       <div>
-        {% if restaurant.gmb_location_id %}
+        {% if restaurant.gmb_refresh_token %}
         <div style="display:flex;align-items:center;gap:8px;font-size:13px">
           <span style="color:var(--green);font-size:16px">✓</span>
           <div>
@@ -1027,7 +1027,7 @@ function clientUpload(dataType, input) {
         {% endif %}
       </div>
       <div style="display:flex;gap:8px">
-        {% if restaurant.gmb_location_id %}
+        {% if restaurant.gmb_refresh_token %}
         <button onclick="gmbDisconnect()" class="btn btn-skip" style="font-size:11px">Disconnect</button>
         {% else %}
         <button onclick="gmbConnect()" class="btn btn-approve" style="font-size:12px;padding:7px 16px">

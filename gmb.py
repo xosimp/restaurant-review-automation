@@ -213,4 +213,4 @@ def is_connected(restaurant_id: int) -> bool:
     """Check if a restaurant has GMB connected."""
     from models import get_restaurant
     r = get_restaurant(restaurant_id)
-    return bool(r and r.gmb_refresh_token and r.gmb_location_id)
+    return bool(r and r.gmb_refresh_token)
