@@ -740,7 +740,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 <!-- COMPETITOR INTEL -->
 <div class="panel" id="panel-competitor">
   <div style="background:linear-gradient(135deg,#0d1b2a,#1a2d40);border-radius:var(--r);padding:20px 24px;margin-bottom:20px;border:1px solid #1e3a52">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+    <div style="display:flex;align-items:center;justify-content:space-between">
       <div>
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#4a9eca;margin-bottom:6px">Cavnar AI · Competitor Intelligence</div>
         <div style="font-family:'DM Serif Display',serif;font-size:20px;color:#e8f4fd">What your neighbors are doing</div>
@@ -748,19 +748,40 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       <button onclick="refreshCompetitorIntel(this)" style="background:#1e3a52;color:#4a9eca;border:1px solid #2a5070;padding:7px 14px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer">Refresh</button>
     </div>
   </div>
-  <div id="comp-loading" style="font-size:13px;color:var(--ink3);font-style:italic;padding:16px 0">Loading competitor analysis...</div>
-  <div id="comp-content" style="display:none">
+
+  {% if competitor_data %}
     <div style="background:linear-gradient(135deg,#0d1b2a,#1a2d40);border-radius:var(--r);padding:16px 20px;margin-bottom:16px;border:1px solid #1e3a52">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#4a9eca;margin-bottom:8px">Strategic Insight</div>
-      <p id="comp-insight" style="font-size:14px;color:#e8f4fd;line-height:1.7;margin:0"></p>
+      <p style="font-size:14px;color:#e8f4fd;line-height:1.7;margin:0">{{competitor_data.insight}}</p>
     </div>
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Nearby competitors</div>
-    <div id="comp-cards" style="display:flex;flex-direction:column;gap:10px"></div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:12px" id="comp-updated"></div>
+    <div style="display:flex;flex-direction:column;gap:10px" id="comp-cards-static">
+      {% for c in competitor_data.competitors %}
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <div style="font-weight:600;font-size:13px">{{c.name}}</div>
+          <div style="font-size:12px;color:#f59e0b">{{c.rating}}★ <span style="color:var(--ink3)">{{c.review_count}} reviews</span></div>
+        </div>
+        <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">{{c.vicinity}}</div>
+        {% for r in c.reviews[:2] %}
+        <div style="font-size:11px;color:var(--ink3);padding:6px 0;border-top:1px solid var(--paper3);line-height:1.5">
+          <span style="color:{{'#16a34a' if r.rating >= 4 else '#dc2626'}}">★</span>
+          {{r.text[:120]}}{{'...' if r.text|length > 120 else ''}}
+        </div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+    {% if competitor_updated_at %}
+    <div style="font-size:11px;color:var(--ink3);margin-top:12px">Last updated: {{competitor_updated_at[:10]}}</div>
+    {% endif %}
+  {% else %}
+  <div style="background:var(--paper2);border-radius:var(--r);padding:24px;text-align:center">
+    <div style="font-size:13px;color:var(--ink3);margin-bottom:12px">No competitor data yet. Click Refresh to analyze your neighborhood.</div>
+    <button onclick="refreshCompetitorIntel(this)" style="background:#4a9eca;color:white;border:none;padding:9px 20px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer">Fetch competitor data</button>
   </div>
-  <div id="comp-empty" style="display:none;background:var(--paper2);border-radius:var(--r);padding:20px;text-align:center">
-    <div style="font-size:13px;color:var(--ink3)">No competitor data yet. Make sure your Google Place ID is set, then click Refresh.</div>
-  </div>
+  {% endif %}
+  <div id="comp-refresh-result" style="margin-top:12px;font-size:12px;display:none"></div>
 </div>
 
 
@@ -2871,6 +2892,15 @@ def index(current_user):
     from auth import get_user_by_id
     _user_row = get_user_by_id(current_user["id"]) if not current_user.get("is_admin") else None
     show_welcome = bool(_user_row and not _user_row.get("last_login"))
+    # Load competitor intel if available
+    competitor_data = None
+    if restaurant and restaurant.google_place_id and restaurant.competitor_intel:
+        import json as _json
+        try:
+            competitor_data = _json.loads(restaurant.competitor_intel)
+        except Exception:
+            competitor_data = None
+
     return render_template_string(DASHBOARD_HTML,
         show_welcome=show_welcome,
         current_user=current_user, restaurant=restaurant,
@@ -2882,7 +2912,9 @@ def index(current_user):
         mod_marketing=int(restaurant.module_marketing or 0),
         now=datetime.now().strftime("%b %d, %Y"),
         viewing_as=current_user.get("is_admin", 0),
-        labor_target=float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0)
+        labor_target=float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0,
+        competitor_data=competitor_data,
+        competitor_updated_at=restaurant.competitor_updated_at if restaurant else None)
 
 @app.route("/approve/<int:rid>", methods=["POST"])
 @login_required
