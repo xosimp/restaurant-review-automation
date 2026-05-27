@@ -6,17 +6,6 @@ Run locally:  python3 hosted_dashboard.py
 Deploy:       Railway (connect GitHub repo, set env vars)
 """
 import os, json
-import sentry_sdk
-from sentry_sdk.integrations.flask import FlaskIntegration
-_sentry_dsn = os.getenv("SENTRY_DSN", "")
-if _sentry_dsn:
-    sentry_sdk.init(
-        dsn=_sentry_dsn,
-        integrations=[FlaskIntegration()],
-        traces_sample_rate=0.1,
-        environment=os.getenv("RAILWAY_ENVIRONMENT", "development"),
-        send_default_pii=False,
-    )
 from datetime import datetime
 from functools import wraps
 from flask import (Flask, render_template_string, request,
@@ -49,7 +38,7 @@ def add_security_headers(response):
     response.headers["Permissions-Policy"]        = "geolocation=(), microphone=(), camera=()"
     response.headers["Content-Security-Policy"]   = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://static.cloudflareinsights.com; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; "
         "font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; "
         "img-src 'self' data: https:; "
@@ -3404,7 +3393,6 @@ try:
     from models import get_conn as _gc
     _wc = _gc(); _wc.execute("PRAGMA journal_mode=WAL"); _wc.commit(); _wc.close()
 except Exception: pass
-
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
