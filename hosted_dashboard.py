@@ -172,6 +172,33 @@ input:focus{border-color:var(--ember)}
 .error{background:#fdf0ef;border:1px solid #f5c6c2;border-radius:var(--r);padding:10px 14px;font-size:13px;color:var(--ember);margin-bottom:16px}
 .footer-note{font-size:11px;color:var(--ink3);text-align:center;margin-top:20px}
 </style>
+<script>
+function clientUpload(dataType, input) {
+  var resultEl = document.getElementById(dataType + '-inline-result');
+  if (!input || !input.files || !input.files[0]) return;
+  var overlay = document.getElementById('upload-loading-overlay');
+  if (overlay) overlay.style.display = 'flex';
+  if (resultEl) resultEl.style.display = 'none';
+  var form = new FormData();
+  form.append('data_type', dataType === 'inventory' ? 'inventory' : 'shifts');
+  form.append('csv_file', input.files[0]);
+  fetch('/client/upload-data', {method:'POST', body: form})
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      if (overlay) overlay.style.display = 'none';
+      if (data.ok) {
+        if (resultEl){ resultEl.style.display='inline'; resultEl.style.color='#2d6a4f'; resultEl.textContent='✓ '+data.rows+' rows loaded — refreshing…'; }
+        setTimeout(function(){ location.reload(); }, 1200);
+      } else {
+        if (resultEl){ resultEl.style.display='inline'; resultEl.style.color='#c84b2f'; resultEl.textContent='✗ '+(data.error||'Upload failed'); }
+      }
+    })
+    .catch(function(){
+      if (overlay) overlay.style.display = 'none';
+      if (resultEl){ resultEl.style.display='inline'; resultEl.style.color='#c84b2f'; resultEl.textContent='✗ Network error — try again'; }
+    });
+}
+</script>
 </head>
 <body>
 <div class="card">
