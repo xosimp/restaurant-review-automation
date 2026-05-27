@@ -8,19 +8,6 @@ Deploy:       Railway (connect GitHub repo, set env vars)
 import os, json
 from datetime import datetime
 from functools import wraps
-
-# ── Sentry error monitoring ────────────────────────────────────────────────────
-import sentry_sdk
-from sentry_sdk.integrations.flask import FlaskIntegration
-_sentry_dsn = os.getenv("SENTRY_DSN", "")
-if _sentry_dsn:
-    sentry_sdk.init(
-        dsn=_sentry_dsn,
-        integrations=[FlaskIntegration()],
-        traces_sample_rate=0.1,
-        environment=os.getenv("RAILWAY_ENVIRONMENT", "development"),
-        send_default_pii=False,
-    )
 from flask import (Flask, render_template_string, request,
                    jsonify, redirect, url_for, make_response, send_file, session)
 from emails import send_payment_email, send_welcome_email
@@ -3406,6 +3393,11 @@ try:
     from models import get_conn as _gc
     _wc = _gc(); _wc.execute("PRAGMA journal_mode=WAL"); _wc.commit(); _wc.close()
 except Exception: pass
+
+# ── Sentry test route (remove after confirming Sentry is live) ────────────────
+@app.route("/sentry-test")
+def sentry_test():
+    division_by_zero = 1 / 0
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
