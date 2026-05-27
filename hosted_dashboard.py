@@ -437,7 +437,7 @@ function clientUpload(dataType, input) {
 <div class="panel {{'active' if mod_reviews}}" id="panel-reviews">
   {% if not restaurant.reviews_live %}
   <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#8a6a00;display:flex;align-items:center;gap:8px">
-    <span>⚠</span><span><strong>Sample data</strong> — example reviews to show how the dashboard works. Will is connecting your live Google and Yelp reviews.</span>
+    <span>⚠</span><span><strong>Sample data</strong> — example reviews showing how the dashboard works. Your live Google and Yelp reviews will appear here automatically once connected.</span>
   </div>
   {% endif %}
   <div class="stat-row">
@@ -3486,7 +3486,7 @@ def server_error(e):
   <div class="wrap">
     <div class="logo">Cavnar <span>AI</span></div>
     <h1>Something went wrong</h1>
-    <p>The server ran into an issue. It's been logged and Will will look into it. Email <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a> if it keeps happening.</p>
+    <p>The server ran into an issue. It's been logged automatically. Email <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a> if it keeps happening.</p>
     <a href="/login" class="btn">Back to dashboard</a>
   </div>
 </body>

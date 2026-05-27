@@ -61,7 +61,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
         elif checkout_monthly:
             btn_html = f'<a href="{checkout_monthly}" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">Complete payment →</a>'
         else:
-            btn_html = '<p style="font-size:13px;color:#3a3530;margin-top:8px">Will will send your payment link shortly.</p>' 
+            btn_html = '<p style="font-size:13px;color:#3a3530;margin-top:8px">Your payment link will arrive in a separate email shortly.</p>' 
         _resend.Emails.send({
             "from": f"Will Cavnar <{FROM_EMAIL}>",
             "to": [to_email],
@@ -406,13 +406,13 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
   <div style="background:#f7f4ef;border-radius:8px;padding:18px 22px;margin-bottom:20px;border-left:3px solid #c84b2f">
     <p style="font-size:13px;font-weight:600;color:#0e0c0a;margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em">One thing to do this week</p>
     <p style="font-size:14px;color:#3a3530;line-height:1.7;margin:0 0 10px">
-      To unlock your full dashboard, send me your data files and I'll get them loaded in:
+      To see your real numbers, upload your data directly in the dashboard — takes about a minute:
     </p>
     <ul style="font-size:13px;color:#3a3530;line-height:1.7;padding-left:18px;margin:0">
       {items_html}
     </ul>
     <p style="font-size:13px;color:#7a736a;margin:10px 0 0">
-      Just reply to this email with the files attached.
+      Head to your <a href="https://dashboard.cavnar.ai" style="color:#c84b2f;text-decoration:none">dashboard</a>, open the Labor or Inventory tab, and you'll see an upload button at the top. Or just reply here and I'll help you through it.
     </p>
   </div>"""
 
