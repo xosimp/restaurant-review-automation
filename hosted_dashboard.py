@@ -1251,20 +1251,6 @@ function loadBillingInfo() {
 }
 
 
-async 
-async 
-// Check IG status when marketing tab is opened
-const _origSwitchTab = switchTab;
-
-
-
-
-
-
-
-
-
-
 function loadLaborTrend(){
   var container=document.getElementById('labor-trend-bars');
   var labels=document.getElementById('labor-trend-labels');
