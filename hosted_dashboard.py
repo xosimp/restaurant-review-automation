@@ -1382,6 +1382,15 @@ function refreshCompetitorIntel(btn){
     else{toast('Error: '+(d.error||'failed'));}
   }).catch(function(){btn.textContent='Refresh';btn.disabled=false;toast('Request failed');});
 }
+function checkTabParam(){
+  var params=new URLSearchParams(window.location.search);
+  var tab=params.get('tab');
+  if(tab){
+    var btn=document.getElementById('tab-'+tab);
+    if(btn){switchTab(tab,btn);}
+  }
+}
+window.addEventListener('load',checkTabParam);
 function dismissWelcome(){
   const b=document.getElementById('welcome-banner');
   if(b) b.style.display='none';
