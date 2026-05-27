@@ -696,7 +696,7 @@ def view_as_client(restaurant_id, current_user):
     token = create_session(dict(user_row)["id"], days=1)
     resp = make_response(redirect("/"))
     resp.set_cookie("session_token", token, max_age=86400,
-                    httponly=True, samesite="Lax")
+                    httponly=True, secure=True, samesite="Strict")
     return resp
 
 @admin_bp.route("/admin/stop-viewing")

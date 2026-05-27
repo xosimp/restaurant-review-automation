@@ -2855,7 +2855,7 @@ def login():
         next_url = request.args.get("next", "/admin" if user["is_admin"] else "/")
         resp = make_response(redirect(next_url))
         resp.set_cookie("session_token", token, max_age=30*24*3600,
-                        httponly=True, samesite="Lax")
+                        httponly=True, secure=True, samesite="Strict")
         return resp
     return render_template_string(LOGIN_HTML, error=None)
 
