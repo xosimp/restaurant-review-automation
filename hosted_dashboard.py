@@ -472,7 +472,7 @@ function clientUpload(dataType, input) {
   {% set colors=['#c84b2f','#2d6a4f','#b7791f','#1a56cc','#6b4fa0','#1e7a8c'] %}
   {% for r in reviews %}
   {% set col=colors[loop.index0%colors|length] %}
-  <div class="card {{'urgent' if r.urgency=='high'}} {{'approved' if r.response_status=='approved'}}" id="rc-{{r.id}}">
+  <div class="card {{'urgent' if r.urgency=='high'}} {{'approved' if r.response_status=='approved'}}" id="rc-{{r.id}}" data-platform="{{r.platform}}" data-yelp-id="{{restaurant.yelp_business_id or ''}}">
     {% if r.urgency=='high' %}<div class="ubanner">⚠ Needs immediate attention</div>{% endif %}
     <div class="card-hd">
       <div class="avatar" style="background:{{col}}">{{r.author[0].upper()}}</div>
@@ -1005,6 +1005,40 @@ function clientUpload(dataType, input) {
     </div>
   </div>
 
+  <!-- Google Business Connect -->
+  {% if mod_reviews %}
+  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:14px">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Google Business — Auto-post replies</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+      <div>
+        {% if restaurant.gmb_location_id %}
+        <div style="display:flex;align-items:center;gap:8px;font-size:13px">
+          <span style="color:var(--green);font-size:16px">✓</span>
+          <div>
+            <div style="font-weight:600;color:var(--ink)">Google Business connected</div>
+            <div style="font-size:11px;color:var(--ink3)">Approved responses post automatically to Google</div>
+          </div>
+        </div>
+        {% else %}
+        <div>
+          <div style="font-size:13px;font-weight:500;color:var(--ink);margin-bottom:2px">Connect Google Business</div>
+          <div style="font-size:11px;color:var(--ink3)">Approved responses will auto-post — no more copy/paste</div>
+        </div>
+        {% endif %}
+      </div>
+      <div style="display:flex;gap:8px">
+        {% if restaurant.gmb_location_id %}
+        <button onclick="gmbDisconnect()" class="btn btn-skip" style="font-size:11px">Disconnect</button>
+        {% else %}
+        <button onclick="gmbConnect()" class="btn btn-approve" style="font-size:12px;padding:7px 16px">
+          Connect Google Business →
+        </button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Two column second row -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
 
@@ -1180,6 +1214,27 @@ async function saveDraft(id) {
   }
 }
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)}
+function gmbConnect(){
+  const popup = window.open('/auth/google/connect','gmb_connect','width=500,height=600,left=200,top=100');
+  window.addEventListener('message', function handler(e){
+    if(!e.data || !e.data.gmb) return;
+    window.removeEventListener('message', handler);
+    if(e.data.gmb === 'connected'){
+      toast('Google Business connected ✓');
+      setTimeout(()=>location.reload(), 1000);
+    } else {
+      toast('Connection failed: ' + (e.data.msg || 'unknown error'));
+    }
+  });
+}
+
+function gmbDisconnect(){
+  if(!confirm('Disconnect Google Business? Responses will no longer auto-post.')) return;
+  fetch('/auth/google/disconnect',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.ok){ toast('Google Business disconnected'); setTimeout(()=>location.reload(),800); }
+  });
+}
+
 function switchTab(n,btn){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
@@ -1200,7 +1255,47 @@ document.addEventListener('DOMContentLoaded', function(){
 let rfilter='{{rfilter}}';
 function setRF(f,btn){rfilter=f;document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active','active-red'));btn.classList.add(f==='urgent'?'active-red':'active');filterReviews()}
 function filterReviews(){const q=document.getElementById('rsearch').value;window.location='/?filter='+rfilter+'&search='+encodeURIComponent(q)}
-function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.ok){document.getElementById('rc-'+id).classList.add('approved');document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="btn btn-approved">✓ Approved</span>';toast('Response approved')}})}
+function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{
+  if(d.ok){
+    document.getElementById('rc-'+id).classList.add('approved');
+    if(d.auto_posted){
+      document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted to Google</span>';
+      toast('Response approved and posted to Google ✓');
+    } else {
+      document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="btn btn-approved">✓ Approved</span><button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px;margin-left:6px" onclick="markPosted('+id+',this)">Mark as posted</button>';
+      toast('Response approved');
+    }
+  }
+})}
+
+function markPosted(id, btn){
+  // For Yelp reviews: copy response to clipboard and open Yelp
+  const card = document.getElementById('rc-'+id);
+  const platform = card ? card.dataset.platform : '';
+  const draftEl = document.getElementById('draft-txt-'+id);
+  const draftText = draftEl ? draftEl.textContent.trim() : '';
+
+  if(platform === 'yelp' && draftText){
+    navigator.clipboard.writeText(draftText).then(function(){
+      toast('Response copied to clipboard — opening Yelp...');
+    }).catch(function(){ toast('Opening Yelp...'); });
+    // Open Yelp business page in new tab
+    const yelpId = card.dataset.yelpId || '';
+    const yelpUrl = yelpId
+      ? 'https://www.yelp.com/biz/' + yelpId
+      : 'https://business.yelp.com';
+    window.open(yelpUrl, '_blank');
+  }
+
+  fetch('/api/mark-posted/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.ok){
+      const actions = document.getElementById('draft-actions-'+id);
+      if(actions) actions.innerHTML='<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>';
+      toast('Marked as posted');
+    }
+  });
+}
+
 function skipR(id){
   fetch('/skip/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{
     if(d.ok){
@@ -3093,7 +3188,27 @@ def index(current_user):
 @login_required
 def approve(rid, current_user):
     approve_response(rid)
-    return jsonify(ok=True)
+    # Auto-post to Google if connected and this is a Google review with a review_name
+    try:
+        from gmb import post_reply, is_connected
+        conn = get_conn()
+        row = conn.execute(
+            "SELECT platform, draft_response, review_name FROM reviews WHERE id=? AND restaurant_id=?",
+            (rid, current_user["restaurant_id"])
+        ).fetchone()
+        conn.close()
+        if row and row["platform"] == "google" and row["review_name"] and row["draft_response"]:
+            if is_connected(current_user["restaurant_id"]):
+                result = post_reply(current_user["restaurant_id"], row["review_name"], row["draft_response"])
+                if result["ok"]:
+                    from models import mark_posted
+                    mark_posted(rid)
+                    return jsonify(ok=True, auto_posted=True)
+                else:
+                    print(f"[GMB] Auto-post failed for review {rid}: {result['error']}")
+    except Exception as e:
+        print(f"[GMB] approve auto-post error: {e}")
+    return jsonify(ok=True, auto_posted=False)
 
 @app.route("/skip/<int:rid>", methods=["POST"])
 @login_required
@@ -3516,6 +3631,94 @@ try:
     from models import get_conn as _gc
     _wc = _gc(); _wc.execute("PRAGMA journal_mode=WAL"); _wc.commit(); _wc.close()
 except Exception: pass
+
+# ── Google My Business OAuth ─────────────────────────────────────────────────
+
+@app.route("/auth/google/connect")
+@login_required
+def gmb_connect(current_user):
+    """Start Google OAuth flow for the logged-in client."""
+    from gmb import get_auth_url
+    if not os.getenv("GOOGLE_CLIENT_ID"):
+        return jsonify(ok=False, error="Google OAuth not configured"), 500
+    url = get_auth_url(current_user["restaurant_id"])
+    from flask import redirect as _redirect
+    return _redirect(url)
+
+
+@app.route("/auth/google/callback")
+def gmb_callback():
+    """Handle Google OAuth callback — exchange code, store tokens, discover location."""
+    from gmb import exchange_code, get_gmb_account_id, get_gmb_location_id
+    from models import update_restaurant, get_restaurant
+    from datetime import datetime, timezone, timedelta
+
+    code          = request.args.get("code")
+    restaurant_id = request.args.get("state")
+    error         = request.args.get("error")
+
+    if error or not code or not restaurant_id:
+        msg = error or "No code returned"
+        return (
+            "<html><body><script>"
+            "window.opener&&window.opener.postMessage({gmb:'error',msg:'" + msg + "'},'*');"
+            "window.close();"
+            "</script><p>Connection failed. Close this window.</p></body></html>"
+        )
+
+    try:
+        restaurant_id = int(restaurant_id)
+        tokens        = exchange_code(code)
+        access_token  = tokens["access_token"]
+        refresh_token = tokens.get("refresh_token", "")
+        expires_in    = tokens.get("expires_in", 3600)
+        expires_at    = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
+
+        account_id  = get_gmb_account_id(access_token)
+        location_id = None
+        if account_id:
+            r = get_restaurant(restaurant_id)
+            location_id = get_gmb_location_id(access_token, account_id, r.google_place_id or "")
+
+        update_restaurant(restaurant_id, {
+            "gmb_access_token":  access_token,
+            "gmb_refresh_token": refresh_token,
+            "gmb_token_expires": expires_at,
+            "gmb_account_id":    account_id or "",
+            "gmb_location_id":   location_id or "",
+        })
+
+        return (
+            "<html><body><script>"
+            "window.opener&&window.opener.postMessage({gmb:'connected'},'*');"
+            "window.close();"
+            "</script><p>Google Business connected! Close this window.</p></body></html>"
+        )
+
+    except Exception as e:
+        print(f"[GMB] OAuth callback error: {e}")
+        return (
+            "<html><body><script>"
+            "window.opener&&window.opener.postMessage({gmb:'error',msg:'Connection error'},'*');"
+            "window.close();"
+            "</script><p>Connection error. Close this window.</p></body></html>"
+        )
+
+
+@app.route("/auth/google/disconnect", methods=["POST"])
+@login_required
+def gmb_disconnect(current_user):
+    """Disconnect Google Business from this restaurant."""
+    from models import update_restaurant
+    update_restaurant(current_user["restaurant_id"], {
+        "gmb_access_token":  "",
+        "gmb_refresh_token": "",
+        "gmb_account_id":    "",
+        "gmb_location_id":   "",
+        "gmb_token_expires": "",
+    })
+    return jsonify(ok=True)
+
 
 # ── Client self-serve data upload ────────────────────────────────────────────
 @app.route("/client/upload-data", methods=["POST"])
