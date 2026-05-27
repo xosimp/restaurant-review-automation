@@ -1289,6 +1289,31 @@ def refresh_ig_token(restaurant_id, current_user):
         return jsonify(ok=False, error=str(e))
 
 
+
+@admin_bp.route("/api/competitor-intel")
+@login_required
+def competitor_intel_api(current_user):
+    """Get competitor intel for the current restaurant."""
+    import json
+    from models import get_restaurant
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    if not restaurant or not restaurant.competitor_intel:
+        return jsonify(ok=False, data=None)
+    try:
+        data = json.loads(restaurant.competitor_intel)
+        return jsonify(ok=True, data=data,
+                      updated_at=restaurant.competitor_updated_at)
+    except Exception:
+        return jsonify(ok=False, data=None)
+
+@admin_bp.route("/api/refresh-competitor-intel", methods=["POST"])
+@login_required
+def refresh_competitor_intel(current_user):
+    """Manually trigger competitor analysis."""
+    from competitor import run_competitor_analysis
+    result = run_competitor_analysis(current_user["restaurant_id"])
+    return jsonify(result)
+
 @admin_bp.route("/api/send-referral", methods=["POST"])
 @login_required
 def send_referral(current_user):

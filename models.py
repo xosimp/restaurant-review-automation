@@ -148,6 +148,8 @@ class Restaurant:
     inventory_updated_at: Optional[str]  = None
     temp_password: Optional[str]         = None
     ig_token: Optional[str]              = None
+    competitor_intel: Optional[str]      = None
+    competitor_updated_at: Optional[str] = None
     ig_user_id: Optional[str]            = None
     ig_token_expires: Optional[str]      = None
     fb_token_expires: Optional[str]      = None
@@ -224,6 +226,8 @@ def ensure_columns(db_path: str = DB_PATH):
     columns_to_add = [
         ("restaurants", "temp_password", "TEXT"),
         ("restaurants", "ig_token", "TEXT"),
+        ("restaurants", "competitor_intel", "TEXT"),
+        ("restaurants", "competitor_updated_at", "TEXT"),
         ("restaurants", "ig_user_id", "TEXT"),
         ("restaurants", "ig_token_expires", "TEXT"),
         ("restaurants", "fb_token_expires", "TEXT"),
@@ -337,7 +341,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","reviews_live","billing_status","internal_notes",
+        "hourly_rate","labor_target_pct","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","internal_notes",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled"
     }
@@ -380,6 +384,8 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         inventory_updated_at=row["inventory_updated_at"] if "inventory_updated_at" in row.keys() else None,
         temp_password=row["temp_password"] if "temp_password" in row.keys() else None,
         ig_token=row["ig_token"] if "ig_token" in row.keys() else None,
+        competitor_intel=row["competitor_intel"] if "competitor_intel" in row.keys() else None,
+        competitor_updated_at=row["competitor_updated_at"] if "competitor_updated_at" in row.keys() else None,
         ig_user_id=row["ig_user_id"] if "ig_user_id" in row.keys() else None,
         ig_token_expires=row["ig_token_expires"] if "ig_token_expires" in row.keys() else None,
         fb_token_expires=row["fb_token_expires"] if "fb_token_expires" in row.keys() else None,

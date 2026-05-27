@@ -431,6 +431,21 @@ def scheduler_loop():
             now   = datetime.now()
             today = now.date()
 
+            # Monday 6am — run competitor analysis for all clients
+            if now.hour == 6 and now.weekday() == 0 and _last_fetch_date != today:
+                log.info("Running weekly competitor analysis...")
+                try:
+                    from competitor import run_competitor_analysis
+                    from models import get_all_restaurants
+                    for r in get_all_restaurants():
+                        if r.google_place_id and r.id:
+                            try:
+                                run_competitor_analysis(r.id)
+                            except Exception as ce:
+                                log.error(f"Competitor analysis failed for {r.name}: {ce}")
+                except Exception as e:
+                    log.error(f"Competitor analysis scheduler error: {e}")
+
             if now.hour == 7 and _last_fetch_date != today:
                 log.info("Refreshing expiring IG/FB tokens...")
                 refresh_expiring_tokens()

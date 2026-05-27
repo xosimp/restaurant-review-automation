@@ -330,6 +330,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     {% if mod_labor %}<button class="tab {{'active' if not mod_reviews and mod_labor}}" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
     {% if mod_inventory %}<button class="tab {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="tab-inventory" onclick="switchTab('inventory',this)">Inventory</button>{% endif %}
     {% if mod_marketing %}<button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
+    <button class="tab" id="tab-competitor" onclick="switchTab('competitor',this)" style="display:none">Intel</button>
     <button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" onclick="switchTab('account',this)" style="margin-left:auto">Account</button>
   </nav>
 </div>
@@ -734,7 +735,32 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     </div>
     <button onclick="disconnectInstagram()" style="font-size:11px;color:#7a736a;background:transparent;border:none;cursor:pointer;text-decoration:underline">Disconnect</button>
   </div>
+<!-- COMPETITOR INTEL -->
+<div class="panel" id="panel-competitor" style="display:none">
+  <div style="background:linear-gradient(135deg,#0d1b2a,#1a2d40);border-radius:var(--r);padding:20px 24px;margin-bottom:20px;border:1px solid #1e3a52">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#4a9eca;margin-bottom:6px">Cavnar AI · Competitor Intelligence</div>
+        <div style="font-family:'DM Serif Display',serif;font-size:20px;color:#e8f4fd">What your neighbors are doing</div>
+      </div>
+      <button onclick="refreshCompetitorIntel(this)" style="background:#1e3a52;color:#4a9eca;border:1px solid #2a5070;padding:7px 14px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer">Refresh</button>
+    </div>
+  </div>
+  <div id="comp-loading" style="font-size:13px;color:var(--ink3);font-style:italic;padding:16px 0">Loading competitor analysis...</div>
+  <div id="comp-content" style="display:none">
+    <div style="background:linear-gradient(135deg,#0d1b2a,#1a2d40);border-radius:var(--r);padding:16px 20px;margin-bottom:16px;border:1px solid #1e3a52">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#4a9eca;margin-bottom:8px">Strategic Insight</div>
+      <p id="comp-insight" style="font-size:14px;color:#e8f4fd;line-height:1.7;margin:0"></p>
+    </div>
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Nearby competitors</div>
+    <div id="comp-cards" style="display:flex;flex-direction:column;gap:10px"></div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:12px" id="comp-updated"></div>
+  </div>
+  <div id="comp-empty" style="display:none;background:var(--paper2);border-radius:var(--r);padding:20px;text-align:center">
+    <div style="font-size:13px;color:var(--ink3)">No competitor data yet. Make sure your Google Place ID is set, then click Refresh.</div>
+  </div>
 </div>
+
 
 <!-- ACCOUNT -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account">
@@ -1287,6 +1313,59 @@ async function sendReferral(){
   } else {
     status.style.color='var(--red)';status.textContent=data.error||'Failed to send';
   }
+}
+function loadCompetitorIntel(){
+  var loading=document.getElementById('comp-loading');
+  var comp=document.getElementById('comp-content');
+  var empty=document.getElementById('comp-empty');
+  if(!loading)return;
+  loading.style.display='block';comp.style.display='none';empty.style.display='none';
+  fetch('/api/competitor-intel').then(function(r){return r.json();}).then(function(d){
+    loading.style.display='none';
+    if(!d.ok||!d.data){empty.style.display='block';return;}
+    comp.style.display='block';
+    var insight=document.getElementById('comp-insight');
+    if(insight)insight.textContent=d.data.insight||'';
+    var updated=document.getElementById('comp-updated');
+    if(updated&&d.updated_at)updated.textContent='Last updated: '+d.updated_at.split(' ')[0];
+    var cards=document.getElementById('comp-cards');
+    if(!cards)return;
+    var html='';
+    var comps=d.data.competitors||[];
+    for(var i=0;i<comps.length;i++){
+      var c=comps[i];
+      var stars='';
+      for(var s=0;s<5;s++)stars+=s<Math.round(c.rating)?'<span style="color:#f59e0b">&#9733;</span>':'<span style="color:#d1d5db">&#9733;</span>';
+      var revHtml='';
+      var revs=c.reviews||[];
+      for(var j=0;j<Math.min(revs.length,2);j++){
+        var rv=revs[j];
+        var rCol=rv.rating>=4?'#16a34a':'#dc2626';
+        var rTxt=rv.text.length>120?rv.text.substring(0,120)+'...':rv.text;
+        revHtml+='<div style="font-size:11px;color:var(--ink3);padding:6px 0;border-top:1px solid var(--paper3);line-height:1.5"><span style="color:'+rCol+'">&#9733;</span> '+rTxt+'</div>';
+      }
+      html+='<div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">'
+        +'<div style="font-weight:600;font-size:13px">'+c.name+'</div>'
+        +'<div>'+stars+' <span style="font-size:12px;color:var(--ink3)">'+c.rating+'</span></div>'
+        +'</div>'
+        +'<div style="font-size:11px;color:var(--ink3);margin-bottom:8px">'+c.vicinity+' &middot; '+c.review_count+' reviews</div>'
+        +revHtml+'</div>';
+    }
+    cards.innerHTML=html;
+  }).catch(function(){
+    loading.style.display='none';empty.style.display='block';
+  });
+}
+async function refreshCompetitorIntel(btn){
+  btn.textContent='Refreshing...';btn.disabled=true;
+  try{
+    var res=await fetch('/api/refresh-competitor-intel',{method:'POST'});
+    var d=await res.json();
+    if(d.ok){loadCompetitorIntel();toast('Competitor data updated');}
+    else{toast('Error: '+(d.error||'failed'));}
+  }catch(e){toast('Request failed');}
+  btn.textContent='Refresh';btn.disabled=false;
 }
 function dismissWelcome(){
   const b=document.getElementById('welcome-banner');
