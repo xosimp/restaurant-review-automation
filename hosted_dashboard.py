@@ -172,33 +172,6 @@ input:focus{border-color:var(--ember)}
 .error{background:#fdf0ef;border:1px solid #f5c6c2;border-radius:var(--r);padding:10px 14px;font-size:13px;color:var(--ember);margin-bottom:16px}
 .footer-note{font-size:11px;color:var(--ink3);text-align:center;margin-top:20px}
 </style>
-<script>
-function clientUpload(dataType, input) {
-  var resultEl = document.getElementById(dataType + '-inline-result');
-  if (!input || !input.files || !input.files[0]) return;
-  var overlay = document.getElementById('upload-loading-overlay');
-  if (overlay) overlay.style.display = 'flex';
-  if (resultEl) resultEl.style.display = 'none';
-  var form = new FormData();
-  form.append('data_type', dataType === 'inventory' ? 'inventory' : 'shifts');
-  form.append('csv_file', input.files[0]);
-  fetch('/client/upload-data', {method:'POST', body: form})
-    .then(function(r){ return r.json(); })
-    .then(function(data){
-      if (overlay) overlay.style.display = 'none';
-      if (data.ok) {
-        if (resultEl){ resultEl.style.display='inline'; resultEl.style.color='#2d6a4f'; resultEl.textContent='✓ '+data.rows+' rows loaded — refreshing…'; }
-        setTimeout(function(){ location.reload(); }, 1200);
-      } else {
-        if (resultEl){ resultEl.style.display='inline'; resultEl.style.color='#c84b2f'; resultEl.textContent='✗ '+(data.error||'Upload failed'); }
-      }
-    })
-    .catch(function(){
-      if (overlay) overlay.style.display = 'none';
-      if (resultEl){ resultEl.style.display='inline'; resultEl.style.color='#c84b2f'; resultEl.textContent='✗ Network error — try again'; }
-    });
-}
-</script>
 </head>
 <body>
 <div class="card">
@@ -590,6 +563,13 @@ function clientUpload(dataType, input) {
       <span id="shifts-inline-result" style="font-size:12px;color:#2d6a4f;display:none"></span>
     </div>
   </div>
+  {% else %}
+  <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#2d6a4f;display:flex;align-items:center;gap:8px">
+    <span>✓</span><span><strong>Showing your real data</strong> — upload a new CSV anytime to update.</span>
+    <label style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;background:#c84b2f;color:white;padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">
+      Update CSV <input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)">
+    </label>
+  </div>
   {% endif %}
 
   <!-- Hero metric — dollar gap -->
@@ -742,6 +722,31 @@ function clientUpload(dataType, input) {
 
 <!-- INVENTORY -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="panel-inventory">
+  {% if not inv.is_live %}
+  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:8px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-size:12px;color:#8a6a00;font-weight:600;margin-bottom:8px">⚠ Showing sample data — upload your inventory CSV to see your real numbers</div>
+    <div style="font-size:11px;color:#8a6a00;margin-bottom:10px;line-height:1.6">
+      <strong>How to export:</strong>&nbsp;
+      <span>Toast: Inventory → Items → Export CSV</span> &nbsp;·&nbsp;
+      <span>Square: Items → Inventory → Export</span> &nbsp;·&nbsp;
+      <span>Other: Any CSV with item name, quantity, and unit cost works</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <label style="display:inline-flex;align-items:center;gap:8px;background:#2d6a4f;color:white;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">
+        📂 Upload inventory CSV
+        <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
+      </label>
+      <span id="inventory-inline-result" style="font-size:12px;color:#2d6a4f;display:none"></span>
+    </div>
+  </div>
+  {% else %}
+  <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#2d6a4f;display:flex;align-items:center;gap:8px">
+    <span>✓</span><span><strong>Showing your real data</strong> — upload a new CSV anytime to update.</span>
+    <label style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;background:#2d6a4f;color:white;padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">
+      Update CSV <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
+    </label>
+  </div>
+  {% endif %}
   <div class="stat-row">
     <div class="stat hi"><div class="stat-n">${{inv.total_waste_cost_week|format_num}}</div><div class="stat-l">Waste/week</div></div>
     <div class="stat hi"><div class="stat-n">${{inv.monthly_waste_projection|int|format_num}}</div><div class="stat-l">Projected/mo</div></div>
@@ -750,12 +755,7 @@ function clientUpload(dataType, input) {
     <div class="stat hi"><div class="stat-n">{{inv.critical_low|length}}</div><div class="stat-l">Critical low</div></div>
     <div class="stat"><div class="stat-n">${{inv.total_stock_value|int|format_num}}</div><div class="stat-l">Inventory value</div></div>
   </div>
-  {% if not inv.is_live %}
-  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#8a6a00;display:flex;align-items:center;gap:8px">
-    <span>⚠</span>
-    <span><strong>Sample data</strong> — this is example inventory data. Will will update this with your real numbers after your first weekly export.</span>
-  </div>
-  {% endif %}
+
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
     <div style="font-size:13px;font-weight:600;color:var(--ink)">
       Week of {{inv.week_start}} – {{inv.week_end}}
@@ -1200,12 +1200,18 @@ function switchTab(n,btn){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('panel-'+n).classList.add('active');btn.classList.add('active');
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
-
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor'){renderBars();loadLaborTrend();}
   if(n==='account')loadBillingInfo();
+  history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
 }
+// Restore active tab from hash on page load
+document.addEventListener('DOMContentLoaded', function(){
+  var hash = window.location.hash.replace('#','');
+  var btn = hash ? document.getElementById('tab-'+hash) : null;
+  if(btn){ switchTab(hash, btn); }
+});
 let rfilter='{{rfilter}}';
 function setRF(f,btn){rfilter=f;document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active','active-red'));btn.classList.add(f==='urgent'?'active-red':'active');filterReviews()}
 function filterReviews(){const q=document.getElementById('rsearch').value;window.location='/?filter='+rfilter+'&search='+encodeURIComponent(q)}
