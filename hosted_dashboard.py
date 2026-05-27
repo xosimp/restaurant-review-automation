@@ -495,7 +495,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <label style="display:inline-flex;align-items:center;gap:8px;background:#c84b2f;color:white;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">
         📂 Upload shifts CSV
-        <input type="file" accept=".csv" style="display:none" onchange="clientUpload('shifts', this)">
+        <input type="file" accept=".csv" style="display:none" id="shifts-inline-input">
       </label>
       <span id="shifts-inline-result" style="font-size:12px;color:#2d6a4f;display:none"></span>
     </div>
@@ -686,7 +686,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <label style="display:inline-flex;align-items:center;gap:8px;background:#2d6a4f;color:white;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">
         📂 Upload inventory CSV
-        <input type="file" accept=".csv" style="display:none" onchange="clientUpload('inventory', this)">
+        <input type="file" accept=".csv" style="display:none" id="inventory-inline-input">
       </label>
       <span id="inventory-inline-result" style="font-size:12px;color:#2d6a4f;display:none"></span>
     </div>
@@ -2317,6 +2317,14 @@ function showResult(el, ok, msg) {
   el.className = 'result-msg ' + (ok ? 'result-ok' : 'result-err');
   el.textContent = msg;
 }
+
+// Attach inline upload listeners after DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+  ['shifts','inventory'].forEach(function(dt) {
+    var el = document.getElementById(dt + '-inline-input');
+    if (el) el.addEventListener('change', function() { clientUpload(dt, this); });
+  });
+});
 
 async function clientUpload(dataType, input) {
   // Inline upload button in labor/inventory panels for clients
