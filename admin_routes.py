@@ -689,20 +689,49 @@ def fetch_reviews_now(restaurant_id, current_user):
     reviews = []
     errors = []
 
-    if restaurant.google_place_id and restaurant.reviews_live:
-        try:
-            reviews += fetch_google(restaurant.google_place_id, restaurant_id)
-        except Exception as e:
-            errors.append(f"Google: {e}")
+    if restaurant.reviews_live or restaurant.gmb_refresh_token:
+        # Use GMB API if connected (stores review_name for auto-posting)
+        if restaurant.gmb_refresh_token:
+            try:
+                from gmb import get_valid_token, fetch_reviews_via_gmb, get_gmb_account_id, get_gmb_location_id
+                from models import update_restaurant
+                token = get_valid_token(restaurant_id)
+                if token:
+                    # Discover location_id if not stored
+                    loc_id = restaurant.gmb_location_id
+                    if not loc_id:
+                        acct_id = get_gmb_account_id(token)
+                        if acct_id:
+                            loc_id = get_gmb_location_id(token, acct_id, restaurant.google_place_id or "")
+                            if loc_id:
+                                update_restaurant(restaurant_id, {
+                                    "gmb_account_id": acct_id,
+                                    "gmb_location_id": loc_id,
+                                })
+                    if loc_id:
+                        gmb_reviews = fetch_reviews_via_gmb(token, loc_id, restaurant_id)
+                        reviews += gmb_reviews
+                    else:
+                        errors.append("Google: location not found — check google_place_id is set")
+                else:
+                    errors.append("Google: token refresh failed")
+            except Exception as e:
+                errors.append(f"Google GMB: {e}")
+        elif restaurant.google_place_id and restaurant.reviews_live:
+            # Fallback to Places API
+            try:
+                reviews += fetch_google(restaurant.google_place_id, restaurant_id)
+            except Exception as e:
+                errors.append(f"Google: {e}")
 
-    if restaurant.yelp_business_id and restaurant.reviews_live:
-        try:
-            reviews += fetch_yelp(restaurant.yelp_business_id, restaurant_id)
-        except Exception as e:
-            errors.append(f"Yelp: {e}")
+        if restaurant.yelp_business_id and restaurant.reviews_live:
+            try:
+                reviews += fetch_yelp(restaurant.yelp_business_id, restaurant_id)
+            except Exception as e:
+                errors.append(f"Yelp: {e}")
 
     if not reviews and not errors:
-        return jsonify(ok=False, error="No platform IDs configured or reviews_live is off")
+        return jsonify(ok=False, error="No platform IDs configured, reviews_live is off, and GMB not connected")
 
     new_count = save_reviews(reviews) if reviews else 0
 
