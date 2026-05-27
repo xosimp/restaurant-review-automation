@@ -330,7 +330,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     {% if mod_labor %}<button class="tab {{'active' if not mod_reviews and mod_labor}}" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
     {% if mod_inventory %}<button class="tab {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="tab-inventory" onclick="switchTab('inventory',this)">Inventory</button>{% endif %}
     {% if mod_marketing %}<button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
-    <button class="tab" id="tab-competitor" onclick="switchTab('competitor',this)" style="display:none">Intel</button>
+    {% if restaurant.google_place_id %}<button class="tab" id="tab-competitor" onclick="switchTab('competitor',this)">Intel</button>{% endif %}
     <button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" onclick="switchTab('account',this)" style="margin-left:auto">Account</button>
   </nav>
 </div>
