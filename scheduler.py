@@ -5,6 +5,7 @@ Runs as a daemon thread inside hosted_dashboard.py on Railway.
 Jobs:
   2:00am daily  — backup reviews.db and email to will@cavnar.ai
   10:00am daily — onboarding email sequence (day 2, 7, 30)
+  11:00am Monday — inactive client check (14+ days no login)
   7:00am daily  — fetch new reviews for all live clients
                 — analyse & draft responses automatically
                 — send IMMEDIATE urgent alert to owner if critical review found
@@ -578,6 +579,115 @@ def run_onboarding_sequence():
             except Exception as e:
                 log.error(f"Onboarding day 30 failed for {r.name}: {e}")
 
+
+def check_inactive_clients():
+    """
+    Alert Will when a client hasn't logged in for 14+ days.
+    Runs every Monday at 11am. Only checks active/trial clients.
+    """
+    from datetime import datetime, timedelta
+    from models import get_all_restaurants, get_conn
+
+    RESEND_API_KEY_LOCAL = os.getenv("RESEND_API_KEY", "")
+    WILL_EMAIL_LOCAL     = os.getenv("WILL_EMAIL", "will@cavnar.ai")
+    FROM_EMAIL_LOCAL     = os.getenv("FROM_EMAIL", "will@cavnar.ai")
+
+    if not RESEND_API_KEY_LOCAL:
+        log.warning("check_inactive_clients: no RESEND_API_KEY — skipping")
+        return
+
+    try:
+        restaurants = get_all_restaurants()
+    except Exception as e:
+        log.error(f"check_inactive_clients: could not load restaurants: {e}")
+        return
+
+    inactive = []
+    now = datetime.now()
+    cutoff = now - timedelta(days=14)
+
+    for r in restaurants:
+        if getattr(r, "billing_status", "trial") not in ("trial", "active"):
+            continue
+        try:
+            conn = get_conn()
+            row = conn.execute(
+                """SELECT last_login FROM users
+                   WHERE restaurant_id=? AND is_admin=0 AND is_active=1
+                   ORDER BY last_login DESC LIMIT 1""",
+                (r.id,)
+            ).fetchone()
+            conn.close()
+            if not row:
+                continue
+            last_login = row["last_login"]
+            if not last_login:
+                # Never logged in — check if they've been a client for 3+ days
+                if r.created_at:
+                    try:
+                        created = datetime.fromisoformat(r.created_at.replace("Z",""))
+                        if (now - created).days >= 3:
+                            inactive.append({"name": r.name, "email": r.owner_email, "last_login": "Never logged in", "days": (now - created).days})
+                    except Exception:
+                        pass
+            else:
+                try:
+                    ll = datetime.fromisoformat(last_login.replace("Z",""))
+                    if ll < cutoff:
+                        days_ago = (now - ll).days
+                        inactive.append({"name": r.name, "email": r.owner_email, "last_login": ll.strftime("%b %d"), "days": days_ago})
+                except Exception:
+                    pass
+        except Exception as e:
+            log.error(f"check_inactive_clients: error checking {r.name}: {e}")
+
+    if not inactive:
+        log.info("check_inactive_clients: no inactive clients this week")
+        return
+
+    rows_html = "".join([
+        f"<tr><td style='padding:6px 12px;border-bottom:1px solid #e0dbd0'><strong>{c['name']}</strong></td>"
+        f"<td style='padding:6px 12px;border-bottom:1px solid #e0dbd0'>{c['email']}</td>"
+        f"<td style='padding:6px 12px;border-bottom:1px solid #e0dbd0;color:#c84b2f'>{c['last_login']}</td>"
+        f"<td style='padding:6px 12px;border-bottom:1px solid #e0dbd0'>{c['days']}d ago</td></tr>"
+        for c in inactive
+    ])
+
+    try:
+        import resend as _resend
+        _resend.api_key = RESEND_API_KEY_LOCAL
+        _resend.Emails.send({
+            "from": f"Cavnar AI Alerts <{FROM_EMAIL_LOCAL}>",
+            "to": [WILL_EMAIL_LOCAL],
+            "subject": f"👋 {len(inactive)} inactive client{'s' if len(inactive)>1 else ''} — check in this week",
+            "html": f"""<div style="font-family:sans-serif;max-width:580px;margin:0 auto">
+                <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:16px">
+                    <h3 style="color:#0e0c0a;margin:0">Inactive clients</h3>
+                    <p style="font-size:12px;color:#7a736a;margin:4px 0 0">Clients who haven't logged in for 14+ days</p>
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:13px">
+                    <thead><tr style="background:#f7f4ef">
+                        <th style="padding:8px 12px;text-align:left">Client</th>
+                        <th style="padding:8px 12px;text-align:left">Email</th>
+                        <th style="padding:8px 12px;text-align:left">Last login</th>
+                        <th style="padding:8px 12px;text-align:left">Gap</th>
+                    </tr></thead>
+                    <tbody>{rows_html}</tbody>
+                </table>
+                <p style="font-size:13px;color:#3a3530;margin-top:16px;line-height:1.6">
+                    Worth a quick personal email or text to each of these — early churn usually shows up as disengagement first.
+                </p>
+                <hr style="border:none;border-top:1px solid #e0dbd0;margin:16px 0"/>
+                <p style="font-size:11px;color:#7a736a">
+                    <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">Manage clients →</a>
+                </p>
+            </div>"""
+        })
+        log.info(f"Inactive client alert sent — {len(inactive)} client(s)")
+    except Exception as e:
+        log.error(f"check_inactive_clients email failed: {e}")
+
+
 def scheduler_loop():
     global _last_fetch_date, _last_digest_date
     log.info("Scheduler started — daily fetch 8am, digests 9am on client's chosen day")
@@ -631,6 +741,11 @@ def scheduler_loop():
                 # 10am daily — onboarding email sequence
                 log.info("Running onboarding sequence check...")
                 run_onboarding_sequence()
+
+            if now.hour == 11 and now.weekday() == 0 and _last_digest_date != today:
+                # Monday 11am — inactive client check
+                log.info("Running inactive client check...")
+                check_inactive_clients()
 
         except Exception as e:
             log.error(f"Scheduler loop error: {e}")

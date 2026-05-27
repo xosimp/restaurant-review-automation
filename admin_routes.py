@@ -486,11 +486,51 @@ def stripe_webhook():
                     updates = {"stripe_customer_id": customer_id}
                     # Auto-activate billing status on first real payment
                     # (subscription_cycle = recurring charge, subscription_create = first charge after trial)
-                    if billing_reason in ("subscription_cycle", "subscription_create") and dict(row)["billing_status"] != "active":
+                    first_payment = (
+                        billing_reason in ("subscription_cycle", "subscription_create")
+                        and dict(row)["billing_status"] != "active"
+                    )
+                    if first_payment:
                         updates["billing_status"] = "active"
                         print(f"Auto-activated billing_status for {email}")
                     update_restaurant(dict(row)["id"], updates)
                     print(f"Saved Stripe customer {customer_id} for {email}")
+
+                    # Notify Will when a client converts from trial to paid
+                    if first_payment and RESEND_API_KEY:
+                        try:
+                            import resend as _resend
+                            _resend.api_key = RESEND_API_KEY
+                            # Get restaurant name
+                            conn2 = get_conn()
+                            rname_row = conn2.execute(
+                                "SELECT name FROM restaurants WHERE id=?", (dict(row)["id"],)
+                            ).fetchone()
+                            conn2.close()
+                            rname = rname_row["name"] if rname_row else email
+                            _resend.Emails.send({
+                                "from": f"Cavnar AI Alerts <{FROM_EMAIL}>",
+                                "to": [WILL_EMAIL],
+                                "subject": f"💳 New paying client — {rname}",
+                                "html": f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+                                    <div style="border-top:3px solid #2d6a4f;padding-top:20px;margin-bottom:16px">
+                                        <h3 style="color:#0e0c0a;margin:0">New paying client</h3>
+                                    </div>
+                                    <p style="font-size:15px;line-height:1.6">
+                                        <strong>{rname}</strong> just converted from trial to paid.<br><br>
+                                        <strong>Email:</strong> {email}<br>
+                                        <strong>Amount:</strong> ${amount:.2f}<br>
+                                        <strong>Billing:</strong> {billing_reason.replace('_',' ').title()}
+                                    </p>
+                                    <hr style="border:none;border-top:1px solid #e0dbd0;margin:16px 0"/>
+                                    <p style="font-size:11px;color:#7a736a">
+                                        <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">View in admin →</a>
+                                    </p>
+                                </div>"""
+                            })
+                            log_email(dict(row)["id"], "Admin Alert", WILL_EMAIL, f"New paying client — {rname}")
+                        except Exception as ne:
+                            print(f"First payment notification failed: {ne}")
             except Exception as e:
                 print(f"Failed to save Stripe customer ID: {e}")
 
