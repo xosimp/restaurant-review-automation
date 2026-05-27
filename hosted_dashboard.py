@@ -773,7 +773,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
       {% endfor %}
     </div>
     {% if competitor_updated_at %}
-    <div style="font-size:11px;color:var(--ink3);margin-top:12px">Last updated: {{competitor_updated_at[:10]}}</div>
+    {% set d = competitor_updated_at[:10].split('-') %}
+    <div style="font-size:11px;color:var(--ink3);margin-top:12px">Last updated: {{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}</div>
     {% endif %}
   {% else %}
   <div style="background:var(--paper2);border-radius:var(--r);padding:24px;text-align:center">
