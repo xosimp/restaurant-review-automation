@@ -2892,7 +2892,11 @@ def login():
         resp.set_cookie("session_token", token, max_age=30*24*3600,
                         httponly=True, secure=True, samesite="Strict")
         return resp
-    return render_template_string(LOGIN_HTML, error=None)
+    import secrets as _sec2
+    csrf2 = _sec2.token_hex(16)
+    resp2 = make_response(render_template_string(LOGIN_HTML, error=None, csrf_token=csrf2))
+    resp2.set_cookie("csrf_token", csrf2, httponly=True, samesite="Strict")
+    return resp2
 
 @app.route("/logout")
 def logout():
