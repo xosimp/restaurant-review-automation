@@ -765,22 +765,7 @@ function clientUpload(dataType, input) {
     </div>
   </div>
   <div class="insight"><div class="insight-lbl">Cavnar AI Food Cost Analysis</div><div class="insight-text insight-loading" id="inv-insight">Loading analysis…</div></div>
-  <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:8px;padding:14px 16px;margin-bottom:16px">
-    <div style="font-size:12px;color:#2d6a4f;font-weight:600;margin-bottom:8px">Upload your inventory CSV to see live food cost analysis</div>
-    <div style="font-size:11px;color:#2d6a4f;margin-bottom:10px;line-height:1.6">
-      <strong>How to export:</strong>&nbsp;
-      <span>Toast: Inventory → Items → Export CSV</span> &nbsp;·&nbsp;
-      <span>Square: Items → Inventory → Export</span> &nbsp;·&nbsp;
-      <span>Other: Any CSV with item name, quantity, and unit cost works</span>
-    </div>
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <label style="display:inline-flex;align-items:center;gap:8px;background:#2d6a4f;color:white;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">
-        📂 Upload inventory CSV
-        <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
-      </label>
-      <span id="inventory-inline-result" style="font-size:12px;color:#2d6a4f;display:none"></span>
-    </div>
-  </div>
+
   <div class="two-col">
     <div>
       <div class="slabel">Top waste offenders</div>
