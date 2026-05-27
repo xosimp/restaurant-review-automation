@@ -1357,14 +1357,15 @@ function loadCompetitorIntel(){
     loading.style.display='none';empty.style.display='block';
   });
 }
-function refreshCompetitorIntel(btn){
+async function refreshCompetitorIntel(btn){
   btn.textContent='Refreshing...';btn.disabled=true;
   try{
-    fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    var res=await fetch('/api/refresh-competitor-intel',{method:'POST'});
+    var d=await res.json();
     if(d.ok){loadCompetitorIntel();toast('Competitor data updated');}
     else{toast('Error: '+(d.error||'failed'));}
-    btn.textContent='Refresh';btn.disabled=false;
-  }).catch(function(){toast('Request failed');btn.textContent='Refresh';btn.disabled=false;});
+  }catch(e){toast('Request failed');}
+  btn.textContent='Refresh';btn.disabled=false;
 }
 function dismissWelcome(){
   const b=document.getElementById('welcome-banner');
