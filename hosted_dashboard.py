@@ -2875,7 +2875,11 @@ def login():
         csrf_cookie = request.cookies.get("csrf_token","")
         csrf_form  = request.form.get("csrf_token","")
         if not csrf_cookie or csrf_cookie != csrf_form:
-            return render_template_string(LOGIN_HTML, error="Invalid request. Please try again.", csrf_token="")
+            import secrets as _sec_csrf
+            _new_csrf = _sec_csrf.token_hex(16)
+            _fail_resp = make_response(render_template_string(LOGIN_HTML, error="Invalid request. Please try again.", csrf_token=_new_csrf))
+            _fail_resp.set_cookie("csrf_token", _new_csrf, httponly=True, samesite="Lax")
+            return _fail_resp
         if _is_rate_limited(ip):
             return render_template_string(LOGIN_HTML,
                 error="Too many failed attempts. Please wait 5 minutes and try again.")
@@ -2889,13 +2893,14 @@ def login():
         token = create_session(user["id"])
         next_url = request.args.get("next", "/admin" if user["is_admin"] else "/")
         resp = make_response(redirect(next_url))
+        _on_railway = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
         resp.set_cookie("session_token", token, max_age=30*24*3600,
-                        httponly=True, secure=True, samesite="Strict")
+                        httponly=True, secure=_on_railway, samesite="Lax")
         return resp
     import secrets as _sec2
     csrf2 = _sec2.token_hex(16)
     resp2 = make_response(render_template_string(LOGIN_HTML, error=None, csrf_token=csrf2))
-    resp2.set_cookie("csrf_token", csrf2, httponly=True, samesite="Strict")
+    resp2.set_cookie("csrf_token", csrf2, httponly=True, samesite="Lax")
     return resp2
 
 @app.route("/logout")
