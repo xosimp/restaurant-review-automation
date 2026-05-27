@@ -60,6 +60,22 @@ _login_attempts = {}
 _MAX_ATTEMPTS   = 5      # max failures before lockout
 _LOCKOUT_SECS   = 300    # 5 minute lockout
 
+# API rate limiting - per IP
+_api_requests   = {}
+_API_MAX        = 30     # max requests per window
+_API_WINDOW     = 60     # 60 second window
+
+def _is_api_rate_limited(ip):
+    import time
+    now = time.time()
+    reqs = _api_requests.get(ip, [])
+    recent = [t for t in reqs if now - t < _API_WINDOW]
+    _api_requests[ip] = recent
+    if len(recent) >= _API_MAX:
+        return True
+    _api_requests[ip].append(now)
+    return False
+
 def _get_client_ip():
     """Get real client IP, respecting Railway's proxy headers."""
     return (request.headers.get("X-Forwarded-For","").split(",")[0].strip()
@@ -3077,6 +3093,8 @@ def change_password(current_user):
 @app.route("/api/regenerate-draft/<int:review_id>", methods=["POST"])
 @login_required
 def regenerate_draft(review_id, current_user):
+    if _is_api_rate_limited(_get_client_ip()):
+        return jsonify(ok=False, error="Too many requests. Please slow down."), 429
     """Regenerate AI draft for a review."""
     from models import get_conn, update_draft
     conn = get_conn()

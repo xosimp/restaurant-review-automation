@@ -1317,7 +1317,10 @@ def refresh_competitor_intel(current_user):
 @admin_bp.route("/api/send-referral", methods=["POST"])
 @login_required
 def send_referral(current_user):
-    import resend as _resend
+    import resend as _resend, time as _time
+    # Simple per-session rate limit: max 10 referrals per hour
+    from flask import g
+    ip = (request.headers.get("X-Forwarded-For","").split(",")[0].strip() or request.remote_addr or "")
     data = request.get_json()
     ref_name  = data.get("name","").strip()
     ref_email = data.get("email","").strip()
