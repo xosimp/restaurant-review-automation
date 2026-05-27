@@ -484,8 +484,21 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 <!-- LABOR -->
 <div class="panel {{'active' if not mod_reviews and mod_labor}}" id="panel-labor">
   {% if not labor.is_live %}
-  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#8a6a00;display:flex;align-items:center;gap:8px">
-    <span>⚠</span><span><strong>Sample data</strong> — example figures showing how the labor analysis works. Send your shift data to will@cavnar.ai to activate live data.</span>
+  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:8px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-size:12px;color:#8a6a00;font-weight:600;margin-bottom:8px">⚠ Showing sample data — upload your shift CSV to see your real numbers</div>
+    <div style="font-size:11px;color:#8a6a00;margin-bottom:10px;line-height:1.6">
+      <strong>How to export:</strong>&nbsp;
+      <span>Toast: Reports → Labor → Timesheets → Export CSV</span> &nbsp;·&nbsp;
+      <span>Square: Dashboard → Team → Timecards → Export</span> &nbsp;·&nbsp;
+      <span>Lightspeed: Reports → Employees → Time Clock → Export</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <label style="display:inline-flex;align-items:center;gap:8px;background:#c84b2f;color:white;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">
+        📂 Upload shifts CSV
+        <input type="file" accept=".csv" style="display:none" onchange="clientUpload('shifts', this)">
+      </label>
+      <span id="shifts-inline-result" style="font-size:12px;color:#2d6a4f;display:none"></span>
+    </div>
   </div>
   {% endif %}
 
@@ -662,11 +675,21 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
     </div>
   </div>
   <div class="insight"><div class="insight-lbl">Cavnar AI Food Cost Analysis</div><div class="insight-text insight-loading" id="inv-insight">Loading analysis…</div></div>
-  <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#2d6a4f;line-height:1.6">
-    <strong>How this works:</strong> Your inventory data is managed and updated by Will Cavnar weekly.
-    To get the most accurate analysis, export your inventory or waste log from your POS system
-    and send it to <a href="mailto:will@cavnar.ai" style="color:#2d6a4f;font-weight:600">will@cavnar.ai</a> each week.
-    Will handles all the setup and updates — nothing for you to configure.
+  <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:8px;padding:14px 16px;margin-bottom:16px">
+    <div style="font-size:12px;color:#2d6a4f;font-weight:600;margin-bottom:8px">Upload your inventory CSV to see live food cost analysis</div>
+    <div style="font-size:11px;color:#2d6a4f;margin-bottom:10px;line-height:1.6">
+      <strong>How to export:</strong>&nbsp;
+      <span>Toast: Inventory → Items → Export CSV</span> &nbsp;·&nbsp;
+      <span>Square: Items → Inventory → Export</span> &nbsp;·&nbsp;
+      <span>Other: Any CSV with item name, quantity, and unit cost works</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <label style="display:inline-flex;align-items:center;gap:8px;background:#2d6a4f;color:white;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">
+        📂 Upload inventory CSV
+        <input type="file" accept=".csv" style="display:none" onchange="clientUpload('inventory', this)">
+      </label>
+      <span id="inventory-inline-result" style="font-size:12px;color:#2d6a4f;display:none"></span>
+    </div>
   </div>
   <div class="two-col">
     <div>
@@ -2293,6 +2316,33 @@ function showResult(el, ok, msg) {
   el.style.display = 'block';
   el.className = 'result-msg ' + (ok ? 'result-ok' : 'result-err');
   el.textContent = msg;
+}
+
+async function clientUpload(dataType, input) {
+  // Inline upload button in labor/inventory panels for clients
+  const resultEl = document.getElementById(dataType + '-inline-result');
+  if (!input.files[0]) return;
+  resultEl.style.display = 'inline';
+  resultEl.style.color = '#8a6a00';
+  resultEl.textContent = 'Uploading…';
+  const form = new FormData();
+  form.append('data_type', dataType === 'inventory' ? 'inventory' : 'shifts');
+  form.append('csv_file', input.files[0]);
+  try {
+    const res = await fetch('/client/upload-data', {method:'POST', body: form});
+    const data = await res.json();
+    if (data.ok) {
+      resultEl.style.color = '#2d6a4f';
+      resultEl.textContent = '✓ ' + data.rows + ' rows loaded — refreshing…';
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      resultEl.style.color = '#c84b2f';
+      resultEl.textContent = '✗ ' + (data.error || 'Upload failed');
+    }
+  } catch(e) {
+    resultEl.style.color = '#c84b2f';
+    resultEl.textContent = '✗ Network error — try again';
+  }
 }
 </script>
 </body>
