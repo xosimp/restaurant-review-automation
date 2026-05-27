@@ -1378,7 +1378,7 @@ function refreshCompetitorIntel(btn){
   btn.textContent='Refreshing...';btn.disabled=true;
   fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     btn.textContent='Refresh';btn.disabled=false;
-    if(d.ok){loadCompetitorIntel();toast('Competitor data updated');}
+    if(d.ok){toast('Competitor data updated');setTimeout(function(){window.location.reload();},800);}
     else{toast('Error: '+(d.error||'failed'));}
   }).catch(function(){btn.textContent='Refresh';btn.disabled=false;toast('Request failed');});
 }
