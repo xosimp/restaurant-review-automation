@@ -3405,10 +3405,6 @@ try:
     _wc = _gc(); _wc.execute("PRAGMA journal_mode=WAL"); _wc.commit(); _wc.close()
 except Exception: pass
 
-# ── Sentry test route (remove after confirming Sentry is live) ────────────────
-@app.route("/sentry-test")
-def sentry_test():
-    division_by_zero = 1 / 0
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
