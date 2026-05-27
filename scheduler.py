@@ -3,6 +3,7 @@ scheduler.py — Cavnar AI background scheduler
 Runs as a daemon thread inside hosted_dashboard.py on Railway.
 
 Jobs:
+  2:00am daily  — backup reviews.db and email to will@cavnar.ai
   7:00am daily  — fetch new reviews for all live clients
                 — analyse & draft responses automatically
                 — send IMMEDIATE urgent alert to owner if critical review found
@@ -418,8 +419,70 @@ def refresh_expiring_tokens():
 
 # ── Scheduler loop ────────────────────────────────────────────────────────────
 
-_last_fetch_date  = None
-_last_digest_date = None
+_last_fetch_date   = None
+_last_digest_date  = None
+_last_backup_date  = None
+
+
+def backup_db():
+    """
+    Dump reviews.db and email it to will@cavnar.ai as an attachment.
+    Runs daily at 2am. No external dependencies — uses Resend which is already in the stack.
+    """
+    import base64, shutil, tempfile
+    from models import DB_PATH
+
+    FROM_EMAIL = os.getenv("FROM_EMAIL", "will@cavnar.ai")
+    WILL_EMAIL = os.getenv("WILL_EMAIL", "will@cavnar.ai")
+
+    try:
+        if not RESEND_API_KEY:
+            log.warning("backup_db: RESEND_API_KEY not set — skipping backup")
+            return
+
+        import resend as _resend
+        _resend.api_key = RESEND_API_KEY
+
+        # Copy DB to a temp file so we don't lock the live DB during read
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_path = tmp.name
+        shutil.copy2(DB_PATH, tmp_path)
+
+        # Read and base64-encode for email attachment
+        with open(tmp_path, "rb") as f:
+            db_bytes = f.read()
+        os.unlink(tmp_path)
+
+        db_b64    = base64.b64encode(db_bytes).decode()
+        size_kb   = round(len(db_bytes) / 1024, 1)
+        timestamp = datetime.now().strftime("%Y-%m-%d")
+        filename  = f"cavnar_ai_backup_{timestamp}.db"
+
+        _resend.Emails.send({
+            "from": f"Cavnar AI Backups <{FROM_EMAIL}>",
+            "to":   [WILL_EMAIL],
+            "subject": f"Daily DB backup — {timestamp} ({size_kb} KB)",
+            "html": f"""
+<div style="font-family:-apple-system,sans-serif;max-width:480px;color:#1a1714">
+  <p style="font-size:14px">Daily backup of <strong>reviews.db</strong> attached.</p>
+  <table style="font-size:13px;color:#3a3530;border-collapse:collapse">
+    <tr><td style="padding:3px 12px 3px 0;color:#7a736a">Date</td><td>{timestamp}</td></tr>
+    <tr><td style="padding:3px 12px 3px 0;color:#7a736a">File</td><td>{filename}</td></tr>
+    <tr><td style="padding:3px 12px 3px 0;color:#7a736a">Size</td><td>{size_kb} KB</td></tr>
+  </table>
+  <p style="font-size:12px;color:#7a736a;margin-top:16px">
+    To restore: download the attachment, rename to reviews.db, and replace the file on Railway.
+  </p>
+</div>""",
+            "attachments": [{
+                "filename": filename,
+                "content":  db_b64,
+            }],
+        })
+        log.info(f"backup_db: sent {filename} ({size_kb} KB) to {WILL_EMAIL}")
+
+    except Exception as e:
+        log.error(f"backup_db failed: {e}")
 
 
 def scheduler_loop():
@@ -432,6 +495,12 @@ def scheduler_loop():
             today = now.date()
 
             # Monday 6am — run competitor analysis for all clients
+            # 2am daily — backup DB to email
+            if now.hour == 2 and _last_backup_date != today:
+                _last_backup_date = today
+                log.info("Running daily DB backup...")
+                backup_db()
+
             if now.hour == 6 and now.weekday() == 0 and _last_fetch_date != today:
                 log.info("Running weekly competitor analysis...")
                 try:
