@@ -2837,6 +2837,10 @@ def create_stripe_checkout(module_count: int, owner_email: str,
 def login():
     if request.method == "POST":
         ip = _get_client_ip()
+        csrf_cookie = request.cookies.get("csrf_token","")
+        csrf_form  = request.form.get("csrf_token","")
+        if not csrf_cookie or csrf_cookie != csrf_form:
+            return render_template_string(LOGIN_HTML, error="Invalid request. Please try again.", csrf_token="")
         if _is_rate_limited(ip):
             return render_template_string(LOGIN_HTML,
                 error="Too many failed attempts. Please wait 5 minutes and try again.")
