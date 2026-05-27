@@ -1376,3 +1376,13 @@ def send_referral(current_user):
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
+# ── Backup now (test route — remove after confirming backup works) ─────────────
+@admin_bp.route("/admin/backup-now", methods=["POST"])
+@admin_required
+def backup_now(current_user):
+    try:
+        from scheduler import backup_db
+        backup_db()
+        return jsonify(ok=True, message="Backup triggered — check will@cavnar.ai")
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
