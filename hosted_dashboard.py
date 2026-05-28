@@ -2771,6 +2771,19 @@ function copyPassword() {
     setTimeout(() => { btn.textContent = 'Copy'; btn.style.color = 'var(--ink2)'; }, 2000);
   });
 }
+function toast(msg){
+  let t = document.getElementById('admin-toast');
+  if(!t){
+    t = document.createElement('div');
+    t.id = 'admin-toast';
+    t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#0e0c0a;color:white;padding:10px 20px;border-radius:8px;font-size:13px;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  setTimeout(()=>{ t.style.opacity = '0'; }, 2600);
+}
+
 function toggleMenu(id) {
   event.stopPropagation();
   const menu = document.getElementById('menu-'+id);
