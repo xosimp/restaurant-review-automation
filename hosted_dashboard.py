@@ -2704,7 +2704,7 @@ input:focus,select:focus{border-color:var(--ember)}
   </div>
   <div class="card" style="padding:0;overflow:visible">
     <table class="tbl">
-      <thead><tr><th>Restaurant</th><th>Username</th><th>Email</th><th>Phone</th><th>Billing</th><th>Last login</th><th>Last tab</th><th>Last fetched</th><th>Status</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Restaurant</th><th>Username</th><th>Email</th><th>Phone</th><th>Billing</th><th>Health</th><th>Modules</th><th>Pending</th><th>Last login</th><th>Last tab</th><th>Last fetched</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>
       {% for user in users %}
       <tr class="client-row" data-group="{{user.location_group or ''}}">
@@ -2739,6 +2739,29 @@ input:focus,select:focus{border-color:var(--ember)}
             <span style="font-size:9px;color:#9ca3af">No contract</span>
             {% endif %}
           </div>
+          {% endif %}
+        </td>
+        <td>
+          {% set hc = {'green':'#2d6a4f','amber':'#b7791f','red':'#c84b2f'} %}
+          {% set hbg = {'green':'#eaf4ee','amber':'#fef9ec','red':'#fef2f2'} %}
+          {% set hl = user.health or 'amber' %}
+          <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:{{hbg[hl]}};color:{{hc[hl]}}">
+            {{hl|title}}
+          </span>
+        </td>
+        <td style="font-size:11px">
+          {% if user.module_reviews %}<span title="Reviews" style="margin-right:2px">📊</span>{% endif %}
+          {% if user.module_labor %}<span title="Labor" style="margin-right:2px">⏱</span>{% endif %}
+          {% if user.module_inventory %}<span title="Inventory" style="margin-right:2px">📦</span>{% endif %}
+          {% if user.module_marketing %}<span title="Marketing" style="margin-right:2px">📣</span>{% endif %}
+        </td>
+        <td>
+          {% if user.pending_reviews > 0 %}
+          <span style="font-size:11px;font-weight:600;color:{% if user.pending_reviews > 5 %}#c84b2f{% else %}#b7791f{% endif %}">
+            {{user.pending_reviews}} pending
+          </span>
+          {% else %}
+          <span style="font-size:11px;color:var(--ink3)">—</span>
           {% endif %}
         </td>
         <td style="font-size:12px">{% if user.last_login %}{% set d=user.last_login[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}—{% endif %}</td>
@@ -3040,6 +3063,43 @@ async function deleteNote(noteId) {
       </tbody>
     </table>
   </div>
+  </div>
+
+  <!-- Activity Feed -->
+  <div style="max-width:860px;margin:0 auto 32px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 8px">
+      <div class="section-title" style="margin-bottom:0">Activity feed</div>
+      <span style="font-size:11px;color:var(--ink3)">Recent client actions</span>
+    </div>
+    <div class="card" style="padding:0;overflow:auto">
+      <table class="tbl">
+        <thead><tr><th>Time</th><th>Client</th><th>Action</th></tr></thead>
+        <tbody>
+        {% if activity_feed %}
+          {% for item in activity_feed %}
+          <tr>
+            <td style="font-size:11px;color:var(--ink3);white-space:nowrap">
+              {% if item.ts %}
+                {% set d=item.ts[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}
+                <span style="color:var(--paper3)"> · </span>
+                {% set hr=item.ts[11:13]|int %}{% set mn=item.ts[14:16] %}
+                {% set ampm='am' if hr < 12 else 'pm' %}
+                {% set hr12=hr if hr<=12 else hr-12 %}{% set hr12=12 if hr12==0 else hr12 %}
+                {{hr12}}:{{mn}}{{ampm}}
+              {% else %}—{% endif %}
+            </td>
+            <td style="font-size:12px">{{item.restaurant or '—'}}</td>
+            <td>
+              <span style="font-size:12px;color:{{item.color or '#6b7280'}}">{{item.action}}</span>
+            </td>
+          </tr>
+          {% endfor %}
+        {% else %}
+          <tr><td colspan="3" style="color:var(--ink3);font-style:italic;padding:16px">No activity yet.</td></tr>
+        {% endif %}
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 

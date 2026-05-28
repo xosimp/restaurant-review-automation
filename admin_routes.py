@@ -70,6 +70,51 @@ def admin(current_user):
         u["location_name"]     = r.location_name if r else None
         u["contract_status"]   = r.contract_status if r else "pending"
         u["envelope_id"]       = r.docusign_envelope_id if r else None
+
+        # #10 Client activity dashboard additions
+        # Module flags
+        u["module_reviews"]   = r.module_reviews if r else 0
+        u["module_labor"]     = r.module_labor if r else 0
+        u["module_inventory"] = r.module_inventory if r else 0
+        u["module_marketing"] = r.module_marketing if r else 0
+
+        # Unreviewed reviews count
+        try:
+            from models import get_conn as _gc
+            _conn = _gc()
+            _row = _conn.execute(
+                """SELECT COUNT(*) as cnt FROM reviews
+                   WHERE restaurant_id=? AND response_status NOT IN ('approved','posted','skipped')""",
+                (u["restaurant_id"],)
+            ).fetchone()
+            _conn.close()
+            u["pending_reviews"] = _row["cnt"] if _row else 0
+        except Exception:
+            u["pending_reviews"] = 0
+
+        # Health score: green / amber / red
+        try:
+            from datetime import datetime as _dt, timedelta as _td
+            _now = _dt.now()
+            _last = u.get("last_login")
+            _days_since_login = 999
+            if _last:
+                try:
+                    _ll = _dt.fromisoformat(_last.replace("Z",""))
+                    _days_since_login = (_now - _ll).days
+                except Exception:
+                    pass
+            _pending = u.get("pending_reviews", 0)
+            _has_data = bool(r and (r.last_fetched_at or r.gmb_refresh_token)) if r else False
+            if _days_since_login <= 7 and _pending < 5:
+                u["health"] = "green"
+            elif _days_since_login <= 14 and _pending < 10:
+                u["health"] = "amber"
+            else:
+                u["health"] = "red"
+        except Exception:
+            u["health"] = "amber"
+
         enriched.append(u)
     from models import get_all_location_groups
     location_groups = get_all_location_groups()
@@ -91,11 +136,58 @@ def admin(current_user):
     from models import get_email_log
     email_log = get_email_log(limit=50)
 
+    # Activity feed — recent logins, approvals, uploads
+    try:
+        from models import get_conn as _gc
+        _conn = _gc()
+        activity_feed = []
+
+        # Recent logins
+        _logins = _conn.execute(
+            """SELECT u.last_login, r.name as restaurant_name
+               FROM users u JOIN restaurants r ON u.restaurant_id=r.id
+               WHERE u.last_login IS NOT NULL AND u.is_admin=0
+               ORDER BY u.last_login DESC LIMIT 10"""
+        ).fetchall()
+        for row in _logins:
+            activity_feed.append({
+                "ts": row["last_login"],
+                "restaurant": row["restaurant_name"],
+                "action": "Logged in",
+                "color": "#2d6a4f"
+            })
+
+        # Recent approvals
+        _approvals = _conn.execute(
+            """SELECT r.updated_at, rest.name as restaurant_name
+               FROM reviews r JOIN restaurants rest ON r.restaurant_id=rest.id
+               WHERE r.response_status IN ('approved','posted')
+               AND r.updated_at IS NOT NULL
+               ORDER BY r.updated_at DESC LIMIT 10"""
+        ).fetchall()
+        for row in _approvals:
+            activity_feed.append({
+                "ts": row["updated_at"],
+                "restaurant": row["restaurant_name"],
+                "action": "Approved a review response",
+                "color": "#c84b2f"
+            })
+
+        _conn.close()
+
+        # Sort by timestamp desc
+        activity_feed.sort(key=lambda x: x["ts"] or "", reverse=True)
+        activity_feed = activity_feed[:20]
+    except Exception as e:
+        print(f"Activity feed error: {e}")
+        activity_feed = []
+
     return render_template_string(_get_admin_html(),
         current_user=current_user, users=enriched,
         location_groups=location_groups,
         mrr=mrr,
-        email_log=email_log)
+        email_log=email_log,
+        activity_feed=activity_feed)
 
 @admin_bp.route("/admin/create-client", methods=["POST"])
 @admin_required
