@@ -157,17 +157,16 @@ def admin(current_user):
                 "color": "#2d6a4f"
             })
 
-        # Recent approvals
+        # Recent approvals — use posted_at or review_date as proxy
         _approvals = _conn.execute(
-            """SELECT r.updated_at, rest.name as restaurant_name
+            """SELECT COALESCE(r.posted_at, r.review_date) as ts, rest.name as restaurant_name
                FROM reviews r JOIN restaurants rest ON r.restaurant_id=rest.id
                WHERE r.response_status IN ('approved','posted')
-               AND r.updated_at IS NOT NULL
-               ORDER BY r.updated_at DESC LIMIT 10"""
+               ORDER BY ts DESC LIMIT 10"""
         ).fetchall()
         for row in _approvals:
             activity_feed.append({
-                "ts": row["updated_at"],
+                "ts": row["ts"],
                 "restaurant": row["restaurant_name"],
                 "action": "Approved a review response",
                 "color": "#c84b2f"

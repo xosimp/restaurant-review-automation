@@ -2741,13 +2741,6 @@ input:focus,select:focus{border-color:var(--ember)}
           <!-- Actions -->
           {% if not user.is_admin %}
           <div class="action-menu" id="menu-wrap-{{user.id}}" style="flex-shrink:0">
-            <button class="action-menu-btn" onclick="toggleMenu({{user.id}})">Actions ▾</button>
-            <div class="action-dropdown" id="menu-{{user.id}}">
-      <td>
-        {% if not user.is_admin %}
-        <div class="action-menu" id="menu-wrap-{{user.id}}">
-          <button class="action-menu-btn" onclick="toggleMenu({{user.id}})">Actions ▾</button>
-          <div class="action-dropdown" id="menu-{{user.id}}">
             <button class="action-item" onclick="window.location='/admin/client-settings/{{user.restaurant_id}}'">Settings</button>
             <button class="action-item" onclick="window.location='/admin/client-data/{{user.restaurant_id}}'">Manage data</button>
             <button class="action-item" onclick="window.location='/admin/view-as/{{user.restaurant_id}}'">View as client</button>
