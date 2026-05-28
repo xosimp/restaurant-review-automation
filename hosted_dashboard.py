@@ -2702,78 +2702,47 @@ input:focus,select:focus{border-color:var(--ember)}
       {% endif %}
     </div>
   </div>
-  <div class="card" style="padding:0;overflow:visible">
-    <table class="tbl">
-      <thead><tr><th>Restaurant</th><th>Username</th><th>Email</th><th>Phone</th><th>Billing</th><th>Health</th><th>Modules</th><th>Pending</th><th>Last login</th><th>Last tab</th><th>Last fetched</th><th>Status</th><th>Actions</th></tr></thead>
-      <tbody>
+  <div style="display:flex;flex-direction:column;gap:10px">
       {% for user in users %}
-      <tr class="client-row" data-group="{{user.location_group or ''}}">
-        <td>
-          <div style="display:flex;align-items:center;gap:6px">
-            <strong>{{user.restaurant_name}}</strong>
-            {% if user.internal_notes %}
-            <span title="{{user.internal_notes}}" style="cursor:help;font-size:10px;background:var(--amber-bg);color:var(--amber);padding:1px 5px;border-radius:10px;font-weight:500">note</span>
+      <div class="client-row card" data-group="{{user.location_group or ''}}" style="padding:14px 18px">
+
+        <!-- Top row: name + health + actions -->
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong style="font-size:14px">{{user.restaurant_name}}</strong>
+            {% if user.location_group %}<span style="font-size:11px;color:var(--ink3)">{{user.location_group}}{% if user.location_name %} · {{user.location_name}}{% endif %}</span>{% endif %}
+            {% if user.internal_notes %}<span title="{{user.internal_notes}}" style="cursor:help;font-size:10px;background:var(--amber-bg);color:var(--amber);padding:1px 6px;border-radius:10px;font-weight:500">note</span>{% endif %}
+
+            <!-- Health pill -->
+            {% set hc = {'green':'#2d6a4f','amber':'#b7791f','red':'#c84b2f'} %}
+            {% set hbg = {'green':'#eaf4ee','amber':'#fef9ec','red':'#fef2f2'} %}
+            {% set hl = user.health or 'amber' %}
+            <span style="font-size:10px;font-weight:700;padding:2px 9px;border-radius:20px;background:{{hbg[hl]}};color:{{hc[hl]}}">{{hl|upper}}</span>
+
+            <!-- Billing -->
+            {% set bc = {'trial':'#b7791f','active':'#2d6a4f','paused':'#6b7280','churned':'#c0392b'} %}
+            <span style="font-size:10px;font-weight:500;padding:2px 8px;border-radius:20px;background:{% if user.billing_status=='active' %}var(--green-bg){% elif user.billing_status=='trial' %}var(--amber-bg){% else %}#f3f4f6{% endif %};color:{{bc.get(user.billing_status,'#6b7280')}}">{{(user.billing_status or 'trial')|title}}</span>
+
+            <!-- Contract -->
+            {% if not user.is_admin %}
+              {% if user.contract_status == 'signed' %}<span style="font-size:10px;color:#2d6a4f;font-weight:600">✓ Signed</span>
+              {% elif user.contract_status == 'sent' %}<span style="font-size:10px;color:#b7791f;font-weight:600">⏳ Contract pending</span>
+              {% else %}<span style="font-size:10px;color:#9ca3af">No contract</span>{% endif %}
+            {% endif %}
+
+            <!-- Pending reviews -->
+            {% if user.pending_reviews > 0 %}
+            <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:{% if user.pending_reviews > 5 %}#fef2f2{% else %}#fef9ec{% endif %};color:{% if user.pending_reviews > 5 %}#c84b2f{% else %}#b7791f{% endif %}">
+              {{user.pending_reviews}} reviews pending
+            </span>
             {% endif %}
           </div>
-          {% if user.location_group %}
-          <div style="font-size:10px;color:var(--ink3);margin-top:1px">
-            {{user.location_group}}{% if user.location_name %} · {{user.location_name}}{% endif %}
-          </div>
-          {% endif %}
-        </td>
-        <td><code style="font-size:12px">{{user.username}}</code></td>
-        <td>{{user.email}}</td>
-        <td style="font-size:12px;color:var(--ink3)">{{user.phone or '—'}}</td>
-        <td>
-          {% set bc = {'trial':'#b7791f','active':'#2d6a4f','paused':'#6b7280','churned':'#c0392b'} %}
-          <span style="font-size:10px;font-weight:500;padding:2px 8px;border-radius:20px;background:{% if user.billing_status == 'active' %}var(--green-bg){% elif user.billing_status == 'trial' %}var(--amber-bg){% else %}#f3f4f6{% endif %};color:{{ bc.get(user.billing_status,'#6b7280') }}">
-            {{(user.billing_status or 'trial')|title}}
-          </span>
+
+          <!-- Actions -->
           {% if not user.is_admin %}
-          <div style="margin-top:3px">
-            {% if user.contract_status == 'signed' %}
-            <span style="font-size:9px;color:#2d6a4f;font-weight:600">✓ Signed</span>
-            {% elif user.contract_status == 'sent' %}
-            <span style="font-size:9px;color:#b7791f;font-weight:600">⏳ Awaiting signature</span>
-            {% else %}
-            <span style="font-size:9px;color:#9ca3af">No contract</span>
-            {% endif %}
-          </div>
-          {% endif %}
-        </td>
-        <td>
-          {% set hc = {'green':'#2d6a4f','amber':'#b7791f','red':'#c84b2f'} %}
-          {% set hbg = {'green':'#eaf4ee','amber':'#fef9ec','red':'#fef2f2'} %}
-          {% set hl = user.health or 'amber' %}
-          <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:{{hbg[hl]}};color:{{hc[hl]}}">
-            {{hl|title}}
-          </span>
-        </td>
-        <td style="font-size:11px">
-          {% if user.module_reviews %}<span title="Reviews" style="margin-right:2px">📊</span>{% endif %}
-          {% if user.module_labor %}<span title="Labor" style="margin-right:2px">⏱</span>{% endif %}
-          {% if user.module_inventory %}<span title="Inventory" style="margin-right:2px">📦</span>{% endif %}
-          {% if user.module_marketing %}<span title="Marketing" style="margin-right:2px">📣</span>{% endif %}
-        </td>
-        <td>
-          {% if user.pending_reviews > 0 %}
-          <span style="font-size:11px;font-weight:600;color:{% if user.pending_reviews > 5 %}#c84b2f{% else %}#b7791f{% endif %}">
-            {{user.pending_reviews}} pending
-          </span>
-          {% else %}
-          <span style="font-size:11px;color:var(--ink3)">—</span>
-          {% endif %}
-        </td>
-        <td style="font-size:12px">{% if user.last_login %}{% set d=user.last_login[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}—{% endif %}</td>
-        <td style="font-size:11px;color:var(--ink3)">{{user.last_active_tab or '—'}}</td>
-        <td style="font-size:11px;color:var(--ink3)">{{user.last_fetched_at or 'never'}}</td>
-        <td>
-          {% if user.is_active %}
-            <span class="badge-active">Active</span>
-          {% else %}
-            <span style="background:#f3f4f6;color:#6b7280;font-size:10px;padding:2px 7px;border-radius:20px;font-weight:500">Inactive</span>
-          {% endif %}
-        </td>
+          <div class="action-menu" id="menu-wrap-{{user.id}}" style="flex-shrink:0">
+            <button class="action-menu-btn" onclick="toggleMenu({{user.id}})">Actions ▾</button>
+            <div class="action-dropdown" id="menu-{{user.id}}">
       <td>
         {% if not user.is_admin %}
         <div class="action-menu" id="menu-wrap-{{user.id}}">
@@ -2795,15 +2764,32 @@ input:focus,select:focus{border-color:var(--ember)}
             <button class="action-item action-item-success" onclick="reactivateClient({{user.id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Reactivate</button>
             {% endif %}
           </div>
+          </div>
+          {% endif %}
         </div>
-        {% else %}—{% endif %}
-      </td>
-      </tr>
+
+        <!-- Detail row: username, email, phone, modules, last login, last tab, last fetched -->
+        <div style="display:flex;flex-wrap:wrap;gap:16px;font-size:11px;color:var(--ink3);border-top:1px solid var(--paper2);padding-top:8px;margin-top:2px">
+          <span><strong style="color:var(--ink2)">User:</strong> {{user.username}}</span>
+          <span><strong style="color:var(--ink2)">Email:</strong> {{user.email}}</span>
+          {% if user.phone %}<span><strong style="color:var(--ink2)">Phone:</strong> {{user.phone}}</span>{% endif %}
+          <span><strong style="color:var(--ink2)">Modules:</strong>
+            {% if user.module_reviews %}Reviews {% endif %}
+            {% if user.module_labor %}Labor {% endif %}
+            {% if user.module_inventory %}Inventory {% endif %}
+            {% if user.module_marketing %}Marketing{% endif %}
+            {% if not user.module_reviews and not user.module_labor and not user.module_inventory and not user.module_marketing %}None{% endif %}
+          </span>
+          <span><strong style="color:var(--ink2)">Last login:</strong> {% if user.last_login %}{% set d=user.last_login[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}Never{% endif %}</span>
+          {% if user.last_active_tab %}<span><strong style="color:var(--ink2)">Last tab:</strong> {{user.last_active_tab}}</span>{% endif %}
+          <span><strong style="color:var(--ink2)">Reviews fetched:</strong> {{user.last_fetched_at or 'Never'}}</span>
+          <span><strong style="color:var(--ink2)">Account:</strong> {% if user.is_active %}<span style="color:#2d6a4f">Active</span>{% else %}<span style="color:#9ca3af">Inactive</span>{% endif %}</span>
+        </div>
+
+      </div>
       {% else %}
-      <tr><td colspan="7" style="color:var(--ink3);font-style:italic;padding:16px">No clients yet — create one above.</td></tr>
+      <div class="card" style="padding:16px;color:var(--ink3);font-style:italic">No clients yet — create one above.</div>
       {% endfor %}
-      </tbody>
-    </table>
   </div>
 </div>
 
