@@ -1003,7 +1003,7 @@ def instagram_connect(current_user):
     import urllib.parse
     from flask import redirect as flask_redirect
     app_id       = os.getenv("META_APP_ID","")
-    redirect_uri = "https://web-production-5d9dc.up.railway.app/instagram/callback"
+    redirect_uri = os.getenv("META_REDIRECT_URI", "https://dashboard.cavnar.ai/instagram/callback")
     scope        = "instagram_basic,instagram_content_publish,pages_read_engagement,pages_show_list"
     state        = str(current_user["restaurant_id"])
     params = urllib.parse.urlencode({
@@ -1026,7 +1026,7 @@ def instagram_callback():
     state        = request.args.get("state")
     app_id       = os.getenv("META_APP_ID","")
     app_secret   = os.getenv("META_APP_SECRET","")
-    redirect_uri = "https://web-production-5d9dc.up.railway.app/instagram/callback"
+    redirect_uri = os.getenv("META_REDIRECT_URI", "https://dashboard.cavnar.ai/instagram/callback")
 
     if not code:
         return _ig_redirect("/?ig_error=no_code")
