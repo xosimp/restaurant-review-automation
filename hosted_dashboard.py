@@ -1290,7 +1290,7 @@ function markPosted(id, btn){
       }).catch(function(){ toast('Opening Yelp...'); });
     }
     // Open Yelp business owner portal so they can paste and respond
-    window.open('https://biz.yelp.com/reviews', '_blank');
+    window.open('https://business.yelp.com', '_blank');
   }
 
   fetch('/api/mark-posted/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{
