@@ -503,7 +503,7 @@ function clientUpload(dataType, input) {
           {% elif r.response_status=='approved' %}
             <span class="btn btn-approved">✓ Approved</span>
             <button class="btn btn-skip" onclick="skipR({{r.id}})">Edit</button>
-            <button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px" onclick="markPosted({{r.id}})">Mark as posted</button>
+            <button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px" onclick="markPosted({{r.id}},this)">Mark as posted</button>
           {% elif r.response_status=='skipped' %}
             <button class="btn btn-approve" onclick="approveR({{r.id}})">✓ Approve</button>
             <button class="btn btn-skip" onclick="openEditor({{r.id}})">Edit response</button>
@@ -1266,7 +1266,11 @@ function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(r=>r.json()).th
       document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted to Google</span>';
       toast('Response approved and posted to Google ✓');
     } else {
-      document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="btn btn-approved">✓ Approved</span><button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px;margin-left:6px" onclick="markPosted('+id+',this)">Mark as posted</button>';
+      const _plat = document.getElementById('rc-'+id) ? document.getElementById('rc-'+id).dataset.platform : '';
+      const _markBtn = _plat === 'yelp'
+        ? '<button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px;margin-left:6px" onclick="markPosted('+id+',this)">📋 Copy &amp; open Yelp</button>'
+        : '<button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px;margin-left:6px" onclick="markPosted('+id+',this)">Mark as posted</button>';
+      document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="btn btn-approved">✓ Approved</span>'+_markBtn;
       toast('Response approved');
     }
   }
@@ -1279,15 +1283,14 @@ function markPosted(id, btn){
   const draftEl = document.getElementById('draft-txt-'+id);
   const draftText = draftEl ? draftEl.textContent.trim() : '';
 
-  if(platform === 'yelp' && draftText){
-    navigator.clipboard.writeText(draftText).then(function(){
-      toast('Response copied to clipboard — opening Yelp...');
-    }).catch(function(){ toast('Opening Yelp...'); });
-    // Open Yelp business page in new tab
-    const yelpId = card.dataset.yelpId || '';
-    const yelpUrl = yelpId
-      ? 'https://www.yelp.com/biz/' + yelpId
-      : 'https://business.yelp.com';
+  if(platform === 'yelp'){
+    if(draftText){
+      navigator.clipboard.writeText(draftText).then(function(){
+        toast('Response copied — opening Yelp to paste it ✓');
+      }).catch(function(){ toast('Opening Yelp...'); });
+    }
+    const yelpId = card ? (card.dataset.yelpId || '') : '';
+    const yelpUrl = yelpId ? 'https://www.yelp.com/biz/' + yelpId : 'https://business.yelp.com';
     window.open(yelpUrl, '_blank');
   }
 
@@ -1295,7 +1298,7 @@ function markPosted(id, btn){
     if(d.ok){
       const actions = document.getElementById('draft-actions-'+id);
       if(actions) actions.innerHTML='<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>';
-      toast('Marked as posted');
+      if(platform !== 'yelp') toast('Marked as posted');
     }
   });
 }
