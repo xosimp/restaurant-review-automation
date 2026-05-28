@@ -1289,9 +1289,8 @@ function markPosted(id, btn){
         toast('Response copied — opening Yelp to paste it ✓');
       }).catch(function(){ toast('Opening Yelp...'); });
     }
-    const yelpId = card ? (card.dataset.yelpId || '') : '';
-    const yelpUrl = yelpId ? 'https://www.yelp.com/biz/' + yelpId : 'https://business.yelp.com';
-    window.open(yelpUrl, '_blank');
+    // Open Yelp business owner portal so they can paste and respond
+    window.open('https://biz.yelp.com/reviews', '_blank');
   }
 
   fetch('/api/mark-posted/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{
