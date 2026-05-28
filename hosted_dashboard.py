@@ -815,6 +815,39 @@ function clientUpload(dataType, input) {
 
 <!-- MARKETING -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing">
+
+  <!-- Instagram & Facebook connect — matches Google Business card style -->
+  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:14px">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Instagram &amp; Facebook — Post directly from dashboard</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+      <div>
+        {% if restaurant.ig_token %}
+        <div style="display:flex;align-items:center;gap:8px;font-size:13px">
+          <span style="color:var(--green);font-size:16px">✓</span>
+          <div>
+            <div style="font-weight:600;color:var(--ink)">Instagram &amp; Facebook connected</div>
+            <div style="font-size:11px;color:var(--ink3)">Generate content and post directly — no copy/paste</div>
+          </div>
+        </div>
+        {% else %}
+        <div>
+          <div style="font-size:13px;font-weight:500;color:var(--ink);margin-bottom:2px">Connect Instagram &amp; Facebook</div>
+          <div style="font-size:11px;color:var(--ink3)">Post generated content directly — no copy/paste needed</div>
+        </div>
+        {% endif %}
+      </div>
+      <div style="display:flex;gap:8px">
+        {% if restaurant.ig_token %}
+        <button onclick="disconnectInstagram()" class="btn btn-skip" style="font-size:11px">Disconnect</button>
+        {% else %}
+        <button onclick="igConnect()" class="btn btn-approve" style="font-size:12px;padding:7px 16px">
+          Connect Instagram →
+        </button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
   <div style="background:#f0f4fa;border:1px solid #b3c5e0;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#2d4a6a;line-height:1.6">
     <strong>How this works:</strong> Pick a content type, add a topic or occasion, and hit Generate.
     Copy the result straight to Instagram, your email tool, or Google Business Profile.
@@ -857,21 +890,6 @@ function clientUpload(dataType, input) {
     <div class="cal-grid" id="cal-grid"><div class="no-data" style="grid-column:1/-1;padding:20px">Click "Generate week" for content ideas.</div></div>
   </div>
 
-  <!-- Instagram connect banner -->
-  <div id="ig-connect-banner" style="margin-top:14px;background:linear-gradient(135deg,#1a1410,#2a1f1a);border:1px solid #3a2a20;border-radius:var(--r);padding:14px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px">
-    <div>
-      <div style="font-size:13px;font-weight:600;color:var(--paper);margin-bottom:3px">Connect Instagram &amp; Facebook</div>
-      <div style="font-size:12px;color:#7a736a;line-height:1.5">Connect your Instagram Business account and/or Facebook Business Page to post directly from the dashboard — no copy/paste needed.</div>
-    </div>
-    <button onclick="igConnect()" style="flex-shrink:0;background:var(--ember);color:white;padding:8px 16px;border-radius:6px;border:none;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer">Connect →</button>
-  </div>
-  <div id="ig-connected-banner" style="margin-top:14px;background:#eaf4ee;border:1px solid #b7dfca;border-radius:var(--r);padding:12px 16px;display:none;align-items:center;justify-content:space-between;gap:12px">
-    <div>
-      <div style="font-size:13px;color:#2d6a4f;font-weight:500">✓ Instagram &amp; Facebook connected</div>
-      <div style="font-size:11px;color:#2d6a4f;margin-top:2px">Generate content then post to Instagram, Facebook, or both</div>
-    </div>
-    <button onclick="disconnectInstagram()" style="font-size:11px;color:#7a736a;background:transparent;border:none;cursor:pointer;text-decoration:underline">Disconnect</button>
-  </div>
 </div>
 
 <!-- COMPETITOR INTEL -->
