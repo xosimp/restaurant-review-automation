@@ -2769,11 +2769,12 @@ input:focus,select:focus{border-color:var(--ember)}
           <span><strong style="color:var(--ink2)">Email:</strong> {{user.email}}</span>
           {% if user.phone %}<span><strong style="color:var(--ink2)">Phone:</strong> {{user.phone}}</span>{% endif %}
           <span><strong style="color:var(--ink2)">Modules:</strong>
-            {% if user.module_reviews %}Reviews {% endif %}
-            {% if user.module_labor %}Labor {% endif %}
-            {% if user.module_inventory %}Inventory {% endif %}
-            {% if user.module_marketing %}Marketing{% endif %}
-            {% if not user.module_reviews and not user.module_labor and not user.module_inventory and not user.module_marketing %}None{% endif %}
+            {% set mods = [] %}
+            {% if user.module_reviews %}{% set _ = mods.append('Reviews') %}{% endif %}
+            {% if user.module_labor %}{% set _ = mods.append('Labor') %}{% endif %}
+            {% if user.module_inventory %}{% set _ = mods.append('Inventory') %}{% endif %}
+            {% if user.module_marketing %}{% set _ = mods.append('Marketing') %}{% endif %}
+            {{ mods|join(', ') if mods else 'None' }}
           </span>
           <span><strong style="color:var(--ink2)">Last login:</strong> {% if user.last_login %}{% set d=user.last_login[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}Never{% endif %}</span>
           {% if user.last_active_tab %}<span><strong style="color:var(--ink2)">Last tab:</strong> {{user.last_active_tab}}</span>{% endif %}

@@ -92,26 +92,28 @@ def admin(current_user):
         except Exception:
             u["pending_reviews"] = 0
 
-        # Health score: green / amber / red
+        # Health score: green / amber / red (admin always green)
         try:
-            from datetime import datetime as _dt, timedelta as _td
-            _now = _dt.now()
-            _last = u.get("last_login")
-            _days_since_login = 999
-            if _last:
-                try:
-                    _ll = _dt.fromisoformat(_last.replace("Z",""))
-                    _days_since_login = (_now - _ll).days
-                except Exception:
-                    pass
-            _pending = u.get("pending_reviews", 0)
-            _has_data = bool(r and (r.last_fetched_at or r.gmb_refresh_token)) if r else False
-            if _days_since_login <= 7 and _pending < 5:
+            if u.get("is_admin"):
                 u["health"] = "green"
-            elif _days_since_login <= 14 and _pending < 10:
-                u["health"] = "amber"
             else:
-                u["health"] = "red"
+                from datetime import datetime as _dt, timedelta as _td
+                _now = _dt.now()
+                _last = u.get("last_login")
+                _days_since_login = 999
+                if _last:
+                    try:
+                        _ll = _dt.fromisoformat(_last.replace("Z",""))
+                        _days_since_login = (_now - _ll).days
+                    except Exception:
+                        pass
+                _pending = u.get("pending_reviews", 0)
+                if _days_since_login <= 7 and _pending < 5:
+                    u["health"] = "green"
+                elif _days_since_login <= 14 and _pending < 10:
+                    u["health"] = "amber"
+                else:
+                    u["health"] = "red"
         except Exception:
             u["health"] = "amber"
 
