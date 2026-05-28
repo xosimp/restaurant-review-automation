@@ -1236,6 +1236,14 @@ async function saveDraft(id) {
   }
 }
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)}
+function disconnectInstagram(){
+  if(!confirm('Disconnect Instagram & Facebook? You will need to reconnect to post directly.')) return;
+  fetch('/api/instagram-disconnect',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.ok){ toast('Instagram & Facebook disconnected'); setTimeout(()=>location.reload(),800); }
+    else { toast('Error disconnecting — try again'); }
+  });
+}
+
 function igConnect(){
   const popup = window.open('/instagram/connect','ig_connect','width=600,height=700,left=200,top=100');
   window.addEventListener('message', function handler(e){
