@@ -735,28 +735,23 @@ def fetch_reviews_now(restaurant_id, current_user):
 
     new_count = save_reviews(reviews) if reviews else 0
 
-    # Analyse new reviews
-    from models import get_pending_analysis
-    pending = get_pending_analysis(restaurant_id, limit=50)
-    if pending:
-        from analyser import analyse_review
-        for r in pending:
-            try:
-                analyse_review(r.id, r.rating, r.text)
-            except Exception as e:
-                errors.append(f"Analysis error: {e}")
-
-    # Draft responses
-    from models import get_pending_drafts
-    pending_drafts = get_pending_drafts(restaurant_id)
-    if pending_drafts:
-        from drafter import draft_response
-        for r in pending_drafts:
-            try:
-                draft_response(r.id, r.rating, r.text, r.sentiment,
-                              restaurant.name, restaurant.voice_notes or "")
-            except Exception as e:
-                errors.append(f"Draft error: {e}")
+    # Run analysis + drafting in background so route returns immediately
+    import threading
+    def _analyse_and_draft():
+        try:
+            from models import get_pending_analysis, get_pending_drafts
+            from analyser import analyse_review
+            for r in get_pending_analysis(restaurant_id, limit=50):
+                try: analyse_review(r.id, r.rating, r.text)
+                except Exception: pass
+            from drafter import draft_response
+            for r in get_pending_drafts(restaurant_id):
+                try: draft_response(r.id, r.rating, r.text, r.sentiment,
+                                    restaurant.name, restaurant.voice_notes or "")
+                except Exception: pass
+        except Exception as e:
+            print(f"[fetch] background error: {e}")
+    threading.Thread(target=_analyse_and_draft, daemon=True).start()
 
     return jsonify(ok=True, new_reviews=new_count, errors=errors)
 

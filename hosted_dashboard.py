@@ -2875,14 +2875,21 @@ async function fetchReviewsNow(rid){
   const btn = event.target;
   btn.textContent = 'Fetching...'; btn.disabled = true;
   try {
-    const res = await fetch('/admin/fetch-reviews/'+rid, {method:'POST'});
+    const controller = new AbortController();
+    const timeout = setTimeout(()=>controller.abort(), 30000);
+    const res = await fetch('/admin/fetch-reviews/'+rid, {method:'POST', signal:controller.signal});
+    clearTimeout(timeout);
     const data = await res.json();
     if(data.ok){
-      toast('Fetched ' + (data.new_count||0) + ' new reviews ✓');
+      const n = data.new_reviews || data.new_count || 0;
+      toast('Fetched ' + n + ' new reviews ✓' + (data.errors&&data.errors.length?' ('+data.errors.length+' warnings)':''));
     } else {
       toast('Error: ' + (data.error||'unknown'));
     }
-  } catch(e) { toast('Fetch failed'); }
+  } catch(e) {
+    if(e.name==='AbortError') toast('Timed out — try again or check Railway logs');
+    else toast('Fetch failed: '+e.message);
+  }
   btn.textContent = 'Fetch reviews now'; btn.disabled = false;
 }
 
