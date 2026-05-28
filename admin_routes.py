@@ -697,27 +697,28 @@ def fetch_reviews_now(restaurant_id, current_user):
                 from models import update_restaurant
                 token = get_valid_token(restaurant_id)
                 if token:
+                    debug = []
                     # Discover location_id if not stored
                     loc_id = restaurant.gmb_location_id
                     if not loc_id:
                         acct_id = get_gmb_account_id(token)
-                        print(f"[GMB fetch] account_id={acct_id}")
+                        debug.append(f"account_id={acct_id}")
                         if acct_id:
                             loc_id = get_gmb_location_id(token, acct_id, restaurant.google_place_id or "")
-                            print(f"[GMB fetch] location_id={loc_id} (place_id={restaurant.google_place_id})")
+                            debug.append(f"location_id={loc_id}")
                             if loc_id:
                                 update_restaurant(restaurant_id, {
                                     "gmb_account_id": acct_id,
                                     "gmb_location_id": loc_id,
                                 })
                         else:
-                            errors.append("Google: no account found — make sure the connected Google account manages this business")
+                            errors.append(f"Google: no GMB account found. Debug: {debug}")
                     if loc_id:
                         gmb_reviews = fetch_reviews_via_gmb(token, loc_id, restaurant_id)
-                        print(f"[GMB fetch] fetched {len(gmb_reviews)} reviews from {loc_id}")
+                        debug.append(f"fetched={len(gmb_reviews)}")
                         reviews += gmb_reviews
                     else:
-                        errors.append(f"Google: location not found for place_id={restaurant.google_place_id} — the connected Google account may not manage this business")
+                        errors.append(f"Google: location not found. Debug: {debug}, place_id={restaurant.google_place_id}")
                 else:
                     errors.append("Google: token refresh failed — try reconnecting Google Business")
             except Exception as e:
