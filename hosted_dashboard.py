@@ -863,7 +863,7 @@ function clientUpload(dataType, input) {
       <div style="font-size:13px;font-weight:600;color:var(--paper);margin-bottom:3px">Connect Instagram &amp; Facebook</div>
       <div style="font-size:12px;color:#7a736a;line-height:1.5">Connect your Instagram Business account and/or Facebook Business Page to post directly from the dashboard — no copy/paste needed.</div>
     </div>
-    <a href="/instagram/connect" style="flex-shrink:0;background:var(--ember);color:white;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600;white-space:nowrap">Connect →</a>
+    <button onclick="igConnect()" style="flex-shrink:0;background:var(--ember);color:white;padding:8px 16px;border-radius:6px;border:none;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;white-space:nowrap;cursor:pointer">Connect →</button>
   </div>
   <div id="ig-connected-banner" style="margin-top:14px;background:#eaf4ee;border:1px solid #b7dfca;border-radius:var(--r);padding:12px 16px;display:none;align-items:center;justify-content:space-between;gap:12px">
     <div>
@@ -1218,6 +1218,20 @@ async function saveDraft(id) {
   }
 }
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)}
+function igConnect(){
+  const popup = window.open('/instagram/connect','ig_connect','width=600,height=700,left=200,top=100');
+  window.addEventListener('message', function handler(e){
+    if(!e.data || !e.data.ig) return;
+    window.removeEventListener('message', handler);
+    if(e.data.ig === 'connected'){
+      toast('Instagram & Facebook connected ✓');
+      setTimeout(()=>location.reload(), 1000);
+    } else {
+      toast('Connection failed: ' + (e.data.msg || 'unknown error'));
+    }
+  });
+}
+
 function gmbConnect(){
   const popup = window.open('/auth/google/connect','gmb_connect','width=500,height=600,left=200,top=100');
   window.addEventListener('message', function handler(e){

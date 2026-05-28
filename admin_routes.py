@@ -999,12 +999,12 @@ def favicon_png():
 @admin_bp.route("/instagram/connect")
 @login_required
 def instagram_connect(current_user):
-    """Redirect client to Meta OAuth to connect their Instagram."""
+    """Open Meta OAuth in a popup — state carries restaurant_id."""
     import urllib.parse
     from flask import redirect as flask_redirect
     app_id       = os.getenv("META_APP_ID","")
     redirect_uri = os.getenv("META_REDIRECT_URI", "https://dashboard.cavnar.ai/instagram/callback")
-    scope        = "instagram_basic,instagram_content_publish,pages_read_engagement,pages_show_list"
+    scope        = "instagram_basic,instagram_content_publish,pages_read_engagement,pages_show_list,business_management"
     state        = str(current_user["restaurant_id"])
     params = urllib.parse.urlencode({
         "client_id":     app_id,
@@ -1029,7 +1029,12 @@ def instagram_callback():
     redirect_uri = os.getenv("META_REDIRECT_URI", "https://dashboard.cavnar.ai/instagram/callback")
 
     if not code:
-        return _ig_redirect("/?ig_error=no_code")
+        return (
+            "<html><body><script>"
+            "window.opener&&window.opener.postMessage({ig:'error',msg:'no_code'},'*');"
+            "window.close();"
+            "</script><p>Connection failed.</p></body></html>"
+        )
 
     # Exchange code for short-lived token
     r = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
@@ -1038,7 +1043,12 @@ def instagram_callback():
     })
     if r.status_code != 200:
         print(f"IG token exchange failed: {r.text}")
-        return _ig_redirect("/?ig_error=token_failed")
+        return (
+            "<html><body><script>"
+            "window.opener&&window.opener.postMessage({ig:'error',msg:'token_failed'},'*');"
+            "window.close();"
+            "</script><p>Token exchange failed.</p></body></html>"
+        )
     short_token = r.json().get("access_token")
 
     # Exchange for long-lived token (60 days)
@@ -1067,7 +1077,12 @@ def instagram_callback():
 
     if not ig_user_id:
         print(f"No IG account found. Pages: {r3.json()}")
-        return _ig_redirect("/?ig_error=no_ig_account")
+        return (
+            "<html><body><script>"
+            "window.opener&&window.opener.postMessage({ig:'error',msg:'no_ig_account'},'*');"
+            "window.close();"
+            "</script><p>No Instagram business account found.</p></body></html>"
+        )
 
     rid = int(state) if state and state.isdigit() else None
     if rid:
@@ -1086,7 +1101,12 @@ def instagram_callback():
         _update_r(rid, update_data)
         print(f"Instagram+Facebook connected for restaurant {rid}, expires {expires}")
 
-    return _ig_redirect("/?ig_connected=1")
+    return (
+        "<html><body><script>"
+        "window.opener&&window.opener.postMessage({ig:'connected'},'*');"
+        "window.close();"
+        "</script><p>Instagram connected! Close this window.</p></body></html>"
+    )
 
 @admin_bp.route("/api/post-to-instagram", methods=["POST"])
 @login_required
