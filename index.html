@@ -485,5 +485,24 @@ document.getElementById('contactForm').addEventListener('submit',async function(
   }
 });
 </script>
+<script type="text/javascript">
+  window.$crisp=[];
+  window.CRISP_WEBSITE_ID="e2c7eccf-a15e-4631-9222-9b43c6b18e05";
+  (function(){
+    var d=document;
+    var s=d.createElement("script");
+    s.src="https://client.crisp.chat/l.js";
+    s.async=1;
+    d.getElementsByTagName("head")[0].appendChild(s);
+  })();
+
+  // Style Crisp to match Cavnar AI brand
+  window.CRISP_READY_TRIGGER = function() {
+    if(window.$crisp) {
+      $crisp.push(["config", "color:theme", ["amber"]]);
+      $crisp.push(["config", "position:reverse", [true]]);
+    }
+  };
+</script>
 </body>
 </html>
