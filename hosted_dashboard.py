@@ -435,9 +435,13 @@ function clientUpload(dataType, input) {
 
 <!-- REVIEWS -->
 <div class="panel {{'active' if mod_reviews}}" id="panel-reviews">
-  {% if not restaurant.reviews_live %}
+  {% if not restaurant.reviews_live and not restaurant.gmb_refresh_token %}
   <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#8a6a00;display:flex;align-items:center;gap:8px">
     <span>⚠</span><span><strong>Sample data</strong> — example reviews showing how the dashboard works. Your live Google and Yelp reviews will appear here automatically once connected.</span>
+  </div>
+  {% elif restaurant.gmb_refresh_token and not restaurant.reviews_live %}
+  <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#2d6a4f;display:flex;align-items:center;gap:8px">
+    <span>✓</span><span><strong>Google Business connected</strong> — new reviews will sync automatically. Sample reviews shown below until your first live review comes in.</span>
   </div>
   {% endif %}
   <div class="stat-row">
@@ -448,8 +452,8 @@ function clientUpload(dataType, input) {
     <div class="stat hi"><div class="stat-n">{{rstats.negative}}</div><div class="stat-l">Negative</div></div>
     <div class="stat hi"><div class="stat-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
     <div class="stat warn"><div class="stat-n">{{rstats.awaiting_approval}}</div><div class="stat-l">To approve</div></div>
-  <div class="stat {{'ok' if restaurant.reviews_live else 'warn'}}">
-    <div class="stat-n" style="font-size:14px;margin-top:4px">{{'Live' if restaurant.reviews_live else 'Demo'}}</div>
+  <div class="stat {{'ok' if restaurant.reviews_live or restaurant.gmb_refresh_token else 'warn'}}">
+    <div class="stat-n" style="font-size:14px;margin-top:4px">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
     <div class="stat-l">Review source</div>
   </div>
   </div>
@@ -1770,9 +1774,9 @@ textarea{resize:vertical;min-height:60px}
       <div style="margin-top:14px">
         <label style="display:block;margin-bottom:6px">Review data status</label>
         <div class="status-row">
-          <div class="status-dot {{'dot-live' if restaurant.reviews_live else 'dot-sample'}}"></div>
+          <div class="status-dot {{'dot-live' if restaurant.reviews_live or restaurant.gmb_refresh_token else 'dot-sample'}}"></div>
           <div class="status-text">
-            {{'Pulling live reviews from Google/Yelp' if restaurant.reviews_live else 'Using sample review data — add Place ID and enable to go live'}}
+            {{'Pulling live reviews from Google/Yelp' if restaurant.reviews_live else ('Google Business connected — fetching live reviews' if restaurant.gmb_refresh_token else 'Using sample review data — add Place ID and enable to go live')}}
           </div>
           <button class="toggle {{'on' if restaurant.reviews_live}}" id="reviews-live-toggle"
                   onclick="toggleReviewsLive(this)" title="Toggle live reviews"></button>
@@ -2717,6 +2721,7 @@ input:focus,select:focus{border-color:var(--ember)}
             <div class="action-divider"></div>
             <button class="action-item" onclick="resendPayment({{user.restaurant_id}},'{{user.email}}','{{user.billing_status}}');closeMenu({{user.id}})">Resend payment link</button>
             <button class="action-item" onclick="resendContract({{user.restaurant_id}});closeMenu({{user.id}})">Resend contract</button>
+            <button class="action-item" onclick="fetchReviewsNow({{user.restaurant_id}});closeMenu({{user.id}})">Fetch reviews now</button>
             <button class="action-item" onclick="seedReviews({{user.restaurant_id}});closeMenu({{user.id}})">Seed sample reviews</button>
             <div class="action-divider"></div>
             <button class="action-item action-item-danger" onclick="deactivateClient({{user.id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Deactivate</button>
@@ -2863,6 +2868,22 @@ async function resendPayment(restaurantId, email, billing) {
     btn.disabled = false;
     console.error(data.error);
   }
+}
+
+async function fetchReviewsNow(rid){
+  if(!confirm('Fetch latest reviews from Google/Yelp for this restaurant?')) return;
+  const btn = event.target;
+  btn.textContent = 'Fetching...'; btn.disabled = true;
+  try {
+    const res = await fetch('/admin/fetch-reviews/'+rid, {method:'POST'});
+    const data = await res.json();
+    if(data.ok){
+      toast('Fetched ' + (data.new_count||0) + ' new reviews ✓');
+    } else {
+      toast('Error: ' + (data.error||'unknown'));
+    }
+  } catch(e) { toast('Fetch failed'); }
+  btn.textContent = 'Fetch reviews now'; btn.disabled = false;
 }
 
 async function seedReviews(restaurantId) {
