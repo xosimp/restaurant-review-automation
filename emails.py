@@ -110,6 +110,8 @@ def send_payment_email(to_email, restaurant_name, tier=None,
     <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
     &nbsp;·&nbsp;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
+    &nbsp;·&nbsp;
+    <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
 </div>"""
         })
@@ -179,6 +181,8 @@ def send_welcome_email(to_email, restaurant_name, username, password,
     <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
     &nbsp;·&nbsp;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
+    &nbsp;·&nbsp;
+    <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
 </div>"""
     _resend.Emails.send({
@@ -377,6 +381,8 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
     <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
     &nbsp;·&nbsp;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
+    &nbsp;·&nbsp;
+    <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
 </div>"""
         })
@@ -443,6 +449,8 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
     <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
     &nbsp;·&nbsp;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
+    &nbsp;·&nbsp;
+    <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
 </div>"""
         })
@@ -505,6 +513,8 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
     <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
     &nbsp;·&nbsp;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
+    &nbsp;·&nbsp;
+    <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
 </div>"""
         })
