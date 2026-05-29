@@ -189,6 +189,9 @@ input:focus{border-color:var(--ember)}
     </div>
     <button class="btn" type="submit">Sign in</button>
   </form>
+  <div class="footer-note" style="text-align:center;margin-top:12px">
+    <a href="mailto:will@cavnar.ai?subject=Password reset request" style="font-size:12px;color:#7a736a;text-decoration:none">Forgot your password?</a>
+  </div>
   <div class="footer-note">Need access? Contact will@cavnar.ai</div>
 </div>
 </body>
@@ -322,6 +325,59 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 .form-label{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3)}
 .form-input{padding:9px 12px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;color:var(--ink);background:white;outline:none;transition:border .15s}
 .form-input:focus{border-color:var(--ember)}
+
+/* ── Mobile responsive ────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  /* Header */
+  .hdr { padding: 8px 14px; }
+  .hdr-logo { font-size: 18px; }
+  .hdr-user { display: none; }
+
+  /* Tabs — horizontal scroll */
+  .tabs { padding: 0 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap; gap: 0; }
+  .tab { padding: 8px 12px; font-size: 11px; white-space: nowrap; flex-shrink: 0; }
+  .tab .badge { display: none; }
+
+  /* Panels */
+  .panel { padding: 14px 12px; }
+  .panel.active { display: block; }
+
+  /* Stat row — 2 columns on mobile */
+  .stat-row { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .stat { padding: 10px 8px; }
+  .stat-n { font-size: 22px !important; }
+  .stat-l { font-size: 10px; }
+
+  /* Two-col — stack on mobile */
+  .two-col { grid-template-columns: 1fr; }
+
+  /* Cards */
+  .card { padding: 12px; }
+
+  /* Tables — horizontal scroll */
+  .card > table, .tbl { font-size: 11px; }
+  div:has(> .tbl) { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* Toolbar */
+  .toolbar { gap: 6px; }
+  .search-input { width: 100%; }
+
+  /* Draft actions */
+  .draft-actions { flex-wrap: wrap; gap: 4px; }
+  .btn { font-size: 11px; padding: 5px 10px; }
+
+  /* CT grid (marketing content types) */
+  .ct-grid { grid-template-columns: repeat(2, 1fr); }
+
+  /* Labor/inventory section labels */
+  .slabel { font-size: 9px; }
+
+  /* Account tab two-column layout */
+  .form-grid { grid-template-columns: 1fr; }
+
+  /* Hide less important columns in review cards */
+  .card-sub .platform-badge { display: none; }
+}
 </style>
 <script>
 function clientUpload(dataType, input) {
@@ -991,7 +1047,10 @@ function clientUpload(dataType, input) {
         <div style="font-size:15px;font-weight:600;color:var(--ink);margin-bottom:8px" id="billing-amount-prominent">—</div>
         <div style="font-size:12px;color:var(--ink3);margin-bottom:4px" id="billing-status"></div>
         <div style="font-size:12px;color:var(--ink3);margin-bottom:10px" id="billing-pm"></div>
-        <a id="billing-portal-link" href="#" target="_blank" style="font-size:12px;color:var(--ember);text-decoration:none;font-weight:600">Manage payment →</a>
+        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+          <a id="billing-portal-link" href="#" target="_blank" style="font-size:12px;color:var(--ember);text-decoration:none;font-weight:600">Manage payment →</a>
+          <a id="billing-invoice-link" href="#" target="_blank" style="font-size:12px;color:var(--ink3);text-decoration:none;font-weight:500">View invoice history →</a>
+        </div>
       </div>
       <div id="billing-no-sub" style="display:none;font-size:12px;color:var(--ink3)">
         No active subscription. <a href="mailto:will@cavnar.ai" style="color:var(--ember)">Contact Will</a>
@@ -1549,8 +1608,13 @@ function loadBillingInfo() {
     document.getElementById('billing-next-prominent').textContent=nextDate;
     document.getElementById('billing-amount-prominent').textContent=d.amount||'—';
     document.getElementById('billing-pm').textContent=d.payment_method||'—';
-    if(d.portal_url) document.getElementById('billing-portal-link').href=d.portal_url;
-    else document.getElementById('billing-portal-link').style.display='none';
+    if(d.portal_url){
+      document.getElementById('billing-portal-link').href=d.portal_url;
+      document.getElementById('billing-invoice-link').href=d.portal_url;
+    } else {
+      document.getElementById('billing-portal-link').style.display='none';
+      document.getElementById('billing-invoice-link').style.display='none';
+    }
   }).catch(()=>{document.getElementById('billing-loading').textContent='Billing info unavailable.';});
 }
 
@@ -2763,8 +2827,8 @@ input:focus,select:focus{border-color:var(--ember)}
           {% endif %}
         </div>
 
-        <!-- Detail row: username, email, phone, modules, last login, last tab, last fetched -->
-        <div style="display:flex;flex-wrap:wrap;gap:16px;font-size:11px;color:var(--ink3);border-top:1px solid var(--paper2);padding-top:8px;margin-top:2px">
+        <!-- Detail row + usage toggle -->
+        <div style="display:flex;flex-wrap:wrap;gap:16px;font-size:11px;color:var(--ink3);border-top:1px solid var(--paper2);padding-top:8px;margin-top:2px;align-items:center">
           <span><strong style="color:var(--ink2)">User:</strong> {{user.username}}</span>
           <span><strong style="color:var(--ink2)">Email:</strong> {{user.email}}</span>
           {% if user.phone %}<span><strong style="color:var(--ink2)">Phone:</strong> {{user.phone}}</span>{% endif %}
@@ -2780,7 +2844,16 @@ input:focus,select:focus{border-color:var(--ember)}
           {% if user.last_active_tab %}<span><strong style="color:var(--ink2)">Last tab:</strong> {{user.last_active_tab}}</span>{% endif %}
           <span><strong style="color:var(--ink2)">Reviews fetched:</strong> {{user.last_fetched_at or 'Never'}}</span>
           <span><strong style="color:var(--ink2)">Account:</strong> {% if user.is_active %}<span style="color:#2d6a4f">Active</span>{% else %}<span style="color:#9ca3af">Inactive</span>{% endif %}</span>
+          {% if not user.is_admin %}
+          <button onclick="toggleUsage({{user.restaurant_id}}, this)" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;padding:0;font-weight:500;margin-left:auto">Show usage ▾</button>
+          {% endif %}
         </div>
+        {% if not user.is_admin %}
+        <div id="usage-{{user.restaurant_id}}" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--paper2)">
+          <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:6px">30-day usage</div>
+          <div id="usage-data-{{user.restaurant_id}}" style="font-size:12px;color:var(--ink3)">Loading...</div>
+        </div>
+        {% endif %}
 
       </div>
       {% else %}
@@ -2818,6 +2891,37 @@ function copyPassword() {
     setTimeout(() => { btn.textContent = 'Copy'; btn.style.color = 'var(--ink2)'; }, 2000);
   });
 }
+function toggleUsage(rid, btn){
+  const div = document.getElementById('usage-'+rid);
+  if(!div) return;
+  if(div.style.display === 'none'){
+    div.style.display = 'block';
+    btn.textContent = 'Hide usage ▴';
+    const dataDiv = document.getElementById('usage-data-'+rid);
+    if(dataDiv.textContent === 'Loading...'){
+      fetch('/admin/api/client-usage/'+rid).then(r=>r.json()).then(d=>{
+        if(!d.ok){ dataDiv.textContent = 'No data yet.'; return; }
+        const tabs = d.tab_counts || {};
+        const events = d.event_counts || {};
+        let html = '';
+        if(Object.keys(tabs).length){
+          html += '<div style="margin-bottom:6px"><strong style="color:var(--ink2)">Tab views:</strong> ';
+          html += Object.entries(tabs).sort((a,b)=>b[1]-a[1]).map(([k,v])=>k+' ('+v+')').join(' · ');
+          html += '</div>';
+        }
+        if(events.login) html += '<span style="margin-right:12px">🔑 Logins: <strong>'+events.login+'</strong></span>';
+        if(events.review_approved) html += '<span style="margin-right:12px">✓ Approvals: <strong>'+events.review_approved+'</strong></span>';
+        if(events.csv_upload) html += '<span>📤 CSV uploads: <strong>'+events.csv_upload+'</strong></span>';
+        if(!html) html = 'No activity logged yet.';
+        dataDiv.innerHTML = html;
+      }).catch(()=>{ dataDiv.textContent = 'Error loading usage.'; });
+    }
+  } else {
+    div.style.display = 'none';
+    btn.textContent = 'Show usage ▾';
+  }
+}
+
 function toast(msg){
   let t = document.getElementById('admin-toast');
   if(!t){
@@ -3210,6 +3314,29 @@ def create_stripe_checkout(module_count: int, owner_email: str,
         return None
 
 
+@app.route("/sitemap.xml")
+def sitemap():
+    from flask import Response
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://cavnar.ai/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://cavnar.ai/privacy</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>
+</urlset>"""
+    return Response(xml, mimetype="application/xml")
+
+
+@app.route("/robots.txt")
+def robots():
+    from flask import Response
+    txt = """User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /login
+Disallow: /api/
+Sitemap: https://cavnar.ai/sitemap.xml"""
+    return Response(txt, mimetype="text/plain")
+
+
 @app.route("/login", methods=["GET","POST"])
 def login():
     if request.method == "POST":
@@ -3313,6 +3440,11 @@ def index(current_user):
 @login_required
 def approve(rid, current_user):
     approve_response(rid)
+    try:
+        from models import log_event
+        log_event(current_user["restaurant_id"], "review_approved", {"review_id": rid})
+    except Exception:
+        pass
     # Auto-post to Google if connected and this is a Google review with a review_name
     try:
         from gmb import post_reply, is_connected
@@ -3669,6 +3801,11 @@ def dismiss_welcome(current_user):
     """Mark user as having seen welcome banner by updating last_login."""
     from auth import update_last_login
     update_last_login(current_user["id"])
+    try:
+        from models import log_event
+        log_event(current_user["restaurant_id"], "login")
+    except Exception:
+        pass
     return jsonify(ok=True)
 
 @app.errorhandler(404)

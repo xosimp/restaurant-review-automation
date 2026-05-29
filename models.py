@@ -92,6 +92,17 @@ CREATE TABLE IF NOT EXISTS reviews (
     UNIQUE(platform, external_id)
 );
 
+CREATE TABLE IF NOT EXISTS activity_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id   INTEGER NOT NULL,
+    event_type      TEXT NOT NULL,  -- 'tab_view', 'review_approved', 'csv_upload', 'login'
+    event_data      TEXT,           -- JSON extra info
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (restaurant_id) REFERENCES restaurants(id)
+);
+CREATE INDEX IF NOT EXISTS idx_activity_log_restaurant ON activity_log(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_activity_log_created ON activity_log(created_at);
+
 CREATE TABLE IF NOT EXISTS weekly_reports (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
@@ -758,14 +769,75 @@ def reset_user_password(user_id: int, new_password: str,
 
 def log_activity(restaurant_id: int, tab: str,
                  db_path: str = DB_PATH):
-    """Record last active tab and timestamp."""
+    """Record last active tab, timestamp, and append to activity_log."""
+    import json
     from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
     conn = get_conn(db_path)
     conn.execute("""
         UPDATE restaurants SET last_active_tab=?, last_activity=? WHERE id=?
-    """, (tab, datetime.now(timezone.utc).isoformat(), restaurant_id))
+    """, (tab, now, restaurant_id))
+    try:
+        conn.execute("""
+            INSERT INTO activity_log (restaurant_id, event_type, event_data, created_at)
+            VALUES (?, 'tab_view', ?, ?)
+        """, (restaurant_id, json.dumps({"tab": tab}), now))
+    except Exception:
+        pass
     conn.commit()
     conn.close()
+
+
+def log_event(restaurant_id: int, event_type: str, event_data: dict = None,
+              db_path: str = DB_PATH):
+    """Log a named event to activity_log (login, review_approved, csv_upload, etc.)"""
+    import json
+    from datetime import datetime, timezone
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""
+            INSERT INTO activity_log (restaurant_id, event_type, event_data, created_at)
+            VALUES (?, ?, ?, ?)
+        """, (restaurant_id, event_type, json.dumps(event_data or {}),
+                datetime.now(timezone.utc).isoformat()))
+        conn.commit()
+    except Exception as e:
+        print(f"log_event error: {e}")
+    finally:
+        conn.close()
+
+
+def get_activity_summary(restaurant_id: int, days: int = 30,
+                         db_path: str = DB_PATH) -> dict:
+    """Return tab usage counts and recent events for a restaurant."""
+    from datetime import datetime, timezone, timedelta
+    import json
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT event_type, event_data, created_at FROM activity_log
+        WHERE restaurant_id=? AND created_at >= ?
+        ORDER BY created_at DESC
+    """, (restaurant_id, since)).fetchall()
+    conn.close()
+
+    tab_counts = {}
+    event_counts = {}
+    for row in rows:
+        et = row["event_type"]
+        event_counts[et] = event_counts.get(et, 0) + 1
+        if et == "tab_view":
+            try:
+                data = json.loads(row["event_data"] or "{}")
+                tab = data.get("tab", "unknown")
+                tab_counts[tab] = tab_counts.get(tab, 0) + 1
+            except Exception:
+                pass
+    return {
+        "tab_counts": tab_counts,
+        "event_counts": event_counts,
+        "total_events": len(rows),
+    }
 
 
 # ── Service tier → module access ──────────────────────────────────────────────

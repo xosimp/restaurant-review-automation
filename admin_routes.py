@@ -1289,6 +1289,15 @@ def post_to_facebook(current_user):
         return jsonify(ok=False, error=err)
     return jsonify(ok=True, post_id=r.json().get("id"))
 
+@admin_bp.route("/admin/api/client-usage/<int:restaurant_id>")
+@admin_required
+def client_usage(restaurant_id, current_user):
+    """Return 30-day activity summary for a restaurant."""
+    from models import get_activity_summary
+    summary = get_activity_summary(restaurant_id, days=30)
+    return jsonify(ok=True, **summary)
+
+
 @admin_bp.route("/api/mark-posted/<int:review_id>", methods=["POST"])
 @login_required
 def mark_posted(review_id, current_user):
