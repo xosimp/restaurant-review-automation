@@ -1059,7 +1059,7 @@ function clientUpload(dataType, input) {
 
   {% if competitor_data %}
     <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:16px" id="intel-insight-card">
-      {{ format_intel(competitor_data.insight) }}
+      {{ competitor_data.insight | format_intel }}
     </div>
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Nearby competitors</div>
     <div style="display:flex;flex-direction:column;gap:10px" id="comp-cards-static">
