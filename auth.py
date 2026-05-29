@@ -23,7 +23,9 @@ CREATE TABLE IF NOT EXISTS users (
     is_admin        INTEGER NOT NULL DEFAULT 0,
     is_active       INTEGER NOT NULL DEFAULT 1,
     created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
-    last_login      TEXT
+    last_login      TEXT,
+    reset_token     TEXT,
+    reset_token_expires TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sessions (

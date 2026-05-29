@@ -178,6 +178,7 @@ input:focus{border-color:var(--ember)}
   <div class="logo">Cavnar <em>AI</em></div>
   <div class="sub">Restaurant Intelligence Dashboard</div>
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  {% if request.args.get('reset') %}<div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:10px 14px;font-size:13px;color:#2d6a4f;margin-bottom:14px;text-align:center">✓ Password updated — sign in with your new password.</div>{% endif %}
   <form method="POST">
     <div class="form-group">
       <label>Username</label>
@@ -190,7 +191,7 @@ input:focus{border-color:var(--ember)}
     <button class="btn" type="submit">Sign in</button>
   </form>
   <div class="footer-note" style="text-align:center;margin-top:12px">
-    <a href="mailto:will@cavnar.ai?subject=Password reset request" style="font-size:12px;color:#7a736a;text-decoration:none">Forgot your password?</a>
+    <a href="/forgot-password" style="font-size:12px;color:#7a736a;text-decoration:none">Forgot your password?</a>
   </div>
   <div class="footer-note">Need access? Contact will@cavnar.ai</div>
 </div>
@@ -3320,6 +3321,158 @@ def create_stripe_checkout(module_count: int, owner_email: str,
         print(f"[STRIPE ERROR] Checkout creation failed for {restaurant_name}: {e}")
         traceback.print_exc()
         return None
+
+
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if request.method == "GET":
+        sent = request.args.get("sent")
+        return render_template_string("""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reset Password — Cavnar AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:#f5f3f0;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{background:white;border-radius:12px;padding:40px;width:100%;max-width:380px;border:1px solid #e5e0db}
+.logo{font-size:20px;font-weight:600;margin-bottom:28px;color:#0e0c0a}
+.logo em{color:#c84b2f;font-style:italic}
+h2{font-size:16px;font-weight:600;margin-bottom:8px;color:#0e0c0a}
+p{font-size:13px;color:#7a736a;line-height:1.6;margin-bottom:20px}
+label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:#4a4540;display:block;margin-bottom:6px}
+input{width:100%;padding:10px 12px;border:1px solid #e5e0db;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;outline:none;margin-bottom:14px}
+input:focus{border-color:#c84b2f}
+.btn{width:100%;padding:11px;background:#c84b2f;color:white;border:none;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer}
+.back{display:block;text-align:center;margin-top:16px;font-size:12px;color:#7a736a;text-decoration:none}
+.success{background:#f0faf4;border:1px solid #a7d7b8;border-radius:8px;padding:14px;font-size:13px;color:#2d6a4f;text-align:center;margin-bottom:16px}
+</style></head><body>
+<div class="card">
+  <div class="logo">Cavnar <em>AI</em></div>
+  {% if sent %}
+  <div class="success">✓ If that email is in our system, a reset link is on its way. Check your inbox.</div>
+  <a href="/login" class="back">Back to sign in</a>
+  {% else %}
+  <h2>Reset your password</h2>
+  <p>Enter your account email and we'll send you a reset link.</p>
+  <form method="POST">
+    <label>Email address</label>
+    <input type="email" name="email" placeholder="you@restaurant.com" required autofocus>
+    <button type="submit" class="btn">Send reset link</button>
+  </form>
+  <a href="/login" class="back">Back to sign in</a>
+  {% endif %}
+</div>
+</body></html>""", sent=sent)
+
+    # POST — send reset email
+    email = request.form.get("email", "").strip().lower()
+    if email:
+        try:
+            from models import create_reset_token
+            import resend as _resend
+            token = create_reset_token(email)
+            if token:
+                reset_url = f"https://dashboard.cavnar.ai/reset-password/{token}"
+                _resend.api_key = os.getenv("RESEND_API_KEY", "")
+                _resend.Emails.send({
+                    "from": f"Cavnar AI <{os.getenv('FROM_EMAIL', 'will@cavnar.ai')}>",
+                    "to": [email],
+                    "subject": "Reset your Cavnar AI password",
+                    "html": f"""
+                    <div style="font-family:'DM Sans',sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
+                      <div style="font-size:20px;font-weight:600;margin-bottom:24px">Cavnar <em style="color:#c84b2f;font-style:italic">AI</em></div>
+                      <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:#0e0c0a">Reset your password</h2>
+                      <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:24px">
+                        Click the button below to reset your password. This link expires in 1 hour.
+                      </p>
+                      <a href="{reset_url}" style="display:inline-block;background:#c84b2f;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">Reset password →</a>
+                      <p style="font-size:12px;color:#7a736a;margin-top:24px">If you didn't request this, ignore this email — your password won't change.</p>
+                      <hr style="border:none;border-top:1px solid #e5e0db;margin:24px 0">
+                      <p style="font-size:11px;color:#9ca3af">Cavnar AI · will@cavnar.ai · cavnar.ai</p>
+                    </div>"""
+                })
+        except Exception as e:
+            print(f"[forgot-password] error: {e}")
+    # Always redirect to sent page (don't reveal if email exists)
+    from flask import redirect as _redir
+    return _redir("/forgot-password?sent=1")
+
+
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    from models import validate_reset_token, consume_reset_token
+    valid = validate_reset_token(token)
+
+    if request.method == "GET":
+        return render_template_string("""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reset Password — Cavnar AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:#f5f3f0;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{background:white;border-radius:12px;padding:40px;width:100%;max-width:380px;border:1px solid #e5e0db}
+.logo{font-size:20px;font-weight:600;margin-bottom:28px;color:#0e0c0a}
+.logo em{color:#c84b2f;font-style:italic}
+h2{font-size:16px;font-weight:600;margin-bottom:8px;color:#0e0c0a}
+p{font-size:13px;color:#7a736a;line-height:1.6;margin-bottom:20px}
+label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:#4a4540;display:block;margin-bottom:6px}
+input{width:100%;padding:10px 12px;border:1px solid #e5e0db;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;outline:none;margin-bottom:14px}
+input:focus{border-color:#c84b2f}
+.btn{width:100%;padding:11px;background:#c84b2f;color:white;border:none;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer}
+.back{display:block;text-align:center;margin-top:16px;font-size:12px;color:#7a736a;text-decoration:none}
+.error{background:#fef2f2;border:1px solid #f5c6c2;border-radius:8px;padding:14px;font-size:13px;color:#c84b2f;margin-bottom:16px}
+</style></head><body>
+<div class="card">
+  <div class="logo">Cavnar <em>AI</em></div>
+  {% if not valid %}
+  <div class="error">This reset link has expired or is invalid. <a href="/forgot-password" style="color:#c84b2f">Request a new one.</a></div>
+  {% else %}
+  <h2>Choose a new password</h2>
+  <p>Must be at least 8 characters.</p>
+  <form method="POST" id="resetForm">
+    <label>New password</label>
+    <input type="password" name="password" id="pw" placeholder="Min 8 characters" minlength="8" required>
+    <label>Confirm password</label>
+    <input type="password" name="confirm" id="cpw" placeholder="Confirm password" minlength="8" required>
+    <div id="pw-err" style="font-size:12px;color:#c84b2f;margin-bottom:10px;display:none">Passwords don't match.</div>
+    <button type="submit" class="btn">Set new password</button>
+  </form>
+  <script>
+  document.getElementById('resetForm').onsubmit=function(e){
+    if(document.getElementById('pw').value!==document.getElementById('cpw').value){
+      e.preventDefault();
+      document.getElementById('pw-err').style.display='block';
+    }
+  };
+  </script>
+  {% endif %}
+  <a href="/login" class="back">Back to sign in</a>
+</div>
+</body></html>""", valid=valid)
+
+    # POST — set new password
+    if not valid:
+        from flask import redirect as _redir
+        return _redir("/forgot-password")
+
+    password = request.form.get("password", "")
+    confirm  = request.form.get("confirm", "")
+
+    if len(password) < 8 or password != confirm:
+        from flask import redirect as _redir
+        return _redir(f"/reset-password/{token}")
+
+    success = consume_reset_token(token, password)
+    if success:
+        from flask import redirect as _redir
+        return _redir("/login?reset=1")
+    from flask import redirect as _redir
+    return _redir("/forgot-password")
 
 
 @app.route("/sitemap.xml")

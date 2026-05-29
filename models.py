@@ -317,6 +317,8 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE client_data ADD COLUMN shifts_csv TEXT",
         "ALTER TABLE client_data ADD COLUMN inventory_csv TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_access_token TEXT",
+        "ALTER TABLE users ADD COLUMN reset_token TEXT",
+        "ALTER TABLE users ADD COLUMN reset_token_expires TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_refresh_token TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_account_id TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_location_id TEXT",
@@ -765,6 +767,62 @@ def reset_user_password(user_id: int, new_password: str,
                  (generate_password_hash(new_password), user_id))
     conn.commit()
     conn.close()
+
+
+def create_reset_token(email: str, db_path: str = DB_PATH) -> str | None:
+    """Create a password reset token for the user with this email. Returns token or None if not found."""
+    import secrets
+    from datetime import datetime, timezone, timedelta
+    conn = get_conn(db_path)
+    user = conn.execute("SELECT id FROM users WHERE email=? AND is_active=1", (email,)).fetchone()
+    if not user:
+        conn.close()
+        return None
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    conn.execute("UPDATE users SET reset_token=?, reset_token_expires=? WHERE id=?",
+                 (token, expires, user["id"]))
+    conn.commit()
+    conn.close()
+    return token
+
+
+def validate_reset_token(token: str, db_path: str = DB_PATH) -> dict | None:
+    """Validate a reset token. Returns user row or None if invalid/expired."""
+    from datetime import datetime, timezone
+    conn = get_conn(db_path)
+    user = conn.execute(
+        "SELECT * FROM users WHERE reset_token=? AND is_active=1", (token,)
+    ).fetchone()
+    conn.close()
+    if not user:
+        return None
+    expires = user["reset_token_expires"]
+    if not expires:
+        return None
+    try:
+        exp = datetime.fromisoformat(expires.replace("Z", ""))
+        if datetime.now(timezone.utc) > exp.replace(tzinfo=timezone.utc) if exp.tzinfo is None else datetime.now(timezone.utc) > exp:
+            return None
+    except Exception:
+        return None
+    return dict(user)
+
+
+def consume_reset_token(token: str, new_password: str, db_path: str = DB_PATH) -> bool:
+    """Reset password using token. Returns True on success."""
+    from werkzeug.security import generate_password_hash
+    user = validate_reset_token(token, db_path)
+    if not user:
+        return False
+    conn = get_conn(db_path)
+    conn.execute(
+        "UPDATE users SET password_hash=?, reset_token=NULL, reset_token_expires=NULL WHERE id=?",
+        (generate_password_hash(new_password), user["id"])
+    )
+    conn.commit()
+    conn.close()
+    return True
 
 
 def log_activity(restaurant_id: int, tab: str,
