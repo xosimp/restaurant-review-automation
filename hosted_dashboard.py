@@ -1213,7 +1213,7 @@ function clientUpload(dataType, input) {
   </div>
 
   <!-- Full width bottom row -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px" class="account-two-col">
 
     <!-- Support -->
     <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
@@ -1227,7 +1227,7 @@ function clientUpload(dataType, input) {
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Refer a restaurant</div>
       <div style="font-size:12px;color:var(--ink2);line-height:1.6;margin-bottom:10px">Know another owner? Send an intro — get <strong>one free month ($300)</strong> if they sign up.</div>
       <div style="display:flex;flex-direction:column;gap:8px">
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
           <input type="text" id="referral-name" placeholder="Restaurant name" style="flex:1;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none">
           <input type="email" id="referral-email" placeholder="Owner email" style="flex:1;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none">
         </div>
