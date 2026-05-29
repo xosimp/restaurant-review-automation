@@ -86,11 +86,11 @@ def format_intel_filter(text):
             current_section = "recommendations"
             bullets = []
         elif line.startswith("-") and current_section != "recommendations":
-            bullets.append(line.lstrip("- ").strip())
+            bullets.append(re.sub(r'\*+', '', line.lstrip("- ")).strip())
         elif re.match(r"^[0-9]+[.)]\s+", line):
-            rec_lines.append(re.sub(r"^[0-9]+[.)]\s+", "", line).strip())
+            rec_lines.append(re.sub(r'\*+', '', re.sub(r"^[0-9]+[.)]\s+", "", line)).strip())
         elif current_section == "recommendations" and line and not re.match(r"Recommendations?:?", line, re.I):
-            rec_lines.append(line)
+            rec_lines.append(re.sub(r'\*+', '', line).strip())
 
     if current_section and current_section != "recommendations" and bullets:
         html_parts.append(flush_bullets(current_section, bullets))
