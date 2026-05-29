@@ -802,7 +802,10 @@ def validate_reset_token(token: str, db_path: str = DB_PATH) -> dict | None:
         return None
     try:
         exp = datetime.fromisoformat(expires.replace("Z", ""))
-        if datetime.now(timezone.utc) > exp.replace(tzinfo=timezone.utc) if exp.tzinfo is None else datetime.now(timezone.utc) > exp:
+        # Ensure both datetimes are timezone-aware for comparison
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > exp:
             return None
     except Exception:
         return None
