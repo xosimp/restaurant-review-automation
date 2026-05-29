@@ -23,6 +23,89 @@ load_dotenv(pathlib.Path(__file__).parent / ".env")
 
 app = Flask(__name__)
 
+@app.template_filter("format_intel")
+def format_intel_filter(text):
+    """Parse structured competitor intel into formatted HTML matching labor/inventory style."""
+    import re
+    from markupsafe import Markup
+    if not text:
+        return Markup('<p style="color:var(--ink3);font-size:13px">Analysis unavailable.</p>')
+
+    html = ""
+    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+
+    # Extract intro line (before first section header)
+    intro_lines = []
+    section_lines = []
+    in_section = False
+    for line in lines:
+        if re.match(r"^(WHAT COMPETITORS|Recommendations?:?)", line, re.I):
+            in_section = True
+        if in_section:
+            section_lines.append(line)
+        else:
+            intro_lines.append(line)
+
+    if intro_lines:
+        html += f'''<p style="font-size:13px;color:var(--ink2);line-height:1.7;margin-bottom:14px">{' '.join(intro_lines)}</p>'''
+
+    # Parse sections
+    current_section = None
+    bullets = []
+    rec_lines = []
+
+    def flush_bullets(section_name, bullets):
+        if not bullets:
+            return ""
+        color = "#16a34a" if "WELL" in section_name.upper() else "#dc2626"
+        icon = "✓" if "WELL" in section_name.upper() else "✗"
+        out = f'''<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{color};margin:14px 0 8px">{section_name}</div>'''
+        for b in bullets:
+            out += f'''<div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start">
+              <span style="flex-shrink:0;color:{color};font-weight:700;font-size:13px">{icon}</span>
+              <span style="font-size:13px;color:var(--ink2);line-height:1.6">{b}</span>
+            </div>'''
+        return out
+
+    for line in section_lines:
+        if re.match(r"WHAT COMPETITORS ARE DOING WELL", line, re.I):
+            if current_section and bullets:
+                html += flush_bullets(current_section, bullets)
+            current_section = "What competitors are doing well"
+            bullets = []
+        elif re.match(r"WHAT COMPETITORS ARE DOING POORLY", line, re.I):
+            if current_section and bullets:
+                html += flush_bullets(current_section, bullets)
+            current_section = "What competitors are doing poorly"
+            bullets = []
+        elif re.match(r"Recommendations?:?", line, re.I):
+            if current_section and bullets:
+                html += flush_bullets(current_section, bullets)
+            current_section = "recommendations"
+            bullets = []
+        elif line.startswith("-") and current_section != "recommendations":
+            bullets.append(line.lstrip("- ").strip())
+        elif re.match(r"^[0-9]+[\.\)]\s+", line) or current_section == "recommendations":
+            if re.match(r"^[0-9]+[\.\)]\s+", line):
+                rec_lines.append(re.sub(r"^[0-9]+[\.\)]\s+", "", line).strip())
+
+    if current_section and current_section != "recommendations" and bullets:
+        html += flush_bullets(current_section, bullets)
+
+    # Recommendations — same style as labor/inventory
+    if rec_lines:
+        html += '''<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c84b2f;margin:14px 0 8px">Recommendations</div>'''
+        for i, rec in enumerate(rec_lines, 1):
+            html += (
+                '<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">'                f'<span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:#c84b2f;color:white;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">{i}</span>'                f'<span style="line-height:1.6;color:#b7791f;font-weight:500">{rec}</span></div>'
+            )
+
+    if not html:
+        html = f'<p style="font-size:13px;color:var(--ink2);line-height:1.7">{text}</p>'
+
+    return Markup(html)
+
+
 @app.template_filter("format_num")
 def format_num(v):
     try: return f"{float(v):,.0f}"
@@ -970,9 +1053,8 @@ function clientUpload(dataType, input) {
   </div>
 
   {% if competitor_data %}
-    <div style="background:linear-gradient(135deg,#0d1b2a,#1a2d40);border-radius:var(--r);padding:16px 20px;margin-bottom:16px;border:1px solid #1e3a52">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#4a9eca;margin-bottom:8px">Strategic Insight</div>
-      <p style="font-size:14px;color:#e8f4fd;line-height:1.7;margin:0">{{competitor_data.insight}}</p>
+    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:16px" id="intel-insight-card">
+      {{ format_intel(competitor_data.insight) }}
     </div>
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Nearby competitors</div>
     <div style="display:flex;flex-direction:column;gap:10px" id="comp-cards-static">

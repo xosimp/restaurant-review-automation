@@ -105,18 +105,26 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
 Nearby competitors and their recent customer reviews:
 {comp_summary}
 
-Write a brief competitive intelligence note (3-4 sentences) for the owner that:
-1. Starts with "{greeting}," and identifies the strongest competitor and why
-2. Calls out one specific gap or weakness in competitor reviews that {restaurant_name} could exploit
-3. Gives one concrete action the owner can take this week to differentiate
+Write a competitive intelligence report for {restaurant_name} in this EXACT format with these EXACT headers:
 
-Tone: sharp, direct, like a trusted business advisor. No fluff, no generic advice. 
-Be specific about competitor names and actual review themes.
-Do NOT use markdown, bullets, or headers. Plain sentences only."""
+{greeting}, here is your competitive landscape snapshot.
+
+WHAT COMPETITORS ARE DOING WELL:
+Write 2-3 short bullet points (starting with -) about what nearby competitors are genuinely excelling at based on their reviews. Be specific — name the restaurant and the specific strength.
+
+WHAT COMPETITORS ARE DOING POORLY:
+Write 2-3 short bullet points (starting with -) about real weaknesses or complaints in competitor reviews that {restaurant_name} could exploit. Be specific — name the restaurant and the specific complaint.
+
+Recommendations:
+1. [First concrete action {restaurant_name} can take this week based on the gaps above]
+2. [Second specific differentiator to emphasize]
+3. [Third tactical move to capture dissatisfied competitor customers]
+
+Tone: sharp, direct, trusted business advisor. No generic advice. Name specific competitors and cite specific review themes."""
 
         msg = client.messages.create(
             model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-            max_tokens=250,
+            max_tokens=600,
             messages=[{"role": "user", "content": prompt}]
         )
         return msg.content[0].text.strip()
