@@ -27,14 +27,13 @@ app = Flask(__name__)
 def format_intel_filter(text):
     """Parse structured competitor intel into formatted HTML matching labor/inventory style."""
     import re
-    from markupsafe import Markup
     if not text:
-        return Markup('<p style="color:var(--ink3);font-size:13px">Analysis unavailable.</p>')
+        return '<p style="color:var(--ink3);font-size:13px">Analysis unavailable.</p>'
 
-    html = ""
+    html_parts = []
     lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
 
-    # Extract intro line (before first section header)
+    # Split into intro and sections
     intro_lines = []
     section_lines = []
     in_section = False
@@ -47,63 +46,69 @@ def format_intel_filter(text):
             intro_lines.append(line)
 
     if intro_lines:
-        html += f'''<p style="font-size:13px;color:var(--ink2);line-height:1.7;margin-bottom:14px">{' '.join(intro_lines)}</p>'''
+        intro_text = " ".join(intro_lines)
+        html_parts.append('<p style="font-size:13px;color:#374151;line-height:1.7;margin-bottom:14px">' + intro_text + "</p>")
 
     # Parse sections
     current_section = None
     bullets = []
     rec_lines = []
 
-    def flush_bullets(section_name, bullets):
-        if not bullets:
+    def flush_bullets(section_name, b_list):
+        if not b_list:
             return ""
-        color = "#16a34a" if "WELL" in section_name.upper() else "#dc2626"
-        icon = "✓" if "WELL" in section_name.upper() else "✗"
-        out = f'''<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{color};margin:14px 0 8px">{section_name}</div>'''
-        for b in bullets:
-            out += f'''<div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start">
-              <span style="flex-shrink:0;color:{color};font-weight:700;font-size:13px">{icon}</span>
-              <span style="font-size:13px;color:var(--ink2);line-height:1.6">{b}</span>
-            </div>'''
+        is_good = "WELL" in section_name.upper()
+        color = "#16a34a" if is_good else "#dc2626"
+        icon = "✓" if is_good else "✗"
+        out = '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:' + color + ';margin:14px 0 8px">' + section_name + "</div>"
+        for b in b_list:
+            out += (
+                '<div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start">'
+                + '<span style="flex-shrink:0;color:' + color + ';font-weight:700;font-size:13px">' + icon + "</span>"
+                + '<span style="font-size:13px;color:#374151;line-height:1.6">' + b + "</span></div>"
+            )
         return out
 
     for line in section_lines:
         if re.match(r"WHAT COMPETITORS ARE DOING WELL", line, re.I):
             if current_section and bullets:
-                html += flush_bullets(current_section, bullets)
+                html_parts.append(flush_bullets(current_section, bullets))
             current_section = "What competitors are doing well"
             bullets = []
         elif re.match(r"WHAT COMPETITORS ARE DOING POORLY", line, re.I):
             if current_section and bullets:
-                html += flush_bullets(current_section, bullets)
+                html_parts.append(flush_bullets(current_section, bullets))
             current_section = "What competitors are doing poorly"
             bullets = []
-        elif re.match(r"Recommendations?:?", line, re.I):
+        elif re.match(r"Recommendations?:?\s*$", line, re.I):
             if current_section and bullets:
-                html += flush_bullets(current_section, bullets)
+                html_parts.append(flush_bullets(current_section, bullets))
             current_section = "recommendations"
             bullets = []
         elif line.startswith("-") and current_section != "recommendations":
             bullets.append(line.lstrip("- ").strip())
-        elif re.match(r"^[0-9]+[\.\)]\s+", line) or current_section == "recommendations":
-            if re.match(r"^[0-9]+[\.\)]\s+", line):
-                rec_lines.append(re.sub(r"^[0-9]+[\.\)]\s+", "", line).strip())
+        elif re.match(r"^[0-9]+[.)]\s+", line):
+            rec_lines.append(re.sub(r"^[0-9]+[.)]\s+", "", line).strip())
+        elif current_section == "recommendations" and line and not re.match(r"Recommendations?:?", line, re.I):
+            rec_lines.append(line)
 
     if current_section and current_section != "recommendations" and bullets:
-        html += flush_bullets(current_section, bullets)
+        html_parts.append(flush_bullets(current_section, bullets))
 
-    # Recommendations — same style as labor/inventory
     if rec_lines:
-        html += '''<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c84b2f;margin:14px 0 8px">Recommendations</div>'''
+        html_parts.append('<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c84b2f;margin:14px 0 8px">Recommendations</div>')
         for i, rec in enumerate(rec_lines, 1):
-            html += (
-                '<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">'                f'<span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:#c84b2f;color:white;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">{i}</span>'                f'<span style="line-height:1.6;color:#b7791f;font-weight:500">{rec}</span></div>'
+            html_parts.append(
+                '<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">'
+                + '<span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:#c84b2f;color:white;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">' + str(i) + "</span>"
+                + '<span style="line-height:1.6;color:#b7791f;font-weight:500">' + rec + "</span></div>"
             )
 
-    if not html:
-        html = f'<p style="font-size:13px;color:var(--ink2);line-height:1.7">{text}</p>'
+    if not html_parts:
+        return '<p style="font-size:13px;color:#374151;line-height:1.7">' + text + "</p>"
 
-    return Markup(html)
+    from markupsafe import Markup
+    return Markup("".join(html_parts))
 
 
 @app.template_filter("format_num")
