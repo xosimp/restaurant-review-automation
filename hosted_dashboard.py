@@ -377,6 +377,14 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 
   /* Hide less important columns in review cards */
   .card-sub .platform-badge { display: none; }
+
+  /* Account tab — stack all grids */
+  .account-top-row { grid-template-columns: 1fr !important; }
+  .account-two-col { grid-template-columns: 1fr !important; }
+
+  /* Hero banner — stack on mobile */
+  .acct-hero { flex-direction: column; gap: 12px !important; }
+  .acct-hero-right { text-align: left !important; }
 }
 </style>
 <script>
@@ -1001,7 +1009,7 @@ function clientUpload(dataType, input) {
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account">
 
   <!-- Hero consultant banner -->
-  <div style="background:var(--ink);border-radius:var(--r);padding:20px 24px;margin-bottom:24px;display:flex;align-items:center;gap:20px">
+  <div style="background:var(--ink);border-radius:var(--r);padding:20px 24px;margin-bottom:24px;display:flex;align-items:center;gap:20px" class="acct-hero">
     <div style="width:60px;height:60px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 3px #c84b2f55,0 0 20px 6px #c84b2f22;overflow:hidden;background:#1a1410">
       <img src="/static/will.png" style="width:100%;height:110%;object-fit:cover;object-position:center 20%">
     </div>
@@ -1016,14 +1024,14 @@ function clientUpload(dataType, input) {
         <a href="https://calendly.com/will-cavnar/30min" target="_blank" style="font-size:12px;color:#7a736a;text-decoration:none">Book a call</a>
       </div>
     </div>
-    <div style="text-align:right;flex-shrink:0">
+    <div style="text-align:right;flex-shrink:0" class="acct-hero-right">
       <div style="font-size:10px;color:#4a4540;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Restaurant</div>
       <div style="font-size:14px;font-weight:600;color:var(--paper)">{{restaurant.name}}</div>
     </div>
   </div>
 
   <!-- Three column top row -->
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px">
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px" class="account-top-row">
 
     <!-- Account info -->
     <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
@@ -1121,7 +1129,7 @@ function clientUpload(dataType, input) {
   {% endif %}
 
   <!-- Two column second row -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px" class="account-two-col">
 
     <!-- What's included -->
     <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
