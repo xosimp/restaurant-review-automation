@@ -210,8 +210,11 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
                         owner_name: str = None) -> str:
     """Ask Claude to narrate labor findings in a warm, direct consultant tone."""
     greeting = f"{owner_name}," if owner_name else "Hi,"
+    from datetime import datetime as _now_dt
+    today_labor = _now_dt.now().strftime("%B %d, %Y")
     prompt = f"""You are the Cavnar AI Consultant — a friendly, experienced restaurant labor advisor.
 You are writing a weekly labor summary for {owner_name or "the owner"} of {restaurant_name}.
+Today's date: {today_labor}
 
 Data:
 - Overall labor cost: ${analysis['total_labor_cost']:,.0f} on ${analysis['total_sales']:,.0f} in sales ({analysis['overall_labor_pct']}% labor ratio)

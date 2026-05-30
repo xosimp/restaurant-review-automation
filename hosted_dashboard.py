@@ -3900,7 +3900,7 @@ Review (rating: {r["rating"]}/5):
 Write ONLY the response, no preamble. Keep it under 100 words. Sound like a real person, not a PR firm."""
 
         msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=os.getenv("CLAUDE_MODEL","claude-haiku-4-5-20251001"),
             max_tokens=300,
             messages=[{"role":"user","content":prompt}]
         )
