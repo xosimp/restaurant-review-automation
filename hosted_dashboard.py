@@ -1654,6 +1654,28 @@ function genContent(){
       box.textContent='Content generation unavailable — check back shortly.';
     });
 }
+function downloadCal(){
+  const ideas = window._calIdeas;
+  if(!ideas || !ideas.length){ toast('Generate the calendar first'); return; }
+  const rows = [['Day','Platform','Content Idea','Type']];
+  ideas.forEach(function(i){
+    rows.push([
+      (i.day||'').replace(/,/g,' '),
+      (i.platform||'').replace(/,/g,' '),
+      (i.angle||'').replace(/,/g,' '),
+      (i.type||'').replace(/,/g,' ')
+    ]);
+  });
+  const csv = rows.map(function(r){ return r.map(function(c){ return '"'+c+'"'; }).join(','); }).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'content_calendar.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}const calDownBtn=document.getElementById('cal-download-btn');
   if(calDownBtn) calDownBtn.style.display='inline-block';
   g.innerHTML=d.ideas.map((i,idx)=>{

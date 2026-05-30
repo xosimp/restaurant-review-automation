@@ -21,6 +21,81 @@ DEFAULT_PROFILE = {
 RESTAURANT_PROFILE = DEFAULT_PROFILE
 
 
+def get_upcoming_holidays(from_date=None) -> str:
+    """Return a comma-separated string of holidays/events in the next 30 days."""
+    from datetime import datetime, timedelta
+    if from_date is None:
+        from_date = datetime.now()
+
+    # Fixed-date holidays (month, day, name)
+    fixed = [
+        (1, 1, "New Year's Day"), (1, 15, "Martin Luther King Jr. Day"),
+        (2, 14, "Valentine's Day"), (3, 17, "St. Patrick's Day"),
+        (4, 1, "April Fool's Day"), (4, 22, "Earth Day"),
+        (5, 5, "Cinco de Mayo"), (6, 19, "Juneteenth"),
+        (7, 4, "Fourth of July / Independence Day"),
+        (8, 26, "National Dog Day"), (9, 22, "First Day of Fall"),
+        (10, 31, "Halloween"), (11, 11, "Veterans Day"),
+        (12, 24, "Christmas Eve"), (12, 25, "Christmas Day"),
+        (12, 31, "New Year's Eve"),
+    ]
+
+    # Calculated holidays
+    year = from_date.year
+    calculated = []
+
+    # Mother's Day — 2nd Sunday of May
+    may1 = datetime(year, 5, 1)
+    mothers_day = may1 + timedelta(days=(6 - may1.weekday()) % 7 + 7)
+    calculated.append((mothers_day, "Mother's Day"))
+
+    # Father's Day — 3rd Sunday of June
+    jun1 = datetime(year, 6, 1)
+    fathers_day = jun1 + timedelta(days=(6 - jun1.weekday()) % 7 + 14)
+    calculated.append((fathers_day, "Father's Day"))
+
+    # Thanksgiving — 4th Thursday of November
+    nov1 = datetime(year, 11, 1)
+    first_thu = nov1 + timedelta(days=(3 - nov1.weekday()) % 7)
+    thanksgiving = first_thu + timedelta(weeks=3)
+    calculated.append((thanksgiving, "Thanksgiving"))
+
+    # Memorial Day — last Monday of May
+    may31 = datetime(year, 5, 31)
+    memorial = may31 - timedelta(days=(may31.weekday()) % 7)
+    calculated.append((memorial, "Memorial Day"))
+
+    # Labor Day — first Monday of September
+    sep1 = datetime(year, 9, 1)
+    labor_day = sep1 + timedelta(days=(7 - sep1.weekday()) % 7)
+    calculated.append((labor_day, "Labor Day"))
+
+    # Check next year too for year-end queries
+    year2 = year + 1
+    jan1_next = datetime(year2, 1, 1)
+    calculated.append((jan1_next, "New Year's Day"))
+
+    # Find holidays in next 30 days
+    end_date = from_date + timedelta(days=30)
+    upcoming = []
+
+    for month, day, name in fixed:
+        for y in [year, year2]:
+            try:
+                d = datetime(y, month, day)
+                if from_date <= d <= end_date:
+                    upcoming.append(f"{name} ({d.strftime('%b %d')})")
+            except ValueError:
+                pass
+
+    for d, name in calculated:
+        if from_date <= d <= end_date:
+            upcoming.append(f"{name} ({d.strftime('%b %d')})")
+
+    upcoming.sort()
+    return ", ".join(upcoming) if upcoming else ""
+
+
 def get_profile_for_restaurant(restaurant_id: int = None) -> dict:
     """Get restaurant profile from DB, fall back to default."""
     if not restaurant_id:
@@ -197,16 +272,12 @@ def generate_content(content_type: str, topic: str,
         )
         recent_context = f"\n\nIMPORTANT: You have recently generated content about: {recent_topics}. Do NOT repeat these themes or topics. Be fresh and different."
 
-    # Seasonal awareness
-    month = datetime.now().strftime("%B")
-    season_map = {
-        "December": "holiday season", "January": "new year", "February": "Valentine's Day",
-        "March": "spring", "April": "spring", "May": "Mother's Day and spring",
-        "June": "summer", "July": "summer", "August": "end of summer",
-        "September": "fall", "October": "fall and Halloween", "November": "Thanksgiving"
-    }
-    season = season_map.get(month, month)
-    seasonal_context = f"\nCurrent season/month context: {month} ({season}). Consider incorporating this if relevant."
+    # Seasonal awareness with real date
+    now_dt = datetime.now()
+    month = now_dt.strftime("%B")
+    today_date = now_dt.strftime("%B %d, %Y")
+    upcoming = get_upcoming_holidays(now_dt)
+    seasonal_context = f"\nToday's date: {today_date}. Upcoming holidays in next 30 days: {upcoming if upcoming else 'none'}. Only reference holidays that are actually coming up soon."
 
     never_clause = f"\nNever use these words or phrases: {p['never_say']}." if p.get('never_say') else ""
 
@@ -240,16 +311,22 @@ def generate_content(content_type: str, topic: str,
 def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
     """Generate a week of content ideas using Claude."""
     p = get_profile_for_restaurant(restaurant_id)
-    from datetime import datetime as _dt
-    current_month = _dt.now().strftime("%B")
+    from datetime import datetime as _dt, timedelta as _td
+    now = _dt.now()
+    current_month = now.strftime("%B")
+    today_str = now.strftime("%B %d, %Y")
     recent = get_recent_content(restaurant_id, limit=5)
     recent_topics = ", ".join(r['topic'] for r in recent) if recent else "none"
+
+    # Build upcoming holidays in the next 30 days
+    upcoming_holidays = get_upcoming_holidays(now)
 
     prompt = f"""Generate a 7-day social media content calendar for {p['name']}, 
 a {p['vibe']} in {p['neighborhood']}.
 
 Known for: {p['known_for']}
-Current month: {current_month}
+TODAY'S DATE: {today_str} (this is the real current date — do not assume any other date)
+Upcoming holidays/events in the next 30 days: {upcoming_holidays if upcoming_holidays else "No major holidays"}
 Recently generated content (avoid repeating these): {recent_topics}
 
 Return ONLY valid JSON — no markdown fences. Array of 7 objects with:

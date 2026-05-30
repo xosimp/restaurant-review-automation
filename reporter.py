@@ -119,6 +119,8 @@ This week's data:
 - Top themes: {top_themes or "nothing notable"}
 - Period: {report.period_start} to {report.period_end}{extra_context}
 
+Today's actual date: {datetime.now().strftime('%B %d, %Y')}
+
 Write 2-3 sentences starting with "{greeting}," that:
 1. Give the honest overall picture covering the most important metric this week (reviews, labor, or inventory — whichever is most notable)
 2. Call out the single most important thing to act on this week
