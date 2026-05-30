@@ -78,6 +78,36 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None):
         neg = report.sentiment.get("negative", 0)
         urgent_count = sum(1 for r in reviews if r.urgency == "high")
         top_themes = ", ".join(cat.replace("_"," ") for cat, n in (report.top_issues or [])[:3])
+        # Pull labor and inventory context if available
+        labor_context = ""
+        inventory_context = ""
+        try:
+            from labor import analyse_shifts_for_restaurant
+            labor = analyse_shifts_for_restaurant(report.restaurant_id)
+            if labor and labor.get("summary"):
+                lp = labor.get("labor_pct", 0)
+                ot_risk = labor.get("overtime_risk", [])
+                labor_context = f"Labor cost this week: {lp:.1f}% of revenue. Overtime risk: {len(ot_risk)} employee(s)." if lp else ""
+        except Exception:
+            pass
+        try:
+            from inventory import load_inventory_for_restaurant, analyse_inventory
+            inv = load_inventory_for_restaurant(report.restaurant_id)
+            if inv:
+                analysis = analyse_inventory(inv)
+                waste = analysis.get("top_waste", [])
+                low = analysis.get("critical_low", [])
+                if waste or low:
+                    inventory_context = f"Top food waste item: {waste[0][0] if waste else 'none'}. Critical low stock: {low[0][0] if low else 'none'}."
+        except Exception:
+            pass
+
+        extra_context = ""
+        if labor_context:
+            extra_context += f"\n- {labor_context}"
+        if inventory_context:
+            extra_context += f"\n- {inventory_context}"
+
         greeting = f"Hi {owner_name}" if owner_name else "Hi"
         prompt = f"""You are the Cavnar AI Consultant writing a brief weekly summary for {restaurant_name}.
 
@@ -87,11 +117,11 @@ This week's data:
 - Positive: {pos}, Negative: {neg}
 - Urgent reviews needing attention: {urgent_count}
 - Top themes: {top_themes or "nothing notable"}
-- Period: {report.period_start} to {report.period_end}
+- Period: {report.period_start} to {report.period_end}{extra_context}
 
 Write 2-3 sentences starting with "{greeting}," that:
-1. Give the honest overall picture with the key number
-2. Call out the most important thing to act on this week (urgent review, trending theme, or celebrate a win)
+1. Give the honest overall picture covering the most important metric this week (reviews, labor, or inventory — whichever is most notable)
+2. Call out the single most important thing to act on this week
 3. End with one specific, actionable suggestion
 
 Tone: warm, direct, like a trusted advisor. No markdown, no bullet points, plain sentences only."""

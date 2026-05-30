@@ -259,7 +259,8 @@ def run_weekly_digests():
                     log.info(f"No reviews this week for {restaurant.name}")
                     continue
 
-                html = render_html(report, restaurant.name)
+                owner_name = restaurant.sign_off_name or restaurant.owner_email.split("@")[0].title()
+                html = render_html(report, restaurant.name, owner_name=owner_name)
                 _resend.api_key = RESEND_API_KEY
                 _resend.Emails.send({
                     "from": f"Cavnar AI <{FROM_EMAIL}>",
@@ -551,12 +552,33 @@ def run_onboarding_sequence():
         # Day 7 — send on day 7, 8, or 9
         elif days_since >= 7 and "day_7" not in already_sent:
             try:
+                # Pull actual activity stats for personalization
+                try:
+                    from models import get_conn as _gc
+                    _conn = _gc()
+                    _reviews_row = _conn.execute(
+                        "SELECT COUNT(*) as cnt FROM reviews WHERE restaurant_id=? AND response_status IN ('approved','posted')",
+                        (r.id,)
+                    ).fetchone()
+                    _pending_row = _conn.execute(
+                        "SELECT COUNT(*) as cnt FROM reviews WHERE restaurant_id=? AND response_status NOT IN ('approved','posted','skipped')",
+                        (r.id,)
+                    ).fetchone()
+                    _conn.close()
+                    approved_count = _reviews_row["cnt"] if _reviews_row else 0
+                    pending_count = _pending_row["cnt"] if _pending_row else 0
+                except Exception:
+                    approved_count = 0
+                    pending_count = 0
+
                 send_onboarding_day7(
                     to_email=r.owner_email,
                     restaurant_name=r.name,
                     owner_name=r.owner_name,
                     has_labor=bool(r.module_labor),
                     has_inventory=bool(r.module_inventory),
+                    approved_count=approved_count,
+                    pending_count=pending_count,
                 )
                 mark_onboarding_sent(r.id, "day_7")
                 log_email(r.id, "Onboarding Day 7", r.owner_email, f"One week in — {r.name}")

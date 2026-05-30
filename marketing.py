@@ -130,13 +130,86 @@ Write 2 versions — one for Instagram (casual, visual), one for email subject l
 }
 
 
+def get_recent_content(restaurant_id: int, limit: int = 5) -> list:
+    """Get recently generated content topics to avoid repetition."""
+    if not restaurant_id:
+        return []
+    try:
+        from models import get_conn
+        conn = get_conn()
+        # Ensure table exists
+        conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            content_type TEXT,
+            topic TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )""")
+        rows = conn.execute(
+            """SELECT content_type, topic FROM marketing_content_log
+               WHERE restaurant_id=? ORDER BY created_at DESC LIMIT ?""",
+            (restaurant_id, limit)
+        ).fetchall()
+        conn.commit()
+        conn.close()
+        return [{"type": r["content_type"], "topic": r["topic"]} for r in rows]
+    except Exception:
+        return []
+
+
+def log_content(restaurant_id: int, content_type: str, topic: str):
+    """Log generated content for memory."""
+    if not restaurant_id:
+        return
+    try:
+        from models import get_conn
+        conn = get_conn()
+        conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            content_type TEXT,
+            topic TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )""")
+        conn.execute(
+            "INSERT INTO marketing_content_log (restaurant_id, content_type, topic) VALUES (?,?,?)",
+            (restaurant_id, content_type, topic)
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def generate_content(content_type: str, topic: str,
                      restaurant_id: int = None) -> str:
     """Generate marketing content for a given type and topic."""
+    from datetime import datetime
     prompt_template = PROMPTS.get(content_type, PROMPTS["instagram_post"])
     p = get_profile_for_restaurant(restaurant_id)
-    # Build never_say addition
+
+    # Build recent content context to avoid repetition
+    recent = get_recent_content(restaurant_id, limit=5)
+    recent_context = ""
+    if recent:
+        recent_topics = ", ".join(
+            f"{r['type'].replace('_',' ')} about {r['topic']}" for r in recent
+        )
+        recent_context = f"\n\nIMPORTANT: You have recently generated content about: {recent_topics}. Do NOT repeat these themes or topics. Be fresh and different."
+
+    # Seasonal awareness
+    month = datetime.now().strftime("%B")
+    season_map = {
+        "December": "holiday season", "January": "new year", "February": "Valentine's Day",
+        "March": "spring", "April": "spring", "May": "Mother's Day and spring",
+        "June": "summer", "July": "summer", "August": "end of summer",
+        "September": "fall", "October": "fall and Halloween", "November": "Thanksgiving"
+    }
+    season = season_map.get(month, month)
+    seasonal_context = f"\nCurrent season/month context: {month} ({season}). Consider incorporating this if relevant."
+
     never_clause = f"\nNever use these words or phrases: {p['never_say']}." if p.get('never_say') else ""
+
     prompt = prompt_template.format(
         restaurant=p["name"],
         neighborhood=p["neighborhood"],
@@ -144,23 +217,35 @@ def generate_content(content_type: str, topic: str,
         voice=p["voice"],
         known_for=p["known_for"],
         topic=topic,
-    )
+    ) + recent_context + seasonal_context + never_clause
+
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
         max_tokens=500,
         messages=[{"role": "user", "content": prompt}],
     )
-    return msg.content[0].text.strip()
+    result = msg.content[0].text.strip()
+
+    # Log this content for future memory
+    log_content(restaurant_id, content_type, topic)
+
+    return result
 
 
 def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
     """Generate a week of content ideas using Claude."""
     p = get_profile_for_restaurant(restaurant_id)
+    from datetime import datetime as _dt
+    current_month = _dt.now().strftime("%B")
+    recent = get_recent_content(restaurant_id, limit=5)
+    recent_topics = ", ".join(r['topic'] for r in recent) if recent else "none"
+
     prompt = f"""Generate a 7-day social media content calendar for {p['name']}, 
 a {p['vibe']} in {p['neighborhood']}.
 
 Known for: {p['known_for']}
-Current month: May
+Current month: {current_month}
+Recently generated content (avoid repeating these): {recent_topics}
 
 Return ONLY valid JSON — no markdown fences. Array of 7 objects with:
 {{"day": "Monday", "platform": "Instagram|Email|Google", "angle": "one sentence topic idea", "type": "instagram_post|weekly_email|google_promo|happy_hour"}}

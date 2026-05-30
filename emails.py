@@ -392,8 +392,9 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
 
 
 def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = None,
-                          has_labor: bool = False, has_inventory: bool = False):
-    """Day 7 — First week check-in + prompt to upload CSV data if relevant."""
+                          has_labor: bool = False, has_inventory: bool = False,
+                          approved_count: int = 0, pending_count: int = 0):
+    """Day 7 — First week check-in with real activity data + prompt to upload CSV."""
     if not RESEND_API_KEY:
         return
     try:
@@ -422,6 +423,18 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
     </p>
   </div>"""
 
+        # Pre-compute activity sentences
+        if approved_count > 0:
+            s = "s" if approved_count != 1 else ""
+            activity_sentence = f"You've approved {approved_count} review response{s} so far — great start."
+        else:
+            activity_sentence = "The review monitoring has been running in the background — any new reviews are in your dashboard with draft responses ready."
+        if pending_count > 0:
+            s = "s" if pending_count != 1 else ""
+            pending_sentence = f"You still have {pending_count} review{s} waiting for your approval."
+        else:
+            pending_sentence = ""
+
         _resend.Emails.send({
             "from": f"Will Cavnar <{FROM_EMAIL}>",
             "to": [to_email],
@@ -436,8 +449,9 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:16px">
-    It's been one week since {restaurant_name} went live on Cavnar AI.
-    The review monitoring has been running quietly in the background — any new reviews that came in this week are already in your dashboard with draft responses ready to go.
+    It's been one week since {{restaurant_name}} went live on Cavnar AI.
+    {{activity_sentence}}
+    {{pending_sentence}}
   </p>
   {upload_block}
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:20px">

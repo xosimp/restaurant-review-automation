@@ -135,7 +135,7 @@ def get_competitor_reviews(place_id: str, max_reviews: int = 5) -> list:
         data = r.json()
         if data.get("status") != "OK":
             return []
-        reviews = data["result"].get("reviews", [])[:max_reviews]
+        reviews = data["result"].get("reviews", [])[:max_reviews]  # Google Places API returns max 5
         return [{
             "author": rev.get("author_name", "Guest"),
             "rating": rev.get("rating", 3),
@@ -156,10 +156,19 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
 
         comp_summary = ""
         for c in competitors:
-            reviews_text = " | ".join([f'"{r["text"][:100]}"' for r in c.get("reviews", [])[:3]])
+            # Use up to 5 reviews, 250 chars each for richer insight
+            rev_list = c.get("reviews", [])
+            if rev_list:
+                reviews_text = "\n  ".join([
+                    f'[{r["rating"]}★] "{r["text"][:250].strip()}"'
+                    for r in rev_list[:5]
+                ])
+            else:
+                reviews_text = "No recent reviews"
             comp_summary += f"""
 - {c["name"]} ({c["rating"]}★, {c["review_count"]} reviews)
-  Recent reviews: {reviews_text or "No recent reviews"}
+  Recent customer reviews:
+  {reviews_text}
 """
 
         greeting = f"Hi {owner_name}" if owner_name else "Hi"
@@ -187,7 +196,7 @@ Tone: sharp, direct, trusted business advisor. No generic advice. Name specific 
 
         msg = client.messages.create(
             model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-            max_tokens=600,
+            max_tokens=800,
             messages=[{"role": "user", "content": prompt}]
         )
         return msg.content[0].text.strip()
