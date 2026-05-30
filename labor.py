@@ -212,6 +212,17 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
     greeting = f"{owner_name}," if owner_name else "Hi,"
     from datetime import datetime as _now_dt
     today_labor = _now_dt.now().strftime("%B %d, %Y")
+
+    # Guard: if no sales data, return a helpful message instead of nonsense
+    total_sales = analysis.get("total_sales", 0)
+    total_labor = analysis.get("total_labor_cost", 0)
+    if total_sales == 0:
+        return (f"{greeting} Your shift data has been uploaded and analyzed, but no sales figures were found. "
+                "To see your labor cost percentage and get accurate recommendations, please make sure your CSV includes a sales or revenue column. "
+                "Reply to will@cavnar.ai and I can help you format it correctly.")
+    if total_labor == 0:
+        return (f"{greeting} No labor cost data was found in your upload. "
+                "Please make sure your CSV includes employee hours and hourly rates so we can calculate your true labor cost percentage.")
     prompt = f"""You are the Cavnar AI Consultant — a friendly, experienced restaurant labor advisor.
 You are writing a weekly labor summary for {owner_name or "the owner"} of {restaurant_name}.
 Today's date: {today_labor}
@@ -309,10 +320,10 @@ Requirements:
 - Maintain full coverage on high-volume days (Fri/Sat typically)
 - No employee over 40 hours for the week (overtime threshold)
 - Target labor ratio for each day: {labor_target}%
-- Servers: typically 4-6h shifts, bartenders: 5-7h shifts
+- Servers: typically 4-6h shifts, bartenders/cooks: 5-7h shifts
 - Notes: one brief phrase explaining any change from normal (e.g. "reduced - slow Monday pattern" or "full coverage - high volume Friday")
 - Include 6-10 shifts per day
-- Start times between 10:00 and 18:00, end times between 15:00 and 23:00
+- Infer appropriate shift hours from the existing staff data provided. If the restaurant appears to be breakfast/brunch (early shifts, short hours), use start times between 06:00-10:00 and end times between 12:00-16:00. For lunch/dinner operations use 10:00-14:00 starts and 15:00-23:00 ends. Match the pattern in the actual shift data above.
 
 Output ONLY the CSV rows including header. No explanation."""
 

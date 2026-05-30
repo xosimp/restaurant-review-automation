@@ -173,16 +173,6 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
 
         greeting = f"Hi {owner_name}" if owner_name else "Hi"
 
-        # Build restaurant context for the prompt
-        restaurant_context = ""
-        try:
-            from models import get_restaurant as _gr
-            _r = next((c for c in competitors if True), None)
-            # Get own restaurant details from DB if possible
-            pass
-        except Exception:
-            pass
-
         # Build restaurant profile context
         profile = restaurant_profile or {}
         profile_lines = []
@@ -192,7 +182,11 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
             profile_lines.append(f"Known for: {profile['known_for']}")
         if profile.get("neighborhood"):
             profile_lines.append(f"Location: {profile['neighborhood']}")
-        profile_context = "\n".join(profile_lines) if profile_lines else "Independent restaurant"
+        # If no profile data, try to infer from competitor types as a last resort
+        if not profile_lines:
+            profile_lines.append(f"Name: {restaurant_name}")
+            profile_lines.append("Independent restaurant — focus recommendations on service, hospitality, and marketing")
+        profile_context = "\n".join(profile_lines)
 
         prompt = f"""You are the Cavnar AI Consultant analyzing the competitive landscape for {restaurant_name}.
 

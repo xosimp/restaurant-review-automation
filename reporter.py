@@ -130,7 +130,7 @@ Tone: warm, direct, like a trusted advisor. No markdown, no bullet points, plain
 
         msg = client.messages.create(
             model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-            max_tokens=200,
+            max_tokens=350,
             messages=[{"role": "user", "content": prompt}]
         )
         return msg.content[0].text.strip()

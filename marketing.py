@@ -184,7 +184,7 @@ Topic: {topic}
 Keep it under 100 words. Direct, local, specific. Include a soft call to action.
 No hashtags. No emojis.""",
 
-    "loyalty_nudge": """Write an SMS re-engagement message for guests of {restaurant} who haven't visited in 3+ weeks.
+    "loyalty_nudge": """Write an SMS re-engagement message for guests of {restaurant}.
 Topic/offer: {topic}
 Voice: {voice}
 
@@ -192,10 +192,11 @@ Rules: Under 160 characters. Feels personal not automated. Includes restaurant n
 Write 2 options.""",
 
     "happy_hour": """Write a social media post promoting happy hour at {restaurant}.
-Details: Mon-Thu 4-6pm, half-price small plates, $8 cocktails.
-Voice: {voice}. Topic angle: {topic}
+Happy hour details: {topic}
+Voice: {voice}.
 
-Write for Instagram/Facebook. 2-4 sentences + hashtags. Make people actually want to leave work early.""",
+Write for Instagram/Facebook. 2-4 sentences + hashtags. Make people actually want to leave work early.
+If the topic doesn't specify exact times or deals, write something that feels authentic without inventing specifics.""",
 
     "event_announcement": """Write a social media announcement for {restaurant}.
 Event details: {topic}
