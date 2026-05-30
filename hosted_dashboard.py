@@ -1053,7 +1053,7 @@ function clientUpload(dataType, input) {
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#4a9eca;margin-bottom:6px">Cavnar AI · Competitor Intelligence</div>
         <div style="font-family:'DM Serif Display',serif;font-size:20px;color:#e8f4fd">What your neighbors are doing</div>
       </div>
-      <button onclick="refreshCompetitorIntel(this)" style="background:#1e3a52;color:#4a9eca;border:1px solid #2a5070;padding:7px 14px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer">Refresh</button>
+
     </div>
   </div>
 
@@ -1816,12 +1816,24 @@ function loadCompetitorIntel(){
   });
 }
 function refreshCompetitorIntel(btn){
+  // Show branded loading overlay
+  var overlay = document.getElementById('upload-loading-overlay');
+  var overlayMsg = document.getElementById('upload-loading-message');
+  if(overlay){
+    if(overlayMsg) overlayMsg.textContent = 'Analyzing your competitors...';
+    overlay.style.display = 'flex';
+  }
   btn.textContent='Refreshing...';btn.disabled=true;
   fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     btn.textContent='Refresh';btn.disabled=false;
+    if(overlay) overlay.style.display = 'none';
     if(d.ok){toast('Competitor data updated');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},800);}
     else{toast('Error: '+(d.error||'failed'));}
-  }).catch(function(){btn.textContent='Refresh';btn.disabled=false;toast('Request failed');});
+  }).catch(function(){
+    btn.textContent='Refresh';btn.disabled=false;
+    if(overlay) overlay.style.display = 'none';
+    toast('Request failed');
+  });
 }
 function checkTabParam(){
   var params=new URLSearchParams(window.location.search);

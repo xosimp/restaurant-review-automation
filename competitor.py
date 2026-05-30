@@ -147,7 +147,7 @@ def get_competitor_reviews(place_id: str, max_reviews: int = 5) -> list:
         return []
 
 
-def generate_competitor_insight(restaurant_name: str, competitors: list, owner_name: str = None) -> str:
+def generate_competitor_insight(restaurant_name: str, competitors: list, owner_name: str = None, restaurant_profile: dict = None) -> str:
     """Use Claude to generate a strategic competitor insight."""
     if not competitors or not ANTHROPIC_KEY:
         return ""
@@ -172,7 +172,38 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
 """
 
         greeting = f"Hi {owner_name}" if owner_name else "Hi"
+
+        # Build restaurant context for the prompt
+        restaurant_context = ""
+        try:
+            from models import get_restaurant as _gr
+            _r = next((c for c in competitors if True), None)
+            # Get own restaurant details from DB if possible
+            pass
+        except Exception:
+            pass
+
+        # Build restaurant profile context
+        profile = restaurant_profile or {}
+        profile_lines = []
+        if profile.get("vibe"):
+            profile_lines.append(f"Concept/vibe: {profile['vibe']}")
+        if profile.get("known_for"):
+            profile_lines.append(f"Known for: {profile['known_for']}")
+        if profile.get("neighborhood"):
+            profile_lines.append(f"Location: {profile['neighborhood']}")
+        profile_context = "\n".join(profile_lines) if profile_lines else "Independent restaurant"
+
         prompt = f"""You are the Cavnar AI Consultant analyzing the competitive landscape for {restaurant_name}.
+
+About {restaurant_name}:
+{profile_context}
+
+CRITICAL RULES:
+- Only recommend actions that fit {restaurant_name}'s actual concept and cuisine
+- NEVER recommend menu items or food categories outside their concept (e.g. don't suggest a burger promotion to a breakfast cafe)
+- Focus on service quality, marketing angles, atmosphere, timing, and operational strengths
+- Recommendations must be something {restaurant_name} can realistically act on given what they already are
 
 Nearby competitors and their recent customer reviews:
 {comp_summary}
@@ -223,7 +254,12 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
 
         insight = generate_competitor_insight(
             restaurant.name, competitors,
-            owner_name=restaurant.owner_name
+            owner_name=restaurant.owner_name,
+            restaurant_profile={
+                "vibe": restaurant.vibe or "",
+                "known_for": restaurant.known_for or "",
+                "neighborhood": restaurant.neighborhood or "",
+            }
         )
 
         # Store in DB

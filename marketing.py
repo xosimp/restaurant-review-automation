@@ -226,6 +226,11 @@ def generate_content(content_type: str, topic: str,
     )
     result = msg.content[0].text.strip()
 
+    # Strip markdown asterisks that Claude sometimes adds
+    import re as _re
+    result = _re.sub('[*]{2}(.+?)[*]{2}', lambda m: m.group(1), result)
+    result = _re.sub('[*](.+?)[*]', lambda m: m.group(1), result)
+
     # Log this content for future memory
     log_content(restaurant_id, content_type, topic)
 
