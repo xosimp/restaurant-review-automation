@@ -1396,6 +1396,61 @@ def labor_trend_api(current_user):
         print(f"Labor trend error: {e}")
         return jsonify(weeks=[])
 
+@admin_bp.route("/admin/resend-welcome/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def resend_welcome_email(restaurant_id, current_user):
+    """Reset client password and resend welcome email with new credentials."""
+    import secrets, string
+    from models import get_restaurant, get_conn
+    from werkzeug.security import generate_password_hash
+
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found")
+
+    try:
+        # Get client user
+        conn = get_conn()
+        user = conn.execute(
+            "SELECT * FROM users WHERE restaurant_id=? AND is_admin=0 LIMIT 1",
+            (restaurant_id,)
+        ).fetchone()
+        if not user:
+            conn.close()
+            return jsonify(ok=False, error="No client user found")
+
+        # Generate a new temporary password
+        alphabet = string.ascii_letters + string.digits
+        new_password = "".join(secrets.choice(alphabet) for _ in range(12))
+
+        # Reset the password
+        conn.execute(
+            "UPDATE users SET password_hash=? WHERE id=?",
+            (generate_password_hash(new_password), user["id"])
+        )
+        conn.commit()
+        conn.close()
+
+        # Send welcome email with new credentials
+        from emails import send_welcome_email
+        send_welcome_email(
+            to_email=restaurant.owner_email,
+            restaurant_name=restaurant.name,
+            username=user["username"],
+            password=new_password,
+            module_reviews=restaurant.module_reviews,
+            module_labor=restaurant.module_labor,
+            module_inventory=restaurant.module_inventory,
+            module_marketing=restaurant.module_marketing,
+        )
+
+        return jsonify(ok=True, email=restaurant.owner_email)
+
+    except Exception as e:
+        print(f"[resend-welcome] error: {e}")
+        return jsonify(ok=False, error=str(e))
+
+
 @admin_bp.route("/admin/test-digest/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def test_digest(restaurant_id, current_user):

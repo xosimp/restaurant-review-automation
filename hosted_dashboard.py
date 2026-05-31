@@ -2266,6 +2266,9 @@ textarea{resize:vertical;min-height:60px}
         <button class="btn-save" style="padding:9px 16px;background:#b7791f" onclick="sendTestUrgent()">
           Send test urgent alert
         </button>
+        <button class="btn-save" style="padding:9px 16px;background:#c84b2f" onclick="resendWelcome()" id="resend-welcome-btn">
+          Resend welcome email
+        </button>
         {% if restaurant.ig_token %}
         <button class="btn-save" style="padding:9px 16px;background:#1877f2" onclick="refreshIgToken()">
           Refresh Instagram tokens
