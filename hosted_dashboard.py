@@ -2347,6 +2347,29 @@ async function deleteNote(noteId) {
   const data = await res.json();
   if(data.ok) location.reload();
 }
+async function resendWelcome(){
+  const btn = document.getElementById('resend-welcome-btn');
+  const status = document.getElementById('test-email-status');
+  if(!confirm('This will reset the client password and send them a new welcome email with their credentials. Continue?')) return;
+  btn.textContent = 'Sending...'; btn.disabled = true;
+  status.style.display = 'block'; status.textContent = 'Sending welcome email...'; status.style.color = 'var(--ink3)';
+  try {
+    const res = await fetch('/admin/resend-welcome/{{ restaurant.id }}', {method:'POST'});
+    const data = await res.json();
+    if(data.ok){
+      status.style.color = '#2d6a4f';
+      status.textContent = '\u2713 Welcome email sent to ' + data.email + ' with a new temporary password.';
+    } else {
+      status.style.color = '#c84b2f';
+      status.textContent = 'Error: ' + (data.error || 'failed');
+    }
+  } catch(e) {
+    status.style.color = '#c84b2f';
+    status.textContent = 'Request failed';
+  }
+  btn.textContent = 'Resend welcome email'; btn.disabled = false;
+}
+
 async function sendTestDigest() {
   const status = document.getElementById('test-email-status');
   status.style.display = 'block';
@@ -3108,26 +3131,38 @@ async function createClient() {
     module_marketing:document.getElementById('mod-marketing').checked ? 1 : 0,
 
   };
-  const res = await fetch('/admin/create-client', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify(payload)
-  });
-  const data = await res.json();
-  status.style.display = 'block';
-  if (data.ok) {
-    status.className = 'status-msg status-ok';
-    let msg = `✓ Client created — username: ${payload.username}`;
-    if (payload.send_email) msg += `. Welcome email sent to ${payload.owner_email}`;
-    if (payload.service_tier && payload.service_tier !== "trial") msg += `. Payment links sent.`;
-    status.textContent = msg;
-    setTimeout(() => location.reload(), 1500);
-  } else {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    const res = await fetch('/admin/create-client', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    const data = await res.json();
+    status.style.display = 'block';
+    if (data.ok) {
+      status.className = 'status-msg status-ok';
+      let msg = '✓ Client created — username: ' + payload.username;
+      if (data.docusign_skipped) msg += '. (DocuSign unavailable — send contract manually)';
+      status.textContent = msg;
+      setTimeout(() => location.reload(), 1800);
+    } else {
+      status.className = 'status-msg status-err';
+      status.textContent = data.error || 'Something went wrong';
+    }
+  } catch(e) {
+    status.style.display = 'block';
     status.className = 'status-msg status-err';
-    status.textContent = data.error || 'Something went wrong';
+    if(e.name === 'AbortError') {
+      status.textContent = 'Request timed out — check Railway logs and try again';
+    } else {
+      status.textContent = 'Request failed: ' + e.message;
+    }
   }
   btn.textContent = 'Create client account'; btn.disabled = false;
-  status.style.display = 'block';
 }
 function searchClients(query) {
   const q = query.toLowerCase();
