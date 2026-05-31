@@ -4432,6 +4432,11 @@ if __name__ == "__main__":
             rid = r[0]
         create_user(rid, ADMIN_USERNAME, "will@cavnar.ai",
                     admin_pw, is_admin=True)
+        # Set admin billing status to active
+        from models import get_conn as _gc2
+        _c = _gc2()
+        _c.execute("UPDATE restaurants SET billing_status='active' WHERE id=?", (rid,))
+        _c.commit(); _c.close()
         print(f"\n  Admin account created: {ADMIN_USERNAME} (password set from env)\n")
 
     # Create Ryan's test client account if it doesn't exist
