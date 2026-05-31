@@ -1666,7 +1666,7 @@ function downloadCal(){
       (i.type||'').replace(/,/g,' ')
     ]);
   });
-  const csv = rows.map(function(r){ return r.map(function(c){ return '"'+c+'"'; }).join(','); }).join(String.fromCharCode(10));
+  const csv = rows.map(function(r){ return r.map(function(c){ return '"'+c+'"'; }).join(','); }).join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -4433,6 +4433,30 @@ if __name__ == "__main__":
         create_user(rid, ADMIN_USERNAME, "will@cavnar.ai",
                     admin_pw, is_admin=True)
         print(f"\n  Admin account created: {ADMIN_USERNAME} (password set from env)\n")
+
+    # Create Ryan's test client account if it doesn't exist
+    conn = gc()
+    ryan_exists = conn.execute(
+        "SELECT id FROM users WHERE email=?", ("ryancavnar@gmail.com",)
+    ).fetchone()
+    conn.close()
+
+    if not ryan_exists:
+        from models import create_restaurant, Restaurant
+        ryan_rid = create_restaurant(Restaurant(
+            name="Ryan's Charthouse",
+            owner_email="ryancavnar@gmail.com",
+            google_place_id="ChIJSzCXdo8R3ogRodiPcpYYLGw",
+            neighborhood="Melbourne, Florida",
+            vibe="upscale seafood on the water",
+            known_for="fresh seafood and waterfront views",
+            module_reviews=1, module_labor=1,
+            module_inventory=1, module_marketing=1,
+            billing_status="trial",
+        ))
+        ryan_pw = os.getenv("RYAN_TEST_PASSWORD", "charthouse123")
+        create_user(ryan_rid, "ryan", "ryancavnar@gmail.com", ryan_pw, is_admin=False)
+        print(f"\n  Test client created: ryan / {ryan_pw}\n")
 
     print(f"\n  Hosted dashboard → http://localhost:{PORT}")
     print(f"  Admin panel      → http://localhost:{PORT}/admin\n")
