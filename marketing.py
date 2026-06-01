@@ -31,17 +31,18 @@ def get_upcoming_holidays(from_date=None) -> str:
         except Exception:
             from_date = datetime.now()
 
-    # Fixed-date holidays (month, day, name)
+    # Dining-relevant holidays only — skip civic/cultural holidays
+    # that don't naturally drive restaurant visits or fit most concepts
     fixed = [
-        (1, 1, "New Year's Day"), (1, 15, "Martin Luther King Jr. Day"),
-        (2, 14, "Valentine's Day"), (3, 17, "St. Patrick's Day"),
-        (4, 1, "April Fool's Day"), (4, 22, "Earth Day"),
-        (5, 5, "Cinco de Mayo"), (6, 19, "Juneteenth"),
-        (7, 4, "Fourth of July / Independence Day"),
-        (8, 26, "National Dog Day"), (9, 22, "First Day of Fall"),
-        (10, 31, "Halloween"), (11, 11, "Veterans Day"),
-        (12, 24, "Christmas Eve"), (12, 25, "Christmas Day"),
-        (12, 31, "New Year's Eve"),
+        (1, 1, "New Year's Day"),
+        (2, 14, "Valentine's Day"),
+        (3, 17, "St. Patrick's Day"),
+        (5, 5, "Cinco de Mayo"),
+        (7, 4, "Fourth of July — summer cookout season"),
+        (10, 31, "Halloween — great for themed specials"),
+        (12, 24, "Christmas Eve — holiday dining"),
+        (12, 25, "Christmas Day"),
+        (12, 31, "New Year's Eve — celebration dining"),
     ]
 
     # Calculated holidays
@@ -171,23 +172,25 @@ Write 2 versions:
 VERSION A (short, punchy — 1-2 sentences + hashtags)
 VERSION B (storytelling — 3-4 sentences + hashtags)
 
+If menu items are provided below, reference specific dishes by name — never make up dishes.
 Use 5-8 relevant hashtags per version. No emojis unless they feel totally natural.
 Do not use the phrases "indulge", "culinary journey", "delight", or "experience".""",
 
     "weekly_email": """Write a short weekly email for {restaurant} regulars.
-Voice: {voice}. Neighborhood: {neighborhood}.
+Voice: {voice}. Neighborhood: {neighborhood}. Known for: {known_for}.
 Topic/occasion: {topic}
 
 Format:
 SUBJECT LINE: (2 options)
 BODY: (4-6 sentences, conversational, like the owner wrote it personally)
 
+If menu items are provided below, mention specific dishes by name to make it feel personal and specific.
 No "Dear valued customer". No corporate sign-offs. End with a first name sign-off like "— Sarah" or "— the Maplewood team".""",
 
-    "google_promo": """Write a Google Business Profile promotional post for {restaurant}.
-Topic: {topic}
+    "google_promo": """Write a Google Business Profile promotional post for {restaurant} in {neighborhood}.
+Topic: {topic}. Known for: {known_for}.
 Keep it under 100 words. Direct, local, specific. Include a soft call to action.
-No hashtags. No emojis.""",
+Reference specific menu items if provided below. No hashtags. No emojis.""",
 
     "loyalty_nudge": """Write an SMS re-engagement message for guests of {restaurant}.
 Topic/offer: {topic}
