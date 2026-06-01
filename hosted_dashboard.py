@@ -2481,7 +2481,7 @@ async function refreshMenuFromGoogle(){
       status.textContent = d.message || '✓ Menu data updated';
       status.style.color = '#2d6a4f';
     } else {
-      status.textContent = 'No menu data found on Google Places — fill in manually below';
+      status.textContent = d.error || 'No menu data found — try PDF upload or enter manually';
       status.style.color = '#7a736a';
     }
   } catch(e) {
