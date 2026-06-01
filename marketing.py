@@ -25,7 +25,12 @@ def get_upcoming_holidays(from_date=None) -> str:
     """Return a comma-separated string of holidays/events in the next 30 days."""
     from datetime import datetime, timedelta
     if from_date is None:
-        from_date = datetime.now()
+        try:
+            import pytz as _pytz3
+            _chi3 = _pytz3.timezone('America/Chicago')
+            from_date = datetime.now(_chi3).replace(tzinfo=None)
+        except Exception:
+            from_date = datetime.now()
 
     # Fixed-date holidays (month, day, name)
     fixed = [
@@ -274,7 +279,12 @@ def generate_content(content_type: str, topic: str,
         recent_context = f"\n\nIMPORTANT: You have recently generated content about: {recent_topics}. Do NOT repeat these themes or topics. Be fresh and different."
 
     # Seasonal awareness with real date
-    now_dt = datetime.now()
+    try:
+        import pytz as _pytz2
+        _chi = _pytz2.timezone('America/Chicago')
+        now_dt = datetime.now(_chi).replace(tzinfo=None)
+    except Exception:
+        now_dt = datetime.now()
     month = now_dt.strftime("%B")
     today_date = now_dt.strftime("%B %d, %Y")
     upcoming = get_upcoming_holidays(now_dt)
@@ -313,13 +323,20 @@ def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
     """Generate a week of content ideas using Claude."""
     p = get_profile_for_restaurant(restaurant_id)
     from datetime import datetime as _dt, timedelta as _td
-    now = _dt.now()
+    import pytz as _pytz
+    _chicago = _pytz.timezone('America/Chicago')
+    now = _dt.now(_chicago).replace(tzinfo=None)
     # Build the 7-day window starting from tomorrow
     start = now + _td(days=1)
+    # Map by index (0-6) so duplicate day names never collide
+    dates_by_index = [( (start + _td(days=i)).strftime("%A"),
+                        (start + _td(days=i)).strftime("%-m/%-d") )
+                      for i in range(7)]
+    # Also keep a day-name map for the FIRST occurrence only
     days_map = {}
-    for i in range(7):
-        d = start + _td(days=i)
-        days_map[d.strftime("%A")] = d.strftime("%-m/%-d")  # e.g. "5/29"
+    for day_name, date_str in dates_by_index:
+        if day_name not in days_map:
+            days_map[day_name] = date_str
     week_range = f"{start.strftime('%-m/%-d')} – {(start + _td(days=6)).strftime('%-m/%-d/%y')}"
     current_month = now.strftime("%B")
     today_str = now.strftime("%B %d, %Y")
