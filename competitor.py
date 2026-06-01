@@ -90,18 +90,29 @@ def fetch_menu_from_url(menu_url: str) -> str:
         # Truncate to first 8000 chars — enough to get menu items
         page_text = r.text[:8000]
 
+        # Check if page has useful content or is just a JS shell
+        alpha_chars = sum(1 for c in page_text if c.isalpha())
+        script_count = page_text.count("<script")
+        if script_count > 10 or alpha_chars < 500:
+            return ""  # JS-rendered site, no readable content
+
         client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+        extract_prompt = (
+            "Extract the key menu items from this restaurant page. "
+            "Return a concise summary: Signature dishes: [list]. Appetizers: [list]. "
+            "Mains: [list]. Desserts: [list]. Drinks: [list]. "
+            "Only include actual menu items. Skip prices and HTML. Max 300 words. "
+            "If no menu items found, respond with exactly: NO_MENU_FOUND\n\nPage content:\n" + page_text
+        )
         msg = client.messages.create(
             model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
             max_tokens=400,
-            messages=[{"role": "user", "content": f"""Extract the key menu items from this restaurant page. 
-Return a concise summary like: "Signature dishes: [list]. Appetizers: [list]. Mains: [list]. Desserts: [list]. Drinks: [list]."
-Only include items that are clearly menu items. Skip prices, descriptions, and HTML. Be concise — max 300 words.
-
-Page content:
-{page_text}"""}]
+            messages=[{"role": "user", "content": extract_prompt}]
         )
-        return msg.content[0].text.strip()
+        result = msg.content[0].text.strip()
+        if "NO_MENU_FOUND" in result or len(result) < 30:
+            return ""
+        return result
     except Exception as e:
         print(f"[fetch_menu_from_url] error: {e}")
         return ""

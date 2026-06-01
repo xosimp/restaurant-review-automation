@@ -361,9 +361,14 @@ Upcoming holidays/events in the next 30 days: {upcoming_holidays if upcoming_hol
 Recently generated content (avoid repeating these): {recent_topics}
 
 Return ONLY valid JSON — no markdown fences. Array of 7 objects with:
-{{"day": "Monday", "platform": "Instagram|Email|Google", "angle": "one sentence topic idea", "type": "instagram_post|weekly_email|google_promo|happy_hour"}}
+{{"day": "Monday", "platform": "Instagram|Email|Google|SMS", "angle": "one sentence topic idea", "type": "instagram_post|weekly_email|google_promo|happy_hour|loyalty_nudge"}}
 
-Make ideas specific and seasonal. Reference real menu items when relevant. Vary platforms."""
+Rules:
+- Include at least one SMS/loyalty_nudge idea per week to re-engage guests
+- Reference real menu items and dishes by name when menu info is provided
+- For any upcoming holiday, make the content feel natural and relevant to THIS restaurant — skip it if it doesn't fit
+- Vary platforms across the 7 days — don't use Instagram more than 3 times
+- Make every idea specific enough that the owner knows exactly what to post"""
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),

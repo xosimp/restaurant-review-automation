@@ -1495,7 +1495,7 @@ def fetch_menu_from_url_route(restaurant_id, current_user):
         from models import update_restaurant
         menu_items = fetch_menu_from_url(url)
         if not menu_items:
-            return jsonify(ok=False, error="Could not extract menu data from that URL")
+            return jsonify(ok=False, error="This site uses JavaScript to load its menu — it can't be auto-fetched. Enter menu items manually in the field above.")
         # Save the URL and extracted notes
         update_restaurant(restaurant_id, {"menu_url": url, "menu_notes": menu_items})
         return jsonify(ok=True, menu_notes=menu_items)
