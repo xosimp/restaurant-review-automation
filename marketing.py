@@ -26,9 +26,8 @@ def get_upcoming_holidays(from_date=None) -> str:
     from datetime import datetime, timedelta
     if from_date is None:
         try:
-            import pytz as _pytz3
-            _chi3 = _pytz3.timezone('America/Chicago')
-            from_date = datetime.now(_chi3).replace(tzinfo=None)
+            from zoneinfo import ZoneInfo
+            from_date = datetime.now(ZoneInfo('America/Chicago')).replace(tzinfo=None)
         except Exception:
             from_date = datetime.now()
 
@@ -280,9 +279,8 @@ def generate_content(content_type: str, topic: str,
 
     # Seasonal awareness with real date
     try:
-        import pytz as _pytz2
-        _chi = _pytz2.timezone('America/Chicago')
-        now_dt = datetime.now(_chi).replace(tzinfo=None)
+        from zoneinfo import ZoneInfo
+        now_dt = datetime.now(ZoneInfo('America/Chicago')).replace(tzinfo=None)
     except Exception:
         now_dt = datetime.now()
     month = now_dt.strftime("%B")
@@ -323,9 +321,8 @@ def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
     """Generate a week of content ideas using Claude."""
     p = get_profile_for_restaurant(restaurant_id)
     from datetime import datetime as _dt, timedelta as _td
-    import pytz as _pytz
-    _chicago = _pytz.timezone('America/Chicago')
-    now = _dt.now(_chicago).replace(tzinfo=None)
+    from zoneinfo import ZoneInfo as _ZI
+    now = _dt.now(_ZI('America/Chicago')).replace(tzinfo=None)
     # Build the 7-day window starting from tomorrow
     start = now + _td(days=1)
     # Map by index (0-6) so duplicate day names never collide

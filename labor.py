@@ -211,10 +211,9 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
     """Ask Claude to narrate labor findings in a warm, direct consultant tone."""
     greeting = f"{owner_name}," if owner_name else "Hi,"
     try:
-        import pytz as _pytz_l
-        _chi_l = _pytz_l.timezone('America/Chicago')
+        from zoneinfo import ZoneInfo
         from datetime import datetime as _now_dt
-        today_labor = _now_dt.now(_chi_l).strftime("%B %d, %Y")
+        today_labor = _now_dt.now(ZoneInfo('America/Chicago')).strftime("%B %d, %Y")
     except Exception:
         from datetime import datetime as _now_dt
         today_labor = _now_dt.now().strftime("%B %d, %Y")

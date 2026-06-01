@@ -119,7 +119,7 @@ This week's data:
 - Top themes: {top_themes or "nothing notable"}
 - Period: {report.period_start} to {report.period_end}{extra_context}
 
-Today's actual date: {__import__('datetime').datetime.now(__import__('pytz').timezone('America/Chicago')).strftime('%B %d, %Y') if True else ''}
+Today's actual date: {__import__('datetime').datetime.now(__import__('zoneinfo').ZoneInfo('America/Chicago')).strftime('%B %d, %Y') if True else ''}
 
 Write 2-3 sentences starting with "{greeting}," that:
 1. Give the honest overall picture covering the most important metric this week (reviews, labor, or inventory — whichever is most notable)
