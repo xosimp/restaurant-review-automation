@@ -22,6 +22,7 @@ import pathlib
 load_dotenv(pathlib.Path(__file__).parent / ".env")
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB global upload limit
 
 @app.template_filter("format_intel")
 def format_intel_filter(text):
@@ -47,7 +48,8 @@ def format_intel_filter(text):
 
     if intro_lines:
         intro_text = " ".join(intro_lines)
-        html_parts.append('<p style="font-size:13px;color:#374151;line-height:1.7;margin-bottom:14px">' + intro_text + "</p>")
+        from markupsafe import escape as _esc
+        html_parts.append('<p style="font-size:13px;color:#374151;line-height:1.7;margin-bottom:14px">' + str(_esc(intro_text)) + "</p>")
 
     # Parse sections
     current_section = None
@@ -62,10 +64,11 @@ def format_intel_filter(text):
         icon = "✓" if is_good else "✗"
         out = '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:' + color + ';margin:14px 0 8px">' + section_name + "</div>"
         for b in b_list:
-            out += (
+            from markupsafe import escape as _esc
+        out += (
                 '<div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start">'
                 + '<span style="flex-shrink:0;color:' + color + ';font-weight:700;font-size:13px">' + icon + "</span>"
-                + '<span style="font-size:13px;color:#374151;line-height:1.6">' + b + "</span></div>"
+                + '<span style="font-size:13px;color:#374151;line-height:1.6">' + str(_esc(b)) + "</span></div>"
             )
         return out
 
@@ -101,13 +104,15 @@ def format_intel_filter(text):
             html_parts.append(
                 '<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">'
                 + '<span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:#c84b2f;color:white;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">' + str(i) + "</span>"
-                + '<span style="line-height:1.6;color:#b7791f;font-weight:500">' + rec + "</span></div>"
+                + '<span style="line-height:1.6;color:#b7791f;font-weight:500">' + str(_esc(rec)) + "</span></div>"
             )
 
     if not html_parts:
         return '<p style="font-size:13px;color:#374151;line-height:1.7">' + text + "</p>"
 
-    from markupsafe import Markup
+    from markupsafe import Markup, escape as _esc
+    # Sanitize: escape any HTML that came through from AI output in text nodes
+    # html_parts contains our own safe HTML structure — only the text content needs escaping
     return Markup("".join(html_parts))
 
 
@@ -185,6 +190,29 @@ def _record_failed_attempt(ip):
 
 def _clear_attempts(ip):
     _login_attempts.pop(ip, None)
+
+def _generate_csrf():
+    import secrets
+    return secrets.token_hex(16)
+
+def _verify_csrf():
+    """Verify CSRF token on state-changing requests. Returns True if valid."""
+    if request.method not in ('POST', 'PUT', 'DELETE', 'PATCH'):
+        return True
+    # Skip CSRF for webhooks and OAuth callbacks — they have their own auth
+    skip_paths = ['/stripe-webhook', '/docusign/webhook', '/docusign/callback',
+                  '/docusign/callback2', '/auth/google/callback', '/instagram/callback']
+    if any(request.path.startswith(p) for p in skip_paths):
+        return True
+    # Get token from cookie and from header/form
+    cookie_token = request.cookies.get('csrf_token', '')
+    # Accept from X-CSRF-Token header (JS fetch) or form field
+    header_token = request.headers.get('X-CSRF-Token', '')
+    form_token = request.form.get('csrf_token', '')
+    submitted = header_token or form_token
+    if not cookie_token or not submitted:
+        return False
+    return cookie_token == submitted
 PORT           = int(os.getenv("PORT", 8080))
 RESEND_API_KEY          = os.getenv("RESEND_API_KEY", "")
 FROM_EMAIL              = os.getenv("FROM_EMAIL", "will@cavnar.ai")
@@ -292,6 +320,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ restaurant.name }} — Cavnar AI</title>
+<meta name="csrf-token" content="{{csrf_token}}">
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="shortcut icon" href="/favicon.ico">
@@ -1390,6 +1419,14 @@ async function saveDraft(id) {
     toast('Response saved and approved');
   }
 }
+// Global CSRF-aware fetch wrapper
+const _csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+const _fetch = (url, opts={}) => {
+  opts.headers = opts.headers || {};
+  if(opts.method && opts.method !== 'GET') opts.headers['X-CSRF-Token'] = _csrf;
+  return fetch(url, opts);
+};
+
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)}
 function disconnectInstagram(){
   if(!confirm('Disconnect Instagram & Facebook? You will need to reconnect to post directly.')) return;
@@ -3526,6 +3563,20 @@ input:focus{border-color:#c84b2f}
 </body></html>""", sent=sent)
 
     # POST — send reset email
+    ip = _get_client_ip()
+    if _is_rate_limited(ip):
+        return render_template_string("""<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Rate Limited</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'DM Sans',sans-serif;background:#f5f3f0;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{background:white;border-radius:12px;padding:40px;width:100%;max-width:380px;border:1px solid #e5e0db;text-align:center}
+.logo{font-size:20px;font-weight:600;margin-bottom:24px;color:#0e0c0a}.logo em{color:#c84b2f;font-style:italic}
+p{font-size:13px;color:#7a736a;margin-bottom:16px}.back{font-size:12px;color:#7a736a;text-decoration:none}</style></head>
+<body><div class="card"><div class="logo">Cavnar <em>AI</em></div>
+<p>Too many attempts. Please wait a few minutes before trying again.</p>
+<a href="/forgot-password" class="back">← Back</a></div></body></html>"""), 429
+    _record_failed_attempt(ip)  # Count each forgot-password POST
+
     email = request.form.get("email", "").strip().lower()
     if email:
         try:
@@ -3615,6 +3666,11 @@ input:focus{border-color:#c84b2f}
 </body></html>""", valid=valid)
 
     # POST — set new password
+    ip = _get_client_ip()
+    if _is_rate_limited(ip):
+        from flask import redirect as _redir
+        return _redir("/forgot-password?sent=1"), 429
+
     if not valid:
         from flask import redirect as _redir
         return _redir("/forgot-password")
@@ -3741,8 +3797,11 @@ def index(current_user):
         except Exception:
             competitor_data = None
 
+    import secrets as _sec
+    csrf_token = request.cookies.get('csrf_token') or _sec.token_hex(16)
     return render_template_string(DASHBOARD_HTML,
         show_welcome=show_welcome,
+        csrf_token=csrf_token,
         current_user=current_user, restaurant=restaurant,
         rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch,
         labor=labor, inv=inv, ctypes=CONTENT_TYPES,
@@ -4312,6 +4371,11 @@ def client_upload_data(current_user):
     """
     import io, csv as _csv
     from models import save_client_data, log_email
+
+    # File size limit: 5MB max
+    file = request.files.get("file")
+    if file and file.content_length and file.content_length > 5 * 1024 * 1024:
+        return jsonify(ok=False, error="File too large. Maximum size is 5MB."), 413
 
     restaurant_id = current_user["restaurant_id"]
     data_type     = request.form.get("data_type")  # "shifts" or "inventory"

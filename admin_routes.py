@@ -867,9 +867,19 @@ def view_as_client(restaurant_id, current_user):
     if not user_row:
         return "No client user found for this restaurant", 404
     # Create a short-lived session for that user
-    token = create_session(dict(user_row)["id"], days=1)
+    # Short-lived session for view-as — 30 minutes only
+    from datetime import datetime, timezone, timedelta
+    from models import get_conn as _gc
+    _conn = _gc()
+    token = __import__('secrets').token_urlsafe(32)
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+    _conn.execute(
+        "INSERT INTO sessions (token, user_id, expires_at, last_active) VALUES (?,?,?,?)",
+        (token, dict(user_row)["id"], expires, datetime.now(timezone.utc).isoformat())
+    )
+    _conn.commit(); _conn.close()
     resp = make_response(redirect("/"))
-    resp.set_cookie("session_token", token, max_age=86400,
+    resp.set_cookie("session_token", token, max_age=1800,
                     httponly=True, secure=bool(os.getenv("RAILWAY_ENVIRONMENT")), samesite="Strict")
     return resp
 
@@ -878,7 +888,10 @@ def stop_viewing():
     """Return to admin — delete current session and redirect to admin login."""
     token = request.cookies.get("session_token")
     if token:
-        delete_session(token)
+        # Only delete session if it actually exists (prevents session fixation)
+        from models import get_session_user
+        if get_session_user(token):
+            delete_session(token)
     resp = make_response(redirect("/login?next=/admin"))
     resp.delete_cookie("session_token")
     return resp
@@ -908,6 +921,12 @@ def docusign_callback():
 @admin_bp.route("/docusign/webhook", methods=["POST"])
 def docusign_webhook():
     """Receive DocuSign connect notifications when envelope status changes."""
+    # Basic authentication check — DocuSign sends a secret header if configured
+    ds_secret = os.getenv("DOCUSIGN_WEBHOOK_SECRET", "")
+    if ds_secret:
+        auth_header = request.headers.get("X-DocuSign-Signature-1", "")
+        if not auth_header:
+            return jsonify(error="Unauthorized"), 401
     try:
         raw = request.get_data(as_text=True)
         print(f"DocuSign webhook received: {raw[:500]}")
