@@ -1531,49 +1531,31 @@ def fetch_menu_from_url_route(restaurant_id, current_user):
 @admin_bp.route("/admin/refresh-menu-notes/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def refresh_menu_notes(restaurant_id, current_user):
-    """Re-fetch menu notes from Google Places, Yelp, or web search and update the restaurant record."""
+    """Re-fetch menu notes from Google Places API and update the restaurant record."""
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
         return jsonify(ok=False, error="Restaurant not found")
+    if not restaurant.google_place_id:
+        return jsonify(ok=False, error="No Google Place ID set for this restaurant")
     try:
-        from competitor import fetch_menu_notes_from_places, fetch_menu_from_yelp_id, search_and_fetch_menu
+        from competitor import fetch_menu_notes_from_places
         from models import update_restaurant
-        menu_notes = ""
-        source = ""
-
-        # Step 1: Try Google Places
-        if restaurant.google_place_id:
-            menu_notes = fetch_menu_notes_from_places(restaurant.google_place_id)
-            if menu_notes and len(menu_notes) > 50:
-                source = "Google Places"
-
-        # Step 2: Try Yelp directly
-        if (not menu_notes or len(menu_notes) < 50) and restaurant.yelp_business_id:
-            yelp_result = fetch_menu_from_yelp_id(restaurant.yelp_business_id)
-            if yelp_result and len(yelp_result) > 50:
-                menu_notes = yelp_result
-                source = "Yelp"
-
-        # Step 3: Try web search
-        if not menu_notes or len(menu_notes) < 50:
-            web_result = search_and_fetch_menu(restaurant.name, restaurant.neighborhood or "")
-            if web_result and len(web_result) > 50:
-                menu_notes = web_result
-                source = "web search"
-
+        menu_notes = fetch_menu_notes_from_places(restaurant.google_place_id)
         if not menu_notes or len(menu_notes) < 30:
-            return jsonify(ok=False, error="No menu data found via Google Places, Yelp, or web search. Use the PDF upload or enter menu items manually.")
-
-        # Merge with any existing manual notes
+            # Build helpful message with where to find menu data manually
+            yelp_url = f"https://www.yelp.com/biz/{restaurant.yelp_business_id}" if restaurant.yelp_business_id else ""
+            tips = "Google Places has no menu data for this restaurant. "
+            if yelp_url:
+                tips += f"Try: 1) Upload a menu PDF, 2) Paste their menu URL and click Fetch, or 3) Copy dishes from their Yelp page ({yelp_url}) into the notes field manually."
+            else:
+                tips += "Try: 1) Upload a menu PDF, 2) Paste their menu URL and click Fetch, or 3) Enter key dishes manually in the notes field."
+            return jsonify(ok=False, error=tips)
         existing = restaurant.menu_notes or ""
-        if existing and existing not in menu_notes:
-            merged = menu_notes + ("\n\nAdditional notes:\n" + existing if existing else "")
-        else:
-            merged = menu_notes
+        merged = menu_notes if not existing else menu_notes + ("\n\nAdditional notes:\n" + existing if existing not in menu_notes else "")
         update_restaurant(restaurant_id, {"menu_notes": merged})
         has_url = "Menu URL:" in merged
-        return jsonify(ok=True, menu_notes=merged, source=source,
-                       message=f"\u2713 Updated from {source}" + (" — menu URL found" if has_url else ""))
+        return jsonify(ok=True, menu_notes=merged,
+                       message="\u2713 Updated from Google Places" + (" — menu URL found, dishes extracted" if has_url else ""))
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
