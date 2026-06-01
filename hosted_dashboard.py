@@ -1069,6 +1069,9 @@ function clientUpload(dataType, input) {
         <button class="btn-secondary" style="font-size:10px;padding:5px 10px" id="cal-download-btn" onclick="downloadCal()" style="display:none">Download CSV ↓</button>
       </div>
     </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <span id="cal-week-range" style="font-size:11px;color:var(--ink3);font-weight:500"></span>
+    </div>
     <div class="cal-grid" id="cal-grid"><div class="no-data" style="grid-column:1/-1;padding:20px">Click "Generate week" for content ideas.</div></div>
   </div>
 
@@ -1703,7 +1706,7 @@ function downloadCal(){
       (i.type||'').replace(/,/g,' ')
     ]);
   });
-  const csv = rows.map(function(r){ return r.map(function(c){ return '"'+c+'"'; }).join(','); }).join(String.fromCharCode(10));
+  const csv = rows.map(function(r){ return r.map(function(c){ return '"'+c+'"'; }).join(','); }).join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1715,10 +1718,15 @@ function downloadCal(){
 
 function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}const calDownBtn=document.getElementById('cal-download-btn');
   if(calDownBtn) calDownBtn.style.display='inline-block';
+  // Show week range header
+  const weekRange = d.ideas[0] && d.ideas[0].week_range;
+  const rangeEl = document.getElementById('cal-week-range');
+  if(rangeEl && weekRange) rangeEl.textContent = 'Week of ' + weekRange;
   g.innerHTML=d.ideas.map((i,idx)=>{
     window._calIdeas=window._calIdeas||[];
     window._calIdeas[idx]=i;
-    return `<div class="cal-card"><div class="cal-day-name">${i.day}</div><div class="cal-platform" style="font-size:10px;color:var(--ink3);margin:2px 0 4px">${i.platform||''}</div><div style="font-size:12px;line-height:1.5">${i.angle||''}</div><button data-idx="${idx}" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;width:100%">Generate →</button></div>`;
+    const dateLabel = i.date ? `<span style="font-size:10px;color:var(--ink3);font-weight:400">${i.date}</span>` : '';
+    return `<div class="cal-card"><div class="cal-day-name" style="display:flex;align-items:center;justify-content:space-between">${i.day}${dateLabel}</div><div class="cal-platform" style="font-size:10px;color:var(--ink3);margin:2px 0 4px">${i.platform||''}</div><div style="font-size:12px;line-height:1.5">${i.angle||''}</div><button data-idx="${idx}" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;width:100%">Generate →</button></div>`;
   }).join('')})}
 function generateFromCalIdx(idx) {
   const i = window._calIdeas && window._calIdeas[idx];

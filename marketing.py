@@ -314,6 +314,13 @@ def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
     p = get_profile_for_restaurant(restaurant_id)
     from datetime import datetime as _dt, timedelta as _td
     now = _dt.now()
+    # Build the 7-day window starting from tomorrow
+    start = now + _td(days=1)
+    days_map = {}
+    for i in range(7):
+        d = start + _td(days=i)
+        days_map[d.strftime("%A")] = d.strftime("%-m/%-d")  # e.g. "5/29"
+    week_range = f"{start.strftime('%-m/%-d')} – {(start + _td(days=6)).strftime('%-m/%-d/%y')}"
     current_month = now.strftime("%B")
     today_str = now.strftime("%B %d, %Y")
     recent = get_recent_content(restaurant_id, limit=5)
@@ -343,7 +350,15 @@ Make ideas specific and seasonal. Vary platforms."""
     raw = msg.content[0].text.strip()
     raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
-        return json.loads(raw)
+        ideas = json.loads(raw)
+        # Inject real dates into each idea based on day name
+        for idea in ideas:
+            day_name = idea.get("day", "")
+            idea["date"] = days_map.get(day_name, "")
+        # Attach week_range to first idea for the UI to read
+        if ideas:
+            ideas[0]["week_range"] = week_range
+        return ideas
     except Exception:
         return []
 
