@@ -291,7 +291,22 @@ def deactivate_client(user_id, current_user):
 def reactivate_client(user_id, current_user):
     conn = get_conn()
     conn.execute("UPDATE users SET is_active=1 WHERE id=?", (user_id,))
-    conn.commit(); conn.close()
+    conn.commit()
+    # Get user info to send reactivation email
+    user_row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    conn.close()
+    if user_row:
+        try:
+            restaurant = get_restaurant(dict(user_row)["restaurant_id"])
+            if restaurant:
+                from emails import send_reactivation_email
+                send_reactivation_email(
+                    to_email=restaurant.owner_email,
+                    restaurant_name=restaurant.name,
+                    owner_name=restaurant.owner_name,
+                )
+        except Exception as e:
+            print(f"Reactivation email failed: {e}")
     return jsonify(ok=True)
 
 @admin_bp.route("/admin/client-data/<int:restaurant_id>")

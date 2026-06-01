@@ -473,6 +473,145 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
         print(f"send_onboarding_day7 failed: {e}")
 
 
+def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str = None,
+                             db_path: str = None):
+    """Send a welcome-back email when a client is reactivated."""
+    if not RESEND_API_KEY:
+        return
+    try:
+        import resend as _resend
+        _resend.api_key = RESEND_API_KEY
+        first = owner_name.split()[0] if owner_name else "there"
+        _resend.Emails.send({
+            "from": f"Will Cavnar <{FROM_EMAIL}>",
+            "to": [to_email],
+            "subject": f"Welcome back to Cavnar AI — {restaurant_name}",
+            "html": f"""
+<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+  <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
+    <h2 style="font-family:Georgia,serif;font-size:22px;font-weight:400;margin:0 0 4px">
+      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    </h2>
+    <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
+  </div>
+  <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:16px">
+    Your <strong>{restaurant_name}</strong> account has been reactivated. Everything is running again —
+    review monitoring, your AI modules, and your weekly digest are all back on.
+  </p>
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:24px">
+    Jump back into your dashboard whenever you're ready. If anything looks off or you need a refresher, just reply here.
+  </p>
+  <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;font-family:-apple-system,sans-serif">Go to dashboard →</a>
+  <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
+  <p style="font-size:12px;color:#7a736a;margin:0">
+    Questions? Reply to this email or reach me at
+    <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
+    · <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
+  </p>
+</div>"""
+        })
+    except Exception as e:
+        print(f"send_reactivation_email failed: {e}")
+
+
+def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: str = None,
+                                restaurant_id: int = None,
+                                has_reviews: bool = True, has_labor: bool = False,
+                                has_inventory: bool = False, has_marketing: bool = False):
+    """Send a monthly summary email with AI-generated insights for the past month."""
+    if not RESEND_API_KEY:
+        return
+    try:
+        import resend as _resend
+        from datetime import datetime, timedelta
+        _resend.api_key = RESEND_API_KEY
+        first = owner_name.split()[0] if owner_name else "there"
+        now = datetime.now()
+        month_name = (now.replace(day=1) - timedelta(days=1)).strftime("%B")  # previous month
+        year = (now.replace(day=1) - timedelta(days=1)).year
+
+        # Pull review stats for the month
+        review_block = ""
+        if has_reviews and restaurant_id:
+            try:
+                from models import get_reviews_since
+                from datetime import timezone
+                month_start = now.replace(day=1, hour=0, minute=0, second=0) - timedelta(days=30)
+                reviews = get_reviews_since(restaurant_id, month_start.isoformat())
+                total = len(reviews)
+                if total > 0:
+                    avg = round(sum(r.rating for r in reviews) / total, 1)
+                    pos = sum(1 for r in reviews if r.rating >= 4)
+                    neg = sum(1 for r in reviews if r.rating <= 2)
+                    review_block = f"""
+  <div style="background:#f5f3f0;border-radius:8px;padding:16px 20px;margin-bottom:16px">
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#7a736a;margin-bottom:10px">Review Intelligence</div>
+    <div style="display:flex;gap:24px;flex-wrap:wrap">
+      <div><div style="font-size:28px;font-weight:600;color:#0e0c0a">{total}</div><div style="font-size:11px;color:#7a736a">Total reviews</div></div>
+      <div><div style="font-size:28px;font-weight:600;color:#0e0c0a">{avg}★</div><div style="font-size:11px;color:#7a736a">Avg rating</div></div>
+      <div><div style="font-size:28px;font-weight:600;color:#2d6a4f">{pos}</div><div style="font-size:11px;color:#7a736a">Positive</div></div>
+      <div><div style="font-size:28px;font-weight:600;color:#c84b2f">{neg}</div><div style="font-size:11px;color:#7a736a">Negative</div></div>
+    </div>
+  </div>"""
+            except Exception:
+                pass
+
+        # Module summary blocks
+        module_blocks = ""
+        if has_labor:
+            module_blocks += """
+  <div style="background:#f5f3f0;border-radius:8px;padding:14px 20px;margin-bottom:12px">
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#7a736a;margin-bottom:6px">Labor Optimizer</div>
+    <p style="font-size:13px;color:#3a3530;margin:0;line-height:1.6">Your labor data has been analyzed all month. Log in to see your latest cost breakdown and schedule recommendations.</p>
+  </div>"""
+        if has_inventory:
+            module_blocks += """
+  <div style="background:#f5f3f0;border-radius:8px;padding:14px 20px;margin-bottom:12px">
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#7a736a;margin-bottom:6px">Inventory Control</div>
+    <p style="font-size:13px;color:#3a3530;margin:0;line-height:1.6">Food cost and waste tracking has been running. Check your dashboard for this month's waste report and ordering recommendations.</p>
+  </div>"""
+        if has_marketing:
+            module_blocks += """
+  <div style="background:#f5f3f0;border-radius:8px;padding:14px 20px;margin-bottom:12px">
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#7a736a;margin-bottom:6px">Marketing Autopilot</div>
+    <p style="font-size:13px;color:#3a3530;margin:0;line-height:1.6">Your AI content engine has been ready all month. Log in to generate your content calendar and social posts for {now.strftime("%B")}.</p>
+  </div>"""
+
+        _resend.Emails.send({
+            "from": f"Will Cavnar <{FROM_EMAIL}>",
+            "to": [to_email],
+            "subject": f"{month_name} {year} — your monthly Cavnar AI summary",
+            "html": f"""
+<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+  <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
+    <h2 style="font-family:Georgia,serif;font-size:22px;font-weight:400;margin:0 0 4px">
+      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    </h2>
+    <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">{month_name} {year} Monthly Summary</p>
+  </div>
+  <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:20px">
+    Here's a look at how <strong>{restaurant_name}</strong> performed on Cavnar AI in {month_name}.
+  </p>
+  {review_block}
+  {module_blocks}
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin:20px 0">
+    Log in to your dashboard to see full details, approve any pending review responses, and generate your content for the month ahead.
+  </p>
+  <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;font-family:-apple-system,sans-serif">View dashboard →</a>
+  <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
+  <p style="font-size:12px;color:#7a736a;margin:0">
+    Questions? Reply to this email or reach me at
+    <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
+    · <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
+  </p>
+</div>"""
+        })
+    except Exception as e:
+        print(f"send_monthly_summary_email failed: {e}")
+
+
 def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str = None,
                            modules: list = None):
     """Day 30 — 30-day check-in, celebrate milestone, soft feedback ask."""

@@ -762,6 +762,32 @@ def scheduler_loop():
                 log.info("Running stale inventory check...")
                 check_stale_inventory()
 
+            # 1st of the month at 9am — send monthly summary to all active clients
+            if now.day == 1 and now.hour == 9 and _last_digest_date != today:
+                log.info("Running monthly summary emails...")
+                try:
+                    from emails import send_monthly_summary_email
+                    from models import get_all_restaurants
+                    for r in get_all_restaurants():
+                        if not r.owner_email or r.billing_status in ('internal', 'churned'):
+                            continue
+                        try:
+                            send_monthly_summary_email(
+                                to_email=r.owner_email,
+                                restaurant_name=r.name,
+                                owner_name=r.owner_name,
+                                restaurant_id=r.id,
+                                has_reviews=bool(r.module_reviews),
+                                has_labor=bool(r.module_labor),
+                                has_inventory=bool(r.module_inventory),
+                                has_marketing=bool(r.module_marketing),
+                            )
+                            log.info(f"Monthly summary sent to {r.name}")
+                        except Exception as me:
+                            log.error(f"Monthly summary failed for {r.name}: {me}")
+                except Exception as e:
+                    log.error(f"Monthly summary scheduler error: {e}")
+
             if now.hour == 10 and _last_digest_date != today:
                 # 10am daily — onboarding email sequence
                 log.info("Running onboarding sequence check...")
