@@ -1586,6 +1586,11 @@ def competitor_intel_api(current_user):
 @admin_bp.route("/api/refresh-competitor-intel", methods=["POST"])
 @login_required
 def refresh_competitor_intel(current_user):
+    # Require all 4 modules (Full System only)
+    from models import get_restaurant as _gr
+    _r = _gr(current_user["restaurant_id"])
+    if not (_r and _r.module_reviews and _r.module_labor and _r.module_inventory and _r.module_marketing):
+        return jsonify(ok=False, error="Competitor intelligence is available on the Full System plan only."), 403
     """Manually trigger competitor analysis."""
     from competitor import run_competitor_analysis
     result = run_competitor_analysis(current_user["restaurant_id"])

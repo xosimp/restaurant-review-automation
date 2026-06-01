@@ -610,7 +610,7 @@ function clientUpload(dataType, input) {
     {% if mod_labor %}<button class="tab {{'active' if not mod_reviews and mod_labor}}" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
     {% if mod_inventory %}<button class="tab {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="tab-inventory" onclick="switchTab('inventory',this)">Inventory</button>{% endif %}
     {% if mod_marketing %}<button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
-    {% if restaurant.google_place_id %}<button class="tab" id="tab-competitor" onclick="switchTab('competitor',this)">Intel</button>{% endif %}
+    {% if restaurant.google_place_id and mod_reviews and mod_labor and mod_inventory and mod_marketing %}<button class="tab" id="tab-competitor" onclick="switchTab('competitor',this)">Intel</button>{% endif %}
     <button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" onclick="switchTab('account',this)" style="margin-left:auto">Account</button>
   </nav>
 </div>
@@ -1706,7 +1706,7 @@ function downloadCal(){
       (i.type||'').replace(/,/g,' ')
     ]);
   });
-    const csv = rows.map(function(r){ return r.map(function(c){ return '"'+c+'"'; }).join(','); }).join(String.fromCharCode(10));
+  const csv = rows.map(function(r){ return r.map(function(c){ return '"'+c+'"'; }).join(','); }).join(String.fromCharCode(10));
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -3798,7 +3798,9 @@ def index(current_user):
     show_welcome = bool(_user_row and not _user_row.get("last_login"))
     # Load competitor intel if available
     competitor_data = None
-    if restaurant and restaurant.google_place_id and restaurant.competitor_intel:
+    if (restaurant and restaurant.google_place_id and restaurant.competitor_intel
+            and restaurant.module_reviews and restaurant.module_labor
+            and restaurant.module_inventory and restaurant.module_marketing):
         import json as _json
         try:
             competitor_data = _json.loads(restaurant.competitor_intel)
