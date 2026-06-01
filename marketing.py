@@ -331,7 +331,7 @@ def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
     from zoneinfo import ZoneInfo as _ZI
     now = _dt.now(_ZI('America/Chicago')).replace(tzinfo=None)
     # Build the 7-day window starting from tomorrow
-    start = now + _td(days=1)
+    start = now  # Start from today so Monday = today's date not next week
     # Map by index (0-6) so duplicate day names never collide
     dates_by_index = [( (start + _td(days=i)).strftime("%A"),
                         (start + _td(days=i)).strftime("%-m/%-d") )
@@ -350,10 +350,12 @@ def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
     # Build upcoming holidays in the next 30 days
     upcoming_holidays = get_upcoming_holidays(now)
 
+    menu_context = f"\nMenu & current specials: {p['menu_notes']}\nReference specific dishes and specials in content ideas when relevant." if p.get('menu_notes') else ""
+
     prompt = f"""Generate a 7-day social media content calendar for {p['name']}, 
 a {p['vibe']} in {p['neighborhood']}.
 
-Known for: {p['known_for']}
+Known for: {p['known_for']}{menu_context}
 TODAY'S DATE: {today_str} (this is the real current date — do not assume any other date)
 Upcoming holidays/events in the next 30 days: {upcoming_holidays if upcoming_holidays else "No major holidays"}
 Recently generated content (avoid repeating these): {recent_topics}
@@ -361,7 +363,7 @@ Recently generated content (avoid repeating these): {recent_topics}
 Return ONLY valid JSON — no markdown fences. Array of 7 objects with:
 {{"day": "Monday", "platform": "Instagram|Email|Google", "angle": "one sentence topic idea", "type": "instagram_post|weekly_email|google_promo|happy_hour"}}
 
-Make ideas specific and seasonal. Vary platforms."""
+Make ideas specific and seasonal. Reference real menu items when relevant. Vary platforms."""
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
