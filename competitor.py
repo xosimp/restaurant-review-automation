@@ -109,7 +109,17 @@ def fetch_menu_from_yelp_id(yelp_business_id: str) -> str:
     try:
         import requests as _req
         url = f"https://www.yelp.com/biz/{yelp_business_id}"
-        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+        }
         r = _req.get(url, headers=headers, timeout=10)
         if r.status_code != 200:
             return ""
@@ -217,22 +227,54 @@ def fetch_menu_from_url(menu_url: str) -> str:
     try:
         import requests as _req
         import anthropic, os
-        user_agents = [
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        import time as _time, random as _random
+        # Realistic browser header sets — rotate through them
+        browser_profiles = [
+            {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Cache-Control": "max-age=0",
+            },
+            {
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive",
+            },
+            {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+            },
         ]
         page_text = ""
-        for ua in user_agents:
+        session = _req.Session()
+        for profile in browser_profiles:
             try:
-                r = _req.get(menu_url, headers={"User-Agent": ua, "Accept": "text/html"}, timeout=10, allow_redirects=True)
+                # Small random delay between retries — looks more human
+                if page_text == "" and browser_profiles.index(profile) > 0:
+                    _time.sleep(_random.uniform(0.5, 1.5))
+                r = session.get(menu_url, headers=profile, timeout=12, allow_redirects=True)
                 if r.status_code == 200 and len(r.text) > 500:
                     page_text = r.text[:10000]
                     break
+                elif r.status_code == 403:
+                    continue  # Bot blocked — try next profile
             except Exception:
                 continue
         if not page_text:
-            return ""  # All attempts blocked
+            return ""  # All profiles blocked
 
         # Check if page has useful content or is just a JS shell
         # Strip script/style tags first, then check remaining content
