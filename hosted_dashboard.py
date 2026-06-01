@@ -1703,7 +1703,7 @@ function downloadCal(){
       (i.type||'').replace(/,/g,' ')
     ]);
   });
-  const csv = rows.map(function(r){ return r.map(function(c){ return '"'+c+'"'; }).join(','); }).join('\n');
+  const csv = rows.map(function(r){ return r.map(function(c){ return '"'+c+'"'; }).join(','); }).join(String.fromCharCode(10));
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
