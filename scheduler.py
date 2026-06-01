@@ -732,7 +732,10 @@ def scheduler_loop():
                     from competitor import run_competitor_analysis
                     from models import get_all_restaurants
                     for r in get_all_restaurants():
-                        if r.google_place_id and r.id:
+                        # Only run for full system clients (all 4 modules)
+                        if (r.google_place_id and r.id and
+                                r.module_reviews and r.module_labor and
+                                r.module_inventory and r.module_marketing):
                             try:
                                 run_competitor_analysis(r.id)
                             except Exception as ce:

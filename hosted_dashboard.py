@@ -1046,7 +1046,7 @@ function clientUpload(dataType, input) {
     </div>{% endfor %}
   </div>
   <div class="topic-row">
-    <input class="topic-input" id="mktopic" placeholder="Topic or occasion — e.g. new spring menu, Mother's Day brunch…" value="New spring menu launch">
+    <input class="topic-input" id="mktopic" placeholder="Topic or occasion — e.g. new spring menu, Sunday brunch special…">
     <button class="btn-primary" onclick="genContent()">Generate ↗</button>
   </div>
   <div class="output-box" id="mkoutput" style="color:var(--ink3);font-style:italic">Select a type and click Generate.</div>

@@ -626,6 +626,40 @@ def stripe_webhook():
                                 </div>"""
                             })
                             log_email(dict(row)["id"], "Admin Alert", WILL_EMAIL, f"New paying client — {rname}")
+
+                            # Send branded receipt to the client
+                            try:
+                                from datetime import datetime as _dt
+                                receipt_date = _dt.now().strftime("%B %d, %Y")
+                                _resend.Emails.send({
+                                    "from": f"Will Cavnar <{FROM_EMAIL}>",
+                                    "to": [email],
+                                    "subject": f"Payment confirmed — Cavnar AI",
+                                    "html": f"""<div style="font-family:'DM Sans',sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
+                                      <div style="font-size:20px;font-weight:600;margin-bottom:24px">Cavnar <em style="color:#c84b2f;font-style:italic">AI</em></div>
+                                      <h2 style="font-size:18px;font-weight:600;margin-bottom:8px;color:#0e0c0a">Payment confirmed ✓</h2>
+                                      <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:20px">
+                                        Thank you — your payment of <strong>${amount:.2f}</strong> has been received for <strong>{rname}</strong>.
+                                      </p>
+                                      <div style="background:#f5f3f0;border-radius:8px;padding:16px 20px;margin-bottom:20px">
+                                        <div style="font-size:12px;color:#7a736a;margin-bottom:4px">Date</div>
+                                        <div style="font-size:14px;font-weight:500;color:#0e0c0a;margin-bottom:12px">{receipt_date}</div>
+                                        <div style="font-size:12px;color:#7a736a;margin-bottom:4px">Amount</div>
+                                        <div style="font-size:14px;font-weight:500;color:#0e0c0a;margin-bottom:12px">${amount:.2f}</div>
+                                        <div style="font-size:12px;color:#7a736a;margin-bottom:4px">Restaurant</div>
+                                        <div style="font-size:14px;font-weight:500;color:#0e0c0a">{rname}</div>
+                                      </div>
+                                      <p style="font-size:13px;color:#4a4540;line-height:1.6;margin-bottom:20px">
+                                        Your dashboard is active and all modules are running. Questions? Reply to this email or reach me at will@cavnar.ai.
+                                      </p>
+                                      <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Go to dashboard →</a>
+                                      <hr style="border:none;border-top:1px solid #e5e0db;margin:24px 0">
+                                      <p style="font-size:11px;color:#9ca3af">Cavnar AI · will@cavnar.ai · cavnar.ai</p>
+                                    </div>"""
+                                })
+                                log_email(dict(row)["id"], "Payment Receipt", email, f"Payment confirmed — ${amount:.2f}")
+                            except Exception as re_err:
+                                print(f"Receipt email failed: {re_err}")
                         except Exception as ne:
                             print(f"First payment notification failed: {ne}")
             except Exception as e:
