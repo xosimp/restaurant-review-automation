@@ -217,18 +217,32 @@ def fetch_menu_from_url(menu_url: str) -> str:
     try:
         import requests as _req
         import anthropic, os
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; CavnarAI/1.0)"}
-        r = _req.get(menu_url, headers=headers, timeout=10)
-        if r.status_code != 200:
-            return ""
-        # Truncate to first 8000 chars — enough to get menu items
-        page_text = r.text[:8000]
+        user_agents = [
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        ]
+        page_text = ""
+        for ua in user_agents:
+            try:
+                r = _req.get(menu_url, headers={"User-Agent": ua, "Accept": "text/html"}, timeout=10, allow_redirects=True)
+                if r.status_code == 200 and len(r.text) > 500:
+                    page_text = r.text[:10000]
+                    break
+            except Exception:
+                continue
+        if not page_text:
+            return ""  # All attempts blocked
 
         # Check if page has useful content or is just a JS shell
-        alpha_chars = sum(1 for c in page_text if c.isalpha())
-        script_count = page_text.count("<script")
-        if script_count > 10 or alpha_chars < 500:
-            return ""  # JS-rendered site, no readable content
+        # Strip script/style tags first, then check remaining content
+        import re as _re2
+        clean = _re2.sub(r'<script[^>]*>.*?</script>', '', page_text, flags=_re2.DOTALL)
+        clean = _re2.sub(r'<style[^>]*>.*?</style>', '', clean, flags=_re2.DOTALL)
+        clean = _re2.sub(r'<[^>]+>', ' ', clean)
+        clean_words = [w for w in clean.split() if len(w) > 2]
+        if len(clean_words) < 80:
+            return ""  # JS-rendered site — no readable content after stripping tags
 
         client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
         extract_prompt = (
