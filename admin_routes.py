@@ -998,7 +998,7 @@ def docusign_webhook():
                 # Send welcome email with credentials
                 try:
                     tmp_pw = r.get("temp_password") or ""
-                    print(f"Welcome email temp_password length: {len(tmp_pw)}, value: '{tmp_pw}'")
+                    print(f"Welcome email sent to {to_email}")
                     # Fallback if temp_password wasn't stored
                     if not tmp_pw:
                         tmp_pw = "Check your email from Will for your temporary password, or contact will@cavnar.ai"
