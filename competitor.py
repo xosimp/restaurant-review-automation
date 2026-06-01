@@ -59,14 +59,51 @@ def fetch_menu_notes_from_places(google_place_id: str) -> str:
         if types:
             parts.append(f"Cuisine type: {', '.join(types[:3])}")
 
-        # Menu URL for reference
-        menu_url = result.get("menu_url", "")
+        # Menu URL — try to parse it for actual menu items
+        menu_url = result.get("menu_url", "") or result.get("website", "")
         if menu_url:
             parts.append(f"Menu URL: {menu_url}")
+            try:
+                menu_items = fetch_menu_from_url(menu_url)
+                if menu_items:
+                    parts.append(f"Menu items (auto-extracted):\n{menu_items}")
+            except Exception:
+                pass
 
         return "\n".join(parts) if parts else ""
     except Exception as e:
         print(f"[fetch_menu_notes] error: {e}")
+        return ""
+
+
+def fetch_menu_from_url(menu_url: str) -> str:
+    """Fetch a restaurant's menu page and use AI to extract key menu items."""
+    if not menu_url:
+        return ""
+    try:
+        import requests as _req
+        import anthropic, os
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; CavnarAI/1.0)"}
+        r = _req.get(menu_url, headers=headers, timeout=10)
+        if r.status_code != 200:
+            return ""
+        # Truncate to first 8000 chars — enough to get menu items
+        page_text = r.text[:8000]
+
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+        msg = client.messages.create(
+            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+            max_tokens=400,
+            messages=[{"role": "user", "content": f"""Extract the key menu items from this restaurant page. 
+Return a concise summary like: "Signature dishes: [list]. Appetizers: [list]. Mains: [list]. Desserts: [list]. Drinks: [list]."
+Only include items that are clearly menu items. Skip prices, descriptions, and HTML. Be concise — max 300 words.
+
+Page content:
+{page_text}"""}]
+        )
+        return msg.content[0].text.strip()
+    except Exception as e:
+        print(f"[fetch_menu_from_url] error: {e}")
         return ""
 
 

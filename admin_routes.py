@@ -421,6 +421,7 @@ def save_client_settings(restaurant_id, current_user):
             "sign_off_name":   data.get("sign_off_name","").strip() or None,
             "never_say":       sanitize(data.get("never_say","")),
             "menu_notes":      sanitize(data.get("menu_notes",""), max_len=2000),
+            "menu_url":        sanitize(data.get("menu_url","")),
             "hourly_rate":     float(data.get("hourly_rate") or 26.0),
             "labor_target_pct": float(data.get("labor_target_pct") or 30.0),
             "pos_system":      data.get("pos_system","").strip() or None,
@@ -1480,6 +1481,27 @@ def labor_trend_api(current_user):
     except Exception as e:
         print(f"Labor trend error: {e}")
         return jsonify(weeks=[])
+
+@admin_bp.route("/admin/fetch-menu-from-url/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def fetch_menu_from_url_route(restaurant_id, current_user):
+    """Fetch and parse menu items from a given URL using AI."""
+    data = request.get_json()
+    url = data.get("url", "").strip()
+    if not url:
+        return jsonify(ok=False, error="No URL provided")
+    try:
+        from competitor import fetch_menu_from_url
+        from models import update_restaurant
+        menu_items = fetch_menu_from_url(url)
+        if not menu_items:
+            return jsonify(ok=False, error="Could not extract menu data from that URL")
+        # Save the URL and extracted notes
+        update_restaurant(restaurant_id, {"menu_url": url, "menu_notes": menu_items})
+        return jsonify(ok=True, menu_notes=menu_items)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
 
 @admin_bp.route("/admin/refresh-menu-notes/<int:restaurant_id>", methods=["POST"])
 @admin_required

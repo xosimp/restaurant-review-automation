@@ -2180,10 +2180,18 @@ textarea{resize:vertical;min-height:60px}
           <label class="form-label">Menu &amp; current specials</label>
           <textarea id="menu_notes" rows="4" placeholder="Key menu items, signature dishes, current specials — e.g. Known for: short rib pasta, truffle fries, brunch cocktails. Current specials: bottomless brunch Sat/Sun 10am-2pm">{{ restaurant.menu_notes or '' }}</textarea>
           <div class="hint">AI uses this to generate accurate, specific marketing content. Update when menu or specials change.</div>
-          {% if restaurant.google_place_id %}
-          <button type="button" onclick="refreshMenuFromGoogle()" style="margin-top:6px;background:none;border:1px solid var(--paper3);color:var(--ink3);padding:4px 12px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">↻ Refresh from Google Places</button>
-          <span id="menu-refresh-status" style="font-size:11px;color:var(--ink3);margin-left:8px"></span>
-          {% endif %}
+          <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+            {% if restaurant.google_place_id %}
+            <button type="button" onclick="refreshMenuFromGoogle()" style="background:none;border:1px solid var(--paper3);color:var(--ink3);padding:4px 12px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">↻ Refresh from Google Places</button>
+            {% endif %}
+            <button type="button" onclick="fetchMenuFromUrl()" style="background:none;border:1px solid var(--paper3);color:var(--ink3);padding:4px 12px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">↻ Fetch from menu URL</button>
+          </div>
+          <span id="menu-refresh-status" style="font-size:11px;color:var(--ink3);display:block;margin-top:4px"></span>
+        </div>
+        <div class="form-row-wide">
+          <label class="form-label">Menu URL <span style="font-weight:400;color:var(--ink3);font-size:11px">(optional — paste their online menu link)</span></label>
+          <input type="text" id="menu_url" value="{{ restaurant.menu_url or '' }}" placeholder="https://restaurant.com/menu">
+          <div class="hint">Paste any URL with their menu — the AI will auto-extract dishes and specials</div>
         </div>
       </div>
     </div>
@@ -2401,6 +2409,36 @@ async function deleteNote(noteId) {
   const data = await res.json();
   if(data.ok) location.reload();
 }
+async function fetchMenuFromUrl(){
+  const urlInput = document.getElementById('menu_url');
+  const status = document.getElementById('menu-refresh-status');
+  const url = urlInput ? urlInput.value.trim() : '';
+  if(!url){ status.textContent = 'Enter a menu URL first'; status.style.color = '#c84b2f'; return; }
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = '↻ Fetching...';
+  status.textContent = ''; 
+  try {
+    const res = await fetch('/admin/fetch-menu-from-url/{{ restaurant.id }}', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({url})
+    });
+    const d = await res.json();
+    if(d.ok){
+      document.getElementById('menu_notes').value = d.menu_notes;
+      status.textContent = '✓ Menu extracted — review and save';
+      status.style.color = '#2d6a4f';
+    } else {
+      status.textContent = d.error || 'Could not extract menu from that URL — fill in manually';
+      status.style.color = '#7a736a';
+    }
+  } catch(e) {
+    status.textContent = 'Request failed';
+    status.style.color = '#c84b2f';
+  }
+  btn.disabled = false; btn.textContent = '↻ Fetch from menu URL';
+}
+
 async function refreshMenuFromGoogle(){
   const btn = event.target;
   const status = document.getElementById('menu-refresh-status');
@@ -2411,11 +2449,12 @@ async function refreshMenuFromGoogle(){
     const d = await res.json();
     if(d.ok){
       document.getElementById('menu_notes').value = d.menu_notes;
-      status.textContent = '✓ Updated from Google Places';
+      const hasUrl = d.menu_notes && d.menu_notes.includes('Menu URL:');
+      status.textContent = hasUrl ? '✓ Updated — menu URL found, dishes extracted' : '✓ Updated from Google Places';
       status.style.color = '#2d6a4f';
     } else {
-      status.textContent = d.error || 'No menu data found on Google Places';
-      status.style.color = '#c84b2f';
+      status.textContent = 'No menu data found on Google Places — fill in manually below';
+      status.style.color = '#7a736a';
     }
   } catch(e) {
     status.textContent = 'Request failed';
@@ -2504,6 +2543,7 @@ async function saveSettings() {
     voice_notes:     document.getElementById('voice_notes').value,
     never_say:       document.getElementById('never_say').value,
     menu_notes:      document.getElementById('menu_notes').value,
+    menu_url:        document.getElementById('menu_url').value,
     hourly_rate:        parseFloat(document.getElementById('hourly_rate').value),
     labor_target_pct:   parseFloat(document.getElementById('labor_target_pct').value) || 30.0,
     billing_status:  document.getElementById('billing_status').value,
