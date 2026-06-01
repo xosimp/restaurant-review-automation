@@ -2478,8 +2478,7 @@ async function refreshMenuFromGoogle(){
     const d = await res.json();
     if(d.ok){
       document.getElementById('menu_notes').value = d.menu_notes;
-      const hasUrl = d.menu_notes && d.menu_notes.includes('Menu URL:');
-      status.textContent = hasUrl ? '✓ Updated — menu URL found, dishes extracted' : '✓ Updated from Google Places';
+      status.textContent = d.message || '✓ Menu data updated';
       status.style.color = '#2d6a4f';
     } else {
       status.textContent = 'No menu data found on Google Places — fill in manually below';
