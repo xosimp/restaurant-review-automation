@@ -70,9 +70,143 @@ def fetch_menu_notes_from_places(google_place_id: str) -> str:
             except Exception:
                 pass
 
-        return "\n".join(parts) if parts else ""
+        result = "\n".join(parts) if parts else ""
+
+        # If Places returned nothing useful, try Yelp ID or web search as fallback
+        if not result or len(result) < 50:
+            try:
+                from models import get_conn as _gc_m, get_restaurant
+                _conn = _gc_m()
+                row = _conn.execute(
+                    "SELECT id, name, yelp_business_id FROM restaurants WHERE google_place_id=? LIMIT 1",
+                    (google_place_id,)
+                ).fetchone()
+                _conn.close()
+                if row:
+                    yelp_id = row["yelp_business_id"] if "yelp_business_id" in row.keys() else None
+                    rname = row["name"] if "name" in row.keys() else ""
+                    if yelp_id:
+                        yelp_result = fetch_menu_from_yelp_id(yelp_id)
+                        if yelp_result:
+                            result = (result + "\n" + yelp_result).strip()
+                    if (not result or len(result) < 50) and rname:
+                        web_result = search_and_fetch_menu(rname)
+                        if web_result:
+                            result = (result + "\n" + web_result).strip()
+            except Exception as fe:
+                print(f"[fetch_menu_notes fallback] {fe}")
+
+        return result
     except Exception as e:
         print(f"[fetch_menu_notes] error: {e}")
+        return ""
+
+
+def fetch_menu_from_yelp_id(yelp_business_id: str) -> str:
+    """Fetch menu info from Yelp business page — static HTML, reliable."""
+    if not yelp_business_id:
+        return ""
+    try:
+        import requests as _req
+        url = f"https://www.yelp.com/biz/{yelp_business_id}"
+        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        r = _req.get(url, headers=headers, timeout=10)
+        if r.status_code != 200:
+            return ""
+        text = r.text[:12000]
+        # Extract menu section and review mentions of dishes
+        import re
+        # Pull text between menu-related sections
+        menu_matches = re.findall(r'menu[^<]{0,200}', text, re.IGNORECASE)
+        dish_matches = re.findall('"([A-Z][a-zA-Z &]{3,40})"', text)
+        # Filter to likely dish names
+        dish_names = [d for d in dish_matches if 2 < len(d.split()) < 8
+                      and not any(skip in d.lower() for skip in ['photo','review','rating','yelp','write','click','more','open','close'])]
+        dish_names = list(dict.fromkeys(dish_names))[:20]  # dedup, limit
+        if dish_names:
+            import anthropic, os
+            client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
+            msg = client.messages.create(
+                model=os.getenv("CLAUDE_MODEL","claude-haiku-4-5-20251001"),
+                max_tokens=300,
+                messages=[{"role":"user","content":
+                    f"From these potential dish names extracted from a restaurant Yelp page, identify which ones are actual menu items and organize them into a brief menu summary. Names: {', '.join(dish_names)}. Return: Signature dishes: [list]. Appetizers: [list]. Mains: [list]. Desserts: [list if any]. Keep it concise."}]
+            )
+            return msg.content[0].text.strip()
+    except Exception as e:
+        print(f"[fetch_menu_from_yelp_id] error: {e}")
+    return ""
+
+
+def search_and_fetch_menu(restaurant_name: str, city: str = "") -> str:
+    """Search for a restaurant menu using web search then fetch the best static result."""
+    try:
+        import requests as _req, anthropic, os, re
+        # Search for menu on static-HTML-friendly sites
+        search_query = f"{restaurant_name} {city} menu site:sirved.com OR site:allmenus.com OR site:menupix.com OR site:zmenu.com"
+        # Use DuckDuckGo instant answer API (no key needed)
+        r = _req.get(
+            "https://html.duckduckgo.com/html/",
+            params={"q": f"{restaurant_name} {city} dinner menu"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=8
+        )
+        # Extract first few result URLs
+        urls = re.findall(r'class="result__url"[^>]*>([^<]+)', r.text)[:3]
+        for url in urls:
+            url = url.strip()
+            if not url.startswith("http"):
+                url = "https://" + url
+            try:
+                page = _req.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=8)
+                if page.status_code == 200 and len(page.text) > 1000:
+                    result = _extract_menu_with_ai(page.text[:8000], restaurant_name)
+                    if result:
+                        return result
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"[search_and_fetch_menu] error: {e}")
+    return ""
+
+
+def _extract_menu_with_ai(page_text: str, restaurant_name: str) -> str:
+    """Use AI to extract menu items from page text."""
+    try:
+        import anthropic, os
+        alpha_chars = sum(1 for c in page_text if c.isalpha())
+        if alpha_chars < 300:
+            return ""
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
+        msg = client.messages.create(
+            model=os.getenv("CLAUDE_MODEL","claude-haiku-4-5-20251001"),
+            max_tokens=350,
+            messages=[{"role":"user","content":
+                f"Extract menu items for {restaurant_name} from this page. "
+                "Return: Signature dishes: [list]. Appetizers: [list]. Mains: [list]. Desserts: [list]. Drinks: [list]. "
+                "Only real menu items, no prices or HTML. If no menu items found, say NO_MENU_FOUND.\n\n" + page_text}]
+        )
+        result = msg.content[0].text.strip()
+        return "" if "NO_MENU_FOUND" in result or len(result) < 30 else result
+    except Exception:
+        return ""
+
+
+def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "") -> str:
+    """Extract menu items from PDF bytes using pypdf then AI."""
+    try:
+        import io, anthropic, os
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() or ""
+        text = text[:8000]
+        if len(text) < 50:
+            return ""
+        return _extract_menu_with_ai(text, restaurant_name)
+    except Exception as e:
+        print(f"[fetch_menu_from_pdf_bytes] error: {e}")
         return ""
 
 

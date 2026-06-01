@@ -2185,6 +2185,10 @@ textarea{resize:vertical;min-height:60px}
             <button type="button" onclick="refreshMenuFromGoogle()" style="background:none;border:1px solid var(--paper3);color:var(--ink3);padding:4px 12px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">↻ Refresh from Google Places</button>
             {% endif %}
             <button type="button" onclick="fetchMenuFromUrl()" style="background:none;border:1px solid var(--paper3);color:var(--ink3);padding:4px 12px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">↻ Fetch from menu URL</button>
+            <label style="cursor:pointer;background:none;border:1px solid var(--paper3);color:var(--ink3);padding:4px 12px;border-radius:4px;font-size:11px;font-weight:600;font-family:'DM Sans',sans-serif">
+              📄 Upload menu PDF
+              <input type="file" id="menu-pdf-input" accept=".pdf" style="display:none" onchange="uploadMenuPDF(this)">
+            </label>
           </div>
           <span id="menu-refresh-status" style="font-size:11px;color:var(--ink3);display:block;margin-top:4px"></span>
         </div>
@@ -2409,6 +2413,31 @@ async function deleteNote(noteId) {
   const data = await res.json();
   if(data.ok) location.reload();
 }
+async function uploadMenuPDF(input){
+  const file = input.files[0];
+  if(!file) return;
+  const status = document.getElementById('menu-refresh-status');
+  status.textContent = 'Extracting menu from PDF...'; status.style.color = 'var(--ink3)';
+  const form = new FormData();
+  form.append('pdf', file);
+  try {
+    const res = await fetch('/admin/upload-menu-pdf/{{ restaurant.id }}', {method:'POST', body: form});
+    const d = await res.json();
+    if(d.ok){
+      document.getElementById('menu_notes').value = d.menu_notes;
+      status.textContent = '✓ Menu extracted from PDF — review and save';
+      status.style.color = '#2d6a4f';
+    } else {
+      status.textContent = d.error || 'Could not extract menu from PDF';
+      status.style.color = '#c84b2f';
+    }
+  } catch(e) {
+    status.textContent = 'Upload failed';
+    status.style.color = '#c84b2f';
+  }
+  input.value = '';
+}
+
 async function fetchMenuFromUrl(){
   const urlInput = document.getElementById('menu_url');
   const status = document.getElementById('menu-refresh-status');

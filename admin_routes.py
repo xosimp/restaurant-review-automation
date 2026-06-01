@@ -1482,6 +1482,31 @@ def labor_trend_api(current_user):
         print(f"Labor trend error: {e}")
         return jsonify(weeks=[])
 
+@admin_bp.route("/admin/upload-menu-pdf/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def upload_menu_pdf(restaurant_id, current_user):
+    """Accept a PDF upload and extract menu items using AI."""
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found")
+    pdf_file = request.files.get("pdf")
+    if not pdf_file:
+        return jsonify(ok=False, error="No PDF file uploaded")
+    try:
+        pdf_bytes = pdf_file.read()
+        if len(pdf_bytes) > 10 * 1024 * 1024:  # 10MB limit
+            return jsonify(ok=False, error="PDF too large — max 10MB")
+        from competitor import fetch_menu_from_pdf_bytes
+        from models import update_restaurant
+        menu_notes = fetch_menu_from_pdf_bytes(pdf_bytes, restaurant.name)
+        if not menu_notes:
+            return jsonify(ok=False, error="Could not extract menu items from this PDF — try a text-based PDF rather than a scanned image")
+        update_restaurant(restaurant_id, {"menu_notes": menu_notes})
+        return jsonify(ok=True, menu_notes=menu_notes)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
+
 @admin_bp.route("/admin/fetch-menu-from-url/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def fetch_menu_from_url_route(restaurant_id, current_user):
