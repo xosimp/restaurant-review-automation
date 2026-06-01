@@ -4649,6 +4649,7 @@ if __name__ == "__main__":
             neighborhood="Melbourne, Florida — on the Indian River Lagoon waterfront",
             vibe="casual-elegant waterfront seafood and steakhouse with lagoon views and sunset patio",
             known_for="prime rib, fresh seafood, waterfront patio, happy hour, early bird specials",
+            yelp_business_id="chart-house-melbourne",
             module_reviews=1, module_labor=1,
             module_inventory=1, module_marketing=1,
             billing_status="trial",
