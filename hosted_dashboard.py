@@ -1666,14 +1666,14 @@ function loadInvInsight(){
 }
 let selCt='{{ctypes[0].id if ctypes}}';
 function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(b=>b.classList.remove('selected'));el.classList.add('selected')}
-function genContent(){
+function genContent(fromCalendar){
   const topic=document.getElementById('mktopic').value.trim();
   if(!topic){toast('Enter a topic');return;}
   const box=document.getElementById('mkoutput');
   box.style.fontStyle='italic';
   box.style.color='var(--ink3)';
   box.textContent='Generating…';
-  fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic})})
+  fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic,from_calendar:!!fromCalendar})})
     .then(r=>r.json())
     .then(d=>{
       box.style.fontStyle='normal';
@@ -1739,7 +1739,7 @@ function generateFromCal(type, topic) {
   });
   document.getElementById('mktopic').value = topic;
   document.getElementById('mkoutput').scrollIntoView({behavior:'smooth', block:'nearest'});
-  genContent();
+  genContent(true);
 }
 async function saveDigestDay() {
   const day     = document.getElementById('digest-day-select').value;
