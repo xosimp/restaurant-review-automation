@@ -207,7 +207,7 @@ def analyse_shifts(shifts: list[dict],
 
 
 def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant",
-                        owner_name: str = None) -> str:
+                        owner_name: str = None, restaurant_id: int = None) -> str:
     """Ask Claude to narrate labor findings in a warm, direct consultant tone."""
     greeting = f"{owner_name}," if owner_name else "Hi,"
     try:
@@ -228,9 +228,25 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
     if total_labor == 0:
         return (f"{greeting} No labor cost data was found in your upload. "
                 "Please make sure your CSV includes employee hours and hourly rates so we can calculate your true labor cost percentage.")
+    # Feedback loop: check how many times this client has uploaded shift data
+    upload_context = ""
+    if restaurant_id:
+        try:
+            from models import get_conn as _gc_l
+            _c = _gc_l()
+            row = _c.execute(
+                "SELECT COUNT(*) as cnt FROM client_data WHERE restaurant_id=? AND data_type='shifts'",
+                (restaurant_id,)
+            ).fetchone()
+            _c.close()
+            if row and row["cnt"] > 1:
+                upload_context = f"\nThis client has uploaded shift data {row['cnt']} times — they are actively engaged. Acknowledge their consistency and note if numbers are trending better or need more attention."
+        except Exception:
+            pass
+
     prompt = f"""You are the Cavnar AI Consultant — a friendly, experienced restaurant labor advisor.
 You are writing a weekly labor summary for {owner_name or "the owner"} of {restaurant_name}.
-Today's date: {today_labor}
+Today's date: {today_labor}{upload_context}
 
 Data:
 - Overall labor cost: ${analysis['total_labor_cost']:,.0f} on ${analysis['total_sales']:,.0f} in sales ({analysis['overall_labor_pct']}% labor ratio)

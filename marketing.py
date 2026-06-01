@@ -319,6 +319,11 @@ def generate_content(content_type: str, topic: str,
     return result
 
 
+def mark_calendar_idea_used(restaurant_id: int, content_type: str, topic: str):
+    """Track which calendar ideas were actually generated — feeds back into future calendar quality."""
+    log_content(restaurant_id, f"calendar_{content_type}", topic)
+
+
 def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
     """Generate a week of content ideas using Claude."""
     p = get_profile_for_restaurant(restaurant_id)

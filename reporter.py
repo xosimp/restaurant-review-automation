@@ -133,6 +133,23 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None):
         except Exception:
             pass
 
+        # Pull 1-2 specific notable reviews to call out by name
+        specific_reviews = ""
+        try:
+            notable = [r for r in reviews if r.urgency == "high" or r.rating == 5][:2]
+            if notable:
+                lines = []
+                for r in notable:
+                    reviewer = (r.review_name or "A guest").split()[0]
+                    snippet = (r.text or "")[:100].strip()
+                    stars = f"{r.rating}★"
+                    lines.append("- " + reviewer + " left a " + stars + " review: " + snippet[:80])
+                specific_reviews = "\n" + "\n".join(lines)
+            else:
+                specific_reviews = " None particularly notable this week."
+        except Exception:
+            specific_reviews = " No specific reviews to highlight."
+
         greeting = f"Hi {owner_name}" if owner_name else "Hi"
         prompt = f"""You are the Cavnar AI Consultant writing a brief weekly summary for {restaurant_name}.
 
@@ -146,9 +163,11 @@ This week's data:
 
 Today's actual date: {__import__('datetime').datetime.now(__import__('zoneinfo').ZoneInfo('America/Chicago')).strftime('%B %d, %Y') if True else ''}
 
+Notable reviews this week:{specific_reviews}
+
 Write 2-3 sentences starting with "{greeting}," that:
-1. Give the honest overall picture covering the most important metric this week (reviews, labor, or inventory — whichever is most notable)
-2. Call out the single most important thing to act on this week
+1. Give the honest overall picture covering the most important metric this week
+2. Call out the single most important thing to act on — if there's a notable review, mention the reviewer by first name and what they said
 3. End with one specific, actionable suggestion
 
 Tone: warm, direct, like a trusted advisor. No markdown, no bullet points, plain sentences only."""

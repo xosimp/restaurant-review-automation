@@ -235,6 +235,18 @@ def create_client(current_user):
             "module_marketing":int(data.get("module_marketing", 0)),
             "temp_password":   data.get("password",""),
         })
+
+        # Auto-fetch menu notes from Google Places if place ID provided
+        google_place_id = data.get("google_place_id") or None
+        if google_place_id and int(data.get("module_marketing", 0)):
+            try:
+                from competitor import fetch_menu_notes_from_places
+                auto_menu = fetch_menu_notes_from_places(google_place_id)
+                if auto_menu:
+                    update_restaurant(rid, {"menu_notes": auto_menu})
+                    print(f"[create_client] Auto-fetched menu notes for {data['restaurant_name']}")
+            except Exception as me:
+                print(f"[create_client] Menu auto-fetch failed: {me}")
         mods = (int(data.get("module_reviews",0)) + int(data.get("module_labor",0)) +
                 int(data.get("module_inventory",0)) + int(data.get("module_marketing",0)))
         module_names = []
@@ -1468,6 +1480,32 @@ def labor_trend_api(current_user):
     except Exception as e:
         print(f"Labor trend error: {e}")
         return jsonify(weeks=[])
+
+@admin_bp.route("/admin/refresh-menu-notes/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def refresh_menu_notes(restaurant_id, current_user):
+    """Re-fetch menu notes from Google Places and update the restaurant record."""
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant or not restaurant.google_place_id:
+        return jsonify(ok=False, error="No Google Place ID set for this restaurant")
+    try:
+        from competitor import fetch_menu_notes_from_places
+        from models import update_restaurant
+        menu_notes = fetch_menu_notes_from_places(restaurant.google_place_id)
+        if not menu_notes:
+            return jsonify(ok=False, error="No menu data found on Google Places for this restaurant")
+        # Merge with any existing manual notes
+        existing = restaurant.menu_notes or ""
+        if existing and existing not in menu_notes:
+            # Keep manual additions below the auto-fetched data
+            merged = menu_notes + ("\n\nAdditional notes:\n" + existing if existing else "")
+        else:
+            merged = menu_notes
+        update_restaurant(restaurant_id, {"menu_notes": merged})
+        return jsonify(ok=True, menu_notes=merged)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
 
 @admin_bp.route("/admin/resend-welcome/<int:restaurant_id>", methods=["POST"])
 @admin_required

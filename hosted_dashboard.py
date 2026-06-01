@@ -2180,6 +2180,10 @@ textarea{resize:vertical;min-height:60px}
           <label class="form-label">Menu &amp; current specials</label>
           <textarea id="menu_notes" rows="4" placeholder="Key menu items, signature dishes, current specials — e.g. Known for: short rib pasta, truffle fries, brunch cocktails. Current specials: bottomless brunch Sat/Sun 10am-2pm">{{ restaurant.menu_notes or '' }}</textarea>
           <div class="hint">AI uses this to generate accurate, specific marketing content. Update when menu or specials change.</div>
+          {% if restaurant.google_place_id %}
+          <button type="button" onclick="refreshMenuFromGoogle()" style="margin-top:6px;background:none;border:1px solid var(--paper3);color:var(--ink3);padding:4px 12px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">↻ Refresh from Google Places</button>
+          <span id="menu-refresh-status" style="font-size:11px;color:var(--ink3);margin-left:8px"></span>
+          {% endif %}
         </div>
       </div>
     </div>
@@ -2397,6 +2401,29 @@ async function deleteNote(noteId) {
   const data = await res.json();
   if(data.ok) location.reload();
 }
+async function refreshMenuFromGoogle(){
+  const btn = event.target;
+  const status = document.getElementById('menu-refresh-status');
+  btn.disabled = true; btn.textContent = '↻ Fetching...';
+  status.textContent = '';
+  try {
+    const res = await fetch('/admin/refresh-menu-notes/{{ restaurant.id }}', {method:'POST'});
+    const d = await res.json();
+    if(d.ok){
+      document.getElementById('menu_notes').value = d.menu_notes;
+      status.textContent = '✓ Updated from Google Places';
+      status.style.color = '#2d6a4f';
+    } else {
+      status.textContent = d.error || 'No menu data found on Google Places';
+      status.style.color = '#c84b2f';
+    }
+  } catch(e) {
+    status.textContent = 'Request failed';
+    status.style.color = '#c84b2f';
+  }
+  btn.disabled = false; btn.textContent = '↻ Refresh from Google Places';
+}
+
 async function resendWelcome(){
   const btn = document.getElementById('resend-welcome-btn');
   const status = document.getElementById('test-email-status');
@@ -3931,7 +3958,7 @@ def labor_insight_api(current_user):
         name  = restaurant.name if restaurant else "your restaurant"
         owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
         analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
-        insight = get_claude_insights(analysis, restaurant_name=name, owner_name=owner)
+        insight = get_claude_insights(analysis, restaurant_name=name, owner_name=owner, restaurant_id=current_user["restaurant_id"])
         return jsonify(insight=format_insight_html(insight))
     except Exception as e:
         import traceback; traceback.print_exc()
@@ -3952,11 +3979,18 @@ def inv_insight_api(current_user):
 @login_required
 def gen_content(current_user):
     data = request.get_json()
-    from marketing import generate_content
+    from marketing import generate_content, mark_calendar_idea_used
     user = get_current_user()
-    return jsonify(content=generate_content(
-        data.get("type","instagram_post"), data.get("topic",""),
-        restaurant_id=user["restaurant_id"] if user else None))
+    rid = user["restaurant_id"] if user else None
+    content_type = data.get("type","instagram_post")
+    topic = data.get("topic","")
+    result = generate_content(content_type, topic, restaurant_id=rid)
+    if data.get("from_calendar") and rid:
+        try:
+            mark_calendar_idea_used(rid, content_type, topic)
+        except Exception:
+            pass
+    return jsonify(content=result)
 
 @app.route("/api/content-calendar")
 @login_required

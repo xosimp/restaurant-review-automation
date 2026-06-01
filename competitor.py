@@ -8,6 +8,68 @@ PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
 ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
 
 
+def fetch_menu_notes_from_places(google_place_id: str) -> str:
+    """Fetch menu URL, editorial summary, and cuisine info from Google Places API.
+    Returns a string suitable for menu_notes field, or empty string if nothing useful found."""
+    if not PLACES_API_KEY or not google_place_id:
+        return ""
+    try:
+        details_url = "https://maps.googleapis.com/maps/api/place/details/json"
+        r = requests.get(details_url, params={
+            "place_id": google_place_id,
+            "fields": "name,types,price_level,editorial_summary,menu_url,website,serves_breakfast,serves_brunch,serves_lunch,serves_dinner,serves_beer,serves_wine,serves_cocktails,serves_vegetarian_food",
+            "key": PLACES_API_KEY,
+        })
+        data = r.json()
+        if data.get("status") != "OK":
+            return ""
+        result = data.get("result", {})
+
+        parts = []
+
+        # Editorial summary (Google's own description)
+        summary = result.get("editorial_summary", {}).get("overview", "")
+        if summary:
+            parts.append(f"Google description: {summary}")
+
+        # Meal services
+        meal_flags = []
+        if result.get("serves_breakfast"): meal_flags.append("breakfast")
+        if result.get("serves_brunch"): meal_flags.append("brunch")
+        if result.get("serves_lunch"): meal_flags.append("lunch")
+        if result.get("serves_dinner"): meal_flags.append("dinner")
+        if meal_flags:
+            parts.append(f"Serves: {', '.join(meal_flags)}")
+
+        # Drinks
+        drinks = []
+        if result.get("serves_beer"): drinks.append("beer")
+        if result.get("serves_wine"): drinks.append("wine")
+        if result.get("serves_cocktails"): drinks.append("cocktails")
+        if drinks:
+            parts.append(f"Drinks: {', '.join(drinks)}")
+
+        if result.get("serves_vegetarian_food"):
+            parts.append("Vegetarian options available")
+
+        # Cuisine types
+        generic = {"restaurant","food","point_of_interest","establishment","bar","cafe"}
+        types = [t.replace("_restaurant","").replace("_"," ") 
+                 for t in result.get("types", []) if t not in generic]
+        if types:
+            parts.append(f"Cuisine type: {', '.join(types[:3])}")
+
+        # Menu URL for reference
+        menu_url = result.get("menu_url", "")
+        if menu_url:
+            parts.append(f"Menu URL: {menu_url}")
+
+        return "\n".join(parts) if parts else ""
+    except Exception as e:
+        print(f"[fetch_menu_notes] error: {e}")
+        return ""
+
+
 def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_results: int = 5) -> list:
     """Find nearby restaurants using the Google Places API."""
     if not PLACES_API_KEY or not google_place_id:
