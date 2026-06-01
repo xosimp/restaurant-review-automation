@@ -169,10 +169,11 @@ Topic/occasion: {topic}
 Known for: {known_for}
 
 Write 2 versions:
-VERSION A (short, punchy — 1-2 sentences + hashtags)
-VERSION B (storytelling — 3-4 sentences + hashtags)
+1st option (short, punchy — 1-2 sentences + hashtags)
+2nd option (storytelling — 3-4 sentences + hashtags)
 
 If menu items are provided below, reference specific dishes by name — never make up dishes.
+IMPORTANT: Only reference location details (water views, surroundings, setting) that are provided in the restaurant profile. Never invent or assume geographic details like "river", "ocean", "mountains" — use only what you are told.
 Use 5-8 relevant hashtags per version. No emojis unless they feel totally natural.
 Do not use the phrases "indulge", "culinary journey", "delight", or "experience".""",
 
@@ -295,6 +296,9 @@ def generate_content(content_type: str, topic: str,
     never_clause = f"\nNever use these words or phrases: {p['never_say']}." if p.get('never_say') else ""
     menu_clause = f"\nMenu & current specials for {p['name']}: {p['menu_notes']}\nUse this to make content specific and accurate — reference real dishes, specials, and offerings when relevant." if p.get('menu_notes') else ""
 
+    # Build explicit location context so AI doesn't invent geography
+    location_context = f"\nLocation context: {p['neighborhood']}. Setting/vibe: {p['vibe']}. Only use these details when describing the restaurant's physical setting — do not add any geographic details not mentioned here."
+
     prompt = prompt_template.format(
         restaurant=p["name"],
         neighborhood=p["neighborhood"],
@@ -302,7 +306,7 @@ def generate_content(content_type: str, topic: str,
         voice=p["voice"],
         known_for=p["known_for"],
         topic=topic,
-    ) + recent_context + seasonal_context + never_clause + menu_clause
+    ) + location_context + recent_context + seasonal_context + never_clause + menu_clause
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
@@ -371,7 +375,8 @@ Rules:
 - Reference real menu items and dishes by name when menu info is provided
 - For any upcoming holiday, make the content feel natural and relevant to THIS restaurant — skip it if it doesn't fit
 - Vary platforms across the 7 days — don't use Instagram more than 3 times
-- Make every idea specific enough that the owner knows exactly what to post"""
+- Make every idea specific enough that the owner knows exactly what to post
+- NEVER invent geographic or setting details — only reference location specifics (waterfront, patio, views) if they are explicitly mentioned in the restaurant profile above"""
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
