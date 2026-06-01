@@ -123,6 +123,8 @@ def admin(current_user):
     # Calculate MRR from active clients
     mrr = 0
     for u in enriched:
+        if u.get("is_admin"):
+            continue  # Never count admin account in MRR
         if u.get("is_active") and u.get("billing_status") == "active":
             r = get_restaurant(u["restaurant_id"])
             if r:
@@ -270,8 +272,10 @@ def create_client(current_user):
         # Steps 2 & 3 (payment + welcome emails) fire automatically
         # when the client signs the contract via the DocuSign webhook
 
-        return jsonify(ok=True, restaurant_id=rid, envelope_id=envelope_id)
+        docusign_skipped = envelope_id is None and mods > 0
+        return jsonify(ok=True, restaurant_id=rid, envelope_id=envelope_id, docusign_skipped=docusign_skipped)
     except Exception as e:
+        import traceback; traceback.print_exc()
         return jsonify(ok=False, error=str(e))
 
 @admin_bp.route("/admin/deactivate-client/<int:user_id>", methods=["POST"])

@@ -2835,7 +2835,7 @@ input:focus,select:focus{border-color:var(--ember)}
   <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:24px">
     <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
       <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Active Clients</div>
-      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:var(--paper)">{{users|selectattr('is_active')|list|length}}</div>
+      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:var(--paper)">{{users|selectattr('is_active')|selectattr('is_admin','equalto',0)|list|length}}</div>
     </div>
     <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
       <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">MRR</div>
@@ -2847,7 +2847,7 @@ input:focus,select:focus{border-color:var(--ember)}
     </div>
     <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
       <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Contracts Signed</div>
-      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:var(--ember)">{{users|selectattr('contract_status','equalto','signed')|list|length}} / {{users|selectattr('is_active')|list|length}}</div>
+      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:var(--ember)">{{users|selectattr('contract_status','equalto','signed')|selectattr('is_admin','equalto',0)|list|length}} / {{users|selectattr('is_active')|selectattr('is_admin','equalto',0)|list|length}}</div>
     </div>
   </div>
 
@@ -4432,10 +4432,10 @@ if __name__ == "__main__":
             rid = r[0]
         create_user(rid, ADMIN_USERNAME, "will@cavnar.ai",
                     admin_pw, is_admin=True)
-        # Set admin billing status to active
+        # Set admin billing status to internal so it never affects MRR/client stats
         from models import get_conn as _gc2
         _c = _gc2()
-        _c.execute("UPDATE restaurants SET billing_status='active' WHERE id=?", (rid,))
+        _c.execute("UPDATE restaurants SET billing_status='internal' WHERE id=?", (rid,))
         _c.commit(); _c.close()
         print(f"\n  Admin account created: {ADMIN_USERNAME} (password set from env)\n")
 
