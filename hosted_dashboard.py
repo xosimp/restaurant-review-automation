@@ -2176,6 +2176,11 @@ textarea{resize:vertical;min-height:60px}
           <input type="text" id="never_say" value="{{ restaurant.never_say or '' }}" placeholder="e.g. culinary journey, indulge, delightful">
           <div class="hint">Comma-separated — AI will never use these</div>
         </div>
+        <div class="form-row-wide">
+          <label class="form-label">Menu &amp; current specials</label>
+          <textarea id="menu_notes" rows="4" placeholder="Key menu items, signature dishes, current specials — e.g. Known for: short rib pasta, truffle fries, brunch cocktails. Current specials: bottomless brunch Sat/Sun 10am-2pm">{{ restaurant.menu_notes or '' }}</textarea>
+          <div class="hint">AI uses this to generate accurate, specific marketing content. Update when menu or specials change.</div>
+        </div>
       </div>
     </div>
   </div>
@@ -2471,6 +2476,7 @@ async function saveSettings() {
     vibe:            document.getElementById('vibe').value,
     voice_notes:     document.getElementById('voice_notes').value,
     never_say:       document.getElementById('never_say').value,
+    menu_notes:      document.getElementById('menu_notes').value,
     hourly_rate:        parseFloat(document.getElementById('hourly_rate').value),
     labor_target_pct:   parseFloat(document.getElementById('labor_target_pct').value) || 30.0,
     billing_status:  document.getElementById('billing_status').value,
@@ -3994,12 +4000,24 @@ def regenerate_draft(review_id, current_user):
         import anthropic
         client = anthropic.Anthropic()
         sentiment_note = {"positive":"positive","negative":"negative","neutral":"neutral"}.get(r.get("sentiment","neutral"),"neutral")
+
+        # Pull approved examples to teach the AI this owner's style
+        from models import get_approved_examples
+        examples = get_approved_examples(current_user["restaurant_id"], limit=4)
+        examples_block = ""
+        if examples:
+            ex_lines = "\n".join([
+                f"  Review ({e['rating']}★): \"{e['review']}\"\n  Response: \"{e['response']}\""
+                for e in examples
+            ])
+            examples_block = f"\n\nHere are {len(examples)} recent responses this owner approved — match this exact tone and style:\n{ex_lines}"
+
         prompt = f"""Write a professional, warm restaurant response to this {sentiment_note} review.
 
 Restaurant: {restaurant.name}
 Voice guidance: {restaurant.voice_notes or "Warm, genuine, never corporate. Always invite guests back."}
 Sign off as: {restaurant.sign_off_name or restaurant.name}
-Never use: {restaurant.never_say or ""}
+Never use: {restaurant.never_say or ""}{examples_block}
 
 Review (rating: {r["rating"]}/5):
 {r["text"]}

@@ -198,11 +198,16 @@ def run_daily_fetch():
                 except Exception as e:
                     log.error(f"Analyse error: {e}")
 
-            # Draft
+            # Draft — include approved examples for style learning
+            from models import get_approved_examples
+            approved_examples = get_approved_examples(rid, limit=4)
             for r in get_pending_drafts(rid, limit=50):
                 try:
                     draft_response(r.id, r.rating, r.text, r.sentiment,
-                                  restaurant.name, restaurant.voice_notes or "")
+                                  restaurant.name, restaurant.voice_notes or "",
+                                  approved_examples=approved_examples,
+                                  sign_off=restaurant.sign_off_name or restaurant.name,
+                                  never_say=restaurant.never_say or "")
                 except Exception as e:
                     log.error(f"Draft error: {e}")
 

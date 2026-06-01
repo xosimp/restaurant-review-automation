@@ -108,6 +108,31 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None):
         if inventory_context:
             extra_context += f"\n- {inventory_context}"
 
+        # Pull last week's stats for comparison
+        wow_context = ""
+        try:
+            from datetime import datetime, timedelta
+            from models import get_reviews_since, get_conn as _gc_r
+            from zoneinfo import ZoneInfo
+            now_chi = datetime.now(ZoneInfo('America/Chicago'))
+            last_week_start = (now_chi - timedelta(days=14)).isoformat()
+            last_week_end = (now_chi - timedelta(days=7)).isoformat()
+            _conn_r = _gc_r()
+            last_week = _conn_r.execute(
+                """SELECT COUNT(*) as cnt, AVG(rating) as avg_r FROM reviews
+                   WHERE restaurant_id=? AND fetched_at >= ? AND fetched_at < ?""",
+                (report.restaurant_id, last_week_start, last_week_end)
+            ).fetchone()
+            _conn_r.close()
+            if last_week and last_week["cnt"] > 0:
+                diff = report.total_reviews - last_week["cnt"]
+                diff_str = f"+{diff}" if diff >= 0 else str(diff)
+                avg_diff = round((report.avg_rating or 0) - (last_week["avg_r"] or 0), 1)
+                avg_diff_str = f"+{avg_diff}" if avg_diff >= 0 else str(avg_diff)
+                wow_context = f"\n- vs last week: {diff_str} reviews, rating {avg_diff_str}"
+        except Exception:
+            pass
+
         greeting = f"Hi {owner_name}" if owner_name else "Hi"
         prompt = f"""You are the Cavnar AI Consultant writing a brief weekly summary for {restaurant_name}.
 
@@ -117,7 +142,7 @@ This week's data:
 - Positive: {pos}, Negative: {neg}
 - Urgent reviews needing attention: {urgent_count}
 - Top themes: {top_themes or "nothing notable"}
-- Period: {report.period_start} to {report.period_end}{extra_context}
+- Period: {report.period_start} to {report.period_end}{wow_context}{extra_context}
 
 Today's actual date: {__import__('datetime').datetime.now(__import__('zoneinfo').ZoneInfo('America/Chicago')).strftime('%B %d, %Y') if True else ''}
 

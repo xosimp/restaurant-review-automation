@@ -408,6 +408,7 @@ def save_client_settings(restaurant_id, current_user):
             "known_for":       sanitize(data.get("known_for","")),
             "sign_off_name":   data.get("sign_off_name","").strip() or None,
             "never_say":       sanitize(data.get("never_say","")),
+            "menu_notes":      sanitize(data.get("menu_notes",""), max_len=2000),
             "hourly_rate":     float(data.get("hourly_rate") or 26.0),
             "labor_target_pct": float(data.get("labor_target_pct") or 30.0),
             "pos_system":      data.get("pos_system","").strip() or None,

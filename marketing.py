@@ -117,6 +117,7 @@ def get_profile_for_restaurant(restaurant_id: int = None) -> dict:
             "voice":       r.voice_notes or "warm, genuine, never corporate",
             "never_say":   r.never_say or "",
             "sign_off_name": r.sign_off_name or r.name,
+            "menu_notes":  r.menu_notes or "",
         }
     except Exception:
         return DEFAULT_PROFILE
@@ -289,6 +290,7 @@ def generate_content(content_type: str, topic: str,
     seasonal_context = f"\nToday's date: {today_date}. Upcoming holidays in next 30 days: {upcoming if upcoming else 'none'}. Only reference holidays that are actually coming up soon."
 
     never_clause = f"\nNever use these words or phrases: {p['never_say']}." if p.get('never_say') else ""
+    menu_clause = f"\nMenu & current specials for {p['name']}: {p['menu_notes']}\nUse this to make content specific and accurate — reference real dishes, specials, and offerings when relevant." if p.get('menu_notes') else ""
 
     prompt = prompt_template.format(
         restaurant=p["name"],
@@ -297,7 +299,7 @@ def generate_content(content_type: str, topic: str,
         voice=p["voice"],
         known_for=p["known_for"],
         topic=topic,
-    ) + recent_context + seasonal_context + never_clause
+    ) + recent_context + seasonal_context + never_clause + menu_clause
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
