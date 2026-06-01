@@ -92,6 +92,18 @@ CREATE TABLE IF NOT EXISTS reviews (
     UNIQUE(platform, external_id)
 );
 
+CREATE TABLE IF NOT EXISTS labor_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+    period_start    TEXT NOT NULL,
+    period_end      TEXT NOT NULL,
+    labor_pct       REAL,
+    total_labor     REAL,
+    total_sales     REAL,
+    saved_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_labor_history_restaurant ON labor_history(restaurant_id);
+
 CREATE TABLE IF NOT EXISTS activity_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     restaurant_id   INTEGER NOT NULL,
@@ -849,6 +861,32 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
     """, (restaurant_id, limit)).fetchall()
     conn.close()
     return [{"rating": r["rating"], "review": r["text"][:120], "response": r["draft_response"]} for r in rows]
+
+
+def save_labor_snapshot(restaurant_id: int, period_start: str, period_end: str,
+                         labor_pct: float, total_labor: float, total_sales: float,
+                         db_path: str = DB_PATH):
+    """Save a labor analysis snapshot for trend tracking."""
+    conn = get_conn(db_path)
+    conn.execute("""
+        INSERT INTO labor_history (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (restaurant_id, period_start, period_end, labor_pct, total_labor, total_sales))
+    conn.commit()
+    conn.close()
+
+
+def get_labor_history(restaurant_id: int, limit: int = 4,
+                      db_path: str = DB_PATH) -> list:
+    """Return recent labor snapshots for trend awareness."""
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT period_start, period_end, labor_pct, total_labor, total_sales
+        FROM labor_history WHERE restaurant_id=?
+        ORDER BY saved_at DESC LIMIT ?
+    """, (restaurant_id, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def log_activity(restaurant_id: int, tab: str,

@@ -185,6 +185,24 @@ def analyse_shifts(shifts: list[dict],
     target_labor_cost = total_sales * (LABOR_TARGET / 100)
     potential_savings = round(max(0, total_labor - target_labor_cost) * 2, 2)  # x2 to project monthly
 
+    # Role-level breakdown
+    by_role = defaultdict(lambda: {"hours": 0, "labor_cost": 0, "headcount": set()})
+    for s in shifts:
+        role = s.get("role", "Unknown")
+        actual = float(s["actual_hours"])
+        by_role[role]["hours"] += actual
+        by_role[role]["labor_cost"] += actual * HOURLY_RATE
+        by_role[role]["headcount"].add(s["employee"])
+    role_summary = {
+        role: {
+            "hours": round(d["hours"], 1),
+            "labor_cost": round(d["labor_cost"], 2),
+            "headcount": len(d["headcount"]),
+            "labor_pct": round(d["labor_cost"] / total_sales * 100, 1) if total_sales else 0
+        }
+        for role, d in by_role.items()
+    }
+
     return {
         "total_labor_cost": round(total_labor, 2),
         "total_sales": round(total_sales, 2),
@@ -194,6 +212,7 @@ def analyse_shifts(shifts: list[dict],
         "overtime_risk": overtime_flags,
         "dow_summary": dow_summary,
         "potential_savings": potential_savings,
+        "role_summary": role_summary,
         "by_day": {k: {kk: vv for kk, vv in v.items() if kk != "shifts"}
                    for k, v in by_day.items()},
         "employee_hours": {k: dict(v) for k, v in by_employee.items()},
@@ -244,6 +263,43 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
         except Exception:
             pass
 
+    # Pull labor history for trend awareness
+    trend_context = ""
+    if restaurant_id:
+        try:
+            from models import get_labor_history, save_labor_snapshot
+            history = get_labor_history(restaurant_id, limit=3)
+            if history:
+                trend_lines = []
+                for h in history:
+                    trend_lines.append(f"{h['period_start']} to {h['period_end']}: {h['labor_pct']}% labor")
+                trend_context = f"\n- Previous uploads (for trend comparison): {'; '.join(trend_lines)}"
+                # Check if trending up or down
+                if len(history) >= 2:
+                    diff = analysis['overall_labor_pct'] - history[0]['labor_pct']
+                    if abs(diff) >= 1:
+                        direction = "UP" if diff > 0 else "DOWN"
+                        trend_context += f"\n- TREND: Labor % is {direction} {abs(diff):.1f} points from last upload — mention this trend explicitly"
+            # Save this upload as a new snapshot
+            dr = analysis.get('date_range', {})
+            if dr.get('start') and dr.get('end'):
+                save_labor_snapshot(
+                    restaurant_id, dr['start'], dr['end'],
+                    analysis['overall_labor_pct'],
+                    analysis['total_labor_cost'],
+                    analysis['total_sales']
+                )
+        except Exception as le:
+            print(f"[labor trend] {le}")
+
+    # Role breakdown context
+    role_context = ""
+    role_summary = analysis.get('role_summary', {})
+    if role_summary:
+        role_lines = [f"{role}: {d['labor_pct']}% labor ({d['headcount']} staff, {d['hours']}h)"
+                      for role, d in sorted(role_summary.items(), key=lambda x: x[1]['labor_cost'], reverse=True)]
+        role_context = f"\n- Labor by role/department: {'; '.join(role_lines)}"
+
     prompt = f"""You are the Cavnar AI Consultant — a friendly, experienced restaurant labor advisor.
 You are writing a weekly labor summary for {owner_name or "the owner"} of {restaurant_name}.
 Today's date: {today_labor}{upload_context}
@@ -253,7 +309,7 @@ Data:
 - Industry target: 28-32% labor ratio
 - Overstaffed days: {json.dumps(analysis['overstaffed_days'][:3])}
 - Understaffed days: {json.dumps(analysis['understaffed_days'][:2])}
-- Overtime risk: {json.dumps(analysis['overtime_risk'])}
+- Overtime risk: {json.dumps(analysis['overtime_risk'])}{role_context}{trend_context}
 - Labor % by day of week: {json.dumps(analysis['dow_summary'])}
 - Estimated monthly savings with optimized scheduling: ${analysis['potential_savings']:,.0f}
 

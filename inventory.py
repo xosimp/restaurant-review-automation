@@ -117,19 +117,84 @@ def analyse_inventory(items: list[dict]) -> dict:
     }
 
 
-def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name: str = None) -> str:
+def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name: str = None, restaurant_id: int = None) -> str:
     """Claude narrates inventory findings like a food cost consultant."""
     name_line = f"Owner name: {owner_name}" if owner_name else ""
     rest_line  = f"Restaurant: {restaurant_name}" if restaurant_name else ""
+    # Pull inventory history for week-over-week comparison
+    wow_context = ""
+    menu_context = ""
+    if restaurant_id:
+        try:
+            from models import get_conn as _gc_inv
+            _conn_inv = _gc_inv()
+            # Get previous waste snapshot
+            prev = _conn_inv.execute("""
+                SELECT waste_json FROM inventory_history
+                WHERE restaurant_id=? ORDER BY saved_at DESC LIMIT 1
+            """, (restaurant_id,)).fetchone()
+            if prev and prev["waste_json"]:
+                import json as _json_inv
+                prev_waste = _json_inv.loads(prev["waste_json"])
+                prev_total = prev_waste.get("total_waste_cost", 0)
+                curr_total = analysis['total_waste_cost_week']
+                if prev_total > 0:
+                    diff = curr_total - prev_total
+                    pct_change = round((diff / prev_total) * 100, 1)
+                    direction = "UP" if diff > 0 else "DOWN"
+                    wow_context = f"\n- vs last week: waste is {direction} ${abs(diff):,.2f} ({abs(pct_change)}%) — mention this trend"
+                # Check if same items repeating
+                prev_items = set(prev_waste.get("top_items", []))
+                curr_items = set(x["item"] for x in analysis["waste_items"][:4])
+                repeat = prev_items & curr_items
+                if repeat:
+                    wow_context += f"\n- REPEAT waste offenders (2+ weeks): {', '.join(repeat)} — these need stronger action, not just reordering"
+
+            # Save current snapshot
+            import json as _json_inv2
+            snapshot = {
+                "total_waste_cost": analysis['total_waste_cost_week'],
+                "top_items": [x["item"] for x in analysis["waste_items"][:4]]
+            }
+            _conn_inv.execute("""CREATE TABLE IF NOT EXISTS inventory_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                waste_json TEXT,
+                saved_at TEXT DEFAULT (datetime('now'))
+            )""")
+            _conn_inv.execute(
+                "INSERT INTO inventory_history (restaurant_id, waste_json) VALUES (?,?)",
+                (restaurant_id, _json_inv2.dumps(snapshot))
+            )
+            _conn_inv.commit()
+            _conn_inv.close()
+        except Exception as ie:
+            print(f"[inventory history] {ie}")
+
+        # Menu connection — if restaurant has menu_notes, suggest menu decisions for repeat waste
+        try:
+            from models import get_restaurant as _gr_inv
+            rest = _gr_inv(restaurant_id)
+            if rest and rest.menu_notes and analysis["waste_items"]:
+                top_waste_item = analysis["waste_items"][0]["item"]
+                menu_context = f"\n- Menu context: {rest.menu_notes[:300]}. If {top_waste_item} appears in multiple dishes, consider whether portion sizes or menu placement should change."
+        except Exception:
+            pass
+
+    from datetime import datetime as _dt_inv
+    from zoneinfo import ZoneInfo
+    today_inv = _dt_inv.now(ZoneInfo('America/Chicago')).strftime("%B %d, %Y")
+
     prompt = f"""You are a food cost consultant reviewing weekly inventory data for a restaurant.
 {rest_line}
 {name_line}
+Today's date: {today_inv}
 
 Key findings:
 - Waste this week: ${analysis['total_waste_cost_week']:,.2f}
 - Projected monthly waste cost: ${analysis['monthly_waste_projection']:,.2f}
 - Recoverable with better ordering: ${analysis['recoverable_monthly']:,.2f}/month
-- Total current inventory value: ${analysis['total_stock_value']:,.2f}
+- Total current inventory value: ${analysis['total_stock_value']:,.2f}{wow_context}
 
 Top waste offenders:
 {json.dumps([{"item": x["item"], "waste_units": x["waste_last_week"], "waste_cost": x["waste_cost"], "waste_pct": x["waste_pct"]} for x in analysis["waste_items"][:4]], indent=2)}
@@ -138,7 +203,7 @@ Overstocked items:
 {json.dumps([{"item": x["item"], "current": x["current_stock"], "par": x["par_level"], "overstock_cost": x["overstock_cost"]} for x in analysis["overstock"][:3]], indent=2)}
 
 Critical low stock:
-{json.dumps([{"item": x["item"], "days_remaining": x["days_remaining"]} for x in analysis["critical_low"]], indent=2)}
+{json.dumps([{"item": x["item"], "days_remaining": x["days_remaining"]} for x in analysis["critical_low"]], indent=2)}{menu_context}
 
 Write a food cost analysis. Rules that apply to everything:
 - No markdown, no bullet points, no bold text, no asterisks whatsoever

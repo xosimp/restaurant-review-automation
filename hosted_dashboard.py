@@ -4040,7 +4040,7 @@ def inv_insight_api(current_user):
     items, _is_live = load_inventory_for_restaurant(current_user["restaurant_id"])
     analysis = analyse_inventory(items)
     owner_name = restaurant.owner_name if restaurant else None
-    insight  = get_claude_insights(analysis, owner_name=owner_name, restaurant_name=restaurant.name if restaurant else None)
+    insight  = get_claude_insights(analysis, owner_name=owner_name, restaurant_name=restaurant.name if restaurant else None, restaurant_id=current_user["restaurant_id"])
     return jsonify(insight=format_insight_html(insight))
 
 @app.route("/api/generate-content", methods=["POST"])
@@ -4114,17 +4114,69 @@ def regenerate_draft(review_id, current_user):
             ])
             examples_block = f"\n\nHere are {len(examples)} recent responses this owner approved — match this exact tone and style:\n{ex_lines}"
 
+        # Extract reviewer first name if available
+        reviewer_name = ""
+        if r.get("review_name"):
+            first = r["review_name"].strip().split()[0]
+            # Only use if it looks like a real name (not "A Google User" etc)
+            if len(first) > 1 and first.lower() not in ("a","an","the","anonymous","user","google","yelp"):
+                reviewer_name = first
+
+        # Pull recurring negative themes to address patterns
+        theme_context = ""
+        if sentiment_note == "negative":
+            try:
+                from models import get_conn as _gc_r
+                _conn_r = _gc_r()
+                recent_neg = _conn_r.execute("""
+                    SELECT text FROM reviews
+                    WHERE restaurant_id=? AND sentiment='negative'
+                    AND response_status NOT IN ('skipped')
+                    ORDER BY fetched_at DESC LIMIT 5
+                """, (current_user["restaurant_id"],)).fetchall()
+                _conn_r.close()
+                if len(recent_neg) >= 3:
+                    theme_context = f"\n\nNote: This restaurant has had {len(recent_neg)} negative reviews recently. If this review shares themes with common complaints, acknowledge the pattern and note that it's being actively addressed."
+            except Exception:
+                pass
+
+        # Platform-specific guidance
+        platform = r.get("platform", "google")
+        if platform == "google":
+            platform_guidance = "This is a Google review — naturally include the restaurant name once for SEO. Keep it professional and inviting."
+        elif platform == "yelp":
+            platform_guidance = "This is a Yelp review — be conversational and genuine. Do NOT include the restaurant name repeatedly."
+        else:
+            platform_guidance = "Keep the response professional and genuine."
+
+        # Length calibration by rating
+        rating = r.get("rating", 3)
+        if rating >= 4:
+            length_guidance = "Keep it brief and warm — 25-40 words is ideal for a positive review. Don't over-explain."
+        elif rating == 3:
+            length_guidance = "Keep it 40-60 words — acknowledge both the positives and address any concerns mentioned."
+        else:
+            length_guidance = "This needs a fuller response — 60-80 words. Acknowledge specific complaints mentioned, apologize sincerely, and explain what will be done differently."
+
+        # Build reviewer address
+        reviewer_line = f"Address the reviewer as {reviewer_name} by name at the start." if reviewer_name else "Do not invent a name — start without one."
+
         prompt = f"""Write a professional, warm restaurant response to this {sentiment_note} review.
 
 Restaurant: {restaurant.name}
+Platform: {platform_guidance}
 Voice guidance: {restaurant.voice_notes or "Warm, genuine, never corporate. Always invite guests back."}
 Sign off as: {restaurant.sign_off_name or restaurant.name}
 Never use: {restaurant.never_say or ""}{examples_block}
+{reviewer_line}
+Length: {length_guidance}
+
+IMPORTANT: If the reviewer mentions specific complaints (cold food, slow service, wrong order, etc.) — address each one directly by name. Do not give a generic apology.{theme_context}
 
 Review (rating: {r["rating"]}/5):
 {r["text"]}
 
-Write ONLY the response, no preamble. Keep it under 100 words. Sound like a real person, not a PR firm."""
+Write ONLY the response, no preamble. Sound like a real person, not a PR firm."""
 
         msg = client.messages.create(
             model=os.getenv("CLAUDE_MODEL","claude-haiku-4-5-20251001"),
