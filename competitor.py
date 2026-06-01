@@ -373,7 +373,22 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
             profile_lines.append("Independent restaurant — focus recommendations on service, hospitality, and marketing")
         profile_context = "\n".join(profile_lines)
 
+        # Add upcoming holidays for timely recommendations
+        try:
+            from marketing import get_upcoming_holidays as _get_hols_c
+            from datetime import datetime as _dt_hc
+            from zoneinfo import ZoneInfo as _ZI_hc
+            _now_hc = _dt_hc.now(_ZI_hc('America/Chicago')).replace(tzinfo=None)
+            _upcoming_hc = _get_hols_c(_now_hc)
+            holiday_rec_context = f"\nUpcoming holidays/events in the next 30 days: {_upcoming_hc}. Consider these when making recommendations." if _upcoming_hc else ""
+            today_comp = _now_hc.strftime("%B %d, %Y")
+        except Exception:
+            holiday_rec_context = ""
+            from datetime import datetime as _dt_hc2
+            today_comp = _dt_hc2.now().strftime("%B %d, %Y")
+
         prompt = f"""You are the Cavnar AI Consultant analyzing the competitive landscape for {restaurant_name}.
+Today's date: {today_comp}{holiday_rec_context}
 
 About {restaurant_name}:
 {profile_context}

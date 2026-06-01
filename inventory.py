@@ -236,7 +236,13 @@ Finally, on a new line with NO number, write one short warm closing sentence:
         max_tokens=900,
         messages=[{"role": "user", "content": prompt}],
     )
-    return msg.content[0].text.strip()
+    result = msg.content[0].text.strip()
+    # Strip any markdown that slips through
+    import re as _re_inv
+    result = _re_inv.sub('[*]{2}(.+?)[*]{2}', lambda m: m.group(1), result)
+    result = _re_inv.sub('[*](.+?)[*]', lambda m: m.group(1), result)
+    result = _re_inv.sub(r'#{1,6}\s', '', result)
+    return result
 
 
 def load_inventory_for_restaurant(restaurant_id: int):

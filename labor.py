@@ -300,9 +300,19 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
                       for role, d in sorted(role_summary.items(), key=lambda x: x[1]['labor_cost'], reverse=True)]
         role_context = f"\n- Labor by role/department: {'; '.join(role_lines)}"
 
+    # Add upcoming holidays for scheduling context
+    try:
+        from marketing import get_upcoming_holidays as _get_hols
+        from datetime import datetime as _dt_h
+        from zoneinfo import ZoneInfo as _ZI_h
+        _upcoming = _get_hols(_dt_h.now(_ZI_h('America/Chicago')).replace(tzinfo=None))
+        holiday_context = f"\n- Upcoming holidays (affects scheduling): {_upcoming}" if _upcoming else ""
+    except Exception:
+        holiday_context = ""
+
     prompt = f"""You are the Cavnar AI Consultant — a friendly, experienced restaurant labor advisor.
 You are writing a weekly labor summary for {owner_name or "the owner"} of {restaurant_name}.
-Today's date: {today_labor}{upload_context}
+Today's date: {today_labor}{upload_context}{holiday_context}
 
 Data:
 - Overall labor cost: ${analysis['total_labor_cost']:,.0f} on ${analysis['total_sales']:,.0f} in sales ({analysis['overall_labor_pct']}% labor ratio)
