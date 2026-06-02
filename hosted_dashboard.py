@@ -2178,6 +2178,11 @@ textarea{resize:vertical;min-height:60px}
           <div class="hint">Comma-separated — AI will never use these</div>
         </div>
         <div class="form-row-wide">
+          <label class="form-label">Skip these holidays in marketing content</label>
+          <input type="text" id="skip_holidays" value="{{ restaurant.skip_holidays or '' }}" placeholder="e.g. St. Patrick's Day, Halloween, Cinco de Mayo">
+          <div class="hint">Comma-separated — AI will not suggest these holidays in content calendar or marketing copy</div>
+        </div>
+        <div class="form-row-wide">
           <label class="form-label">Menu &amp; current specials</label>
           <textarea id="menu_notes" rows="4" placeholder="Key menu items, signature dishes, current specials — e.g. Known for: short rib pasta, truffle fries, brunch cocktails. Current specials: bottomless brunch Sat/Sun 10am-2pm">{{ restaurant.menu_notes or '' }}</textarea>
           <div class="hint">AI uses this to generate accurate, specific marketing content. Update when menu or specials change.</div>
@@ -2571,6 +2576,7 @@ async function saveSettings() {
     vibe:            document.getElementById('vibe').value,
     voice_notes:     document.getElementById('voice_notes').value,
     never_say:       document.getElementById('never_say').value,
+    skip_holidays:   document.getElementById('skip_holidays').value,
     menu_notes:      document.getElementById('menu_notes').value,
     menu_url:        document.getElementById('menu_url').value,
     hourly_rate:        parseFloat(document.getElementById('hourly_rate').value),

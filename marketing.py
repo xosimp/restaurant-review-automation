@@ -118,7 +118,8 @@ def get_profile_for_restaurant(restaurant_id: int = None) -> dict:
             "voice":       r.voice_notes or "warm, genuine, never corporate",
             "never_say":   r.never_say or "",
             "sign_off_name": r.sign_off_name or r.name,
-            "menu_notes":  r.menu_notes or "",
+            "menu_notes":   r.menu_notes or "",
+            "skip_holidays": r.skip_holidays or "",
         }
     except Exception:
         return DEFAULT_PROFILE
@@ -291,6 +292,12 @@ def generate_content(content_type: str, topic: str,
     month = now_dt.strftime("%B")
     today_date = now_dt.strftime("%B %d, %Y")
     upcoming = get_upcoming_holidays(now_dt)
+    # Filter out client-skipped holidays
+    skip_h = [h.strip().lower() for h in (p.get('skip_holidays') or '').split(',') if h.strip()]
+    if skip_h and upcoming:
+        filtered_h = [h for h in upcoming.split(', ')
+                      if not any(s in h.lower() for s in skip_h)]
+        upcoming = ', '.join(filtered_h) if filtered_h else None
     seasonal_context = f"\nToday's date: {today_date}. Upcoming holidays in next 30 days: {upcoming if upcoming else 'none'}. Only reference holidays that are actually coming up soon."
 
     never_clause = f"\nNever use these words or phrases: {p['never_say']}." if p.get('never_say') else ""
@@ -354,6 +361,12 @@ def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
 
     # Build upcoming holidays in the next 30 days
     upcoming_holidays = get_upcoming_holidays(now)
+    # Filter out holidays the client wants to skip
+    skip = [h.strip().lower() for h in (p.get('skip_holidays') or '').split(',') if h.strip()]
+    if skip and upcoming_holidays:
+        filtered = [h for h in upcoming_holidays.split(', ')
+                    if not any(s in h.lower() for s in skip)]
+        upcoming_holidays = ', '.join(filtered) if filtered else None
 
     menu_context = f"\nMenu & current specials: {p['menu_notes']}\nReference specific dishes and specials in content ideas when relevant." if p.get('menu_notes') else ""
 
