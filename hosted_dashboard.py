@@ -618,6 +618,11 @@ function clientUpload(dataType, input) {
 
 <!-- REVIEWS -->
 <div class="panel {{'active' if mod_reviews}}" id="panel-reviews">
+  <!-- New reviews notification banner -->
+  <div id="new-reviews-banner" style="display:none;background:#1a1410;color:#f0ebe0;padding:10px 16px;border-radius:6px;margin-bottom:12px;font-size:13px;cursor:pointer;display:none;align-items:center;justify-content:space-between" onclick="window.location.reload()">
+    <span id="new-reviews-text"></span>
+    <span style="font-size:11px;color:#c84b2f;font-weight:600">Click to refresh →</span>
+  </div>
   {% if not restaurant.reviews_live and not restaurant.gmb_refresh_token %}
   <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#8a6a00;display:flex;align-items:center;gap:8px">
     <span>⚠</span><span><strong>Sample data</strong> — example reviews showing how the dashboard works. Your live Google and Yelp reviews will appear here automatically once connected.</span>
@@ -2383,6 +2388,42 @@ textarea{resize:vertical;min-height:60px}
 
 <script>
 let reviewsLive = {{ 'true' if restaurant.gmb_refresh_token else 'false' }};
+
+// Poll for new reviews every 5 minutes when on reviews tab
+(function() {
+  let _knownTotal = {{ rstats.total }};
+  let _knownPending = {{ rstats.awaiting_approval }};
+  let _pollActive = false;
+
+  function checkNewReviews() {
+    if(document.hidden) return; // don't poll when tab is hidden
+    fetch('/api/review-count')
+      .then(r => r.json())
+      .then(d => {
+        const newTotal = d.total || 0;
+        const newPending = d.pending || 0;
+        const newUrgent = d.urgent || 0;
+        if(newTotal > _knownTotal || newPending > _knownPending) {
+          const added = newTotal - _knownTotal;
+          const banner = document.getElementById('new-reviews-banner');
+          const txt = document.getElementById('new-reviews-text');
+          if(banner && txt) {
+            const urgentNote = newUrgent > 0 ? ` (${newUrgent} urgent ⚠)` : '';
+            txt.textContent = added > 0
+              ? `${added} new review${added > 1 ? 's' : ''} available${urgentNote}`
+              : `New review activity — click to refresh${urgentNote}`;
+            banner.style.display = 'flex';
+          }
+        }
+      })
+      .catch(() => {}); // silently ignore errors
+  }
+
+  // Start polling every 5 minutes
+  if(reviewsLive) {
+    setInterval(checkNewReviews, 5 * 60 * 1000);
+  }
+})();
 
 
 

@@ -505,6 +505,19 @@ def reset_password_by_restaurant(restaurant_id, current_user):
         return jsonify(ok=False, error="No client user found for this restaurant")
     return reset_password(row["id"], current_user=current_user)
 
+@admin_bp.route("/api/review-count")
+@login_required
+def review_count_api(current_user):
+    """Lightweight polling endpoint for new review detection."""
+    from models import get_review_stats
+    stats = get_review_stats(current_user["restaurant_id"])
+    return jsonify(
+        total=stats.get("total", 0),
+        pending=stats.get("awaiting_approval", 0),
+        urgent=stats.get("urgent", 0)
+    )
+
+
 @admin_bp.route("/api/log-activity", methods=["POST"])
 @login_required
 def log_activity_route(current_user):
