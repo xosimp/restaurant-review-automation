@@ -4614,6 +4614,15 @@ def gmb_disconnect(current_user):
 
 
 # ── Sample CSV template downloads ────────────────────────────────────────────
+@app.route("/og-image.png")
+def og_image():
+    import os
+    path = os.path.join(os.path.dirname(__file__), "og-image.png")
+    if os.path.exists(path):
+        return send_file(path, mimetype="image/png")
+    return "", 404
+
+
 @app.route("/client/sample-template/<template_type>")
 @login_required
 def download_sample_template(current_user, template_type):
