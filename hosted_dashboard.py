@@ -2391,8 +2391,8 @@ let reviewsLive = {{ 'true' if restaurant.gmb_refresh_token else 'false' }};
 
 // Poll for new reviews every 5 minutes when on reviews tab
 (function() {
-  let _knownTotal = {{ rstats.total }};
-  let _knownPending = {{ rstats.awaiting_approval }};
+  let _knownTotal = {% if rstats is defined %}{{ rstats.total }}{% else %}0{% endif %};
+  let _knownPending = {% if rstats is defined %}{{ rstats.awaiting_approval }}{% else %}0{% endif %};
   let _pollActive = false;
 
   function checkNewReviews() {
