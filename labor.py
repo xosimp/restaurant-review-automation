@@ -162,7 +162,7 @@ def analyse_shifts(shifts: list[dict],
         emp    = s["employee"]
         sched  = float(s["scheduled_hours"])
         actual = float(s["actual_hours"])
-        sales  = float(s["sales_that_day"])
+        sales  = float(s.get("sales_that_day") or s.get("sales") or 0)
 
         by_day[day]["scheduled"] += sched
         by_day[day]["actual"]    += actual

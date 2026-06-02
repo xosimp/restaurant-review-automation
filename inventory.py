@@ -123,8 +123,15 @@ def analyse_inventory(items: list[dict]) -> dict:
         week_end_dt   = latest
         week_start_dt = latest - timedelta(days=6)
     else:
-        week_end_dt   = datetime.now()
-        week_start_dt = week_end_dt - timedelta(days=6)
+        # Use current Mon-Sun week in Chicago time
+        try:
+            from zoneinfo import ZoneInfo as _ZI_inv
+            now_chi = datetime.now(_ZI_inv('America/Chicago')).replace(tzinfo=None)
+        except Exception:
+            now_chi = datetime.now()
+        days_since_monday = now_chi.weekday()
+        week_start_dt = now_chi - timedelta(days=days_since_monday)
+        week_end_dt   = week_start_dt + timedelta(days=6)
 
     def fmt(dt): return dt.strftime("%-m/%-d/%y")
 
