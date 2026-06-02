@@ -269,7 +269,7 @@ def analyse_shifts(shifts: list[dict],
 
     total_labor  = sum(s["actual"] * HOURLY_RATE for s in
                        [{"actual": float(x["actual_hours"])} for x in shifts])
-    total_sales  = sum(float(s["sales_that_day"]) for s in
+    total_sales  = sum(float(s.get("sales_that_day") or s.get("sales") or 0) for s in
                        {s["date"]: s for s in shifts}.values())
     overall_pct  = round(total_labor / total_sales * 100, 1) if total_sales else 0
     target_labor_cost = total_sales * (LABOR_TARGET / 100)
