@@ -263,8 +263,13 @@ def run_weekly_digests():
 
             try:
                 report = build_report_from_db(rid, restaurant.name, days=7)
-                if report.total_reviews == 0:
-                    log.info(f"No reviews this week for {restaurant.name}")
+                # Only skip if reviews-only client AND no reviews this week
+                # Full system clients always get a digest (labor/inventory data still valuable)
+                has_other_modules = (restaurant.module_labor or
+                                     restaurant.module_inventory or
+                                     restaurant.module_marketing)
+                if report.total_reviews == 0 and not has_other_modules:
+                    log.info(f"No reviews this week for {restaurant.name} — skipping digest")
                     continue
 
                 owner_name = restaurant.sign_off_name or restaurant.owner_email.split("@")[0].title()
