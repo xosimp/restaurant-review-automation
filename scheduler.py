@@ -725,7 +725,7 @@ def check_inactive_clients():
 
 def scheduler_loop():
     global _last_fetch_date, _last_digest_date
-    log.info("Scheduler started — daily fetch 8am, digests 9am on client's chosen day")
+    log.info("Scheduler started — review fetch every 4hr (8am/12pm/4pm/8pm CT), digests 9am on client's chosen day")
 
     while True:
         try:
@@ -760,9 +760,10 @@ def scheduler_loop():
                 log.info("Refreshing expiring IG/FB tokens...")
                 refresh_expiring_tokens()
 
-            if now.hour == 8 and _last_fetch_date != today:
-                _last_fetch_date = today
-                log.info("Running daily fetch + urgent alert check...")
+            # Fetch every 4 hours: 8am, 12pm, 4pm, 8pm Chicago time
+            if now.hour in (8, 12, 16, 20) and _last_fetch_date != f"{today}-{now.hour}":
+                _last_fetch_date = f"{today}-{now.hour}"
+                log.info(f"Running review fetch (every 4hr) at {now.hour}:00 CT...")
                 run_daily_fetch()
 
             if now.hour == 9 and _last_digest_date != today:
