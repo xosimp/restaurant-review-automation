@@ -68,7 +68,7 @@ def _review_card(r) -> str:
 </div>"""
 
 
-def generate_ai_digest_summary(report, restaurant_name, owner_name=None):
+def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaurant_id=None):
     """Generate a short AI summary paragraph for the weekly digest."""
     try:
         import anthropic, os
@@ -163,7 +163,7 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None):
         # Determine active modules for this client
         try:
             from models import get_restaurant as _gr_rpt
-            _rest = _gr_rpt(report.restaurant_id)
+            _rest = _gr_rpt(restaurant_id or report.restaurant_id)
             has_labor = _rest and _rest.module_labor
             has_inventory = _rest and _rest.module_inventory
             has_marketing = _rest and _rest.module_marketing
@@ -225,84 +225,202 @@ Rules:
     except Exception as e:
         return ""
 
-def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = None) -> str:
+def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = None,
+                restaurant_id: int = None) -> str:
     reviews = getattr(report, "_reviews", [])
     urgent  = [r for r in reviews if r.urgency == "high"]
-    normal  = [r for r in reviews if r.urgency != "high"]
+    pos_count = report.sentiment.get("positive", 0)
+    neg_count = report.sentiment.get("negative", 0)
+    first_name = (owner_name or "").split()[0] if owner_name else "there"
 
-    urgent_section = ""
-    if urgent:
-        cards = "".join(_review_card(r) for r in urgent)
-        urgent_section = f"""
-<h3 style="color:#dc2626;margin:24px 0 8px">Needs attention ({len(urgent)})</h3>
-{cards}"""
-
-    normal_section = "".join(_review_card(r) for r in normal)
-    top_issues_html = "".join(
-        f'<span style="background:#f3f4f6;border-radius:4px;padding:3px 8px;'
-        f'font-size:12px;margin-right:6px">{cat.replace("_"," ")} ({n})</span>'
-        for cat, n in report.top_issues
-    ) if report.top_issues else "<em>—</em>"
-
-    ai_summary = generate_ai_digest_summary(report, restaurant_name, owner_name)
-    if ai_summary:
-        ai_summary_block = (
-            '<div style="background:linear-gradient(135deg,#1a1410,#2a1f1a);border-radius:8px;padding:16px 20px;margin-bottom:20px">' +
-            '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#c84b2f;margin-bottom:8px">Cavnar AI Consultant</div>' +
-            '<p style="font-size:14px;color:#f0ebe0;line-height:1.7;margin:0">' + ai_summary + '</p></div>'
-        )
+    # Rating trend indicator
+    rating = report.avg_rating or 0
+    if rating >= 4.5:
+        rating_color = "#16a34a"; rating_label = "Excellent"
+    elif rating >= 4.0:
+        rating_color = "#2d6a4f"; rating_label = "Good"
+    elif rating >= 3.5:
+        rating_color = "#d97706"; rating_label = "Fair"
     else:
-        ai_summary_block = ''
+        rating_color = "#dc2626"; rating_label = "Needs work"
 
-    return f"""
-<html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  max-width:620px;margin:0 auto;color:#111827;padding:20px">
+    # AI consultant summary
+    ai_summary = generate_ai_digest_summary(report, restaurant_name, owner_name,
+                                             restaurant_id=restaurant_id)
 
-<div style="border-bottom:2px solid #f3f4f6;padding-bottom:12px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between">
-  <h2 style="margin:0;font-family:Georgia,serif;font-size:22px;font-weight:400">
-    Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
-  </h2>
-  <span style="font-size:11px;color:#9ca3af;letter-spacing:.08em;text-transform:uppercase">Weekly Review Digest</span>
-</div>
-<p style="color:#6b7280;margin:0 0 16px;font-size:13px">{restaurant_name} &nbsp;·&nbsp; {report.period_start} – {report.period_end}</p>
-
-{ai_summary_block}
-
-<div style="display:flex;gap:12px;margin-bottom:20px">
-  <div style="flex:1;background:#f9fafb;border-radius:8px;padding:12px;text-align:center">
-    <div style="font-size:28px;font-weight:600">{report.total_reviews}</div>
-    <div style="font-size:12px;color:#6b7280">reviews</div>
+    # Pull labor and inventory data for module scorecards
+    labor_card = ""
+    inventory_card = ""
+    try:
+        from models import get_restaurant as _gr_d
+        _rest = _gr_d(restaurant_id) if restaurant_id else None
+        if _rest and _rest.module_labor:
+            from labor import analyse_shifts_for_restaurant
+            labor_data = analyse_shifts_for_restaurant(restaurant_id)
+            if labor_data:
+                lp = labor_data.get("overall_labor_pct", 0)
+                ls = labor_data.get("total_sales", 0)
+                lc = labor_data.get("total_labor_cost", 0)
+                l_color = "#16a34a" if lp <= 32 else ("#d97706" if lp <= 36 else "#dc2626")
+                l_label = "On target" if lp <= 32 else ("Watch closely" if lp <= 36 else "Over budget")
+                labor_card = f"""
+<tr><td style="padding:0 0 12px">
+  <div style="background:#f9fafb;border-radius:8px;padding:16px;border-left:4px solid {l_color}">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#6b7280">Labor Optimizer</span>
+      <span style="font-size:11px;font-weight:600;color:{l_color};background:{l_color}18;padding:2px 8px;border-radius:12px">{l_label}</span>
+    </div>
+    <div style="display:flex;gap:20px">
+      <div><div style="font-size:26px;font-weight:700;color:{l_color}">{lp}%</div><div style="font-size:11px;color:#9ca3af">labor ratio</div></div>
+      <div><div style="font-size:26px;font-weight:700;color:#111">${lc:,.0f}</div><div style="font-size:11px;color:#9ca3af">labor cost</div></div>
+      <div><div style="font-size:26px;font-weight:700;color:#111">${ls:,.0f}</div><div style="font-size:11px;color:#9ca3af">in sales</div></div>
+    </div>
   </div>
-  <div style="flex:1;background:#f9fafb;border-radius:8px;padding:12px;text-align:center">
-    <div style="font-size:28px;font-weight:600">{report.avg_rating}</div>
-    <div style="font-size:12px;color:#6b7280">avg rating</div>
+</td></tr>"""
+        if _rest and _rest.module_inventory:
+            from inventory import load_inventory_for_restaurant, analyse_inventory
+            items, _ = load_inventory_for_restaurant(restaurant_id)
+            inv = analyse_inventory(items)
+            waste = inv.get("total_waste_cost_week", 0)
+            recoverable = inv.get("recoverable_monthly", 0)
+            top_waste = inv.get("waste_items", [])
+            top_item = top_waste[0]["item"] if top_waste else "None"
+            i_color = "#16a34a" if waste < 200 else ("#d97706" if waste < 500 else "#dc2626")
+            i_label = "Low waste" if waste < 200 else ("Moderate" if waste < 500 else "High waste")
+            inventory_card = f"""
+<tr><td style="padding:0 0 12px">
+  <div style="background:#f9fafb;border-radius:8px;padding:16px;border-left:4px solid {i_color}">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#6b7280">Inventory Control</span>
+      <span style="font-size:11px;font-weight:600;color:{i_color};background:{i_color}18;padding:2px 8px;border-radius:12px">{i_label}</span>
+    </div>
+    <div style="display:flex;gap:20px">
+      <div><div style="font-size:26px;font-weight:700;color:{i_color}">${waste:,.0f}</div><div style="font-size:11px;color:#9ca3af">waste this week</div></div>
+      <div><div style="font-size:26px;font-weight:700;color:#111">${recoverable:,.0f}</div><div style="font-size:11px;color:#9ca3af">recoverable/mo</div></div>
+      <div style="max-width:120px"><div style="font-size:13px;font-weight:600;color:#111;padding-top:4px">{top_item}</div><div style="font-size:11px;color:#9ca3af">top waste item</div></div>
+    </div>
   </div>
-  <div style="flex:1;background:#f0fdf4;border-radius:8px;padding:12px;text-align:center">
-    <div style="font-size:28px;font-weight:600;color:#16a34a">
-      {report.sentiment.get("positive",0)}</div>
-    <div style="font-size:12px;color:#6b7280">positive</div>
+</td></tr>"""
+    except Exception:
+        pass
+
+    # Urgent reviews section
+    urgent_rows = ""
+    if urgent:
+        for r in urgent[:3]:
+            stars = "★" * r.rating + "☆" * (5 - r.rating)
+            name = (r.author or "Guest")[:20]
+            snippet = (r.text or "")[:120]
+            urgent_rows += f"""
+<tr><td style="padding:0 0 8px">
+  <div style="background:#fef2f2;border-radius:6px;padding:12px 14px;border-left:3px solid #dc2626">
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+      <span style="font-size:12px;font-weight:600">{name}</span>
+      <span style="font-size:12px;color:#dc2626">{stars}</span>
+    </div>
+    <p style="font-size:12px;color:#374151;margin:0;line-height:1.5">"{snippet}{"..." if len(r.text or "") > 120 else ""}"</p>
   </div>
-  <div style="flex:1;background:#fef2f2;border-radius:8px;padding:12px;text-align:center">
-    <div style="font-size:28px;font-weight:600;color:#dc2626">
-      {report.sentiment.get("negative",0)}</div>
-    <div style="font-size:12px;color:#6b7280">negative</div>
+</td></tr>"""
+
+    # Top positive review
+    top_pos = next((r for r in reviews if r.sentiment == "positive" and r.rating >= 4), None)
+    pos_row = ""
+    if top_pos:
+        stars = "★" * top_pos.rating
+        name = (top_pos.author or "Guest")[:20]
+        snippet = (top_pos.text or "")[:120]
+        pos_row = f"""
+<tr><td style="padding:0 0 8px">
+  <div style="background:#f0fdf4;border-radius:6px;padding:12px 14px;border-left:3px solid #16a34a">
+    <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+      <span style="font-size:12px;font-weight:600">{name}</span>
+      <span style="font-size:12px;color:#16a34a">{stars}</span>
+    </div>
+    <p style="font-size:12px;color:#374151;margin:0;line-height:1.5">"{snippet}{"..." if len(top_pos.text or "") > 120 else ""}"</p>
   </div>
-</div>
+</td></tr>"""
 
-<div style="margin-bottom:20px">
-  <strong style="font-size:13px">Top themes this week:</strong><br>
-  <div style="margin-top:6px">{top_issues_html}</div>
-</div>
+    from datetime import datetime as _dt_html
+    from zoneinfo import ZoneInfo as _ZI_html
+    week_label = _dt_html.now(_ZI_html("America/Chicago")).strftime("Week of %B %d, %Y")
 
-{urgent_section}
+    # Pre-build conditional HTML sections to avoid f-string nesting issues
+    urgent_section_html = ""
+    if urgent:
+        urgent_section_html = ('<tr><td style="padding:0 32px 12px">' +
+            '<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#dc2626;margin-bottom:8px">⚠ Needs Immediate Response</div>' +
+            '<table width="100%" cellpadding="0" cellspacing="0">' + urgent_rows + '</table></td></tr>')
+    pos_section_html = ""
+    if pos_row:
+        pos_section_html = ('<tr><td style="padding:0 32px 12px">' +
+            '<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#16a34a;margin-bottom:8px">★ Highlight of the Week</div>' +
+            '<table width="100%" cellpadding="0" cellspacing="0">' + pos_row + '</table></td></tr>')
+    urgent_stat = (f"<div><div style='font-size:26px;font-weight:700;color:#dc2626'>⚠ {len(urgent)}</div><div style='font-size:11px;color:#9ca3af'>urgent</div></div>" if urgent else "")
 
-<h3 style="margin:24px 0 8px">All reviews ({len(normal)})</h3>
-{normal_section}
+    return f"""<html>
+<body style="margin:0;padding:0;background:#f5f3f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3f0;padding:24px 0">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">
 
-<p style="font-size:11px;color:#9ca3af;margin-top:32px;border-top:1px solid #f3f4f6;
-  padding-top:12px">
-  Generated by Cavnar AI &nbsp;·&nbsp;
-  Approve responses before posting.</p>
+<!-- HEADER -->
+<tr><td style="background:#1a1410;padding:24px 32px">
+  <table width="100%"><tr>
+    <td><span style="font-family:Georgia,serif;font-size:22px;font-weight:400;color:#f0ebe0">Cavnar <em style="color:#c84b2f">AI</em></span></td>
+    <td align="right"><span style="font-size:11px;color:#7a6f65;letter-spacing:.1em;text-transform:uppercase">Weekly Digest</span></td>
+  </tr></table>
+  <div style="margin-top:6px;font-size:13px;color:#9a8f85">{restaurant_name} &nbsp;·&nbsp; {week_label}</div>
+</td></tr>
+
+<!-- AI CONSULTANT SUMMARY -->
+<tr><td style="padding:24px 32px 0">
+  <div style="background:#1a1410;border-radius:8px;padding:18px 20px">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#c84b2f;margin-bottom:8px">Cavnar AI Consultant</div>
+    <p style="font-size:14px;color:#f0ebe0;line-height:1.75;margin:0">{ai_summary or f"Hi {first_name}, here is your weekly summary for {restaurant_name}."}</p>
+  </div>
+</td></tr>
+
+<!-- REVIEW SCORECARD -->
+<tr><td style="padding:24px 32px 12px">
+  <table width="100%" cellpadding="0" cellspacing="0">
+  <tr><td style="padding:0 0 12px">
+    <div style="background:#f9fafb;border-radius:8px;padding:16px;border-left:4px solid {rating_color}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#6b7280">Review Intelligence</span>
+        <span style="font-size:11px;font-weight:600;color:{rating_color};background:{rating_color}18;padding:2px 8px;border-radius:12px">{rating_label}</span>
+      </div>
+      <div style="display:flex;gap:20px">
+        <div><div style="font-size:26px;font-weight:700;color:{rating_color}">{rating}★</div><div style="font-size:11px;color:#9ca3af">avg rating</div></div>
+        <div><div style="font-size:26px;font-weight:700;color:#111">{report.total_reviews}</div><div style="font-size:11px;color:#9ca3af">total reviews</div></div>
+        <div><div style="font-size:26px;font-weight:700;color:#16a34a">{pos_count}</div><div style="font-size:11px;color:#9ca3af">positive</div></div>
+        <div><div style="font-size:26px;font-weight:700;color:#dc2626">{neg_count}</div><div style="font-size:11px;color:#9ca3af">negative</div></div>
+        {urgent_stat}
+      </div>
+    </div>
+  </td></tr>
+
+  {labor_card}
+  {inventory_card}
+  </table>
+</td></tr>
+
+    {urgent_section_html}
+
+    {pos_section_html}
+
+<!-- CTA -->
+<tr><td style="padding:0 32px 24px">
+  <a href="https://dashboard.cavnar.ai" style="display:block;background:#c84b2f;color:white;text-align:center;padding:13px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">View Dashboard & Approve Responses →</a>
+</td></tr>
+
+<!-- FOOTER -->
+<tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #e5e7eb">
+  <p style="font-size:11px;color:#9ca3af;margin:0;text-align:center">Cavnar AI &nbsp;·&nbsp; will@cavnar.ai &nbsp;·&nbsp; <a href="https://cavnar.ai" style="color:#9ca3af">cavnar.ai</a></p>
+</td></tr>
+
+</table>
+</td></tr>
+</table>
 </body></html>"""
 
 

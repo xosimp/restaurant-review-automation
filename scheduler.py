@@ -268,7 +268,7 @@ def run_weekly_digests():
                     continue
 
                 owner_name = restaurant.sign_off_name or restaurant.owner_email.split("@")[0].title()
-                html = render_html(report, restaurant.name, owner_name=owner_name)
+                html = render_html(report, restaurant.name, owner_name=owner_name, restaurant_id=restaurant.id)
                 _resend.api_key = RESEND_API_KEY
                 _resend.Emails.send({
                     "from": f"Cavnar AI <{FROM_EMAIL}>",
