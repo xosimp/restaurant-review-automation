@@ -200,7 +200,8 @@ class Restaurant:
     last_active_tab: Optional[str]  = None
     menu_notes:      Optional[str]  = None
     menu_url:        Optional[str]  = None
-    skip_holidays:   Optional[str]  = None
+    skip_holidays:    Optional[str]  = None
+    custom_competitors: Optional[str] = None
     last_activity: Optional[str]    = None
     id: Optional[int]               = None
     created_at: str = field(default_factory=lambda: __import__('datetime').datetime.now(__import__('zoneinfo').ZoneInfo('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'))
@@ -337,6 +338,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN menu_notes TEXT",
         "ALTER TABLE restaurants ADD COLUMN menu_url TEXT",
         "ALTER TABLE restaurants ADD COLUMN skip_holidays TEXT",
+        "ALTER TABLE restaurants ADD COLUMN custom_competitors TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_refresh_token TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_account_id TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_location_id TEXT",
@@ -386,7 +388,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "neighborhood","vibe","known_for","sign_off_name","never_say",
         "hourly_rate","labor_target_pct","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
-        "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays"
+        "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors"
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -447,6 +449,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         menu_notes=row["menu_notes"] if "menu_notes" in row.keys() else None,
         menu_url=row["menu_url"] if "menu_url" in row.keys() else None,
         skip_holidays=row["skip_holidays"] if "skip_holidays" in row.keys() else None,
+        custom_competitors=row["custom_competitors"] if "custom_competitors" in row.keys() else None,
         gmb_access_token=row["gmb_access_token"] if "gmb_access_token" in row.keys() else None,
         gmb_refresh_token=row["gmb_refresh_token"] if "gmb_refresh_token" in row.keys() else None,
         gmb_account_id=row["gmb_account_id"] if "gmb_account_id" in row.keys() else None,

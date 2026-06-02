@@ -441,6 +441,36 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
             return {"ok": False, "error": "No Google Place ID set"}
 
         competitors = get_nearby_competitors(restaurant.google_place_id)
+
+        # Add any manually specified competitor Place IDs
+        if restaurant.custom_competitors:
+            custom_ids = [pid.strip() for pid in restaurant.custom_competitors.split(',') if pid.strip()]
+            existing_ids = {c['place_id'] for c in competitors}
+            for pid in custom_ids:
+                if pid not in existing_ids:
+                    try:
+                        # Fetch basic info for this custom competitor
+                        custom_details = get_nearby_competitors.__wrapped__(pid) if hasattr(get_nearby_competitors, '__wrapped__') else None
+                        details_url = "https://maps.googleapis.com/maps/api/place/details/json"
+                        import requests as _req
+                        r = _req.get(details_url, params={
+                            "place_id": pid,
+                            "fields": "name,rating,user_ratings_total,types",
+                            "key": PLACES_API_KEY,
+                        })
+                        d = r.json().get("result", {})
+                        if d.get("name"):
+                            competitors.append({
+                                "place_id": pid,
+                                "name": d["name"],
+                                "rating": d.get("rating", 0),
+                                "user_ratings_total": d.get("user_ratings_total", 0),
+                                "types": d.get("types", []),
+                                "custom": True,
+                            })
+                    except Exception as ce:
+                        print(f"[Competitor] Could not fetch custom competitor {pid}: {ce}")
+
         if not competitors:
             return {"ok": False, "error": "No nearby competitors found"}
 

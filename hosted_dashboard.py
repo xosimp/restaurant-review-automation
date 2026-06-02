@@ -2183,6 +2183,11 @@ textarea{resize:vertical;min-height:60px}
           <div class="hint">Comma-separated — AI will not suggest these holidays in content calendar or marketing copy</div>
         </div>
         <div class="form-row-wide">
+          <label class="form-label">Custom competitors <span style="font-weight:400;color:var(--ink3);font-size:11px">(Google Place IDs)</span></label>
+          <input type="text" id="custom_competitors" value="{{ restaurant.custom_competitors or '' }}" placeholder="e.g. ChIJabc123, ChIJxyz789">
+          <div class="hint">Comma-separated Google Place IDs — these will always be included in competitor intel regardless of proximity. <a href="https://developers.google.com/maps/documentation/places/web-service/place-id" target="_blank" style="color:var(--ember)">How to find a Place ID</a></div>
+        </div>
+        <div class="form-row-wide">
           <label class="form-label">Menu &amp; current specials</label>
           <textarea id="menu_notes" rows="4" placeholder="Key menu items, signature dishes, current specials — e.g. Known for: short rib pasta, truffle fries, brunch cocktails. Current specials: bottomless brunch Sat/Sun 10am-2pm">{{ restaurant.menu_notes or '' }}</textarea>
           <div class="hint">AI uses this to generate accurate, specific marketing content. Update when menu or specials change.</div>
@@ -2577,6 +2582,7 @@ async function saveSettings() {
     voice_notes:     document.getElementById('voice_notes').value,
     never_say:       document.getElementById('never_say').value,
     skip_holidays:   document.getElementById('skip_holidays').value,
+    custom_competitors: document.getElementById('custom_competitors').value,
     menu_notes:      document.getElementById('menu_notes').value,
     menu_url:        document.getElementById('menu_url').value,
     hourly_rate:        parseFloat(document.getElementById('hourly_rate').value),
