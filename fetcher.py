@@ -18,7 +18,7 @@ def fetch_google(place_id: str, restaurant_id: int) -> list[Review]:
         external_id=f"google_{r['time']}_{r.get('author_name','')}",
         author=r.get("author_name", "Anonymous"),
         rating=r.get("rating", 0), text=r.get("text", ""),
-        review_date=datetime.fromtimestamp(r["time"], tz=timezone.utc).isoformat(),
+        review_date=datetime.fromtimestamp(r["time"]).astimezone(__import__('zoneinfo').ZoneInfo('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'),
     ) for r in raw]
 
 

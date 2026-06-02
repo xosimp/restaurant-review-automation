@@ -202,7 +202,7 @@ class Restaurant:
     menu_url:        Optional[str]  = None
     last_activity: Optional[str]    = None
     id: Optional[int]               = None
-    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str = field(default_factory=lambda: __import__('datetime').datetime.now(__import__('zoneinfo').ZoneInfo('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'))
 
 
 @dataclass
@@ -213,7 +213,7 @@ class Review:
     author: str
     rating: int
     text: str
-    fetched_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    fetched_at: str = field(default_factory=lambda: __import__('datetime').datetime.now(__import__('zoneinfo').ZoneInfo('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'))
     review_date: Optional[str] = None
     id: Optional[int] = None
     sentiment: Optional[str] = None
@@ -936,7 +936,8 @@ def get_activity_summary(restaurant_id: int, days: int = 30,
     """Return tab usage counts and recent events for a restaurant."""
     from datetime import datetime, timezone, timedelta
     import json
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    from zoneinfo import ZoneInfo as _ZI_m
+    since = (datetime.now(_ZI_m('America/Chicago')) - timedelta(days=days)).strftime('%Y-%m-%dT%H:%M:%S')
     conn = get_conn(db_path)
     rows = conn.execute("""
         SELECT event_type, event_data, created_at FROM activity_log
@@ -1022,7 +1023,7 @@ def update_last_fetched(restaurant_id: int, db_path: str = DB_PATH):
     from datetime import datetime, timezone
     conn = get_conn(db_path)
     conn.execute("UPDATE restaurants SET last_fetched_at=? WHERE id=?",
-                 (datetime.now(timezone.utc).isoformat(), restaurant_id))
+                 (datetime.now(_ZI_m('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'), restaurant_id))
     conn.commit()
     conn.close()
 

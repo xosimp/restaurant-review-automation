@@ -92,8 +92,9 @@ def verify_password(username: str, password: str,
         return None
     # Update last login
     conn = get_conn(db_path)
+    from zoneinfo import ZoneInfo as _ZI_auth
     conn.execute("UPDATE users SET last_login=? WHERE id=?",
-                 (datetime.now(timezone.utc).isoformat(), user["id"]))
+                 (datetime.now(_ZI_auth('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'), user["id"]))
     conn.commit()
     conn.close()
     return user
@@ -177,7 +178,7 @@ def update_last_login(user_id: int, db_path: str = DB_PATH):
     conn = get_conn(db_path)
     conn.execute(
         "UPDATE users SET last_login=? WHERE id=?",
-        (datetime.now(timezone.utc).isoformat(), user_id)
+        (datetime.now(_ZI_a('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'), user_id)
     )
     conn.commit()
     conn.close()

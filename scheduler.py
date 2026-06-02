@@ -13,6 +13,9 @@ Jobs:
 """
 import os, threading, time, logging
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo as _ZI_sch
+def _chi_now():
+    return datetime.now(_ZI_sch('America/Chicago')).replace(tzinfo=None)
 from dotenv import load_dotenv
 import pathlib
 
@@ -239,7 +242,7 @@ def run_weekly_digests():
         from reporter import build_report_from_db, render_html
         import resend as _resend
 
-        today = datetime.now().strftime("%A").lower()
+        today = _chi_now().strftime("%A").lower()
         scheduled = get_restaurants_for_digest(today)
 
         if not scheduled:
@@ -313,7 +316,7 @@ def check_stale_inventory():
                 continue
 
             updated = datetime.fromisoformat(row["updated_at"])
-            days_old = (datetime.now() - updated).days
+            days_old = (_chi_now() - updated).days
             freq = getattr(r, 'inventory_frequency', 'weekly')
             threshold = 7 if freq == 'weekly' else (14 if freq == 'biweekly' else 30)
             if days_old >= threshold:
@@ -386,7 +389,7 @@ def refresh_expiring_tokens():
             return
 
         restaurants = get_all_restaurants()
-        soon = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+        soon = (_chi_now() + timedelta(days=7)).strftime("%Y-%m-%d")
 
         for r in restaurants:
             if not r.ig_token:
@@ -403,7 +406,7 @@ def refresh_expiring_tokens():
                 })
                 if resp.status_code == 200:
                     new_token   = resp.json().get("access_token", r.ig_token)
-                    new_expires = (datetime.now() + timedelta(days=60)).strftime("%Y-%m-%d")
+                    new_expires = (_chi_now() + timedelta(days=60)).strftime("%Y-%m-%d")
                     update_data = {"ig_token": new_token, "ig_token_expires": new_expires}
                     if r.fb_page_token:
                         resp2 = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
@@ -463,7 +466,7 @@ def backup_db():
 
         db_b64    = base64.b64encode(db_bytes).decode()
         size_kb   = round(len(db_bytes) / 1024, 1)
-        timestamp = datetime.now().strftime("%Y-%m-%d")
+        timestamp = _chi_now().strftime("%Y-%m-%d")
         filename  = f"cavnar_ai_backup_{timestamp}.db"
 
         _resend.Emails.send({
@@ -511,7 +514,7 @@ def run_onboarding_sequence():
         log.error(f"run_onboarding_sequence: could not load restaurants: {e}")
         return
 
-    now = datetime.now()
+    now = _chi_now()
 
     for r in restaurants:
         # Only send to trial or active clients
@@ -630,7 +633,7 @@ def check_inactive_clients():
         return
 
     inactive = []
-    now = datetime.now()
+    now = _chi_now()
     cutoff = now - timedelta(days=14)
 
     for r in restaurants:
@@ -721,7 +724,7 @@ def scheduler_loop():
 
     while True:
         try:
-            now   = datetime.now()
+            now   = _chi_now()
             today = now.date()
 
             # Monday 6am — run competitor analysis for all clients

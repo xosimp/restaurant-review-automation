@@ -935,10 +935,11 @@ def view_as_client(restaurant_id, current_user):
     from models import get_conn as _gc
     _conn = _gc()
     token = __import__('secrets').token_urlsafe(32)
-    expires = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+    from zoneinfo import ZoneInfo as _ZI_ar
+    expires = (datetime.now(_ZI_ar('America/Chicago')) + timedelta(minutes=30)).strftime('%Y-%m-%dT%H:%M:%S')
     _conn.execute(
         "INSERT INTO sessions (token, user_id, expires_at, last_active) VALUES (?,?,?,?)",
-        (token, dict(user_row)["id"], expires, datetime.now(timezone.utc).isoformat())
+        (token, dict(user_row)["id"], expires, datetime.now(_ZI_ar('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'))
     )
     _conn.commit(); _conn.close()
     resp = make_response(redirect("/"))
