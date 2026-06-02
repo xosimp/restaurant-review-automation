@@ -1521,7 +1521,10 @@ function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(r=>r.json()).th
       document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="btn btn-approved">✓ Approved</span>'+_markBtn;
       const platform = card.dataset.platform || 'google';
       if(platform === 'google'){
-        toast('Response approved — auto-posting to Google');
+        document.querySelector('#rc-'+id+' .draft-actions').innerHTML=
+          '<span class="btn btn-approved">✓ Approved</span>' +
+          '<span style="font-size:11px;color:var(--ink3);margin-left:6px">Saved — will post to Google when GBP is connected</span>';
+        toast('Response approved and saved ✓');
       } else {
         toast('Response approved — copy and post to ' + platform + ' manually');
       }
@@ -2219,11 +2222,11 @@ textarea{resize:vertical;min-height:60px}
             </label>
           </div>
           <span id="menu-refresh-status" style="font-size:11px;color:var(--ink3);display:block;margin-top:4px"></span>
-        </div>
-        <div class="form-row-wide">
-          <label class="form-label">Menu URL <span style="font-weight:400;color:var(--ink3);font-size:11px">(optional — paste their online menu link)</span></label>
-          <input type="text" id="menu_url" value="{{ restaurant.menu_url or '' }}" placeholder="https://restaurant.com/menu">
-          <div class="hint">Paste any URL with their menu — the AI will auto-extract dishes and specials</div>
+          <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+            <input type="text" id="menu_url" value="{{ restaurant.menu_url or '' }}" placeholder="https://restaurant.com/menu" style="flex:1;font-size:12px">
+            <span style="font-size:11px;color:var(--ink3);white-space:nowrap">Menu URL</span>
+          </div>
+          <div class="hint" style="margin-top:2px">Paste their menu URL and click ↻ Fetch, or upload a PDF above</div>
         </div>
       </div>
     </div>

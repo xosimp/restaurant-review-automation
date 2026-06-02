@@ -254,7 +254,7 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
 - Each must directly save money this week or next week with an estimated dollar amount
 - Specific to the actual items in the data — never generic advice
 - Never suggest anything that hurts guest experience, reduces quality, or cuts portions
-- Focus on ordering frequency, quantity reductions, or par level adjustments
+- Focus on quantity reductions or par level adjustments based on the data — NEVER assume or mention ordering frequency (daily, weekly, twice a week etc.) since you don't know their ordering schedule
 - Do not use the owner name anywhere in the recommendations
 
 Finally, on a new line with NO number, write one short warm closing sentence:
