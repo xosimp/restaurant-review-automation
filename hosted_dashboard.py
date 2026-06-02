@@ -3485,7 +3485,7 @@ async function deleteNote(noteId) {
                 {% set hr=item.ts[11:13]|int %}{% set mn=item.ts[14:16] %}
                 {% set ampm='am' if hr < 12 else 'pm' %}
                 {% set hr12=hr if hr<=12 else hr-12 %}{% set hr12=12 if hr12==0 else hr12 %}
-                {{hr12}}:{{mn}}{{ampm}}
+                {{hr12}}:{{mn}}{{ampm}} CT
               {% else %}—{% endif %}
             </td>
             <td style="font-size:12px">{{item.restaurant or '—'}}</td>

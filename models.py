@@ -893,8 +893,9 @@ def log_activity(restaurant_id: int, tab: str,
                  db_path: str = DB_PATH):
     """Record last active tab, timestamp, and append to activity_log."""
     import json
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S')
     conn = get_conn(db_path)
     conn.execute("""
         UPDATE restaurants SET last_active_tab=?, last_activity=? WHERE id=?
@@ -914,14 +915,15 @@ def log_event(restaurant_id: int, event_type: str, event_data: dict = None,
               db_path: str = DB_PATH):
     """Log a named event to activity_log (login, review_approved, csv_upload, etc.)"""
     import json
-    from datetime import datetime, timezone
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
     conn = get_conn(db_path)
     try:
         conn.execute("""
             INSERT INTO activity_log (restaurant_id, event_type, event_data, created_at)
             VALUES (?, ?, ?, ?)
         """, (restaurant_id, event_type, json.dumps(event_data or {}),
-                datetime.now(timezone.utc).isoformat()))
+                datetime.now(ZoneInfo('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S')))
         conn.commit()
     except Exception as e:
         print(f"log_event error: {e}")
