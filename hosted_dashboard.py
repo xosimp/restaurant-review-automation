@@ -4617,9 +4617,16 @@ def gmb_disconnect(current_user):
 @app.route("/og-image.png")
 def og_image():
     import os
-    path = os.path.join(os.path.dirname(__file__), "og-image.png")
-    if os.path.exists(path):
-        return send_file(path, mimetype="image/png")
+    # Try multiple paths — Railway deploys to various locations
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "og-image.png"),
+        os.path.join(os.getcwd(), "og-image.png"),
+        "/app/og-image.png",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return send_file(path, mimetype="image/png", max_age=86400)
+    # Fallback: return a redirect to a placeholder
     return "", 404
 
 
