@@ -9,13 +9,40 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 def load_inventory(path: str = "sample_inventory.csv",
                    csv_string: str = None) -> list[dict]:
-    """Load inventory from a CSV string (client data) or file (sample/demo)."""
+    """Load inventory from a CSV string (client data) or bundled sample."""
+    import io
     if csv_string:
-        import io
         rows = list(csv.DictReader(io.StringIO(csv_string)))
     else:
-        with open(path, newline="", encoding="utf-8") as f:
-            rows = list(csv.DictReader(f))
+        _SAMPLE = """item,category,par_level,current_stock,unit_cost,avg_daily_usage,last_order_qty,waste_last_week
+Romaine Lettuce,Produce,20,28,2.5,3.5,25,8.0
+Chicken Breast,Protein,30,22,5.8,6.0,30,3.5
+Salmon Fillet,Protein,15,18,12.5,2.5,15,2.0
+Ground Beef 80/20,Protein,25,32,4.2,4.0,25,4.5
+Heavy Cream,Dairy,12,9,3.8,1.8,12,1.5
+Butter Unsalted,Dairy,10,14,4.5,1.5,10,0.5
+Parmesan Cheese,Dairy,8,5,8.2,1.2,8,0.8
+Roma Tomatoes,Produce,15,22,1.8,2.8,20,6.5
+Fresh Garlic,Produce,5,7,3.2,0.8,5,0.3
+Yellow Onions,Produce,10,13,1.2,1.5,10,1.2
+Olive Oil Extra Virgin,Pantry,6,8,14.5,0.9,6,0.2
+Pasta Rigatoni,Pantry,15,19,2.8,2.2,15,1.8
+Bread Rolls,Bakery,60,45,0.45,12.0,60,15.0
+Russet Potatoes,Produce,20,16,0.8,3.5,20,4.0
+Baby Spinach,Produce,8,11,4.2,1.4,8,3.5
+White Wine Chardonnay,Beverage,12,15,8.5,1.8,12,0.0
+Lemons,Produce,10,7,0.6,1.5,10,0.8
+Fresh Herbs Mix,Produce,4,6,5.5,0.7,4,2.0
+Beef Stock,Pantry,8,10,4.8,1.2,8,0.5
+Shrimp 16/20,Protein,10,8,14.2,1.6,10,1.2"""
+        try:
+            rows = list(csv.DictReader(io.StringIO(_SAMPLE)))
+        except Exception:
+            try:
+                with open(path, newline="", encoding="utf-8") as f:
+                    rows = list(csv.DictReader(f))
+            except Exception:
+                return []
     for r in rows:
         r["par_level"]      = float(r["par_level"])
         r["current_stock"]  = float(r["current_stock"])
