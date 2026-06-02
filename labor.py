@@ -345,10 +345,11 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     # Strip any markdown that slips through
     import re
     text = msg.content[0].text.strip()
-    text = re.sub(r'\*\*(.+?)\*\*', r'', text)  # remove bold
-    text = re.sub(r'\*(.+?)\*', r'', text)        # remove italic
-    text = re.sub(r'#{1,6}\s', '', text)            # remove headers
-    text = re.sub(r'^\s*[-•]\s', '', text, flags=re.MULTILINE)  # remove bullets
+    text = re.sub('\\*\\*(.+?)\\*\\*', lambda m: m.group(1), text)
+    text = re.sub('\\*(.+?)\\*',   lambda m: m.group(1), text)
+    text = re.sub(r'#{1,6}\s', '', text)
+    text = re.sub(r'^\s*[-•]\s', '', text, flags=re.MULTILINE)
+    text = re.sub(r'(?<![\$\d\-\/])(\d{3,}(?:,\d{3})*(?:\.\d+)?)(?![\-\/\d])', r'$\1', text)
     return text
 
 
@@ -369,7 +370,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     dow = analysis.get("dow_summary", {})
 
     # Next Monday as schedule start
-    today = datetime.now()
+    from zoneinfo import ZoneInfo as _ZI_sched
+    today = datetime.now(_ZI_sched('America/Chicago')).replace(tzinfo=None)
     days_ahead = (7 - today.weekday()) % 7 or 7
     monday = today + timedelta(days=days_ahead)
     week_dates = [(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]

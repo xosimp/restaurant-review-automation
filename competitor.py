@@ -424,7 +424,10 @@ Tone: sharp, direct, trusted business advisor. No generic advice. Name specific 
             max_tokens=800,
             messages=[{"role": "user", "content": prompt}]
         )
-        return msg.content[0].text.strip()
+        raw = msg.content[0].text.strip()
+        import re as _re_c
+        raw = _re_c.sub(r'(?<![\$\d\-\/])(\d{3,}(?:,\d{3})*(?:\.\d+)?)(?![\-\/\d])', r'$\1', raw)
+        return raw
     except Exception as e:
         print(f"[Competitor] generate_competitor_insight error: {e}")
         return ""

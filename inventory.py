@@ -242,6 +242,7 @@ Finally, on a new line with NO number, write one short warm closing sentence:
     result = _re_inv.sub('[*]{2}(.+?)[*]{2}', lambda m: m.group(1), result)
     result = _re_inv.sub('[*](.+?)[*]', lambda m: m.group(1), result)
     result = _re_inv.sub(r'#{1,6}\s', '', result)
+    result = _re_inv.sub(r'(?<![\$\d\-\/])(\d{3,}(?:,\d{3})*(?:\.\d+)?)(?![\-\/\d])', r'$\1', result)
     return result
 
 

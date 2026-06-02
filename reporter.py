@@ -151,6 +151,38 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None):
             specific_reviews = " No specific reviews to highlight."
 
         greeting = f"Hi {owner_name}" if owner_name else "Hi"
+        from datetime import datetime as _dt_rpt
+        from zoneinfo import ZoneInfo as _ZI_rpt
+        today_rpt = _dt_rpt.now(_ZI_rpt('America/Chicago')).strftime('%B %d, %Y')
+
+        # Build module context for full system clients
+        module_lines = []
+        if extra_context:
+            module_lines.append(extra_context.strip())
+
+        # Determine active modules for this client
+        try:
+            from models import get_restaurant as _gr_rpt
+            _rest = _gr_rpt(report.restaurant_id)
+            has_labor = _rest and _rest.module_labor
+            has_inventory = _rest and _rest.module_inventory
+            has_marketing = _rest and _rest.module_marketing
+            has_all_four = _rest and all([_rest.module_reviews, _rest.module_labor,
+                                          _rest.module_inventory, _rest.module_marketing])
+        except Exception:
+            has_labor = has_inventory = has_marketing = has_all_four = False
+
+        modules_active = []
+        if has_labor: modules_active.append("Labor Optimizer")
+        if has_inventory: modules_active.append("Inventory Control")
+        if has_marketing: modules_active.append("Marketing Autopilot")
+
+        module_instruction = ""
+        if has_all_four:
+            module_instruction = "\n\nThis client has all 4 modules active. Your summary MUST touch on all active modules — not just reviews. Weave in labor, inventory, and marketing context where available."
+        elif modules_active:
+            module_instruction = "\n\nThis client has these modules active: Review Intelligence, " + ", ".join(modules_active) + ". Reference all active modules in your summary."
+
         prompt = f"""You are the Cavnar AI Consultant writing a brief weekly summary for {restaurant_name}.
 
 This week's data:
@@ -159,14 +191,14 @@ This week's data:
 - Positive: {pos}, Negative: {neg}
 - Urgent reviews needing attention: {urgent_count}
 - Top themes: {top_themes or "nothing notable"}
-- Period: {report.period_start} to {report.period_end}{wow_context}{extra_context}
+- Period: {report.period_start} to {report.period_end}{wow_context}{extra_context}{module_instruction}
 
-Today's actual date: {__import__('datetime').datetime.now(__import__('zoneinfo').ZoneInfo('America/Chicago')).strftime('%B %d, %Y') if True else ''}
+Today's actual date: {today_rpt}
 
 Notable reviews this week:{specific_reviews}
 
 Write 2-3 sentences starting with "{greeting}," that:
-1. Give the honest overall picture covering the most important metric this week
+1. Give the honest overall picture covering the most important metrics this week across ALL active modules
 2. Call out the single most important thing to act on — if there's a notable review, mention the reviewer by first name and what they said
 3. End with one specific, actionable suggestion
 
@@ -177,7 +209,10 @@ Tone: warm, direct, like a trusted advisor. No markdown, no bullet points, plain
             max_tokens=350,
             messages=[{"role": "user", "content": prompt}]
         )
-        return msg.content[0].text.strip()
+        raw = msg.content[0].text.strip()
+        import re as _re_rpt
+        raw = _re_rpt.sub(r'(?<![\$\d\-\/])(\d{3,}(?:,\d{3})*(?:\.\d+)?)(?![\-\/\d])', r'$\1', raw)
+        return raw
     except Exception as e:
         return ""
 

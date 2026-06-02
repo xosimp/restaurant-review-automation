@@ -111,13 +111,23 @@ def draft_response(review_id: int, rating: int, text: str,
     # Sign off
     sign_off_name = sign_off or restaurant_name
 
+    # Health/safety escalation
+    health_keywords = ['sick', 'food poison', 'ill ', 'vomit', 'allergic reaction',
+                       'hospital', 'health department', 'cockroach', 'rat', 'rodent',
+                       'bug in', 'foreign object', 'glass in', 'metal in', 'hair in',
+                       'mold', 'raw chicken', 'raw meat']
+    is_health_issue = rating <= 2 and any(kw in text.lower() for kw in health_keywords)
+    if is_health_issue:
+        length_note = "80-100 words — this is a serious health/safety concern, it requires a full and careful response."
+    health_note = """\nIMPORTANT: This review mentions a health or safety issue. Take it extremely seriously — no defensiveness, no minimising. Apologise specifically, invite them to contact the owner directly by email or phone.""" if is_health_issue else ""
+
     prompt = f"""Write a public {sentiment} review response for {restaurant_name}.
 
 Platform: {platform_note}
 Voice: {voice_notes or "Warm, genuine, never corporate. Always invite guests back."}
 Sign off as: {sign_off_name}
 {reviewer_line}
-Length: {length_note}{never_note}{style_block}{theme_note}
+Length: {length_note}{never_note}{style_block}{theme_note}{health_note}
 CRITICAL: If the reviewer mentions specific issues (cold food, slow service, wrong order, noise, parking, staff) — address each one directly by name. Never give a generic apology for a specific complaint.
 
 Review ({rating}/5 stars, {sentiment}):
@@ -135,6 +145,7 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
     # Strip markdown if AI slips any in
     draft = re.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), draft)
     draft = re.sub(r'\*(.+?)\*', lambda m: m.group(1), draft)
+    draft = re.sub(r'(?<![\$\d\-\/])(\d{3,}(?:,\d{3})*(?:\.\d+)?)(?![\-\/\d])', r'$\1', draft)
 
     update_draft(review_id, draft)
     return draft
