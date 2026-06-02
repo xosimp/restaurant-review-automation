@@ -11,12 +11,95 @@ DEFAULT_HOURLY_RATE = 26.0  # fallback if not set per client
 
 def load_shifts(path: str = "sample_shifts.csv",
                 csv_string: str = None) -> list[dict]:
-    """Load shifts from a CSV string (client data) or file (sample/demo)."""
+    """Load shifts from a CSV string (client data) or bundled sample."""
+    import io
     if csv_string:
-        import io
         return list(csv.DictReader(io.StringIO(csv_string)))
-    with open(path, newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+    # Bundled sample data — week of June 1-7 2026 with verified correct day names
+    _SAMPLE = """date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes
+2026-06-01,Monday,Marcus T.,Server,11:00,17:00,6,6.1,4200,
+2026-06-01,Monday,Jamie L.,Server,11:00,17:00,6,5.5,4200,
+2026-06-01,Monday,Priya K.,Server,11:00,17:00,6,5.8,4200,
+2026-06-01,Monday,Derek M.,Bartender,16:00,24:00,8,7.7,4200,
+2026-06-01,Monday,Sofia R.,Bartender,16:00,24:00,8,8.2,4200,
+2026-06-01,Monday,Carlos B.,Cook,10:00,18:00,8,8.2,4200,
+2026-06-01,Monday,Amy C.,Cook,10:00,18:00,8,8.4,4200,
+2026-06-01,Monday,James H.,Host,17:00,22:00,5,4.6,4200,
+2026-06-02,Tuesday,Marcus T.,Server,11:00,17:00,6,5.9,4800,
+2026-06-02,Tuesday,Jamie L.,Server,11:00,17:00,6,5.5,4800,
+2026-06-02,Tuesday,Priya K.,Server,11:00,17:00,6,5.7,4800,
+2026-06-02,Tuesday,Derek M.,Bartender,16:00,24:00,8,8.0,4800,
+2026-06-02,Tuesday,Sofia R.,Bartender,16:00,24:00,8,7.5,4800,
+2026-06-02,Tuesday,Carlos B.,Cook,10:00,18:00,8,7.7,4800,
+2026-06-02,Tuesday,Amy C.,Cook,10:00,18:00,8,8.1,4800,
+2026-06-02,Tuesday,James H.,Host,17:00,22:00,5,5.0,4800,
+2026-06-03,Wednesday,Marcus T.,Server,11:00,17:00,6,6.1,5100,
+2026-06-03,Wednesday,Marcus T.,Server,17:00,23:00,6,6.3,5100,
+2026-06-03,Wednesday,Jamie L.,Server,11:00,17:00,6,6.3,5100,
+2026-06-03,Wednesday,Jamie L.,Server,17:00,23:00,6,6.2,5100,
+2026-06-03,Wednesday,Priya K.,Server,11:00,17:00,6,5.7,5100,
+2026-06-03,Wednesday,Derek M.,Bartender,16:00,24:00,8,7.8,5100,
+2026-06-03,Wednesday,Sofia R.,Bartender,16:00,24:00,8,7.6,5100,
+2026-06-03,Wednesday,Carlos B.,Cook,10:00,18:00,8,8.1,5100,
+2026-06-03,Wednesday,Amy C.,Cook,10:00,18:00,8,8.2,5100,
+2026-06-03,Wednesday,James H.,Host,17:00,22:00,5,5.5,5100,
+2026-06-04,Thursday,Marcus T.,Server,11:00,17:00,6,6.1,5600,
+2026-06-04,Thursday,Jamie L.,Server,11:00,17:00,6,6.1,5600,
+2026-06-04,Thursday,Priya K.,Server,11:00,17:00,6,6.1,5600,
+2026-06-04,Thursday,Derek M.,Bartender,16:00,24:00,8,7.5,5600,
+2026-06-04,Thursday,Sofia R.,Bartender,16:00,24:00,8,7.8,5600,
+2026-06-04,Thursday,Carlos B.,Cook,10:00,18:00,8,7.7,5600,
+2026-06-04,Thursday,Carlos B.,Cook,16:00,24:00,8,7.6,5600,
+2026-06-04,Thursday,Amy C.,Cook,10:00,18:00,8,8.1,5600,
+2026-06-04,Thursday,Amy C.,Cook,16:00,24:00,8,7.9,5600,
+2026-06-04,Thursday,James H.,Host,17:00,22:00,5,4.7,5600,
+2026-06-05,Friday,Marcus T.,Server,11:00,17:00,6,5.8,7800,
+2026-06-05,Friday,Marcus T.,Server,17:00,23:00,6,6.4,7800,
+2026-06-05,Friday,Jamie L.,Server,11:00,17:00,6,6.1,7800,
+2026-06-05,Friday,Jamie L.,Server,17:00,23:00,6,6.1,7800,
+2026-06-05,Friday,Priya K.,Server,11:00,17:00,6,5.7,7800,
+2026-06-05,Friday,Priya K.,Server,17:00,23:00,6,6.2,7800,
+2026-06-05,Friday,Derek M.,Bartender,16:00,24:00,8,7.7,7800,
+2026-06-05,Friday,Sofia R.,Bartender,16:00,24:00,8,7.9,7800,
+2026-06-05,Friday,Carlos B.,Cook,10:00,18:00,8,8.5,7800,
+2026-06-05,Friday,Carlos B.,Cook,16:00,24:00,8,8.1,7800,
+2026-06-05,Friday,Amy C.,Cook,10:00,18:00,8,8.1,7800,
+2026-06-05,Friday,Amy C.,Cook,16:00,24:00,8,8.2,7800,
+2026-06-05,Friday,James H.,Host,17:00,22:00,5,5.3,7800,
+2026-06-06,Saturday,Marcus T.,Server,11:00,17:00,6,6.3,9200,
+2026-06-06,Saturday,Marcus T.,Server,17:00,23:00,6,5.7,9200,
+2026-06-06,Saturday,Jamie L.,Server,11:00,17:00,6,5.5,9200,
+2026-06-06,Saturday,Jamie L.,Server,17:00,23:00,6,5.8,9200,
+2026-06-06,Saturday,Priya K.,Server,11:00,17:00,6,5.8,9200,
+2026-06-06,Saturday,Priya K.,Server,17:00,23:00,6,5.7,9200,
+2026-06-06,Saturday,Derek M.,Bartender,16:00,24:00,8,8.4,9200,
+2026-06-06,Saturday,Sofia R.,Bartender,16:00,24:00,8,8.4,9200,
+2026-06-06,Saturday,Carlos B.,Cook,10:00,18:00,8,7.8,9200,
+2026-06-06,Saturday,Carlos B.,Cook,16:00,24:00,8,8.2,9200,
+2026-06-06,Saturday,Amy C.,Cook,10:00,18:00,8,7.9,9200,
+2026-06-06,Saturday,Amy C.,Cook,16:00,24:00,8,8.4,9200,
+2026-06-06,Saturday,James H.,Host,17:00,22:00,5,5.0,9200,
+2026-06-07,Sunday,Marcus T.,Server,11:00,17:00,6,5.8,6400,
+2026-06-07,Sunday,Marcus T.,Server,17:00,23:00,6,5.7,6400,
+2026-06-07,Sunday,Jamie L.,Server,11:00,17:00,6,6.1,6400,
+2026-06-07,Sunday,Jamie L.,Server,17:00,23:00,6,5.8,6400,
+2026-06-07,Sunday,Priya K.,Server,11:00,17:00,6,6.1,6400,
+2026-06-07,Sunday,Priya K.,Server,17:00,23:00,6,6.4,6400,
+2026-06-07,Sunday,Derek M.,Bartender,16:00,24:00,8,7.9,6400,
+2026-06-07,Sunday,Sofia R.,Bartender,16:00,24:00,8,7.7,6400,
+2026-06-07,Sunday,Carlos B.,Cook,10:00,18:00,8,8.5,6400,
+2026-06-07,Sunday,Carlos B.,Cook,16:00,24:00,8,8.0,6400,
+2026-06-07,Sunday,Amy C.,Cook,10:00,18:00,8,7.6,6400,
+2026-06-07,Sunday,Amy C.,Cook,16:00,24:00,8,7.5,6400,
+2026-06-07,Sunday,James H.,Host,17:00,22:00,5,4.6,6400,"""
+    try:
+        return list(csv.DictReader(io.StringIO(_SAMPLE)))
+    except Exception:
+        try:
+            with open(path, newline="", encoding="utf-8") as f:
+                return list(csv.DictReader(f))
+        except Exception:
+            return []
 
 
 def load_shifts_for_restaurant(restaurant_id: int) -> list[dict]:
