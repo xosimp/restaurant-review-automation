@@ -360,6 +360,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 .card{background:white;border:1px solid var(--paper3);border-radius:var(--r);overflow:hidden;margin-bottom:10px;box-shadow:0 1px 3px rgba(14,12,10,.05)}
 .card.urgent{border-left:3px solid var(--red)}
 .card.approved{border-left:3px solid var(--green)}
+.card.posted{border-left:3px solid #1a56cc;opacity:.85}
 .card-hd{display:flex;align-items:flex-start;gap:10px;padding:12px 14px 8px}
 .avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'DM Serif Display',serif;font-size:13px;color:white;flex-shrink:0}
 .card-meta{flex:1;min-width:0}
@@ -658,7 +659,7 @@ function clientUpload(dataType, input) {
   {% set colors=['#c84b2f','#2d6a4f','#b7791f','#1a56cc','#6b4fa0','#1e7a8c'] %}
   {% for r in reviews %}
   {% set col=colors[loop.index0%colors|length] %}
-  <div class="card {{'urgent' if r.urgency=='high'}} {{'approved' if r.response_status=='approved'}}" id="rc-{{r.id}}" data-platform="{{r.platform}}" data-yelp-id="{{restaurant.yelp_business_id or ''}}">
+  <div class="card {{'urgent' if r.urgency=='high'}} {{'posted' if r.response_status=='posted'}} {{'approved' if r.response_status=='approved'}}" id="rc-{{r.id}}" data-platform="{{r.platform}}" data-yelp-id="{{restaurant.yelp_business_id or ''}}">
     {% if r.urgency=='high' %}<div class="ubanner">⚠ Needs immediate attention</div>{% endif %}
     <div class="card-hd">
       <div class="avatar" style="background:{{col}}">{{r.author[0].upper() if r.author else "?"}}</div>
@@ -681,11 +682,20 @@ function clientUpload(dataType, input) {
         <div class="draft-txt" id="draft-txt-{{r.id}}">{{r.draft_response|e}}</div>
         <div class="draft-actions" id="draft-actions-{{r.id}}">
           {% if r.response_status=='posted' %}
-            <span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:11px;color:#1a56cc;font-weight:600;background:#e8f0fe;border:1px solid #c5d8f8;padding:3px 8px;border-radius:4px">✓ Live on {{r.platform|title}}</span>
+            </div>
           {% elif r.response_status=='approved' %}
-            <span class="btn btn-approved">✓ Approved</span>
-            <button class="btn btn-skip" onclick="skipR({{r.id}})">Edit</button>
-            <button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px" onclick="markPosted({{r.id}},this)">Mark as posted</button>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              <span style="font-size:11px;color:var(--green);font-weight:600;background:#f0fdf4;border:1px solid #b7dfca;padding:3px 8px;border-radius:4px">✓ Approved</span>
+              <span style="font-size:11px;color:var(--ink3)">{% if r.platform=='google' %}Auto-posting to Google or click below{% else %}Copy and post to {{r.platform|title}} manually{% endif %}</span>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:6px">
+              <button class="btn btn-skip" onclick="skipR({{r.id}})">Edit</button>
+              {% if r.platform != 'google' %}
+              <button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px" onclick="markPosted({{r.id}},this)">✓ Mark as posted</button>
+              {% endif %}
+            </div>
           {% elif r.response_status=='skipped' %}
             <button class="btn btn-approve" onclick="approveR({{r.id}})">✓ Approve</button>
             <button class="btn btn-skip" onclick="openEditor({{r.id}})">Edit response</button>
@@ -1497,17 +1507,24 @@ function setRF(f,btn){rfilter=f;document.querySelectorAll('.fpill').forEach(p=>p
 function filterReviews(){const q=document.getElementById('rsearch').value;window.location='/?filter='+rfilter+'&search='+encodeURIComponent(q)}
 function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{
   if(d.ok){
-    document.getElementById('rc-'+id).classList.add('approved');
+    const card = document.getElementById('rc-'+id);
+    card.classList.add('approved');
+    card.classList.remove('urgent');
     if(d.auto_posted){
       document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted to Google</span>';
-      toast('Response approved and posted to Google ✓');
+      toast('Response approved and posted to Google ✓ — now live');
     } else {
       const _plat = document.getElementById('rc-'+id) ? document.getElementById('rc-'+id).dataset.platform : '';
       const _markBtn = _plat === 'yelp'
         ? '<button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px;margin-left:6px" onclick="markPosted('+id+',this)">📋 Copy &amp; open Yelp</button>'
         : '<button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px;margin-left:6px" onclick="markPosted('+id+',this)">Mark as posted</button>';
       document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="btn btn-approved">✓ Approved</span>'+_markBtn;
-      toast('Response approved');
+      const platform = card.dataset.platform || 'google';
+      if(platform === 'google'){
+        toast('Response approved — auto-posting to Google');
+      } else {
+        toast('Response approved — copy and post to ' + platform + ' manually');
+      }
     }
   }
 })}
