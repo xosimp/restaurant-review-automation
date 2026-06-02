@@ -47,7 +47,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
   <div style="flex:1;min-width:200px;background:white;border:2px solid #c84b2f;border-radius:8px;padding:16px">
     <div style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin-bottom:4px">Monthly</div>
     <div style="font-size:20px;font-weight:600;color:#0e0c0a;font-family:Georgia,serif;margin-bottom:2px">{retainer_price}</div>
-    <div style="font-size:11px;color:#7a736a;margin-bottom:12px">Cancel anytime</div>
+    <div style="font-size:11px;color:#7a736a;margin-bottom:12px">Cancel anytime with 30 days written notice &nbsp;·&nbsp; No long-term contracts</div>
     <a href="{checkout_monthly}" style="display:block;text-align:center;background:#c84b2f;color:white;padding:10px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Choose monthly →</a>
   </div>
   <div style="flex:1;min-width:200px;background:#fdf8f6;border:2px solid #2d6a4f;border-radius:8px;padding:16px;position:relative">
