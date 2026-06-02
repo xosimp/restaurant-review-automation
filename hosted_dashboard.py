@@ -2709,6 +2709,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
           <span style="color:var(--ember)">Square:</span> Dashboard → Team → Timecards → Export &nbsp;·&nbsp;
           <span style="color:var(--ember)">Lightspeed:</span> Reports → Employees → Time Clock → Export
         </div>
+        <div style="margin-bottom:8px">
+          <a href="/client/sample-template/shifts" download="sample_shifts_template.csv" style="font-size:12px;color:var(--ember);text-decoration:none;font-weight:600">📥 Download sample shifts template</a>
+          <span style="font-size:11px;color:var(--ink3);margin-left:8px">Required columns: date, employee, actual_hours, sales</span>
+        </div>
         <div class="upload-zone" id="shifts-drop">
           <input type="file" accept=".csv" onchange="handleFile('shifts', this)">
           <div class="upload-icon">📂</div>
@@ -2805,6 +2809,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
           <span style="color:var(--ember)">Toast:</span> Inventory → Items → Export CSV &nbsp;·&nbsp;
           <span style="color:var(--ember)">Square:</span> Items → Inventory → Export &nbsp;·&nbsp;
           <span style="color:var(--ember)">Other:</span> Any CSV with item name, quantity, unit cost columns works
+        </div>
+        <div style="margin-bottom:8px">
+          <a href="/client/sample-template/inventory" download="sample_inventory_template.csv" style="font-size:12px;color:var(--ember);text-decoration:none;font-weight:600">📥 Download sample inventory template</a>
+          <span style="font-size:11px;color:var(--ink3);margin-left:8px">Required columns: item, current_stock, par_level, unit_cost, waste_last_week</span>
         </div>
         <div class="upload-zone">
           <input type="file" accept=".csv" onchange="handleFile('inv', this)">
@@ -4550,6 +4558,31 @@ def gmb_disconnect(current_user):
     return jsonify(ok=True)
 
 
+# ── Sample CSV template downloads ────────────────────────────────────────────
+@app.route("/client/sample-template/<template_type>")
+@login_required
+def download_sample_template(current_user, template_type):
+    """Serve sample CSV templates for clients to download."""
+    from flask import Response
+    if template_type == "shifts":
+        csv = "date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes\n"
+        csv += "2026-06-01,Monday,Jane Smith,Server,11:00,17:00,6,6.0,4200,\n"
+        csv += "2026-06-01,Monday,Mark Jones,Cook,10:00,18:00,8,8.2,4200,\n"
+        csv += "2026-06-02,Tuesday,Jane Smith,Server,17:00,23:00,6,5.8,4800,\n"
+        csv += "2026-06-02,Tuesday,Mark Jones,Cook,10:00,18:00,8,8.0,4800,\n"
+        return Response(csv, mimetype="text/csv",
+            headers={"Content-Disposition": "attachment;filename=sample_shifts_template.csv"})
+    elif template_type == "inventory":
+        csv = "item,category,par_level,current_stock,unit_cost,avg_daily_usage,last_order_qty,waste_last_week\n"
+        csv += "Chicken Breast,Protein,30,22,5.80,6.0,30,3.5\n"
+        csv += "Romaine Lettuce,Produce,20,28,2.50,3.5,25,8.0\n"
+        csv += "Heavy Cream,Dairy,12,9,3.80,1.8,12,1.5\n"
+        csv += "Pasta Rigatoni,Pantry,15,19,2.80,2.2,15,1.8\n"
+        return Response(csv, mimetype="text/csv",
+            headers={"Content-Disposition": "attachment;filename=sample_inventory_template.csv"})
+    return "Template not found", 404
+
+
 # ── Client self-serve data upload ────────────────────────────────────────────
 @app.route("/client/upload-data", methods=["POST"])
 @login_required
@@ -4591,6 +4624,36 @@ def client_upload_data(current_user):
             return jsonify(ok=False, error="CSV has no data rows")
     except Exception as e:
         return jsonify(ok=False, error=f"Could not parse CSV: {e}")
+
+    # Validate required columns exist
+    headers = [h.strip().lower() for h in (rows[0].keys() if rows else [])]
+
+    if data_type == "shifts":
+        required = ["date", "employee", "actual_hours"]
+        optional_sales = ["sales", "sales_that_day", "revenue"]
+        missing = [c for c in required if c not in headers]
+        has_sales = any(c in headers for c in optional_sales)
+        if missing:
+            return jsonify(ok=False, error=(
+                f"Your shifts CSV is missing required columns: {', '.join(missing)}. "
+                f"Required columns are: date, employee, actual_hours. "
+                f"Also recommended: sales (daily revenue for that date). "
+                f"Download the sample template from the Labor tab for reference."
+            ))
+        if not has_sales:
+            # Warn but don't block — labor % just won't show
+            pass
+
+    elif data_type == "inventory":
+        required = ["item", "current_stock", "par_level", "unit_cost", "waste_last_week"]
+        missing = [c for c in required if c not in headers]
+        if missing:
+            return jsonify(ok=False, error=(
+                f"Your inventory CSV is missing required columns: {', '.join(missing)}. "
+                f"Required columns are: item, current_stock, par_level, unit_cost, waste_last_week. "
+                f"Also recommended: avg_daily_usage, last_order_qty. "
+                f"Download the sample template from the Inventory tab for reference."
+            ))
 
     # Save it
     save_client_data(restaurant_id, data_type, csv_content, source="upload")
