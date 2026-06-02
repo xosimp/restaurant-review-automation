@@ -4710,6 +4710,41 @@ if __name__ == "__main__":
         create_user(ryan_rid, "ryan", "ryancavnar@gmail.com", ryan_pw, is_admin=False)
         print(f"\n  Test client created: ryan / {ryan_pw}\n")
 
+        # Seed sample reviews for Ryan's Charthouse with realistic Chart House content
+        from models import get_conn as _gc_r
+        _conn_r = _gc_r()
+        sample_reviews = [
+            ("google", "rev_ryan_001", 5, "Absolutely incredible dinner. The Chilean sea bass melted in my mouth and our server was phenomenal. Best waterfront dining in Melbourne FL by far.", "positive", "Jennifer M."),
+            ("google", "rev_ryan_002", 2, "Waited 40 minutes past our reservation. The prime rib was overcooked and came out cold. Manager never came by to check on us. Disappointed for the price point.", "negative", "David K."),
+            ("yelp",   "rev_ryan_003", 5, "Celebrated my anniversary here. The filet mignon and lobster tail combo was perfect. Sunset views from the patio are absolutely stunning. Will be back every year.", "positive", "Sarah T."),
+            ("google", "rev_ryan_004", 4, "Great happy hour on the outdoor patio — firecracker shrimp and craft cocktails were excellent. Service was a bit slow but the food made up for it.", "neutral",  "Mike R."),
+            ("yelp",   "rev_ryan_005", 1, "Food was cold, service was rude, and the lobster bisque tasted like it came from a can. For these prices I expected much better. Will not return.", "negative", "Amanda L."),
+            ("google", "rev_ryan_006", 5, "The Chart House Cut prime rib is legendary. Been coming here for 10 years and it never disappoints. Lagoon views at sunset are unmatched in Brevard County.", "positive", "Robert H."),
+            ("google", "rev_ryan_007", 3, "Hit or miss experience. The tuna tartare appetizer was excellent but my Mac Nut Mahi came out overcooked. Staff was friendly though.", "neutral",  "Lisa C."),
+            ("yelp",   "rev_ryan_008", 5, "Best restaurant on the lagoon hands down. The mud pie dessert is a must. Our server Danny made the whole evening special with his knowledge of the menu.", "positive", "Tom W."),
+        ]
+        from zoneinfo import ZoneInfo as _ZI_r
+        from datetime import datetime as _dt_r
+        _now_r = _dt_r.now(_ZI_r('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S')
+        for platform, ext_id, rating, text, sentiment, name in sample_reviews:
+            _conn_r.execute("""
+                INSERT OR IGNORE INTO reviews
+                (restaurant_id, platform, external_id, rating, text, sentiment,
+                 fetched_at, review_date, response_status, processed, review_name)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            """, (ryan_rid, platform, ext_id, rating, text, sentiment,
+                    _now_r, _now_r, 'pending', 1, name))
+        _conn_r.commit()
+        _conn_r.close()
+
+        # Draft responses for Ryan's reviews
+        try:
+            from drafter import draft_pending
+            draft_pending(ryan_rid, limit=50)
+            print("  Ryan's reviews seeded and drafted.\n")
+        except Exception as _de:
+            print(f"  Draft error: {_de}")
+
     print(f"\n  Hosted dashboard → http://localhost:{PORT}")
     print(f"  Admin panel      → http://localhost:{PORT}/admin\n")
     app.run(host="0.0.0.0", port=PORT, debug=False)
