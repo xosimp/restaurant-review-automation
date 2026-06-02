@@ -661,7 +661,7 @@ function clientUpload(dataType, input) {
   <div class="card {{'urgent' if r.urgency=='high'}} {{'approved' if r.response_status=='approved'}}" id="rc-{{r.id}}" data-platform="{{r.platform}}" data-yelp-id="{{restaurant.yelp_business_id or ''}}">
     {% if r.urgency=='high' %}<div class="ubanner">⚠ Needs immediate attention</div>{% endif %}
     <div class="card-hd">
-      <div class="avatar" style="background:{{col}}">{{r.author[0].upper()}}</div>
+      <div class="avatar" style="background:{{col}}">{{r.author[0].upper() if r.author else "?"}}</div>
       <div class="card-meta">
         <div class="card-author">{{r.author|e}}</div>
         <div class="card-sub">
@@ -4729,10 +4729,10 @@ if __name__ == "__main__":
         for platform, ext_id, rating, text, sentiment, name in sample_reviews:
             _conn_r.execute("""
                 INSERT OR IGNORE INTO reviews
-                (restaurant_id, platform, external_id, rating, text, sentiment,
+                (restaurant_id, platform, external_id, author, rating, text, sentiment,
                  fetched_at, review_date, response_status, processed, review_name)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)
-            """, (ryan_rid, platform, ext_id, rating, text, sentiment,
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (ryan_rid, platform, ext_id, name, rating, text, sentiment,
                     _now_r, _now_r, 'pending', 1, name))
         _conn_r.commit()
         _conn_r.close()
