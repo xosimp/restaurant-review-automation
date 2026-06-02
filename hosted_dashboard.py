@@ -3142,7 +3142,7 @@ input:focus,select:focus{border-color:var(--ember)}
             {% if user.module_marketing %}{% set _ = mods.append('Marketing') %}{% endif %}
             {{ mods|join(', ') if mods else 'None' }}
           </span>
-          <span><strong style="color:var(--ink2)">Last login:</strong> {% if user.last_login %}{% set d=user.last_login[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}Never{% endif %}</span>
+          <span><strong style="color:var(--ink2)">Last login:</strong> {% if user.last_login and user.last_login|length >= 10 %}{% set d=user.last_login[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}Never{% endif %}</span>
           {% if user.last_active_tab %}<span><strong style="color:var(--ink2)">Last tab:</strong> {{user.last_active_tab}}</span>{% endif %}
           <span><strong style="color:var(--ink2)">Reviews fetched:</strong> {{user.last_fetched_at or 'Never'}}</span>
           <span><strong style="color:var(--ink2)">Account:</strong> {% if user.is_active %}<span style="color:#2d6a4f">Active</span>{% else %}<span style="color:#9ca3af">Inactive</span>{% endif %}</span>
@@ -3443,7 +3443,7 @@ async function deleteNote(noteId) {
       {% for log in email_log %}
       <tr>
         <td style="font-size:11px;color:var(--ink3);white-space:nowrap">
-          {% set d=log.sent_at[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}
+          {% if log.sent_at and log.sent_at|length >= 10 %}{% set d=log.sent_at[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}—{% endif %}
           <span style="color:var(--paper3)"> · </span>{% set hr=log.sent_at[11:13]|int %}{% set mn=log.sent_at[14:16] %}{% set ampm='am' if hr < 12 else 'pm' %}{% set hr12=hr if hr <= 12 else hr-12 %}{% set hr12=12 if hr12==0 else hr12 %}{{hr12}}:{{mn}}{{ampm}}
         </td>
         <td style="font-size:12px">{{log.restaurant_name or '—'}}</td>
@@ -3480,7 +3480,7 @@ async function deleteNote(noteId) {
           <tr>
             <td style="font-size:11px;color:var(--ink3);white-space:nowrap">
               {% if item.ts %}
-                {% set d=item.ts[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}
+                {% if item.ts and item.ts|length >= 10 %}{% set d=item.ts[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}—{% endif %}
                 <span style="color:var(--paper3)"> · </span>
                 {% set hr=item.ts[11:13]|int %}{% set mn=item.ts[14:16] %}
                 {% set ampm='am' if hr < 12 else 'pm' %}
