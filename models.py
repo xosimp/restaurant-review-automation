@@ -856,7 +856,7 @@ def get_approved_examples(restaurant_id: int, limit: int = 5,
           AND response_status IN ('approved','posted')
           AND draft_response IS NOT NULL
           AND draft_response != ''
-        ORDER BY updated_at DESC NULLS LAST
+        ORDER BY id DESC
         LIMIT ?
     """, (restaurant_id, limit)).fetchall()
     conn.close()
