@@ -417,7 +417,7 @@ Recommendations:
 2. [Second specific differentiator to emphasize]
 3. [Third tactical move to capture dissatisfied competitor customers]
 
-Tone: sharp, direct, trusted business advisor. No generic advice. Name specific competitors and cite specific review themes."""
+Tone: sharp, direct, trusted business advisor. No generic advice. Name specific competitors and cite specific review themes. Always use $ signs before dollar amounts."""
 
         msg = client.messages.create(
             model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
@@ -426,7 +426,6 @@ Tone: sharp, direct, trusted business advisor. No generic advice. Name specific 
         )
         raw = msg.content[0].text.strip()
         import re as _re_c
-        raw = _re_c.sub(r'(?<![\$\d\-\/])(\d{3,}(?:,\d{3})*(?:\.\d+)?)(?![\-\/\d])', r'$\1', raw)
         return raw
     except Exception as e:
         print(f"[Competitor] generate_competitor_insight error: {e}")

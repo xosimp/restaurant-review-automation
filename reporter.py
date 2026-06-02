@@ -177,41 +177,50 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None):
         if has_inventory: modules_active.append("Inventory Control")
         if has_marketing: modules_active.append("Marketing Autopilot")
 
+        # Build per-module instructions
         module_instruction = ""
         if has_all_four:
-            module_instruction = "\n\nThis client has all 4 modules active. Your summary MUST touch on all active modules — not just reviews. Weave in labor, inventory, and marketing context where available."
-        elif modules_active:
-            module_instruction = "\n\nThis client has these modules active: Review Intelligence, " + ", ".join(modules_active) + ". Reference all active modules in your summary."
+            module_instruction = """
 
-        prompt = f"""You are the Cavnar AI Consultant writing a brief weekly summary for {restaurant_name}.
+This client has all 4 modules active. Write 3-4 sentences total covering ALL of these:
+- Reviews: overall rating picture, any urgent or notable review to call out by reviewer name
+- Labor: mention the labor % and whether it's trending up or down if data is available
+- Inventory: mention the top waste item or a win if waste improved
+- Marketing: one actionable content or engagement suggestion for the week ahead
+Do NOT focus only on reviews. Each module deserves at least a mention."""
+        elif modules_active:
+            active_list = "Review Intelligence, " + ", ".join(modules_active)
+            module_instruction = f"\n\nActive modules: {active_list}. Cover each active module — not just reviews."
+
+        prompt = f"""You are the Cavnar AI Consultant writing a weekly summary for {restaurant_name}.
 
 This week's data:
 - Total reviews: {report.total_reviews}
 - Average rating: {report.avg_rating}/5
 - Positive: {pos}, Negative: {neg}
-- Urgent reviews needing attention: {urgent_count}
+- Urgent reviews: {urgent_count}
 - Top themes: {top_themes or "nothing notable"}
 - Period: {report.period_start} to {report.period_end}{wow_context}{extra_context}{module_instruction}
 
-Today's actual date: {today_rpt}
+Today: {today_rpt}
 
-Notable reviews this week:{specific_reviews}
+Notable reviews:{specific_reviews}
 
-Write 2-3 sentences starting with "{greeting}," that:
-1. Give the honest overall picture covering the most important metrics this week across ALL active modules
-2. Call out the single most important thing to act on — if there's a notable review, mention the reviewer by first name and what they said
-3. End with one specific, actionable suggestion
+Start with "{greeting}," then write a natural, flowing summary covering the most important points across all active modules. Be specific with numbers. End with one clear action item.
 
-Tone: warm, direct, like a trusted advisor. No markdown, no bullet points, plain sentences only."""
+Rules:
+- No markdown, no bullet points, no bold, plain sentences only
+- Always use $ signs before dollar amounts ($2,400 not 2400)
+- Do not list every review — only mention a specific reviewer if they stand out
+- 3-4 sentences for single module clients, 4-5 sentences for full system clients"""
 
         msg = client.messages.create(
             model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-            max_tokens=350,
+            max_tokens=500,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = msg.content[0].text.strip()
         import re as _re_rpt
-        raw = _re_rpt.sub(r'(?<![\$\d\-\/])(\d{3,}(?:,\d{3})*(?:\.\d+)?)(?![\-\/\d])', r'$\1', raw)
         return raw
     except Exception as e:
         return ""

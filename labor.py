@@ -110,7 +110,8 @@ def analyse_shifts(shifts: list[dict],
                 fmt_date = _dt.strptime(date, "%Y-%m-%d").strftime("%-m/%-d/%y")
             except Exception:
                 fmt_date = date
-            overstaffed.append({"date": fmt_date, "day": d["shifts"][0]["day"],
+            real_day = _dt.strptime(date, "%Y-%m-%d").strftime("%A") if date else d["shifts"][0]["day"]
+            overstaffed.append({"date": fmt_date, "day": real_day,
                                  "labor_pct": round(labor_pct, 1),
                                  "labor_cost": round(labor_cost, 2),
                                  "sales": d["sales"]})
@@ -120,7 +121,8 @@ def analyse_shifts(shifts: list[dict],
                 fmt_date = _dt.strptime(date, "%Y-%m-%d").strftime("%-m/%-d/%y")
             except Exception:
                 fmt_date = date
-            understaffed.append({"date": fmt_date, "day": d["shifts"][0]["day"],
+            real_day_u = _dt.strptime(date, "%Y-%m-%d").strftime("%A") if date else d["shifts"][0]["day"]
+            understaffed.append({"date": fmt_date, "day": real_day_u,
                                   "labor_pct": round(labor_pct, 1), "sales": d["sales"]})
 
     # Overtime risk — bucket by week, flag anyone who hit 40h in any single week
@@ -162,7 +164,12 @@ def analyse_shifts(shifts: list[dict],
     dow_summary = {}
     dow_daily = {}  # accumulate per-day labor and sales
     for date, d in by_day.items():
-        day_name = d["shifts"][0]["day"] if d.get("shifts") else None
+        # Derive day name from actual date, not CSV field (CSV may have wrong day)
+        try:
+            from datetime import datetime as _dt_dow
+            day_name = _dt_dow.strptime(date, "%Y-%m-%d").strftime("%A")
+        except Exception:
+            day_name = d["shifts"][0]["day"] if d.get("shifts") else None
         if not day_name:
             continue
         labor_cost = d["actual"] * HOURLY_RATE
@@ -333,6 +340,7 @@ Recommendations:
 3. [Third actionable suggestion. End this recommendation with one short warm closing sentence on the same line, separated by a space. Do not add a 4th item.]
 
 Tone: warm, direct, human. Use the owner name once or twice. Be specific with numbers.
+Always use $ signs before dollar amounts (e.g. $2,400 not 2400 or 2,400).
 Do NOT use markdown, asterisks, bold, or special characters.
 There must be EXACTLY 3 numbered recommendations and nothing after number 3.
 The Recommendations section must start with exactly the word "Recommendations:" on its own line."""
@@ -349,7 +357,6 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     text = re.sub('\\*(.+?)\\*',   lambda m: m.group(1), text)
     text = re.sub(r'#{1,6}\s', '', text)
     text = re.sub(r'^\s*[-•]\s', '', text, flags=re.MULTILINE)
-    text = re.sub(r'(?<![\$\d\-\/])(\d{3,}(?:,\d{3})*(?:\.\d+)?)(?![\-\/\d])', r'$\1', text)
     return text
 
 

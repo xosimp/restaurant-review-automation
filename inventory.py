@@ -210,6 +210,7 @@ Write a food cost analysis. Rules that apply to everything:
 - Do NOT label sections or write "Part 1", "Part 2", "Recommendations", or any headers
 - Plain flowing prose throughout — no line that starts with a dash or number
 - Friendly and direct — like a trusted advisor, not a formal report
+- Always use $ signs before dollar amounts (e.g. $2,400 not 2400 or 2,400)
 
 First, write one paragraph of 3-4 sentences:
 - Open with the monthly waste projection dollar amount, make it feel real and personal
@@ -242,7 +243,6 @@ Finally, on a new line with NO number, write one short warm closing sentence:
     result = _re_inv.sub('[*]{2}(.+?)[*]{2}', lambda m: m.group(1), result)
     result = _re_inv.sub('[*](.+?)[*]', lambda m: m.group(1), result)
     result = _re_inv.sub(r'#{1,6}\s', '', result)
-    result = _re_inv.sub(r'(?<![\$\d\-\/])(\d{3,}(?:,\d{3})*(?:\.\d+)?)(?![\-\/\d])', r'$\1', result)
     return result
 
 

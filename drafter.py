@@ -145,7 +145,6 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
     # Strip markdown if AI slips any in
     draft = re.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), draft)
     draft = re.sub(r'\*(.+?)\*', lambda m: m.group(1), draft)
-    draft = re.sub(r'(?<![\$\d\-\/])(\d{3,}(?:,\d{3})*(?:\.\d+)?)(?![\-\/\d])', r'$\1', draft)
 
     update_draft(review_id, draft)
     return draft

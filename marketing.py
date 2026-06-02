@@ -337,17 +337,15 @@ def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
     from datetime import datetime as _dt, timedelta as _td
     from zoneinfo import ZoneInfo as _ZI
     now = _dt.now(_ZI('America/Chicago')).replace(tzinfo=None)
-    # Build the 7-day window starting from tomorrow
-    start = now  # Start from today so Monday = today's date not next week
-    # Map by index (0-6) so duplicate day names never collide
-    dates_by_index = [( (start + _td(days=i)).strftime("%A"),
-                        (start + _td(days=i)).strftime("%-m/%-d") )
-                      for i in range(7)]
-    # Also keep a day-name map for the FIRST occurrence only
+    # Always start from Monday of the current week (Mon-Sun calendar)
+    days_since_monday = now.weekday()  # Monday=0 ... Sunday=6
+    start = now - _td(days=days_since_monday)
     days_map = {}
-    for day_name, date_str in dates_by_index:
-        if day_name not in days_map:
-            days_map[day_name] = date_str
+    for i in range(7):
+        d = start + _td(days=i)
+        dn = d.strftime("%A")
+        if dn not in days_map:
+            days_map[dn] = d.strftime("%-m/%-d")
     week_range = f"{start.strftime('%-m/%-d')} – {(start + _td(days=6)).strftime('%-m/%-d/%y')}"
     current_month = now.strftime("%B")
     today_str = now.strftime("%B %d, %Y")
