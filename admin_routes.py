@@ -851,7 +851,7 @@ def fetch_reviews_now(restaurant_id, current_user):
     reviews = []
     errors = []
 
-    if restaurant.reviews_live or restaurant.gmb_refresh_token:
+    if restaurant.gmb_refresh_token or restaurant.reviews_live:
         # Use GMB API if connected (stores review_name for auto-posting)
         if restaurant.gmb_refresh_token:
             try:

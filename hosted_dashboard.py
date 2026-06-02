@@ -2076,12 +2076,10 @@ textarea{resize:vertical;min-height:60px}
       <div style="margin-top:14px">
         <label style="display:block;margin-bottom:6px">Review data status</label>
         <div class="status-row">
-          <div class="status-dot {{'dot-live' if restaurant.reviews_live or restaurant.gmb_refresh_token else 'dot-sample'}}"></div>
+          <div class="status-dot {{'dot-live' if restaurant.gmb_refresh_token else 'dot-sample'}}"></div>
           <div class="status-text">
-            {{'Pulling live reviews from Google/Yelp' if restaurant.reviews_live else ('Google Business connected — fetching live reviews' if restaurant.gmb_refresh_token else 'Using sample review data — add Place ID and enable to go live')}}
+            {{'Pulling live reviews from Google Business' if restaurant.gmb_refresh_token else 'Using sample review data — connect Google Business Profile in the Account tab to go live'}}
           </div>
-          <button class="toggle {{'on' if restaurant.reviews_live}}" id="reviews-live-toggle"
-                  onclick="toggleReviewsLive(this)" title="Toggle live reviews"></button>
         </div>
       </div>
       <div style="margin-top:14px">
@@ -2384,17 +2382,7 @@ textarea{resize:vertical;min-height:60px}
 </div>
 
 <script>
-let reviewsLive = {{ 'true' if restaurant.reviews_live else 'false' }};
-
-
-function toggleReviewsLive(btn) {
-  reviewsLive = !reviewsLive;
-  btn.classList.toggle('on', reviewsLive);
-  btn.previousElementSibling.className = 'status-dot ' + (reviewsLive ? 'dot-live' : 'dot-sample');
-  btn.previousElementSibling.nextElementSibling.textContent = reviewsLive
-    ? 'Pulling live reviews from Google/Yelp'
-    : 'Using sample review data — add Place ID and enable to go live';
-}
+let reviewsLive = {{ 'true' if restaurant.gmb_refresh_token else 'false' }};
 
 
 
@@ -2595,7 +2583,7 @@ async function saveSettings() {
     sign_off_name:   document.getElementById('sign_off_name').value,
     google_place_id: document.getElementById('google_place_id').value,
     yelp_business_id:document.getElementById('yelp_business_id').value,
-    reviews_live:    reviewsLive,
+    reviews_live:    {{ 1 if restaurant.gmb_refresh_token else 0 }},
     neighborhood:    document.getElementById('neighborhood').value,
     known_for:       document.getElementById('known_for').value,
     vibe:            document.getElementById('vibe').value,

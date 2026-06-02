@@ -155,7 +155,7 @@ def run_daily_fetch():
 
         conn = get_conn()
         live = conn.execute(
-            "SELECT id FROM restaurants WHERE reviews_live=1"
+            "SELECT id FROM restaurants WHERE reviews_live=1 OR gmb_refresh_token IS NOT NULL"
         ).fetchall()
         conn.close()
 
