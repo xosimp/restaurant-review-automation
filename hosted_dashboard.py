@@ -4931,6 +4931,59 @@ if __name__ == "__main__":
         except Exception as _de:
             print(f"  Draft error: {_de}")
 
+        # Seed 6 weeks of inventory history so the trend chart is always populated for testing
+        try:
+            import json as _json_ryan_inv
+            from datetime import timedelta as _td_ryan
+            _ryan_inv_weeks = [
+                (312.50, ["Romaine Lettuce", "Bread Rolls", "Roma Tomatoes", "Baby Spinach"]),
+                (287.00, ["Bread Rolls", "Roma Tomatoes", "Ground Beef 80/20"]),
+                (401.75, ["Romaine Lettuce", "Bread Rolls", "Salmon Fillet", "Baby Spinach"]),
+                (358.20, ["Roma Tomatoes", "Bread Rolls", "Fresh Herbs Mix"]),
+                (295.40, ["Bread Rolls", "Baby Spinach", "Romaine Lettuce"]),
+                (334.10, ["Romaine Lettuce", "Bread Rolls", "Ground Beef 80/20", "Roma Tomatoes"]),
+            ]
+            from zoneinfo import ZoneInfo as _ZI_ryan_inv
+            from datetime import datetime as _dt_ryan_inv
+            _today_ryan = _dt_ryan_inv.now(_ZI_ryan_inv('America/Chicago')).date()
+            _monday_ryan = _today_ryan - _td_ryan(days=_today_ryan.weekday())
+            _conn_ryan_inv = get_conn()
+            _conn_ryan_inv.execute("""CREATE TABLE IF NOT EXISTS inventory_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                restaurant_id INTEGER NOT NULL,
+                waste_json TEXT,
+                week_end TEXT,
+                saved_at TEXT DEFAULT (datetime('now'))
+            )""")
+            try:
+                _conn_ryan_inv.execute("ALTER TABLE inventory_history ADD COLUMN week_end TEXT")
+            except Exception:
+                pass
+            _conn_ryan_inv.commit()
+            for _wi, (_waste, _items) in enumerate(_ryan_inv_weeks):
+                _week_monday = _monday_ryan - _td_ryan(weeks=(5 - _wi))
+                _week_end = (_week_monday + _td_ryan(days=6)).isoformat()
+                _snap = _json_ryan_inv.dumps({"total_waste_cost": _waste, "top_items": _items})
+                _ex = _conn_ryan_inv.execute(
+                    "SELECT id FROM inventory_history WHERE restaurant_id=? AND week_end=?",
+                    (ryan_rid, _week_end)
+                ).fetchone()
+                if _ex:
+                    _conn_ryan_inv.execute(
+                        "UPDATE inventory_history SET waste_json=? WHERE id=?",
+                        (_snap, _ex["id"])
+                    )
+                else:
+                    _conn_ryan_inv.execute(
+                        "INSERT INTO inventory_history (restaurant_id, waste_json, week_end) VALUES (?,?,?)",
+                        (ryan_rid, _snap, _week_end)
+                    )
+            _conn_ryan_inv.commit()
+            _conn_ryan_inv.close()
+            print("  Ryan's inventory trend history seeded (6 weeks).\n")
+        except Exception as _ryan_inv_e:
+            print(f"  Ryan inventory seed error: {_ryan_inv_e}")
+
     print(f"\n  Hosted dashboard → http://localhost:{PORT}")
     print(f"  Admin panel      → http://localhost:{PORT}/admin\n")
     app.run(host="0.0.0.0", port=PORT, debug=False)
