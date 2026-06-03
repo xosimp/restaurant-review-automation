@@ -986,15 +986,26 @@ function clientUpload(dataType, input) {
         </tr>{% else %}<tr><td colspan="4" style="color:#2d6a4f;font-style:italic;padding:12px;text-align:center">
           ✓ No significant waste flagged this week — great job.
         </td></tr>{% endfor %}</tbody></table></div>
-      {% if inv.reorder_soon %}
-      <div class="slabel" style="margin-top:12px">Order this week</div>
+      {% if inv.critical_low or inv.reorder_soon %}
+      <div class="slabel" style="margin-top:12px">Order list — recommended quantities</div>
       <div class="card"><table class="tbl">
-        <thead><tr><th>Item</th><th>Days left</th><th>Current stock</th></tr></thead>
-        <tbody>{% for item in inv.reorder_soon %}<tr>
+        <thead><tr><th>Item</th><th>Days left</th><th>Order qty</th><th>Last order</th><th>vs Last</th></tr></thead>
+        <tbody>
+        {% for item in inv.critical_low %}<tr>
+          <td><strong>{{item.item}}</strong> <span class="pill pill-red" style="font-size:10px">urgent</span></td>
+          <td><span class="pill pill-red">{{item.days_remaining}}d</span></td>
+          <td><strong>{{item.suggested_order_qty}} {{item.unit}}</strong></td>
+          <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
+          <td>{% if item.savings_vs_last > 0 %}<span style="color:#2d6a4f;font-weight:600">-${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:var(--ink3)">+${{(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:var(--ink3)">—</span>{% endif %}</td>
+        </tr>{% endfor %}
+        {% for item in inv.reorder_soon %}<tr>
           <td><strong>{{item.item}}</strong></td>
           <td><span class="pill pill-amber">{{item.days_remaining}}d</span></td>
-          <td>{{item.current_stock}} {{item.unit}}</td>
-        </tr>{% endfor %}</tbody></table></div>
+          <td><strong>{{item.suggested_order_qty}} {{item.unit}}</strong></td>
+          <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
+          <td>{% if item.savings_vs_last > 0 %}<span style="color:#2d6a4f;font-weight:600">-${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:var(--ink3)">+${{(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:var(--ink3)">—</span>{% endif %}</td>
+        </tr>{% endfor %}
+        </tbody></table></div>
       {% endif %}
     </div>
     <div>
@@ -1005,15 +1016,7 @@ function clientUpload(dataType, input) {
           <td><strong>{{item.item}}</strong></td><td>{{item.current_stock}}</td>
           <td>{{item.par_level}}</td><td><span class="pill pill-amber">${{item.overstock_cost}}</span></td>
         </tr>{% else %}<tr><td colspan="4" style="color:#2d6a4f;font-style:italic;padding:12px;text-align:center">✓ Nothing overstocked this week.</td></tr>{% endfor %}</tbody></table></div>
-      {% if inv.critical_low %}
-      <div class="slabel" style="margin-top:12px">Critical low — order today</div>
-      <div class="card"><table class="tbl">
-        <thead><tr><th>Item</th><th>Days left</th><th>Action</th></tr></thead>
-        <tbody>{% for item in inv.critical_low %}<tr>
-          <td><strong>{{item.item}}</strong></td><td>{{item.days_remaining}}d</td>
-          <td><span class="pill pill-red">Order now</span></td>
-        </tr>{% endfor %}</tbody></table></div>
-      {% endif %}
+
     </div>
   </div>
 </div>

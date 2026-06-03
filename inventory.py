@@ -50,6 +50,7 @@ Shrimp 16/20,Protein,10,8,14.2,1.6,10,1.2"""
         r["avg_daily_usage"]= float(r["avg_daily_usage"])
         r["last_order_qty"] = float(r["last_order_qty"])
         r["waste_last_week"]= float(r["waste_last_week"])
+        r.setdefault("unit", "")  # unit label optional (e.g. "lbs", "cases")
     return rows
 
 
@@ -91,6 +92,15 @@ def analyse_inventory(items: list[dict]) -> dict:
         item["waste_cost"]     = round(waste_cost, 2)
         item["overstock_cost"] = round(overstock_cost, 2)
         item["waste_pct"]      = round(waste_pct, 1)
+
+        # Suggested order quantity: target 1.5x par, cover 3 days usage, adjusted for waste rate
+        # If wasting a lot, pull the order quantity down proportionally
+        waste_adj     = min(0.95, max(0.60, 1.0 - (waste_pct / 100) * 0.5))
+        raw_qty       = (item["par_level"] * 1.5) - item["current_stock"] + (item["avg_daily_usage"] * 3)
+        suggested_qty = max(1, round(raw_qty * waste_adj))
+        savings_vs_last = round((item["last_order_qty"] - suggested_qty) * item["unit_cost"], 2)
+        item["suggested_order_qty"] = suggested_qty
+        item["savings_vs_last"]     = savings_vs_last  # positive = save money, negative = need more
 
         if waste_pct > 20:
             waste_items.append(item)
