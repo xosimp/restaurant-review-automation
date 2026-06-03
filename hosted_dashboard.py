@@ -948,10 +948,21 @@ function clientUpload(dataType, input) {
     </label>
   </div>
   {% endif %}
+  <div style="background:linear-gradient(135deg,#3d0c0c 0%,#5c1a1a 100%);border-radius:10px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+    <div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#f4a4a4;margin-bottom:4px">Projected annual food waste cost</div>
+      <div style="font-size:32px;font-weight:800;color:#ffffff;letter-spacing:-1px">${{inv.annual_waste_projection|int|format_num}}</div>
+      <div style="font-size:12px;color:#f4a4a4;margin-top:3px">Based on this week — ${{inv.monthly_waste_projection|int|format_num}}/mo projected</div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#a8d5b5;margin-bottom:4px">Recoverable with better ordering</div>
+      <div style="font-size:28px;font-weight:800;color:#6fcf97;letter-spacing:-1px">${{inv.annual_recoverable|int|format_num}}<span style="font-size:14px;font-weight:600;color:#a8d5b5">/yr</span></div>
+      <div style="font-size:12px;color:#a8d5b5;margin-top:3px">${{inv.recoverable_monthly|int|format_num}}/mo recoverable</div>
+    </div>
+  </div>
   <div class="stat-row">
     <div class="stat hi"><div class="stat-n">${{inv.total_waste_cost_week|format_num}}</div><div class="stat-l">Waste/week</div></div>
     <div class="stat hi"><div class="stat-n">${{inv.monthly_waste_projection|int|format_num}}</div><div class="stat-l">Projected/mo</div></div>
-    <div class="stat ok"><div class="stat-n">${{inv.recoverable_monthly|int|format_num}}</div><div class="stat-l">Recoverable</div></div>
     <div class="stat warn"><div class="stat-n">{{inv.waste_items|length}}</div><div class="stat-l">Waste items</div></div>
     <div class="stat hi"><div class="stat-n">{{inv.critical_low|length}}</div><div class="stat-l">Critical low</div></div>
     <div class="stat"><div class="stat-n">${{inv.total_stock_value|int|format_num}}</div><div class="stat-l">Inventory value</div></div>
@@ -4016,6 +4027,7 @@ def index(current_user):
                "recoverable_monthly":0,"total_stock_value":0,
                "waste_items":[],"overstock":[],"critical_low":[],
                "reorder_soon":[],"order_reduction":[],"total_items":0,
+               "annual_waste_projection":0,"annual_recoverable":0,
                "week_start":"—","week_end":"—","last_updated":"—",
                "is_live":False}
     # Show welcome banner if user has never logged in before (last_login is None)

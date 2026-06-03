@@ -122,7 +122,9 @@ def analyse_inventory(items: list[dict]) -> dict:
     order_reduction  = sorted(order_reduction,  key=lambda x: x["savings_vs_last"], reverse=True)
 
     monthly_waste_projection = total_waste_cost * 4.3
+    annual_waste_projection  = monthly_waste_projection * 12
     recoverable = monthly_waste_projection * 0.65
+    annual_recoverable = recoverable * 12
 
     from datetime import datetime, timedelta
     # Derive week range from last_ordered dates in items, or use current week
@@ -148,9 +150,11 @@ def analyse_inventory(items: list[dict]) -> dict:
     def fmt(dt): return dt.strftime("%-m/%-d/%y")
 
     return {
-        "total_waste_cost_week": round(total_waste_cost, 2),
+        "total_waste_cost_week":    round(total_waste_cost, 2),
         "monthly_waste_projection": round(monthly_waste_projection, 2),
-        "recoverable_monthly":   round(recoverable, 2),
+        "annual_waste_projection":  round(annual_waste_projection, 2),
+        "recoverable_monthly":      round(recoverable, 2),
+        "annual_recoverable":       round(annual_recoverable, 2),
         "total_stock_value":     round(total_stock_value, 2),
         "waste_items":    waste_items[:6],
         "overstock":      overstock[:5],
