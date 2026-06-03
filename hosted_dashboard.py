@@ -117,32 +117,33 @@ def format_intel_filter(text):
 
 
 def inv_banner_gradient(annual_waste, annual_recoverable):
-    """Compute a red-to-green CSS gradient based on waste severity and recovery opportunity."""
-    # Red intensity: scaled against industry benchmarks
-    # <$5K excellent | $5-15K normal | $15-30K concerning | >$30K serious
+    """Compute a red-to-green CSS gradient based on waste severity and recovery opportunity.
+    Industry benchmarks: <$5K excellent | $5-15K normal | $15-30K concerning | >$30K serious
+    Recovery %: >60% deep green | 40-60% medium | 20-40% muted | <20% near neutral
+    """
+    # Red intensity 0.0-1.0
     if annual_waste < 5000:
-        red_i = 0.2
+        red_i = 0.15
     elif annual_waste < 15000:
-        red_i = 0.2 + (annual_waste - 5000) / 10000 * 0.4
+        red_i = 0.15 + (annual_waste - 5000) / 10000 * 0.45
     elif annual_waste < 30000:
-        red_i = 0.6 + (annual_waste - 15000) / 15000 * 0.3
+        red_i = 0.60 + (annual_waste - 15000) / 15000 * 0.30
     else:
-        red_i = 0.9
-    # Green intensity: scaled by % of waste that is recoverable
-    # >60% deep green | 40-60% medium | 20-40% muted | <20% near neutral
+        red_i = 0.90
+    # Green intensity 0.0-1.0
     rec_pct = (annual_recoverable / annual_waste * 100) if annual_waste > 0 else 0
     if rec_pct > 60:
-        grn_i = 0.9
+        grn_i = 1.0
     elif rec_pct > 40:
-        grn_i = 0.6 + (rec_pct - 40) / 20 * 0.3
+        grn_i = 0.65 + (rec_pct - 40) / 20 * 0.35
     elif rec_pct > 20:
-        grn_i = 0.3 + (rec_pct - 20) / 20 * 0.3
+        grn_i = 0.35 + (rec_pct - 20) / 20 * 0.30
     else:
-        grn_i = 0.3
-    # Map to hex — red: #2a0808 (low) → #6b0f0f (high)
-    rh = f"#{int(42 + red_i*(107-42)):02x}{int(8+red_i*(15-8)):02x}{int(8+red_i*(15-8)):02x}"
-    # Green: #1a2e1a (muted) → #0d331f (deep)
-    gh = f"#{int(26-grn_i*(26-13)):02x}{int(46+grn_i*(51-46)):02x}{int(26+grn_i*(32-26)):02x}"
+        grn_i = 0.35
+    # Red: #2a0a0a (mild) → #8b1a1a (serious) — wide visible range
+    rh = f"#{int(42+red_i*(139-42)):02x}{int(10+red_i*(26-10)):02x}{int(10+red_i*(26-10)):02x}"
+    # Green: #162b1e (muted) → #1a6640 (deep saturated)
+    gh = f"#{int(22+grn_i*(26-22)):02x}{int(43+grn_i*(102-43)):02x}{int(30+grn_i*(64-30)):02x}"
     return f"linear-gradient(to right,{rh} 0%,{gh} 65%,{gh} 100%)"
 
 @app.template_filter("format_num")
