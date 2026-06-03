@@ -101,7 +101,7 @@ def analyse_inventory(items: list[dict]) -> dict:
         suggested_qty = max(1, round(raw_qty * waste_adj))
         savings_vs_last = round((item["last_order_qty"] - suggested_qty) * item["unit_cost"], 2)
         item["suggested_order_qty"] = suggested_qty
-        item["savings_vs_last"]     = savings_vs_last  # positive = save money, negative = need more
+        item["savings_vs_last"]     = round(savings_vs_last, 2)  # positive = save money, negative = need more
 
         if waste_pct > 20:
             waste_items.append(item)
@@ -129,9 +129,14 @@ def analyse_inventory(items: list[dict]) -> dict:
     # Industry benchmark: waste cost as % of total purchased this week
     # 4-5% = industry target | 5-8% = above average | 8-15% = concerning | >15% = serious
     total_purchased = sum(i["last_order_qty"] * i["unit_cost"] for i in items)
-    waste_rate_pct  = round((total_waste_cost / total_purchased * 100) if total_purchased > 0 else 0, 1)
+    _has_benchmark  = total_purchased > 0 and total_waste_cost > 0
+    waste_rate_pct  = round((total_waste_cost / total_purchased * 100) if _has_benchmark else 0, 1)
     # Benchmark rating
-    if waste_rate_pct <= 4:
+    if not _has_benchmark:
+        benchmark_label  = "—"
+        benchmark_color  = "#999999"
+        benchmark_detail = "Upload inventory data to see benchmark"
+    elif waste_rate_pct <= 4:
         benchmark_label  = "Excellent"
         benchmark_color  = "#2d6a4f"
         benchmark_detail = "At or below the 4% industry target"

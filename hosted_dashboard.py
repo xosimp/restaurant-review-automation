@@ -1048,46 +1048,49 @@ function clientUpload(dataType, input) {
         </tr>{% else %}<tr><td colspan="4" style="color:#2d6a4f;font-style:italic;padding:12px;text-align:center">
           ✓ No significant waste flagged this week — great job.
         </td></tr>{% endfor %}</tbody></table></div>
-      {% if inv.critical_low or inv.reorder_soon or inv.order_reduction %}
-      <div class="slabel" style="margin-top:12px">Order list — recommended quantities</div>
-      <div class="card"><table class="tbl">
-        <thead><tr><th>Item</th><th>Status</th><th>Order qty</th><th>Last order</th><th>vs Last</th></tr></thead>
-        <tbody>
-        {% for item in inv.critical_low %}<tr>
-          <td><strong>{{item.item}}</strong></td>
-          <td><span class="pill pill-red">{{item.days_remaining}}d — urgent</span></td>
-          <td><strong>{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}</strong></td>
-          <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
-          <td>{% if item.savings_vs_last > 0 %}<span style="color:#2d6a4f;font-weight:600">save ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:var(--red)">need ${{(item.savings_vs_last * -1)|round(2)}}</span>{% else %}<span style="color:var(--ink3)">—</span>{% endif %}</td>
-        </tr>{% endfor %}
-        {% for item in inv.reorder_soon %}<tr>
-          <td><strong>{{item.item}}</strong></td>
-          <td><span class="pill pill-amber">{{item.days_remaining}}d — order soon</span></td>
-          <td><strong>{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}</strong></td>
-          <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
-          <td>{% if item.savings_vs_last > 0 %}<span style="color:#2d6a4f;font-weight:600">save ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:var(--red)">need ${{(item.savings_vs_last * -1)|round(2)}}</span>{% else %}<span style="color:var(--ink3)">—</span>{% endif %}</td>
-        </tr>{% endfor %}
-        {% for item in inv.order_reduction %}<tr>
-          <td><strong>{{item.item}}</strong></td>
-          <td><span class="pill" style="background:#e8f4f0;color:#2d6a4f">reduce order</span></td>
-          <td><strong>{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}</strong></td>
-          <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
-          <td><span style="color:#2d6a4f;font-weight:600">save ${{item.savings_vs_last}}</span></td>
-        </tr>{% endfor %}
-        </tbody></table></div>
-      {% endif %}
     </div>
     <div>
       <div class="slabel">Overstocked</div>
       <div class="card"><table class="tbl">
-        <thead><tr><th>Item</th><th>Stock</th><th>Par</th><th>Excess</th></tr></thead>
+        <thead><tr><th>Item</th><th>Stock</th><th>Par</th><th>Tied-up $</th></tr></thead>
         <tbody>{% for item in inv.overstock %}<tr>
-          <td><strong>{{item.item}}</strong></td><td>{{item.current_stock}}</td>
-          <td>{{item.par_level}}</td><td><span class="pill pill-amber">${{item.overstock_cost}}</span></td>
+          <td><strong>{{item.item}}</strong></td>
+          <td>{{item.current_stock|int}}{% if item.unit %} {{item.unit}}{% endif %}</td>
+          <td>{{item.par_level|int}}{% if item.unit %} {{item.unit}}{% endif %}</td>
+          <td><span class="pill pill-amber">${{item.overstock_cost}}</span></td>
         </tr>{% else %}<tr><td colspan="4" style="color:#2d6a4f;font-style:italic;padding:12px;text-align:center">✓ Nothing overstocked this week.</td></tr>{% endfor %}</tbody></table></div>
-
     </div>
   </div>
+
+  {% if inv.critical_low or inv.reorder_soon or inv.order_reduction %}
+  <div class="slabel">Order list — recommended quantities</div>
+  <div class="card"><table class="tbl">
+    <thead><tr><th>Item</th><th>Status</th><th>Order qty</th><th>Last order</th><th>vs Last</th></tr></thead>
+    <tbody>
+    {% for item in inv.critical_low %}<tr>
+      <td><strong>{{item.item}}</strong></td>
+      <td><span class="pill pill-red">{{item.days_remaining}}d — urgent</span></td>
+      <td><strong>{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}</strong></td>
+      <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
+      <td>{% if item.savings_vs_last > 0 %}<span style="color:#2d6a4f;font-weight:600">save ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:var(--red)">need ${{"{:.2f}".format(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:var(--ink3)">—</span>{% endif %}</td>
+    </tr>{% endfor %}
+    {% for item in inv.reorder_soon %}<tr>
+      <td><strong>{{item.item}}</strong></td>
+      <td><span class="pill pill-amber">{{item.days_remaining}}d — order soon</span></td>
+      <td><strong>{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}</strong></td>
+      <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
+      <td>{% if item.savings_vs_last > 0 %}<span style="color:#2d6a4f;font-weight:600">save ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:var(--red)">need ${{"{:.2f}".format(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:var(--ink3)">—</span>{% endif %}</td>
+    </tr>{% endfor %}
+    {% for item in inv.order_reduction %}<tr>
+      <td><strong>{{item.item}}</strong></td>
+      <td><span class="pill" style="background:#e8f4f0;color:#2d6a4f">reduce order</span></td>
+      <td><strong>{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}</strong></td>
+      <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
+      <td><span style="color:#2d6a4f;font-weight:600">save ${{item.savings_vs_last}}</span></td>
+    </tr>{% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
 </div>
 
 <!-- MARKETING -->
