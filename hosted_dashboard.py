@@ -4945,8 +4945,8 @@ if __name__ == "__main__":
             ]
             from zoneinfo import ZoneInfo as _ZI_ryan_inv
             from datetime import datetime as _dt_ryan_inv
+            # Use today as week_end anchor — matches how analyse_inventory saves snapshots
             _today_ryan = _dt_ryan_inv.now(_ZI_ryan_inv('America/Chicago')).date()
-            _monday_ryan = _today_ryan - _td_ryan(days=_today_ryan.weekday())
             _conn_ryan_inv = get_conn()
             _conn_ryan_inv.execute("""CREATE TABLE IF NOT EXISTS inventory_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4961,8 +4961,8 @@ if __name__ == "__main__":
                 pass
             _conn_ryan_inv.commit()
             for _wi, (_waste, _items) in enumerate(_ryan_inv_weeks):
-                _week_monday = _monday_ryan - _td_ryan(weeks=(5 - _wi))
-                _week_end = (_week_monday + _td_ryan(days=6)).isoformat()
+                # Go back 5,4,3,2,1,0 weeks from today — same cadence as real weekly uploads
+                _week_end = (_today_ryan - _td_ryan(weeks=(5 - _wi))).isoformat()
                 _snap = _json_ryan_inv.dumps({"total_waste_cost": _waste, "top_items": _items})
                 _ex = _conn_ryan_inv.execute(
                     "SELECT id FROM inventory_history WHERE restaurant_id=? AND week_end=?",
