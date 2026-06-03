@@ -726,9 +726,7 @@ def check_inactive_clients():
 def scheduler_loop():
     global _last_fetch_date, _last_digest_date
     log.info("Scheduler started — review fetch every 4hr (8am/12pm/4pm/8pm CT), digests 9am on client's chosen day")
-    import os as _os_dbg
-    log.info(f"[DEBUG] CWD: {_os_dbg.getcwd()}")
-    log.info(f"[DEBUG] og-image at CWD: {_os_dbg.path.exists(_os_dbg.path.join(_os_dbg.getcwd(), 'og-image.png'))}")
+
 
     while True:
         try:
