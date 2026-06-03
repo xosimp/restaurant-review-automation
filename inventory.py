@@ -126,6 +126,32 @@ def analyse_inventory(items: list[dict]) -> dict:
     recoverable = monthly_waste_projection * 0.65
     annual_recoverable = recoverable * 12
 
+    # Industry benchmark: waste cost as % of total purchased this week
+    # 4-5% = industry target | 5-8% = above average | 8-15% = concerning | >15% = serious
+    total_purchased = sum(i["last_order_qty"] * i["unit_cost"] for i in items)
+    waste_rate_pct  = round((total_waste_cost / total_purchased * 100) if total_purchased > 0 else 0, 1)
+    # Benchmark rating
+    if waste_rate_pct <= 4:
+        benchmark_label  = "Excellent"
+        benchmark_color  = "#2d6a4f"
+        benchmark_detail = "At or below the 4% industry target"
+    elif waste_rate_pct <= 6:
+        benchmark_label  = "On Track"
+        benchmark_color  = "#6fcf97"
+        benchmark_detail = "Near the 4-5% industry target"
+    elif waste_rate_pct <= 10:
+        benchmark_label  = "Above Average"
+        benchmark_color  = "#ef9f27"
+        benchmark_detail = f"Industry target is 4-5% — you're at {waste_rate_pct}%"
+    elif waste_rate_pct <= 15:
+        benchmark_label  = "Concerning"
+        benchmark_color  = "#e07040"
+        benchmark_detail = f"Industry target is 4-5% — you're at {waste_rate_pct}%"
+    else:
+        benchmark_label  = "Needs Attention"
+        benchmark_color  = "#c0392b"
+        benchmark_detail = f"Industry target is 4-5% — you're at {waste_rate_pct}%"
+
     from datetime import datetime, timedelta
     # Derive week range from last_ordered dates in items, or use current week
     ordered_dates = []
@@ -155,6 +181,10 @@ def analyse_inventory(items: list[dict]) -> dict:
         "annual_waste_projection":  round(annual_waste_projection, 2),
         "recoverable_monthly":      round(recoverable, 2),
         "annual_recoverable":       round(annual_recoverable, 2),
+        "waste_rate_pct":           waste_rate_pct,
+        "benchmark_label":          benchmark_label,
+        "benchmark_color":          benchmark_color,
+        "benchmark_detail":         benchmark_detail,
         "total_stock_value":     round(total_stock_value, 2),
         "waste_items":    waste_items[:6],
         "overstock":      overstock[:5],
@@ -312,7 +342,8 @@ Key findings:
 - Waste this week: ${analysis['total_waste_cost_week']:,.2f}
 - Projected monthly waste cost: ${analysis['monthly_waste_projection']:,.2f}
 - Recoverable with better ordering: ${analysis['recoverable_monthly']:,.2f}/month
-- Total current inventory value: ${analysis['total_stock_value']:,.2f}{wow_context}{holiday_context}
+- Total current inventory value: ${analysis['total_stock_value']:,.2f}
+- Waste rate vs industry: {analysis['waste_rate_pct']}% (industry target is 4-5% — label: {analysis['benchmark_label']}){wow_context}{holiday_context}
 
 Top waste offenders:
 {json.dumps([{"item": x["item"], "waste_units": x["waste_last_week"], "waste_cost": x["waste_cost"], "waste_pct": x["waste_pct"]} for x in analysis["waste_items"][:4]], indent=2)}

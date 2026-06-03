@@ -998,6 +998,27 @@ function clientUpload(dataType, input) {
     <div class="stat"><div class="stat-n">${{inv.total_stock_value|int|format_num}}</div><div class="stat-l">Inventory value</div></div>
   </div>
 
+  <div class="card" style="padding:14px 16px;margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Waste rate vs industry benchmark</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:13px;font-weight:700;color:{{inv.benchmark_color}}">{{inv.waste_rate_pct}}%</span>
+        <span style="background:{{inv.benchmark_color}};color:white;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.5px">{{inv.benchmark_label}}</span>
+      </div>
+    </div>
+    <div style="position:relative;height:10px;background:var(--paper3);border-radius:5px;overflow:hidden">
+      <div style="position:absolute;left:0;top:0;height:100%;width:{{[inv.waste_rate_pct * 5, 100]|min}}%;background:{{inv.benchmark_color}};border-radius:5px;transition:width .4s"></div>
+      <div style="position:absolute;left:20%;top:-2px;height:14px;width:2px;background:#2d6a4f;opacity:.7" title="4% target"></div>
+      <div style="position:absolute;left:25%;top:-2px;height:14px;width:2px;background:#6fcf97;opacity:.7" title="5% target"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:10px;color:var(--ink3)">
+      <span>0%</span>
+      <span style="color:#2d6a4f;font-weight:600">▲ 4-5% target</span>
+      <span>{{inv.benchmark_detail}}</span>
+      <span>20%+</span>
+    </div>
+  </div>
+
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
     <div style="font-size:13px;font-weight:600;color:var(--ink)">
       Week of {{inv.week_start}} – {{inv.week_end}}
@@ -4058,7 +4079,7 @@ def index(current_user):
                "recoverable_monthly":0,"total_stock_value":0,
                "waste_items":[],"overstock":[],"critical_low":[],
                "reorder_soon":[],"order_reduction":[],"total_items":0,
-               "annual_waste_projection":0,"annual_recoverable":0,
+               "annual_waste_projection":0,"annual_recoverable":0,"waste_rate_pct":0,"benchmark_label":"—","benchmark_color":"#999","benchmark_detail":"Upload inventory to see benchmark",
                "week_start":"—","week_end":"—","last_updated":"—",
                "banner_gradient":"linear-gradient(to right,#2a0808 0%,#0d331f 100%)",
                "is_live":False}
