@@ -948,7 +948,7 @@ function clientUpload(dataType, input) {
     </label>
   </div>
   {% endif %}
-  <div style="background:linear-gradient(135deg,#3d0c0c 0%,#5c1a1a 100%);border-radius:10px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+  <div style="background:linear-gradient(to right,#4a0e0e 0%,#2d3a20 60%,#1a3d2b 100%);border-radius:10px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>
       <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#f4a4a4;margin-bottom:4px">Projected annual food waste cost</div>
       <div style="font-size:32px;font-weight:800;color:#ffffff;letter-spacing:-1px">${{inv.annual_waste_projection|int|format_num}}</div>
@@ -4958,12 +4958,12 @@ if __name__ == "__main__":
             import json as _json_ryan_inv
             from datetime import timedelta as _td_ryan
             _ryan_inv_weeks = [
-                (312.50, ["Romaine Lettuce", "Bread Rolls", "Roma Tomatoes", "Baby Spinach"]),
-                (287.00, ["Bread Rolls", "Roma Tomatoes", "Ground Beef 80/20"]),
-                (401.75, ["Romaine Lettuce", "Bread Rolls", "Salmon Fillet", "Baby Spinach"]),
-                (358.20, ["Roma Tomatoes", "Bread Rolls", "Fresh Herbs Mix"]),
-                (295.40, ["Bread Rolls", "Baby Spinach", "Romaine Lettuce"]),
-                (334.10, ["Romaine Lettuce", "Bread Rolls", "Ground Beef 80/20", "Roma Tomatoes"]),
+                (241.80, ["Romaine Lettuce", "Bread Rolls", "Roma Tomatoes", "Baby Spinach"]),
+                (218.50, ["Bread Rolls", "Roma Tomatoes", "Sourdough Loaf"]),
+                (309.20, ["Romaine Lettuce", "Bread Rolls", "Salmon Fillet", "Baby Spinach"]),
+                (284.70, ["Roma Tomatoes", "Bread Rolls", "Fresh Herbs Mix"]),
+                (253.10, ["Bread Rolls", "Baby Spinach", "Romaine Lettuce"]),
+                (267.45, ["Romaine Lettuce", "Bread Rolls", "Roma Tomatoes", "Baby Spinach"]),
             ]
             from zoneinfo import ZoneInfo as _ZI_ryan_inv
             from datetime import datetime as _dt_ryan_inv
