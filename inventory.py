@@ -58,8 +58,9 @@ def analyse_inventory(items: list[dict]) -> dict:
     """Compute waste, overstock, and reorder flags."""
     waste_items   = []
     overstock     = []
-    reorder_soon  = []
-    critical_low  = []
+    reorder_soon     = []
+    critical_low     = []
+    order_reduction  = []  # items where suggested qty is meaningfully less than last order
 
     total_waste_cost  = 0.0
     total_stock_value = 0.0
@@ -110,10 +111,15 @@ def analyse_inventory(items: list[dict]) -> dict:
             critical_low.append(item)
         elif days_remaining <= 4:
             reorder_soon.append(item)
+        # Flag items with meaningful savings potential even if stock isn't critically low
+        # Threshold: saves $5+ vs last order AND not already in critical/reorder lists
+        elif savings_vs_last >= 5.0:
+            order_reduction.append(item)
 
-    waste_items  = sorted(waste_items,  key=lambda x: x["waste_cost"],     reverse=True)
-    overstock    = sorted(overstock,    key=lambda x: x["overstock_cost"],  reverse=True)
-    critical_low = sorted(critical_low, key=lambda x: x["days_remaining"])
+    waste_items      = sorted(waste_items,      key=lambda x: x["waste_cost"],     reverse=True)
+    overstock        = sorted(overstock,        key=lambda x: x["overstock_cost"],  reverse=True)
+    critical_low     = sorted(critical_low,     key=lambda x: x["days_remaining"])
+    order_reduction  = sorted(order_reduction,  key=lambda x: x["savings_vs_last"], reverse=True)
 
     monthly_waste_projection = total_waste_cost * 4.3
     recoverable = monthly_waste_projection * 0.65
@@ -148,8 +154,9 @@ def analyse_inventory(items: list[dict]) -> dict:
         "total_stock_value":     round(total_stock_value, 2),
         "waste_items":    waste_items[:6],
         "overstock":      overstock[:5],
-        "critical_low":   critical_low[:4],
-        "reorder_soon":   reorder_soon[:6],
+        "critical_low":     critical_low[:4],
+        "reorder_soon":     reorder_soon[:6],
+        "order_reduction":  order_reduction[:6],
         "total_items":    len(items),
         "week_start":     fmt(week_start_dt),
         "week_end":       fmt(week_end_dt),

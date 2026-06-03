@@ -986,24 +986,31 @@ function clientUpload(dataType, input) {
         </tr>{% else %}<tr><td colspan="4" style="color:#2d6a4f;font-style:italic;padding:12px;text-align:center">
           ✓ No significant waste flagged this week — great job.
         </td></tr>{% endfor %}</tbody></table></div>
-      {% if inv.critical_low or inv.reorder_soon %}
+      {% if inv.critical_low or inv.reorder_soon or inv.order_reduction %}
       <div class="slabel" style="margin-top:12px">Order list — recommended quantities</div>
       <div class="card"><table class="tbl">
-        <thead><tr><th>Item</th><th>Days left</th><th>Order qty</th><th>Last order</th><th>vs Last</th></tr></thead>
+        <thead><tr><th>Item</th><th>Status</th><th>Order qty</th><th>Last order</th><th>vs Last</th></tr></thead>
         <tbody>
         {% for item in inv.critical_low %}<tr>
-          <td><strong>{{item.item}}</strong> <span class="pill pill-red" style="font-size:10px">urgent</span></td>
-          <td><span class="pill pill-red">{{item.days_remaining}}d</span></td>
-          <td><strong>{{item.suggested_order_qty}} {{item.unit}}</strong></td>
+          <td><strong>{{item.item}}</strong></td>
+          <td><span class="pill pill-red">{{item.days_remaining}}d — urgent</span></td>
+          <td><strong>{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}</strong></td>
           <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
-          <td>{% if item.savings_vs_last > 0 %}<span style="color:#2d6a4f;font-weight:600">-${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:var(--ink3)">+${{(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:var(--ink3)">—</span>{% endif %}</td>
+          <td>{% if item.savings_vs_last > 0 %}<span style="color:#2d6a4f;font-weight:600">save ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:var(--red)">need ${{(item.savings_vs_last * -1)|round(2)}}</span>{% else %}<span style="color:var(--ink3)">—</span>{% endif %}</td>
         </tr>{% endfor %}
         {% for item in inv.reorder_soon %}<tr>
           <td><strong>{{item.item}}</strong></td>
-          <td><span class="pill pill-amber">{{item.days_remaining}}d</span></td>
-          <td><strong>{{item.suggested_order_qty}} {{item.unit}}</strong></td>
+          <td><span class="pill pill-amber">{{item.days_remaining}}d — order soon</span></td>
+          <td><strong>{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}</strong></td>
           <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
-          <td>{% if item.savings_vs_last > 0 %}<span style="color:#2d6a4f;font-weight:600">-${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:var(--ink3)">+${{(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:var(--ink3)">—</span>{% endif %}</td>
+          <td>{% if item.savings_vs_last > 0 %}<span style="color:#2d6a4f;font-weight:600">save ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:var(--red)">need ${{(item.savings_vs_last * -1)|round(2)}}</span>{% else %}<span style="color:var(--ink3)">—</span>{% endif %}</td>
+        </tr>{% endfor %}
+        {% for item in inv.order_reduction %}<tr>
+          <td><strong>{{item.item}}</strong></td>
+          <td><span class="pill" style="background:#e8f4f0;color:#2d6a4f">reduce order</span></td>
+          <td><strong>{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}</strong></td>
+          <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
+          <td><span style="color:#2d6a4f;font-weight:600">save ${{item.savings_vs_last}}</span></td>
         </tr>{% endfor %}
         </tbody></table></div>
       {% endif %}
@@ -4008,7 +4015,7 @@ def index(current_user):
         inv = {"total_waste_cost_week":0,"monthly_waste_projection":0,
                "recoverable_monthly":0,"total_stock_value":0,
                "waste_items":[],"overstock":[],"critical_low":[],
-               "reorder_soon":[],"total_items":0,
+               "reorder_soon":[],"order_reduction":[],"total_items":0,
                "week_start":"—","week_end":"—","last_updated":"—",
                "is_live":False}
     # Show welcome banner if user has never logged in before (last_login is None)
@@ -4986,6 +4993,40 @@ if __name__ == "__main__":
             print("  Ryan's inventory trend history seeded (6 weeks).\n")
         except Exception as _ryan_inv_e:
             print(f"  Ryan inventory seed error: {_ryan_inv_e}")
+
+        # Seed rich inventory CSV for Ryan so the order list shows all row types
+        try:
+            from models import save_client_data as _scd_ryan
+            _ryan_inv_csv = """item,category,unit,par_level,current_stock,unit_cost,avg_daily_usage,last_order_qty,waste_last_week
+Chilean Sea Bass,Protein,lb,12,2,28.50,2.2,12,0.5
+Prime Rib,Protein,lb,20,3,18.75,3.8,20,1.2
+Lobster Tail,Protein,lb,8,1,42.00,1.4,8,0.3
+Shrimp 16/20,Protein,lb,15,6,14.20,2.6,15,1.8
+Salmon Fillet,Protein,lb,14,10,16.50,2.1,14,2.4
+Chicken Breast,Protein,lb,18,22,5.80,2.8,18,0.6
+Filet Mignon,Protein,lb,10,12,32.00,1.5,10,0.4
+Romaine Lettuce,Produce,head,24,30,2.50,3.2,24,9.5
+Roma Tomatoes,Produce,lb,16,22,1.80,2.4,20,7.2
+Baby Spinach,Produce,lb,10,14,4.20,1.2,10,4.8
+Fresh Herbs Mix,Produce,bunch,6,8,5.50,0.6,6,3.1
+Lemons,Produce,each,40,18,0.60,5.5,40,2.0
+Asparagus,Produce,lb,12,9,3.80,1.8,12,1.1
+Russet Potatoes,Produce,lb,25,12,0.80,4.2,25,3.5
+Heavy Cream,Dairy,qt,10,16,3.80,1.4,10,0.8
+Butter Unsalted,Dairy,lb,12,18,4.50,1.6,12,0.4
+Parmesan Cheese,Dairy,lb,6,9,8.20,0.8,6,0.6
+Bread Rolls,Bakery,each,80,52,0.45,14.0,80,22.0
+Sourdough Loaf,Bakery,loaf,20,26,3.20,3.0,20,8.5
+Pasta Rigatoni,Pantry,lb,18,22,2.80,2.5,18,1.2
+Olive Oil Extra Virgin,Pantry,bottle,8,11,14.50,0.9,8,0.2
+Beef Stock,Pantry,qt,10,14,4.80,1.4,10,0.3
+White Wine Chardonnay,Beverage,bottle,16,20,8.50,2.0,16,0.0
+House Cabernet,Beverage,bottle,20,24,9.20,2.8,20,0.0
+Sparkling Water,Beverage,case,6,9,22.00,0.8,6,0.0"""
+            _scd_ryan(ryan_rid, "inventory", _ryan_inv_csv, source="upload")
+            print("  Ryan's rich inventory CSV seeded.\n")
+        except Exception as _ryan_csv_e:
+            print(f"  Ryan inventory CSV seed error: {_ryan_csv_e}")
 
     print(f"\n  Hosted dashboard → http://localhost:{PORT}")
     print(f"  Admin panel      → http://localhost:{PORT}/admin\n")
