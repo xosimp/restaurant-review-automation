@@ -116,6 +116,35 @@ def format_intel_filter(text):
     return Markup("".join(html_parts))
 
 
+def inv_banner_gradient(annual_waste, annual_recoverable):
+    """Compute a red-to-green CSS gradient based on waste severity and recovery opportunity."""
+    # Red intensity: scaled against industry benchmarks
+    # <$5K excellent | $5-15K normal | $15-30K concerning | >$30K serious
+    if annual_waste < 5000:
+        red_i = 0.2
+    elif annual_waste < 15000:
+        red_i = 0.2 + (annual_waste - 5000) / 10000 * 0.4
+    elif annual_waste < 30000:
+        red_i = 0.6 + (annual_waste - 15000) / 15000 * 0.3
+    else:
+        red_i = 0.9
+    # Green intensity: scaled by % of waste that is recoverable
+    # >60% deep green | 40-60% medium | 20-40% muted | <20% near neutral
+    rec_pct = (annual_recoverable / annual_waste * 100) if annual_waste > 0 else 0
+    if rec_pct > 60:
+        grn_i = 0.9
+    elif rec_pct > 40:
+        grn_i = 0.6 + (rec_pct - 40) / 20 * 0.3
+    elif rec_pct > 20:
+        grn_i = 0.3 + (rec_pct - 20) / 20 * 0.3
+    else:
+        grn_i = 0.3
+    # Map to hex — red: #2a0808 (low) → #6b0f0f (high)
+    rh = f"#{int(42 + red_i*(107-42)):02x}{int(8+red_i*(15-8)):02x}{int(8+red_i*(15-8)):02x}"
+    # Green: #1a2e1a (muted) → #0d331f (deep)
+    gh = f"#{int(26-grn_i*(26-13)):02x}{int(46+grn_i*(51-46)):02x}{int(26+grn_i*(32-26)):02x}"
+    return f"linear-gradient(to right,{rh} 0%,{gh} 65%,{gh} 100%)"
+
 @app.template_filter("format_num")
 def format_num(v):
     try: return f"{float(v):,.0f}"
@@ -948,7 +977,7 @@ function clientUpload(dataType, input) {
     </label>
   </div>
   {% endif %}
-  <div style="background:linear-gradient(to right,#4a0e0e 0%,#2d3a20 60%,#1a3d2b 100%);border-radius:10px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+  <div style="background:{{inv.banner_gradient}};border-radius:10px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>
       <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#f4a4a4;margin-bottom:4px">Projected annual food waste cost</div>
       <div style="font-size:32px;font-weight:800;color:#ffffff;letter-spacing:-1px">${{inv.annual_waste_projection|int|format_num}}</div>
@@ -4021,6 +4050,7 @@ def index(current_user):
         _inv_items, _inv_live = load_inventory_for_restaurant(rid)
         inv = analyse_inventory(_inv_items)
         inv['is_live'] = _inv_live
+        inv['banner_gradient'] = inv_banner_gradient(inv['annual_waste_projection'], inv['annual_recoverable'])
     except Exception as e:
         print(f"Inventory analysis error: {e}")
         inv = {"total_waste_cost_week":0,"monthly_waste_projection":0,
@@ -4029,6 +4059,7 @@ def index(current_user):
                "reorder_soon":[],"order_reduction":[],"total_items":0,
                "annual_waste_projection":0,"annual_recoverable":0,
                "week_start":"—","week_end":"—","last_updated":"—",
+               "banner_gradient":"linear-gradient(to right,#2a0808 0%,#0d331f 100%)",
                "is_live":False}
     # Show welcome banner if user has never logged in before (last_login is None)
     from auth import get_user_by_id
