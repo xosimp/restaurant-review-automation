@@ -180,8 +180,10 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
                 if repeat:
                     wow_context += f"\n- REPEAT waste offenders (2+ weeks): {', '.join(repeat)} — these need stronger action, not just reordering"
 
-            # Save current snapshot
+            # Save current snapshot — one row per week per restaurant (upsert by week_end)
             import json as _json_inv2
+            from zoneinfo import ZoneInfo as _ZI_hist
+            _week_end_str = datetime.now(_ZI_hist('America/Chicago')).strftime('%Y-%m-%d')
             snapshot = {
                 "total_waste_cost": analysis['total_waste_cost_week'],
                 "top_items": [x["item"] for x in analysis["waste_items"][:4]]
@@ -190,12 +192,30 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 restaurant_id INTEGER NOT NULL,
                 waste_json TEXT,
-                saved_at TEXT DEFAULT (datetime('now'))
+                week_end    TEXT,
+                saved_at    TEXT DEFAULT (datetime('now'))
             )""")
-            _conn_inv.execute(
-                "INSERT INTO inventory_history (restaurant_id, waste_json) VALUES (?,?)",
-                (restaurant_id, _json_inv2.dumps(snapshot))
-            )
+            # Add week_end column if missing (migration for existing rows)
+            try:
+                _conn_inv.execute("ALTER TABLE inventory_history ADD COLUMN week_end TEXT")
+                _conn_inv.commit()
+            except Exception:
+                pass
+            # Upsert: update existing row for this week, or insert new one
+            existing = _conn_inv.execute(
+                "SELECT id FROM inventory_history WHERE restaurant_id=? AND week_end=?",
+                (restaurant_id, _week_end_str)
+            ).fetchone()
+            if existing:
+                _conn_inv.execute(
+                    "UPDATE inventory_history SET waste_json=?, saved_at=datetime('now') WHERE id=?",
+                    (_json_inv2.dumps(snapshot), existing["id"])
+                )
+            else:
+                _conn_inv.execute(
+                    "INSERT INTO inventory_history (restaurant_id, waste_json, week_end) VALUES (?,?,?)",
+                    (restaurant_id, _json_inv2.dumps(snapshot), _week_end_str)
+                )
             _conn_inv.commit()
             _conn_inv.close()
         except Exception as ie:

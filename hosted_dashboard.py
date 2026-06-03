@@ -967,6 +967,14 @@ function clientUpload(dataType, input) {
   </div>
   <div class="insight"><div class="insight-lbl">Cavnar AI Food Cost Analysis</div><div class="insight-text insight-loading" id="inv-insight">Loading analysis…</div></div>
 
+  <div class="slabel" style="margin-top:16px">Waste cost trend — last 6 weeks</div>
+  <div class="card" style="padding:14px 16px 10px">
+    <div id="inv-trend-bars" style="display:flex;align-items:flex-end;gap:10px;height:80px;margin-bottom:6px">
+      <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading trend data…</div>
+    </div>
+    <div id="inv-trend-labels" style="display:flex;gap:10px;font-size:10px;color:var(--ink3)"></div>
+  </div>
+
   <div class="two-col">
     <div>
       <div class="slabel">Top waste offenders</div>
@@ -1688,6 +1696,43 @@ function loadInvInsight(){
     const elInvErr=document.getElementById('inv-insight');
     elInvErr.textContent='Analysis unavailable — check back shortly.';
     elInvErr.classList.remove('insight-loading');
+  });
+  loadInvTrend();
+}
+function loadInvTrend(){
+  var container=document.getElementById('inv-trend-bars');
+  var labels=document.getElementById('inv-trend-labels');
+  if(!container)return;
+  fetch('/api/inv-trend').then(function(r){return r.json();}).then(function(data){
+    if(!data.weeks||!data.weeks.length){
+      container.innerHTML='<div style="color:var(--ink3);font-size:12px;font-style:italic">No history yet — waste trend will appear after your first upload.</div>';
+      if(labels)labels.innerHTML='';
+      return;
+    }
+    var maxWaste=0;
+    for(var i=0;i<data.weeks.length;i++){if(data.weeks[i].waste>maxWaste)maxWaste=data.weeks[i].waste;}
+    maxWaste=Math.max(maxWaste,50);
+    var html='';
+    var lblHtml='';
+    var avg=0;
+    for(var i=0;i<data.weeks.length;i++){avg+=data.weeks[i].waste;}
+    avg=data.weeks.length>0?avg/data.weeks.length:0;
+    for(var i=0;i<data.weeks.length;i++){
+      var w=data.weeks[i];
+      var h=Math.max(6,Math.round((w.waste/maxWaste)*72));
+      var isLast=(i===data.weeks.length-1);
+      var col=w.waste>avg*1.15?'var(--red)':w.waste<avg*0.85?'#6fcf97':'#ef9f27';
+      if(isLast)col='var(--ember)';
+      html+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px">';
+      html+='<span style="font-size:10px;color:'+col+';font-weight:600">$'+w.waste.toFixed(0)+'</span>';
+      html+='<div style="width:80%;height:'+h+'px;background:'+col+';border-radius:3px 3px 0 0;opacity:'+(isLast?'1':'0.75')+'" title="Week of '+w.week_end+': $'+w.waste+'"></div>';
+      html+='</div>';
+      lblHtml+='<span style="flex:1;text-align:center">'+w.label+'</span>';
+    }
+    container.innerHTML=html;
+    if(labels)labels.innerHTML=lblHtml;
+  }).catch(function(){
+    if(container)container.innerHTML='<div style="color:var(--ink3);font-size:12px;font-style:italic">Trend data unavailable.</div>';
   });
 }
 let selCt='{{ctypes[0].id if ctypes}}';

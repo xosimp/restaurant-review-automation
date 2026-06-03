@@ -1437,6 +1437,42 @@ def export_reviews(current_user):
         headers={"Content-Disposition": f"attachment;filename={name}_reviews.csv"}
     )
 
+@admin_bp.route("/api/inv-trend")
+@login_required
+def inv_trend_api(current_user):
+    """Return weekly waste cost for up to 6 weeks for trend chart."""
+    try:
+        from models import get_conn as _gc_it
+        import json as _json_it
+        conn = _gc_it()
+        rows = conn.execute("""
+            SELECT week_end, waste_json FROM inventory_history
+            WHERE restaurant_id=? AND week_end IS NOT NULL
+            ORDER BY week_end DESC LIMIT 6
+        """, (current_user["restaurant_id"],)).fetchall()
+        conn.close()
+
+        if not rows:
+            return jsonify(weeks=[])
+
+        # Reverse so oldest is first (left-to-right on chart)
+        rows = list(reversed(rows))
+        weeks = []
+        for row in rows:
+            try:
+                data = _json_it.loads(row["waste_json"])
+                waste = round(float(data.get("total_waste_cost", 0)), 2)
+                # Format label: "5/27" from "2026-05-27"
+                parts = (row["week_end"] or "").split("-")
+                label = f"{int(parts[1])}/{int(parts[2])}" if len(parts) == 3 else row["week_end"]
+                weeks.append({"label": label, "waste": waste, "week_end": row["week_end"]})
+            except Exception:
+                continue
+
+        return jsonify(weeks=weeks)
+    except Exception as e:
+        return jsonify(weeks=[], error=str(e))
+
 @admin_bp.route("/api/labor-trend")
 @login_required
 def labor_trend_api(current_user):
