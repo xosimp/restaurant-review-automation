@@ -179,10 +179,11 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
         try:
             from models import get_conn as _gc_inv
             _conn_inv = _gc_inv()
-            # Get previous waste snapshot
+            # Get previous week's snapshot (exclude current week so we compare to last week)
             prev = _conn_inv.execute("""
                 SELECT waste_json FROM inventory_history
-                WHERE restaurant_id=? ORDER BY saved_at DESC LIMIT 1
+                WHERE restaurant_id=? AND week_end < date('now','-1 day')
+                ORDER BY week_end DESC LIMIT 1
             """, (restaurant_id,)).fetchone()
             if prev and prev["waste_json"]:
                 import json as _json_inv

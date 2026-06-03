@@ -4172,13 +4172,18 @@ def labor_insight_api(current_user):
 @app.route("/api/inv-insight")
 @login_required
 def inv_insight_api(current_user):
-    from inventory import load_inventory_for_restaurant, analyse_inventory, get_claude_insights
-    restaurant = get_restaurant(current_user["restaurant_id"])
-    items, _is_live = load_inventory_for_restaurant(current_user["restaurant_id"])
-    analysis = analyse_inventory(items)
-    owner_name = restaurant.owner_name if restaurant else None
-    insight  = get_claude_insights(analysis, owner_name=owner_name, restaurant_name=restaurant.name if restaurant else None, restaurant_id=current_user["restaurant_id"])
-    return jsonify(insight=format_insight_html(insight))
+    try:
+        from inventory import load_inventory_for_restaurant, analyse_inventory, get_claude_insights
+        restaurant = get_restaurant(current_user["restaurant_id"])
+        items, _is_live = load_inventory_for_restaurant(current_user["restaurant_id"])
+        analysis = analyse_inventory(items)
+        owner_name = restaurant.owner_name if restaurant else None
+        insight = get_claude_insights(analysis, owner_name=owner_name, restaurant_name=restaurant.name if restaurant else None, restaurant_id=current_user["restaurant_id"])
+        return jsonify(insight=format_insight_html(insight))
+    except Exception as _inv_e:
+        import traceback
+        print(f"[inv-insight ERROR] {_inv_e}\n{traceback.format_exc()}")
+        return jsonify(insight="Analysis unavailable — check server logs.", error=str(_inv_e)), 500
 
 @app.route("/api/generate-content", methods=["POST"])
 @login_required
