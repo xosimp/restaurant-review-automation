@@ -257,14 +257,14 @@ LOGIN_HTML = """<!DOCTYPE html>
 <meta property="og:url" content="https://cavnar.ai">
 <meta property="og:title" content="Cavnar AI — Restaurant Intelligence">
 <meta property="og:description" content="AI-powered reviews, labor, inventory, and marketing for independent restaurants. Fully managed. No learning curve.">
-<meta property="og:image" content="https://dashboard.cavnar.ai/og-image.png">
+<meta property="og:image" content="https://dashboard.cavnar.ai/og-image-v2.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:site_name" content="Cavnar AI">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Cavnar AI — Restaurant Intelligence">
 <meta name="twitter:description" content="AI-powered reviews, labor, inventory, and marketing for independent restaurants. Fully managed. No learning curve.">
-<meta name="twitter:image" content="https://dashboard.cavnar.ai/og-image.png">
+<meta name="twitter:image" content="https://dashboard.cavnar.ai/og-image-v2.png">
 <meta name="description" content="AI-powered reviews, labor, inventory, and marketing for independent restaurants. Fully managed. No learning curve.">
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
 <link rel="icon" type="image/png" href="/favicon.png">
@@ -4614,14 +4614,14 @@ def gmb_disconnect(current_user):
 
 
 # ── Sample CSV template downloads ────────────────────────────────────────────
-@app.route("/og-image.png")
+@app.route("/og-image-v2.png")
 def og_image():
     import os
     # Try multiple paths — Railway deploys to various locations
     candidates = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "og-image.png"),
-        os.path.join(os.getcwd(), "og-image.png"),
-        "/app/og-image.png",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "og-image-v2.png"),
+        os.path.join(os.getcwd(), "og-image-v2.png"),
+        "/app/og-image-v2.png",
     ]
     for path in candidates:
         if os.path.exists(path):
