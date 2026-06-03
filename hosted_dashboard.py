@@ -981,7 +981,7 @@ function clientUpload(dataType, input) {
   <div style="background:{{inv.banner_gradient}};border-radius:10px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>
       <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#f4a4a4;margin-bottom:4px">Projected annual food waste cost</div>
-      <div style="font-size:32px;font-weight:800;color:#ffffff;letter-spacing:-1px">${{inv.annual_waste_projection|int|format_num}}</div>
+      <div style="font-size:32px;font-weight:800;color:#f87171;letter-spacing:-1px">${{inv.annual_waste_projection|int|format_num}}</div>
       <div style="font-size:12px;color:#f4a4a4;margin-top:3px">Based on this week — ${{inv.monthly_waste_projection|int|format_num}}/mo projected</div>
     </div>
     <div style="text-align:right">

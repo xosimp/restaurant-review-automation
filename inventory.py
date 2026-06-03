@@ -262,6 +262,47 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
     from zoneinfo import ZoneInfo
     today_inv = _dt_inv.now(ZoneInfo('America/Chicago')).strftime("%B %d, %Y")
 
+    # Seasonal/event awareness — pull upcoming holidays for ordering recommendations
+    holiday_context = ""
+    try:
+        from marketing import get_upcoming_holidays as _guh
+        _upcoming = _guh()
+        if _upcoming:
+            # Flag any inventory items that are relevant to upcoming holidays
+            _all_items = (analysis.get("waste_items", []) +
+                         analysis.get("critical_low", []) +
+                         analysis.get("reorder_soon", []))
+            _item_names = [x["item"].lower() for x in _all_items]
+            # Holiday-to-ingredient hints
+            _holiday_items = {
+                "valentine": ["salmon", "filet", "lobster", "shrimp", "chocolate", "cream", "butter"],
+                "mother": ["salmon", "filet", "lobster", "shrimp", "cream", "herbs", "asparagus"],
+                "father": ["prime rib", "steak", "beef", "ribs", "lobster"],
+                "thanksgiving": ["turkey", "potato", "cream", "butter", "herbs", "onion"],
+                "christmas": ["prime rib", "beef", "salmon", "cream", "butter", "herbs"],
+                "fourth of july": ["beef", "chicken", "ribs", "corn", "potato"],
+                "memorial": ["beef", "chicken", "ribs", "potato"],
+                "labor day": ["beef", "chicken", "ribs", "potato"],
+                "new year": ["salmon", "lobster", "shrimp", "cream", "butter", "champagne"],
+                "st. patrick": ["beef", "potato", "cabbage", "onion"],
+            }
+            relevant_flags = []
+            for holiday_str in _upcoming.split(", "):
+                h_lower = holiday_str.lower()
+                for keyword, ingredients in _holiday_items.items():
+                    if keyword in h_lower:
+                        matches = [i for i in ingredients
+                                  if any(i in name for name in _item_names)]
+                        if matches:
+                            relevant_flags.append(
+                                f"{holiday_str}: consider stocking up on {', '.join(matches)}"
+                            )
+            _flag_lines = ("\nInventory flags for upcoming events:\n" + "\n".join("- " + f for f in relevant_flags)) if relevant_flags else ""
+            _tail = "\nIf any upcoming holiday is within 2 weeks and relevant to this restaurant's inventory, include a specific ordering heads-up in your recommendations — only if it would genuinely change what they should order this week."
+            holiday_context = "\n\nUpcoming holidays/events in the next 30 days: " + _upcoming + _flag_lines + _tail
+    except Exception as _he:
+        print(f"[inventory holiday context] {_he}")
+
     prompt = f"""You are a food cost consultant reviewing weekly inventory data for a restaurant.
 {rest_line}
 {name_line}
@@ -271,7 +312,7 @@ Key findings:
 - Waste this week: ${analysis['total_waste_cost_week']:,.2f}
 - Projected monthly waste cost: ${analysis['monthly_waste_projection']:,.2f}
 - Recoverable with better ordering: ${analysis['recoverable_monthly']:,.2f}/month
-- Total current inventory value: ${analysis['total_stock_value']:,.2f}{wow_context}
+- Total current inventory value: ${analysis['total_stock_value']:,.2f}{wow_context}{holiday_context}
 
 Top waste offenders:
 {json.dumps([{"item": x["item"], "waste_units": x["waste_last_week"], "waste_cost": x["waste_cost"], "waste_pct": x["waste_pct"]} for x in analysis["waste_items"][:4]], indent=2)}
