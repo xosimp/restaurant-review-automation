@@ -181,9 +181,14 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
                     wow_context += f"\n- REPEAT waste offenders (2+ weeks): {', '.join(repeat)} — these need stronger action, not just reordering"
 
             # Save current snapshot — one row per week per restaurant (upsert by week_end)
+            # Use the inventory data's own week_end date so chart labels match the header
             import json as _json_inv2
             from zoneinfo import ZoneInfo as _ZI_hist
-            _week_end_str = datetime.now(_ZI_hist('America/Chicago')).strftime('%Y-%m-%d')
+            try:
+                from datetime import datetime as _dt_we
+                _week_end_str = _dt_we.strptime(analysis.get("week_end", ""), "%m/%d/%y").strftime("%Y-%m-%d")
+            except Exception:
+                _week_end_str = datetime.now(_ZI_hist('America/Chicago')).strftime('%Y-%m-%d')
             snapshot = {
                 "total_waste_cost": analysis['total_waste_cost_week'],
                 "top_items": [x["item"] for x in analysis["waste_items"][:4]]
