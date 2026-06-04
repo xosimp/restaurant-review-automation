@@ -764,7 +764,7 @@ function clientUpload(dataType, input) {
       {% set pct = (issue.count / max_count * 100)|int %}
       {% set col = '#c0392b' if issue.count >= 4 else ('#ef9f27' if issue.count >= 2 else '#6b7280') %}
       {% set is_top = loop.first %}
-      <div style="display:flex;align-items:center;gap:8px;background:{% if is_top %}linear-gradient(135deg,#f5d5d5,var(--paper)){% else %}var(--paper){% endif %};border:1px solid {% if is_top %}#f5c6c6{% else %}var(--paper3){% endif %};border-radius:8px;padding:{% if is_top %}10px 14px{% else %}6px 12px{% endif %};min-width:{% if is_top %}180px{% else %}130px{% endif %};flex:{% if is_top %}2{% else %}1{% endif %}">
+      <div onclick="filterByTopic('{{issue.category}}')" title="Click to filter reviews by {{issue.label}}" style="cursor:pointer;transition:box-shadow .15s;display:flex;align-items:center;gap:8px;background:{% if is_top %}linear-gradient(135deg,#f5d5d5,var(--paper)){% else %}var(--paper){% endif %};border:1px solid {% if is_top %}#f5c6c6{% else %}var(--paper3){% endif %};border-radius:8px;padding:{% if is_top %}10px 14px{% else %}6px 12px{% endif %};min-width:{% if is_top %}180px{% else %}130px{% endif %};flex:{% if is_top %}2{% else %}1{% endif %}" onmouseover="this.style.boxShadow='0 4px 12px rgba(14,12,10,.12)'" onmouseout="this.style.boxShadow=''">
         <div style="flex:1">
           <div style="font-size:{% if is_top %}14px{% else %}12px{% endif %};font-weight:{% if is_top %}700{% else %}600{% endif %};color:{% if is_top %}{{col}}{% else %}var(--ink){% endif %}">{{issue.label}}</div>
           <div style="height:{% if is_top %}6px{% else %}4px{% endif %};background:var(--paper3);border-radius:2px;margin-top:4px;overflow:hidden">
@@ -794,7 +794,7 @@ function clientUpload(dataType, input) {
   <div class="toolbar">
     <div class="search-wrap">
       <svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-      <input class="search-input" id="rsearch" placeholder="Search reviews…" value="{{rsearch}}" onkeydown="if(event.key==='Enter')filterReviews()">
+      <input class="search-input" id="rsearch" placeholder="Search by name, keyword, rating, platform…" value="{{rsearch}}" oninput="filterReviews()" onkeydown="if(event.key==='Escape'){this.value='';filterReviews();}">
     </div>
     <div class="filter-pills">
       <button class="fpill {{'active' if rfilter=='all'}}" onclick="setRF('all',this)">All</button>
@@ -810,7 +810,7 @@ function clientUpload(dataType, input) {
   {% set colors=['#c84b2f','#2d6a4f','#b7791f','#1a56cc','#6b4fa0','#1e7a8c'] %}
   {% for r in reviews %}
   {% set col=colors[loop.index0%colors|length] %}
-  <div class="card {{'urgent' if r.urgency=='high'}} {{'posted' if r.response_status=='posted'}} {{'approved' if r.response_status=='approved'}}" id="rc-{{r.id}}" data-platform="{{r.platform}}" data-yelp-id="{{restaurant.yelp_business_id or ''}}">
+  <div class="card {{'urgent' if r.urgency=='high'}} {{'posted' if r.response_status=='posted'}} {{'approved' if r.response_status=='approved'}}" id="rc-{{r.id}}" data-platform="{{r.platform}}" data-yelp-id="{{restaurant.yelp_business_id or ''}}" data-cats="{{(r.categories|join(' '))|lower if r.categories else ''}}" data-author="{{r.author|lower if r.author else ''}}" data-rating="{{r.rating}}" data-topic-filter="">
     {% if r.urgency=='high' %}<div class="ubanner">⚠ Needs immediate attention</div>{% endif %}
     <div class="card-hd">
       <div class="avatar" style="background:{{col}}">{{r.author[0].upper() if r.author else "?"}}</div>
@@ -1745,6 +1745,46 @@ function loadReviewInsight(){
     if(el){el.textContent='Analysis unavailable — check back shortly.';el.classList.remove('insight-loading');}
   });
 }
+function filterByTopic(category){
+  window._topicFilter = category;
+  // Switch to reviews tab
+  var reviewsPanel = document.getElementById('panel-reviews');
+  var reviewsTab = document.getElementById('tab-reviews');
+  if(reviewsPanel && !reviewsPanel.classList.contains('active')){
+    document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});
+    document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
+    reviewsPanel.classList.add('active');
+    if(reviewsTab) reviewsTab.classList.add('active');
+    if(!reviewInsightLoaded){ loadReviewInsight(); loadSentimentTrend(); }
+  }
+  // Clear search, reset filter pills to All
+  var searchEl = document.getElementById('rsearch');
+  if(searchEl) searchEl.value='';
+  rfilter='all';
+  document.querySelectorAll('.fpill').forEach(function(p){p.classList.remove('active','active-red');});
+  var allPill=document.querySelector('.fpill');
+  if(allPill) allPill.classList.add('active');
+  // Show topic banner above reviews with clear button
+  var existing=document.getElementById('topic-filter-banner');
+  if(existing) existing.remove();
+  var banner=document.createElement('div');
+  banner.id='topic-filter-banner';
+  var label=category.replace(/_/g,' ');
+  banner.style.cssText='background:#fff3e0;border:1px solid #ef9f27;border-radius:8px;padding:8px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#7a4f00';
+  banner.innerHTML='<span>📂 Showing reviews tagged <strong>'+label+'</strong></span><button onclick="clearTopicFilter()" style="background:none;border:none;cursor:pointer;font-size:12px;color:#7a4f00;font-weight:700;padding:0 4px">✕ Clear</button>';
+  var toolbar=document.querySelector('.toolbar');
+  if(toolbar) toolbar.parentNode.insertBefore(banner, toolbar);
+  filterReviews();
+  setTimeout(function(){
+    if(toolbar) toolbar.scrollIntoView({behavior:'smooth',block:'start'});
+  }, 100);
+}
+function clearTopicFilter(){
+  window._topicFilter='';
+  var banner=document.getElementById('topic-filter-banner');
+  if(banner) banner.remove();
+  filterReviews();
+}
 function filterByPlatform(platform){
   // Switch to reviews tab if not already there
   var reviewsPanel = document.getElementById('panel-reviews');
@@ -1766,7 +1806,10 @@ function filterByPlatform(platform){
   });
   var countEl = document.querySelector('.count-lbl');
   if(countEl) countEl.textContent = shown + ' review' + (shown !== 1 ? 's' : '') + ' — ' + platform;
-  // Clear search input
+  // Clear search + topic filter
+  window._topicFilter='';
+  var tb=document.getElementById('topic-filter-banner');
+  if(tb) tb.remove();
   var searchEl = document.getElementById('rsearch');
   if(searchEl) searchEl.value = '';
   // Scroll to toolbar
@@ -1810,30 +1853,41 @@ function setRF(f,btn){
   filterReviews();
 }
 function filterReviews(){
-  var q=(document.getElementById('rsearch').value||'').toLowerCase();
+  var q=(document.getElementById('rsearch').value||'').toLowerCase().trim();
+  var topicF=window._topicFilter||'';
   var cards=document.querySelectorAll('[id^="rc-"]');
   var shown=0;
   cards.forEach(function(card){
-    var platform=card.dataset.platform||'';
     var urgency=card.classList.contains('urgent');
     var approved=card.classList.contains('approved');
     var posted=card.classList.contains('posted');
-    var sentiment='';
     var schip=card.querySelector('.schip');
-    if(schip) sentiment=schip.textContent.trim().toLowerCase();
-    var text=(card.textContent||'').toLowerCase();
+    var sentiment=schip?schip.textContent.trim().toLowerCase():'';
+    // Build searchable string: review text + author + rating + platform + categories
+    var reviewText=(card.querySelector('.rtext')||{}).textContent||'';
+    var author=card.dataset.author||'';
+    var rating=card.dataset.rating||'';
+    var platform=card.dataset.platform||'';
+    var cats=card.dataset.cats||'';
+    var searchable=(reviewText+' '+author+' '+rating+' star '+platform+' '+cats).toLowerCase();
+    // Filter match
     var matchFilter=true;
     if(rfilter==='urgent') matchFilter=urgency;
     else if(rfilter==='pending') matchFilter=(!approved&&!posted&&!urgency);
     else if(rfilter==='negative') matchFilter=(sentiment==='negative');
     else if(rfilter==='positive') matchFilter=(sentiment==='positive');
-    var matchSearch=!q||text.indexOf(q)!==-1;
-    var visible=matchFilter&&matchSearch;
+    // Topic match
+    var matchTopic=!topicF||cats.indexOf(topicF)!==-1;
+    // Search match — empty query shows all
+    var matchSearch=!q||searchable.indexOf(q)!==-1;
+    var visible=matchFilter&&matchTopic&&matchSearch;
     card.style.display=visible?'':'none';
     if(visible)shown++;
   });
   var countEl=document.querySelector('.count-lbl');
-  if(countEl)countEl.textContent=shown+' review'+(shown!==1?'s':'');
+  var label=shown+' review'+(shown!==1?'s':'');
+  if(topicF) label+=' — '+topicF.replace(/_/g,' ');
+  if(countEl)countEl.textContent=label;
 }
 function setPendingClass(el, count){
   el.classList.remove('warn','ok','hi');
@@ -1868,8 +1922,8 @@ function updateReviewStats(){
     if(rateCard){
       var borderCol = color;
       var bgGrad;
-      if(rrate >= 100){     bgGrad = 'linear-gradient(to right,#0d3320,#1a5c35,white)'; }
-      else if(rrate >= 70){ bgGrad = 'linear-gradient(to right,#1a4d2e,#d5ede0,white)'; }
+      if(rrate >= 100){     bgGrad = 'linear-gradient(to right,#1a4d2e,#c8e8d4,white)'; }
+      else if(rrate >= 70){ bgGrad = 'linear-gradient(to right,#2d6a4f22,#d5ede0,white)'; }
       else if(rrate >= 40){ bgGrad = 'linear-gradient(to right,#c8e8d4,white)'; }
       else if(rrate >= 15){ bgGrad = 'linear-gradient(to right,#fdf5e0,white)'; }
       else {                bgGrad = 'linear-gradient(to right,#f5d5d5,white)'; }
