@@ -5218,6 +5218,32 @@ try:
 except Exception as _e:
     print(f"DB init error: {_e}")
 
+# ── Admin account seed (module-level so it runs under Gunicorn too) ──────────
+try:
+    from models import get_conn as _gc_boot, create_restaurant as _cr_boot, Restaurant as _R_boot
+    from auth import create_user as _cu_boot
+    _conn_boot = _gc_boot()
+    _existing_admin = _conn_boot.execute(
+        "SELECT id FROM users WHERE username=?", (os.getenv("ADMIN_USERNAME","will"),)
+    ).fetchone()
+    _conn_boot.close()
+    if not _existing_admin:
+        _admin_pw = os.getenv("ADMIN_PASSWORD", "changeme123")
+        _conn_boot2 = _gc_boot()
+        _r_boot = _conn_boot2.execute("SELECT id FROM restaurants LIMIT 1").fetchone()
+        _conn_boot2.close()
+        if not _r_boot:
+            _rid_boot = _cr_boot(_R_boot(name="Cavnar AI Admin", owner_email="will@cavnar.ai"))
+        else:
+            _rid_boot = _r_boot[0]
+        _cu_boot(_rid_boot, os.getenv("ADMIN_USERNAME","will"), "will@cavnar.ai", _admin_pw, is_admin=True)
+        _conn_boot3 = _gc_boot()
+        _conn_boot3.execute("UPDATE restaurants SET billing_status='internal' WHERE id=?", (_rid_boot,))
+        _conn_boot3.commit(); _conn_boot3.close()
+        print(f"Admin account created: {os.getenv('ADMIN_USERNAME','will')}")
+except Exception as _boot_e:
+    print(f"Admin seed error: {_boot_e}")
+
 try:
     from scheduler import start_scheduler as _ss
     _ss()
