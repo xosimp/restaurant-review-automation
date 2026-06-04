@@ -705,7 +705,7 @@ function clientUpload(dataType, input) {
       <span style="color:#2d6a4f;font-weight:600">▲ 70% excellent</span>
       <span>100%</span>
     </div>
-    <div class="review-rate-count" style="margin-top:6px;font-size:11px;color:var(--ink3)">{{rstats.responded or rstats.posted}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit</div>
+    <div class="review-rate-count" style="margin-top:6px;font-size:11px;color:var(--ink3)">{{rstats.get("responded", rstats.posted)}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit</div>
   </div>
   {% if platform_breakdown and platform_breakdown|length > 1 %}
   {% set best_rating = platform_breakdown|map(attribute='avg_rating')|max %}
@@ -1758,6 +1758,8 @@ function filterByPlatform(platform){
   var allPill = document.querySelector('.fpill');
   // Mark rfilter as platform so reset works
   rfilter = 'all';
+  var allPill2 = document.querySelector('.fpill');
+  if(allPill2) allPill2.classList.add('active');
 }
 function switchTab(n,btn){
   document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});

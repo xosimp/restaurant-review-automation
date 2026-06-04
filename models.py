@@ -1109,11 +1109,11 @@ def get_sentiment_trend(restaurant_id, weeks=8):
         ORDER BY week_key ASC
     """, (restaurant_id, f"-{weeks * 7}")).fetchall()
     conn.close()
+    from datetime import datetime as _dt_st
     result = []
     for row in rows:
         # Format label as M/D from week_start
         try:
-            from datetime import datetime as _dt_st
             dt = _dt_st.strptime(row["week_start"], "%Y-%m-%d")
             label = f"{dt.month}/{dt.day}"
         except Exception:
@@ -1165,8 +1165,8 @@ def get_top_issues(restaurant_id, days=90, limit=6):
         SELECT categories FROM reviews
         WHERE restaurant_id=? AND processed=1
         AND categories IS NOT NULL AND categories != '[]'
-        AND fetched_at >= datetime('now', ? || ' days')
-    """, (restaurant_id, f"-{days}")).fetchall()
+        AND fetched_at >= datetime('now', '-' || ? || ' days')
+    """, (restaurant_id, str(days))).fetchall()
     conn.close()
     counts = Counter()
     for row in rows:
