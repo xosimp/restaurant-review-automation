@@ -728,7 +728,7 @@ function clientUpload(dataType, input) {
 
   {% if top_issues %}
   <div class="card" style="padding:14px 16px;margin-bottom:14px">
-    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Top mentioned topics — last 30 days</div>
+    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Top mentioned topics — last 90 days</div>
     <div style="display:flex;flex-wrap:wrap;gap:8px">
     {% set max_count = top_issues[0].count %}
     {% for issue in top_issues %}
@@ -4136,7 +4136,7 @@ def index(current_user):
     restaurant = get_restaurant(rid)
     rstats     = get_review_stats(rid)
     reviews    = get_reviews_data(rid, rfilter, rsearch)
-    top_issues        = get_top_issues(rid, days=30)
+    top_issues        = get_top_issues(rid, days=90)
     platform_breakdown = get_platform_breakdown(rid)
     try:
         labor = analyse_shifts_for_restaurant(rid)
@@ -5080,6 +5080,14 @@ if __name__ == "__main__":
                     _now_r, _now_r, 'pending', 1, name))
         _conn_r.commit()
         _conn_r.close()
+
+        # Analyse Ryan's reviews so categories/sentiment are populated (needed for top issues)
+        try:
+            from analyser import analyse_pending
+            analyse_pending(ryan_rid, limit=50)
+            print("  Ryan's reviews analysed.\n")
+        except Exception as _ae:
+            print(f"  Analyse error: {_ae}")
 
         # Draft responses for Ryan's reviews
         try:

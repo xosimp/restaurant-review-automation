@@ -1116,7 +1116,7 @@ def get_platform_breakdown(restaurant_id):
         })
     return result
 
-def get_top_issues(restaurant_id, days=30, limit=6):
+def get_top_issues(restaurant_id, days=90, limit=6):
     """Return top review categories by mention count for the last N days."""
     from collections import Counter
     conn = get_conn()
