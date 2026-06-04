@@ -673,12 +673,16 @@ function clientUpload(dataType, input) {
     </div>
   </div>
 
-  <div class="insight" style="margin-bottom:14px"><div class="insight-lbl">Cavnar AI Review Intelligence</div><div class="insight-text insight-loading" id="review-insight">Loading analysis…</div></div>
+  <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Review Intelligence</div>
+    <div class="insight-text insight-loading" id="review-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px">Loading analysis…</div>
+  </div>
 
   {% set rrate = rstats.response_rate %}
   {% set rrate_label = 'Excellent' if rrate >= 70 else ('Strong' if rrate >= 40 else ('On Track' if rrate >= 15 else 'Below Average')) %}
   {% set rrate_color = '#2d6a4f' if rrate >= 70 else ('#6fcf97' if rrate >= 40 else ('#ef9f27' if rrate >= 15 else '#c0392b')) %}
-  <div class="card" style="padding:14px 16px;margin-bottom:14px">
+  <div class="card" style="padding:14px 16px;margin-bottom:14px;{% if rrate < 15 %}border-left:3px solid #c0392b;background:linear-gradient(to right,#fdf2f2,var(--paper));{% elif rrate >= 70 %}border-left:3px solid #2d6a4f;background:linear-gradient(to right,#f0faf4,var(--paper));{% endif %}">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Response rate vs industry benchmark</div>
       <div style="display:flex;align-items:center;gap:8px">
@@ -702,18 +706,29 @@ function clientUpload(dataType, input) {
     <div class="review-rate-count" style="margin-top:6px;font-size:11px;color:var(--ink3)">{{rstats.posted}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit</div>
   </div>
   {% if platform_breakdown and platform_breakdown|length > 1 %}
+  {% set best_rating = platform_breakdown|map(attribute='avg_rating')|max %}
+  {% set worst_rating = platform_breakdown|map(attribute='avg_rating')|min %}
   <div class="card" style="padding:14px 16px;margin-bottom:14px">
-    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Platform breakdown</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Platform breakdown</div>
+      {% if best_rating != worst_rating %}<div style="font-size:11px;color:#c0392b;font-weight:600">⚠ {{(best_rating - worst_rating)|round(1)}} star gap between platforms</div>{% endif %}
+    </div>
     <div style="display:grid;grid-template-columns:{% for p in platform_breakdown %}1fr{% if not loop.last %} {% endif %}{% endfor %};gap:12px">
     {% for p in platform_breakdown %}
       {% set plat_col = '#4285f4' if p.platform == 'google' else '#d32323' %}
       {% set rating_col = '#2d6a4f' if p.avg_rating >= 4.5 else ('#ef9f27' if p.avg_rating >= 3.5 else '#c0392b') %}
-      <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:8px;padding:12px 14px">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
-          <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:{{plat_col}}">{{p.platform|title}}</span>
-          <span style="font-size:10px;color:var(--ink3)">{{p.total}} review{{'s' if p.total != 1}}</span>
+      {% set is_worst = p.avg_rating == worst_rating and best_rating != worst_rating %}
+      {% set is_best = p.avg_rating == best_rating and best_rating != worst_rating %}
+      <div style="background:var(--paper);border:1px solid {% if is_worst %}#f5c6c6{% elif is_best %}#b7dfca{% else %}var(--paper3){% endif %};border-radius:8px;padding:12px 14px;{% if is_worst %}background:linear-gradient(to bottom,#fdf5f5,var(--paper));{% elif is_best %}background:linear-gradient(to bottom,#f5fdf8,var(--paper));{% endif %}">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:{{plat_col}}">{{p.platform|title}}</span>
+            <span style="font-size:10px;color:var(--ink3)">{{p.total}} review{{'s' if p.total != 1}}</span>
+          </div>
+          {% if is_worst %}<span style="font-size:9px;font-weight:700;background:#fde8e8;color:#c0392b;padding:1px 6px;border-radius:10px">needs attention</span>
+          {% elif is_best %}<span style="font-size:9px;font-weight:700;background:#e8f5ee;color:#2d6a4f;padding:1px 6px;border-radius:10px">strongest</span>{% endif %}
         </div>
-        <div style="font-size:26px;font-weight:800;color:{{rating_col}};letter-spacing:-1px;line-height:1">{{p.avg_rating}} <span style="font-size:14px;color:var(--ink3)">★</span></div>
+        <div style="font-size:28px;font-weight:800;color:{{rating_col}};letter-spacing:-1px;line-height:1">{{p.avg_rating}} <span style="font-size:14px;color:var(--ink3)">★</span></div>
         <div style="display:flex;gap:10px;margin-top:8px;font-size:11px">
           <span style="color:#2d6a4f">▲ {{p.positive}} positive</span>
           <span style="color:#c0392b">▼ {{p.negative}} negative</span>
@@ -732,14 +747,15 @@ function clientUpload(dataType, input) {
     {% for issue in top_issues %}
       {% set pct = (issue.count / max_count * 100)|int %}
       {% set col = '#c0392b' if issue.count >= 4 else ('#ef9f27' if issue.count >= 2 else '#6b7280') %}
-      <div style="display:flex;align-items:center;gap:8px;background:var(--paper);border:1px solid var(--paper3);border-radius:8px;padding:6px 12px;min-width:140px;flex:1">
+      {% set is_top = loop.first %}
+      <div style="display:flex;align-items:center;gap:8px;background:{% if is_top %}linear-gradient(135deg,#fdf2f2,var(--paper)){% else %}var(--paper){% endif %};border:1px solid {% if is_top %}#f5c6c6{% else %}var(--paper3){% endif %};border-radius:8px;padding:{% if is_top %}10px 14px{% else %}6px 12px{% endif %};min-width:{% if is_top %}180px{% else %}130px{% endif %};flex:{% if is_top %}2{% else %}1{% endif %}">
         <div style="flex:1">
-          <div style="font-size:12px;font-weight:600;color:var(--ink)">{{issue.label}}</div>
-          <div style="height:4px;background:var(--paper3);border-radius:2px;margin-top:4px;overflow:hidden">
+          <div style="font-size:{% if is_top %}14px{% else %}12px{% endif %};font-weight:{% if is_top %}700{% else %}600{% endif %};color:{% if is_top %}{{col}}{% else %}var(--ink){% endif %}">{{issue.label}}</div>
+          <div style="height:{% if is_top %}6px{% else %}4px{% endif %};background:var(--paper3);border-radius:2px;margin-top:4px;overflow:hidden">
             <div style="height:100%;width:{{pct}}%;background:{{col}};border-radius:2px"></div>
           </div>
         </div>
-        <span style="font-size:13px;font-weight:700;color:{{col}};min-width:24px;text-align:right">{{issue.count}}</span>
+        <span style="font-size:{% if is_top %}18px{% else %}13px{% endif %};font-weight:700;color:{{col}};min-width:24px;text-align:right">{{issue.count}}</span>
       </div>
     {% endfor %}
     </div>
@@ -747,7 +763,7 @@ function clientUpload(dataType, input) {
   {% endif %}
 
   <div class="card" style="padding:14px 16px;margin-bottom:14px">
-    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Sentiment trend — last 8 weeks</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><div style="width:3px;height:14px;background:var(--ember);border-radius:2px"></div><div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Sentiment trend — last 8 weeks</div></div>
     <div style="display:flex;align-items:flex-end;gap:8px;height:80px;margin-bottom:6px" id="sentiment-trend-bars">
       <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading…</div>
     </div>
