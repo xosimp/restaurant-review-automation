@@ -665,8 +665,8 @@ function clientUpload(dataType, input) {
   {% endif %}
   <div class="stat-row">
     <div class="stat {{'ok' if rstats.avg_rating >= 4.5 else ('warn' if rstats.avg_rating >= 3.5 else 'hi')}}"><div class="stat-n">{{rstats.avg_rating}}</div><div class="stat-l">Avg rating</div></div>
-    <div class="stat {{'hi' if rstats.urgent > 0 else 'ok'}}"><div class="stat-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
-    <div class="stat {{'warn' if rstats.awaiting_approval > 0 else 'ok'}}"><div class="stat-n">{{rstats.awaiting_approval}}</div><div class="stat-l">To approve</div></div>
+    <div class="stat {{'hi' if rstats.urgent > 0 else 'ok'}}" id="stat-urgent"><div class="stat-n" id="stat-urgent-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
+    <div class="stat {{'warn' if rstats.awaiting_approval > 0 else 'ok'}}" id="stat-pending"><div class="stat-n" id="stat-pending-n">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:11px;color:#2d6a4f;margin-left:4px">↓</span></div><div class="stat-l">To approve</div></div>
     <div class="stat {{'ok' if restaurant.reviews_live or restaurant.gmb_refresh_token else 'warn'}}">
       <div class="stat-n" style="font-size:14px;margin-top:4px">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
       <div class="stat-l">Review source</div>
@@ -1600,6 +1600,7 @@ function saveDraft(id) {
         document.getElementById('draft-actions-'+id).innerHTML =
           '<span class="btn btn-approved">✓ Approved</span>';
         document.getElementById('draft-actions-'+id).style.display='flex';
+        updateReviewStats();
         toast('Response saved and approved');
       }
     });
@@ -1756,9 +1757,11 @@ function filterReviews(){
   var countEl=document.querySelector('.count-lbl');
   if(countEl)countEl.textContent=shown+' review'+(shown!==1?'s':'');
 }
-function updateResponseRateBar(){
+function updateReviewStats(){
   fetch('/api/review-stats').then(function(r){return r.json();}).then(function(d){
-    if(!d.response_rate && d.response_rate !== 0) return;
+    if(typeof d.response_rate === 'undefined') return;
+
+    // Response rate bar
     var rrate = d.response_rate;
     var color = rrate>=70?'#2d6a4f':rrate>=40?'#6fcf97':rrate>=15?'#ef9f27':'#c0392b';
     var label = rrate>=70?'Excellent':rrate>=40?'Strong':rrate>=15?'On Track':'Below Average';
@@ -1769,9 +1772,42 @@ function updateResponseRateBar(){
     if(barEl){ barEl.style.width=(rrate>0?Math.min(rrate,100)+'%':'2px'); barEl.style.background=color; }
     if(labelEl){ labelEl.textContent=label; labelEl.style.background=color; }
     if(pctEl){ pctEl.textContent=rrate+'%'; pctEl.style.color=color; }
-    if(countEl){ countEl.textContent=d.posted+' of '+d.total+' reviews responded to'; }
+    if(countEl){ countEl.innerHTML=d.posted+' of '+d.total+' reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit'; }
+
+    // To approve stat card
+    var pendingEl = document.getElementById('stat-pending');
+    var pendingNEl = document.getElementById('stat-pending-n');
+    var arrowEl = document.getElementById('stat-pending-arrow');
+    if(pendingNEl){
+      var prev = parseInt(pendingNEl.dataset.prev || pendingNEl.textContent) || 0;
+      var curr = d.awaiting_approval || 0;
+      pendingNEl.dataset.prev = curr;
+      // Update number (keep arrow element intact)
+      pendingNEl.childNodes[0].nodeValue = curr;
+      // Show green down arrow if count dropped
+      if(arrowEl){
+        if(curr < prev){ arrowEl.style.display='inline'; }
+        else { arrowEl.style.display='none'; }
+      }
+      // Update card color
+      if(pendingEl){
+        pendingEl.className = pendingEl.className.replace(/warn|ok/g,'').trim();
+        pendingEl.className += (curr > 0 ? ' warn' : ' ok');
+      }
+    }
+
+    // Urgent stat card
+    var urgentEl = document.getElementById('stat-urgent');
+    var urgentNEl = document.getElementById('stat-urgent-n');
+    if(urgentNEl) urgentNEl.textContent = d.urgent || 0;
+    if(urgentEl){
+      urgentEl.className = urgentEl.className.replace(/hi|ok/g,'').trim();
+      urgentEl.className += ((d.urgent||0) > 0 ? ' hi' : ' ok');
+    }
   }).catch(function(){});
 }
+// Keep old name as alias so existing calls still work
+function updateResponseRateBar(){ updateReviewStats(); }
 function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
   if(d.ok){
     var card = document.getElementById('rc-'+id);
@@ -1779,25 +1815,23 @@ function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(function(r){ret
     card.classList.remove('urgent');
     if(d.auto_posted){
       document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted to Google</span>';
-      updateResponseRateBar();
-    toast('Response approved and posted to Google ✓ — now live');
+      updateReviewStats();
+      toast('Response approved and posted to Google ✓ — now live');
     } else {
-      const _plat = document.getElementById('rc-'+id) ? document.getElementById('rc-'+id).dataset.platform : '';
-      const _markBtn = _plat === 'yelp'
+      var _plat = document.getElementById('rc-'+id) ? document.getElementById('rc-'+id).dataset.platform : '';
+      var _markBtn = _plat === 'yelp'
         ? '<button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px;margin-left:6px" onclick="markPosted('+id+',this)">📋 Copy &amp; open Yelp</button>'
         : '<button class="btn" style="background:#e8f0fe;color:#1a56cc;border:1px solid #c5d8f8;font-size:11px;margin-left:6px" onclick="markPosted('+id+',this)">Mark as posted</button>';
-      document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="btn btn-approved">✓ Approved</span>'+_markBtn;
-      const platform = card.dataset.platform || 'google';
+      var platform = card.dataset.platform || 'google';
       if(platform === 'google'){
         document.querySelector('#rc-'+id+' .draft-actions').innerHTML=
           '<span class="btn btn-approved">✓ Approved</span>' +
           '<span style="font-size:11px;color:var(--ink3);margin-left:6px">Saved — will post to Google when GBP is connected</span>';
-        updateResponseRateBar();
-        toast('Response approved and saved ✓');
       } else {
-        updateResponseRateBar();
-        toast('Response approved — copy and post to ' + platform + ' manually');
+        document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="btn btn-approved">✓ Approved</span>'+_markBtn;
       }
+      updateReviewStats();
+      toast('Response approved' + (platform === 'google' ? ' and saved ✓' : ' — copy and post to ' + platform + ' manually'));
     }
   }
 })}
