@@ -670,10 +670,37 @@ function clientUpload(dataType, input) {
     <div class="stat hi"><div class="stat-n">{{rstats.negative}}</div><div class="stat-l">Negative</div></div>
     <div class="stat hi"><div class="stat-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
     <div class="stat warn"><div class="stat-n">{{rstats.awaiting_approval}}</div><div class="stat-l">To approve</div></div>
-  <div class="stat {{'ok' if restaurant.reviews_live or restaurant.gmb_refresh_token else 'warn'}}">
-    <div class="stat-n" style="font-size:14px;margin-top:4px">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
-    <div class="stat-l">Review source</div>
+    <div class="stat {{'ok' if restaurant.reviews_live or restaurant.gmb_refresh_token else 'warn'}}">
+      <div class="stat-n" style="font-size:14px;margin-top:4px">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
+      <div class="stat-l">Review source</div>
+    </div>
   </div>
+
+  {% set rrate = rstats.response_rate %}
+  {% set rrate_label = 'Excellent' if rrate >= 70 else ('Strong' if rrate >= 40 else ('On Track' if rrate >= 15 else 'Below Average')) %}
+  {% set rrate_color = '#2d6a4f' if rrate >= 70 else ('#6fcf97' if rrate >= 40 else ('#ef9f27' if rrate >= 15 else '#c0392b')) %}
+  <div class="card" style="padding:14px 16px;margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Response rate vs industry benchmark</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:13px;font-weight:700;color:{{rrate_color}}">{{rrate}}%</span>
+        <span style="background:{{rrate_color}};color:white;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.5px">{{rrate_label}}</span>
+      </div>
+    </div>
+    <div style="position:relative;height:10px;background:var(--paper3);border-radius:5px;overflow:hidden">
+      <div style="position:absolute;left:0;top:0;height:100%;width:{% if rrate > 0 %}{{[rrate, 100]|min}}%{% else %}2px{% endif %};background:{{rrate_color}};border-radius:5px;transition:width .4s"></div>
+      <div style="position:absolute;left:15%;top:-2px;height:14px;width:2px;background:#ef9f27;opacity:.7" title="15% — typical independent"></div>
+      <div style="position:absolute;left:40%;top:-2px;height:14px;width:2px;background:#6fcf97;opacity:.7" title="40% — strong"></div>
+      <div style="position:absolute;left:70%;top:-2px;height:14px;width:2px;background:#2d6a4f;opacity:.7" title="70% — excellent"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:10px;color:var(--ink3)">
+      <span>0%</span>
+      <span style="color:#ef9f27;font-weight:600">▲ 15% avg independent</span>
+      <span style="color:#6fcf97;font-weight:600">▲ 40% strong</span>
+      <span style="color:#2d6a4f;font-weight:600">▲ 70% excellent</span>
+      <span>100%</span>
+    </div>
+    <div style="margin-top:6px;font-size:11px;color:var(--ink3)">{{rstats.posted}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong></div>
   </div>
   <div class="toolbar">
     <div class="search-wrap">
