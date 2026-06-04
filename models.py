@@ -1088,6 +1088,45 @@ def get_review_stats(restaurant_id):
         response_rate     = response_rate,
     )
 
+def get_sentiment_trend(restaurant_id, weeks=8):
+    """Return weekly positive/negative counts for the last N weeks."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT
+            strftime('%Y-%W', fetched_at)          AS week_key,
+            MIN(DATE(fetched_at))                  AS week_start,
+            SUM(sentiment='positive')              AS positive,
+            SUM(sentiment='negative')              AS negative,
+            SUM(sentiment='neutral')               AS neutral,
+            COUNT(*)                               AS total,
+            ROUND(AVG(rating),1)                   AS avg_rating
+        FROM reviews
+        WHERE restaurant_id=? AND processed=1
+          AND fetched_at >= datetime('now', ? || ' days')
+        GROUP BY week_key
+        ORDER BY week_key ASC
+    """, (restaurant_id, f"-{weeks * 7}")).fetchall()
+    conn.close()
+    result = []
+    for row in rows:
+        # Format label as M/D from week_start
+        try:
+            from datetime import datetime as _dt_st
+            dt = _dt_st.strptime(row["week_start"], "%Y-%m-%d")
+            label = f"{dt.month}/{dt.day}"
+        except Exception:
+            label = row["week_key"]
+        result.append({
+            "label":      label,
+            "week_key":   row["week_key"],
+            "positive":   row["positive"] or 0,
+            "negative":   row["negative"] or 0,
+            "neutral":    row["neutral"]  or 0,
+            "total":      row["total"]    or 0,
+            "avg_rating": row["avg_rating"] or 0,
+        })
+    return result
+
 def get_platform_breakdown(restaurant_id):
     """Return review count and avg rating per platform."""
     conn = get_conn()

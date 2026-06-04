@@ -14,7 +14,7 @@ from emails import send_payment_email, send_welcome_email
 from models import (init_db, get_conn, approve_response,
                     get_reviews_since, get_restaurant,
                     get_review_stats, get_reviews_data, get_top_issues,
-                    get_platform_breakdown)
+                    get_platform_breakdown, get_sentiment_trend)
 from auth import (init_auth, verify_password, create_session,
                   get_session_user, delete_session, create_user,
                   list_users, update_password)
@@ -749,6 +749,19 @@ function clientUpload(dataType, input) {
     </div>
   </div>
   {% endif %}
+
+  <div class="card" style="padding:14px 16px;margin-bottom:14px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Sentiment trend — last 8 weeks</div>
+    <div style="display:flex;align-items:flex-end;gap:8px;height:80px;margin-bottom:6px" id="sentiment-trend-bars">
+      <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading…</div>
+    </div>
+    <div style="display:flex;gap:8px;font-size:10px" id="sentiment-trend-labels"></div>
+    <div style="display:flex;gap:14px;margin-top:8px;font-size:11px;color:var(--ink3)">
+      <span><span style="display:inline-block;width:10px;height:10px;background:#2d6a4f;border-radius:2px;margin-right:4px"></span>Positive</span>
+      <span><span style="display:inline-block;width:10px;height:10px;background:#c0392b;border-radius:2px;margin-right:4px"></span>Negative</span>
+      <span><span style="display:inline-block;width:10px;height:10px;background:#cbd5e0;border-radius:2px;margin-right:4px"></span>Neutral</span>
+    </div>
+  </div>
 
   <div class="toolbar">
     <div class="search-wrap">
@@ -1648,6 +1661,41 @@ function gmbDisconnect(){
   });
 }
 
+function loadSentimentTrend(){
+  var container=document.getElementById('sentiment-trend-bars');
+  var labels=document.getElementById('sentiment-trend-labels');
+  if(!container)return;
+  fetch('/api/sentiment-trend').then(function(r){return r.json();}).then(function(data){
+    if(!data.weeks||!data.weeks.length){
+      container.innerHTML='<div style="color:var(--ink3);font-size:12px;font-style:italic">No trend data yet — reviews will appear here as they come in.</div>';
+      return;
+    }
+    var maxTotal=0;
+    for(var i=0;i<data.weeks.length;i++){if(data.weeks[i].total>maxTotal)maxTotal=data.weeks[i].total;}
+    maxTotal=Math.max(maxTotal,1);
+    var html='';
+    var lblHtml='';
+    for(var i=0;i<data.weeks.length;i++){
+      var w=data.weeks[i];
+      var totalH=Math.max(8,Math.round((w.total/maxTotal)*72));
+      var posH=w.total>0?Math.round((w.positive/w.total)*totalH):0;
+      var negH=w.total>0?Math.round((w.negative/w.total)*totalH):0;
+      var neuH=totalH-posH-negH;
+      var isLast=(i===data.weeks.length-1);
+      html+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:0;opacity:'+(isLast?'1':'0.8')+'" title="'+w.label+': '+w.positive+' pos, '+w.negative+' neg, '+w.neutral+' neu">';
+      html+='<span style="font-size:10px;color:var(--ink3);margin-bottom:2px">'+w.total+'</span>';
+      if(negH>0) html+='<div style="width:80%;height:'+negH+'px;background:#c0392b;border-radius:'+(posH===0&&neuH===0?'3px 3px':'0')+' 0 0"></div>';
+      if(neuH>0) html+='<div style="width:80%;height:'+neuH+'px;background:#cbd5e0"></div>';
+      if(posH>0) html+='<div style="width:80%;height:'+posH+'px;background:#2d6a4f;border-radius:0 0 3px 3px"></div>';
+      html+='</div>';
+      lblHtml+='<span style="flex:1;text-align:center;font-size:10px;color:var(--ink3)">'+w.label+'</span>';
+    }
+    container.innerHTML=html;
+    if(labels)labels.innerHTML=lblHtml;
+  }).catch(function(){
+    if(container)container.innerHTML='<div style="color:var(--ink3);font-size:12px;font-style:italic">Trend unavailable.</div>';
+  });
+}
 function loadReviewInsight(){
   reviewInsightLoaded=true;
   fetch('/api/review-insight').then(function(r){return r.json();}).then(function(d){
@@ -1664,7 +1712,7 @@ function switchTab(n,btn){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('panel-'+n).classList.add('active');btn.classList.add('active');
-  if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();}
+  if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor'){renderBars();loadLaborTrend();}
@@ -1679,6 +1727,7 @@ document.addEventListener('DOMContentLoaded', function(){
   if(btn){ switchTab(hash, btn); }
   else if(document.getElementById('panel-reviews') && document.getElementById('panel-reviews').classList.contains('active')){
     loadReviewInsight();
+    loadSentimentTrend();
   }
 });
 let rfilter='{{rfilter}}';
@@ -4156,6 +4205,7 @@ def index(current_user):
     reviews    = get_reviews_data(rid, rfilter, rsearch)
     top_issues        = get_top_issues(rid, days=90)
     platform_breakdown = get_platform_breakdown(rid)
+    sentiment_trend    = get_sentiment_trend(rid, weeks=8)
     try:
         labor = analyse_shifts_for_restaurant(rid)
     except Exception as e:
@@ -4200,7 +4250,7 @@ def index(current_user):
         show_welcome=show_welcome,
         csrf_token=csrf_token,
         current_user=current_user, restaurant=restaurant,
-        rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch, top_issues=top_issues, platform_breakdown=platform_breakdown,
+        rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch, top_issues=top_issues, platform_breakdown=platform_breakdown, sentiment_trend=sentiment_trend,
         labor=labor, inv=inv, ctypes=CONTENT_TYPES,
         mod_reviews=int(restaurant.module_reviews or 0),
         mod_labor=int(restaurant.module_labor or 0),
@@ -4301,6 +4351,16 @@ def format_insight_html(text):
             '</span><span style="line-height:1.6;color:#b7791f;font-weight:500">' + clean + '</span></div>')
         num += 1
     return html
+
+@app.route("/api/sentiment-trend")
+@login_required
+def sentiment_trend_api(current_user):
+    from models import get_sentiment_trend as _gst
+    try:
+        data = _gst(current_user["restaurant_id"], weeks=8)
+        return jsonify(weeks=data)
+    except Exception as e:
+        return jsonify(weeks=[], error=str(e))
 
 @app.route("/api/review-insight")
 @login_required
@@ -5181,15 +5241,21 @@ if __name__ == "__main__":
         ]
         from zoneinfo import ZoneInfo as _ZI_r
         from datetime import datetime as _dt_r
-        _now_r = _dt_r.now(_ZI_r('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S')
+        _now_r = _dt_r.now(_ZI_r('America/Chicago'))
+        # Spread reviews across weeks so sentiment trend chart shows real data
+        _week_offsets = [-49,-42,-35,-28,-21,-14,-7,0]  # 8 weeks back to now
         for platform, ext_id, rating, text, sentiment, name, cats, urgency in sample_reviews:
+            from datetime import timedelta as _td_r2
+            _idx_r = list(i for i,(p,e,_ra,_t,_s,_n,_c,_u) in enumerate(sample_reviews) if e==ext_id)[0]
+            _offset = _week_offsets[_idx_r % len(_week_offsets)]
+            _rev_dt = (_now_r + _td_r2(days=_offset)).strftime('%Y-%m-%dT%H:%M:%S')
             _conn_r.execute("""
                 INSERT OR REPLACE INTO reviews
                 (restaurant_id, platform, external_id, author, rating, text, sentiment,
                  categories, urgency, fetched_at, review_date, response_status, processed, review_name)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (ryan_rid, platform, ext_id, name, rating, text, sentiment,
-                  _json_r.dumps(cats), urgency, _now_r, _now_r, 'pending', 1, name))
+                  _json_r.dumps(cats), urgency, _rev_dt, _rev_dt, 'pending', 1, name))
         _conn_r.commit()
         _conn_r.close()
         print("  Ryan's reviews seeded with categories.\n")
