@@ -705,7 +705,7 @@ function clientUpload(dataType, input) {
       <span style="color:#2d6a4f;font-weight:600">▲ 70% excellent</span>
       <span>100%</span>
     </div>
-    <div class="review-rate-count" style="margin-top:6px;font-size:11px;color:var(--ink3)">{{rstats.posted}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit</div>
+    <div class="review-rate-count" style="margin-top:6px;font-size:11px;color:var(--ink3)">{{rstats.responded or rstats.posted}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit</div>
   </div>
   {% if platform_breakdown and platform_breakdown|length > 1 %}
   {% set best_rating = platform_breakdown|map(attribute='avg_rating')|max %}
@@ -721,7 +721,7 @@ function clientUpload(dataType, input) {
       {% set rating_col = '#2d6a4f' if p.avg_rating >= 4.5 else ('#ef9f27' if p.avg_rating >= 3.5 else '#c0392b') %}
       {% set is_worst = p.avg_rating == worst_rating and best_rating != worst_rating %}
       {% set is_best = p.avg_rating == best_rating and best_rating != worst_rating %}
-      <div style="background:var(--paper);border:1px solid {% if is_worst %}#f5c6c6{% elif is_best %}#b7dfca{% else %}var(--paper3){% endif %};border-radius:8px;padding:12px 14px;{% if is_worst %}background:linear-gradient(to bottom,#f5d5d5,var(--paper));{% elif is_best %}background:linear-gradient(to bottom,#d5ede0,var(--paper));{% endif %}">
+      <div onclick="filterByPlatform('{{p.platform}}')" style="cursor:pointer;transition:box-shadow .15s;background:var(--paper);border:1px solid {% if is_worst %}#f5c6c6{% elif is_best %}#b7dfca{% else %}var(--paper3){% endif %};border-radius:8px;padding:12px 14px;{% if is_worst %}background:linear-gradient(to bottom,#f5d5d5,var(--paper));{% elif is_best %}background:linear-gradient(to bottom,#d5ede0,var(--paper));{% endif %}" onmouseover="this.style.boxShadow='0 4px 16px rgba(14,12,10,.15)'" onmouseout="this.style.boxShadow=''">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
           <div style="display:flex;align-items:center;gap:6px">
             <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:{{plat_col}}">{{p.platform|title}}</span>
@@ -735,6 +735,7 @@ function clientUpload(dataType, input) {
           <span style="color:#2d6a4f">▲ {{p.positive}} positive</span>
           <span style="color:#c0392b">▼ {{p.negative}} negative</span>
         </div>
+        <div style="margin-top:8px;font-size:10px;color:var(--ink3);letter-spacing:.3px">Click to view {{p.platform|title}} reviews ↓</div>
       </div>
     {% endfor %}
     </div>
@@ -1728,6 +1729,36 @@ function loadReviewInsight(){
     if(el){el.textContent='Analysis unavailable — check back shortly.';el.classList.remove('insight-loading');}
   });
 }
+function filterByPlatform(platform){
+  // Switch to reviews tab if not already there
+  var reviewsPanel = document.getElementById('panel-reviews');
+  var reviewsTab = document.getElementById('tab-reviews');
+  if(reviewsPanel && !reviewsPanel.classList.contains('active')){
+    document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});
+    document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
+    reviewsPanel.classList.add('active');
+    if(reviewsTab) reviewsTab.classList.add('active');
+    if(!reviewInsightLoaded){ loadReviewInsight(); loadSentimentTrend(); }
+  }
+  // Filter cards by platform
+  var cards = document.querySelectorAll('[id^="rc-"]');
+  var shown = 0;
+  cards.forEach(function(card){
+    var match = card.dataset.platform === platform;
+    card.style.display = match ? '' : 'none';
+    if(match) shown++;
+  });
+  var countEl = document.querySelector('.count-lbl');
+  if(countEl) countEl.textContent = shown + ' review' + (shown !== 1 ? 's' : '') + ' — ' + platform;
+  // Scroll to toolbar
+  var toolbar = document.querySelector('.toolbar');
+  if(toolbar) setTimeout(function(){ toolbar.scrollIntoView({behavior:'smooth', block:'start'}); }, 100);
+  // Update filter pill state — clear all, highlight search area
+  document.querySelectorAll('.fpill').forEach(function(p){ p.classList.remove('active','active-red'); });
+  var allPill = document.querySelector('.fpill');
+  // Mark rfilter as platform so reset works
+  rfilter = 'all';
+}
 function switchTab(n,btn){
   document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});
   document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
@@ -1796,15 +1827,12 @@ function updateReviewStats(){
     var pctEl   = document.querySelector('.review-rate-pct');
     var countEl = document.querySelector('.review-rate-count');
     if(barEl){
-      barEl.style.cssText = barEl.style.cssText
-        .replace(/width:[^;]+;?/,'')
-        .replace(/background:[^;]+;?/,'');
-      barEl.style.width = (rrate>0 ? Math.min(rrate,100)+'%' : '2px');
-      barEl.style.background = color;
+      barEl.style.setProperty('width', rrate>0 ? Math.min(rrate,100)+'%' : '2px', 'important');
+      barEl.style.setProperty('background', color, 'important');
     }
     if(labelEl){ labelEl.textContent=label; labelEl.style.background=color; }
     if(pctEl)  { pctEl.textContent=rrate+'%'; pctEl.style.color=color; }
-    if(countEl){ countEl.innerHTML=d.posted+' of '+d.total+' reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit'; }
+    if(countEl){ countEl.innerHTML=(d.responded||d.posted)+' of '+d.total+' reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit'; }
 
     // ── To approve stat card ───────────────────────────────
     var pendingEl  = document.getElementById('stat-pending');
@@ -1836,10 +1864,24 @@ function updateReviewStats(){
     // ── Urgent stat card ───────────────────────────────────
     var urgentEl  = document.getElementById('stat-urgent');
     var urgentNEl = document.getElementById('stat-urgent-n');
-    if(urgentNEl) urgentNEl.textContent = d.urgent || 0;
-    if(urgentEl){
-      urgentEl.className = urgentEl.className.replace(/hi|ok/g,'').trim();
-      urgentEl.className += ((d.urgent||0)>0 ? ' hi' : ' ok');
+    if(urgentEl && urgentNEl){
+      var urgPrev = parseInt(urgentEl.dataset.prevCount || (d.urgent||0)+1) || 0;
+      var urgCurr = d.urgent || 0;
+      urgentEl.dataset.prevCount = urgCurr;
+      urgentNEl.innerHTML = urgCurr + '<span id="stat-urgent-arrow" style="font-size:11px;color:#2d6a4f;margin-left:4px;display:none">↓</span>';
+      var urgArrow = document.getElementById('stat-urgent-arrow');
+      if(urgCurr < urgPrev && urgArrow){
+        urgArrow.style.display='inline';
+        urgentEl.classList.add('stat-flash-green');
+        urgentEl.className = urgentEl.className.replace(/hi|ok/g,'').trim()+' ok';
+        setTimeout(function(){
+          if(urgArrow) urgArrow.style.display='none';
+          urgentEl.classList.remove('stat-flash-green');
+          urgentEl.className = urgentEl.className.replace(/hi|ok/g,'').trim()+(urgCurr>0?' hi':' ok');
+        }, 2000);
+      } else {
+        urgentEl.className = urgentEl.className.replace(/hi|ok/g,'').trim()+(urgCurr>0?' hi':' ok');
+      }
     }
   }).catch(function(){});
 }

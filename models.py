@@ -1059,22 +1059,23 @@ def get_review_stats(restaurant_id):
     # Single query for sentiment/status counts
     rows = conn.execute("""
         SELECT
-            COUNT(*)                                                        AS total,
-            SUM(sentiment='positive')                                       AS positive,
-            SUM(sentiment='negative')                                       AS negative,
-            SUM(sentiment='neutral')                                        AS neutral,
-            AVG(rating)                                                     AS avg_rating,
-            SUM(response_status='drafted')                                  AS drafted,
-            SUM(urgency='high' AND response_status NOT IN ('posted','skipped')) AS urgent,
-            SUM(response_status='posted')                                   AS posted
+            COUNT(*)                                                                    AS total,
+            SUM(sentiment='positive')                                                   AS positive,
+            SUM(sentiment='negative')                                                   AS negative,
+            SUM(sentiment='neutral')                                                    AS neutral,
+            AVG(rating)                                                                 AS avg_rating,
+            SUM(response_status='drafted')                                              AS drafted,
+            SUM(urgency='high' AND response_status NOT IN ('posted','approved','skipped')) AS urgent,
+            SUM(response_status='posted')                                               AS posted,
+            SUM(response_status IN ('posted','approved'))                               AS responded
         FROM reviews WHERE processed=1 AND restaurant_id=?
     """, (restaurant_id,)).fetchone()
     conn.close()
-    total   = rows["total"]   or 0
-    posted  = rows["posted"]  or 0
-    drafted = rows["drafted"] or 0
-    # Response rate = posted / total (only count reviews that have a draft or are posted)
-    responded     = posted
+    total     = rows["total"]     or 0
+    posted    = rows["posted"]    or 0
+    responded = rows["responded"] or 0
+    drafted   = rows["drafted"]   or 0
+    # Response rate = approved+posted / total
     response_rate = round((responded / total * 100) if total > 0 else 0, 1)
     return dict(
         total             = total,
@@ -1085,6 +1086,7 @@ def get_review_stats(restaurant_id):
         avg_rating        = round(rows["avg_rating"] or 0, 1),
         awaiting_approval = drafted,
         posted            = posted,
+        responded         = responded,
         response_rate     = response_rate,
     )
 
