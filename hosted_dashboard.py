@@ -5167,37 +5167,32 @@ if __name__ == "__main__":
         # Seed sample reviews for Ryan's Charthouse with realistic Chart House content
         from models import get_conn as _gc_r
         _conn_r = _gc_r()
+        import json as _json_r
+        # categories hand-assigned to match review content — avoids needing API call on seed
         sample_reviews = [
-            ("google", "rev_ryan_001", 5, "Absolutely incredible dinner. The Chilean sea bass melted in my mouth and our server was phenomenal. Best waterfront dining in Melbourne FL by far.", "positive", "Jennifer M."),
-            ("google", "rev_ryan_002", 2, "Waited 40 minutes past our reservation. The prime rib was overcooked and came out cold. Manager never came by to check on us. Disappointed for the price point.", "negative", "David K."),
-            ("yelp",   "rev_ryan_003", 5, "Celebrated my anniversary here. The filet mignon and lobster tail combo was perfect. Sunset views from the patio are absolutely stunning. Will be back every year.", "positive", "Sarah T."),
-            ("google", "rev_ryan_004", 4, "Great happy hour on the outdoor patio — firecracker shrimp and craft cocktails were excellent. Service was a bit slow but the food made up for it.", "neutral",  "Mike R."),
-            ("yelp",   "rev_ryan_005", 1, "Food was cold, service was rude, and the lobster bisque tasted like it came from a can. For these prices I expected much better. Will not return.", "negative", "Amanda L."),
-            ("google", "rev_ryan_006", 5, "The Chart House Cut prime rib is legendary. Been coming here for 10 years and it never disappoints. Lagoon views at sunset are unmatched in Brevard County.", "positive", "Robert H."),
-            ("google", "rev_ryan_007", 3, "Hit or miss experience. The tuna tartare appetizer was excellent but my Mac Nut Mahi came out overcooked. Staff was friendly though.", "neutral",  "Lisa C."),
-            ("yelp",   "rev_ryan_008", 5, "Best restaurant on the lagoon hands down. The mud pie dessert is a must. Our server Danny made the whole evening special with his knowledge of the menu.", "positive", "Tom W."),
+            ("google","rev_ryan_001",5,"Absolutely incredible dinner. The Chilean sea bass melted in my mouth and our server was phenomenal. Best waterfront dining in Melbourne FL by far.","positive","Jennifer M.",["food_quality","service"],"normal"),
+            ("google","rev_ryan_002",2,"Waited 40 minutes past our reservation. The prime rib was overcooked and came out cold. Manager never came by to check on us. Disappointed for the price point.","negative","David K.",["wait_time","food_quality","service"],"normal"),
+            ("yelp",  "rev_ryan_003",5,"Celebrated my anniversary here. The filet mignon and lobster tail combo was perfect. Sunset views from the patio are absolutely stunning. Will be back every year.","positive","Sarah T.",["food_quality","ambiance"],"normal"),
+            ("google","rev_ryan_004",4,"Great happy hour on the outdoor patio — firecracker shrimp and craft cocktails were excellent. Service was a bit slow but the food made up for it.","neutral", "Mike R.",["food_quality","service","wait_time"],"normal"),
+            ("yelp",  "rev_ryan_005",1,"Food was cold, service was rude, and the lobster bisque tasted like it came from a can. For these prices I expected much better. Will not return.","negative","Amanda L.",["food_quality","service","value"],"high"),
+            ("google","rev_ryan_006",5,"The Chart House Cut prime rib is legendary. Been coming here for 10 years and it never disappoints. Lagoon views at sunset are unmatched in Brevard County.","positive","Robert H.",["food_quality","ambiance"],"normal"),
+            ("google","rev_ryan_007",3,"Hit or miss experience. The tuna tartare appetizer was excellent but my Mac Nut Mahi came out overcooked. Staff was friendly though.","neutral", "Lisa C.",["food_quality","service"],"normal"),
+            ("yelp",  "rev_ryan_008",5,"Best restaurant on the lagoon hands down. The mud pie dessert is a must. Our server Danny made the whole evening special with his knowledge of the menu.","positive","Tom W.",["food_quality","service"],"normal"),
         ]
         from zoneinfo import ZoneInfo as _ZI_r
         from datetime import datetime as _dt_r
         _now_r = _dt_r.now(_ZI_r('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S')
-        for platform, ext_id, rating, text, sentiment, name in sample_reviews:
+        for platform, ext_id, rating, text, sentiment, name, cats, urgency in sample_reviews:
             _conn_r.execute("""
-                INSERT OR IGNORE INTO reviews
+                INSERT OR REPLACE INTO reviews
                 (restaurant_id, platform, external_id, author, rating, text, sentiment,
-                 fetched_at, review_date, response_status, processed, review_name)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                 categories, urgency, fetched_at, review_date, response_status, processed, review_name)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (ryan_rid, platform, ext_id, name, rating, text, sentiment,
-                    _now_r, _now_r, 'pending', 1, name))
+                  _json_r.dumps(cats), urgency, _now_r, _now_r, 'pending', 1, name))
         _conn_r.commit()
         _conn_r.close()
-
-        # Analyse Ryan's reviews so categories/sentiment are populated (needed for top issues)
-        try:
-            from analyser import analyse_pending
-            analyse_pending(ryan_rid, limit=50)
-            print("  Ryan's reviews analysed.\n")
-        except Exception as _ae:
-            print(f"  Analyse error: {_ae}")
+        print("  Ryan's reviews seeded with categories.\n")
 
         # Draft responses for Ryan's reviews
         try:
