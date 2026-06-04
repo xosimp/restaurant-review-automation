@@ -5606,13 +5606,50 @@ def _do_seed_ryan():
         _conn_r.close()
         print("  Ryan's 32 reviews seeded with categories and week spread.\n")
 
-        # Draft responses for Ryan's reviews
+        # Draft responses — hardcoded on Railway (fast), real API locally (quality)
         try:
+            _on_railway = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
+            if _on_railway:
+                _drafts_map = {
+                    "positive": [
+                        "Thank you so much for the kind words — it truly means the world to our team. We can't wait to welcome you back to the lagoon!",
+                        "What a wonderful review — we're so glad you had a great experience. Please come see us again soon!",
+                        "This made our whole team smile. Thank you for sharing your experience — see you next time!",
+                        "We're so grateful for guests like you. Thank you for the kind review and we hope to see you back very soon!",
+                    ],
+                    "negative": [
+                        "We're truly sorry to hear about your experience and we take this feedback very seriously. Please reach out to us directly at ryans@charthouse.com so we can make this right.",
+                        "This is not the standard we hold ourselves to and we sincerely apologize. We'd love the chance to speak with you directly — please contact us at ryans@charthouse.com.",
+                        "We're sorry your visit didn't meet expectations. Your feedback has been shared with our management team.",
+                    ],
+                    "neutral": [
+                        "Thank you for taking the time to share your experience. We appreciate the honest feedback and hope to exceed your expectations on your next visit.",
+                        "Thanks for visiting and for the thoughtful review. We'd love to show you an even better experience next time.",
+                    ],
+                }
+                _d_idx = {"positive": 0, "negative": 0, "neutral": 0}
+                _conn_d = get_conn()
+                _pending_d = _conn_d.execute(
+                    "SELECT id, sentiment FROM reviews WHERE restaurant_id=? AND (draft_response IS NULL OR draft_response='')",
+                    (ryan_rid,)
+                ).fetchall()
+                for _rev_d in _pending_d:
+                    _sk = _rev_d["sentiment"] if _rev_d["sentiment"] in _drafts_map else "neutral"
+                    _dl = _drafts_map[_sk]
+                    _dt = _dl[_d_idx[_sk] % len(_dl)]
+                    _d_idx[_sk] += 1
+                    _conn_d.execute(
+                        "UPDATE reviews SET draft_response=?, response_status='drafted' WHERE id=?",
+                        (_dt, _rev_d["id"])
+                    )
+                _conn_d.commit(); _conn_d.close()
+                print("  Ryan's reviews drafted (hardcoded — Railway).\n")
+            else:
                 from drafter import draft_pending
                 draft_pending(ryan_rid, limit=50)
-                print("  Ryan's reviews seeded and drafted.\n")
+                print("  Ryan's reviews seeded and drafted (API — local).\n")
         except Exception as _de:
-                print(f"  Draft error: {_de}")
+            print(f"  Draft error: {_de}")
 
         # Seed 6 weeks of inventory history so the trend chart is always populated for testing
         try:
