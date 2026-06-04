@@ -653,7 +653,7 @@ function clientUpload(dataType, input) {
 {% endif %}
 <div style="background:var(--ink);padding:0 28px">
   <nav style="display:flex;gap:0">
-    {% if mod_reviews %}<button class="tab {{'active' if mod_reviews}}" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews <span class="badge">{{rstats.total}}</span></button>{% endif %}
+    {% if mod_reviews %}<button class="tab {{'active' if mod_reviews}}" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews {% if rstats.awaiting_approval > 0 %}<span class="badge" id="reviews-badge" style="background:#c0392b;color:white">{{rstats.awaiting_approval}}</span>{% else %}<span class="badge" id="reviews-badge" style="background:rgba(255,255,255,.1)">{{rstats.total}}</span>{% endif %}</button>{% endif %}
     {% if mod_labor %}<button class="tab {{'active' if not mod_reviews and mod_labor}}" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
     {% if mod_inventory %}<button class="tab {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="tab-inventory" onclick="switchTab('inventory',this)">Inventory</button>{% endif %}
     {% if mod_marketing %}<button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
@@ -778,16 +778,25 @@ function clientUpload(dataType, input) {
   </div>
   {% endif %}
 
-  <div class="card" style="padding:14px 16px;margin-bottom:14px">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><div style="width:3px;height:14px;background:var(--ember);border-radius:2px"></div><div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Sentiment trend — last 8 weeks</div></div>
-    <div style="display:flex;align-items:flex-end;gap:8px;height:80px;margin-bottom:6px" id="sentiment-trend-bars">
-      <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading…</div>
+  <div class="card" style="padding:14px 16px;margin-bottom:14px;background:linear-gradient(to bottom,#fafaf8,white)">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px"><div style="width:3px;height:14px;background:var(--ember);border-radius:2px"></div><div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Sentiment trend — last 8 weeks</div></div>
+      <div id="trend-summary" style="font-size:11px;color:var(--ink3)"></div>
     </div>
-    <div style="display:flex;gap:8px;font-size:10px" id="sentiment-trend-labels"></div>
-    <div style="display:flex;gap:14px;margin-top:8px;font-size:11px;color:var(--ink3)">
-      <span><span style="display:inline-block;width:10px;height:10px;background:#2d6a4f;border-radius:2px;margin-right:4px"></span>Positive</span>
-      <span><span style="display:inline-block;width:10px;height:10px;background:#c0392b;border-radius:2px;margin-right:4px"></span>Negative</span>
-      <span><span style="display:inline-block;width:10px;height:10px;background:#cbd5e0;border-radius:2px;margin-right:4px"></span>Neutral</span>
+    <div style="position:relative">
+      <div style="display:flex;align-items:flex-end;gap:6px;height:90px;margin-bottom:0;padding:0 2px" id="sentiment-trend-bars">
+        <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading…</div>
+      </div>
+      <div style="height:1px;background:var(--paper3);margin:4px 0 2px"></div>
+    </div>
+    <div style="display:flex;gap:6px;font-size:10px;color:var(--ink3)" id="sentiment-trend-labels"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
+      <div style="display:flex;gap:14px;font-size:11px;color:var(--ink3)">
+        <span><span style="display:inline-block;width:10px;height:10px;background:#2d6a4f;border-radius:2px;margin-right:4px"></span>Positive</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:#c0392b;border-radius:2px;margin-right:4px"></span>Negative</span>
+        <span><span style="display:inline-block;width:10px;height:10px;background:#e8c87a;border-radius:2px;margin-right:4px"></span>Neutral</span>
+      </div>
+      <div id="trend-avg-rating" style="font-size:11px;color:var(--ink3)"></div>
     </div>
   </div>
 
@@ -1710,22 +1719,47 @@ function loadSentimentTrend(){
     var maxTotal=0;
     for(var i=0;i<data.weeks.length;i++){if(data.weeks[i].total>maxTotal)maxTotal=data.weeks[i].total;}
     maxTotal=Math.max(maxTotal,1);
-    var html='';
-    var lblHtml='';
+    // Compute trend direction for summary
+    var firstW=data.weeks[0]; var lastW=data.weeks[data.weeks.length-1];
+    var firstPct=firstW.total>0?Math.round(firstW.positive/firstW.total*100):0;
+    var lastPct=lastW.total>0?Math.round(lastW.positive/lastW.total*100):0;
+    var trendSummary=document.getElementById('trend-summary');
+    if(trendSummary){
+      if(lastPct>firstPct+10) trendSummary.innerHTML='<span style="color:#2d6a4f;font-weight:700">↑ Trending positive</span>';
+      else if(lastPct<firstPct-10) trendSummary.innerHTML='<span style="color:#c0392b;font-weight:700">↓ Trending negative</span>';
+      else trendSummary.innerHTML='<span style="color:var(--ink3)">→ Holding steady</span>';
+    }
+    // Avg rating across all weeks
+    var totalRatings=0; var ratingCount=0;
+    for(var i=0;i<data.weeks.length;i++){
+      if(data.weeks[i].avg_rating && data.weeks[i].total>0){
+        totalRatings+=data.weeks[i].avg_rating*data.weeks[i].total;
+        ratingCount+=data.weeks[i].total;
+      }
+    }
+    var avgRatingEl=document.getElementById('trend-avg-rating');
+    if(avgRatingEl && ratingCount>0){
+      var avg=Math.round(totalRatings/ratingCount*10)/10;
+      var starCol=avg>=4.5?'#2d6a4f':avg>=3.5?'#ef9f27':'#c0392b';
+      avgRatingEl.innerHTML='Avg: <strong style="color:'+starCol+'">'+avg+'★</strong>';
+    }
+    var html=''; var lblHtml='';
     for(var i=0;i<data.weeks.length;i++){
       var w=data.weeks[i];
-      var totalH=Math.max(8,Math.round((w.total/maxTotal)*72));
+      var totalH=Math.max(8,Math.round((w.total/maxTotal)*80));
       var posH=w.total>0?Math.round((w.positive/w.total)*totalH):0;
       var negH=w.total>0?Math.round((w.negative/w.total)*totalH):0;
       var neuH=totalH-posH-negH;
       var isLast=(i===data.weeks.length-1);
-      html+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:0;opacity:'+(isLast?'1':'0.8')+'" title="'+w.label+': '+w.positive+' pos, '+w.negative+' neg, '+w.neutral+' neu">';
-      html+='<span style="font-size:10px;color:var(--ink3);margin-bottom:2px">'+w.total+'</span>';
-      if(negH>0) html+='<div style="width:80%;height:'+negH+'px;background:#c0392b;border-radius:'+(posH===0&&neuH===0?'3px 3px':'0')+' 0 0"></div>';
-      if(neuH>0) html+='<div style="width:80%;height:'+neuH+'px;background:#cbd5e0"></div>';
-      if(posH>0) html+='<div style="width:80%;height:'+posH+'px;background:#2d6a4f;border-radius:0 0 3px 3px"></div>';
+      var posPct=w.total>0?Math.round(w.positive/w.total*100):0;
+      var tooltip=w.label+': '+w.total+' reviews ('+w.positive+' pos '+w.negative+' neg)';
+      html+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:0;cursor:default" title="'+tooltip+'">';
+      html+='<span style="font-size:9px;font-weight:600;color:'+(posPct>=75?'#2d6a4f':posPct<=30?'#c0392b':'var(--ink3)')+';margin-bottom:2px">'+posPct+'%</span>';
+      if(negH>0) html+='<div style="width:82%;height:'+negH+'px;background:#c0392b;border-radius:'+(posH===0&&neuH===0?'4px 4px':'0')+' 0 0;opacity:'+(isLast?'1':'0.85')+'"></div>';
+      if(neuH>0) html+='<div style="width:82%;height:'+neuH+'px;background:#e8c87a;opacity:'+(isLast?'1':'0.85')+'"></div>';
+      if(posH>0) html+='<div style="width:82%;height:'+posH+'px;background:linear-gradient(to top,#1a5c35,#2d6a4f);border-radius:0 0 4px 4px;opacity:'+(isLast?'1':'0.85')+'"></div>';
       html+='</div>';
-      lblHtml+='<span style="flex:1;text-align:center;font-size:10px;color:var(--ink3)">'+w.label+'</span>';
+      lblHtml+='<span style="flex:1;text-align:center;font-size:10px;color:'+(isLast?'var(--ink)':'var(--ink3)')+';font-weight:'+(isLast?'600':'400')+'">'+w.label+'</span>';
     }
     container.innerHTML=html;
     if(labels)labels.innerHTML=lblHtml;
@@ -1956,6 +1990,20 @@ function updateReviewStats(){
       }
     }
 
+    // ── Tab badge ──────────────────────────────────────────
+    var badge = document.getElementById('reviews-badge');
+    if(badge){
+      var pending = d.awaiting_approval || 0;
+      if(pending > 0){
+        badge.textContent = pending;
+        badge.style.background = '#c0392b';
+        badge.style.color = 'white';
+      } else {
+        badge.textContent = d.total || '';
+        badge.style.background = 'rgba(255,255,255,.1)';
+        badge.style.color = '';
+      }
+    }
     // ── Urgent stat card ───────────────────────────────────
     var urgentEl  = document.getElementById('stat-urgent');
     var urgentNEl = document.getElementById('stat-urgent-n');
