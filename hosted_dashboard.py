@@ -4576,9 +4576,9 @@ def approve(rid, current_user):
         log_event(current_user["restaurant_id"], "review_approved", {"review_id": rid})
     except Exception:
         pass
-    # Auto-post to Google if connected and this is a Google review with a review_name
+    # Auto-post to Google in background thread — don't block the response
     try:
-        from gmb import post_reply, is_connected
+        from gmb import is_connected
         conn = get_conn()
         row = conn.execute(
             "SELECT platform, draft_response, review_name FROM reviews WHERE id=? AND restaurant_id=?",
@@ -4587,13 +4587,25 @@ def approve(rid, current_user):
         conn.close()
         if row and row["platform"] == "google" and row["review_name"] and row["draft_response"]:
             if is_connected(current_user["restaurant_id"]):
-                result = post_reply(current_user["restaurant_id"], row["review_name"], row["draft_response"])
-                if result["ok"]:
-                    from models import mark_posted
-                    mark_posted(rid)
-                    return jsonify(ok=True, auto_posted=True)
-                else:
-                    print(f"[GMB] Auto-post failed for review {rid}: {result['error']}")
+                import threading as _t_gmb
+                _rid_capture = rid
+                _rest_id_capture = current_user["restaurant_id"]
+                _review_name = row["review_name"]
+                _draft = row["draft_response"]
+                def _post_gmb_bg():
+                    try:
+                        from gmb import post_reply
+                        result = post_reply(_rest_id_capture, _review_name, _draft)
+                        if result["ok"]:
+                            from models import mark_posted
+                            mark_posted(_rid_capture)
+                            print(f"[GMB] Auto-posted review {_rid_capture} ✓")
+                        else:
+                            print(f"[GMB] Auto-post failed for review {_rid_capture}: {result['error']}")
+                    except Exception as _ge:
+                        print(f"[GMB] Background post error: {_ge}")
+                _t_gmb.Thread(target=_post_gmb_bg, daemon=True).start()
+                return jsonify(ok=True, auto_posted=True)
     except Exception as e:
         print(f"[GMB] approve auto-post error: {e}")
     return jsonify(ok=True, auto_posted=False)
@@ -5503,14 +5515,22 @@ if __name__ == "__main__":
         _c.commit(); _c.close()
         print(f"\n  Admin account created: {ADMIN_USERNAME} (password set from env)\n")
 
-    # Create Ryan's test client account if it doesn't exist
-    conn = gc()
-    ryan_exists = conn.execute(
-        "SELECT id FROM users WHERE email=?", ("ryancavnar@gmail.com",)
-    ).fetchone()
-    conn.close()
+    # Create Ryan's test client account in background so app.run() fires immediately
+    def _seed_ryan_background():
+      try:
+        import time as _t_ryan; _t_ryan.sleep(2)  # let Flask fully start first
+        conn = gc()
+        ryan_exists = conn.execute(
+            "SELECT id FROM users WHERE email=?", ("ryancavnar@gmail.com",)
+        ).fetchone()
+        conn.close()
+        if not ryan_exists:
+          _do_seed_ryan()
+      except Exception as _bg_e:
+        print(f"  Ryan seed background error: {_bg_e}")
 
-    if not ryan_exists:
+    def _do_seed_ryan():
+      try:
         from models import create_restaurant, Restaurant
         ryan_rid = create_restaurant(Restaurant(
             name="Ryan's Charthouse",
@@ -5691,6 +5711,12 @@ Sparkling Water,Beverage,case,6,9,22.00,0.8,6,0.0"""
             print("  Ryan's rich inventory CSV seeded.\n")
         except Exception as _ryan_csv_e:
             print(f"  Ryan inventory CSV seed error: {_ryan_csv_e}")
+      except Exception as _do_seed_e:
+        print(f"  Ryan full seed error: {_do_seed_e}")
+
+    import threading as _t_seed
+    _seed_thread = _t_seed.Thread(target=_seed_ryan_background, daemon=True)
+    _seed_thread.start()
 
     print(f"\n  Hosted dashboard → http://localhost:{PORT}")
     print(f"  Admin panel      → http://localhost:{PORT}/admin\n")
