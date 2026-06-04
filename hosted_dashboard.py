@@ -387,6 +387,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 .stat-l{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
 .stat.hi .stat-n{color:var(--red)}
 .stat.ok .stat-n{color:var(--green)}
+.stat.ok{background:linear-gradient(135deg,#f0faf4,white);border-color:#b7dfca}
 .stat.warn .stat-n{color:var(--amber)}
 .card{background:white;border:1px solid var(--paper3);border-radius:var(--r);overflow:hidden;margin-bottom:10px;box-shadow:0 4px 12px rgba(14,12,10,.10),0 1px 3px rgba(14,12,10,.06)}
 .card.urgent{border-left:3px solid var(--red)}
@@ -437,6 +438,18 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 .insight-text{font-size:12px;line-height:1.7;color:rgba(250,248,245,.85);white-space:pre-wrap}
 .insight-loading{color:var(--ink3);font-style:italic;font-size:12px}
 @keyframes flashGreen{0%{background:#d5ede0;}60%{background:#d5ede0;}100%{background:var(--paper)}}
+@keyframes modalIn{0%{opacity:0;transform:scale(.92) translateY(12px)}100%{opacity:1;transform:scale(1) translateY(0)}}
+#congrats-modal{display:none;position:fixed;inset:0;background:rgba(14,12,10,.6);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
+#congrats-modal.show{display:flex}
+#congrats-inner{background:linear-gradient(135deg,#1a1410,#1e1a14);border:1px solid #3d2e1e;border-radius:16px;padding:32px 36px;max-width:480px;width:90%;animation:modalIn .3s ease;position:relative;text-align:center}
+#congrats-inner .c-ember{width:3px;position:absolute;left:0;top:0;bottom:0;background:var(--ember);border-radius:16px 0 0 16px}
+#congrats-inner h2{color:#f0ebe0;font-size:22px;font-weight:800;margin:0 0 8px}
+#congrats-inner .c-sub{color:var(--ember);font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:16px}
+#congrats-inner p{color:#c8bfb0;font-size:13px;line-height:1.7;margin:0 0 10px}
+#congrats-inner .c-stat{background:rgba(255,255,255,.06);border-radius:8px;padding:10px 14px;margin:8px 0;font-size:12px;color:#f0ebe0;text-align:left}
+#congrats-inner .c-stat strong{color:var(--ember)}
+#congrats-close{margin-top:20px;background:var(--ember);color:white;border:none;border-radius:8px;padding:10px 28px;font-size:13px;font-weight:700;cursor:pointer;width:100%}
+#congrats-close:hover{opacity:.9}
 .stat-flash-green{animation:flashGreen 1.8s ease forwards;}
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
 .tbl{width:100%;border-collapse:collapse;font-size:12px}
@@ -877,6 +890,9 @@ function clientUpload(dataType, input) {
   <div class="no-data">No reviews match this filter.</div>
   {% endif %}
 </div>
+
+<!-- Congratulations modal — fires once when 100% response rate achieved -->
+<div id="congrats-modal"><div id="congrats-inner"><div class="c-ember"></div><div class="c-sub">🎉 100% Response Rate Achieved</div><h2>You're in the top tier.</h2><p>Every single review on your dashboard now has a response. That's rare — and it matters more than most owners realize.</p><div class="c-stat"><strong>35% higher return rates</strong> — guests who see responses come back more often</div><div class="c-stat"><strong>5–9% revenue lift</strong> per star gained — Harvard Business School research on independent restaurants</div><div class="c-stat"><strong>$125k+/yr</strong> in additional revenue possible from a 3.1% sales lift at a casual dining unit</div><p style="margin-top:12px;font-size:12px;color:#a09080">This won't appear again. Keep responding to new reviews to maintain your edge.</p><button id="congrats-close" onclick="document.getElementById('congrats-modal').classList.remove('show')">Got it — keep it up ✓</button></div></div>
 
 <!-- LABOR -->
 <div class="panel {{'active' if not mod_reviews and mod_labor}}" id="panel-labor">
@@ -1848,11 +1864,13 @@ function updateReviewStats(){
     if(countEl){ countEl.innerHTML=(d.responded||d.posted)+' of '+d.total+' reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit'; }
     // Shift card background red→neutral→green as response rate improves
     var rateCard = document.getElementById('rate-card');
+    maybeShowCongrats(rrate);
     if(rateCard){
       var borderCol = color;
       var bgGrad;
-      if(rrate >= 70){      bgGrad = 'linear-gradient(to right,#d5ede0,white)'; }
-      else if(rrate >= 40){ bgGrad = 'linear-gradient(to right,#e8f4e8,white)'; }
+      if(rrate >= 100){     bgGrad = 'linear-gradient(to right,#0d3320,#1a5c35,white)'; }
+      else if(rrate >= 70){ bgGrad = 'linear-gradient(to right,#1a4d2e,#d5ede0,white)'; }
+      else if(rrate >= 40){ bgGrad = 'linear-gradient(to right,#c8e8d4,white)'; }
       else if(rrate >= 15){ bgGrad = 'linear-gradient(to right,#fdf5e0,white)'; }
       else {                bgGrad = 'linear-gradient(to right,#f5d5d5,white)'; }
       rateCard.style.setProperty('background', bgGrad, 'important');
@@ -1907,6 +1925,13 @@ function updateReviewStats(){
       }
     }
   }).catch(function(){});
+}
+function maybeShowCongrats(rrate){
+  if(rrate < 100) return;
+  if(localStorage.getItem('cavnar_congrats_shown')) return;
+  localStorage.setItem('cavnar_congrats_shown','1');
+  var modal = document.getElementById('congrats-modal');
+  if(modal) modal.classList.add('show');
 }
 function updateResponseRateBar(){ updateReviewStats(); }
 function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
