@@ -993,8 +993,8 @@ function clientUpload(dataType, input) {
   <div class="stat-row">
     <div class="stat hi"><div class="stat-n">${{inv.total_waste_cost_week|format_num}}</div><div class="stat-l">Waste/week</div></div>
     <div class="stat hi"><div class="stat-n">${{inv.monthly_waste_projection|int|format_num}}</div><div class="stat-l">Projected/mo</div></div>
-    <div class="stat warn"><div class="stat-n">{{inv.waste_items|length}}</div><div class="stat-l">Waste items</div></div>
-    <div class="stat hi"><div class="stat-n">{{inv.critical_low|length}}</div><div class="stat-l">Critical low</div></div>
+    <div class="stat {% if inv.waste_items|length == 0 %}ok{% else %}warn{% endif %}"><div class="stat-n">{{inv.waste_items|length}}</div><div class="stat-l">Waste items</div></div>
+    <div class="stat {% if inv.critical_low|length == 0 %}ok{% else %}hi{% endif %}"><div class="stat-n">{{inv.critical_low|length}}</div><div class="stat-l">Critical low</div></div>
     <div class="stat"><div class="stat-n">${{inv.total_stock_value|int|format_num}}</div><div class="stat-l">Inventory value</div></div>
   </div>
 
@@ -1007,7 +1007,7 @@ function clientUpload(dataType, input) {
       </div>
     </div>
     <div style="position:relative;height:10px;background:var(--paper3);border-radius:5px;overflow:hidden">
-      <div style="position:absolute;left:0;top:0;height:100%;width:{{[inv.waste_rate_pct * 5, 100]|min}}%;background:{{inv.benchmark_color}};border-radius:5px;transition:width .4s"></div>
+      <div style="position:absolute;left:0;top:0;height:100%;width:{% if inv.waste_rate_pct > 0 %}{{[inv.waste_rate_pct * 5, 100]|min}}%{% else %}2px{% endif %};background:{{inv.benchmark_color}};border-radius:5px;transition:width .4s"></div>
       <div style="position:absolute;left:20%;top:-2px;height:14px;width:2px;background:#2d6a4f;opacity:.7" title="4% target"></div>
       <div style="position:absolute;left:25%;top:-2px;height:14px;width:2px;background:#6fcf97;opacity:.7" title="5% target"></div>
     </div>
@@ -1043,8 +1043,8 @@ function clientUpload(dataType, input) {
       <div class="card"><table class="tbl">
         <thead><tr><th>Item</th><th>Wasted</th><th>Cost</th><th>%</th></tr></thead>
         <tbody>{% for item in inv.waste_items %}<tr>
-          <td><strong>{{item.item}}</strong></td><td>{{item.waste_last_week}} {{item.unit}}</td>
-          <td><span class="pill pill-red">${{item.waste_cost}}</span></td><td>{{item.waste_pct}}%</td>
+          <td><strong>{{item.item}}</strong></td><td>{{item.waste_last_week|round(1)}} {{item.unit}}</td>
+          <td><span class="pill pill-red">${{"%.2f"|format(item.waste_cost)}}</span></td><td>{{item.waste_pct}}%</td>
         </tr>{% else %}<tr><td colspan="4" style="color:#2d6a4f;font-style:italic;padding:12px;text-align:center">
           ✓ No significant waste flagged this week — great job.
         </td></tr>{% endfor %}</tbody></table></div>
@@ -1057,13 +1057,13 @@ function clientUpload(dataType, input) {
           <td><strong>{{item.item}}</strong></td>
           <td>{{item.current_stock|int}}{% if item.unit %} {{item.unit}}{% endif %}</td>
           <td>{{item.par_level|int}}{% if item.unit %} {{item.unit}}{% endif %}</td>
-          <td><span class="pill pill-amber">${{item.overstock_cost}}</span></td>
+          <td><span class="pill pill-amber">${{"%.2f"|format(item.overstock_cost)}}</span></td>
         </tr>{% else %}<tr><td colspan="4" style="color:#2d6a4f;font-style:italic;padding:12px;text-align:center">✓ Nothing overstocked this week.</td></tr>{% endfor %}</tbody></table></div>
     </div>
   </div>
 
-  {% if inv.critical_low or inv.reorder_soon or inv.order_reduction %}
   <div class="slabel">Order list — recommended quantities</div>
+  {% if inv.critical_low or inv.reorder_soon or inv.order_reduction %}
   <div class="card"><table class="tbl">
     <thead><tr><th>Item</th><th>Status</th><th>Order qty</th><th>Last order</th><th>Savings</th></tr></thead>
     <tbody>
@@ -1090,6 +1090,8 @@ function clientUpload(dataType, input) {
     </tr>{% endfor %}
     </tbody>
   </table></div>
+  {% else %}
+  <div class="card" style="padding:14px 16px;color:#2d6a4f;font-style:italic;font-size:13px">✓ Your ordering looks well-calibrated this week — no adjustments needed.</div>
   {% endif %}
 </div>
 
