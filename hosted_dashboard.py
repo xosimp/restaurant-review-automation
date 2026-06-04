@@ -653,7 +653,7 @@ function clientUpload(dataType, input) {
 {% endif %}
 <div style="background:var(--ink);padding:0 28px">
   <nav style="display:flex;gap:0">
-    {% if mod_reviews %}<button class="tab {{'active' if mod_reviews}}" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews {% if rstats.awaiting_approval > 0 %}<span class="badge" id="reviews-badge" style="background:#c0392b;color:white">{{rstats.awaiting_approval}}</span>{% else %}<span class="badge" id="reviews-badge" style="background:rgba(255,255,255,.1)">{{rstats.total}}</span>{% endif %}</button>{% endif %}
+    {% if mod_reviews %}<button class="tab {{'active' if mod_reviews}}" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews <span class="badge" id="reviews-badge" style="{% if rstats.awaiting_approval > 0 %}background:#c0392b;color:white{% else %}display:none{% endif %}">{{rstats.awaiting_approval if rstats.awaiting_approval > 0 else ''}}</span></button>{% endif %}
     {% if mod_labor %}<button class="tab {{'active' if not mod_reviews and mod_labor}}" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
     {% if mod_inventory %}<button class="tab {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="tab-inventory" onclick="switchTab('inventory',this)">Inventory</button>{% endif %}
     {% if mod_marketing %}<button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
@@ -699,7 +699,7 @@ function clientUpload(dataType, input) {
   {% set rrate_color = '#2d6a4f' if rrate >= 70 else ('#6fcf97' if rrate >= 40 else ('#ef9f27' if rrate >= 15 else '#c0392b')) %}
   <div class="card" id="rate-card" style="padding:14px 16px;margin-bottom:14px;{% if rrate < 15 %}border-left:3px solid #c0392b;background:linear-gradient(to right,#f5d5d5,var(--paper));{% elif rrate >= 70 %}border-left:3px solid #2d6a4f;background:linear-gradient(to right,#d5ede0,var(--paper));{% endif %}">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Response rate vs industry benchmark</div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink)">Response rate vs industry benchmark</div>
       <div style="display:flex;align-items:center;gap:8px">
         <span class="review-rate-pct" style="font-size:13px;font-weight:700;color:{{rrate_color}}">{{rrate}}%</span>
         <span class="review-rate-label" style="background:{{rrate_color}};color:white;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.5px">{{rrate_label}}</span>
@@ -713,12 +713,12 @@ function clientUpload(dataType, input) {
     </div>
     <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:10px;color:var(--ink3)">
       <span>0%</span>
-      <span style="color:#ef9f27;font-weight:600">▲ 15% avg independent</span>
-      <span style="color:#6fcf97;font-weight:600">▲ 40% strong</span>
-      <span style="color:#2d6a4f;font-weight:600">▲ 70% excellent</span>
+      <span style="color:#7a4f00;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px;font-size:10px">▲ 15% avg</span>
+      <span style="color:#1a5c35;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px;font-size:10px">▲ 40% strong</span>
+      <span style="color:#0d3320;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px;font-size:10px">▲ 70% excellent</span>
       <span>100%</span>
     </div>
-    <div class="review-rate-count" style="margin-top:6px;font-size:11px;color:var(--ink3)">{{rstats.get("responded", rstats.posted)}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit</div>
+    <div class="review-rate-count" style="margin-top:6px;font-size:11px;color:var(--ink);background:rgba(255,255,255,.6);border-radius:4px;padding:3px 6px;display:inline-block">{{rstats.get("responded", rstats.posted)}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit</div>
   </div>
   {% if platform_breakdown and platform_breakdown|length > 1 %}
   {% set best_rating = platform_breakdown|map(attribute='avg_rating')|max %}
@@ -1998,10 +1998,10 @@ function updateReviewStats(){
         badge.textContent = pending;
         badge.style.background = '#c0392b';
         badge.style.color = 'white';
+        badge.style.display = '';
       } else {
-        badge.textContent = d.total || '';
-        badge.style.background = 'rgba(255,255,255,.1)';
-        badge.style.color = '';
+        badge.textContent = '';
+        badge.style.display = 'none';
       }
     }
     // ── Urgent stat card ───────────────────────────────────
