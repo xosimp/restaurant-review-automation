@@ -684,7 +684,7 @@ function clientUpload(dataType, input) {
   {% set rrate = rstats.response_rate %}
   {% set rrate_label = 'Excellent' if rrate >= 70 else ('Strong' if rrate >= 40 else ('On Track' if rrate >= 15 else 'Below Average')) %}
   {% set rrate_color = '#2d6a4f' if rrate >= 70 else ('#6fcf97' if rrate >= 40 else ('#ef9f27' if rrate >= 15 else '#c0392b')) %}
-  <div class="card" style="padding:14px 16px;margin-bottom:14px;{% if rrate < 15 %}border-left:3px solid #c0392b;background:linear-gradient(to right,#f5d5d5,var(--paper));{% elif rrate >= 70 %}border-left:3px solid #2d6a4f;background:linear-gradient(to right,#d5ede0,var(--paper));{% endif %}">
+  <div class="card" id="rate-card" style="padding:14px 16px;margin-bottom:14px;{% if rrate < 15 %}border-left:3px solid #c0392b;background:linear-gradient(to right,#f5d5d5,var(--paper));{% elif rrate >= 70 %}border-left:3px solid #2d6a4f;background:linear-gradient(to right,#d5ede0,var(--paper));{% endif %}">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Response rate vs industry benchmark</div>
       <div style="display:flex;align-items:center;gap:8px">
@@ -1835,6 +1835,18 @@ function updateReviewStats(){
     if(labelEl){ labelEl.textContent=label; labelEl.style.background=color; }
     if(pctEl)  { pctEl.textContent=rrate+'%'; pctEl.style.color=color; }
     if(countEl){ countEl.innerHTML=(d.responded||d.posted)+' of '+d.total+' reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit'; }
+    // Shift card background red→neutral→green as response rate improves
+    var rateCard = document.getElementById('rate-card');
+    if(rateCard){
+      var borderCol = color;
+      var bgGrad;
+      if(rrate >= 70){      bgGrad = 'linear-gradient(to right,#d5ede0,white)'; }
+      else if(rrate >= 40){ bgGrad = 'linear-gradient(to right,#e8f4e8,white)'; }
+      else if(rrate >= 15){ bgGrad = 'linear-gradient(to right,#fdf5e0,white)'; }
+      else {                bgGrad = 'linear-gradient(to right,#f5d5d5,white)'; }
+      rateCard.style.setProperty('background', bgGrad, 'important');
+      rateCard.style.setProperty('border-left', '3px solid '+borderCol, 'important');
+    }
 
     // ── To approve stat card ───────────────────────────────
     var pendingEl  = document.getElementById('stat-pending');
@@ -1847,19 +1859,21 @@ function updateReviewStats(){
       // Rebuild inner safely
       pendingNEl.innerHTML = curr + '<span id="stat-pending-arrow" style="font-size:11px;color:#2d6a4f;margin-left:4px;display:none">↓</span>';
       var arrowEl2 = document.getElementById('stat-pending-arrow');
+      function setPendingClass(el, count){
+        el.classList.remove('warn','ok','hi');
+        el.classList.add(count===0 ? 'ok' : count<=2 ? 'ok' : 'warn');
+      }
       if(curr < prev && arrowEl2){
-        // Flash green background + show arrow, then fade
         arrowEl2.style.display='inline';
         pendingEl.classList.add('stat-flash-green');
-        pendingEl.className = pendingEl.className.replace(/warn|ok/g,'').trim()+' ok';
+        setPendingClass(pendingEl, curr);
         setTimeout(function(){
           if(arrowEl2) arrowEl2.style.display='none';
           pendingEl.classList.remove('stat-flash-green');
-          pendingEl.className = pendingEl.className.replace(/\bwarn\b|\bok\b/g,'').trim()+(curr<=2?' ok':' warn');
+          setPendingClass(pendingEl, curr);
         }, 2000);
       } else {
-        // Stay green if ≤2 pending (well managed), amber if more
-        pendingEl.className = pendingEl.className.replace(/warn|ok/g,'').trim()+(curr<=2?' ok':' warn');
+        setPendingClass(pendingEl, curr);
       }
     }
 
