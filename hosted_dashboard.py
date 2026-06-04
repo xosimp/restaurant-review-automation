@@ -436,6 +436,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 .insight-lbl{font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}
 .insight-text{font-size:12px;line-height:1.7;color:rgba(250,248,245,.85);white-space:pre-wrap}
 .insight-loading{color:var(--ink3);font-style:italic;font-size:12px}
+@keyframes flashGreen{0%{background:#d5ede0;}60%{background:#d5ede0;}100%{background:var(--paper)}}
+.stat-flash-green{animation:flashGreen 1.8s ease forwards;}
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
 .tbl{width:100%;border-collapse:collapse;font-size:12px}
 .tbl th{text-align:left;font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--ink3);padding:7px 10px;border-bottom:1px solid var(--paper3);background:var(--paper2)}
@@ -682,7 +684,7 @@ function clientUpload(dataType, input) {
   {% set rrate = rstats.response_rate %}
   {% set rrate_label = 'Excellent' if rrate >= 70 else ('Strong' if rrate >= 40 else ('On Track' if rrate >= 15 else 'Below Average')) %}
   {% set rrate_color = '#2d6a4f' if rrate >= 70 else ('#6fcf97' if rrate >= 40 else ('#ef9f27' if rrate >= 15 else '#c0392b')) %}
-  <div class="card" style="padding:14px 16px;margin-bottom:14px;{% if rrate < 15 %}border-left:3px solid #c0392b;background:linear-gradient(to right,#fdf2f2,var(--paper));{% elif rrate >= 70 %}border-left:3px solid #2d6a4f;background:linear-gradient(to right,#f0faf4,var(--paper));{% endif %}">
+  <div class="card" style="padding:14px 16px;margin-bottom:14px;{% if rrate < 15 %}border-left:3px solid #c0392b;background:linear-gradient(to right,#f5d5d5,var(--paper));{% elif rrate >= 70 %}border-left:3px solid #2d6a4f;background:linear-gradient(to right,#d5ede0,var(--paper));{% endif %}">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Response rate vs industry benchmark</div>
       <div style="display:flex;align-items:center;gap:8px">
@@ -719,7 +721,7 @@ function clientUpload(dataType, input) {
       {% set rating_col = '#2d6a4f' if p.avg_rating >= 4.5 else ('#ef9f27' if p.avg_rating >= 3.5 else '#c0392b') %}
       {% set is_worst = p.avg_rating == worst_rating and best_rating != worst_rating %}
       {% set is_best = p.avg_rating == best_rating and best_rating != worst_rating %}
-      <div style="background:var(--paper);border:1px solid {% if is_worst %}#f5c6c6{% elif is_best %}#b7dfca{% else %}var(--paper3){% endif %};border-radius:8px;padding:12px 14px;{% if is_worst %}background:linear-gradient(to bottom,#fdf5f5,var(--paper));{% elif is_best %}background:linear-gradient(to bottom,#f5fdf8,var(--paper));{% endif %}">
+      <div style="background:var(--paper);border:1px solid {% if is_worst %}#f5c6c6{% elif is_best %}#b7dfca{% else %}var(--paper3){% endif %};border-radius:8px;padding:12px 14px;{% if is_worst %}background:linear-gradient(to bottom,#f5d5d5,var(--paper));{% elif is_best %}background:linear-gradient(to bottom,#d5ede0,var(--paper));{% endif %}">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
           <div style="display:flex;align-items:center;gap:6px">
             <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:{{plat_col}}">{{p.platform|title}}</span>
@@ -748,7 +750,7 @@ function clientUpload(dataType, input) {
       {% set pct = (issue.count / max_count * 100)|int %}
       {% set col = '#c0392b' if issue.count >= 4 else ('#ef9f27' if issue.count >= 2 else '#6b7280') %}
       {% set is_top = loop.first %}
-      <div style="display:flex;align-items:center;gap:8px;background:{% if is_top %}linear-gradient(135deg,#fdf2f2,var(--paper)){% else %}var(--paper){% endif %};border:1px solid {% if is_top %}#f5c6c6{% else %}var(--paper3){% endif %};border-radius:8px;padding:{% if is_top %}10px 14px{% else %}6px 12px{% endif %};min-width:{% if is_top %}180px{% else %}130px{% endif %};flex:{% if is_top %}2{% else %}1{% endif %}">
+      <div style="display:flex;align-items:center;gap:8px;background:{% if is_top %}linear-gradient(135deg,#f5d5d5,var(--paper)){% else %}var(--paper){% endif %};border:1px solid {% if is_top %}#f5c6c6{% else %}var(--paper3){% endif %};border-radius:8px;padding:{% if is_top %}10px 14px{% else %}6px 12px{% endif %};min-width:{% if is_top %}180px{% else %}130px{% endif %};flex:{% if is_top %}2{% else %}1{% endif %}">
         <div style="flex:1">
           <div style="font-size:{% if is_top %}14px{% else %}12px{% endif %};font-weight:{% if is_top %}700{% else %}600{% endif %};color:{% if is_top %}{{col}}{% else %}var(--ink){% endif %}">{{issue.label}}</div>
           <div style="height:{% if is_top %}6px{% else %}4px{% endif %};background:var(--paper3);border-radius:2px;margin-top:4px;overflow:hidden">
@@ -951,7 +953,11 @@ function clientUpload(dataType, input) {
   </div>
 
   <!-- AI insight -->
-  <div class="insight"><div class="insight-lbl">Cavnar AI Consultant</div><div class="insight-text insight-loading" id="labor-insight">Loading analysis…</div></div>
+  <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Labor Consultant</div>
+    <div class="insight-text insight-loading" id="labor-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px">Loading analysis…</div>
+  </div>
 
   <!-- Two col: overstaffed table + bar chart -->
   <div class="two-col">
@@ -1127,7 +1133,11 @@ function clientUpload(dataType, input) {
       Last updated: {{inv.last_updated}}
     </div>
   </div>
-  <div class="insight"><div class="insight-lbl">Cavnar AI Food Cost Analysis</div><div class="insight-text insight-loading" id="inv-insight">Loading analysis…</div></div>
+  <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Food Cost Analysis</div>
+    <div class="insight-text insight-loading" id="inv-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px">Loading analysis…</div>
+  </div>
 
   <div class="slabel" style="margin-top:16px">Waste cost trend — last 6 weeks</div>
   <div class="card" style="padding:14px 16px 10px">
@@ -1775,54 +1785,63 @@ function filterReviews(){
 }
 function updateReviewStats(){
   fetch('/api/review-stats').then(function(r){return r.json();}).then(function(d){
-    if(typeof d.response_rate === 'undefined') return;
+    if(typeof d.response_rate==='undefined') return;
 
-    // Response rate bar
-    var rrate = d.response_rate;
+    // ── Response rate bar ──────────────────────────────────
+    var rrate = d.response_rate || 0;
     var color = rrate>=70?'#2d6a4f':rrate>=40?'#6fcf97':rrate>=15?'#ef9f27':'#c0392b';
     var label = rrate>=70?'Excellent':rrate>=40?'Strong':rrate>=15?'On Track':'Below Average';
-    var barEl = document.querySelector('.review-rate-bar');
+    var barEl   = document.querySelector('.review-rate-bar');
     var labelEl = document.querySelector('.review-rate-label');
-    var pctEl = document.querySelector('.review-rate-pct');
+    var pctEl   = document.querySelector('.review-rate-pct');
     var countEl = document.querySelector('.review-rate-count');
-    if(barEl){ barEl.style.width=(rrate>0?Math.min(rrate,100)+'%':'2px'); barEl.style.background=color; }
+    if(barEl){
+      barEl.style.cssText = barEl.style.cssText
+        .replace(/width:[^;]+;?/,'')
+        .replace(/background:[^;]+;?/,'');
+      barEl.style.width = (rrate>0 ? Math.min(rrate,100)+'%' : '2px');
+      barEl.style.background = color;
+    }
     if(labelEl){ labelEl.textContent=label; labelEl.style.background=color; }
-    if(pctEl){ pctEl.textContent=rrate+'%'; pctEl.style.color=color; }
+    if(pctEl)  { pctEl.textContent=rrate+'%'; pctEl.style.color=color; }
     if(countEl){ countEl.innerHTML=d.posted+' of '+d.total+' reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit'; }
 
-    // To approve stat card
-    var pendingEl = document.getElementById('stat-pending');
+    // ── To approve stat card ───────────────────────────────
+    var pendingEl  = document.getElementById('stat-pending');
     var pendingNEl = document.getElementById('stat-pending-n');
-    var arrowEl = document.getElementById('stat-pending-arrow');
-    if(pendingNEl){
-      var prev = parseInt(pendingNEl.dataset.prev || pendingNEl.textContent) || 0;
+    var arrowEl    = document.getElementById('stat-pending-arrow');
+    if(pendingEl && pendingNEl){
+      var prev = parseInt(pendingEl.dataset.prevCount || d.awaiting_approval+1) || 0;
       var curr = d.awaiting_approval || 0;
-      pendingNEl.dataset.prev = curr;
-      // Update number (keep arrow element intact)
-      pendingNEl.childNodes[0].nodeValue = curr;
-      // Show green down arrow if count dropped
-      if(arrowEl){
-        if(curr < prev){ arrowEl.style.display='inline'; }
-        else { arrowEl.style.display='none'; }
-      }
-      // Update card color
-      if(pendingEl){
-        pendingEl.className = pendingEl.className.replace(/warn|ok/g,'').trim();
-        pendingEl.className += (curr > 0 ? ' warn' : ' ok');
+      pendingEl.dataset.prevCount = curr;
+      // Rebuild inner safely
+      pendingNEl.innerHTML = curr + '<span id="stat-pending-arrow" style="font-size:11px;color:#2d6a4f;margin-left:4px;display:none">↓</span>';
+      var arrowEl2 = document.getElementById('stat-pending-arrow');
+      if(curr < prev && arrowEl2){
+        // Flash green background + show arrow, then fade
+        arrowEl2.style.display='inline';
+        pendingEl.classList.add('stat-flash-green');
+        pendingEl.className = pendingEl.className.replace(/warn|ok/g,'').trim()+' ok';
+        setTimeout(function(){
+          if(arrowEl2) arrowEl2.style.display='none';
+          pendingEl.classList.remove('stat-flash-green');
+          pendingEl.className = pendingEl.className.replace(/warn|ok/g,'').trim()+(curr>0?' warn':' ok');
+        }, 2000);
+      } else {
+        pendingEl.className = pendingEl.className.replace(/warn|ok/g,'').trim()+(curr>0?' warn':' ok');
       }
     }
 
-    // Urgent stat card
-    var urgentEl = document.getElementById('stat-urgent');
+    // ── Urgent stat card ───────────────────────────────────
+    var urgentEl  = document.getElementById('stat-urgent');
     var urgentNEl = document.getElementById('stat-urgent-n');
     if(urgentNEl) urgentNEl.textContent = d.urgent || 0;
     if(urgentEl){
       urgentEl.className = urgentEl.className.replace(/hi|ok/g,'').trim();
-      urgentEl.className += ((d.urgent||0) > 0 ? ' hi' : ' ok');
+      urgentEl.className += ((d.urgent||0)>0 ? ' hi' : ' ok');
     }
   }).catch(function(){});
 }
-// Keep old name as alias so existing calls still work
 function updateResponseRateBar(){ updateReviewStats(); }
 function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
   if(d.ok){
