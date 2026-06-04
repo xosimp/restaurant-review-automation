@@ -1043,7 +1043,7 @@ function clientUpload(dataType, input) {
       <div class="card"><table class="tbl">
         <thead><tr><th>Item</th><th>Wasted</th><th>Cost</th><th>%</th></tr></thead>
         <tbody>{% for item in inv.waste_items %}<tr>
-          <td><strong>{{item.item}}</strong></td><td>{{item.waste_last_week|round(1)}} {{item.unit}}</td>
+          <td><strong>{{item.item}}</strong></td><td>{{item.waste_last_week|int if item.waste_last_week % 1 == 0 else item.waste_last_week|round(1)}} {{item.unit}}</td>
           <td><span class="pill pill-red">${{"%.2f"|format(item.waste_cost)}}</span></td><td>{{item.waste_pct}}%</td>
         </tr>{% else %}<tr><td colspan="4" style="color:#2d6a4f;font-style:italic;padding:12px;text-align:center">
           ✓ No significant waste flagged this week — great job.
