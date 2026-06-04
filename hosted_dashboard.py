@@ -1750,6 +1750,9 @@ function filterByPlatform(platform){
   });
   var countEl = document.querySelector('.count-lbl');
   if(countEl) countEl.textContent = shown + ' review' + (shown !== 1 ? 's' : '') + ' — ' + platform;
+  // Clear search input
+  var searchEl = document.getElementById('rsearch');
+  if(searchEl) searchEl.value = '';
   // Scroll to toolbar
   var toolbar = document.querySelector('.toolbar');
   if(toolbar) setTimeout(function(){ toolbar.scrollIntoView({behavior:'smooth', block:'start'}); }, 100);
@@ -1816,6 +1819,14 @@ function filterReviews(){
   var countEl=document.querySelector('.count-lbl');
   if(countEl)countEl.textContent=shown+' review'+(shown!==1?'s':'');
 }
+function setPendingClass(el, count){
+  el.classList.remove('warn','ok','hi');
+  el.classList.add(count===0 ? 'ok' : count<=2 ? 'ok' : 'warn');
+}
+function setUrgentClass(el, count){
+  el.classList.remove('hi','ok','warn');
+  el.classList.add(count===0 ? 'ok' : 'hi');
+}
 function updateReviewStats(){
   fetch('/api/review-stats').then(function(r){return r.json();}).then(function(d){
     if(typeof d.response_rate==='undefined') return;
@@ -1853,17 +1864,13 @@ function updateReviewStats(){
     var pendingNEl = document.getElementById('stat-pending-n');
     var arrowEl    = document.getElementById('stat-pending-arrow');
     if(pendingEl && pendingNEl){
-      var prev = parseInt(pendingEl.dataset.prevCount || d.awaiting_approval+1) || 0;
+      var prev = pendingEl.dataset.prevCount !== undefined ? parseInt(pendingEl.dataset.prevCount) : d.awaiting_approval;
       var curr = d.awaiting_approval || 0;
       pendingEl.dataset.prevCount = curr;
       // Rebuild inner safely
       pendingNEl.innerHTML = curr + '<span id="stat-pending-arrow" style="font-size:11px;color:#2d6a4f;margin-left:4px;display:none">↓</span>';
       var arrowEl2 = document.getElementById('stat-pending-arrow');
-      function setPendingClass(el, count){
-        el.classList.remove('warn','ok','hi');
-        el.classList.add(count===0 ? 'ok' : count<=2 ? 'ok' : 'warn');
-      }
-      if(curr < prev && arrowEl2){
+            if(curr < prev && arrowEl2){
         arrowEl2.style.display='inline';
         pendingEl.classList.add('stat-flash-green');
         setPendingClass(pendingEl, curr);
@@ -1881,22 +1888,22 @@ function updateReviewStats(){
     var urgentEl  = document.getElementById('stat-urgent');
     var urgentNEl = document.getElementById('stat-urgent-n');
     if(urgentEl && urgentNEl){
-      var urgPrev = parseInt(urgentEl.dataset.prevCount || (d.urgent||0)+1) || 0;
+      var urgPrev = urgentEl.dataset.prevCount !== undefined ? parseInt(urgentEl.dataset.prevCount) : (d.urgent||0);
       var urgCurr = d.urgent || 0;
       urgentEl.dataset.prevCount = urgCurr;
       urgentNEl.innerHTML = urgCurr + '<span id="stat-urgent-arrow" style="font-size:11px;color:#2d6a4f;margin-left:4px;display:none">↓</span>';
       var urgArrow = document.getElementById('stat-urgent-arrow');
-      if(urgCurr < urgPrev && urgArrow){
+            if(urgCurr < urgPrev && urgArrow){
         urgArrow.style.display='inline';
         urgentEl.classList.add('stat-flash-green');
-        urgentEl.className = urgentEl.className.replace(/hi|ok/g,'').trim()+' ok';
+        setUrgentClass(urgentEl, 0);
         setTimeout(function(){
           if(urgArrow) urgArrow.style.display='none';
           urgentEl.classList.remove('stat-flash-green');
-          urgentEl.className = urgentEl.className.replace(/hi|ok/g,'').trim()+(urgCurr>0?' hi':' ok');
+          setUrgentClass(urgentEl, urgCurr);
         }, 2000);
       } else {
-        urgentEl.className = urgentEl.className.replace(/hi|ok/g,'').trim()+(urgCurr>0?' hi':' ok');
+        setUrgentClass(urgentEl, urgCurr);
       }
     }
   }).catch(function(){});
@@ -1931,27 +1938,24 @@ function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(function(r){ret
 })}
 
 function markPosted(id, btn){
-  // For Yelp reviews: copy response to clipboard and open Yelp
-  const card = document.getElementById('rc-'+id);
-  const platform = card ? card.dataset.platform : '';
-  const draftEl = document.getElementById('draft-txt-'+id);
-  const draftText = draftEl ? draftEl.textContent.trim() : '';
-
+  var card = document.getElementById('rc-'+id);
+  var platform = card ? card.dataset.platform : '';
+  var draftEl = document.getElementById('draft-txt-'+id);
+  var draftText = draftEl ? draftEl.textContent.trim() : '';
   if(platform === 'yelp'){
     if(draftText){
       navigator.clipboard.writeText(draftText).then(function(){
         toast('Response copied — opening Yelp to paste it ✓');
       }).catch(function(){ toast('Opening Yelp...'); });
     }
-    // Open Yelp business owner portal so they can paste and respond
     window.open('https://business.yelp.com', '_blank');
   }
-
-  fetch('/api/mark-posted/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{
+  fetch('/api/mark-posted/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(d.ok){
-      const actions = document.getElementById('draft-actions-'+id);
+      var actions = document.getElementById('draft-actions-'+id);
       if(actions) actions.innerHTML='<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>';
       if(platform !== 'yelp') toast('Marked as posted');
+      updateReviewStats();
     }
   });
 }
