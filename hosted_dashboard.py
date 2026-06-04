@@ -5205,7 +5205,12 @@ def server_error(e):
 # ── Module-level init (runs under gunicorn/Railway AND direct python) ────────
 
 try:
-    from models import ensure_columns as _ec, init_email_log as _iel, init_onboarding_emails as _ioe
+    from models import init_db as _init_db, ensure_columns as _ec, init_email_log as _iel, init_onboarding_emails as _ioe
+    from models import init_staff_notes as _isn
+    from auth import init_auth as _init_auth
+    _init_db()
+    _init_auth()
+    _isn()
     _ec()
     _iel()
     _ioe()
