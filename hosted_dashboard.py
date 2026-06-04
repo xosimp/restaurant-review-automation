@@ -186,7 +186,7 @@ _LOCKOUT_SECS   = 300    # 5 minute lockout
 
 # API rate limiting - per IP
 _api_requests   = {}
-_API_MAX        = 60     # max AI generation requests per window
+_API_MAX        = 120    # max AI generation requests per window — raised for multi-client
 _API_WINDOW     = 60     # 60 second window
 
 def _is_api_rate_limited(ip):
