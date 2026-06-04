@@ -98,10 +98,10 @@ def analyse_inventory(items: list[dict]) -> dict:
         # If wasting a lot, pull the order quantity down proportionally
         waste_adj     = min(0.95, max(0.60, 1.0 - (waste_pct / 100) * 0.5))
         raw_qty       = (item["par_level"] * 1.5) - item["current_stock"] + (item["avg_daily_usage"] * 3)
-        suggested_qty = max(1, round(raw_qty * waste_adj))
+        suggested_qty = max(0, round(raw_qty * waste_adj))
         savings_vs_last = round((item["last_order_qty"] - suggested_qty) * item["unit_cost"], 2)
         item["suggested_order_qty"] = suggested_qty
-        item["savings_vs_last"]     = round(savings_vs_last, 2)  # positive = save money, negative = need more
+        item["savings_vs_last"]     = savings_vs_last  # positive = save money, negative = need more
 
         if waste_pct > 20:
             waste_items.append(item)
@@ -199,7 +199,7 @@ def analyse_inventory(items: list[dict]) -> dict:
         "total_items":    len(items),
         "week_start":     fmt(week_start_dt),
         "week_end":       fmt(week_end_dt),
-        "last_updated":   fmt(datetime.now()),
+        "last_updated":   fmt(now_chi),
     }
 
 
@@ -306,7 +306,8 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             # Flag any inventory items that are relevant to upcoming holidays
             _all_items = (analysis.get("waste_items", []) +
                          analysis.get("critical_low", []) +
-                         analysis.get("reorder_soon", []))
+                         analysis.get("reorder_soon", []) +
+                         analysis.get("order_reduction", []))
             _item_names = [x["item"].lower() for x in _all_items]
             # Holiday-to-ingredient hints
             _holiday_items = {

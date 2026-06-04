@@ -1070,21 +1070,21 @@ function clientUpload(dataType, input) {
     {% for item in inv.critical_low %}<tr>
       <td><strong>{{item.item}}</strong></td>
       <td><span class="pill pill-red">{{item.days_remaining}}d — urgent</span></td>
-      <td><strong>{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}</strong></td>
+      <td><strong>{% if item.suggested_order_qty == 0 %}<span style="color:var(--ink3)">skip</span>{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</strong></td>
       <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
       <td>{% if item.savings_vs_last > 0 %}<span style="color:#2d6a4f;font-weight:600">↓ ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:var(--red)">↑ ${{"{:.2f}".format(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:var(--ink3)">—</span>{% endif %}</td>
     </tr>{% endfor %}
     {% for item in inv.reorder_soon %}<tr>
       <td><strong>{{item.item}}</strong></td>
       <td><span class="pill pill-amber">{{item.days_remaining}}d — order soon</span></td>
-      <td><strong>{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}</strong></td>
+      <td><strong>{% if item.suggested_order_qty == 0 %}<span style="color:var(--ink3)">skip</span>{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</strong></td>
       <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
       <td>{% if item.savings_vs_last > 0 %}<span style="color:#2d6a4f;font-weight:600">↓ ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:var(--red)">↑ ${{"{:.2f}".format(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:var(--ink3)">—</span>{% endif %}</td>
     </tr>{% endfor %}
     {% for item in inv.order_reduction %}<tr>
       <td><strong>{{item.item}}</strong></td>
       <td><span class="pill" style="background:#e8f4f0;color:#2d6a4f">reduce order</span></td>
-      <td><strong>{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}</strong></td>
+      <td><strong>{% if item.suggested_order_qty == 0 %}<span style="color:var(--ink3)">skip</span>{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</strong></td>
       <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
       <td><span style="color:#2d6a4f;font-weight:600">↓ ${{item.savings_vs_last}}</span></td>
     </tr>{% endfor %}
