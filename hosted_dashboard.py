@@ -650,7 +650,7 @@ function clientUpload(dataType, input) {
 <!-- REVIEWS -->
 <div class="panel {{'active' if mod_reviews}}" id="panel-reviews">
   <!-- New reviews notification banner -->
-  <div id="new-reviews-banner" style="display:none;background:#1a1410;color:#f0ebe0;padding:10px 16px;border-radius:6px;margin-bottom:12px;font-size:13px;cursor:pointer;display:none;align-items:center;justify-content:space-between" onclick="window.location.reload()">
+  <div id="new-reviews-banner" style="display:none;background:#1a1410;color:#f0ebe0;padding:10px 16px;border-radius:6px;margin-bottom:12px;font-size:13px;cursor:pointer;align-items:center;justify-content:space-between" onclick="window.location.reload()">
     <span id="new-reviews-text"></span>
     <span style="font-size:11px;color:#c84b2f;font-weight:600">Click to refresh →</span>
   </div>
@@ -686,12 +686,12 @@ function clientUpload(dataType, input) {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Response rate vs industry benchmark</div>
       <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-size:13px;font-weight:700;color:{{rrate_color}}">{{rrate}}%</span>
-        <span style="background:{{rrate_color}};color:white;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.5px">{{rrate_label}}</span>
+        <span class="review-rate-pct" style="font-size:13px;font-weight:700;color:{{rrate_color}}">{{rrate}}%</span>
+        <span class="review-rate-label" style="background:{{rrate_color}};color:white;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.5px">{{rrate_label}}</span>
       </div>
     </div>
     <div style="position:relative;height:10px;background:var(--paper3);border-radius:5px;overflow:hidden">
-      <div style="position:absolute;left:0;top:0;height:100%;width:{% if rrate > 0 %}{{[rrate, 100]|min}}%{% else %}2px{% endif %};background:{{rrate_color}};border-radius:5px;transition:width .4s"></div>
+      <div class="review-rate-bar" style="position:absolute;left:0;top:0;height:100%;width:{% if rrate > 0 %}{{[rrate, 100]|min}}%{% else %}2px{% endif %};background:{{rrate_color}};border-radius:5px;transition:width .4s"></div>
       <div style="position:absolute;left:15%;top:-2px;height:14px;width:2px;background:#ef9f27;opacity:.7" title="15% — typical independent"></div>
       <div style="position:absolute;left:40%;top:-2px;height:14px;width:2px;background:#6fcf97;opacity:.7" title="40% — strong"></div>
       <div style="position:absolute;left:70%;top:-2px;height:14px;width:2px;background:#2d6a4f;opacity:.7" title="70% — excellent"></div>
@@ -703,7 +703,7 @@ function clientUpload(dataType, input) {
       <span style="color:#2d6a4f;font-weight:600">▲ 70% excellent</span>
       <span>100%</span>
     </div>
-    <div style="margin-top:6px;font-size:11px;color:var(--ink3)">{{rstats.posted}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit</div>
+    <div class="review-rate-count" style="margin-top:6px;font-size:11px;color:var(--ink3)">{{rstats.posted}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit</div>
   </div>
   {% if platform_breakdown and platform_breakdown|length > 1 %}
   <div class="card" style="padding:14px 16px;margin-bottom:14px">
@@ -1609,15 +1609,10 @@ function saveDraft(id) {
     });
   }).catch(function(){ toast('Network error — try again'); });
 }
-// Global CSRF-aware fetch wrapper
-const _csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
-const _fetch = (url, opts={}) => {
-  opts.headers = opts.headers || {};
-  if(opts.method && opts.method !== 'GET') opts.headers['X-CSRF-Token'] = _csrf;
-  return fetch(url, opts);
-};
+// CSRF token for POST requests
+var _csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
 
-function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2600)}
+function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},2600);}
 function disconnectInstagram(){
   if(!confirm('Disconnect Instagram & Facebook? You will need to reconnect to post directly.')) return;
   fetch('/api/instagram-disconnect',{method:'POST'}).then(r=>r.json()).then(d=>{
@@ -1662,6 +1657,8 @@ function gmbDisconnect(){
 }
 
 function loadSentimentTrend(){
+  if(sentimentTrendLoaded)return;
+  sentimentTrendLoaded=true;
   var container=document.getElementById('sentiment-trend-bars');
   var labels=document.getElementById('sentiment-trend-labels');
   if(!container)return;
@@ -1709,8 +1706,8 @@ function loadReviewInsight(){
   });
 }
 function switchTab(n,btn){
-  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
   document.getElementById('panel-'+n).classList.add('active');btn.classList.add('active');
   if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
@@ -1733,14 +1730,31 @@ document.addEventListener('DOMContentLoaded', function(){
 let rfilter='{{rfilter}}';
 function setRF(f,btn){rfilter=f;document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active','active-red'));btn.classList.add(f==='urgent'?'active-red':'active');filterReviews()}
 function filterReviews(){const q=document.getElementById('rsearch').value;window.location='/?filter='+rfilter+'&search='+encodeURIComponent(q)}
-function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{
+function updateResponseRateBar(){
+  fetch('/api/review-stats').then(function(r){return r.json();}).then(function(d){
+    if(!d.response_rate && d.response_rate !== 0) return;
+    var rrate = d.response_rate;
+    var color = rrate>=70?'#2d6a4f':rrate>=40?'#6fcf97':rrate>=15?'#ef9f27':'#c0392b';
+    var label = rrate>=70?'Excellent':rrate>=40?'Strong':rrate>=15?'On Track':'Below Average';
+    var barEl = document.querySelector('.review-rate-bar');
+    var labelEl = document.querySelector('.review-rate-label');
+    var pctEl = document.querySelector('.review-rate-pct');
+    var countEl = document.querySelector('.review-rate-count');
+    if(barEl){ barEl.style.width=(rrate>0?Math.min(rrate,100)+'%':'2px'); barEl.style.background=color; }
+    if(labelEl){ labelEl.textContent=label; labelEl.style.background=color; }
+    if(pctEl){ pctEl.textContent=rrate+'%'; pctEl.style.color=color; }
+    if(countEl){ countEl.textContent=d.posted+' of '+d.total+' reviews responded to'; }
+  }).catch(function(){});
+}
+function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
   if(d.ok){
-    const card = document.getElementById('rc-'+id);
+    var card = document.getElementById('rc-'+id);
     card.classList.add('approved');
     card.classList.remove('urgent');
     if(d.auto_posted){
       document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted to Google</span>';
-      toast('Response approved and posted to Google ✓ — now live');
+      updateResponseRateBar();
+    toast('Response approved and posted to Google ✓ — now live');
     } else {
       const _plat = document.getElementById('rc-'+id) ? document.getElementById('rc-'+id).dataset.platform : '';
       const _markBtn = _plat === 'yelp'
@@ -1752,8 +1766,10 @@ function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(r=>r.json()).th
         document.querySelector('#rc-'+id+' .draft-actions').innerHTML=
           '<span class="btn btn-approved">✓ Approved</span>' +
           '<span style="font-size:11px;color:var(--ink3);margin-left:6px">Saved — will post to Google when GBP is connected</span>';
+        updateResponseRateBar();
         toast('Response approved and saved ✓');
       } else {
+        updateResponseRateBar();
         toast('Response approved — copy and post to ' + platform + ' manually');
       }
     }
@@ -1834,7 +1850,7 @@ function renderBars(){
     </div>`;
   }).join('');
 }
-let laborLoaded=false,invLoaded=false,reviewInsightLoaded=false;
+let laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false;
 function loadLaborInsight(){
   laborLoaded=true;
   fetch('/api/labor-insight').then(r=>r.json()).then(d=>{
@@ -4351,6 +4367,16 @@ def format_insight_html(text):
             '</span><span style="line-height:1.6;color:#b7791f;font-weight:500">' + clean + '</span></div>')
         num += 1
     return html
+
+@app.route("/api/review-stats")
+@login_required
+def review_stats_api(current_user):
+    from models import get_review_stats as _grs
+    try:
+        stats = _grs(current_user["restaurant_id"])
+        return jsonify(**stats)
+    except Exception as e:
+        return jsonify(error=str(e)), 500
 
 @app.route("/api/sentiment-trend")
 @login_required
