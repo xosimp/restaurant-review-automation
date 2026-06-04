@@ -819,7 +819,7 @@ function clientUpload(dataType, input) {
   {% set colors=['#c84b2f','#2d6a4f','#b7791f','#1a56cc','#6b4fa0','#1e7a8c'] %}
   {% for r in reviews %}
   {% set col=colors[loop.index0%colors|length] %}
-  <div class="card {{'urgent' if r.urgency=='high'}} {{'posted' if r.response_status=='posted'}} {{'approved' if r.response_status=='approved'}}" id="rc-{{r.id}}" data-platform="{{r.platform}}" data-yelp-id="{{restaurant.yelp_business_id or ''}}" data-cats="{{(r.categories|join(' '))|lower if r.categories else ''}}" data-author="{{r.author|lower if r.author else ''}}" data-rating="{{r.rating}}" data-topic-filter="">
+  <div class="card {{'urgent' if r.urgency=='high'}} {{'posted' if r.response_status=='posted'}} {{'approved' if r.response_status=='approved'}}" id="rc-{{r.id}}" data-platform="{{r.platform}}" data-yelp-id="{{restaurant.yelp_business_id or ''}}" data-cats="{{(r.categories|join(' '))|lower if r.categories else ''}}" data-author="{{r.author|lower if r.author else ''}}" data-rating="{{r.rating}}">
     {% if r.urgency=='high' %}<div class="ubanner">⚠ Needs immediate attention</div>{% endif %}
     <div class="card-hd">
       <div class="avatar" style="background:{{col}}">{{r.author[0].upper() if r.author else "?"}}</div>
@@ -1664,38 +1664,40 @@ var _csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content ||
 function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},2600);}
 function disconnectInstagram(){
   if(!confirm('Disconnect Instagram & Facebook? You will need to reconnect to post directly.')) return;
-  fetch('/api/instagram-disconnect',{method:'POST'}).then(r=>r.json()).then(d=>{
-    if(d.ok){ toast('Instagram & Facebook disconnected'); setTimeout(()=>location.reload(),800); }
+  fetch('/api/instagram-disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    if(d.ok){ toast('Instagram & Facebook disconnected'); setTimeout(function(){location.reload();},800); }
     else { toast('Error disconnecting — try again'); }
   });
 }
 
 function igConnect(){
-  const popup = window.open('/instagram/connect','ig_connect','width=600,height=700,left=200,top=100');
-  window.addEventListener('message', function handler(e){
+  var popup = window.open('/instagram/connect','ig_connect','width=600,height=700,left=200,top=100');
+  function igHandler(e){
     if(!e.data || !e.data.ig) return;
-    window.removeEventListener('message', handler);
+    window.removeEventListener('message', igHandler);
     if(e.data.ig === 'connected'){
       toast('Instagram & Facebook connected ✓');
-      setTimeout(()=>location.reload(), 1000);
+      setTimeout(function(){location.reload();}, 1000);
     } else {
       toast('Connection failed: ' + (e.data.msg || 'unknown error'));
     }
-  });
+  }
+  window.addEventListener('message', igHandler);
 }
 
 function gmbConnect(){
-  const popup = window.open('/auth/google/connect','gmb_connect','width=500,height=600,left=200,top=100');
-  window.addEventListener('message', function handler(e){
+  var popup = window.open('/auth/google/connect','gmb_connect','width=500,height=600,left=200,top=100');
+  function gmbHandler(e){
     if(!e.data || !e.data.gmb) return;
-    window.removeEventListener('message', handler);
+    window.removeEventListener('message', gmbHandler);
     if(e.data.gmb === 'connected'){
       toast('Google Business connected ✓');
-      setTimeout(()=>location.reload(), 1000);
+      setTimeout(function(){location.reload();}, 1000);
     } else {
       toast('Connection failed: ' + (e.data.msg || 'unknown error'));
     }
-  });
+  }
+  window.addEventListener('message', gmbHandler);
 }
 
 function gmbDisconnect(){
@@ -1878,6 +1880,8 @@ document.addEventListener('DOMContentLoaded', function(){
     loadReviewInsight();
     loadSentimentTrend();
   }
+  // Initialize filter so count label is accurate on page load
+  filterReviews();
 });
 let rfilter='{{rfilter}}';
 function setRF(f,btn){
