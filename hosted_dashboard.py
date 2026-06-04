@@ -1708,8 +1708,8 @@ function gmbConnect(){
 
 function gmbDisconnect(){
   if(!confirm('Disconnect Google Business? Responses will no longer auto-post.')) return;
-  fetch('/auth/google/disconnect',{method:'POST'}).then(r=>r.json()).then(d=>{
-    if(d.ok){ toast('Google Business disconnected'); setTimeout(()=>location.reload(),800); }
+  fetch('/auth/google/disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    if(d.ok){ toast('Google Business disconnected'); setTimeout(function(){location.reload();},800); }
   });
 }
 
@@ -1859,11 +1859,9 @@ function filterByPlatform(platform){
   if(toolbar) setTimeout(function(){ toolbar.scrollIntoView({behavior:'smooth', block:'start'}); }, 100);
   // Update filter pill state — clear all, highlight search area
   document.querySelectorAll('.fpill').forEach(function(p){ p.classList.remove('active','active-red'); });
-  var allPill = document.querySelector('.fpill');
-  // Mark rfilter as platform so reset works
   rfilter = 'all';
-  var allPill2 = document.querySelector('.fpill');
-  if(allPill2) allPill2.classList.add('active');
+  var allPill = document.querySelector('.fpill');
+  if(allPill) allPill.classList.add('active');
 }
 function switchTab(n,btn){
   document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});
