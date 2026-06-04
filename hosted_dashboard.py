@@ -663,7 +663,7 @@ function clientUpload(dataType, input) {
   </div>
   {% endif %}
   <div class="stat-row">
-    <div class="stat"><div class="stat-n">{{rstats.avg_rating}}</div><div class="stat-l">Avg rating</div></div>
+    <div class="stat {{'ok' if rstats.avg_rating >= 4.5 else ('warn' if rstats.avg_rating >= 3.5 else 'hi')}}"><div class="stat-n">{{rstats.avg_rating}}</div><div class="stat-l">Avg rating</div></div>
     <div class="stat"><div class="stat-n">{{rstats.total}}</div><div class="stat-l">Total</div></div>
     <div class="stat ok"><div class="stat-n">{{rstats.positive}}</div><div class="stat-l">Positive</div></div>
     <div class="stat warn"><div class="stat-n">{{rstats.neutral}}</div><div class="stat-l">Neutral</div></div>
@@ -1479,49 +1479,47 @@ function closeEditor(id) {
   document.getElementById('editor-'+id).style.display='none';
   document.getElementById('draft-actions-'+id).style.display='flex';
 }
-async function regenDraft(id) {
-  const box = document.getElementById('draft-box-'+id);
-  const txtEl = document.getElementById('draft-txt-'+id);
-  const editorEl = document.getElementById('editor-text-'+id);
+function regenDraft(id) {
+  var txtEl = document.getElementById('draft-txt-'+id);
+  var editorEl = document.getElementById('editor-text-'+id);
   if (txtEl) txtEl.textContent = 'Generating new response…';
-  const res = await fetch('/api/regenerate-draft/'+id, {method:'POST'});
-  const data = await res.json();
-  if (data.ok) {
-    if (txtEl) txtEl.textContent = data.draft;
-    if (editorEl) editorEl.value = data.draft;
-    document.getElementById('draft-actions-'+id).innerHTML =
-      `<button class="btn btn-approve" onclick="approveR(${id})">✓ Approve</button>
-       <button class="btn btn-skip" onclick="skipR(${id})">Skip</button>`;
-    document.getElementById('draft-actions-'+id).style.display='flex';
-    document.getElementById('editor-'+id).style.display='none';
-    toast('New draft generated');
-  } else {
-    if (txtEl) txtEl.textContent = 'Error generating — try again';
-    toast('Error: ' + (data.error||'unknown'));
-  }
+  fetch('/api/regenerate-draft/'+id, {method:'POST'}).then(function(r){return r.json();}).then(function(data){
+    if (data.ok) {
+      if (txtEl) txtEl.textContent = data.draft;
+      if (editorEl) editorEl.value = data.draft;
+      document.getElementById('draft-actions-'+id).innerHTML =
+        '<button class="btn btn-approve" onclick="approveR('+id+')">✓ Approve</button>' +
+        '<button class="btn btn-skip" onclick="skipR('+id+')">Skip</button>';
+      document.getElementById('draft-actions-'+id).style.display='flex';
+      document.getElementById('editor-'+id).style.display='none';
+      toast('New draft generated');
+    } else {
+      if (txtEl) txtEl.textContent = 'Error generating — try again';
+      toast('Error: ' + (data.error||'unknown'));
+    }
+  }).catch(function(){ toast('Network error — try again'); });
 }
-async function saveDraft(id) {
-  const editorEl = document.getElementById('editor-text-'+id);
-  const draft = editorEl ? editorEl.value.trim() : '';
+function saveDraft(id) {
+  var editorEl = document.getElementById('editor-text-'+id);
+  var draft = editorEl ? editorEl.value.trim() : '';
   if (!draft) { toast('Response cannot be empty'); return; }
-  const save = await fetch('/api/save-draft/'+id, {
+  fetch('/api/save-draft/'+id, {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({draft})
-  });
-  const sd = await save.json();
-  if (!sd.ok) { toast('Save failed'); return; }
-  // Then approve
-  const approve = await fetch('/approve/'+id, {method:'POST'});
-  const ad = await approve.json();
-  if (ad.ok) {
-    const txtEl = document.getElementById('draft-txt-'+id);
-    if (txtEl) txtEl.textContent = draft;
-    document.getElementById('editor-'+id).style.display='none';
-    document.getElementById('draft-actions-'+id).innerHTML =
-      '<span class="btn btn-approved">✓ Approved</span>';
-    document.getElementById('draft-actions-'+id).style.display='flex';
-    toast('Response saved and approved');
-  }
+    body:JSON.stringify({draft:draft})
+  }).then(function(r){return r.json();}).then(function(sd){
+    if (!sd.ok) { toast('Save failed'); return; }
+    fetch('/approve/'+id, {method:'POST'}).then(function(r){return r.json();}).then(function(ad){
+      if (ad.ok) {
+        var txtEl = document.getElementById('draft-txt-'+id);
+        if (txtEl) txtEl.textContent = draft;
+        document.getElementById('editor-'+id).style.display='none';
+        document.getElementById('draft-actions-'+id).innerHTML =
+          '<span class="btn btn-approved">✓ Approved</span>';
+        document.getElementById('draft-actions-'+id).style.display='flex';
+        toast('Response saved and approved');
+      }
+    });
+  }).catch(function(){ toast('Network error — try again'); });
 }
 // Global CSRF-aware fetch wrapper
 const _csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
@@ -1649,14 +1647,14 @@ function markPosted(id, btn){
 }
 
 function skipR(id){
-  fetch('/skip/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{
+  fetch('/skip/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(d.ok){
-      const actions = document.getElementById('draft-actions-'+id);
+      var actions = document.getElementById('draft-actions-'+id);
       if(actions) {
-        actions.innerHTML = `
-          <button class="btn btn-approve" onclick="approveR(${id})">✓ Approve</button>
-          <button class="btn btn-skip" onclick="openEditor(${id})">Edit response</button>
-          <button class="btn btn-skip" onclick="regenDraft(${id})">↻ Regenerate</button>`;
+        actions.innerHTML =
+          '<button class="btn btn-approve" onclick="approveR('+id+')">✓ Approve</button>' +
+          '<button class="btn btn-skip" onclick="openEditor('+id+')">Edit response</button>' +
+          '<button class="btn btn-skip" onclick="regenDraft('+id+')">↻ Regenerate</button>';
         actions.style.display='flex';
       }
       toast('Skipped — edit or regenerate below');

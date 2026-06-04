@@ -1056,31 +1056,58 @@ def get_all_location_groups(db_path: str = DB_PATH) -> list:
 
 def get_review_stats(restaurant_id):
     conn = get_conn()
-    total   = conn.execute("SELECT COUNT(*) FROM reviews WHERE processed=1 AND restaurant_id=?", (restaurant_id,)).fetchone()[0]
-    pos     = conn.execute("SELECT COUNT(*) FROM reviews WHERE sentiment='positive' AND restaurant_id=?", (restaurant_id,)).fetchone()[0]
-    neg     = conn.execute("SELECT COUNT(*) FROM reviews WHERE sentiment='negative' AND restaurant_id=?", (restaurant_id,)).fetchone()[0]
-    neu     = conn.execute("SELECT COUNT(*) FROM reviews WHERE sentiment='neutral' AND restaurant_id=?", (restaurant_id,)).fetchone()[0]
-    urgent  = conn.execute("SELECT COUNT(*) FROM reviews WHERE urgency='high' AND response_status NOT IN ('posted','skipped') AND restaurant_id=?", (restaurant_id,)).fetchone()[0]
-    avg_row = conn.execute("SELECT AVG(rating) FROM reviews WHERE processed=1 AND restaurant_id=?", (restaurant_id,)).fetchone()[0]
-    drafted = conn.execute("SELECT COUNT(*) FROM reviews WHERE response_status='drafted' AND restaurant_id=?", (restaurant_id,)).fetchone()[0]
+    # Single query for sentiment/status counts
+    rows = conn.execute("""
+        SELECT
+            COUNT(*)                                                        AS total,
+            SUM(sentiment='positive')                                       AS positive,
+            SUM(sentiment='negative')                                       AS negative,
+            SUM(sentiment='neutral')                                        AS neutral,
+            AVG(rating)                                                     AS avg_rating,
+            SUM(response_status='drafted')                                  AS drafted,
+            SUM(urgency='high' AND response_status NOT IN ('posted','skipped')) AS urgent,
+            SUM(response_status='posted')                                   AS posted
+        FROM reviews WHERE processed=1 AND restaurant_id=?
+    """, (restaurant_id,)).fetchone()
     conn.close()
-    return dict(total=total, positive=pos, negative=neg, neutral=neu,
-                urgent=urgent, avg_rating=round(avg_row or 0, 1),
-                awaiting_approval=drafted)
+    total   = rows["total"]   or 0
+    posted  = rows["posted"]  or 0
+    drafted = rows["drafted"] or 0
+    # Response rate = posted / total (only count reviews that have a draft or are posted)
+    responded     = posted
+    response_rate = round((responded / total * 100) if total > 0 else 0, 1)
+    return dict(
+        total             = total,
+        positive          = rows["positive"]  or 0,
+        negative          = rows["negative"]  or 0,
+        neutral           = rows["neutral"]   or 0,
+        urgent            = rows["urgent"]    or 0,
+        avg_rating        = round(rows["avg_rating"] or 0, 1),
+        awaiting_approval = drafted,
+        posted            = posted,
+        response_rate     = response_rate,
+    )
 
 def get_reviews_data(restaurant_id, filter_by="all", search=""):
     conn = get_conn()
-    where = ["processed=1", f"restaurant_id={restaurant_id}"]
-    if filter_by == "urgent":    where.append("urgency='high'")
-    elif filter_by in ("positive","neutral","negative"): where.append(f"sentiment='{filter_by}'")
-    elif filter_by == "pending": where.append("response_status='drafted'")
+    where  = ["processed=1", "restaurant_id=?"]
+    params = [restaurant_id]
+    if filter_by == "urgent":
+        where.append("urgency='high'")
+    elif filter_by in ("positive","neutral","negative"):
+        where.append("sentiment=?"); params.append(filter_by)
+    elif filter_by == "pending":
+        where.append("response_status='drafted'")
     if search:
-        s = search.replace("'","''")
-        where.append(f"(author LIKE '%{s}%' OR text LIKE '%{s}%')")
-    rows = conn.execute(f"""SELECT * FROM reviews WHERE {' AND '.join(where)}
+        where.append("(author LIKE ? OR text LIKE ?)")
+        params.extend([f"%{search}%", f"%{search}%"])
+    rows = conn.execute(
+        f"""SELECT * FROM reviews WHERE {' AND '.join(where)}
         ORDER BY CASE urgency WHEN 'high' THEN 0 ELSE 1 END,
         CASE sentiment WHEN 'negative' THEN 0 WHEN 'neutral' THEN 1 ELSE 2 END,
-        fetched_at DESC""").fetchall()
+        fetched_at DESC""",
+        params
+    ).fetchall()
     conn.close()
     result = []
     for r in rows:
