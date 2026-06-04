@@ -677,6 +677,8 @@ function clientUpload(dataType, input) {
     </div>
   </div>
 
+  <div class="insight" style="margin-bottom:14px"><div class="insight-lbl">Cavnar AI Review Intelligence</div><div class="insight-text insight-loading" id="review-insight">Loading analysis…</div></div>
+
   {% set rrate = rstats.response_rate %}
   {% set rrate_label = 'Excellent' if rrate >= 70 else ('Strong' if rrate >= 40 else ('On Track' if rrate >= 15 else 'Below Average')) %}
   {% set rrate_color = '#2d6a4f' if rrate >= 70 else ('#6fcf97' if rrate >= 40 else ('#ef9f27' if rrate >= 15 else '#c0392b')) %}
@@ -1646,10 +1648,23 @@ function gmbDisconnect(){
   });
 }
 
+function loadReviewInsight(){
+  reviewInsightLoaded=true;
+  fetch('/api/review-insight').then(function(r){return r.json();}).then(function(d){
+    var el=document.getElementById('review-insight');
+    if(!el)return;
+    el.innerHTML=d.insight||'Analysis unavailable.';
+    el.classList.remove('insight-loading');
+  }).catch(function(){
+    var el=document.getElementById('review-insight');
+    if(el){el.textContent='Analysis unavailable — check back shortly.';el.classList.remove('insight-loading');}
+  });
+}
 function switchTab(n,btn){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('panel-'+n).classList.add('active');btn.classList.add('active');
+  if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor'){renderBars();loadLaborTrend();}
@@ -1662,6 +1677,9 @@ document.addEventListener('DOMContentLoaded', function(){
   var hash = window.location.hash.replace('#','');
   var btn = hash ? document.getElementById('tab-'+hash) : null;
   if(btn){ switchTab(hash, btn); }
+  else if(document.getElementById('panel-reviews') && document.getElementById('panel-reviews').classList.contains('active')){
+    loadReviewInsight();
+  }
 });
 let rfilter='{{rfilter}}';
 function setRF(f,btn){rfilter=f;document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active','active-red'));btn.classList.add(f==='urgent'?'active-red':'active');filterReviews()}
@@ -1767,7 +1785,7 @@ function renderBars(){
     </div>`;
   }).join('');
 }
-let laborLoaded=false,invLoaded=false;
+let laborLoaded=false,invLoaded=false,reviewInsightLoaded=false;
 function loadLaborInsight(){
   laborLoaded=true;
   fetch('/api/labor-insight').then(r=>r.json()).then(d=>{
@@ -4283,6 +4301,98 @@ def format_insight_html(text):
             '</span><span style="line-height:1.6;color:#b7791f;font-weight:500">' + clean + '</span></div>')
         num += 1
     return html
+
+@app.route("/api/review-insight")
+@login_required
+def review_insight_api(current_user):
+    try:
+        import os, json, anthropic as _anth
+        from models import get_restaurant, get_review_stats, get_top_issues
+        from zoneinfo import ZoneInfo as _ZI_ri
+        from datetime import datetime as _dt_ri, timedelta as _td_ri
+        _client_ri = _anth.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
+        rid = current_user["restaurant_id"]
+        restaurant = get_restaurant(rid)
+        rstats = get_review_stats(rid)
+        top_issues = get_top_issues(rid, days=90, limit=5)
+        now_chi = _dt_ri.now(_ZI_ri('America/Chicago'))
+        today_str = now_chi.strftime("%B %d, %Y")
+        # Week-over-week comparison
+        from models import get_conn as _gc_ri
+        _conn_ri = _gc_ri()
+        last_week = _conn_ri.execute("""
+            SELECT COUNT(*) as cnt, AVG(rating) as avg_r,
+                   SUM(sentiment='negative') as neg
+            FROM reviews
+            WHERE restaurant_id=? AND fetched_at >= datetime('now','-14 days')
+              AND fetched_at < datetime('now','-7 days')
+        """, (rid,)).fetchone()
+        this_week = _conn_ri.execute("""
+            SELECT COUNT(*) as cnt, AVG(rating) as avg_r,
+                   SUM(sentiment='negative') as neg,
+                   SUM(urgency='high' AND response_status NOT IN ('posted','skipped')) as urgent
+            FROM reviews
+            WHERE restaurant_id=? AND fetched_at >= datetime('now','-7 days')
+        """, (rid,)).fetchone()
+        # Recent urgent reviews text
+        urgent_rows = _conn_ri.execute("""
+            SELECT text FROM reviews
+            WHERE restaurant_id=? AND urgency='high'
+              AND response_status NOT IN ('posted','skipped')
+            ORDER BY fetched_at DESC LIMIT 2
+        """, (rid,)).fetchall()
+        _conn_ri.close()
+        wow_str = ""
+        if last_week and last_week["cnt"] > 0 and this_week and this_week["cnt"] > 0:
+            diff = (this_week["cnt"] or 0) - last_week["cnt"]
+            rdiff = round(((this_week["avg_r"] or 0) - (last_week["avg_r"] or 0)), 1)
+            wow_str = f"vs last week: {'+' if diff>=0 else ''}{diff} reviews, avg rating {'up' if rdiff>0 else 'down' if rdiff<0 else 'unchanged'} {abs(rdiff) if rdiff!=0 else ''}."
+        urgent_texts = "; ".join(f'"{r["text"][:80]}"' for r in urgent_rows) if urgent_rows else "none"
+        issues_str = ", ".join(f"{i['label']} ({i['count']})" for i in top_issues) if top_issues else "no data"
+        owner_name = restaurant.owner_name if restaurant else None
+        rest_name  = restaurant.name if restaurant else "this restaurant"
+        name_line  = f"Owner: {owner_name}" if owner_name else ""
+        prompt = f"""You are a restaurant reputation consultant reviewing this week's review data.
+Restaurant: {rest_name}
+{name_line}
+Today: {today_str}
+
+Review snapshot:
+- Total reviews: {rstats['total']} | Avg rating: {rstats['avg_rating']} stars
+- Sentiment: {rstats['positive']} positive, {rstats['neutral']} neutral, {rstats['negative']} negative
+- Urgent (need immediate attention): {rstats['urgent']}
+- Response rate: {rstats['response_rate']}% ({rstats['posted']} of {rstats['total']} responded to)
+- Top mentioned topics (90 days): {issues_str}
+- {wow_str}
+- Recent urgent review excerpts: {urgent_texts}
+
+Write a short review intelligence summary. Rules:
+- No markdown, no bullet points, no bold, no asterisks
+- No headers or labels
+- Plain flowing prose, 3-5 sentences max
+- Friendly and direct — like a trusted advisor
+- Always use $ signs for dollar amounts
+- Open with the most important signal this week (urgent reviews, rating trend, or response rate gap)
+- If urgent reviews exist, address what they mention specifically
+- If response rate is below 40%, mention the opportunity
+- Close with one specific, actionable thing they should do today
+- Never generic — always tied to the actual data"""
+
+        msg = _client_ri.messages.create(
+            model=os.getenv("CLAUDE_MODEL","claude-haiku-4-5-20251001"),
+            max_tokens=350,
+            messages=[{"role":"user","content":prompt}]
+        )
+        insight = msg.content[0].text.strip()
+        # Strip any markdown
+        import re as _re_ri
+        insight = _re_ri.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), insight)
+        insight = _re_ri.sub(r'\*(.+?)\*',   lambda m: m.group(1), insight)
+        return jsonify(insight=insight)
+    except Exception as _re:
+        import traceback
+        print(f"[review-insight ERROR] {_re}\n{traceback.format_exc()}")
+        return jsonify(insight="Analysis unavailable — check back shortly.", error=str(_re)), 500
 
 @app.route("/api/labor-insight")
 @login_required
