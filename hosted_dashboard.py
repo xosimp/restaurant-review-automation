@@ -388,7 +388,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 .stat.hi .stat-n{color:var(--red)}
 .stat.ok .stat-n{color:var(--green)}
 .stat.warn .stat-n{color:var(--amber)}
-.card{background:white;border:1px solid var(--paper3);border-radius:var(--r);overflow:hidden;margin-bottom:10px;box-shadow:0 1px 3px rgba(14,12,10,.05)}
+.card{background:white;border:1px solid var(--paper3);border-radius:var(--r);overflow:hidden;margin-bottom:10px;box-shadow:0 4px 12px rgba(14,12,10,.10),0 1px 3px rgba(14,12,10,.06)}
 .card.urgent{border-left:3px solid var(--red)}
 .card.approved{border-left:3px solid var(--green)}
 .card.posted{border-left:3px solid #1a56cc;opacity:.85}
@@ -668,7 +668,7 @@ function clientUpload(dataType, input) {
   <div class="stat-row">
     <div class="stat {{'ok' if rstats.avg_rating >= 4.5 else ('warn' if rstats.avg_rating >= 3.5 else 'hi')}}"><div class="stat-n">{{rstats.avg_rating}}</div><div class="stat-l">Avg rating</div></div>
     <div class="stat {{'hi' if rstats.urgent > 0 else 'ok'}}" id="stat-urgent"><div class="stat-n" id="stat-urgent-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
-    <div class="stat {{'warn' if rstats.awaiting_approval > 0 else 'ok'}}" id="stat-pending"><div class="stat-n" id="stat-pending-n">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:11px;color:#2d6a4f;margin-left:4px">↓</span></div><div class="stat-l">To approve</div></div>
+    <div class="stat {{'ok' if rstats.awaiting_approval <= 2 else 'warn'}}" id="stat-pending"><div class="stat-n" id="stat-pending-n">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:11px;color:#2d6a4f;margin-left:4px">↓</span></div><div class="stat-l">To approve</div></div>
     <div class="stat {{'ok' if restaurant.reviews_live or restaurant.gmb_refresh_token else 'warn'}}">
       <div class="stat-n" style="font-size:14px;margin-top:4px">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
       <div class="stat-l">Review source</div>
@@ -1825,10 +1825,11 @@ function updateReviewStats(){
         setTimeout(function(){
           if(arrowEl2) arrowEl2.style.display='none';
           pendingEl.classList.remove('stat-flash-green');
-          pendingEl.className = pendingEl.className.replace(/warn|ok/g,'').trim()+(curr>0?' warn':' ok');
+          pendingEl.className = pendingEl.className.replace(/\bwarn\b|\bok\b/g,'').trim()+(curr<=2?' ok':' warn');
         }, 2000);
       } else {
-        pendingEl.className = pendingEl.className.replace(/warn|ok/g,'').trim()+(curr>0?' warn':' ok');
+        // Stay green if ≤2 pending (well managed), amber if more
+        pendingEl.className = pendingEl.className.replace(/warn|ok/g,'').trim()+(curr<=2?' ok':' warn');
       }
     }
 
