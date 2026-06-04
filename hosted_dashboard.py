@@ -22,6 +22,20 @@ from dotenv import load_dotenv
 import pathlib
 load_dotenv(pathlib.Path(__file__).parent / ".env")
 
+# ── Sentry error monitoring ───────────────────────────────────────────────────
+import sentry_sdk
+from sentry_sdk.integrations.flask import FlaskIntegration
+_SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+if _SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=_SENTRY_DSN,
+        integrations=[FlaskIntegration()],
+        traces_sample_rate=0.1,   # 10% of requests for performance tracing
+        profiles_sample_rate=0.0, # off — not needed yet
+        environment=os.getenv("RAILWAY_ENVIRONMENT", "production"),
+        send_default_pii=False,   # never send PII to Sentry
+    )
+
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB global upload limit
 
@@ -147,6 +161,17 @@ def inv_banner_gradient(annual_waste, annual_recoverable):
     gh = f"#{int(22+grn_i*(26-22)):02x}{int(43+grn_i*(102-43)):02x}{int(30+grn_i*(64-30)):02x}"
     return f"linear-gradient(to right,{rh} 0%,{gh} 65%,{gh} 100%)"
 
+@app.route("/health")
+def health():
+    """Health check for UptimeRobot and Railway. Verifies DB is reachable."""
+    try:
+        conn = get_conn()
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+        return jsonify(status="ok", db="ok"), 200
+    except Exception as e:
+        return jsonify(status="error", db=str(e)), 500
+
 @app.template_filter("format_num")
 def format_num(v):
     try: return f"{float(v):,.0f}"
@@ -174,7 +199,11 @@ def add_security_headers(response):
 # Register admin blueprint
 from admin_routes import admin_bp
 app.register_blueprint(admin_bp)
-app.secret_key = os.getenv("SECRET_KEY", os.urandom(32).hex())
+_secret_key = os.getenv("SECRET_KEY", "")
+if not _secret_key:
+    _secret_key = os.urandom(32).hex()
+    print("WARNING: SECRET_KEY not set — sessions will invalidate on every restart. Set SECRET_KEY in Railway env vars.")
+app.secret_key = _secret_key
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "will")
 

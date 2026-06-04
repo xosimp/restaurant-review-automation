@@ -11,3 +11,4 @@ PyJWT>=2.8.0
 docusign-esign>=3.22.0
 sentry-sdk[flask]==2.8.0
 pypdf
+gunicorn>=21.0.0
