@@ -5602,45 +5602,28 @@ if __name__ == "__main__":
         _now_r = _dt_r.now(_ZI_r('America/Chicago'))
         # Map week number from ext_id suffix to day offset
         _wk_map = {"w8":-49,"w7":-42,"w6":-35,"w5":-28,"w4":-21,"w3":-14,"w2":-7,"w1":0}
-        # Pre-built draft templates by sentiment — no API calls needed for test data
-        _drafts = {
-            "positive": [
-                "Thank you so much for the kind words — it truly means the world to our team. We can't wait to welcome you back to the lagoon!",
-                "What a wonderful review — we're so glad you had a great experience. Please come see us again soon!",
-                "This made our whole team smile. Thank you for sharing your experience — see you next time!",
-                "We're so grateful for guests like you. Thank you for the kind review and we hope to see you back very soon!",
-            ],
-            "negative": [
-                "We're truly sorry to hear about your experience and we take this feedback very seriously. Please reach out to us directly at ryans@charthouse.com so we can make this right.",
-                "This is not the standard we hold ourselves to and we sincerely apologize. We'd love the chance to speak with you directly — please contact us at ryans@charthouse.com.",
-                "We're sorry your visit didn't meet expectations. Your feedback has been shared with our management team and we'd welcome the chance to make it right.",
-            ],
-            "neutral": [
-                "Thank you for taking the time to share your experience. We appreciate the honest feedback and are always working to improve. We hope to exceed your expectations on your next visit.",
-                "Thanks for visiting and for the thoughtful review. We'd love to show you an even better experience next time — hope to see you again soon.",
-            ],
-        }
-        _draft_idx = {"positive": 0, "negative": 0, "neutral": 0}
         for platform, ext_id, rating, text, sentiment, name, cats, urgency in sample_reviews:
             _wk = ext_id[3:5]
             _offset = _wk_map.get(_wk, 0)
             _rev_dt = (_now_r + _td_r2(days=_offset)).strftime('%Y-%m-%dT%H:%M:%S')
-            _sent_key = sentiment if sentiment in _drafts else "neutral"
-            _draft_list = _drafts[_sent_key]
-            _draft_text = _draft_list[_draft_idx[_sent_key] % len(_draft_list)]
-            _draft_idx[_sent_key] += 1
             _conn_r.execute("""
                 INSERT OR REPLACE INTO reviews
                 (restaurant_id, platform, external_id, author, rating, text, sentiment,
-                 categories, urgency, fetched_at, review_date, response_status, processed,
-                 review_name, draft_response)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 categories, urgency, fetched_at, review_date, response_status, processed, review_name)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (ryan_rid, platform, ext_id, name, rating, text, sentiment,
-                  _json_r.dumps(cats), urgency, _rev_dt, _rev_dt, "pending", 1,
-                  name, _draft_text))
+                  _json_r.dumps(cats), urgency, _rev_dt, _rev_dt, "pending", 1, name))
         _conn_r.commit()
         _conn_r.close()
-        print("  Ryan\'s 32 reviews seeded with hardcoded drafts (no API calls).\n")
+        print("  Ryan's 32 reviews seeded with categories and week spread.\n")
+
+        # Draft responses for Ryan's reviews
+        try:
+            from drafter import draft_pending
+            draft_pending(ryan_rid, limit=50)
+            print("  Ryan's reviews seeded and drafted.\n")
+        except Exception as _de:
+            print(f"  Draft error: {_de}")
 
         # Seed 6 weeks of inventory history so the trend chart is always populated for testing
         try:
