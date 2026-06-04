@@ -186,7 +186,7 @@ _LOCKOUT_SECS   = 300    # 5 minute lockout
 
 # API rate limiting - per IP
 _api_requests   = {}
-_API_MAX        = 30     # max requests per window
+_API_MAX        = 60     # max AI generation requests per window
 _API_WINDOW     = 60     # 60 second window
 
 def _is_api_rate_limited(ip):
@@ -1619,7 +1619,10 @@ function regenDraft(id) {
   var txtEl = document.getElementById('draft-txt-'+id);
   var editorEl = document.getElementById('editor-text-'+id);
   if (txtEl) txtEl.textContent = 'Generating new response…';
-  fetch('/api/regenerate-draft/'+id, {method:'POST'}).then(function(r){return r.json();}).then(function(data){
+  fetch('/api/regenerate-draft/'+id, {method:'POST'}).then(function(r){
+    if(r.status===429){ return r.json().then(function(d){ throw new Error(d.error||'Rate limited'); }); }
+    return r.json();
+  }).then(function(data){
     if (data.ok) {
       if (txtEl) txtEl.textContent = data.draft;
       if (editorEl) editorEl.value = data.draft;
@@ -1633,7 +1636,10 @@ function regenDraft(id) {
       if (txtEl) txtEl.textContent = 'Error generating — try again';
       toast('Error: ' + (data.error||'unknown'));
     }
-  }).catch(function(){ toast('Network error — try again'); });
+  }).catch(function(err){ 
+    if(txtEl) txtEl.textContent = 'Error generating — try again';
+    toast(err.message||'Network error — try again'); 
+  });
 }
 function saveDraft(id) {
   var editorEl = document.getElementById('editor-text-'+id);
@@ -4845,9 +4851,9 @@ def change_password(current_user):
 @app.route("/api/regenerate-draft/<int:review_id>", methods=["POST"])
 @login_required
 def regenerate_draft(review_id, current_user):
-    if _is_api_rate_limited(_get_client_ip()):
-        return jsonify(ok=False, error="Too many requests. Please slow down."), 429
     """Regenerate AI draft for a review."""
+    if _is_api_rate_limited(_get_client_ip()):
+        return jsonify(ok=False, error="Too many requests — please wait a moment and try again."), 429
     from models import get_conn, update_draft
     conn = get_conn()
     row = conn.execute("SELECT * FROM reviews WHERE id=? AND restaurant_id=?",
