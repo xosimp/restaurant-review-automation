@@ -1088,6 +1088,46 @@ def get_review_stats(restaurant_id):
         response_rate     = response_rate,
     )
 
+def get_top_issues(restaurant_id, days=30, limit=6):
+    """Return top review categories by mention count for the last N days."""
+    from collections import Counter
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT categories FROM reviews
+        WHERE restaurant_id=? AND processed=1
+        AND categories IS NOT NULL AND categories != '[]'
+        AND fetched_at >= datetime('now', ? || ' days')
+    """, (restaurant_id, f"-{days}")).fetchall()
+    conn.close()
+    counts = Counter()
+    for row in rows:
+        try:
+            cats = json.loads(row["categories"] or "[]")
+            for c in cats:
+                if c:
+                    counts[c] += 1
+        except Exception:
+            pass
+    # Friendly labels
+    labels = {
+        "food_quality":       "Food quality",
+        "service":            "Service",
+        "wait_time":          "Wait time",
+        "value":              "Value",
+        "ambiance":           "Ambiance",
+        "cleanliness":        "Cleanliness",
+        "reservation":        "Reservations",
+        "takeout_delivery":   "Takeout / delivery",
+    }
+    results = []
+    for cat, count in counts.most_common(limit):
+        results.append({
+            "category": cat,
+            "label":    labels.get(cat, cat.replace("_", " ").title()),
+            "count":    count,
+        })
+    return results
+
 def get_reviews_data(restaurant_id, filter_by="all", search=""):
     conn = get_conn()
     where  = ["processed=1", "restaurant_id=?"]

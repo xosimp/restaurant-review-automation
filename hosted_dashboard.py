@@ -13,7 +13,7 @@ from flask import (Flask, render_template_string, request,
 from emails import send_payment_email, send_welcome_email
 from models import (init_db, get_conn, approve_response,
                     get_reviews_since, get_restaurant,
-                    get_review_stats, get_reviews_data)
+                    get_review_stats, get_reviews_data, get_top_issues)
 from auth import (init_auth, verify_password, create_session,
                   get_session_user, delete_session, create_user,
                   list_users, update_password)
@@ -700,8 +700,30 @@ function clientUpload(dataType, input) {
       <span style="color:#2d6a4f;font-weight:600">▲ 70% excellent</span>
       <span>100%</span>
     </div>
-    <div style="margin-top:6px;font-size:11px;color:var(--ink3)">{{rstats.posted}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong></div>
+    <div style="margin-top:6px;font-size:11px;color:var(--ink3)">{{rstats.posted}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit</div>
   </div>
+  {% if top_issues %}
+  <div class="card" style="padding:14px 16px;margin-bottom:14px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Top mentioned topics — last 30 days</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+    {% set max_count = top_issues[0].count %}
+    {% for issue in top_issues %}
+      {% set pct = (issue.count / max_count * 100)|int %}
+      {% set col = '#c0392b' if issue.count >= 4 else ('#ef9f27' if issue.count >= 2 else '#6b7280') %}
+      <div style="display:flex;align-items:center;gap:8px;background:var(--paper);border:1px solid var(--paper3);border-radius:8px;padding:6px 12px;min-width:140px;flex:1">
+        <div style="flex:1">
+          <div style="font-size:12px;font-weight:600;color:var(--ink)">{{issue.label}}</div>
+          <div style="height:4px;background:var(--paper3);border-radius:2px;margin-top:4px;overflow:hidden">
+            <div style="height:100%;width:{{pct}}%;background:{{col}};border-radius:2px"></div>
+          </div>
+        </div>
+        <span style="font-size:13px;font-weight:700;color:{{col}};min-width:24px;text-align:right">{{issue.count}}</span>
+      </div>
+    {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   <div class="toolbar">
     <div class="search-wrap">
       <svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -4088,8 +4110,9 @@ def index(current_user):
     rfilter = request.args.get("filter","all")
     rsearch = request.args.get("search","")
     restaurant = get_restaurant(rid)
-    rstats  = get_review_stats(rid)
-    reviews = get_reviews_data(rid, rfilter, rsearch)
+    rstats     = get_review_stats(rid)
+    reviews    = get_reviews_data(rid, rfilter, rsearch)
+    top_issues = get_top_issues(rid, days=30)
     try:
         labor = analyse_shifts_for_restaurant(rid)
     except Exception as e:
@@ -4134,7 +4157,7 @@ def index(current_user):
         show_welcome=show_welcome,
         csrf_token=csrf_token,
         current_user=current_user, restaurant=restaurant,
-        rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch,
+        rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch, top_issues=top_issues,
         labor=labor, inv=inv, ctypes=CONTENT_TYPES,
         mod_reviews=int(restaurant.module_reviews or 0),
         mod_labor=int(restaurant.module_labor or 0),
