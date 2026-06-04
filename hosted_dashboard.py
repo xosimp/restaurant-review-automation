@@ -5515,77 +5515,23 @@ def client_upload_data(current_user):
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
-    init_db()
-    init_auth()
-    from models import init_staff_notes, ensure_columns, init_email_log, init_onboarding_emails
-    init_staff_notes()
-    ensure_columns()
-    init_email_log()
-    init_onboarding_emails()
+# ── Ryan seed (module-level — runs under Gunicorn AND direct python) ─────────
 
-    # Start background scheduler for digests and review fetching
-    from scheduler import start_scheduler
-    start_scheduler()
 
-    # Create your admin account if it doesn't exist
-    from models import create_restaurant, Restaurant, get_conn as gc
-    conn = gc()
-    existing_admin = conn.execute(
-        "SELECT id FROM users WHERE username=?", (ADMIN_USERNAME,)
-    ).fetchone()
-    conn.close()
-
-    if not existing_admin:
-        admin_pw = os.getenv("ADMIN_PASSWORD", "changeme123")
-        # Admin gets restaurant_id=1 (create a placeholder if needed)
-        conn = gc()
-        r = conn.execute("SELECT id FROM restaurants LIMIT 1").fetchone()
-        conn.close()
-        if not r:
-            rid = create_restaurant(Restaurant(
-                name="Cavnar AI Admin",
-                owner_email="will@cavnar.ai",
-            ))
-        else:
-            rid = r[0]
-        create_user(rid, ADMIN_USERNAME, "will@cavnar.ai",
-                    admin_pw, is_admin=True)
-        # Set admin billing status to internal so it never affects MRR/client stats
-        from models import get_conn as _gc2
-        _c = _gc2()
-        _c.execute("UPDATE restaurants SET billing_status='internal' WHERE id=?", (rid,))
-        _c.commit(); _c.close()
-        print(f"\n  Admin account created: {ADMIN_USERNAME} (password set from env)\n")
-
-    # Create Ryan's test client account in background so app.run() fires immediately
-    def _seed_ryan_background():
-      try:
-        import time as _t_ryan; _t_ryan.sleep(2)  # let Flask fully start first
-        conn = gc()
-        ryan_exists = conn.execute(
-            "SELECT id FROM users WHERE email=?", ("ryancavnar@gmail.com",)
-        ).fetchone()
-        conn.close()
-        if not ryan_exists:
-          _do_seed_ryan()
-      except Exception as _bg_e:
-        print(f"  Ryan seed background error: {_bg_e}")
-
-    def _do_seed_ryan():
-      try:
+def _do_seed_ryan():
+    try:
         from models import create_restaurant, Restaurant
         ryan_rid = create_restaurant(Restaurant(
-            name="Ryan's Charthouse",
-            owner_email="ryancavnar@gmail.com",
-            google_place_id="ChIJSzCXdo8R3ogRodiPcpYYLGw",
-            neighborhood="Melbourne, Florida — on the Indian River Lagoon waterfront",
-            vibe="casual-elegant waterfront seafood and steakhouse with lagoon views and sunset patio",
-            known_for="prime rib, fresh seafood, waterfront patio, happy hour, early bird specials",
-            yelp_business_id="chart-house-melbourne",
-            module_reviews=1, module_labor=1,
-            module_inventory=1, module_marketing=1,
-            billing_status="trial",
+                name="Ryan's Charthouse",
+                owner_email="ryancavnar@gmail.com",
+                google_place_id="ChIJSzCXdo8R3ogRodiPcpYYLGw",
+                neighborhood="Melbourne, Florida — on the Indian River Lagoon waterfront",
+                vibe="casual-elegant waterfront seafood and steakhouse with lagoon views and sunset patio",
+                known_for="prime rib, fresh seafood, waterfront patio, happy hour, early bird specials",
+                yelp_business_id="chart-house-melbourne",
+                module_reviews=1, module_labor=1,
+                module_inventory=1, module_marketing=1,
+                billing_status="trial",
         ))
         ryan_pw = os.getenv("RYAN_TEST_PASSWORD", "charthouse123")
         create_user(ryan_rid, "ryan", "ryancavnar@gmail.com", ryan_pw, is_admin=False)
@@ -5599,46 +5545,46 @@ if __name__ == "__main__":
         # 32 reviews spread across 8 weeks — 4 per week with realistic sentiment mix
         # Format: (platform, ext_id, rating, text, sentiment, name, categories, urgency, week_offset)
         sample_reviews = [
-            # Week 8 (oldest, -49 days)
-            ("google","rr_w8a",5,"Stunning sunset views and the prime rib was cooked to perfection. Our server was attentive all night.","positive","Karen B.",["food_quality","service","ambiance"],"normal"),
-            ("google","rr_w8b",4,"Really good food and great atmosphere. Service was a touch slow but nothing major.","positive","James T.",["food_quality","ambiance","service"],"normal"),
-            ("yelp",  "rr_w8c",2,"Waited forever for our table despite a reservation. Food was fine but the wait killed the experience.","negative","Patricia M.",["wait_time","reservation"],"normal"),
-            ("yelp",  "rr_w8d",3,"Decent food, nothing special. The lobster bisque was good but the entrees were just okay for the price.","neutral","Steven R.",["food_quality","value"],"normal"),
-            # Week 7 (-42 days)
-            ("google","rr_w7a",5,"Best anniversary dinner we've had. The filet was incredible and the lagoon view at sunset was magical.","positive","Michelle H.",["food_quality","ambiance"],"normal"),
-            ("google","rr_w7b",5,"Came for the early bird special and left completely satisfied. Great value for waterfront dining.","positive","Donald C.",["food_quality","value","ambiance"],"normal"),
-            ("yelp",  "rr_w7c",1,"Service was absolutely terrible. Rude staff, wrong order, and the manager was dismissive when we complained.","negative","Sandra W.",["service"],"high"),
-            ("google","rr_w7d",4,"Solid seafood and nice atmosphere. The shrimp cocktail appetizer was a highlight.","positive","Gary L.",["food_quality","ambiance"],"normal"),
-            # Week 6 (-35 days)
-            ("google","rr_w6a",5,"The Chart House never disappoints. Prime rib was perfect as always. Our server Danny was exceptional.","positive","Nancy P.",["food_quality","service"],"normal"),
-            ("yelp",  "rr_w6b",4,"Great happy hour specials. The firecracker shrimp and craft cocktails were excellent.","positive","Kevin S.",["food_quality","value"],"normal"),
-            ("google","rr_w6c",2,"Food came out cold and the restaurant was understaffed. Not worth the premium price.","negative","Betty A.",["food_quality","service","value"],"normal"),
-            ("yelp",  "rr_w6d",3,"Mixed experience — some dishes excellent, others disappointing. The view makes up for a lot though.","neutral","Brian N.",["food_quality","ambiance"],"normal"),
-            # Week 5 (-28 days)
-            ("google","rr_w5a",5,"Absolutely wonderful dining experience. The seafood was fresh and the service was impeccable.","positive","Dorothy K.",["food_quality","service"],"normal"),
-            ("google","rr_w5b",4,"Good food and great location on the lagoon. Will definitely return for special occasions.","positive","Charles V.",["food_quality","ambiance"],"normal"),
-            ("yelp",  "rr_w5c",2,"Overpriced for what you get. Portion sizes have shrunk and the quality isn't what it used to be.","negative","Helen J.",["value","food_quality"],"normal"),
-            ("google","rr_w5d",3,"Decent experience but nothing memorable. Service was fine, food was average for the price point.","neutral","Frank M.",["food_quality","service","value"],"normal"),
-            # Week 4 (-21 days)
-            ("google","rr_w4a",5,"Celebrated my retirement here. The whole team made it special — incredible food and service all around.","positive","Ruth C.",["food_quality","service","ambiance"],"normal"),
-            ("yelp",  "rr_w4b",5,"The mud pie dessert alone is worth the trip. Everything was delicious and the lagoon views are stunning.","positive","Edward H.",["food_quality","ambiance"],"normal"),
-            ("google","rr_w4c",1,"Found what appeared to be a hair in my salmon. Staff were apologetic but offered no real resolution.","negative","Carol D.",["food_quality","cleanliness","service"],"high"),
-            ("yelp",  "rr_w4d",4,"Really enjoyed the happy hour. Great selection of appetizers at reasonable prices for this location.","positive","Mark S.",["food_quality","value"],"normal"),
-            # Week 3 (-14 days)
-            ("google","rr_w3a",5,"Outstanding in every way. The Chilean sea bass was the best I've ever had. Will be back monthly.","positive","Linda F.",["food_quality","service"],"normal"),
-            ("google","rr_w3b",4,"Great waterfront ambiance and solid food. The prime rib was excellent as always.","positive","Paul B.",["food_quality","ambiance"],"normal"),
-            ("yelp",  "rr_w3c",2,"Service has declined noticeably. Took 20 minutes to get water and our server seemed overwhelmed.","negative","Barbara G.",["service","wait_time"],"normal"),
-            ("google","rr_w3d",3,"Good location and nice views but the food is inconsistent. Some visits great, others mediocre.","neutral","Thomas E.",["food_quality","ambiance"],"normal"),
-            # Week 2 (-7 days)
-            ("google","rr_w2a",5,"Absolutely incredible dinner. The Chilean sea bass melted in my mouth and our server was phenomenal.","positive","Jennifer M.",["food_quality","service"],"normal"),
-            ("google","rr_w2b",2,"Waited 40 minutes past our reservation. The prime rib was overcooked and came out cold.","negative","David K.",["wait_time","food_quality","reservation"],"normal"),
-            ("yelp",  "rr_w2c",5,"Celebrated my anniversary here. The filet and lobster combo was perfect. Sunset views stunning.","positive","Sarah T.",["food_quality","ambiance"],"normal"),
-            ("google","rr_w2d",4,"Great happy hour on the patio. Firecracker shrimp and cocktails were excellent.","positive","Mike R.",["food_quality","value"],"normal"),
-            # Week 1 (current, 0 days)
-            ("yelp",  "rr_w1a",1,"Food was cold, service was rude, and the lobster bisque tasted like it came from a can. Will not return.","negative","Amanda L.",["food_quality","service","value"],"high"),
-            ("google","rr_w1b",5,"The Chart House Cut prime rib is legendary. Been coming here for 10 years and it never disappoints.","positive","Robert H.",["food_quality","ambiance"],"normal"),
-            ("google","rr_w1c",3,"Hit or miss experience. Tuna tartare was excellent but my mahi came out overcooked.","neutral","Lisa C.",["food_quality","service"],"normal"),
-            ("yelp",  "rr_w1d",5,"Best restaurant on the lagoon. The mud pie dessert is a must. Server Danny made the evening special.","positive","Tom W.",["food_quality","service"],"normal"),
+                # Week 8 (oldest, -49 days)
+                ("google","rr_w8a",5,"Stunning sunset views and the prime rib was cooked to perfection. Our server was attentive all night.","positive","Karen B.",["food_quality","service","ambiance"],"normal"),
+                ("google","rr_w8b",4,"Really good food and great atmosphere. Service was a touch slow but nothing major.","positive","James T.",["food_quality","ambiance","service"],"normal"),
+                ("yelp",  "rr_w8c",2,"Waited forever for our table despite a reservation. Food was fine but the wait killed the experience.","negative","Patricia M.",["wait_time","reservation"],"normal"),
+                ("yelp",  "rr_w8d",3,"Decent food, nothing special. The lobster bisque was good but the entrees were just okay for the price.","neutral","Steven R.",["food_quality","value"],"normal"),
+                # Week 7 (-42 days)
+                ("google","rr_w7a",5,"Best anniversary dinner we've had. The filet was incredible and the lagoon view at sunset was magical.","positive","Michelle H.",["food_quality","ambiance"],"normal"),
+                ("google","rr_w7b",5,"Came for the early bird special and left completely satisfied. Great value for waterfront dining.","positive","Donald C.",["food_quality","value","ambiance"],"normal"),
+                ("yelp",  "rr_w7c",1,"Service was absolutely terrible. Rude staff, wrong order, and the manager was dismissive when we complained.","negative","Sandra W.",["service"],"high"),
+                ("google","rr_w7d",4,"Solid seafood and nice atmosphere. The shrimp cocktail appetizer was a highlight.","positive","Gary L.",["food_quality","ambiance"],"normal"),
+                # Week 6 (-35 days)
+                ("google","rr_w6a",5,"The Chart House never disappoints. Prime rib was perfect as always. Our server Danny was exceptional.","positive","Nancy P.",["food_quality","service"],"normal"),
+                ("yelp",  "rr_w6b",4,"Great happy hour specials. The firecracker shrimp and craft cocktails were excellent.","positive","Kevin S.",["food_quality","value"],"normal"),
+                ("google","rr_w6c",2,"Food came out cold and the restaurant was understaffed. Not worth the premium price.","negative","Betty A.",["food_quality","service","value"],"normal"),
+                ("yelp",  "rr_w6d",3,"Mixed experience — some dishes excellent, others disappointing. The view makes up for a lot though.","neutral","Brian N.",["food_quality","ambiance"],"normal"),
+                # Week 5 (-28 days)
+                ("google","rr_w5a",5,"Absolutely wonderful dining experience. The seafood was fresh and the service was impeccable.","positive","Dorothy K.",["food_quality","service"],"normal"),
+                ("google","rr_w5b",4,"Good food and great location on the lagoon. Will definitely return for special occasions.","positive","Charles V.",["food_quality","ambiance"],"normal"),
+                ("yelp",  "rr_w5c",2,"Overpriced for what you get. Portion sizes have shrunk and the quality isn't what it used to be.","negative","Helen J.",["value","food_quality"],"normal"),
+                ("google","rr_w5d",3,"Decent experience but nothing memorable. Service was fine, food was average for the price point.","neutral","Frank M.",["food_quality","service","value"],"normal"),
+                # Week 4 (-21 days)
+                ("google","rr_w4a",5,"Celebrated my retirement here. The whole team made it special — incredible food and service all around.","positive","Ruth C.",["food_quality","service","ambiance"],"normal"),
+                ("yelp",  "rr_w4b",5,"The mud pie dessert alone is worth the trip. Everything was delicious and the lagoon views are stunning.","positive","Edward H.",["food_quality","ambiance"],"normal"),
+                ("google","rr_w4c",1,"Found what appeared to be a hair in my salmon. Staff were apologetic but offered no real resolution.","negative","Carol D.",["food_quality","cleanliness","service"],"high"),
+                ("yelp",  "rr_w4d",4,"Really enjoyed the happy hour. Great selection of appetizers at reasonable prices for this location.","positive","Mark S.",["food_quality","value"],"normal"),
+                # Week 3 (-14 days)
+                ("google","rr_w3a",5,"Outstanding in every way. The Chilean sea bass was the best I've ever had. Will be back monthly.","positive","Linda F.",["food_quality","service"],"normal"),
+                ("google","rr_w3b",4,"Great waterfront ambiance and solid food. The prime rib was excellent as always.","positive","Paul B.",["food_quality","ambiance"],"normal"),
+                ("yelp",  "rr_w3c",2,"Service has declined noticeably. Took 20 minutes to get water and our server seemed overwhelmed.","negative","Barbara G.",["service","wait_time"],"normal"),
+                ("google","rr_w3d",3,"Good location and nice views but the food is inconsistent. Some visits great, others mediocre.","neutral","Thomas E.",["food_quality","ambiance"],"normal"),
+                # Week 2 (-7 days)
+                ("google","rr_w2a",5,"Absolutely incredible dinner. The Chilean sea bass melted in my mouth and our server was phenomenal.","positive","Jennifer M.",["food_quality","service"],"normal"),
+                ("google","rr_w2b",2,"Waited 40 minutes past our reservation. The prime rib was overcooked and came out cold.","negative","David K.",["wait_time","food_quality","reservation"],"normal"),
+                ("yelp",  "rr_w2c",5,"Celebrated my anniversary here. The filet and lobster combo was perfect. Sunset views stunning.","positive","Sarah T.",["food_quality","ambiance"],"normal"),
+                ("google","rr_w2d",4,"Great happy hour on the patio. Firecracker shrimp and cocktails were excellent.","positive","Mike R.",["food_quality","value"],"normal"),
+                # Week 1 (current, 0 days)
+                ("yelp",  "rr_w1a",1,"Food was cold, service was rude, and the lobster bisque tasted like it came from a can. Will not return.","negative","Amanda L.",["food_quality","service","value"],"high"),
+                ("google","rr_w1b",5,"The Chart House Cut prime rib is legendary. Been coming here for 10 years and it never disappoints.","positive","Robert H.",["food_quality","ambiance"],"normal"),
+                ("google","rr_w1c",3,"Hit or miss experience. Tuna tartare was excellent but my mahi came out overcooked.","neutral","Lisa C.",["food_quality","service"],"normal"),
+                ("yelp",  "rr_w1d",5,"Best restaurant on the lagoon. The mud pie dessert is a must. Server Danny made the evening special.","positive","Tom W.",["food_quality","service"],"normal"),
         ]
         from zoneinfo import ZoneInfo as _ZI_r
         from datetime import datetime as _dt_r, timedelta as _td_r2
@@ -5646,85 +5592,85 @@ if __name__ == "__main__":
         # Map week number from ext_id suffix to day offset
         _wk_map = {"w8":-49,"w7":-42,"w6":-35,"w5":-28,"w4":-21,"w3":-14,"w2":-7,"w1":0}
         for platform, ext_id, rating, text, sentiment, name, cats, urgency in sample_reviews:
-            _wk = ext_id[3:5]
-            _offset = _wk_map.get(_wk, 0)
-            _rev_dt = (_now_r + _td_r2(days=_offset)).strftime('%Y-%m-%dT%H:%M:%S')
-            _conn_r.execute("""
-                INSERT OR REPLACE INTO reviews
-                (restaurant_id, platform, external_id, author, rating, text, sentiment,
-                 categories, urgency, fetched_at, review_date, response_status, processed, review_name)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """, (ryan_rid, platform, ext_id, name, rating, text, sentiment,
-                  _json_r.dumps(cats), urgency, _rev_dt, _rev_dt, "pending", 1, name))
+                _wk = ext_id[3:5]
+                _offset = _wk_map.get(_wk, 0)
+                _rev_dt = (_now_r + _td_r2(days=_offset)).strftime('%Y-%m-%dT%H:%M:%S')
+                _conn_r.execute("""
+                        INSERT OR REPLACE INTO reviews
+                        (restaurant_id, platform, external_id, author, rating, text, sentiment,
+                            categories, urgency, fetched_at, review_date, response_status, processed, review_name)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (ryan_rid, platform, ext_id, name, rating, text, sentiment,
+                            _json_r.dumps(cats), urgency, _rev_dt, _rev_dt, "pending", 1, name))
         _conn_r.commit()
         _conn_r.close()
         print("  Ryan's 32 reviews seeded with categories and week spread.\n")
 
         # Draft responses for Ryan's reviews
         try:
-            from drafter import draft_pending
-            draft_pending(ryan_rid, limit=50)
-            print("  Ryan's reviews seeded and drafted.\n")
+                from drafter import draft_pending
+                draft_pending(ryan_rid, limit=50)
+                print("  Ryan's reviews seeded and drafted.\n")
         except Exception as _de:
-            print(f"  Draft error: {_de}")
+                print(f"  Draft error: {_de}")
 
         # Seed 6 weeks of inventory history so the trend chart is always populated for testing
         try:
-            import json as _json_ryan_inv
-            from datetime import timedelta as _td_ryan
-            _ryan_inv_weeks = [
-                (241.80, ["Romaine Lettuce", "Bread Rolls", "Roma Tomatoes", "Baby Spinach"]),
-                (218.50, ["Bread Rolls", "Roma Tomatoes", "Sourdough Loaf"]),
-                (309.20, ["Romaine Lettuce", "Bread Rolls", "Salmon Fillet", "Baby Spinach"]),
-                (284.70, ["Roma Tomatoes", "Bread Rolls", "Fresh Herbs Mix"]),
-                (253.10, ["Bread Rolls", "Baby Spinach", "Romaine Lettuce"]),
-                (267.45, ["Romaine Lettuce", "Bread Rolls", "Roma Tomatoes", "Baby Spinach"]),
-            ]
-            from zoneinfo import ZoneInfo as _ZI_ryan_inv
-            from datetime import datetime as _dt_ryan_inv
-            # Use today as week_end anchor — matches how analyse_inventory saves snapshots
-            _today_ryan = _dt_ryan_inv.now(_ZI_ryan_inv('America/Chicago')).date()
-            _conn_ryan_inv = get_conn()
-            _conn_ryan_inv.execute("""CREATE TABLE IF NOT EXISTS inventory_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                restaurant_id INTEGER NOT NULL,
-                waste_json TEXT,
-                week_end TEXT,
-                saved_at TEXT DEFAULT (datetime('now'))
-            )""")
-            try:
-                _conn_ryan_inv.execute("ALTER TABLE inventory_history ADD COLUMN week_end TEXT")
-            except Exception:
-                pass
-            _conn_ryan_inv.commit()
-            for _wi, (_waste, _items) in enumerate(_ryan_inv_weeks):
-                # Go back 5,4,3,2,1,0 weeks from today — same cadence as real weekly uploads
-                _week_end = (_today_ryan - _td_ryan(weeks=(5 - _wi))).isoformat()
-                _snap = _json_ryan_inv.dumps({"total_waste_cost": _waste, "top_items": _items})
-                _ex = _conn_ryan_inv.execute(
-                    "SELECT id FROM inventory_history WHERE restaurant_id=? AND week_end=?",
-                    (ryan_rid, _week_end)
-                ).fetchone()
-                if _ex:
-                    _conn_ryan_inv.execute(
-                        "UPDATE inventory_history SET waste_json=? WHERE id=?",
-                        (_snap, _ex["id"])
-                    )
-                else:
-                    _conn_ryan_inv.execute(
-                        "INSERT INTO inventory_history (restaurant_id, waste_json, week_end) VALUES (?,?,?)",
-                        (ryan_rid, _snap, _week_end)
-                    )
-            _conn_ryan_inv.commit()
-            _conn_ryan_inv.close()
-            print("  Ryan's inventory trend history seeded (6 weeks).\n")
+                import json as _json_ryan_inv
+                from datetime import timedelta as _td_ryan
+                _ryan_inv_weeks = [
+                        (241.80, ["Romaine Lettuce", "Bread Rolls", "Roma Tomatoes", "Baby Spinach"]),
+                        (218.50, ["Bread Rolls", "Roma Tomatoes", "Sourdough Loaf"]),
+                        (309.20, ["Romaine Lettuce", "Bread Rolls", "Salmon Fillet", "Baby Spinach"]),
+                        (284.70, ["Roma Tomatoes", "Bread Rolls", "Fresh Herbs Mix"]),
+                        (253.10, ["Bread Rolls", "Baby Spinach", "Romaine Lettuce"]),
+                        (267.45, ["Romaine Lettuce", "Bread Rolls", "Roma Tomatoes", "Baby Spinach"]),
+                ]
+                from zoneinfo import ZoneInfo as _ZI_ryan_inv
+                from datetime import datetime as _dt_ryan_inv
+                # Use today as week_end anchor — matches how analyse_inventory saves snapshots
+                _today_ryan = _dt_ryan_inv.now(_ZI_ryan_inv('America/Chicago')).date()
+                _conn_ryan_inv = get_conn()
+                _conn_ryan_inv.execute("""CREATE TABLE IF NOT EXISTS inventory_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        restaurant_id INTEGER NOT NULL,
+                        waste_json TEXT,
+                        week_end TEXT,
+                        saved_at TEXT DEFAULT (datetime('now'))
+                )""")
+                try:
+                        _conn_ryan_inv.execute("ALTER TABLE inventory_history ADD COLUMN week_end TEXT")
+                except Exception:
+                        pass
+                _conn_ryan_inv.commit()
+                for _wi, (_waste, _items) in enumerate(_ryan_inv_weeks):
+                        # Go back 5,4,3,2,1,0 weeks from today — same cadence as real weekly uploads
+                        _week_end = (_today_ryan - _td_ryan(weeks=(5 - _wi))).isoformat()
+                        _snap = _json_ryan_inv.dumps({"total_waste_cost": _waste, "top_items": _items})
+                        _ex = _conn_ryan_inv.execute(
+                                "SELECT id FROM inventory_history WHERE restaurant_id=? AND week_end=?",
+                                (ryan_rid, _week_end)
+                        ).fetchone()
+                        if _ex:
+                                _conn_ryan_inv.execute(
+                                        "UPDATE inventory_history SET waste_json=? WHERE id=?",
+                                        (_snap, _ex["id"])
+                                )
+                        else:
+                                _conn_ryan_inv.execute(
+                                        "INSERT INTO inventory_history (restaurant_id, waste_json, week_end) VALUES (?,?,?)",
+                                        (ryan_rid, _snap, _week_end)
+                                )
+                _conn_ryan_inv.commit()
+                _conn_ryan_inv.close()
+                print("  Ryan's inventory trend history seeded (6 weeks).\n")
         except Exception as _ryan_inv_e:
-            print(f"  Ryan inventory seed error: {_ryan_inv_e}")
+                print(f"  Ryan inventory seed error: {_ryan_inv_e}")
 
         # Seed rich inventory CSV for Ryan so the order list shows all row types
         try:
-            from models import save_client_data as _scd_ryan
-            _ryan_inv_csv = """item,category,unit,par_level,current_stock,unit_cost,avg_daily_usage,last_order_qty,waste_last_week
+                from models import save_client_data as _scd_ryan
+                _ryan_inv_csv = """item,category,unit,par_level,current_stock,unit_cost,avg_daily_usage,last_order_qty,waste_last_week
 Chilean Sea Bass,Protein,lb,12,2,28.50,2.2,12,0.5
 Prime Rib,Protein,lb,20,3,18.75,3.8,20,1.2
 Lobster Tail,Protein,lb,8,1,42.00,1.4,8,0.3
@@ -5750,17 +5696,32 @@ Beef Stock,Pantry,qt,10,14,4.80,1.4,10,0.3
 White Wine Chardonnay,Beverage,bottle,16,20,8.50,2.0,16,0.0
 House Cabernet,Beverage,bottle,20,24,9.20,2.8,20,0.0
 Sparkling Water,Beverage,case,6,9,22.00,0.8,6,0.0"""
-            _scd_ryan(ryan_rid, "inventory", _ryan_inv_csv, source="upload")
-            print("  Ryan's rich inventory CSV seeded.\n")
+                _scd_ryan(ryan_rid, "inventory", _ryan_inv_csv, source="upload")
+                print("  Ryan's rich inventory CSV seeded.\n")
         except Exception as _ryan_csv_e:
-            print(f"  Ryan inventory CSV seed error: {_ryan_csv_e}")
-      except Exception as _do_seed_e:
+                print(f"  Ryan inventory CSV seed error: {_ryan_csv_e}")
+    except Exception as _do_seed_e:
         print(f"  Ryan full seed error: {_do_seed_e}")
 
-    import threading as _t_seed
-    _seed_thread = _t_seed.Thread(target=_seed_ryan_background, daemon=True)
-    _seed_thread.start()
+def _seed_ryan_background():
+    try:
+        import time as _t_ryan; _t_ryan.sleep(2)  # let Flask fully start first
+        conn = gc()
+        ryan_exists = conn.execute(
+                "SELECT id FROM users WHERE email=?", ("ryancavnar@gmail.com",)
+        ).fetchone()
+        conn.close()
+        if not ryan_exists:
+            _do_seed_ryan()
+    except Exception as _bg_e:
+        print(f"  Ryan seed background error: {_bg_e}")
 
+
+import threading as _t_seed
+_seed_thread = _t_seed.Thread(target=_seed_ryan_background, daemon=True)
+_seed_thread.start()
+
+if __name__ == "__main__":
     print(f"\n  Hosted dashboard → http://localhost:{PORT}")
     print(f"  Admin panel      → http://localhost:{PORT}/admin\n")
     app.run(host="0.0.0.0", port=PORT, debug=False)
