@@ -665,12 +665,8 @@ function clientUpload(dataType, input) {
   {% endif %}
   <div class="stat-row">
     <div class="stat {{'ok' if rstats.avg_rating >= 4.5 else ('warn' if rstats.avg_rating >= 3.5 else 'hi')}}"><div class="stat-n">{{rstats.avg_rating}}</div><div class="stat-l">Avg rating</div></div>
-    <div class="stat"><div class="stat-n">{{rstats.total}}</div><div class="stat-l">Total</div></div>
-    <div class="stat ok"><div class="stat-n">{{rstats.positive}}</div><div class="stat-l">Positive</div></div>
-    <div class="stat warn"><div class="stat-n">{{rstats.neutral}}</div><div class="stat-l">Neutral</div></div>
-    <div class="stat hi"><div class="stat-n">{{rstats.negative}}</div><div class="stat-l">Negative</div></div>
-    <div class="stat hi"><div class="stat-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
-    <div class="stat warn"><div class="stat-n">{{rstats.awaiting_approval}}</div><div class="stat-l">To approve</div></div>
+    <div class="stat {{'hi' if rstats.urgent > 0 else 'ok'}}"><div class="stat-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
+    <div class="stat {{'warn' if rstats.awaiting_approval > 0 else 'ok'}}"><div class="stat-n">{{rstats.awaiting_approval}}</div><div class="stat-l">To approve</div></div>
     <div class="stat {{'ok' if restaurant.reviews_live or restaurant.gmb_refresh_token else 'warn'}}">
       <div class="stat-n" style="font-size:14px;margin-top:4px">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
       <div class="stat-l">Review source</div>
