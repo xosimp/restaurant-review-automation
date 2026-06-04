@@ -5270,25 +5270,58 @@ if __name__ == "__main__":
         _conn_r = _gc_r()
         import json as _json_r
         # categories hand-assigned to match review content — avoids needing API call on seed
+        # 32 reviews spread across 8 weeks — 4 per week with realistic sentiment mix
+        # Format: (platform, ext_id, rating, text, sentiment, name, categories, urgency, week_offset)
         sample_reviews = [
-            ("google","rev_ryan_001",5,"Absolutely incredible dinner. The Chilean sea bass melted in my mouth and our server was phenomenal. Best waterfront dining in Melbourne FL by far.","positive","Jennifer M.",["food_quality","service"],"normal"),
-            ("google","rev_ryan_002",2,"Waited 40 minutes past our reservation. The prime rib was overcooked and came out cold. Manager never came by to check on us. Disappointed for the price point.","negative","David K.",["wait_time","food_quality","service"],"normal"),
-            ("yelp",  "rev_ryan_003",5,"Celebrated my anniversary here. The filet mignon and lobster tail combo was perfect. Sunset views from the patio are absolutely stunning. Will be back every year.","positive","Sarah T.",["food_quality","ambiance"],"normal"),
-            ("google","rev_ryan_004",4,"Great happy hour on the outdoor patio — firecracker shrimp and craft cocktails were excellent. Service was a bit slow but the food made up for it.","neutral", "Mike R.",["food_quality","service","wait_time"],"normal"),
-            ("yelp",  "rev_ryan_005",1,"Food was cold, service was rude, and the lobster bisque tasted like it came from a can. For these prices I expected much better. Will not return.","negative","Amanda L.",["food_quality","service","value"],"high"),
-            ("google","rev_ryan_006",5,"The Chart House Cut prime rib is legendary. Been coming here for 10 years and it never disappoints. Lagoon views at sunset are unmatched in Brevard County.","positive","Robert H.",["food_quality","ambiance"],"normal"),
-            ("google","rev_ryan_007",3,"Hit or miss experience. The tuna tartare appetizer was excellent but my Mac Nut Mahi came out overcooked. Staff was friendly though.","neutral", "Lisa C.",["food_quality","service"],"normal"),
-            ("yelp",  "rev_ryan_008",5,"Best restaurant on the lagoon hands down. The mud pie dessert is a must. Our server Danny made the whole evening special with his knowledge of the menu.","positive","Tom W.",["food_quality","service"],"normal"),
+            # Week 8 (oldest, -49 days)
+            ("google","rr_w8a",5,"Stunning sunset views and the prime rib was cooked to perfection. Our server was attentive all night.","positive","Karen B.",["food_quality","service","ambiance"],"normal"),
+            ("google","rr_w8b",4,"Really good food and great atmosphere. Service was a touch slow but nothing major.","positive","James T.",["food_quality","ambiance","service"],"normal"),
+            ("yelp",  "rr_w8c",2,"Waited forever for our table despite a reservation. Food was fine but the wait killed the experience.","negative","Patricia M.",["wait_time","reservation"],"normal"),
+            ("yelp",  "rr_w8d",3,"Decent food, nothing special. The lobster bisque was good but the entrees were just okay for the price.","neutral","Steven R.",["food_quality","value"],"normal"),
+            # Week 7 (-42 days)
+            ("google","rr_w7a",5,"Best anniversary dinner we've had. The filet was incredible and the lagoon view at sunset was magical.","positive","Michelle H.",["food_quality","ambiance"],"normal"),
+            ("google","rr_w7b",5,"Came for the early bird special and left completely satisfied. Great value for waterfront dining.","positive","Donald C.",["food_quality","value","ambiance"],"normal"),
+            ("yelp",  "rr_w7c",1,"Service was absolutely terrible. Rude staff, wrong order, and the manager was dismissive when we complained.","negative","Sandra W.",["service"],"high"),
+            ("google","rr_w7d",4,"Solid seafood and nice atmosphere. The shrimp cocktail appetizer was a highlight.","positive","Gary L.",["food_quality","ambiance"],"normal"),
+            # Week 6 (-35 days)
+            ("google","rr_w6a",5,"The Chart House never disappoints. Prime rib was perfect as always. Our server Danny was exceptional.","positive","Nancy P.",["food_quality","service"],"normal"),
+            ("yelp",  "rr_w6b",4,"Great happy hour specials. The firecracker shrimp and craft cocktails were excellent.","positive","Kevin S.",["food_quality","value"],"normal"),
+            ("google","rr_w6c",2,"Food came out cold and the restaurant was understaffed. Not worth the premium price.","negative","Betty A.",["food_quality","service","value"],"normal"),
+            ("yelp",  "rr_w6d",3,"Mixed experience — some dishes excellent, others disappointing. The view makes up for a lot though.","neutral","Brian N.",["food_quality","ambiance"],"normal"),
+            # Week 5 (-28 days)
+            ("google","rr_w5a",5,"Absolutely wonderful dining experience. The seafood was fresh and the service was impeccable.","positive","Dorothy K.",["food_quality","service"],"normal"),
+            ("google","rr_w5b",4,"Good food and great location on the lagoon. Will definitely return for special occasions.","positive","Charles V.",["food_quality","ambiance"],"normal"),
+            ("yelp",  "rr_w5c",2,"Overpriced for what you get. Portion sizes have shrunk and the quality isn't what it used to be.","negative","Helen J.",["value","food_quality"],"normal"),
+            ("google","rr_w5d",3,"Decent experience but nothing memorable. Service was fine, food was average for the price point.","neutral","Frank M.",["food_quality","service","value"],"normal"),
+            # Week 4 (-21 days)
+            ("google","rr_w4a",5,"Celebrated my retirement here. The whole team made it special — incredible food and service all around.","positive","Ruth C.",["food_quality","service","ambiance"],"normal"),
+            ("yelp",  "rr_w4b",5,"The mud pie dessert alone is worth the trip. Everything was delicious and the lagoon views are stunning.","positive","Edward H.",["food_quality","ambiance"],"normal"),
+            ("google","rr_w4c",1,"Found what appeared to be a hair in my salmon. Staff were apologetic but offered no real resolution.","negative","Carol D.",["food_quality","cleanliness","service"],"high"),
+            ("yelp",  "rr_w4d",4,"Really enjoyed the happy hour. Great selection of appetizers at reasonable prices for this location.","positive","Mark S.",["food_quality","value"],"normal"),
+            # Week 3 (-14 days)
+            ("google","rr_w3a",5,"Outstanding in every way. The Chilean sea bass was the best I've ever had. Will be back monthly.","positive","Linda F.",["food_quality","service"],"normal"),
+            ("google","rr_w3b",4,"Great waterfront ambiance and solid food. The prime rib was excellent as always.","positive","Paul B.",["food_quality","ambiance"],"normal"),
+            ("yelp",  "rr_w3c",2,"Service has declined noticeably. Took 20 minutes to get water and our server seemed overwhelmed.","negative","Barbara G.",["service","wait_time"],"normal"),
+            ("google","rr_w3d",3,"Good location and nice views but the food is inconsistent. Some visits great, others mediocre.","neutral","Thomas E.",["food_quality","ambiance"],"normal"),
+            # Week 2 (-7 days)
+            ("google","rr_w2a",5,"Absolutely incredible dinner. The Chilean sea bass melted in my mouth and our server was phenomenal.","positive","Jennifer M.",["food_quality","service"],"normal"),
+            ("google","rr_w2b",2,"Waited 40 minutes past our reservation. The prime rib was overcooked and came out cold.","negative","David K.",["wait_time","food_quality","reservation"],"normal"),
+            ("yelp",  "rr_w2c",5,"Celebrated my anniversary here. The filet and lobster combo was perfect. Sunset views stunning.","positive","Sarah T.",["food_quality","ambiance"],"normal"),
+            ("google","rr_w2d",4,"Great happy hour on the patio. Firecracker shrimp and cocktails were excellent.","positive","Mike R.",["food_quality","value"],"normal"),
+            # Week 1 (current, 0 days)
+            ("yelp",  "rr_w1a",1,"Food was cold, service was rude, and the lobster bisque tasted like it came from a can. Will not return.","negative","Amanda L.",["food_quality","service","value"],"high"),
+            ("google","rr_w1b",5,"The Chart House Cut prime rib is legendary. Been coming here for 10 years and it never disappoints.","positive","Robert H.",["food_quality","ambiance"],"normal"),
+            ("google","rr_w1c",3,"Hit or miss experience. Tuna tartare was excellent but my mahi came out overcooked.","neutral","Lisa C.",["food_quality","service"],"normal"),
+            ("yelp",  "rr_w1d",5,"Best restaurant on the lagoon. The mud pie dessert is a must. Server Danny made the evening special.","positive","Tom W.",["food_quality","service"],"normal"),
         ]
         from zoneinfo import ZoneInfo as _ZI_r
-        from datetime import datetime as _dt_r
+        from datetime import datetime as _dt_r, timedelta as _td_r2
         _now_r = _dt_r.now(_ZI_r('America/Chicago'))
-        # Spread reviews across weeks so sentiment trend chart shows real data
-        _week_offsets = [-49,-42,-35,-28,-21,-14,-7,0]  # 8 weeks back to now
+        # Map week number from ext_id suffix to day offset
+        _wk_map = {"w8":-49,"w7":-42,"w6":-35,"w5":-28,"w4":-21,"w3":-14,"w2":-7,"w1":0}
         for platform, ext_id, rating, text, sentiment, name, cats, urgency in sample_reviews:
-            from datetime import timedelta as _td_r2
-            _idx_r = list(i for i,(p,e,_ra,_t,_s,_n,_c,_u) in enumerate(sample_reviews) if e==ext_id)[0]
-            _offset = _week_offsets[_idx_r % len(_week_offsets)]
+            _wk = ext_id[3:5]
+            _offset = _wk_map.get(_wk, 0)
             _rev_dt = (_now_r + _td_r2(days=_offset)).strftime('%Y-%m-%dT%H:%M:%S')
             _conn_r.execute("""
                 INSERT OR REPLACE INTO reviews
@@ -5296,10 +5329,10 @@ if __name__ == "__main__":
                  categories, urgency, fetched_at, review_date, response_status, processed, review_name)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (ryan_rid, platform, ext_id, name, rating, text, sentiment,
-                  _json_r.dumps(cats), urgency, _rev_dt, _rev_dt, 'pending', 1, name))
+                  _json_r.dumps(cats), urgency, _rev_dt, _rev_dt, "pending", 1, name))
         _conn_r.commit()
         _conn_r.close()
-        print("  Ryan's reviews seeded with categories.\n")
+        print("  Ryan's 32 reviews seeded with categories and week spread.\n")
 
         # Draft responses for Ryan's reviews
         try:
