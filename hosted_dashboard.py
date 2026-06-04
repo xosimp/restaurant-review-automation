@@ -13,7 +13,8 @@ from flask import (Flask, render_template_string, request,
 from emails import send_payment_email, send_welcome_email
 from models import (init_db, get_conn, approve_response,
                     get_reviews_since, get_restaurant,
-                    get_review_stats, get_reviews_data, get_top_issues)
+                    get_review_stats, get_reviews_data, get_top_issues,
+                    get_platform_breakdown)
 from auth import (init_auth, verify_password, create_session,
                   get_session_user, delete_session, create_user,
                   list_users, update_password)
@@ -702,6 +703,29 @@ function clientUpload(dataType, input) {
     </div>
     <div style="margin-top:6px;font-size:11px;color:var(--ink3)">{{rstats.posted}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> and a 3.1% sales lift can mean <strong style="color:var(--ink)">$125k/yr</strong> for a casual dining unit</div>
   </div>
+  {% if platform_breakdown and platform_breakdown|length > 1 %}
+  <div class="card" style="padding:14px 16px;margin-bottom:14px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Platform breakdown</div>
+    <div style="display:grid;grid-template-columns:{% for p in platform_breakdown %}1fr{% if not loop.last %} {% endif %}{% endfor %};gap:12px">
+    {% for p in platform_breakdown %}
+      {% set plat_col = '#4285f4' if p.platform == 'google' else '#d32323' %}
+      {% set rating_col = '#2d6a4f' if p.avg_rating >= 4.5 else ('#ef9f27' if p.avg_rating >= 3.5 else '#c0392b') %}
+      <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:8px;padding:12px 14px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+          <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:{{plat_col}}">{{p.platform|title}}</span>
+          <span style="font-size:10px;color:var(--ink3)">{{p.total}} review{{'s' if p.total != 1}}</span>
+        </div>
+        <div style="font-size:26px;font-weight:800;color:{{rating_col}};letter-spacing:-1px;line-height:1">{{p.avg_rating}} <span style="font-size:14px;color:var(--ink3)">★</span></div>
+        <div style="display:flex;gap:10px;margin-top:8px;font-size:11px">
+          <span style="color:#2d6a4f">▲ {{p.positive}} positive</span>
+          <span style="color:#c0392b">▼ {{p.negative}} negative</span>
+        </div>
+      </div>
+    {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   {% if top_issues %}
   <div class="card" style="padding:14px 16px;margin-bottom:14px">
     <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Top mentioned topics — last 30 days</div>
@@ -4112,7 +4136,8 @@ def index(current_user):
     restaurant = get_restaurant(rid)
     rstats     = get_review_stats(rid)
     reviews    = get_reviews_data(rid, rfilter, rsearch)
-    top_issues = get_top_issues(rid, days=30)
+    top_issues        = get_top_issues(rid, days=30)
+    platform_breakdown = get_platform_breakdown(rid)
     try:
         labor = analyse_shifts_for_restaurant(rid)
     except Exception as e:
@@ -4157,7 +4182,7 @@ def index(current_user):
         show_welcome=show_welcome,
         csrf_token=csrf_token,
         current_user=current_user, restaurant=restaurant,
-        rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch, top_issues=top_issues,
+        rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch, top_issues=top_issues, platform_breakdown=platform_breakdown,
         labor=labor, inv=inv, ctypes=CONTENT_TYPES,
         mod_reviews=int(restaurant.module_reviews or 0),
         mod_labor=int(restaurant.module_labor or 0),

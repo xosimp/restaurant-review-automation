@@ -1088,6 +1088,34 @@ def get_review_stats(restaurant_id):
         response_rate     = response_rate,
     )
 
+def get_platform_breakdown(restaurant_id):
+    """Return review count and avg rating per platform."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT platform,
+               COUNT(*)    AS total,
+               AVG(rating) AS avg_rating,
+               SUM(sentiment='positive')  AS positive,
+               SUM(sentiment='negative')  AS negative
+        FROM reviews
+        WHERE restaurant_id=? AND processed=1
+        GROUP BY platform
+        ORDER BY total DESC
+    """, (restaurant_id,)).fetchall()
+    conn.close()
+    result = []
+    for row in rows:
+        if row["platform"] in ("csv","manual"):
+            continue  # skip non-public platforms
+        result.append({
+            "platform":   row["platform"],
+            "total":      row["total"],
+            "avg_rating": round(row["avg_rating"] or 0, 1),
+            "positive":   row["positive"] or 0,
+            "negative":   row["negative"] or 0,
+        })
+    return result
+
 def get_top_issues(restaurant_id, days=30, limit=6):
     """Return top review categories by mention count for the last N days."""
     from collections import Counter
