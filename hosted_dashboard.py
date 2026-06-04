@@ -5705,8 +5705,8 @@ Sparkling Water,Beverage,case,6,9,22.00,0.8,6,0.0"""
 
 def _seed_ryan_background():
     try:
-        import time as _t_ryan; _t_ryan.sleep(2)  # let Flask fully start first
-        conn = gc()
+        import time as _t_ryan; _t_ryan.sleep(3)  # let Gunicorn fully start first
+        conn = get_conn()
         ryan_exists = conn.execute(
                 "SELECT id FROM users WHERE email=?", ("ryancavnar@gmail.com",)
         ).fetchone()
