@@ -1728,8 +1728,38 @@ document.addEventListener('DOMContentLoaded', function(){
   }
 });
 let rfilter='{{rfilter}}';
-function setRF(f,btn){rfilter=f;document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active','active-red'));btn.classList.add(f==='urgent'?'active-red':'active');filterReviews()}
-function filterReviews(){const q=document.getElementById('rsearch').value;window.location='/?filter='+rfilter+'&search='+encodeURIComponent(q)}
+function setRF(f,btn){
+  rfilter=f;
+  document.querySelectorAll('.fpill').forEach(function(p){p.classList.remove('active','active-red');});
+  btn.classList.add(f==='urgent'?'active-red':'active');
+  filterReviews();
+}
+function filterReviews(){
+  var q=(document.getElementById('rsearch').value||'').toLowerCase();
+  var cards=document.querySelectorAll('[id^="rc-"]');
+  var shown=0;
+  cards.forEach(function(card){
+    var platform=card.dataset.platform||'';
+    var urgency=card.classList.contains('urgent');
+    var approved=card.classList.contains('approved');
+    var posted=card.classList.contains('posted');
+    var sentiment='';
+    var schip=card.querySelector('.schip');
+    if(schip) sentiment=schip.textContent.trim().toLowerCase();
+    var text=(card.textContent||'').toLowerCase();
+    var matchFilter=true;
+    if(rfilter==='urgent') matchFilter=urgency;
+    else if(rfilter==='pending') matchFilter=(!approved&&!posted&&!urgency);
+    else if(rfilter==='negative') matchFilter=(sentiment==='negative');
+    else if(rfilter==='positive') matchFilter=(sentiment==='positive');
+    var matchSearch=!q||text.indexOf(q)!==-1;
+    var visible=matchFilter&&matchSearch;
+    card.style.display=visible?'':'none';
+    if(visible)shown++;
+  });
+  var countEl=document.querySelector('.count-lbl');
+  if(countEl)countEl.textContent=shown+' review'+(shown!==1?'s':'');
+}
 function updateResponseRateBar(){
   fetch('/api/review-stats').then(function(r){return r.json();}).then(function(d){
     if(!d.response_rate && d.response_rate !== 0) return;
@@ -4438,35 +4468,24 @@ def review_insight_api(current_user):
         owner_name = restaurant.owner_name if restaurant else None
         rest_name  = restaurant.name if restaurant else "this restaurant"
         name_line  = f"Owner: {owner_name}" if owner_name else ""
-        prompt = f"""You are a restaurant reputation consultant reviewing this week's review data.
-Restaurant: {rest_name}
-{name_line}
-Today: {today_str}
-
-Review snapshot:
-- Total reviews: {rstats['total']} | Avg rating: {rstats['avg_rating']} stars
-- Sentiment: {rstats['positive']} positive, {rstats['neutral']} neutral, {rstats['negative']} negative
-- Urgent (need immediate attention): {rstats['urgent']}
-- Response rate: {rstats['response_rate']}% ({rstats['posted']} of {rstats['total']} responded to)
-- Top mentioned topics (90 days): {issues_str}
-- {wow_str}
-- Recent urgent review excerpts: {urgent_texts}
-
-Write a short review intelligence summary. Rules:
-- No markdown, no bullet points, no bold, no asterisks
-- No headers or labels
-- Plain flowing prose, 3-5 sentences max
-- Friendly and direct — like a trusted advisor
-- Always use $ signs for dollar amounts
-- Open with the most important signal this week (urgent reviews, rating trend, or response rate gap)
-- If urgent reviews exist, address what they mention specifically
-- If response rate is below 40%, mention the opportunity
-- Close with one specific, actionable thing they should do today
-- Never generic — always tied to the actual data"""
+        prompt = (
+            f"You are a restaurant reputation assistant. Output ONLY a 3-line snapshot.\n\n"
+            f"Restaurant: {rest_name} | Today: {today_str}\n"
+            f"Data: {rstats['total']} reviews | {rstats['avg_rating']}★ avg | "
+            f"{rstats['positive']} pos / {rstats['negative']} neg / {rstats['neutral']} neutral | "
+            f"{rstats['urgent']} urgent | response rate {rstats['response_rate']}%\n"
+            f"Top topics: {issues_str} | {wow_str}\n"
+            f"Urgent excerpts: {urgent_texts}\n\n"
+            "Return EXACTLY this format — 3 lines:\n"
+            "\U0001f4ca This week: [1 punchy sentence on the most important number. Be specific.]\n"
+            "\u26a0\ufe0f Watch: [1 sentence on the biggest risk — urgent review theme, low response rate, or negative pattern. Skip if nothing urgent.]\n"
+            "\u2705 Do today: [1 concrete action — e.g. 'Respond to Amanda L.s 1-star review about cold food.' Never generic.]\n\n"
+            "Rules: no markdown, no extra lines, no preamble. Each line max 20 words. Never invent data."
+        )
 
         msg = _client_ri.messages.create(
             model=os.getenv("CLAUDE_MODEL","claude-haiku-4-5-20251001"),
-            max_tokens=350,
+            max_tokens=200,
             messages=[{"role":"user","content":prompt}]
         )
         insight = msg.content[0].text.strip()
