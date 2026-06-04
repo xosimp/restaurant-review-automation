@@ -1765,12 +1765,12 @@ async function downloadSchedule(btn) {
 }
 function loadInvInsight(){
   invLoaded=true;
-  fetch('/api/inv-insight').then(r=>r.json()).then(d=>{
-    const elInvInsight=document.getElementById('inv-insight');
+  fetch('/api/inv-insight').then(function(r){return r.json();}).then(function(d){
+    var elInvInsight=document.getElementById('inv-insight');
     elInvInsight.innerHTML=d.insight||'Analysis unavailable.';
     elInvInsight.classList.remove('insight-loading');
-  }).catch(e=>{
-    const elInvErr=document.getElementById('inv-insight');
+  }).catch(function(){
+    var elInvErr=document.getElementById('inv-insight');
     elInvErr.textContent='Analysis unavailable — check back shortly.';
     elInvErr.classList.remove('insight-loading');
   });

@@ -158,17 +158,7 @@ def analyse_inventory(items: list[dict]) -> dict:
         benchmark_detail = f"Industry target is 4-5% — you're at {waste_rate_pct}%"
 
     from datetime import datetime, timedelta
-    # Derive week range from last_ordered dates in items, or use current week
-    ordered_dates = []
-    for item in items:
-        lo = item.get("last_ordered","")
-        if lo:
-            try:
-                ordered_dates.append(datetime.strptime(lo[:10], "%Y-%m-%d"))
-            except Exception:
-                pass
-    # Always use upload date (passed in) or current Chicago time as week end
-    # This ensures the week range matches when the client actually uploaded
+    # Always use current Chicago time as week end — matches when the client uploaded
     try:
         from zoneinfo import ZoneInfo as _ZI_inv
         now_chi = datetime.now(_ZI_inv('America/Chicago')).replace(tzinfo=None)
@@ -240,12 +230,12 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             # Save current snapshot — one row per week per restaurant (upsert by week_end)
             # Use the inventory data's own week_end date so chart labels match the header
             import json as _json_inv2
-            from zoneinfo import ZoneInfo as _ZI_hist
             try:
                 from datetime import datetime as _dt_we
                 _week_end_str = _dt_we.strptime(analysis.get("week_end", ""), "%m/%d/%y").strftime("%Y-%m-%d")
             except Exception:
-                _week_end_str = datetime.now(_ZI_hist('America/Chicago')).strftime('%Y-%m-%d')
+                from zoneinfo import ZoneInfo as _ZI_fallback
+                _week_end_str = datetime.now(_ZI_fallback('America/Chicago')).strftime('%Y-%m-%d')
             snapshot = {
                 "total_waste_cost": analysis['total_waste_cost_week'],
                 "top_items": [x["item"] for x in analysis["waste_items"][:4]]
