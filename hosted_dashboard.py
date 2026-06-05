@@ -6,7 +6,7 @@ Run locally:  python3 hosted_dashboard.py
 Deploy:       Railway (connect GitHub repo, set env vars)
 """
 import os, json
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from flask import (Flask, render_template_string, request,
                    jsonify, redirect, url_for, make_response, send_file, session)
@@ -1077,7 +1077,7 @@ function clientUpload(dataType, input) {
         </div>
       </div>
 
-      <div class="slabel" style="margin-top:14px">Understaffed days</div>
+      <div class="slabel" style="margin-top:28px">Understaffed days</div>
       <div class="card"><table class="tbl">
         <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor %</th></tr></thead>
         <tbody>
