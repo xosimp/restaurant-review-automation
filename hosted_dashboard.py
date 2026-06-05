@@ -1096,30 +1096,6 @@ function clientUpload(dataType, input) {
         </tbody>
       </table></div>
 
-      <div class="slabel" style="margin-top:14px">Understaffed days — possible missed revenue ⚠</div>
-      <div class="card" style="flex:1;position:relative;overflow:hidden;padding:0">
-        {% set row_count = labor.understaffed_days|length %}
-        <div style="position:absolute;bottom:0;left:0;right:0;top:0;background:linear-gradient(to top,rgba(200,75,47,0.18) 0%,rgba(239,159,39,0.10) {{[row_count * 18 + 12, 55]|min}}%,rgba(239,159,39,0.0) 70%);pointer-events:none;z-index:0"></div>
-        <table class="tbl" style="position:relative;z-index:1">
-          <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor %</th></tr></thead>
-          <tbody>
-          {% for d in labor.understaffed_days %}
-          <tr>
-            <td>{{d.date}}</td><td style="font-weight:500">{{d.day}}</td>
-            <td>${{d.sales|int|format_num}}</td>
-            <td><span class="pill pill-amber" title="Low labor on high-sales day — possible missed revenue">{{d.labor_pct}}% ⚠</span></td>
-          </tr>
-          {% else %}
-          <tr><td colspan="4" style="color:var(--ink3);font-style:italic;padding:10px">None flagged</td></tr>
-          {% endfor %}
-          </tbody>
-        </table>
-        {% if labor.understaffed_days %}
-        <div style="padding:8px 12px 10px;font-size:11px;color:#7a4f00;background:rgba(239,159,39,0.08);border-top:1px solid rgba(239,159,39,0.2)">
-          💡 Consider scheduling 1–2 additional staff on {% for d in labor.understaffed_days %}{{d.day}}{% if not loop.last %}, {% endif %}{% endfor %} — strong sales on lean staffing suggests missed revenue opportunity.
-        </div>
-        {% endif %}
-      </div>
     </div>
 
     <div style="display:flex;flex-direction:column;">
@@ -1162,6 +1138,34 @@ function clientUpload(dataType, input) {
       </div>
     </div>
   </div>
+  <!-- Understaffed days — full width -->
+  <div class="slabel" style="margin-top:16px">Understaffed days — possible missed revenue ⚠</div>
+  <div style="position:relative;overflow:hidden;border-radius:var(--r);border:1px solid var(--paper3);background:white">
+    <div style="position:absolute;inset:0;background:linear-gradient(to right,rgba(200,75,47,0.07) 0%,rgba(239,159,39,0.05) 40%,rgba(239,159,39,0.0) 100%);pointer-events:none;z-index:0"></div>
+    <div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(to bottom,#c84b2f,#ef9f27);z-index:1"></div>
+    <table class="tbl" style="position:relative;z-index:1">
+      <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor %</th><th>Why it matters</th></tr></thead>
+      <tbody>
+      {% for d in labor.understaffed_days %}
+      <tr>
+        <td style="color:var(--ink3);font-size:11px">{{d.date}}</td>
+        <td style="font-weight:600">{{d.day}}</td>
+        <td>${{d.sales|int|format_num}}</td>
+        <td><span class="pill pill-amber">{{d.labor_pct}}% ⚠</span></td>
+        <td style="font-size:11px;color:#7a4f00">Strong sales day — lean staffing may have left revenue on the table</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" style="color:var(--ink3);font-style:italic;padding:12px">No understaffed days flagged — great balance this period</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if labor.understaffed_days %}
+    <div style="padding:10px 16px;font-size:11px;color:#7a4f00;background:rgba(239,159,39,0.06);border-top:1px solid rgba(239,159,39,0.15);position:relative;z-index:1">
+      💡 Consider scheduling 1–2 additional staff on {% for d in labor.understaffed_days %}{{d.day}}{% if not loop.last %}, {% endif %}{% endfor %} — the sales volume justifies it and better coverage drives higher check averages and return visits.
+    </div>
+    {% endif %}
+  </div>
+
   <!-- Labor trend chart -->
   <div class="slabel" style="margin-top:16px">Labor % trend — last 8 weeks</div>
   <div class="card" style="padding:16px">
