@@ -4666,12 +4666,7 @@ def index(current_user):
         except Exception:
             labor['staff_constraints'] = {}
         # Staff notes for constraint-aware overtime display
-        try:
-            from models import get_staff_notes as _gsn_dash
-            _sn = _gsn_dash(current_user["restaurant_id"])
-            labor['staff_constraints'] = {n['employee_name'].lower(): n['notes'] for n in _sn} if _sn else {}
-        except Exception:
-            labor['staff_constraints'] = {}
+
         # Add period-over-period delta
         try:
             from models import get_labor_history as _glh_delta
