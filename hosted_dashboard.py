@@ -2478,7 +2478,7 @@ function loadCal(){
       html += '<div class="cal-day-name" style="display:flex;align-items:center;justify-content:space-between">'+i.day+dateLabel+'</div>';
       html += '<div class="cal-platform" style="font-size:10px;font-weight:600;color:'+pColor+';margin:2px 0 4px;padding:1px 6px;background:'+pColor+'18;border-radius:10px;display:inline-block">'+( i.platform||'')+'</div>';
       html += '<div style="font-size:12px;line-height:1.5;margin-top:4px">'+( i.angle||'')+'</div>';
-      html += '<button data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;width:100%">Generate →</button>';
+      html += '<button data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:sans-serif;width:100%">Generate →</button>';
       html += '</div>';
     }
     g.innerHTML=html;
