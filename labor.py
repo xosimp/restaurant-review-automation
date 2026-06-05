@@ -3,8 +3,6 @@ labor.py — Labor cost analysis + Claude-powered scheduling recommendations
 """
 import os, csv, json
 from collections import defaultdict
-from datetime import datetime
-from zoneinfo import ZoneInfo
 import anthropic
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -191,20 +189,22 @@ def analyse_shifts(shifts: list[dict],
         if labor_pct > OVERSTAFF_THRESHOLD:
             # Format date as M/D/YY
             try:
-                fmt_date = datetime.strptime(date, "%Y-%m-%d").strftime("%-m/%-d/%y")
+                from datetime import datetime as _dt
+                fmt_date = _dt.strptime(date, "%Y-%m-%d").strftime("%-m/%-d/%y")
             except Exception:
                 fmt_date = date
-            real_day = datetime.strptime(date, "%Y-%m-%d").strftime("%A") if date else d["shifts"][0]["day"]
+            real_day = _dt.strptime(date, "%Y-%m-%d").strftime("%A") if date else d["shifts"][0]["day"]
             overstaffed.append({"date": fmt_date, "day": real_day,
                                  "labor_pct": round(labor_pct, 1),
                                  "labor_cost": round(labor_cost, 2),
                                  "sales": d["sales"]})
         elif labor_pct < 18 and d["sales"] > 2500:
             try:
-                fmt_date = datetime.strptime(date, "%Y-%m-%d").strftime("%-m/%-d/%y")
+                from datetime import datetime as _dt
+                fmt_date = _dt.strptime(date, "%Y-%m-%d").strftime("%-m/%-d/%y")
             except Exception:
                 fmt_date = date
-            real_day_u = datetime.strptime(date, "%Y-%m-%d").strftime("%A") if date else d["shifts"][0]["day"]
+            real_day_u = _dt.strptime(date, "%Y-%m-%d").strftime("%A") if date else d["shifts"][0]["day"]
             understaffed.append({"date": fmt_date, "day": real_day_u,
                                   "labor_pct": round(labor_pct, 1), "sales": d["sales"]})
 
@@ -214,20 +214,26 @@ def analyse_shifts(shifts: list[dict],
         emp    = s["employee"]
         actual = float(s["actual_hours"])
         try:
-            week_num = datetime.strptime(s["date"], "%Y-%m-%d").isocalendar()[1]
+            _d = datetime.strptime(s["date"], "%Y-%m-%d")
+            # Store Monday of the week as key so we can show "Week of Jun 8"
+            week_key = (_d - timedelta(days=_d.weekday())).strftime("%Y-%m-%d")
         except Exception:
-            week_num = 0
+            week_key = s.get("date", "unknown")
         if emp not in weekly_hours:
             weekly_hours[emp] = {}
-        weekly_hours[emp][week_num] = weekly_hours[emp].get(week_num, 0) + actual
+        weekly_hours[emp][week_key] = weekly_hours[emp].get(week_key, 0) + actual
 
     for emp, weeks in weekly_hours.items():
         for wk, hrs in weeks.items():
             if hrs > 40:
+                try:
+                    _wk_label = datetime.strptime(wk, "%Y-%m-%d").strftime("%b %-d")
+                except Exception:
+                    _wk_label = str(wk)
                 overtime_flags.append({
                     "employee": emp,
                     "hours": round(hrs, 1),
-                    "week": f"Week {wk}",
+                    "week": _wk_label,
                     "status": "overtime"
                 })
                 break  # only flag once per employee
@@ -235,10 +241,15 @@ def analyse_shifts(shifts: list[dict],
             # Check if any week is close (37-40h)
             max_hrs = max(weeks.values())
             if 37 <= max_hrs <= 40:
+                _best_wk = max(weeks, key=weeks.get)
+                try:
+                    _wk_label2 = datetime.strptime(_best_wk, "%Y-%m-%d").strftime("%b %-d")
+                except Exception:
+                    _wk_label2 = str(_best_wk)
                 overtime_flags.append({
                     "employee": emp,
                     "hours": round(max_hrs, 1),
-                    "week": f"Week {max(weeks, key=weeks.get)}",
+                    "week": _wk_label2,
                     "status": "near"
                 })
 
@@ -248,7 +259,8 @@ def analyse_shifts(shifts: list[dict],
     for date, d in by_day.items():
         # Derive day name from actual date, not CSV field (CSV may have wrong day)
         try:
-            day_name = datetime.strptime(date, "%Y-%m-%d").strftime("%A")
+            from datetime import datetime as _dt_dow
+            day_name = _dt_dow.strptime(date, "%Y-%m-%d").strftime("%A")
         except Exception:
             day_name = d["shifts"][0]["day"] if d.get("shifts") else None
         if not day_name:
@@ -317,7 +329,13 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
                         owner_name: str = None, restaurant_id: int = None) -> str:
     """Ask Claude to narrate labor findings in a warm, direct consultant tone."""
     greeting = f"{owner_name}," if owner_name else "Hi,"
-    today_labor = datetime.now(ZoneInfo('America/Chicago')).strftime("%B %d, %Y")
+    try:
+        from zoneinfo import ZoneInfo
+        from datetime import datetime as _now_dt
+        today_labor = _now_dt.now(ZoneInfo('America/Chicago')).strftime("%B %d, %Y")
+    except Exception:
+        from datetime import datetime as _now_dt
+        today_labor = _now_dt.now().strftime("%B %d, %Y")
 
     # Guard: if no sales data, return a helpful message instead of nonsense
     total_sales = analysis.get("total_sales", 0)
@@ -385,7 +403,9 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
     # Add upcoming holidays for scheduling context
     try:
         from marketing import get_upcoming_holidays as _get_hols
-        _upcoming = _get_hols(datetime.now(ZoneInfo('America/Chicago')).replace(tzinfo=None))
+        from datetime import datetime as _dt_h
+        from zoneinfo import ZoneInfo as _ZI_h
+        _upcoming = _get_hols(_dt_h.now(_ZI_h('America/Chicago')).replace(tzinfo=None))
         holiday_context = f"\n- Upcoming holidays (affects scheduling): {_upcoming}" if _upcoming else ""
     except Exception:
         holiday_context = ""
@@ -440,7 +460,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  staff_notes: list = None,
                                  labor_target: float = 30.0) -> str:
     """Use Claude to generate an optimized weekly schedule as CSV."""
-    from datetime import timedelta
+    from datetime import datetime, timedelta
 
     # Get unique roles and employees with their typical hours
     emp_hours = analysis.get("employee_hours", {})
@@ -450,7 +470,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     dow = analysis.get("dow_summary", {})
 
     # Next Monday as schedule start
-    today = datetime.now(ZoneInfo('America/Chicago')).replace(tzinfo=None)
+    from zoneinfo import ZoneInfo as _ZI_sched
+    today = datetime.now(_ZI_sched('America/Chicago')).replace(tzinfo=None)
     days_ahead = (7 - today.weekday()) % 7 or 7
     monday = today + timedelta(days=days_ahead)
     week_dates = [(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]

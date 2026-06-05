@@ -918,31 +918,13 @@ function clientUpload(dataType, input) {
 
 <!-- LABOR -->
 <div class="panel {{'active' if not mod_reviews and mod_labor}}" id="panel-labor">
-  {% if not labor.is_live %}
-  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:8px;padding:14px 16px;margin-bottom:16px">
-    <div style="font-size:12px;color:#8a6a00;font-weight:600;margin-bottom:8px">⚠ Showing sample data — upload your shift CSV to see your real numbers</div>
-    <div style="font-size:11px;color:#8a6a00;margin-bottom:10px;line-height:1.6">
-      <strong>How to export:</strong>&nbsp;
-      <span>Toast: Reports → Labor → Timesheets → Export CSV</span> &nbsp;·&nbsp;
-      <span>Square: Dashboard → Team → Timecards → Export</span> &nbsp;·&nbsp;
-      <span>Lightspeed: Reports → Employees → Time Clock → Export</span>
-    </div>
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <label style="display:inline-flex;align-items:center;gap:8px;background:#c84b2f;color:white;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">
-        📂 Upload shifts CSV
-        <input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)">
-      </label>
-      <span id="shifts-inline-result" style="font-size:12px;color:#2d6a4f;display:none"></span>
-    </div>
-  </div>
-  {% else %}
-  <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#2d6a4f;display:flex;align-items:center;gap:8px">
-    <span>✓</span><span><strong>Showing your real data</strong> — upload a new CSV anytime to update.</span>
-    <label style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;background:#c84b2f;color:white;padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">
-      Update CSV <input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+    <div style="font-size:11px;color:var(--ink3)">{% if labor.is_live %}<span style="color:#2d6a4f;font-weight:600">✓ Live data</span> — upload a new CSV anytime to update{% else %}<span style="color:#8a6a00;font-weight:600">Sample data</span> — upload your shift CSV to see real numbers{% endif %}</div>
+    <label style="display:inline-flex;align-items:center;gap:6px;background:#c84b2f;color:white;padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">
+      {% if labor.is_live %}Update CSV{% else %}📂 Upload shifts CSV{% endif %}
+      <input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)">
     </label>
   </div>
-  {% endif %}
 
   <!-- Hero metric — dollar gap -->
   <div id="labor-gap-banner" style="background:var(--ink);border-radius:var(--r);padding:20px 24px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
@@ -996,7 +978,7 @@ function clientUpload(dataType, input) {
   {% set lt = labor_target|default(30.0) %}
   {% set lb_label = 'Excellent' if lp <= 25 else ('Strong' if lp <= lt else ('On Track' if lp <= lt + 3 else ('Above Target' if lp <= lt + 8 else 'Needs Attention'))) %}
   {% set lb_color = '#2d6a4f' if lp <= 25 else ('#6fcf97' if lp <= lt else ('#ef9f27' if lp <= lt + 3 else ('#e07040' if lp <= lt + 8 else '#c0392b'))) %}
-  <div class="card" id="labor-bench-card" style="padding:14px 16px;margin-bottom:14px;{% if lp > lt + 8 %}border-left:3px solid #c0392b;background:linear-gradient(to right,#f5d5d5,var(--paper));{% elif lp <= lt %}border-left:3px solid #2d6a4f;background:linear-gradient(to right,#d5ede0,var(--paper));{% endif %}">
+  <div class="card" id="labor-bench-card" style="padding:14px 16px;margin-bottom:14px;border-left:3px solid {{lb_color}};{% if lp > lt + 8 %}background:linear-gradient(to right,#f5d5d5,white);{% elif lp > lt + 3 %}background:linear-gradient(to right,#fdf5e0,white);{% elif lp > lt %}background:linear-gradient(to right,#fff8e6,white);{% elif lp <= 25 %}background:linear-gradient(to right,#d5ede0,white);{% else %}background:linear-gradient(to right,#e8f4ee,white);{% endif %}">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink)">Labor % vs industry benchmark</div>
       <div style="display:flex;align-items:center;gap:8px">
@@ -1060,7 +1042,7 @@ function clientUpload(dataType, input) {
       {% if labor.overtime_risk %}
       <div class="slabel" style="margin-top:14px">Overtime alerts</div>
       <div class="card"><table class="tbl">
-        <thead><tr><th>Employee</th><th>Hours that week</th><th>Week</th><th>Status</th></tr></thead>
+        <thead><tr><th>Employee</th><th>Hours that week</th><th>Week of</th><th>Status</th></tr></thead>
         <tbody>
         {% for emp in labor.overtime_risk %}
         <tr>
@@ -2438,7 +2420,7 @@ function loadLaborTrend(){
     for(var i=0;i<data.weeks.length;i++){
       var w=data.weeks[i];
       var h=Math.max(6,Math.round((w.pct/maxPct)*72));
-      var col=w.pct>32?'var(--red)':w.pct>=28?'#ef9f27':'#6fcf97';
+      var col=w.pct>_laborTarget?'var(--red)':w.pct>=(_laborTarget-3)?'#ef9f27':'#6fcf97';
       html+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px">';
       html+='<span style="font-size:10px;color:'+col+';font-weight:600">'+w.pct+'%</span>';
       html+='<div style="width:80%;height:'+h+'px;background:'+col+';border-radius:3px 3px 0 0"></div>';
@@ -5019,6 +5001,33 @@ def save_draft(review_id, current_user):
     conn.commit(); conn.close()
     return jsonify(ok=True)
 
+@app.route("/api/labor-trend")
+@login_required
+def labor_trend_api(current_user):
+    """Return labor % history for the trend chart."""
+    try:
+        from models import get_labor_history
+        history = get_labor_history(current_user["restaurant_id"], limit=8)
+        if not history:
+            return jsonify(weeks=[])
+        weeks = []
+        for h in reversed(history):  # oldest first for chart
+            try:
+                from datetime import datetime as _dt_lt
+                start = _dt_lt.strptime(h["period_start"], "%Y-%m-%d")
+                label = start.strftime("%-m/%-d")
+            except Exception:
+                label = h.get("period_start", "")[:5]
+            weeks.append({
+                "label": label,
+                "pct": round(h["labor_pct"], 1),
+                "labor": h["total_labor"],
+                "sales": h["total_sales"],
+            })
+        return jsonify(weeks=weeks)
+    except Exception as e:
+        return jsonify(weeks=[], error=str(e))
+
 @app.route("/api/labor-gap")
 @login_required
 def labor_gap_api(current_user):
@@ -5771,6 +5780,31 @@ Sparkling Water,Beverage,case,6,9,22.00,0.8,6,0.0"""
                 print("  Ryan's rich inventory CSV seeded.\n")
         except Exception as _ryan_csv_e:
                 print(f"  Ryan inventory CSV seed error: {_ryan_csv_e}")
+
+        # Seed 8 weeks of labor history for the trend chart
+        try:
+            from models import save_labor_snapshot as _sls_ryan, get_labor_history as _glh_ryan
+            from datetime import datetime as _dt_ls, timedelta as _td_ls
+            _now_ls = _dt_ls.now()
+            # Only seed if no history exists yet
+            if not _glh_ryan(ryan_rid, limit=1):
+                _labor_history = [
+                    (-49, 34.2, 42800, 125200),  # w8 — high
+                    (-42, 33.1, 44100, 133200),  # w7
+                    (-35, 31.8, 45600, 143400),  # w6 — improving
+                    (-28, 32.5, 43200, 132900),  # w5 — slight bump
+                    (-21, 31.2, 46800, 150000),  # w4
+                    (-14, 30.8, 47200, 153200),  # w3 — near target
+                    (-7,  30.9, 45900, 148500),  # w2
+                    (0,   30.9, 45900, 148500),  # w1 current
+                ]
+                for _offset, _pct, _labor, _sales in _labor_history:
+                    _start = (_now_ls + _td_ls(days=_offset)).strftime("%Y-%m-%d")
+                    _end   = (_now_ls + _td_ls(days=_offset + 13)).strftime("%Y-%m-%d")
+                    _sls_ryan(ryan_rid, _start, _end, _pct, _labor, _sales)
+                print("  Ryan's labor history seeded (8 weeks).\n")
+        except Exception as _ryan_ls_e:
+            print(f"  Ryan labor history seed error: {_ryan_ls_e}")
     except Exception as _do_seed_e:
         print(f"  Ryan full seed error: {_do_seed_e}")
 
