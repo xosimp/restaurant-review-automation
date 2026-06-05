@@ -1107,7 +1107,8 @@ function clientUpload(dataType, input) {
         {% for emp in labor.overtime_risk %}
         {% set two_wk = labor.employee_hours.get(emp.employee, {}).get("actual", 0)|round(1) %}
         {% set emp_constraint = labor.staff_constraints.get(emp.employee.lower(), '') %}
-        {% set _ec = emp_constraint.lower() %}
+        {% if not emp_constraint %}{% for ckey, cval in labor.staff_constraints.items() %}{% if emp.employee.lower().split(' ')[0] in ckey or ckey.split(' ')[0] in emp.employee.lower() %}{% set emp_constraint = cval %}{% endif %}{% endfor %}{% endif %}
+        {% set _ec = emp_constraint.lower() if emp_constraint else '' %}
         {% set has_ot_allowance = emp_constraint and ('overtime' in _ec or 'extra hours' in _ec or ' ot ' in (' ' + _ec + ' ') or _ec.startswith('ot ') or _ec.endswith(' ot')) %}
         <tr style="{% if emp.status == "overtime" and emp.hours >= 55 and not has_ot_allowance %}background:linear-gradient(to right,rgba(192,57,43,0.08),white);{% elif has_ot_allowance %}background:linear-gradient(to right,rgba(45,106,79,0.06),white);{% endif %}">
           <td style="font-weight:500">{{emp.employee}}{% if has_ot_allowance %} <span style="font-size:9px;background:#eaf4ee;color:#2d6a4f;padding:1px 5px;border-radius:8px;font-weight:600;vertical-align:middle">constraint</span>{% endif %}</td>
