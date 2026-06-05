@@ -1409,10 +1409,16 @@ function clientUpload(dataType, input) {
     <span id="sms-over" style="color:var(--red);display:none"> — over limit, trim before sending</span>
   </div>
   <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
-    <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').textContent).then(()=>toast('Copied'))">Copy</button>
+    <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').textContent).then(function(){toast('Copied');})">Copy</button>
     <button class="btn-secondary" onclick="genContent()">Regenerate</button>
     <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none">Post to Instagram ↗</button>
     <button class="btn-primary" id="fb-post-btn" onclick="postToFacebook()" style="display:none;background:#1877f2">Post to Facebook ↗</button>
+  </div>
+  <div style="margin-top:10px;font-size:11px;color:var(--ink3)" id="recent-topics-row" style="display:none">
+    <span style="font-weight:600;color:var(--ink)">Recent topics:</span> <span id="recent-topics-list">Loading…</span>
+  </div>
+  <div style="margin-top:6px;font-size:11px;color:var(--ink3);padding:6px 10px;background:var(--paper2);border-radius:6px;display:inline-block">
+    📊 Restaurants that post 3× per week see <strong>2× more Google profile views</strong> — use the content calendar below to stay consistent.
   </div>
 
   <div style="margin-top:24px;background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
@@ -1987,7 +1993,7 @@ function switchTab(n,btn){
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor'){renderBars();loadLaborTrend();}
   if(n==='account')loadBillingInfo();
-  if(n==='marketing'&&!mktLoaded)loadMktInsight();
+  if(n==='marketing'&&!mktLoaded){loadMktInsight();loadRecentTopics();}
   history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
 }
@@ -2273,6 +2279,16 @@ function renderBars(){
   }
 }
 var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false;
+function loadRecentTopics(){
+  fetch('/api/recent-topics').then(function(r){return r.json();}).then(function(d){
+    var row=document.getElementById('recent-topics-row');
+    var list=document.getElementById('recent-topics-list');
+    if(d.topics&&d.topics.length&&row&&list){
+      list.textContent=d.topics.join(' · ');
+      row.style.display='block';
+    }
+  }).catch(function(){});
+}
 function loadMktInsight(){
   mktLoaded=true;
   var el=document.getElementById('mkt-insight');
@@ -4967,6 +4983,17 @@ def review_insight_api(current_user):
         import traceback
         print(f"[review-insight ERROR] {_re}\n{traceback.format_exc()}")
         return jsonify(insight="Analysis unavailable — check back shortly.", error=str(_re)), 500
+
+@app.route("/api/recent-topics")
+@login_required
+def recent_topics_api(current_user):
+    try:
+        from marketing import get_recent_content
+        recent = get_recent_content(current_user["restaurant_id"], limit=8)
+        topics = [r["topic"] for r in recent if r.get("topic")][:8]
+        return jsonify(topics=topics)
+    except Exception as e:
+        return jsonify(topics=[])
 
 @app.route("/api/mkt-insight")
 @login_required
