@@ -1473,66 +1473,6 @@ def inv_trend_api(current_user):
     except Exception as e:
         return jsonify(weeks=[], error=str(e))
 
-@admin_bp.route("/api/labor-trend")
-@login_required
-def labor_trend_api(current_user):
-    """Return labor % for the last 4 weeks for trend chart."""
-    try:
-        from labor import load_shifts_for_restaurant
-        from models import get_restaurant
-        restaurant = get_restaurant(current_user["restaurant_id"])
-        target = float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0
-        shifts = load_shifts_for_restaurant(current_user["restaurant_id"])
-        if not shifts:
-            return jsonify(weeks=[])
-
-        from datetime import datetime, timedelta
-        from collections import defaultdict
-
-        # Find the latest date in the data and work backwards 4 weeks
-        dates = []
-        for s in shifts:
-            try:
-                d = datetime.strptime(str(s.get("date",""))[:10], "%Y-%m-%d").date()
-                dates.append(d)
-            except Exception:
-                continue
-        if not dates:
-            return jsonify(weeks=[])
-
-        latest = max(dates)
-        # Align to Monday of latest week
-        latest_monday = latest - timedelta(days=latest.weekday())
-
-        weeks = []
-        for w in range(3, -1, -1):
-            week_start = latest_monday - timedelta(weeks=w)
-            week_end   = week_start + timedelta(days=6)
-            sales_total = 0
-            labor_total = 0
-            seen_dates = set()
-            for s in shifts:
-                try:
-                    d = datetime.strptime(str(s.get("date",""))[:10], "%Y-%m-%d").date()
-                    if week_start <= d <= week_end:
-                        # Only count sales once per date
-                        if d not in seen_dates:
-                            sales_total += float(s.get("sales_that_day") or 0)
-                            seen_dates.add(d)
-                        hours = float(s.get("actual_hours") or s.get("scheduled_hours") or 0)
-                        rate = float(restaurant.hourly_rate or 26.0) if restaurant else 26.0
-                        labor_total += hours * rate
-                except Exception:
-                    continue
-            pct = round(labor_total / sales_total * 100, 1) if sales_total > 0 else 0
-            label = f"Wk {4-w}"
-            weeks.append({"label": label, "pct": pct, "target": target})
-
-        return jsonify(weeks=weeks)
-    except Exception as e:
-        print(f"Labor trend error: {e}")
-        return jsonify(weeks=[])
-
 @admin_bp.route("/admin/upload-menu-pdf/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def upload_menu_pdf(restaurant_id, current_user):
