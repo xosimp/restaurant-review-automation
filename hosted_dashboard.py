@@ -1107,7 +1107,8 @@ function clientUpload(dataType, input) {
         {% for emp in labor.overtime_risk %}
         {% set two_wk = labor.employee_hours.get(emp.employee, {}).get("actual", 0)|round(1) %}
         {% set emp_constraint = labor.staff_constraints.get(emp.employee.lower(), '') %}
-        {% set has_ot_allowance = emp_constraint and ('overtime' in emp_constraint.lower() or 'ot' in emp_constraint.lower() or 'extra hours' in emp_constraint.lower()) %}
+        {% set _ec = emp_constraint.lower() %}
+        {% set has_ot_allowance = emp_constraint and ('overtime' in _ec or 'extra hours' in _ec or ' ot ' in (' ' + _ec + ' ') or _ec.startswith('ot ') or _ec.endswith(' ot')) %}
         <tr style="{% if emp.status == "overtime" and emp.hours >= 55 and not has_ot_allowance %}background:linear-gradient(to right,rgba(192,57,43,0.08),white);{% elif has_ot_allowance %}background:linear-gradient(to right,rgba(45,106,79,0.06),white);{% endif %}">
           <td style="font-weight:500">{{emp.employee}}{% if has_ot_allowance %} <span style="font-size:9px;background:#eaf4ee;color:#2d6a4f;padding:1px 5px;border-radius:8px;font-weight:600;vertical-align:middle">constraint</span>{% endif %}</td>
           <td style="font-size:11px;color:var(--ink3)">{{emp.week}}</td>
@@ -1165,7 +1166,8 @@ function clientUpload(dataType, input) {
 
       <!-- Left: 8-week trend -->
       <div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">8-week trend</div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:4px">8-week trend</div>
+        <div style="font-size:10px;color:transparent;margin-bottom:8px;user-select:none">placeholder</div>
         <div id="labor-trend-bars" style="display:flex;align-items:flex-end;gap:6px;height:120px;">
           <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading trend data…</div>
         </div>
