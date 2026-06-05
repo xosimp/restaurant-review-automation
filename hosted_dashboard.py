@@ -1109,6 +1109,11 @@ function clientUpload(dataType, input) {
           {% endfor %}
           </tbody>
         </table>
+        {% if labor.understaffed_days %}
+        <div style="padding:8px 12px 10px;font-size:11px;color:#7a4f00;background:rgba(239,159,39,0.08);border-top:1px solid rgba(239,159,39,0.2)">
+          💡 Consider scheduling 1–2 additional staff on {% for d in labor.understaffed_days %}{{d.day}}{% if not loop.last %}, {% endif %}{% endfor %} — strong sales on lean staffing suggests missed revenue opportunity.
+        </div>
+        {% endif %}
       </div>
     </div>
   </div>
