@@ -1070,7 +1070,7 @@ function clientUpload(dataType, input) {
     <div style="display:flex;flex-direction:column;">
       <div class="slabel">Labor % by day of week</div>
       <div class="card" style="padding:16px">
-        <div class="day-bars" id="day-bars" style="height:140px;display:flex;align-items:flex-end;gap:4px"></div>
+        <div class="day-bars" id="day-bars" style="height:110px;display:flex;align-items:flex-end;gap:4px"></div>
         <div style="display:flex;justify-content:space-around;font-size:9px;color:var(--ink3);margin-top:3px">
           {% for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] %}<span>{{d}}</span>{% endfor %}
         </div>
@@ -1084,8 +1084,7 @@ function clientUpload(dataType, input) {
       <div class="slabel" style="margin-top:auto;padding-top:16px">Understaffed days</div>
       <div class="card" style="flex:1;position:relative;overflow:hidden;padding:0">
         {% set row_count = labor.understaffed_days|length %}
-        {% set gradient_h = [row_count * 44 + 42, 999]|min %}
-        <div style="position:absolute;bottom:0;left:0;right:0;height:{{gradient_h}}px;background:linear-gradient(to top,#c84b2f 0%,#ef9f27 60%,rgba(239,159,39,0.08) 100%);pointer-events:none;z-index:0"></div>
+        <div style="position:absolute;bottom:0;left:0;right:0;top:0;background:linear-gradient(to top,rgba(200,75,47,0.18) 0%,rgba(239,159,39,0.10) {{[row_count * 18 + 12, 55]|min}}%,rgba(239,159,39,0.0) 70%);pointer-events:none;z-index:0"></div>
         <table class="tbl" style="position:relative;z-index:1">
           <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor %</th></tr></thead>
           <tbody>
