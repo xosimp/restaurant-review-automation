@@ -1071,7 +1071,7 @@ function clientUpload(dataType, input) {
       {% endif %}
     </div>
 
-    <div>
+    <div style="display:flex;flex-direction:column;">
       <div class="slabel">Labor % by day of week</div>
       <div class="card" style="padding:16px">
         <div class="day-bars" id="day-bars"></div>

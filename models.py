@@ -889,7 +889,7 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
     rows = conn.execute("""
         SELECT period_start, period_end, labor_pct, total_labor, total_sales
         FROM labor_history WHERE restaurant_id=?
-        ORDER BY saved_at DESC LIMIT ?
+        ORDER BY period_start DESC LIMIT ?
     """, (restaurant_id, limit)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
