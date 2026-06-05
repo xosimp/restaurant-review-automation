@@ -1042,13 +1042,13 @@ function clientUpload(dataType, input) {
       {% if labor.overtime_risk %}
       <div class="slabel" style="margin-top:14px">Overtime alerts</div>
       <div class="card"><table class="tbl">
-        <thead><tr><th>Employee</th><th>Hours that week</th><th>Week of</th><th>Status</th></tr></thead>
+        <thead><tr><th>Employee</th><th>Week of</th><th>Hours that week</th><th>Status</th></tr></thead>
         <tbody>
         {% for emp in labor.overtime_risk %}
         <tr>
           <td style="font-weight:500">{{emp.employee}}</td>
-          <td>{{emp.hours}}h</td>
           <td style="font-size:11px;color:var(--ink3)">{{emp.week}}</td>
+          <td>{{emp.hours}}h</td>
           <td>
             {% if emp.status == "overtime" %}
               <span class="pill pill-red">Overtime (40h+) — review pay</span>
@@ -5649,6 +5649,23 @@ def _do_seed_ryan():
         _conn_r.close()
         print("  Ryan's 32 reviews seeded with categories and week spread.\n")
 
+        # Seed labor history FIRST (no API calls, instant)
+        try:
+            from models import save_labor_snapshot as _sls_r2, get_labor_history as _glh_r2
+            if not _glh_r2(ryan_rid, limit=1):
+                _now_r2 = datetime.now()
+                _lh_r2 = [(-49,34.2,42800,125200),(-42,33.1,44100,133200),(-35,31.8,45600,143400),
+                           (-28,32.5,43200,132900),(-21,31.2,46800,150000),(-14,30.8,47200,153200),
+                           (-7,30.9,45900,148500),(0,30.9,45900,148500)]
+                for _off_r2,_pct_r2,_lab_r2,_sal_r2 in _lh_r2:
+                    _sls_r2(ryan_rid,
+                        (_now_r2+timedelta(days=_off_r2)).strftime("%Y-%m-%d"),
+                        (_now_r2+timedelta(days=_off_r2+13)).strftime("%Y-%m-%d"),
+                        _pct_r2, _lab_r2, _sal_r2)
+                print("  Ryan labor history seeded.\n")
+        except Exception as _lh_e2:
+            print(f"  Ryan labor history seed error: {_lh_e2}")
+
         # Draft responses — hardcoded on Railway (fast), real API locally (quality)
         try:
             _on_railway = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
@@ -5781,23 +5798,7 @@ Sparkling Water,Beverage,case,6,9,22.00,0.8,6,0.0"""
         except Exception as _ryan_csv_e:
                 print(f"  Ryan inventory CSV seed error: {_ryan_csv_e}")
 
-        # Seed labor history for trend chart — runs here where ryan_rid is available
-        try:
-            from models import save_labor_snapshot as _sls_r2, get_labor_history as _glh_r2
-            from datetime import datetime as _dt_r2, timedelta as _td_r2
-            if not _glh_r2(ryan_rid, limit=1):
-                _now_r2 = _dt_r2.now()
-                _lh_r2 = [(-49,34.2,42800,125200),(-42,33.1,44100,133200),(-35,31.8,45600,143400),
-                           (-28,32.5,43200,132900),(-21,31.2,46800,150000),(-14,30.8,47200,153200),
-                           (-7,30.9,45900,148500),(0,30.9,45900,148500)]
-                for _off_r2,_pct_r2,_lab_r2,_sal_r2 in _lh_r2:
-                    _sls_r2(ryan_rid,
-                        (_now_r2+_td_r2(days=_off_r2)).strftime("%Y-%m-%d"),
-                        (_now_r2+_td_r2(days=_off_r2+13)).strftime("%Y-%m-%d"),
-                        _pct_r2, _lab_r2, _sal_r2)
-                print("  Ryan labor history seeded (8 weeks).\n")
-        except Exception as _lh_e2:
-            print(f"  Ryan labor history seed error: {_lh_e2}")
+
     except Exception as _do_seed_e:
         print(f"  Ryan full seed error: {_do_seed_e}")
 
