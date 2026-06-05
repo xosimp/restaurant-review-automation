@@ -384,7 +384,7 @@ Upcoming holidays/events in the next 30 days: {upcoming_holidays if upcoming_hol
 Recently generated content (avoid repeating these): {recent_topics}
 
 Return ONLY valid JSON — no markdown fences. Array of 7 objects with:
-{{"day": "Monday", "platform": "Instagram|Email|Google|SMS", "angle": "one sentence topic idea", "type": "instagram_post|weekly_email|google_promo|happy_hour|loyalty_nudge"}}
+{{"day": "Monday", "platform": "Instagram & FB|Email|Google|SMS", "angle": "one sentence topic idea", "type": "instagram_post|weekly_email|google_promo|happy_hour|loyalty_nudge"}}
 
 Rules:
 - Include at least one SMS/loyalty_nudge idea per week to re-engage guests
