@@ -1388,7 +1388,8 @@ function clientUpload(dataType, input) {
     <input class="topic-input" id="mktopic" placeholder="Topic or occasion — e.g. new spring menu, Sunday brunch special…">
     <button class="btn-primary" onclick="genContent()">Generate ↗</button>
   </div>
-  <div class="output-box" id="mkoutput" style="color:var(--ink3);font-style:italic">Select a type and click Generate.</div>
+  <div class="output-box" id="mkoutput" contenteditable="true" style="color:var(--ink3);font-style:italic;outline:none;cursor:text" title="Click to edit before posting">Select a type and click Generate.</div>
+  <div style="font-size:10px;color:var(--ink3);margin-top:4px" id="output-hint" style="display:none">✏ Click the output above to edit — trim to the version you want before copying or posting</div>
   <div id="sms-counter" style="display:none;font-size:11px;margin-top:4px;color:var(--ink3)">
     <span id="sms-char-count">0</span>/160 characters
     <span id="sms-over" style="color:var(--red);display:none"> — over limit, trim before sending</span>
@@ -2439,9 +2440,12 @@ function genContent(fromCalendar){
       box.style.fontStyle='normal';
       box.style.color='var(--ink2)';
       box.textContent=d.content||'Generation failed — try again.';
+      box.style.fontStyle='normal';box.style.color='var(--ink)';
+      var hint=document.getElementById('output-hint');if(hint)hint.style.display='block';
       var igBtn=document.getElementById('ig-post-btn');
       var fbBtn=document.getElementById('fb-post-btn');
       if(_igConnected){if(igBtn)igBtn.style.display='inline-block';if(fbBtn)fbBtn.style.display='inline-block';}
+      loadRecentTopics();
       var selBtn=document.querySelector('.ct-btn.selected');
       var isSms=selBtn&&selBtn.dataset&&selBtn.dataset.type==='loyalty_nudge';
       var counter=document.getElementById('sms-counter');
