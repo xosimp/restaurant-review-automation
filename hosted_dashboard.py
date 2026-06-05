@@ -1007,7 +1007,7 @@ function clientUpload(dataType, input) {
   <!-- Labor % vs industry benchmark bar -->
   {% set lp = labor.overall_labor_pct %}
   {% set lt = labor_target|default(30.0) %}
-  {% set lb_label = 'Excellent' if lp <= 25 else ('Strong' if lp <= lt else ('On Track' if lp <= lt + 3 else ('Above Target' if lp <= lt + 8 else 'Needs Attention'))) %}
+  {% set lb_label = 'Excellent' if lp <= lt - 3 else ('On Target' if lp <= lt else ('Slightly Over' if lp <= lt + 3 else ('Above Target' if lp <= lt + 8 else 'Needs Attention'))) %}
   {% set lb_color = '#2d6a4f' if lp <= 25 else ('#6fcf97' if lp <= lt else ('#ef9f27' if lp <= lt + 3 else ('#e07040' if lp <= lt + 8 else '#c0392b'))) %}
   <div class="card" id="labor-bench-card" style="padding:14px 16px;margin-bottom:14px;border-left:3px solid {{lb_color}};{% if lp > lt + 8 %}background:linear-gradient(to right,#f5d5d5,white);{% elif lp > lt + 3 %}background:linear-gradient(to right,#fdf5e0,white);{% elif lp > lt %}background:linear-gradient(to right,#fff8e6,white);{% elif lp <= 25 %}background:linear-gradient(to right,#d5ede0,white);{% else %}background:linear-gradient(to right,#e8f4ee,white);{% endif %}">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
