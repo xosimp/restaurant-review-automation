@@ -1015,6 +1015,32 @@ function clientUpload(dataType, input) {
     </div>
   </div>
 
+  <!-- Role cost breakdown -->
+  {% if labor.role_summary %}
+  <div class="card" style="padding:14px 16px;margin-bottom:14px;">
+    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink);margin-bottom:12px">Labor cost by role</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+    {% set max_role_pct = labor.role_summary.values()|map(attribute='labor_pct')|max %}
+    {% for role, data in labor.role_summary|dictsort(by='value', attribute='labor_pct', reverse=True) %}
+    {% set bar_w = ((data.labor_pct / max_role_pct) * 100)|int if max_role_pct > 0 else 0 %}
+    {% set role_color = '#c0392b' if data.labor_pct > (labor_target|default(30.0)) else ('#ef9f27' if data.labor_pct > (labor_target|default(30.0) - 5) else '#2d6a4f') %}
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="width:90px;font-size:11px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{role}}</div>
+      <div style="flex:1;position:relative;height:8px;background:var(--paper3);border-radius:4px;overflow:hidden">
+        <div style="position:absolute;left:0;top:0;height:100%;width:{{bar_w}}%;background:{{role_color}};border-radius:4px;transition:width .4s"></div>
+      </div>
+      <div style="display:flex;gap:8px;font-size:11px;min-width:160px">
+        <span style="color:{{role_color}};font-weight:700">{{data.labor_pct}}%</span>
+        <span style="color:var(--ink3)">{{data.hours}}h</span>
+        <span style="color:var(--ink3)">{{data.headcount}} staff</span>
+        <span style="color:var(--ink3)">${{data.labor_cost|int|format_num}}</span>
+      </div>
+    </div>
+    {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   <!-- AI insight -->
   <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
