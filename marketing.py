@@ -344,9 +344,13 @@ def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
     from datetime import datetime as _dt, timedelta as _td
     from zoneinfo import ZoneInfo as _ZI
     now = _dt.now(_ZI('America/Chicago')).replace(tzinfo=None)
-    # Always start from Monday of the current week (Mon-Sun calendar)
+    # Start from current Monday if Mon-Wed, next Monday if Thu-Sun
     days_since_monday = now.weekday()  # Monday=0 ... Sunday=6
-    start = now - _td(days=days_since_monday)
+    if days_since_monday >= 3:  # Thu, Fri, Sat, Sun — show next week
+        days_to_next_monday = 7 - days_since_monday
+        start = now + _td(days=days_to_next_monday)
+    else:  # Mon, Tue, Wed — show current week
+        start = now - _td(days=days_since_monday)
     days_map = {}
     for i in range(7):
         d = start + _td(days=i)
