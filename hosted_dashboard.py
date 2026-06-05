@@ -2433,9 +2433,9 @@ function genContent(fromCalendar){
     });
 }
 function downloadCal(){
-  const ideas = window._calIdeas;
+  var ideas = window._calIdeas;
   if(!ideas || !ideas.length){ toast('Generate the calendar first'); return; }
-  const rows = [['Day','Platform','Content Idea','Type']];
+  var rows = [['Day','Platform','Content Idea','Type']];
   ideas.forEach(function(i){
     rows.push([
       (i.day||'').replace(/,/g,' '),
@@ -2444,10 +2444,10 @@ function downloadCal(){
       (i.type||'').replace(/,/g,' ')
     ]);
   });
-  const csv = rows.map(function(r){ return r.map(function(c){ return '"'+c+'"'; }).join(','); }).join(String.fromCharCode(10));
-  const blob = new Blob([csv], {type:'text/csv'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
+  var csv = rows.map(function(r){ return r.map(function(cel){ return '"'+cel+'"'; }).join(','); }).join(String.fromCharCode(10));
+  var blob = new Blob([csv], {type:'text/csv'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
   a.href = url;
   a.download = 'content_calendar.csv';
   a.click();
@@ -2484,7 +2484,7 @@ function loadCal(){
     g.innerHTML=html;
   }).catch(function(){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate — try again.</div>';});}
 function generateFromCalIdx(idx) {
-  const i = window._calIdeas && window._calIdeas[idx];
+  var i = window._calIdeas && window._calIdeas[idx];
   if (!i) return;
   generateFromCal(i.type || 'instagram_post', i.angle || '');
 }
@@ -2519,10 +2519,10 @@ function loadBillingInfo() {
       document.getElementById('billing-no-sub').style.display='block'; return;
     }
     document.getElementById('billing-content').style.display='block';
-    const statusMap={active:'Active',trialing:'Trial period — first charge on day 31',past_due:'⚠ Payment past due',canceled:'Canceled'};
+    var statusMap={active:'Active',trialing:'Trial period — first charge on day 31',past_due:'⚠ Payment past due',canceled:'Canceled'};
     document.getElementById('billing-status').textContent=statusMap[d.status]||d.status;
     // Prominent next charge
-    const nextDate = d.trial_end ? 'Trial ends '+d.trial_end : (d.next_date||'—');
+    var nextDate = d.trial_end ? 'Trial ends '+d.trial_end : (d.next_date||'—');
     document.getElementById('billing-next-prominent').textContent=nextDate;
     document.getElementById('billing-amount-prominent').textContent=d.amount||'—';
     document.getElementById('billing-pm').textContent=d.payment_method||'—';
@@ -2667,15 +2667,15 @@ function checkTabParam(){
 }
 window.addEventListener('load',checkTabParam);
 function dismissWelcome(){
-  const b=document.getElementById('welcome-banner');
+  var b=document.getElementById('welcome-banner');
   if(b) b.style.display='none';
   fetch('/api/dismiss-welcome', {method:'POST'});
 }
 function changePassword(){
-  const cur=document.getElementById('pw-current').value;
-  const nw=document.getElementById('pw-new').value;
-  const conf=document.getElementById('pw-confirm').value;
-  const st=document.getElementById('pw-status');
+  var cur=document.getElementById('pw-current').value;
+  var nw=document.getElementById('pw-new').value;
+  var conf=document.getElementById('pw-confirm').value;
+  var st=document.getElementById('pw-status');
   if(nw!==conf){st.style.display='block';st.style.color='var(--red)';st.textContent='Passwords do not match';return}
   if(nw.length<8){st.style.display='block';st.style.color='var(--red)';st.textContent='Password must be at least 8 characters';return}
   fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(r=>r.json()).then(d=>{st.style.display='block';if(d.ok){st.style.color='var(--green)';st.textContent='Password updated';document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-confirm').value='';}else{st.style.color='var(--red)';st.textContent=d.error||'Update failed'}})}
@@ -3129,8 +3129,8 @@ let reviewsLive = {{ 'true' if restaurant.gmb_refresh_token else 'false' }};
         const newPending = d.pending || 0;
         const newUrgent = d.urgent || 0;
         if(newTotal > _knownTotal || newPending > _knownPending) {
-          const added = newTotal - _knownTotal;
-          const banner = document.getElementById('new-reviews-banner');
+          var added = newTotal - _knownTotal;
+          var banner = document.getElementById('new-reviews-banner');
           const txt = document.getElementById('new-reviews-text');
           if(banner && txt) {
             const urgentNote = newUrgent > 0 ? ` (${newUrgent} urgent ⚠)` : '';
