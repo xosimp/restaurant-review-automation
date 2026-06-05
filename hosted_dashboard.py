@@ -950,6 +950,11 @@ function clientUpload(dataType, input) {
         <div>
           <span id="gap-current-pct" style="font-family:'DM Serif Display',serif;font-size:48px;color:var(--paper);line-height:1">{{labor.overall_labor_pct}}%</span>
           <span style="font-size:13px;color:var(--ink3);margin-left:6px">current</span>
+          {% if labor.trend_delta is not none and labor.trend_delta != 0 %}
+          <span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:12px;margin-left:8px;{% if labor.trend_delta > 0 %}background:rgba(192,57,43,0.25);color:#ff9b8a{% else %}background:rgba(45,106,79,0.25);color:#6fcf97{% endif %}">
+            {% if labor.trend_delta > 0 %}↑{% else %}↓{% endif %} {{labor.trend_delta|abs|round(1)}}% vs last period
+          </span>
+          {% endif %}
         </div>
         <div style="color:var(--ink3);font-size:20px">→</div>
         <div>
@@ -4553,6 +4558,16 @@ def index(current_user):
     sentiment_trend    = get_sentiment_trend(rid, weeks=8)
     try:
         labor = analyse_shifts_for_restaurant(rid)
+        # Add period-over-period delta
+        try:
+            from models import get_labor_history as _glh_delta
+            _hist = _glh_delta(rid, limit=2)
+            if len(_hist) >= 2:
+                labor['trend_delta'] = round(labor['overall_labor_pct'] - _hist[1]['labor_pct'], 1)
+            else:
+                labor['trend_delta'] = None
+        except Exception:
+            labor['trend_delta'] = None
     except Exception as e:
         print(f"Labor analysis error: {e}")
         labor = {"is_live":False,"total_labor_cost":0,"total_sales":0,"overall_labor_pct":0,
