@@ -962,7 +962,7 @@ function clientUpload(dataType, input) {
         </div>
         <div style="color:var(--ink3);font-size:20px">→</div>
         <div>
-          <span style="font-family:'DM Serif Display',serif;font-size:32px;color:#6fcf97;line-height:1">30%</span>
+          <span style="font-family:'DM Serif Display',serif;font-size:32px;color:#6fcf97;line-height:1">{{labor_target|default(30.0)}}%</span>
           <span style="font-size:13px;color:var(--ink3);margin-left:4px">target</span>
         </div>
       </div>
@@ -986,9 +986,40 @@ function clientUpload(dataType, input) {
   <div class="stat-row">
     <div class="stat"><div class="stat-n">${{labor.total_sales|int|format_num}}</div><div class="stat-l">Revenue (2 wks)</div></div>
     <div class="stat {{"hi" if labor.overall_labor_pct > (labor.labor_target|default(30.0)) + 5 else ("warn" if labor.overall_labor_pct > (labor.labor_target|default(30.0)) else "ok")}}"><div class="stat-n">${{labor.total_labor_cost|int|format_num}}</div><div class="stat-l">Labor cost (2 wks)</div></div>
-    <div class="stat {{'hi' if labor.overall_labor_pct>32 else 'ok'}}"><div class="stat-n">{{labor.overall_labor_pct}}%</div><div class="stat-l">Labor %</div></div>
-    <div class="stat hi"><div class="stat-n">{{labor.overstaffed_days|length}}</div><div class="stat-l">Overstaffed days</div></div>
+    <div class="stat {{'hi' if labor.overall_labor_pct > (labor_target|default(30.0)) + 3 else ('warn' if labor.overall_labor_pct > (labor_target|default(30.0)) else 'ok')}}"><div class="stat-n">{{labor.overall_labor_pct}}%</div><div class="stat-l">Labor %</div></div>
+    <div class="stat {{"hi" if labor.overstaffed_days|length > 0 else "ok"}}"><div class="stat-n">{{labor.overstaffed_days|length}}</div><div class="stat-l">Overstaffed days</div></div>
     <div class="stat {{"hi" if labor.overtime_risk|length > 0 else "ok"}}"><div class="stat-n">{{labor.overtime_risk|length}}</div><div class="stat-l">Overtime risk</div></div>
+  </div>
+
+  <!-- Labor % vs industry benchmark bar -->
+  {% set lp = labor.overall_labor_pct %}
+  {% set lt = labor_target|default(30.0) %}
+  {% set lb_label = 'Excellent' if lp <= 25 else ('Strong' if lp <= lt else ('On Track' if lp <= lt + 3 else ('Above Target' if lp <= lt + 8 else 'Needs Attention'))) %}
+  {% set lb_color = '#2d6a4f' if lp <= 25 else ('#6fcf97' if lp <= lt else ('#ef9f27' if lp <= lt + 3 else ('#e07040' if lp <= lt + 8 else '#c0392b'))) %}
+  <div class="card" id="labor-bench-card" style="padding:14px 16px;margin-bottom:14px;{% if lp > lt + 8 %}border-left:3px solid #c0392b;background:linear-gradient(to right,#f5d5d5,var(--paper));{% elif lp <= lt %}border-left:3px solid #2d6a4f;background:linear-gradient(to right,#d5ede0,var(--paper));{% endif %}">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink)">Labor % vs industry benchmark</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:13px;font-weight:700;color:{{lb_color}}">{{lp}}%</span>
+        <span style="background:{{lb_color}};color:white;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.5px">{{lb_label}}</span>
+      </div>
+    </div>
+    <div style="position:relative;height:10px;background:var(--paper3);border-radius:5px;overflow:hidden">
+      <div style="position:absolute;left:0;top:0;height:100%;width:{{[lp,100]|min}}%;background:{{lb_color}};border-radius:5px;transition:width .4s"></div>
+      <div style="position:absolute;left:25%;top:-2px;height:14px;width:2px;background:#2d6a4f;opacity:.7" title="25% — fine dining target"></div>
+      <div style="position:absolute;left:{{lt}}%;top:-2px;height:14px;width:2px;background:#ef9f27;opacity:.7" title="{{lt}}% — your target"></div>
+      <div style="position:absolute;left:35%;top:-2px;height:14px;width:2px;background:#c0392b;opacity:.7" title="35% — concerning"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:10px;color:var(--ink3)">
+      <span>0%</span>
+      <span style="color:#2d6a4f;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px">▲ 25% fine dining</span>
+      <span style="color:#7a4f00;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px">▲ {{lt}}% your target</span>
+      <span style="color:#c0392b;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px">▲ 35% concerning</span>
+      <span>50%+</span>
+    </div>
+    <div style="margin-top:6px;font-size:11px;color:var(--ink);background:rgba(255,255,255,.6);border-radius:4px;padding:3px 6px;display:inline-block">
+      Industry range: <strong>25–32%</strong> for full-service restaurants — {% if lp <= lt %}you're within target{% elif lp <= lt + 3 %}slightly above your {{lt}}% target{% elif lp <= lt + 8 %}{{(lp - lt)|round(1)}} points above your {{lt}}% target — schedule optimization can help{% else %}{{(lp - lt)|round(1)}} points above your {{lt}}% target — priority area{% endif %}
+    </div>
   </div>
 
   <!-- AI insight -->
@@ -1006,15 +1037,16 @@ function clientUpload(dataType, input) {
         <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor cost</th><th>Labor %</th><th>Over target</th></tr></thead>
         <tbody>
         {% for d in labor.overstaffed_days %}
-        <tr>
-          <td>{{d.date}}</td>
-          <td style="font-weight:500">{{d.day}}</td>
+        {% set diff = (d.labor_pct - (labor.labor_target|default(30.0)))|round(1) %}
+        {% set is_worst = loop.first %}
+        <tr style="{% if is_worst %}background:linear-gradient(to right,#fdf5f5,white);{% endif %}">
+          <td style="color:var(--ink3)">{{d.date}}</td>
+          <td style="font-weight:600">{{d.day}}</td>
           <td>${{d.sales|int|format_num}}</td>
-          <td>${{d.labor_cost|format_num}}</td>
+          <td style="font-weight:{{'700' if is_worst else '400'}};color:{{'var(--red)' if is_worst else 'var(--ink)'}}">${{d.labor_cost|format_num}}</td>
           <td><span class="pill {{'pill-red' if d.labor_pct>35 else 'pill-amber'}}">{{d.labor_pct}}%</span></td>
-          {% set diff = (d.labor_pct - (labor.labor_target|default(30.0)))|round(1) %}
           {% if diff > 0 %}
-          <td style="color:var(--red);font-size:11px;font-weight:500">+{{diff}}% over</td>
+          <td style="color:var(--red);font-size:11px;font-weight:{{'700' if is_worst else '500'}}">+{{diff}}% over{{'  💸' if is_worst else ''}}</td>
           {% else %}
           <td style="color:var(--green);font-size:11px;font-weight:500">{{diff}}% under ✓</td>
           {% endif %}
@@ -1057,9 +1089,9 @@ function clientUpload(dataType, input) {
           {% for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] %}<span>{{d}}</span>{% endfor %}
         </div>
         <div style="margin-top:8px;display:flex;gap:12px;font-size:10px;color:var(--ink3)">
-          <span><span style="color:var(--red)">■</span> Over 32%</span>
-          <span><span style="color:#ef9f27">■</span> 28–32%</span>
-          <span><span style="color:#6fcf97">■</span> Under 28%</span>
+          <span><span style="color:var(--red)">■</span> Over {{labor_target|default(30.0)|int}}%</span>
+          <span><span style="color:#ef9f27">■</span> {{(labor_target|default(30.0) - 3)|int}}–{{labor_target|default(30.0)|int}}%</span>
+          <span><span style="color:#6fcf97">■</span> Under {{(labor_target|default(30.0) - 3)|int}}%</span>
         </div>
       </div>
 
