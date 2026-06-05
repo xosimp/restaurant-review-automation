@@ -5033,7 +5033,6 @@ Tone: warm, direct, like a trusted advisor. No corporate language. Under 80 word
             max_tokens=200,
             messages=[{"role": "user", "content": prompt}]
         )
-        from hosted_dashboard import format_insight_html
         insight = msg.content[0].text.strip()
         return jsonify(insight=format_insight_html(insight))
     except Exception as e:
