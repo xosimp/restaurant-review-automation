@@ -2181,7 +2181,7 @@ function renderBars(){
   }
   c.innerHTML=html;
 }
-let laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false;
+var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false;
 function loadLaborInsight(){
   laborLoaded=true;
   fetch('/api/labor-insight').then(function(r){return r.json();}).then(function(d){
@@ -2428,7 +2428,7 @@ function loadLaborTrend(){
     var lblHtml='';
     for(var i=0;i<data.weeks.length;i++){
       var w=data.weeks[i];
-      var h=Math.max(6,Math.round((w.pct/maxPct)*72));
+      var h=Math.max(6,Math.round((w.pct/maxPct)*80));
       var col=w.pct>_laborTarget?'var(--red)':w.pct>=(_laborTarget-3)?'#ef9f27':'#6fcf97';
       html+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px">';
       html+='<span style="font-size:10px;color:'+col+';font-weight:600">'+w.pct+'%</span>';
@@ -2443,15 +2443,14 @@ function loadLaborTrend(){
   });
 }
 function exportReviews(){window.location='/api/export-reviews';}
-async function sendReferral(){
+function sendReferral(){
   var name = document.getElementById('referral-name').value.trim();
   var email = document.getElementById('referral-email').value.trim();
   var note = document.getElementById('referral-note').value.trim();
   var status = document.getElementById('referral-status');
   if(!name || !email){status.style.display='inline';status.style.color='var(--red)';status.textContent='Enter restaurant name and email';return;}
   status.style.display='inline';status.style.color='var(--ink3)';status.textContent='Sending…';
-  var res = await fetch('/api/send-referral',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,email:email,note:note})});
-  var data = await res.json();
+  fetch('/api/send-referral',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,email:email,note:note})}).then(function(res){return res.json();}).then(function(data){
   if(data.ok){
     status.style.color='var(--green)';status.textContent='Referral sent!';
     document.getElementById('referral-name').value='';
