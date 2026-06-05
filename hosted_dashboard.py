@@ -962,6 +962,7 @@ function clientUpload(dataType, input) {
     <div style="text-align:right">
       <div id="gap-amount" style="font-family:'DM Serif Display',serif;font-size:36px;color:var(--ember2);line-height:1">—</div>
       <div style="font-size:11px;color:var(--ink3);margin-top:4px">estimated monthly overspend</div>
+      <div style="font-size:10px;color:var(--ink3);margin-top:2px;opacity:0.7">based on current {{labor.date_range.days|default(14)}}-day period</div>
       <button onclick="downloadSchedule(this)" style="margin-top:12px;padding:9px 18px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#a83d25'" onmouseout="this.style.background='var(--ember)'">
         Download optimized schedule ↓
       </button>
