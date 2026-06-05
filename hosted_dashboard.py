@@ -2451,14 +2451,15 @@ function sendReferral(){
   if(!name || !email){status.style.display='inline';status.style.color='var(--red)';status.textContent='Enter restaurant name and email';return;}
   status.style.display='inline';status.style.color='var(--ink3)';status.textContent='Sending…';
   fetch('/api/send-referral',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,email:email,note:note})}).then(function(res){return res.json();}).then(function(data){
-  if(data.ok){
-    status.style.color='var(--green)';status.textContent='Referral sent!';
-    document.getElementById('referral-name').value='';
-    document.getElementById('referral-email').value='';
-    document.getElementById('referral-note').value='';
-  } else {
-    status.style.color='var(--red)';status.textContent=data.error||'Failed to send';
-  }
+    if(data.ok){
+      status.style.color='var(--green)';status.textContent='Referral sent!';
+      document.getElementById('referral-name').value='';
+      document.getElementById('referral-email').value='';
+      document.getElementById('referral-note').value='';
+    } else {
+      status.style.color='var(--red)';status.textContent=data.error||'Failed to send';
+    }
+  }).catch(function(){status.style.color='var(--red)';status.textContent='Failed to send';});
 }
 function loadCompetitorIntel(){
   var loading=document.getElementById('comp-loading');
