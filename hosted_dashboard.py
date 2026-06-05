@@ -968,11 +968,7 @@ function clientUpload(dataType, input) {
   </div>
 
   <!-- Stats row -->
-  {% if restaurant.last_fetched_at %}
-  <div style="font-size:11px;color:var(--ink3);margin-bottom:10px">
-    Last updated: {{restaurant.last_fetched_at[:10]}}
-  </div>
-  {% endif %}
+
   <div class="stat-row">
     <div class="stat"><div class="stat-n">${{labor.total_sales|int|format_num}}</div><div class="stat-l">Revenue (2 wks)</div></div>
     <div class="stat {{"hi" if labor.overall_labor_pct > (labor.labor_target|default(30.0)) + 5 else ("warn" if labor.overall_labor_pct > (labor.labor_target|default(30.0)) else "ok")}}"><div class="stat-n">${{labor.total_labor_cost|int|format_num}}</div><div class="stat-l">Labor cost (2 wks)</div></div>
@@ -1027,7 +1023,7 @@ function clientUpload(dataType, input) {
         <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor cost</th><th>Labor %</th><th>Over target</th></tr></thead>
         <tbody>
         {% for d in labor.overstaffed_days %}
-        {% set diff = (d.labor_pct - (labor.labor_target|default(30.0)))|round(1) %}
+        {% set diff = (d.labor_pct - (labor_target|default(30.0)))|round(1) %}
         {% set is_top_cost = loop.first %}
         <tr style="{% if is_top_cost %}background:linear-gradient(to right,#f5d5d5,#fdf0f0,white);border-left:3px solid #c0392b;{% else %}border-left:3px solid transparent;{% endif %}">
           <td style="color:var(--ink3);font-size:11px">{{d.date}}</td>
@@ -2170,7 +2166,7 @@ function renderBars(){
     var d=days[i];
     var pct=dowData[d]||0;
     var h=pct>0?Math.max(6,Math.round(((pct-dataMin)/range)*maxH)):0;
-    var col=pct>32?'var(--red)':pct>=28?'#ef9f27':'#6fcf97';
+    var col=pct>_laborTarget?'var(--red)':pct>=(_laborTarget-3)?'#ef9f27':'#6fcf97';
     var lbl=pct>0?pct+'%':'';
     html+='<div class="day-bar-wrap" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px">'+
       '<span style="font-size:9px;color:'+col+';font-weight:600;line-height:1">'+lbl+'</span>'+
@@ -2407,7 +2403,7 @@ function loadBillingInfo() {
       document.getElementById('billing-portal-link').style.display='none';
       document.getElementById('billing-invoice-link').style.display='none';
     }
-  }).catch(()=>{document.getElementById('billing-loading').textContent='Billing info unavailable.';});
+  }).catch(function(){document.getElementById('billing-loading').textContent='Billing info unavailable.';});
 }
 
 
