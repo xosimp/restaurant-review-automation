@@ -1053,13 +1053,16 @@ function clientUpload(dataType, input) {
       {% if labor.overtime_risk %}
       <div class="slabel" style="margin-top:14px">Overtime alerts</div>
       <div class="card"><table class="tbl">
-        <thead><tr><th>Employee</th><th>Week of</th><th>Hours that week</th><th>Status</th></tr></thead>
+        <thead><tr><th>Employee</th><th>Week of</th><th>Hours that week</th><th>2-wk total</th><th>Status</th></tr></thead>
         <tbody>
         {% for emp in labor.overtime_risk %}
-        <tr>
+        {% set two_wk = labor.employee_hours.get(emp.employee, {}).get("actual", 0)|round(1) %}
+        {% set intensity = ((emp.hours - 40) / 20 * 100)|int if emp.hours > 40 else 0 %}
+        <tr style="{% if emp.status == "overtime" and emp.hours > 55 %}background:linear-gradient(to right,rgba(192,57,43,0.08),white);{% endif %}">
           <td style="font-weight:500">{{emp.employee}}</td>
           <td style="font-size:11px;color:var(--ink3)">{{emp.week}}</td>
-          <td>{{emp.hours}}h</td>
+          <td style="font-weight:{% if emp.hours > 55 %}700{% else %}400{% endif %};color:{% if emp.hours > 55 %}var(--red){% else %}var(--ink){% endif %}">{{emp.hours}}h</td>
+          <td style="font-size:11px;color:var(--ink3)">{{two_wk}}h</td>
           <td>
             {% if emp.status == "overtime" %}
               <span class="pill pill-red">Overtime (40h+) — review pay</span>
