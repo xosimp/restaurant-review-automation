@@ -971,6 +971,10 @@ function clientUpload(dataType, input) {
       <button onclick="downloadSchedule(this)" style="margin-top:12px;padding:9px 18px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#a83d25'" onmouseout="this.style.background='var(--ember)'">
         Download optimized schedule ↓
       </button>
+      <div id="schedule-summary" style="display:none;margin-top:8px;font-size:11px;color:#6fcf97;line-height:1.6">
+        ✓ Schedule optimized — reducing overstaffed shifts on your highest-cost days.<br>
+        Estimated saving: ~${{(labor.potential_savings / 2)|int|format_num}}/mo if adjustments applied.
+      </div>
     </div>
   </div>
 
@@ -2274,6 +2278,12 @@ function downloadSchedule(btn){
       });
     }
     return r.blob().then(function(blob){
+      // Show summary before downloading
+      var summary=document.getElementById('schedule-summary');
+      if(summary){
+        summary.style.display='block';
+        setTimeout(function(){summary.style.display='none';},6000);
+      }
       var url=URL.createObjectURL(blob);
       var a=document.createElement('a');
       a.href=url; a.download='optimized_schedule.csv'; a.click();
