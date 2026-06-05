@@ -1124,18 +1124,6 @@ function clientUpload(dataType, input) {
       </table></div>
       {% endif %}
 
-      <div class="slabel" style="margin-top:14px">Labor % by day of week</div>
-      <div class="card" style="padding:16px;flex:1">
-        <div class="day-bars" id="day-bars" style="height:124px;display:flex;align-items:flex-end;gap:4px"></div>
-        <div style="display:flex;justify-content:space-around;font-size:9px;color:var(--ink3);margin-top:3px">
-          {% for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] %}<span>{{d}}</span>{% endfor %}
-        </div>
-        <div style="margin-top:8px;display:flex;gap:12px;font-size:10px;color:var(--ink3)">
-          <span><span style="color:var(--red)">■</span> Over {{labor_target|default(30.0)|int}}%</span>
-          <span><span style="color:#ef9f27">■</span> {{(labor_target|default(30.0) - 3)|int}}–{{labor_target|default(30.0)|int}}%</span>
-          <span><span style="color:#6fcf97">■</span> Under {{(labor_target|default(30.0) - 3)|int}}%</span>
-        </div>
-      </div>
     </div>
   </div>
   <!-- Understaffed days — full width -->
@@ -1164,6 +1152,20 @@ function clientUpload(dataType, input) {
       💡 Consider scheduling 1–2 additional staff on {% for d in labor.understaffed_days %}{{d.day}}{% if not loop.last %}, {% endif %}{% endfor %} — the sales volume justifies it and better coverage drives higher check averages and return visits.
     </div>
     {% endif %}
+  </div>
+
+  <!-- DOW chart — full width -->
+  <div class="slabel" style="margin-top:16px">Labor % by day of week</div>
+  <div class="card" style="padding:16px">
+    <div class="day-bars" id="day-bars" style="height:140px;display:flex;align-items:flex-end;gap:8px"></div>
+    <div style="display:flex;justify-content:space-around;font-size:9px;color:var(--ink3);margin-top:6px">
+      {% for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] %}<span>{{d}}</span>{% endfor %}
+    </div>
+    <div style="margin-top:8px;display:flex;gap:16px;font-size:10px;color:var(--ink3)">
+      <span><span style="color:var(--red)">■</span> Over {{labor_target|default(30.0)|int}}%</span>
+      <span><span style="color:#ef9f27">■</span> {{(labor_target|default(30.0) - 3)|int}}–{{labor_target|default(30.0)|int}}%</span>
+      <span><span style="color:#6fcf97">■</span> Under {{(labor_target|default(30.0) - 3)|int}}%</span>
+    </div>
   </div>
 
   <!-- Labor trend chart -->
