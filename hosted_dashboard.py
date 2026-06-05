@@ -1070,7 +1070,7 @@ function clientUpload(dataType, input) {
     <div style="display:flex;flex-direction:column;">
       <div class="slabel">Labor % by day of week</div>
       <div class="card" style="padding:16px">
-        <div class="day-bars" id="day-bars"></div>
+        <div class="day-bars" id="day-bars" style="height:140px;display:flex;align-items:flex-end;gap:4px"></div>
         <div style="display:flex;justify-content:space-around;font-size:9px;color:var(--ink3);margin-top:3px">
           {% for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] %}<span>{{d}}</span>{% endfor %}
         </div>
@@ -1101,7 +1101,7 @@ function clientUpload(dataType, input) {
   <!-- Labor trend chart -->
   <div class="slabel" style="margin-top:16px">Labor % trend — last 8 weeks</div>
   <div class="card" style="padding:16px">
-    <div id="labor-trend-bars" style="display:flex;align-items:flex-end;gap:12px;height:80px;margin-bottom:6px">
+    <div id="labor-trend-bars" style="display:flex;align-items:flex-end;gap:8px;height:90px;margin-bottom:6px">
       <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading trend data…</div>
     </div>
     <div id="labor-trend-labels" style="display:flex;gap:12px;font-size:10px;color:var(--ink3)"></div>
@@ -2140,6 +2140,7 @@ function skipR(id){
 }
 var dowData={{labor.dow_summary|tojson}};
 var laborDateRange={{labor.date_range|tojson if labor.date_range else 'null'}};
+var _laborTarget={{labor_target|default(30.0)}};
 (function(){
   var elPeriod=document.getElementById('labor-period');
   if(!elPeriod||!laborDateRange||!laborDateRange.start)return;
@@ -2160,23 +2161,22 @@ function renderBars(){
   var range=dataMax-dataMin||1;
   var c=document.getElementById('day-bars');
   if(!c)return;
-  var maxH=72;
+  var maxH=120;
   var html='';
   for(i=0;i<days.length;i++){
     var d=days[i];
     var pct=dowData[d]||0;
-    var h=pct>0?Math.max(6,Math.round(((pct-dataMin)/range)*maxH)):0;
+    var h=pct>0?Math.max(8,Math.round(((pct-dataMin)/range)*maxH)):0;
     var col=pct>_laborTarget?'var(--red)':pct>=(_laborTarget-3)?'#ef9f27':'#6fcf97';
     var lbl=pct>0?pct+'%':'';
-    html+='<div class="day-bar-wrap" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px">'+
-      '<span style="font-size:9px;color:'+col+';font-weight:600;line-height:1">'+lbl+'</span>'+
-      '<div style="width:75%;height:'+h+'px;background:'+col+';border-radius:3px 3px 0 0" title="'+d+': '+pct+'%"></div>'+
+    html+='<div class="day-bar-wrap" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px">'+
+      '<span style="font-size:10px;color:'+col+';font-weight:700;line-height:1">'+lbl+'</span>'+
+      '<div style="width:80%;height:'+h+'px;background:'+col+';border-radius:4px 4px 0 0;opacity:0.9" title="'+d+': '+pct+'%"></div>'+
     '</div>';
   }
   c.innerHTML=html;
 }
 let laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false;
-var _laborTarget={{labor_target|default(30.0)}};
 function loadLaborInsight(){
   laborLoaded=true;
   fetch('/api/labor-insight').then(function(r){return r.json();}).then(function(d){
