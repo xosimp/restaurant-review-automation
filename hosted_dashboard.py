@@ -2388,28 +2388,29 @@ function loadInvTrend(){
 let selCt='{{ctypes[0].id if ctypes}}';
 function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(b=>b.classList.remove('selected'));el.classList.add('selected')}
 function genContent(fromCalendar){
-  const topic=document.getElementById('mktopic').value.trim();
+  var topic=document.getElementById('mktopic').value.trim();
   if(!topic){toast('Enter a topic');return;}
-  const box=document.getElementById('mkoutput');
+  var box=document.getElementById('mkoutput');
   box.style.fontStyle='italic';
   box.style.color='var(--ink3)';
   box.textContent='Generating…';
-  fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic,from_calendar:!!fromCalendar})})
-    .then(r=>r.json())
-    .then(d=>{
+  fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic:topic,from_calendar:!!fromCalendar})})
+    .then(function(r){return r.json();})
+    .then(function(d){
       box.style.fontStyle='normal';
       box.style.color='var(--ink2)';
       box.textContent=d.content||'Generation failed — try again.';
-      const isSms=document.querySelector('.ct-btn.selected')?.dataset?.type==='loyalty_nudge';
-      const counter=document.getElementById('sms-counter');
+      var selBtn=document.querySelector('.ct-btn.selected');
+      var isSms=selBtn&&selBtn.dataset&&selBtn.dataset.type==='loyalty_nudge';
+      var counter=document.getElementById('sms-counter');
       if(isSms){
-        const charCount=(d.content||'').length;
+        var charCount=(d.content||'').length;
         document.getElementById('sms-char-count').textContent=charCount;
         document.getElementById('sms-over').style.display=charCount>160?'inline':'none';
         counter.style.display='block';
-      } else { counter.style.display='none'; }
+      } else { if(counter)counter.style.display='none'; }
     })
-    .catch(e=>{
+    .catch(function(){
       box.style.color='var(--red)';
       box.style.fontStyle='italic';
       box.textContent='Content generation unavailable — check back shortly.';
@@ -2437,26 +2438,43 @@ function downloadCal(){
   URL.revokeObjectURL(url);
 }
 
-function loadCal(){const g=document.getElementById('cal-grid');g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';fetch('/api/content-calendar').then(r=>r.json()).then(d=>{if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return}const calDownBtn=document.getElementById('cal-download-btn');
-  if(calDownBtn) calDownBtn.style.display='inline-block';
-  // Show week range header
-  const weekRange = d.ideas[0] && d.ideas[0].week_range;
-  const rangeEl = document.getElementById('cal-week-range');
-  if(rangeEl && weekRange) rangeEl.textContent = 'Week of ' + weekRange;
-  g.innerHTML=d.ideas.map((i,idx)=>{
-    window._calIdeas=window._calIdeas||[];
-    window._calIdeas[idx]=i;
-    const dateLabel = i.date ? `<span style="font-size:10px;color:var(--ink3);font-weight:400">${i.date}</span>` : '';
-    return `<div class="cal-card"><div class="cal-day-name" style="display:flex;align-items:center;justify-content:space-between">${i.day}${dateLabel}</div><div class="cal-platform" style="font-size:10px;color:var(--ink3);margin:2px 0 4px">${i.platform||''}</div><div style="font-size:12px;line-height:1.5">${i.angle||''}</div><button data-idx="${idx}" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;width:100%">Generate →</button></div>`;
-  }).join('')})}
+function loadCal(){
+  var g=document.getElementById('cal-grid');
+  g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';
+  fetch('/api/content-calendar').then(function(r){return r.json();}).then(function(d){
+    if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return;}
+    var calDownBtn=document.getElementById('cal-download-btn');
+    if(calDownBtn) calDownBtn.style.display='inline-block';
+    var weekRange = d.ideas[0] && d.ideas[0].week_range;
+    var rangeEl = document.getElementById('cal-week-range');
+    if(rangeEl && weekRange) rangeEl.textContent = 'Week of ' + weekRange;
+    window._calIdeas = d.ideas;
+    var platformColors = {
+      'Instagram':'#e1306c','Facebook':'#1877f2','Email':'#2d6a4f',
+      'Google':'#4285f4','SMS':'#ef9f27'
+    };
+    var html = '';
+    for(var idx=0;idx<d.ideas.length;idx++){
+      var i=d.ideas[idx];
+      var dateLabel = i.date ? '<span style="font-size:10px;color:var(--ink3);font-weight:400">'+i.date+'</span>' : '';
+      var pColor = platformColors[i.platform] || 'var(--ink3)';
+      html += '<div class="cal-card">';
+      html += '<div class="cal-day-name" style="display:flex;align-items:center;justify-content:space-between">'+i.day+dateLabel+'</div>';
+      html += '<div class="cal-platform" style="font-size:10px;font-weight:600;color:'+pColor+';margin:2px 0 4px;padding:1px 6px;background:'+pColor+'18;border-radius:10px;display:inline-block">'+( i.platform||'')+'</div>';
+      html += '<div style="font-size:12px;line-height:1.5;margin-top:4px">'+( i.angle||'')+'</div>';
+      html += '<button data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;width:100%">Generate →</button>';
+      html += '</div>';
+    }
+    g.innerHTML=html;
+  }).catch(function(){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate — try again.</div>';});}
 function generateFromCalIdx(idx) {
   const i = window._calIdeas && window._calIdeas[idx];
   if (!i) return;
   generateFromCal(i.type || 'instagram_post', i.angle || '');
 }
 function generateFromCal(type, topic) {
-  document.querySelectorAll('.ct-btn').forEach(b=>{
-    if(b.dataset.type===type) { b.click(); }
+  document.querySelectorAll('.ct-btn').forEach(function(b){
+    if(b.dataset&&b.dataset.type===type){ b.click(); }
   });
   document.getElementById('mktopic').value = topic;
   document.getElementById('mkoutput').scrollIntoView({behavior:'smooth', block:'nearest'});
