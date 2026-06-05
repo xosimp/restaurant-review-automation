@@ -1382,14 +1382,16 @@ function clientUpload(dataType, input) {
     </div>
   </div>
 
-  <div style="background:#f0f4fa;border:1px solid #b3c5e0;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#2d4a6a;line-height:1.6">
-    <strong>How this works:</strong> Pick a content type, add a topic or occasion, and hit Generate.
-    Copy the result straight to Instagram, your email tool, or Google Business Profile.
-    The more specific your topic, the better the output.
+  <!-- AI marketing brief -->
+  <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Marketing Brief</div>
+    <div class="insight-text insight-loading" id="mkt-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px">Loading marketing brief…</div>
   </div>
-  <div style="background:#fdf8f4;border:1px solid var(--paper3);border-radius:6px;padding:8px 14px;margin-bottom:14px;font-size:12px;color:var(--ink3);line-height:1.5">
-    The AI writes in your restaurant's voice. If something doesn't sound right or you want to update your brand voice,
-    <a href="mailto:will@cavnar.ai?subject=Update my marketing voice profile — {{restaurant.name}}" style="color:var(--ember)">email Will</a> and it'll be updated within one business day.
+
+  <div style="font-size:11px;color:var(--ink3);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <span>Pick a content type, add a topic, hit Generate. The AI writes in {{restaurant.name}}'s voice.</span>
+    <a href="mailto:will@cavnar.ai?subject=Update my marketing voice profile — {{restaurant.name}}" style="color:var(--ember);font-size:11px;font-weight:600;text-decoration:none">Update brand voice →</a>
   </div>
   <div class="slabel">Content type</div>
   <div class="ct-grid">{% for ct in ctypes %}
