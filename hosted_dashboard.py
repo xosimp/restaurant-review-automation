@@ -1038,7 +1038,7 @@ function clientUpload(dataType, input) {
   <div class="card" style="padding:14px 16px;margin-bottom:14px;border-left:3px solid #2d6a4f;background:linear-gradient(to right,#e8f4ee,white)">
     <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink);margin-bottom:12px">Labor cost by role</div>
     <div style="display:flex;flex-direction:column;gap:8px">
-    {% set max_role_pct = labor.role_summary.values()|map(attribute='labor_pct')|max %}
+    {% set max_role_pct = labor.role_max_pct|default(30.0) %}
     {% for role, data in labor.role_summary_sorted %}
     {% set bar_w = ((data.labor_pct / max_role_pct) * 100)|int if max_role_pct > 0 else 0 %}
     {% set role_color = '#c0392b' if data.labor_pct > (labor_target|default(30.0)) else ('#ef9f27' if data.labor_pct > (labor_target|default(30.0) - 5) else '#2d6a4f') %}
@@ -4618,6 +4618,7 @@ def index(current_user):
             key=lambda x: x[1].get('labor_pct', 0),
             reverse=True
         )
+        labor['role_max_pct'] = max((v.get('labor_pct', 0) for v in labor.get('role_summary', {}).values()), default=30.0)
         # Add period-over-period delta
         try:
             from models import get_labor_history as _glh_delta
@@ -4633,7 +4634,7 @@ def index(current_user):
         labor = {"is_live":False,"total_labor_cost":0,"total_sales":0,"overall_labor_pct":0,
                  "overstaffed_days":[],"understaffed_days":[],"overtime_risk":[],
                  "dow_summary":{},"potential_savings":0,"labor_target":30.0,
-                 "by_day":{},"employee_hours":{}}
+                 "by_day":{},"employee_hours":{},"role_summary":{},"role_summary_sorted":[],"role_max_pct":0,"trend_delta":None}
     try:
         _inv_items, _inv_live = load_inventory_for_restaurant(rid)
         inv = analyse_inventory(_inv_items)
