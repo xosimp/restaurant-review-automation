@@ -1154,35 +1154,41 @@ function clientUpload(dataType, input) {
     {% endif %}
   </div>
 
-  <!-- DOW chart — full width -->
-  <div class="slabel" style="margin-top:16px">Labor % by day of week</div>
+  <!-- Labor performance charts — combined side by side -->
+  <div class="slabel" style="margin-top:16px">Labor % performance</div>
   <div class="card" style="padding:16px">
-    <div class="day-bars" id="day-bars" style="height:140px;display:flex;align-items:flex-end;gap:8px"></div>
-    <div style="display:flex;justify-content:space-around;font-size:9px;color:var(--ink3);margin-top:6px">
-      {% for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] %}<span>{{d}}</span>{% endfor %}
-    </div>
-    <div style="margin-top:8px;display:flex;gap:16px;font-size:10px;color:var(--ink3)">
-      <span><span style="color:var(--red)">■</span> Over {{labor_target|default(30.0)|int}}%</span>
-      <span><span style="color:#ef9f27">■</span> {{(labor_target|default(30.0) - 3)|int}}–{{labor_target|default(30.0)|int}}%</span>
-      <span><span style="color:#6fcf97">■</span> Under {{(labor_target|default(30.0) - 3)|int}}%</span>
-    </div>
-  </div>
+    <div style="display:grid;grid-template-columns:3fr 2fr;gap:24px">
 
-  <!-- Labor trend chart -->
-  <div class="slabel" style="margin-top:16px">Labor % trend — last 8 weeks</div>
-  <div class="card" style="padding:16px">
-    <div id="labor-trend-bars" style="display:flex;align-items:flex-end;gap:8px;height:90px;margin-bottom:6px">
-      <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading trend data…</div>
+      <!-- Left: 8-week trend -->
+      <div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">8-week trend</div>
+        <div id="labor-trend-bars" style="display:flex;align-items:flex-end;gap:6px;height:120px;margin-bottom:6px">
+          <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading trend data…</div>
+        </div>
+        <div id="labor-trend-labels" style="display:flex;font-size:9px;color:var(--ink3);margin-top:4px"></div>
+      </div>
+
+      <!-- Right: DOW breakdown -->
+      <div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">This period by day</div>
+        <div style="position:relative">
+          <div class="day-bars" id="day-bars" style="height:120px;display:flex;align-items:flex-end;gap:4px;position:relative;z-index:1"></div>
+          <div id="dow-target-line" style="position:absolute;left:0;right:0;bottom:0;height:2px;background:#ef9f27;opacity:0.6;z-index:2;pointer-events:none"></div>
+        </div>
+        <div style="display:flex;justify-content:space-around;font-size:9px;color:var(--ink3);margin-top:4px">
+          {% for d in ["M","T","W","Th","F","Sa","Su"] %}<span>{{d}}</span>{% endfor %}
+        </div>
+      </div>
     </div>
-    <div id="labor-trend-labels" style="display:flex;gap:12px;font-size:10px;color:var(--ink3)"></div>
-    <div style="margin-top:8px;display:flex;gap:12px;font-size:10px;color:var(--ink3)">
+
+    <!-- Shared legend -->
+    <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--paper3);display:flex;gap:16px;flex-wrap:wrap;font-size:10px;color:var(--ink3)">
       <span><span style="color:var(--red)">■</span> Over {{labor_target|default(30.0)|int}}%</span>
       <span><span style="color:#ef9f27">■</span> {{(labor_target|default(30.0)-3)|int}}–{{labor_target|default(30.0)|int}}%</span>
       <span><span style="color:#6fcf97">■</span> Under {{(labor_target|default(30.0)-3)|int}}%</span>
-      <span style="margin-left:auto;color:var(--ink3)">Target: {{labor_target|default(30.0)}}%</span>
+      <span style="margin-left:auto">Target: {{labor_target|default(30.0)}}%</span>
     </div>
   </div>
-</div>
 
 <!-- INVENTORY -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="panel-inventory">
@@ -2245,6 +2251,14 @@ function renderBars(){
     '</div>';
   }
   c.innerHTML=html;
+  // Draw target line on DOW chart
+  var tline=document.getElementById('dow-target-line');
+  if(tline&&filled.length){
+    var pxPerPct=120/(dataMax-dataMin||1);
+    var targetFromBottom=Math.round((_laborTarget-dataMin)*pxPerPct);
+    tline.style.bottom=targetFromBottom+'px';
+    tline.style.display='block';
+  }
 }
 var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false;
 function loadLaborInsight(){
@@ -2354,7 +2368,7 @@ function loadInvTrend(){
       html+='<span style="font-size:10px;color:'+col+';font-weight:600">$'+w.waste.toFixed(0)+'</span>';
       html+='<div style="width:80%;height:'+h+'px;background:'+col+';border-radius:3px 3px 0 0;opacity:'+(isLast?'1':'0.75')+'" title="Week of '+w.week_end+': $'+w.waste+'"></div>';
       html+='</div>';
-      lblHtml+='<span style="flex:1;text-align:center">'+w.label+'</span>';
+      lblHtml+='<span style="flex:1;text-align:center;font-size:9px">'+w.label+'</span>';
     }
     container.innerHTML=html;
     if(labels)labels.innerHTML=lblHtml;
