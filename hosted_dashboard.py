@@ -1106,13 +1106,17 @@ function clientUpload(dataType, input) {
         <tbody>
         {% for emp in labor.overtime_risk %}
         {% set two_wk = labor.employee_hours.get(emp.employee, {}).get("actual", 0)|round(1) %}
-        <tr style="{% if emp.status == "overtime" and emp.hours >= 55 %}background:linear-gradient(to right,rgba(192,57,43,0.08),white);{% endif %}">
-          <td style="font-weight:500">{{emp.employee}}</td>
+        {% set emp_constraint = labor.staff_constraints.get(emp.employee.lower(), '') %}
+        {% set has_ot_allowance = emp_constraint and ('overtime' in emp_constraint.lower() or 'ot' in emp_constraint.lower() or 'extra hours' in emp_constraint.lower()) %}
+        <tr style="{% if emp.status == "overtime" and emp.hours >= 55 and not has_ot_allowance %}background:linear-gradient(to right,rgba(192,57,43,0.08),white);{% elif has_ot_allowance %}background:linear-gradient(to right,rgba(45,106,79,0.06),white);{% endif %}">
+          <td style="font-weight:500">{{emp.employee}}{% if has_ot_allowance %} <span style="font-size:9px;background:#eaf4ee;color:#2d6a4f;padding:1px 5px;border-radius:8px;font-weight:600;vertical-align:middle">constraint</span>{% endif %}</td>
           <td style="font-size:11px;color:var(--ink3)">{{emp.week}}</td>
-          <td style="font-weight:{% if emp.hours >= 55 %}700{% else %}400{% endif %};color:{% if emp.hours >= 55 %}var(--red){% else %}var(--ink){% endif %}">{{emp.hours}}h</td>
+          <td style="font-weight:{% if emp.hours >= 55 and not has_ot_allowance %}700{% else %}400{% endif %};color:{% if emp.hours >= 55 and not has_ot_allowance %}var(--red){% else %}var(--ink){% endif %}">{{emp.hours}}h</td>
           <td style="font-size:11px;color:var(--ink3)">{{two_wk}}h</td>
           <td>
-            {% if emp.status == "overtime" %}
+            {% if has_ot_allowance %}
+              <span class="pill" style="background:#eaf4ee;color:#2d6a4f">✓ OT allowed per constraint</span>
+            {% elif emp.status == "overtime" %}
               <span class="pill pill-red">Overtime (40h+) — review pay</span>
             {% else %}
               <span class="pill pill-amber">⚠ Approaching 40h</span>
@@ -4641,6 +4645,13 @@ def index(current_user):
             reverse=True
         )
         labor['role_max_pct'] = max((v.get('labor_pct', 0) for v in labor.get('role_summary', {}).values()), default=30.0)
+        # Staff notes for constraint-aware overtime display
+        try:
+            from models import get_staff_notes as _gsn_dash
+            _sn = _gsn_dash(current_user["restaurant_id"])
+            labor['staff_constraints'] = {n['employee_name'].lower(): n['notes'] for n in _sn} if _sn else {}
+        except Exception:
+            labor['staff_constraints'] = {}
         # Add period-over-period delta
         try:
             from models import get_labor_history as _glh_delta
@@ -4656,7 +4667,7 @@ def index(current_user):
         labor = {"is_live":False,"total_labor_cost":0,"total_sales":0,"overall_labor_pct":0,
                  "overstaffed_days":[],"understaffed_days":[],"overtime_risk":[],
                  "dow_summary":{},"potential_savings":0,"labor_target":30.0,
-                 "by_day":{},"employee_hours":{},"role_summary":{},"role_summary_sorted":[],"role_max_pct":0,"trend_delta":None}
+                 "by_day":{},"employee_hours":{},"role_summary":{},"role_summary_sorted":[],"role_max_pct":0,"trend_delta":None,"staff_constraints":{}}
     try:
         _inv_items, _inv_live = load_inventory_for_restaurant(rid)
         inv = analyse_inventory(_inv_items)
@@ -4918,7 +4929,11 @@ def labor_insight_api(current_user):
         name  = restaurant.name if restaurant else "your restaurant"
         owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
         analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
-        insight = get_claude_insights(analysis, restaurant_name=name, owner_name=owner, restaurant_id=current_user["restaurant_id"])
+        from models import get_staff_notes as _gsn_labor
+        _staff_notes_labor = _gsn_labor(current_user["restaurant_id"])
+        insight = get_claude_insights(analysis, restaurant_name=name, owner_name=owner,
+                                      restaurant_id=current_user["restaurant_id"],
+                                      staff_notes=_staff_notes_labor if _staff_notes_labor else None)
         return jsonify(insight=format_insight_html(insight))
     except Exception as e:
         import traceback; traceback.print_exc()

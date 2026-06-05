@@ -325,7 +325,8 @@ def analyse_shifts(shifts: list[dict],
 
 
 def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant",
-                        owner_name: str = None, restaurant_id: int = None) -> str:
+                        owner_name: str = None, restaurant_id: int = None,
+                        staff_notes: list = None) -> str:
     """Ask Claude to narrate labor findings in a warm, direct consultant tone."""
     greeting = f"{owner_name}," if owner_name else "Hi,"
     today_labor = datetime.now(ZoneInfo('America/Chicago')).strftime("%B %d, %Y")
@@ -401,6 +402,14 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
     except Exception:
         holiday_context = ""
 
+    # Staff constraints context
+    constraints_context = ""
+    if staff_notes:
+        constraints_context = "\n- Staff scheduling constraints (MUST be respected and referenced when relevant):\n"
+        for note in staff_notes:
+            constraints_context += f"  * {note['employee_name']}: {note['notes']}\n"
+        constraints_context += "  IMPORTANT: If an employee appears in overtime risk but has a constraint allowing overtime or extra hours, explicitly acknowledge this and do NOT flag it as a problem."
+
     prompt = f"""You are the Cavnar AI Consultant — a friendly, experienced restaurant labor advisor.
 You are writing a weekly labor summary for {owner_name or "the owner"} of {restaurant_name}.
 Today's date: {today_labor}{upload_context}{holiday_context}
@@ -412,7 +421,7 @@ Data:
 - Understaffed days (IMPORTANT — these are NOT good days despite low labor %): {json.dumps(analysis['understaffed_days'][:2])} — these days had strong sales but lean staffing, meaning the restaurant likely left revenue on the table through slower service, longer waits, or missed covers. Flag these explicitly as missed revenue opportunities and recommend adding 1-2 staff on these days going forward.
 - Overtime risk: {json.dumps(analysis['overtime_risk'])}{role_context}{trend_context}
 - Labor % by day of week: {json.dumps(analysis['dow_summary'])}
-- Estimated monthly savings with optimized scheduling: ${analysis['potential_savings']:,.0f}
+- Estimated monthly savings with optimized scheduling: ${analysis['potential_savings']:,.0f}{constraints_context}
 
 Write a short consultant note structured exactly like this:
 
