@@ -1106,8 +1106,8 @@ function clientUpload(dataType, input) {
         <tbody>
         {% for emp in labor.overtime_risk %}
         {% set two_wk = labor.employee_hours.get(emp.employee, {}).get("actual", 0)|round(1) %}
-        {% set emp_constraint = labor.staff_constraints.get(emp.employee.lower(), '') %}
-        {% if not emp_constraint %}{% for ckey, cval in labor.staff_constraints.items() %}{% if emp.employee.lower().split(' ')[0] in ckey or ckey.split(' ')[0] in emp.employee.lower() %}{% set emp_constraint = cval %}{% endif %}{% endfor %}{% endif %}
+        {% set _emp_key = emp.employee.lower().strip().rstrip('.') %}
+        {% set emp_constraint = labor.staff_constraints.get(_emp_key, labor.staff_constraints.get(_emp_key.split(' ')[0], '')) %}
         {% set _ec = emp_constraint.lower() if emp_constraint else '' %}
         {% set has_ot_allowance = emp_constraint and ('overtime' in _ec or 'extra hours' in _ec or ' ot ' in (' ' + _ec + ' ') or _ec.startswith('ot ') or _ec.endswith(' ot')) %}
         <tr style="{% if emp.status == "overtime" and emp.hours >= 55 and not has_ot_allowance %}background:linear-gradient(to right,rgba(192,57,43,0.08),white);{% elif has_ot_allowance %}background:linear-gradient(to right,rgba(45,106,79,0.06),white);{% endif %}">
@@ -4648,7 +4648,21 @@ def index(current_user):
         try:
             from models import get_staff_notes as _gsn_dash
             _sn_dash = _gsn_dash(current_user["restaurant_id"])
-            labor['staff_constraints'] = {n['employee_name'].lower(): n['notes'] for n in _sn_dash} if _sn_dash else {}
+            if _sn_dash:
+                _sc = {}
+                for _n in _sn_dash:
+                    _name = _n['employee_name'].lower().strip().rstrip('.')
+                    _sc[_name] = _n['notes']
+                    # Also index by first name and first+initial for fuzzy matching
+                    _parts = _name.split()
+                    if _parts:
+                        _sc[_parts[0]] = _n['notes']
+                    if len(_parts) >= 2:
+                        _sc[_parts[0] + ' ' + _parts[1].rstrip('.')] = _n['notes']
+                        _sc[_parts[0] + ' ' + _parts[1].rstrip('.') + '.'] = _n['notes']
+                labor['staff_constraints'] = _sc
+            else:
+                labor['staff_constraints'] = {}
         except Exception:
             labor['staff_constraints'] = {}
         # Staff notes for constraint-aware overtime display
