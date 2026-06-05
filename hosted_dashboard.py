@@ -967,13 +967,12 @@ function clientUpload(dataType, input) {
     <div style="text-align:right">
       <div id="gap-amount" style="font-family:'DM Serif Display',serif;font-size:36px;color:var(--ember2);line-height:1">—</div>
       <div style="font-size:11px;color:var(--ink3);margin-top:4px">estimated monthly overspend</div>
-      <div style="font-size:10px;color:var(--ink3);margin-top:2px;opacity:0.7">based on current {{labor.date_range.days|default(14)}}-day period</div>
+
       <button onclick="downloadSchedule(this)" style="margin-top:12px;padding:9px 18px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#a83d25'" onmouseout="this.style.background='var(--ember)'">
         Download optimized schedule ↓
       </button>
-      <div id="schedule-summary" style="display:none;margin-top:8px;font-size:11px;color:#6fcf97;line-height:1.6">
-        ✓ Schedule optimized — reducing overstaffed shifts on your highest-cost days.<br>
-        Estimated saving: ~${{(labor.potential_savings / 2)|int|format_num}}/mo if adjustments applied.
+      <div id="schedule-summary" style="display:none;margin-top:8px;font-size:11px;color:#6fcf97;line-height:1.6;min-height:0">
+        ✓ Schedule optimized — reducing overstaffed shifts on your highest-cost days. Estimated saving: ~${{(labor.potential_savings / 2)|int|format_num}}/mo if adjustments applied.
       </div>
     </div>
   </div>
@@ -1003,9 +1002,9 @@ function clientUpload(dataType, input) {
     </div>
     <div style="position:relative;height:10px;background:var(--paper3);border-radius:5px;overflow:hidden">
       <div style="position:absolute;left:0;top:0;height:100%;width:{{[lp,100]|min}}%;background:{{lb_color}};border-radius:5px;transition:width .4s"></div>
-      <div style="position:absolute;left:25%;top:-2px;height:14px;width:2px;background:#2d6a4f;opacity:.7" title="25% — fine dining target"></div>
-      <div style="position:absolute;left:{{lt}}%;top:-2px;height:14px;width:2px;background:#ef9f27;opacity:.7" title="{{lt}}% — your target"></div>
-      <div style="position:absolute;left:35%;top:-2px;height:14px;width:2px;background:#c0392b;opacity:.7" title="35% — concerning"></div>
+      <div style="position:absolute;left:{{(25/50*100)|int}}%;top:-2px;height:14px;width:2px;background:#2d6a4f;opacity:.7" title="25% — fine dining target"></div>
+      <div style="position:absolute;left:{{[lt/50*100,99]|min|int}}%;top:-2px;height:14px;width:2px;background:#ef9f27;opacity:.7" title="{{lt}}% — your target"></div>
+      <div style="position:absolute;left:{{(35/50*100)|int}}%;top:-2px;height:14px;width:2px;background:#c0392b;opacity:.7" title="35% — concerning"></div>
     </div>
     <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:10px;color:var(--ink3)">
       <span>0%</span>
@@ -1021,7 +1020,7 @@ function clientUpload(dataType, input) {
 
   <!-- Role cost breakdown -->
   {% if labor.role_summary %}
-  <div class="card" style="padding:14px 16px;margin-bottom:14px;">
+  <div class="card" style="padding:14px 16px;margin-bottom:14px;border-left:3px solid #2d6a4f;background:linear-gradient(to right,#e8f4ee,white)">
     <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink);margin-bottom:12px">Labor cost by role</div>
     <div style="display:flex;flex-direction:column;gap:8px">
     {% set max_role_pct = labor.role_summary.values()|map(attribute='labor_pct')|max %}
@@ -1088,10 +1087,10 @@ function clientUpload(dataType, input) {
         {% for emp in labor.overtime_risk %}
         {% set two_wk = labor.employee_hours.get(emp.employee, {}).get("actual", 0)|round(1) %}
         {% set intensity = ((emp.hours - 40) / 20 * 100)|int if emp.hours > 40 else 0 %}
-        <tr style="{% if emp.status == "overtime" and emp.hours > 55 %}background:linear-gradient(to right,rgba(192,57,43,0.08),white);{% endif %}">
+        <tr style="{% if emp.status == "overtime" and emp.hours >= 55 %}background:linear-gradient(to right,rgba(192,57,43,0.08),white);{% endif %}">
           <td style="font-weight:500">{{emp.employee}}</td>
           <td style="font-size:11px;color:var(--ink3)">{{emp.week}}</td>
-          <td style="font-weight:{% if emp.hours > 55 %}700{% else %}400{% endif %};color:{% if emp.hours > 55 %}var(--red){% else %}var(--ink){% endif %}">{{emp.hours}}h</td>
+          <td style="font-weight:{% if emp.hours >= 55 %}700{% else %}400{% endif %};color:{% if emp.hours >= 55 %}var(--red){% else %}var(--ink){% endif %}">{{emp.hours}}h</td>
           <td style="font-size:11px;color:var(--ink3)">{{two_wk}}h</td>
           <td>
             {% if emp.status == "overtime" %}
