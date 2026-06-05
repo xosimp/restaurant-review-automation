@@ -1174,6 +1174,7 @@ function clientUpload(dataType, input) {
         </div>
         <div id="labor-trend-labels" style="display:flex;font-size:9px;color:var(--ink3);margin-top:4px"></div>
       </div>
+      </div>
 
       <!-- Right: DOW breakdown -->
       <div>
