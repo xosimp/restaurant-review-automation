@@ -1166,7 +1166,7 @@ function clientUpload(dataType, input) {
       <!-- Left: 8-week trend -->
       <div>
         <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">8-week trend</div>
-        <div id="labor-trend-bars" style="display:flex;align-items:flex-end;gap:6px;height:120px;margin-bottom:6px">
+        <div id="labor-trend-bars" style="display:flex;align-items:flex-end;gap:6px;height:120px;">
           <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading trend data…</div>
         </div>
         <div id="labor-trend-labels" style="display:flex;font-size:9px;color:var(--ink3);margin-top:4px"></div>
@@ -1175,7 +1175,7 @@ function clientUpload(dataType, input) {
       <!-- Right: DOW breakdown -->
       <div>
         <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:4px">By day of week</div>
-        <div style="font-size:10px;color:var(--ink3);margin-bottom:8px">From your uploaded CSV{% if labor.date_range and labor.date_range.start %} ({{labor.date_range.start}} – {{labor.date_range.end}}){% endif %}</div>
+        <div style="font-size:10px;color:var(--ink3);margin-bottom:8px">From your uploaded CSV{% if labor.date_range and labor.date_range.start %} ({{labor.date_range.start[5:7]|int}}/{{labor.date_range.start[8:10]|int}}/{{labor.date_range.start[2:4]}} – {{labor.date_range.end[5:7]|int}}/{{labor.date_range.end[8:10]|int}}/{{labor.date_range.end[2:4]}}){% endif %}</div>
         <div style="position:relative">
           <div class="day-bars" id="day-bars" style="height:120px;display:flex;align-items:flex-end;gap:4px;position:relative;z-index:1"></div>
           <div id="dow-target-line" style="position:absolute;left:0;right:0;bottom:0;height:2px;background:#ef9f27;opacity:0.6;z-index:2;pointer-events:none"></div>
@@ -4642,6 +4642,12 @@ def index(current_user):
             reverse=True
         )
         labor['role_max_pct'] = max((v.get('labor_pct', 0) for v in labor.get('role_summary', {}).values()), default=30.0)
+        try:
+            from models import get_staff_notes as _gsn_dash
+            _sn_dash = _gsn_dash(current_user["restaurant_id"])
+            labor['staff_constraints'] = {n['employee_name'].lower(): n['notes'] for n in _sn_dash} if _sn_dash else {}
+        except Exception:
+            labor['staff_constraints'] = {}
         # Staff notes for constraint-aware overtime display
         try:
             from models import get_staff_notes as _gsn_dash
