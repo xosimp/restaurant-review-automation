@@ -1085,7 +1085,7 @@ function clientUpload(dataType, input) {
         </div>
       </div>
 
-      <div class="slabel" style="margin-top:28px">Understaffed days</div>
+      <div class="slabel" style="margin-top:auto;padding-top:16px">Understaffed days</div>
       <div class="card"><table class="tbl">
         <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor %</th></tr></thead>
         <tbody>
@@ -1103,7 +1103,7 @@ function clientUpload(dataType, input) {
     </div>
   </div>
   <!-- Labor trend chart -->
-  <div class="slabel" style="margin-top:16px">Labor % trend — last 4 weeks</div>
+  <div class="slabel" style="margin-top:16px">Labor % trend — last 8 weeks</div>
   <div class="card" style="padding:16px">
     <div id="labor-trend-bars" style="display:flex;align-items:flex-end;gap:12px;height:80px;margin-bottom:6px">
       <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading trend data…</div>
@@ -5019,7 +5019,7 @@ def labor_trend_api(current_user):
         if not history:
             return jsonify(weeks=[])
         weeks = []
-        for h in reversed(history):  # oldest first for chart
+        for h in history[::-1]:  # oldest first = left to right
             try:
                 from datetime import datetime as _dt_lt
                 start = _dt_lt.strptime(h["period_start"], "%Y-%m-%d")
