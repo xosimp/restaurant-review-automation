@@ -966,7 +966,7 @@ function clientUpload(dataType, input) {
           <span style="font-size:13px;color:var(--ink3);margin-left:4px">target</span>
         </div>
       </div>
-      <div id="gap-dollar" style="font-size:13px;color:var(--ember2);margin-top:6px;font-weight:500">Loading cost gap…</div>
+      <div id="gap-dollar" style="font-size:13px;color:var(--ember2);margin-top:6px;font-weight:500">{% if labor.overall_labor_pct > labor.labor_target|default(30.0) %}Your labor is at {{labor.overall_labor_pct}}% vs {{labor.labor_target|default(30.0)}}% target — loading gap calculation…{% else %}Your labor is on target at {{labor.overall_labor_pct}}% — great work.{% endif %}</div>
     </div>
     <div style="text-align:right">
       <div id="gap-amount" style="font-family:'DM Serif Display',serif;font-size:36px;color:var(--ember2);line-height:1">—</div>
@@ -985,10 +985,10 @@ function clientUpload(dataType, input) {
   {% endif %}
   <div class="stat-row">
     <div class="stat"><div class="stat-n">${{labor.total_sales|int|format_num}}</div><div class="stat-l">Revenue (2 wks)</div></div>
-    <div class="stat warn"><div class="stat-n">${{labor.total_labor_cost|int|format_num}}</div><div class="stat-l">Labor cost (2 wks)</div></div>
+    <div class="stat {{"hi" if labor.overall_labor_pct > (labor.labor_target|default(30.0)) + 5 else ("warn" if labor.overall_labor_pct > (labor.labor_target|default(30.0)) else "ok")}}"><div class="stat-n">${{labor.total_labor_cost|int|format_num}}</div><div class="stat-l">Labor cost (2 wks)</div></div>
     <div class="stat {{'hi' if labor.overall_labor_pct>32 else 'ok'}}"><div class="stat-n">{{labor.overall_labor_pct}}%</div><div class="stat-l">Labor %</div></div>
     <div class="stat hi"><div class="stat-n">{{labor.overstaffed_days|length}}</div><div class="stat-l">Overstaffed days</div></div>
-    <div class="stat warn"><div class="stat-n">{{labor.overtime_risk|length}}</div><div class="stat-l">Overtime risk</div></div>
+    <div class="stat {{"hi" if labor.overtime_risk|length > 0 else "ok"}}"><div class="stat-n">{{labor.overtime_risk|length}}</div><div class="stat-l">Overtime risk</div></div>
   </div>
 
   <!-- AI insight -->
@@ -2120,105 +2120,107 @@ function skipR(id){
     }
   });
 }
-const dowData={{labor.dow_summary|tojson}};
-const laborDateRange={{labor.date_range|tojson if labor.date_range else 'null'}};
+var dowData={{labor.dow_summary|tojson}};
+var laborDateRange={{labor.date_range|tojson if labor.date_range else 'null'}};
 (function(){
-  const elPeriod=document.getElementById('labor-period');
+  var elPeriod=document.getElementById('labor-period');
   if(!elPeriod||!laborDateRange||!laborDateRange.start)return;
   function fmt(d){
-    const p=d.split('-');
+    var p=d.split('-');
     return parseInt(p[1])+'/'+parseInt(p[2])+'/'+p[0].slice(2);
   }
   elPeriod.textContent='Data: '+fmt(laborDateRange.start)+' — '+fmt(laborDateRange.end)+' ('+laborDateRange.days+' days)';
 })();
 function renderBars(){
-  const days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
-  const vals=days.map(d=>dowData[d]||0);
-  const filled=vals.filter(v=>v>0);
+  var days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  var filled=[];
+  var i;
+  for(i=0;i<days.length;i++){ if(dowData[days[i]]>0) filled.push(dowData[days[i]]); }
   if(!filled.length)return;
-  const dataMin=Math.max(0,Math.min(...filled)-8);
-  const dataMax=Math.max(...filled)+5;
-  const range=dataMax-dataMin||1;
-  const c=document.getElementById('day-bars');
+  var dataMin=Math.max(0,Math.min.apply(null,filled)-8);
+  var dataMax=Math.max.apply(null,filled)+5;
+  var range=dataMax-dataMin||1;
+  var c=document.getElementById('day-bars');
   if(!c)return;
-  const maxH=72;
-  c.innerHTML=days.map(d=>{
-    const pct=dowData[d]||0;
-    const h=pct>0?Math.max(6,Math.round(((pct-dataMin)/range)*maxH)):0;
-    const col=pct>32?'var(--red)':pct>=28?'#ef9f27':'#6fcf97';
-    const lbl=pct>0?pct+'%':'';
-    return`<div class="day-bar-wrap" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px">
-      <span style="font-size:9px;color:${col};font-weight:600;line-height:1">${lbl}</span>
-      <div style="width:75%;height:${h}px;background:${col};border-radius:3px 3px 0 0" title="${d}: ${pct}%"></div>
-    </div>`;
-  }).join('');
+  var maxH=72;
+  var html='';
+  for(i=0;i<days.length;i++){
+    var d=days[i];
+    var pct=dowData[d]||0;
+    var h=pct>0?Math.max(6,Math.round(((pct-dataMin)/range)*maxH)):0;
+    var col=pct>32?'var(--red)':pct>=28?'#ef9f27':'#6fcf97';
+    var lbl=pct>0?pct+'%':'';
+    html+='<div class="day-bar-wrap" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px">'+
+      '<span style="font-size:9px;color:'+col+';font-weight:600;line-height:1">'+lbl+'</span>'+
+      '<div style="width:75%;height:'+h+'px;background:'+col+';border-radius:3px 3px 0 0" title="'+d+': '+pct+'%"></div>'+
+    '</div>';
+  }
+  c.innerHTML=html;
 }
 let laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false;
+var _laborTarget={{labor_target|default(30.0)}};
 function loadLaborInsight(){
   laborLoaded=true;
-  fetch('/api/labor-insight').then(r=>r.json()).then(d=>{
-    const elLaborInsight=document.getElementById('labor-insight');
-    elLaborInsight.innerHTML=d.insight||'Analysis unavailable.';
-    elLaborInsight.classList.remove('insight-loading');
-  }).catch(e=>{
-    const elLaborErr=document.getElementById('labor-insight');
-    elLaborErr.textContent='Analysis unavailable — check back shortly.';
-    elLaborErr.classList.remove('insight-loading');
-    const elLaborErr2=document.getElementById('labor-insight');
-    elLaborErr2.textContent='Analysis unavailable — check back shortly.';
-    elLaborErr2.classList.remove('insight-loading');
+  fetch('/api/labor-insight').then(function(r){return r.json();}).then(function(d){
+    var elLaborInsight=document.getElementById('labor-insight');
+    if(elLaborInsight){
+      elLaborInsight.innerHTML=d.insight||'Analysis unavailable.';
+      elLaborInsight.classList.remove('insight-loading');
+    }
+  }).catch(function(){
+    var elLaborErr=document.getElementById('labor-insight');
+    if(elLaborErr){
+      elLaborErr.textContent='Analysis unavailable — check back shortly.';
+      elLaborErr.classList.remove('insight-loading');
+    }
   });
-  // Load dollar gap
-  fetch('/api/labor-gap').then(r=>r.json()).then(d=>{
-    const gapEl = document.getElementById('gap-amount');
-    const msgEl = document.getElementById('gap-dollar');
-    const pctEl = document.getElementById('gap-current-pct');
-    const target = {{labor_target|default(30.0)}};
-    if(!d || d.ok === false) {
-      gapEl.textContent = '—';
-      msgEl.textContent = 'Unable to calculate gap. Upload shift data to see this.';
+  fetch('/api/labor-gap').then(function(r){return r.json();}).then(function(d){
+    var gapEl=document.getElementById('gap-amount');
+    var msgEl=document.getElementById('gap-dollar');
+    var pctEl=document.getElementById('gap-current-pct');
+    if(!d||d.ok===false){
+      if(gapEl) gapEl.textContent='—';
+      if(msgEl) msgEl.textContent='Unable to calculate gap. Upload shift data to see this.';
       return;
     }
-    if(d.over_target && d.monthly_gap > 0) {
-      gapEl.textContent = '$' + Math.round(d.monthly_gap).toLocaleString();
-      gapEl.style.color = 'var(--ember2)';
-      msgEl.textContent = 'You are at ' + d.current_pct + '% vs your ' + target + '% target \u2014 that gap is costing around $' + Math.round(d.monthly_gap).toLocaleString() + '/mo. An optimized schedule can help close it.';
-      pctEl.style.color = '#ef9f27';
+    if(d.over_target&&d.monthly_gap>0){
+      if(gapEl){ gapEl.textContent='$'+Math.round(d.monthly_gap).toLocaleString(); gapEl.style.color='var(--ember2)'; }
+      if(msgEl) msgEl.textContent='You are at '+d.current_pct+'% vs your '+_laborTarget+'% target — that gap is costing around $'+Math.round(d.monthly_gap).toLocaleString()+'/mo. An optimized schedule can help close it.';
+      if(pctEl) pctEl.style.color='#ef9f27';
     } else {
-      gapEl.textContent = 'On target ✓';
-      gapEl.style.color = '#6fcf97';
-      msgEl.textContent = 'Your labor is at ' + d.current_pct + '% \u2014 at or below your ' + target + '% target. Great work. Keep an eye on individual days that spike.';
-      pctEl.style.color = '#6fcf97';
+      if(gapEl){ gapEl.textContent='On target ✓'; gapEl.style.color='#6fcf97'; }
+      if(msgEl) msgEl.textContent='Your labor is at '+d.current_pct+'% — at or below your '+_laborTarget+'% target. Great work. Keep an eye on individual days that spike.';
+      if(pctEl) pctEl.style.color='#6fcf97';
     }
-  }).catch(e=>{
-    document.getElementById('gap-amount').textContent='—';
-    document.getElementById('gap-dollar').textContent='Unable to load gap data.';
+  }).catch(function(){
+    var gapEl=document.getElementById('gap-amount');
+    var msgEl=document.getElementById('gap-dollar');
+    if(gapEl) gapEl.textContent='—';
+    if(msgEl) msgEl.textContent='Unable to load gap data.';
   });
 }
-async function downloadSchedule(btn) {
-  btn.textContent = 'Generating… (30 sec)';
-  btn.disabled = true;
-  try {
-    const res = await fetch('/api/download-schedule');
-    const contentType = res.headers.get('content-type') || '';
-    if(contentType.includes('json')) {
-      const data = await res.json();
-      btn.textContent = data.error || 'Error — try again';
-      setTimeout(()=>{btn.textContent='Download optimized schedule ↓';btn.disabled=false;},4000);
-      return;
+function downloadSchedule(btn){
+  btn.textContent='Generating… (30 sec)';
+  btn.disabled=true;
+  fetch('/api/download-schedule').then(function(r){
+    var ct=r.headers.get('content-type')||'';
+    if(ct.includes('json')){
+      return r.json().then(function(data){
+        btn.textContent=data.error||'Error — try again';
+        setTimeout(function(){btn.textContent='Download optimized schedule ↓';btn.disabled=false;},4000);
+      });
     }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'optimized_schedule.csv';
-    a.click();
-    btn.textContent = '✓ Downloaded';
-    setTimeout(()=>{btn.textContent='Download optimized schedule ↓';btn.disabled=false;},3000);
-  } catch(e) {
-    btn.textContent = 'Error — try again';
-    setTimeout(()=>{btn.textContent='Download optimized schedule ↓';btn.disabled=false;},4000);
-  }
+    return r.blob().then(function(blob){
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');
+      a.href=url; a.download='optimized_schedule.csv'; a.click();
+      btn.textContent='✓ Downloaded';
+      setTimeout(function(){btn.textContent='Download optimized schedule ↓';btn.disabled=false;},3000);
+    });
+  }).catch(function(){
+    btn.textContent='Error — try again';
+    setTimeout(function(){btn.textContent='Download optimized schedule ↓';btn.disabled=false;},4000);
+  });
 }
 function loadInvInsight(){
   invLoaded=true;
