@@ -1399,7 +1399,7 @@ function clientUpload(dataType, input) {
     <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none">Post to Instagram ↗</button>
     <button class="btn-primary" id="fb-post-btn" onclick="postToFacebook()" style="display:none;background:#1877f2">Post to Facebook ↗</button>
   </div>
-  <div style="margin-top:10px;font-size:11px;color:var(--ink3)" id="recent-topics-row" style="display:none">
+  <div style="margin-top:10px;font-size:11px;color:var(--ink3);display:none" id="recent-topics-row">
     <span style="font-weight:600;color:var(--ink)">Recent topics:</span> <span id="recent-topics-list">Loading…</span>
   </div>
   <div style="margin-top:6px;font-size:11px;color:var(--ink3);padding:6px 10px;background:var(--paper2);border-radius:6px;display:inline-block">
@@ -2268,8 +2268,12 @@ function loadRecentTopics(){
   fetch('/api/recent-topics').then(function(r){return r.json();}).then(function(d){
     var row=document.getElementById('recent-topics-row');
     var list=document.getElementById('recent-topics-list');
-    if(d.topics&&d.topics.length&&row&&list){
-      list.textContent=d.topics.join(' · ');
+    if(row&&list){
+      if(d.topics&&d.topics.length){
+        list.textContent=d.topics.join(' · ');
+      } else {
+        list.textContent='none yet — generate some content to build history';
+      }
       row.style.display='block';
     }
   }).catch(function(){});
