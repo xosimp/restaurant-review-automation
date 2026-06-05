@@ -37,6 +37,14 @@ if _SENTRY_DSN:
     )
 
 app = Flask(__name__)
+
+def _check_duplicate_routes():
+    """Crash loudly at startup if any URL rule is registered more than once."""
+    from collections import Counter
+    rules = [r.rule for r in app.url_map.iter_rules()]
+    dupes = [r for r, n in Counter(rules).items() if n > 1]
+    if dupes:
+        raise RuntimeError(f"DUPLICATE ROUTES DETECTED — fix before deploying: {dupes}")
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB global upload limit
 
 @app.template_filter("format_intel")
