@@ -1772,6 +1772,7 @@ function saveDraft(id) {
 }
 // CSRF token for POST requests
 var _csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
+var _igConnected = {{"true" if restaurant.ig_token else "false"}};
 
 function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},2600);}
 function disconnectInstagram(){
@@ -2264,6 +2265,24 @@ function renderBars(){
   }
 }
 var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false;
+function postToInstagram(){
+  var content=document.getElementById('mkoutput').textContent;
+  if(!content||content==='Select a type and click Generate.')return toast('Generate content first');
+  fetch('/api/post-to-instagram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content})})
+    .then(function(r){return r.json();}).then(function(d){
+      if(d.ok){toast('Posted to Instagram ✓');}
+      else{toast(d.error||'Post failed — try again');}
+    }).catch(function(){toast('Post failed — check connection');});
+}
+function postToFacebook(){
+  var content=document.getElementById('mkoutput').textContent;
+  if(!content||content==='Select a type and click Generate.')return toast('Generate content first');
+  fetch('/api/post-to-facebook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:content})})
+    .then(function(r){return r.json();}).then(function(d){
+      if(d.ok){toast('Posted to Facebook ✓');}
+      else{toast(d.error||'Post failed — try again');}
+    }).catch(function(){toast('Post failed — check connection');});
+}
 function loadRecentTopics(){
   fetch('/api/recent-topics').then(function(r){return r.json();}).then(function(d){
     var row=document.getElementById('recent-topics-row');
@@ -2420,6 +2439,9 @@ function genContent(fromCalendar){
       box.style.fontStyle='normal';
       box.style.color='var(--ink2)';
       box.textContent=d.content||'Generation failed — try again.';
+      var igBtn=document.getElementById('ig-post-btn');
+      var fbBtn=document.getElementById('fb-post-btn');
+      if(_igConnected){if(igBtn)igBtn.style.display='inline-block';if(fbBtn)fbBtn.style.display='inline-block';}
       var selBtn=document.querySelector('.ct-btn.selected');
       var isSms=selBtn&&selBtn.dataset&&selBtn.dataset.type==='loyalty_nudge';
       var counter=document.getElementById('sms-counter');

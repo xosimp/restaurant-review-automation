@@ -406,6 +406,9 @@ Rules:
         for idea in ideas:
             day_name = idea.get("day", "")
             idea["date"] = days_map.get(day_name, "")
+        # Sort by date so calendar always shows Mon→Sun order
+        day_order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+        ideas.sort(key=lambda x: day_order.index(x.get("day","Monday")) if x.get("day","") in day_order else 7)
         # Attach week_range to first idea for the UI to read
         if ideas:
             ideas[0]["week_range"] = week_range
