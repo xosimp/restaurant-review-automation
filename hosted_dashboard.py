@@ -1403,7 +1403,7 @@ function clientUpload(dataType, input) {
     <span style="font-weight:600;color:var(--ink)">Recent topics:</span> <span id="recent-topics-list">Loading…</span>
   </div>
   <div style="margin-top:6px;font-size:11px;color:var(--ink3);padding:6px 10px;background:var(--paper2);border-radius:6px;display:inline-block">
-    📊 Restaurants that post 3× per week see <strong>2× more Google profile views</strong> — use the content calendar below to stay consistent.
+    📊 Restaurants posting weekly Google Business updates get <strong>3–7× more direction requests</strong> — use the content calendar below to stay consistent.
   </div>
 
   <div style="margin-top:24px;background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
