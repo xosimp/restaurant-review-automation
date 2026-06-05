@@ -2440,7 +2440,7 @@ function genContent(fromCalendar){
     .then(function(d){
       box.style.fontStyle='normal';
       box.style.color='var(--ink2)';
-      box.innerHTML=(d.content||'Generation failed — try again.').split('\n').join('<br>');
+      box.textContent=d.content||'Generation failed — try again.';
       box.style.fontStyle='normal';box.style.color='var(--ink)';
       var hint=document.getElementById('output-hint');if(hint)hint.style.display='block';
       var igBtn=document.getElementById('ig-post-btn');
