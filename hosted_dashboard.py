@@ -935,6 +935,25 @@ function clientUpload(dataType, input) {
     </label>
   </div>
 
+  <!-- Schedule download tooltip -->
+  <div id="schedule-tooltip" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:999;background:rgba(14,12,10,0.6);align-items:center;justify-content:center">
+    <div style="background:var(--ink);border-radius:12px;padding:28px 32px;max-width:420px;width:90%;position:relative;border:1px solid #3d3530">
+      <button onclick="document.getElementById('schedule-tooltip').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;color:var(--ink3);font-size:18px;cursor:pointer;line-height:1">✕</button>
+      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:12px">Schedule optimized</div>
+      <div style="font-size:14px;color:var(--paper);font-weight:600;margin-bottom:8px">Your CSV is downloading now</div>
+      <div style="font-size:12px;color:#c0b8b0;line-height:1.7;margin-bottom:16px">
+        The AI reviewed your shift data and built an optimized schedule targeting your {{labor_target|default(30.0)}}% labor goal.
+        Focus areas: reducing hours on your highest-cost days and smoothing coverage across the week.
+      </div>
+      <div style="background:#1e1a14;border-radius:8px;padding:12px 14px;margin-bottom:16px">
+        <div style="font-size:11px;color:var(--ember2);font-weight:600;margin-bottom:6px">Estimated impact</div>
+        <div style="font-size:13px;color:#6fcf97;font-weight:700">~${{(labor.potential_savings / 2)|int|format_num}}/mo saved</div>
+        <div style="font-size:11px;color:#8a8078;margin-top:2px">if schedule adjustments are applied</div>
+      </div>
+      <button onclick="document.getElementById('schedule-tooltip').style.display='none'" style="width:100%;padding:10px;background:var(--ember);color:white;border:none;border-radius:7px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer">Got it — open the CSV ✓</button>
+    </div>
+  </div>
+
   <!-- Hero metric — dollar gap -->
   <div id="labor-gap-banner" style="background:var(--ink);border-radius:var(--r);padding:20px 24px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>
@@ -971,9 +990,7 @@ function clientUpload(dataType, input) {
       <button onclick="downloadSchedule(this)" style="margin-top:12px;padding:9px 18px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#a83d25'" onmouseout="this.style.background='var(--ember)'">
         Download optimized schedule ↓
       </button>
-      <div id="schedule-summary" style="display:none;margin-top:8px;font-size:11px;color:#6fcf97;line-height:1.6;min-height:0">
-        ✓ Schedule optimized — reducing overstaffed shifts on your highest-cost days. Estimated saving: ~${{(labor.potential_savings / 2)|int|format_num}}/mo if adjustments applied.
-      </div>
+
     </div>
   </div>
 
@@ -1002,19 +1019,17 @@ function clientUpload(dataType, input) {
     </div>
     <div style="position:relative;height:10px;background:var(--paper3);border-radius:5px;overflow:hidden">
       <div style="position:absolute;left:0;top:0;height:100%;width:{{[lp,100]|min}}%;background:{{lb_color}};border-radius:5px;transition:width .4s"></div>
-      <div style="position:absolute;left:{{(25/50*100)|int}}%;top:-2px;height:14px;width:2px;background:#2d6a4f;opacity:.7" title="25% — fine dining target"></div>
       <div style="position:absolute;left:{{[lt/50*100,99]|min|int}}%;top:-2px;height:14px;width:2px;background:#ef9f27;opacity:.7" title="{{lt}}% — your target"></div>
       <div style="position:absolute;left:{{(35/50*100)|int}}%;top:-2px;height:14px;width:2px;background:#c0392b;opacity:.7" title="35% — concerning"></div>
     </div>
     <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:10px;color:var(--ink3)">
       <span>0%</span>
-      <span style="color:#2d6a4f;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px">▲ 25% fine dining</span>
       <span style="color:#7a4f00;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px">▲ {{lt}}% your target</span>
-      <span style="color:#c0392b;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px">▲ 35% concerning</span>
+      <span style="margin-left:auto;color:#c0392b;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px">▲ 35% high</span>
       <span>50%+</span>
     </div>
     <div style="margin-top:6px;font-size:11px;color:var(--ink);background:rgba(255,255,255,.6);border-radius:4px;padding:3px 6px;display:inline-block">
-      Industry range: <strong>25–32%</strong> for full-service restaurants — {% if lp <= lt %}you're within target{% elif lp <= lt + 3 %}slightly above your {{lt}}% target{% elif lp <= lt + 8 %}{{(lp - lt)|round(1)}} points above your {{lt}}% target — schedule optimization can help{% else %}{{(lp - lt)|round(1)}} points above your {{lt}}% target — priority area{% endif %}
+      Industry range: <strong>28–35%</strong> for full-service restaurants — {% if lp <= lt %}you're within target{% elif lp <= lt + 3 %}slightly above your {{lt}}% target{% elif lp <= lt + 8 %}{{(lp - lt)|round(1)}} points above your {{lt}}% target — schedule optimization can help{% else %}{{(lp - lt)|round(1)}} points above your {{lt}}% target — priority area{% endif %}
     </div>
   </div>
 
@@ -2278,11 +2293,8 @@ function downloadSchedule(btn){
     }
     return r.blob().then(function(blob){
       // Show summary before downloading
-      var summary=document.getElementById('schedule-summary');
-      if(summary){
-        summary.style.display='block';
-        setTimeout(function(){summary.style.display='none';},6000);
-      }
+      var tooltip=document.getElementById('schedule-tooltip');
+      if(tooltip){ tooltip.style.display='flex'; }
       var url=URL.createObjectURL(blob);
       var a=document.createElement('a');
       a.href=url; a.download='optimized_schedule.csv'; a.click();
