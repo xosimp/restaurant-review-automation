@@ -1025,7 +1025,7 @@ function clientUpload(dataType, input) {
     <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink);margin-bottom:12px">Labor cost by role</div>
     <div style="display:flex;flex-direction:column;gap:8px">
     {% set max_role_pct = labor.role_summary.values()|map(attribute='labor_pct')|max %}
-    {% for role, data in labor.role_summary|dictsort(by='value', attribute='labor_pct', reverse=True) %}
+    {% for role, data in labor.role_summary_sorted %}
     {% set bar_w = ((data.labor_pct / max_role_pct) * 100)|int if max_role_pct > 0 else 0 %}
     {% set role_color = '#c0392b' if data.labor_pct > (labor_target|default(30.0)) else ('#ef9f27' if data.labor_pct > (labor_target|default(30.0) - 5) else '#2d6a4f') %}
     <div style="display:flex;align-items:center;gap:10px">
@@ -4602,6 +4602,12 @@ def index(current_user):
     sentiment_trend    = get_sentiment_trend(rid, weeks=8)
     try:
         labor = analyse_shifts_for_restaurant(rid)
+        # Pre-sort role_summary for Jinja (dictsort attribute not supported in this Jinja2)
+        labor['role_summary_sorted'] = sorted(
+            labor.get('role_summary', {}).items(),
+            key=lambda x: x[1].get('labor_pct', 0),
+            reverse=True
+        )
         # Add period-over-period delta
         try:
             from models import get_labor_history as _glh_delta
