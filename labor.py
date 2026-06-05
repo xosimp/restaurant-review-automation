@@ -200,7 +200,7 @@ def analyse_shifts(shifts: list[dict],
                                  "labor_pct": round(labor_pct, 1),
                                  "labor_cost": round(labor_cost, 2),
                                  "sales": d["sales"]})
-        elif labor_pct < 18 and d["sales"] > 2500:
+        elif labor_pct < (LABOR_TARGET - 3) and d["sales"] > 2500:
             try:
                 from datetime import datetime as _dt
                 fmt_date = _dt.strptime(date, "%Y-%m-%d").strftime("%-m/%-d/%y")

@@ -5649,10 +5649,14 @@ def _do_seed_ryan():
         _conn_r.close()
         print("  Ryan's 32 reviews seeded with categories and week spread.\n")
 
-        # Seed labor history FIRST (no API calls, instant)
+        # Seed labor history FIRST (no API calls, instant) — always replace on fresh deploy
         try:
-            from models import save_labor_snapshot as _sls_r2, get_labor_history as _glh_r2
-            if not _glh_r2(ryan_rid, limit=1):
+            from models import save_labor_snapshot as _sls_r2, get_conn as _gc_lh
+            # Clear existing labor history for Ryan and reseed fresh
+            _clh = _gc_lh()
+            _clh.execute("DELETE FROM labor_history WHERE restaurant_id=?", (ryan_rid,))
+            _clh.commit(); _clh.close()
+            if True:
                 _now_r2 = datetime.now()
                 _lh_r2 = [(-49,34.2,42800,125200),(-42,33.1,44100,133200),(-35,31.8,45600,143400),
                            (-28,32.5,43200,132900),(-21,31.2,46800,150000),(-14,30.8,47200,153200),
