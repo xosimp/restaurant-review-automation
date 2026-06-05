@@ -2346,24 +2346,24 @@ function generateFromCal(type, topic) {
   document.getElementById('mkoutput').scrollIntoView({behavior:'smooth', block:'nearest'});
   genContent(true);
 }
-async function saveDigestDay() {
-  const day     = document.getElementById('digest-day-select').value;
-  const enabled = document.getElementById('digest-enabled-select').value;
-  const status  = document.getElementById('digest-save-status');
-  const res = await fetch('/api/update-digest-day', {
+function saveDigestDay() {
+  var day     = document.getElementById('digest-day-select').value;
+  var enabled = document.getElementById('digest-enabled-select').value;
+  var status  = document.getElementById('digest-save-status');
+  fetch('/api/update-digest-day', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({day, enabled: parseInt(enabled)})
-  });
-  const data = await res.json();
-  status.style.display='inline';
-  if(data.ok) {
-    status.style.color='var(--green)'; status.textContent='✓ Saved';
-    document.getElementById('digest-day-current').textContent=day.charAt(0).toUpperCase()+day.slice(1);
-    setTimeout(()=>{status.style.display='none';},2500);
-  } else { status.style.color='var(--red)'; status.textContent='Save failed'; }
+    body: JSON.stringify({day:day, enabled: parseInt(enabled)})
+  }).then(function(r){return r.json();}).then(function(data){
+    status.style.display='inline';
+    if(data.ok) {
+      status.style.color='var(--green)'; status.textContent='✓ Saved';
+      document.getElementById('digest-day-current').textContent=day.charAt(0).toUpperCase()+day.slice(1);
+      setTimeout(function(){status.style.display='none';},2500);
+    } else { status.style.color='var(--red)'; status.textContent='Save failed'; }
+  }).catch(function(){ status.style.color='var(--red)'; status.textContent='Save failed'; });
 }
 function loadBillingInfo() {
-  fetch('/api/billing-info').then(r=>r.json()).then(d=>{
+  fetch('/api/billing-info').then(function(r){return r.json();}).then(function(d){
     document.getElementById('billing-loading').style.display='none';
     if(!d.ok || d.status==='inactive') {
       document.getElementById('billing-no-sub').style.display='block'; return;
@@ -5742,7 +5742,16 @@ Sparkling Water,Beverage,case,6,9,22.00,0.8,6,0.0"""
 
 def _seed_ryan_background():
     try:
-        import time as _t_ryan; _t_ryan.sleep(3)  # let Gunicorn fully start first
+        import time as _t_ryan
+        # Wait for DB to be ready — poll instead of blind sleep
+        for _attempt in range(10):
+            try:
+                _test = get_conn()
+                _test.execute("SELECT 1").fetchone()
+                _test.close()
+                break
+            except Exception:
+                _t_ryan.sleep(1)
         conn = get_conn()
         ryan_exists = conn.execute(
                 "SELECT id FROM users WHERE email=?", ("ryancavnar@gmail.com",)

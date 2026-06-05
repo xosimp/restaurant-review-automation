@@ -3,6 +3,8 @@ inventory.py — Food waste analysis + Claude-powered ordering recommendations
 """
 import os, csv, json
 import anthropic
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -157,13 +159,8 @@ def analyse_inventory(items: list[dict]) -> dict:
         benchmark_color  = "#c0392b"
         benchmark_detail = f"Industry target is 4-5% — you're at {waste_rate_pct}%"
 
-    from datetime import datetime, timedelta
     # Always use current Chicago time as week end — matches when the client uploaded
-    try:
-        from zoneinfo import ZoneInfo as _ZI_inv
-        now_chi = datetime.now(_ZI_inv('America/Chicago')).replace(tzinfo=None)
-    except Exception:
-        now_chi = datetime.now()
+    now_chi = datetime.now(ZoneInfo('America/Chicago')).replace(tzinfo=None)
     # Week ending on the upload day, starting 6 days prior
     week_end_dt   = now_chi
     week_start_dt = now_chi - timedelta(days=6)
@@ -231,11 +228,9 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             # Use the inventory data's own week_end date so chart labels match the header
             import json as _json_inv2
             try:
-                from datetime import datetime as _dt_we
-                _week_end_str = _dt_we.strptime(analysis.get("week_end", ""), "%m/%d/%y").strftime("%Y-%m-%d")
+                _week_end_str = datetime.strptime(analysis.get("week_end", ""), "%m/%d/%y").strftime("%Y-%m-%d")
             except Exception:
-                from zoneinfo import ZoneInfo as _ZI_fallback
-                _week_end_str = datetime.now(_ZI_fallback('America/Chicago')).strftime('%Y-%m-%d')
+                _week_end_str = datetime.now(ZoneInfo('America/Chicago')).strftime('%Y-%m-%d')
             snapshot = {
                 "total_waste_cost": analysis['total_waste_cost_week'],
                 "top_items": [x["item"] for x in analysis["waste_items"][:4]]
@@ -283,9 +278,7 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
         except Exception:
             pass
 
-    from datetime import datetime as _dt_inv
-    from zoneinfo import ZoneInfo
-    today_inv = _dt_inv.now(ZoneInfo('America/Chicago')).strftime("%B %d, %Y")
+    today_inv = datetime.now(ZoneInfo('America/Chicago')).strftime("%B %d, %Y")
 
     # Seasonal/event awareness — pull upcoming holidays for ordering recommendations
     holiday_context = ""

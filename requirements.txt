@@ -1,14 +1,19 @@
-anthropic>=0.25.0
-flask>=3.0.0
+# Core — pinned to avoid silent breaking changes on deploy
+anthropic>=0.105.0
+flask>=3.0.0,<4.0.0
+werkzeug>=3.0.0,<4.0.0
+stripe>=8.0.0,<12.0.0
+sentry-sdk[flask]==2.8.0
+
+# Infrastructure
+gunicorn>=21.0.0
 python-dotenv>=1.0.0
 requests>=2.31.0
 schedule>=1.2.0
-werkzeug>=3.0.0
+
+# Features
 resend>=0.8.0
 reportlab>=4.0.0
-stripe>=8.0.0
 PyJWT>=2.8.0
 docusign-esign>=3.22.0
-sentry-sdk[flask]==2.8.0
 pypdf
-gunicorn>=21.0.0
