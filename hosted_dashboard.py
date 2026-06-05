@@ -1350,36 +1350,21 @@ function clientUpload(dataType, input) {
 <!-- MARKETING -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing">
 
-  <!-- Instagram & Facebook connect — matches Google Business card style -->
-  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:14px">
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Instagram &amp; Facebook — Post directly from dashboard</div>
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-      <div>
-        {% if restaurant.ig_token %}
-        <div style="display:flex;align-items:center;gap:8px;font-size:13px">
-          <span style="color:var(--green);font-size:16px">✓</span>
-          <div>
-            <div style="font-weight:600;color:var(--ink)">Instagram &amp; Facebook connected</div>
-            <div style="font-size:11px;color:var(--ink3)">Generate content and post directly — no copy/paste</div>
-          </div>
-        </div>
-        {% else %}
-        <div>
-          <div style="font-size:13px;font-weight:500;color:var(--ink);margin-bottom:2px">Connect Instagram &amp; Facebook</div>
-          <div style="font-size:11px;color:var(--ink3)">Post generated content directly — no copy/paste needed</div>
-        </div>
-        {% endif %}
-      </div>
-      <div style="display:flex;gap:8px">
-        {% if restaurant.ig_token %}
-        <button onclick="disconnectInstagram()" class="btn btn-skip" style="font-size:11px">Disconnect</button>
-        {% else %}
-        <button onclick="igConnect()" class="btn btn-approve" style="font-size:12px;padding:7px 16px">
-          Connect Instagram →
-        </button>
-        {% endif %}
-      </div>
+  <!-- Instagram & Facebook connect — compact status bar -->
+  <div style="display:flex;align-items:center;justify-content:space-between;background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:10px 14px;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+    {% if restaurant.ig_token %}
+    <div style="display:flex;align-items:center;gap:6px;font-size:12px">
+      <span style="color:var(--green);font-weight:700">✓</span>
+      <span style="font-weight:600;color:var(--ink)">Instagram &amp; Facebook connected</span>
+      <span style="color:var(--ink3)">— generate content and post directly below</span>
     </div>
+    <button onclick="disconnectInstagram()" class="btn btn-skip" style="font-size:11px;padding:4px 10px">Disconnect</button>
+    {% else %}
+    <div style="display:flex;align-items:center;gap:6px;font-size:12px">
+      <span style="color:var(--ink3)">Connect Instagram &amp; Facebook to post generated content directly — no copy/paste</span>
+    </div>
+    <button onclick="igConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 14px">Connect Instagram →</button>
+    {% endif %}
   </div>
 
   <!-- AI marketing brief -->
