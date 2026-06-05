@@ -1994,7 +1994,7 @@ document.addEventListener('DOMContentLoaded', function(){
   // Initialize filter so count label is accurate on page load
   filterReviews();
 });
-let rfilter='{{rfilter}}';
+var rfilter='{{rfilter}}';
 function setRF(f,btn){
   rfilter=f;
   document.querySelectorAll('.fpill').forEach(function(p){p.classList.remove('active','active-red');});
@@ -2401,8 +2401,8 @@ function loadInvTrend(){
     if(container)container.innerHTML='<div style="color:var(--ink3);font-size:12px;font-style:italic">Trend data unavailable.</div>';
   });
 }
-let selCt='{{ctypes[0].id if ctypes}}';
-function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(b=>b.classList.remove('selected'));el.classList.add('selected')}
+var selCt='{{ctypes[0].id if ctypes}}';
+function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(function(b){b.classList.remove('selected');});el.classList.add('selected');}
 function genContent(fromCalendar){
   var topic=document.getElementById('mktopic').value.trim();
   if(!topic){toast('Enter a topic');return;}
@@ -3112,7 +3112,7 @@ textarea{resize:vertical;min-height:60px}
 </div>
 
 <script>
-let reviewsLive = {{ 'true' if restaurant.gmb_refresh_token else 'false' }};
+var reviewsLive = {{ 'true' if restaurant.gmb_refresh_token else 'false' }};
 
 // Poll for new reviews every 5 minutes when on reviews tab
 (function() {
