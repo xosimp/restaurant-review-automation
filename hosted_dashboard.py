@@ -1081,7 +1081,7 @@ function clientUpload(dataType, input) {
         </div>
       </div>
 
-      <div class="slabel" style="margin-top:auto;padding-top:28px">Understaffed days</div>
+      <div class="slabel" style="margin-top:auto;padding-top:28px">Understaffed days — possible missed revenue ⚠</div>
       <div class="card" style="flex:1;position:relative;overflow:hidden;padding:0">
         {% set row_count = labor.understaffed_days|length %}
         <div style="position:absolute;bottom:0;left:0;right:0;top:0;background:linear-gradient(to top,rgba(200,75,47,0.18) 0%,rgba(239,159,39,0.10) {{[row_count * 18 + 12, 55]|min}}%,rgba(239,159,39,0.0) 70%);pointer-events:none;z-index:0"></div>
@@ -1092,7 +1092,7 @@ function clientUpload(dataType, input) {
           <tr>
             <td>{{d.date}}</td><td style="font-weight:500">{{d.day}}</td>
             <td>${{d.sales|int|format_num}}</td>
-            <td><span class="pill pill-green">{{d.labor_pct}}%</span></td>
+            <td><span class="pill pill-amber" title="Low labor on high-sales day — possible missed revenue">{{d.labor_pct}}% ⚠</span></td>
           </tr>
           {% else %}
           <tr><td colspan="4" style="color:var(--ink3);font-style:italic;padding:10px">None flagged</td></tr>
