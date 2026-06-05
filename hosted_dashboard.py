@@ -1022,11 +1022,11 @@ function clientUpload(dataType, input) {
       <div style="position:absolute;left:{{[lt/50*100,99]|min|int}}%;top:-2px;height:14px;width:2px;background:#ef9f27;opacity:.7" title="{{lt}}% — your target"></div>
       <div style="position:absolute;left:{{(35/50*100)|int}}%;top:-2px;height:14px;width:2px;background:#c0392b;opacity:.7" title="35% — concerning"></div>
     </div>
-    <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:10px;color:var(--ink3)">
-      <span>0%</span>
-      <span style="color:#7a4f00;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px">▲ {{lt}}% your target</span>
-      <span style="margin-left:auto;color:#c0392b;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px">▲ 35% high</span>
-      <span>50%+</span>
+    <div style="position:relative;height:18px;margin-top:4px;font-size:10px;">
+      <span style="position:absolute;left:0;color:var(--ink3)">0%</span>
+      <span style="position:absolute;left:{{[lt/50*100,90]|min|int}}%;transform:translateX(-50%);color:#7a4f00;font-weight:600;white-space:nowrap;background:rgba(255,255,255,.8);padding:0 3px;border-radius:3px">▲ {{lt}}% target</span>
+      <span style="position:absolute;left:70%;transform:translateX(-50%);color:#c0392b;font-weight:600;white-space:nowrap;background:rgba(255,255,255,.8);padding:0 3px;border-radius:3px">▲ 35% high</span>
+      <span style="position:absolute;right:0;color:var(--ink3)">50%+</span>
     </div>
     <div style="margin-top:6px;font-size:11px;color:var(--ink);background:rgba(255,255,255,.6);border-radius:4px;padding:3px 6px;display:inline-block">
       Industry range: <strong>28–35%</strong> for full-service restaurants — {% if lp <= lt %}you're within target{% elif lp <= lt + 3 %}slightly above your {{lt}}% target{% elif lp <= lt + 8 %}{{(lp - lt)|round(1)}} points above your {{lt}}% target — schedule optimization can help{% else %}{{(lp - lt)|round(1)}} points above your {{lt}}% target — priority area{% endif %}
@@ -1094,47 +1094,6 @@ function clientUpload(dataType, input) {
         </tbody>
       </table></div>
 
-      {% if labor.overtime_risk %}
-      <div class="slabel" style="margin-top:14px">Overtime alerts</div>
-      <div class="card"><table class="tbl">
-        <thead><tr><th>Employee</th><th>Week of</th><th>Hours that week</th><th>2-wk total</th><th>Status</th></tr></thead>
-        <tbody>
-        {% for emp in labor.overtime_risk %}
-        {% set two_wk = labor.employee_hours.get(emp.employee, {}).get("actual", 0)|round(1) %}
-        {% set intensity = ((emp.hours - 40) / 20 * 100)|int if emp.hours > 40 else 0 %}
-        <tr style="{% if emp.status == "overtime" and emp.hours >= 55 %}background:linear-gradient(to right,rgba(192,57,43,0.08),white);{% endif %}">
-          <td style="font-weight:500">{{emp.employee}}</td>
-          <td style="font-size:11px;color:var(--ink3)">{{emp.week}}</td>
-          <td style="font-weight:{% if emp.hours >= 55 %}700{% else %}400{% endif %};color:{% if emp.hours >= 55 %}var(--red){% else %}var(--ink){% endif %}">{{emp.hours}}h</td>
-          <td style="font-size:11px;color:var(--ink3)">{{two_wk}}h</td>
-          <td>
-            {% if emp.status == "overtime" %}
-              <span class="pill pill-red">Overtime (40h+) — review pay</span>
-            {% else %}
-              <span class="pill pill-amber">⚠ Approaching 40h</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-      </table></div>
-      {% endif %}
-    </div>
-
-    <div style="display:flex;flex-direction:column;">
-      <div class="slabel">Labor % by day of week</div>
-      <div class="card" style="padding:16px">
-        <div class="day-bars" id="day-bars" style="height:124px;display:flex;align-items:flex-end;gap:4px"></div>
-        <div style="display:flex;justify-content:space-around;font-size:9px;color:var(--ink3);margin-top:3px">
-          {% for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] %}<span>{{d}}</span>{% endfor %}
-        </div>
-        <div style="margin-top:8px;display:flex;gap:12px;font-size:10px;color:var(--ink3)">
-          <span><span style="color:var(--red)">■</span> Over {{labor_target|default(30.0)|int}}%</span>
-          <span><span style="color:#ef9f27">■</span> {{(labor_target|default(30.0) - 3)|int}}–{{labor_target|default(30.0)|int}}%</span>
-          <span><span style="color:#6fcf97">■</span> Under {{(labor_target|default(30.0) - 3)|int}}%</span>
-        </div>
-      </div>
-
       <div class="slabel" style="margin-top:14px">Understaffed days — possible missed revenue ⚠</div>
       <div class="card" style="flex:1;position:relative;overflow:hidden;padding:0">
         {% set row_count = labor.understaffed_days|length %}
@@ -1158,6 +1117,46 @@ function clientUpload(dataType, input) {
           💡 Consider scheduling 1–2 additional staff on {% for d in labor.understaffed_days %}{{d.day}}{% if not loop.last %}, {% endif %}{% endfor %} — strong sales on lean staffing suggests missed revenue opportunity.
         </div>
         {% endif %}
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;">
+      {% if labor.overtime_risk %}
+      <div class="slabel">Overtime alerts</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Employee</th><th>Week of</th><th>Hours that week</th><th>2-wk total</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for emp in labor.overtime_risk %}
+        {% set two_wk = labor.employee_hours.get(emp.employee, {}).get("actual", 0)|round(1) %}
+        <tr style="{% if emp.status == "overtime" and emp.hours >= 55 %}background:linear-gradient(to right,rgba(192,57,43,0.08),white);{% endif %}">
+          <td style="font-weight:500">{{emp.employee}}</td>
+          <td style="font-size:11px;color:var(--ink3)">{{emp.week}}</td>
+          <td style="font-weight:{% if emp.hours >= 55 %}700{% else %}400{% endif %};color:{% if emp.hours >= 55 %}var(--red){% else %}var(--ink){% endif %}">{{emp.hours}}h</td>
+          <td style="font-size:11px;color:var(--ink3)">{{two_wk}}h</td>
+          <td>
+            {% if emp.status == "overtime" %}
+              <span class="pill pill-red">Overtime (40h+) — review pay</span>
+            {% else %}
+              <span class="pill pill-amber">⚠ Approaching 40h</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% endif %}
+
+      <div class="slabel" style="margin-top:14px">Labor % by day of week</div>
+      <div class="card" style="padding:16px;flex:1">
+        <div class="day-bars" id="day-bars" style="height:124px;display:flex;align-items:flex-end;gap:4px"></div>
+        <div style="display:flex;justify-content:space-around;font-size:9px;color:var(--ink3);margin-top:3px">
+          {% for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"] %}<span>{{d}}</span>{% endfor %}
+        </div>
+        <div style="margin-top:8px;display:flex;gap:12px;font-size:10px;color:var(--ink3)">
+          <span><span style="color:var(--red)">■</span> Over {{labor_target|default(30.0)|int}}%</span>
+          <span><span style="color:#ef9f27">■</span> {{(labor_target|default(30.0) - 3)|int}}–{{labor_target|default(30.0)|int}}%</span>
+          <span><span style="color:#6fcf97">■</span> Under {{(labor_target|default(30.0) - 3)|int}}%</span>
+        </div>
       </div>
     </div>
   </div>
