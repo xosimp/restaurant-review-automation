@@ -3885,7 +3885,7 @@ function toggleUsage(rid, btn){
         if(events.csv_upload) html += '<span>📤 CSV uploads: <strong>'+events.csv_upload+'</strong></span>';
         if(!html) html = 'No activity logged yet.';
         dataDiv.innerHTML = html;
-      }).catch(()=>{ dataDiv.textContent = 'Error loading usage.'; });
+      }).catch(function(){ dataDiv.textContent = 'Error loading usage.'; });
     }
   } else {
     div.style.display = 'none';
@@ -5017,8 +5017,7 @@ def labor_trend_api(current_user):
         weeks = []
         for h in history[::-1]:  # oldest first = left to right
             try:
-                from datetime import datetime as _dt_lt
-                start = _dt_lt.strptime(h["period_start"], "%Y-%m-%d")
+                start = datetime.strptime(h["period_start"], "%Y-%m-%d")
                 label = start.strftime("%-m/%-d")
             except Exception:
                 label = h.get("period_start", "")[:5]
