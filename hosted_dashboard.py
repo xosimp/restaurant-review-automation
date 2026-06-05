@@ -1019,18 +1019,16 @@ function clientUpload(dataType, input) {
     </div>
     {% set bar_fill = [lp/50*100, 100]|min|int %}
     {% set target_pos = [lt/50*100, 97]|min|int %}
-    {% set client_pos = [lp/50*100, 99]|min|int %}
-    <div style="position:relative;height:10px;background:var(--paper3);border-radius:5px;overflow:hidden;margin-bottom:0">
-      <div style="position:absolute;left:0;top:0;height:100%;width:{{bar_fill}}%;background:{{lb_color}};border-radius:5px;transition:width .4s"></div>
-      <div style="position:absolute;left:{{target_pos}}%;top:0;height:100%;width:2px;background:#ef9f27;opacity:1"></div>
-      <div style="position:absolute;left:70%;top:0;height:100%;width:2px;background:#c0392b;opacity:.4"></div>
+    <div style="position:relative;height:18px;font-size:10px;margin-bottom:4px">
+      <span style="position:absolute;left:0;color:var(--ink3)">0%</span>
+      <span style="position:absolute;left:{{target_pos}}%;transform:translateX(-50%);color:#2d6a4f;font-weight:700;white-space:nowrap">{{lt}}% target ↓</span>
+      <span style="position:absolute;left:70%;transform:translateX(-50%);color:#c0392b;font-weight:700;white-space:nowrap">35% high ↓</span>
+      <span style="position:absolute;right:0;color:var(--ink3)">50%+</span>
     </div>
-    <div style="position:relative;height:28px;font-size:10px;margin-top:3px">
-      <span style="position:absolute;left:0;color:var(--ink3);top:8px">0%</span>
-      <span style="position:absolute;left:{{target_pos}}%;transform:translateX(-50%);color:#7a4f00;font-weight:700;white-space:nowrap;top:0">▲ {{lt}}% target</span>
-      <span style="position:absolute;left:70%;transform:translateX(-50%);color:var(--ink3);font-weight:400;white-space:nowrap;font-size:9px;top:10px">35%</span>
-      <span style="position:absolute;right:0;color:var(--ink3);top:8px">50%+</span>
-      <span style="position:absolute;left:{{client_pos}}%;transform:translateX(-50%);color:{{lb_color}};font-weight:700;white-space:nowrap;top:14px;font-size:10px">● {{lp}}% you</span>
+    <div style="position:relative;height:10px;background:var(--paper3);border-radius:5px;overflow:hidden">
+      <div style="position:absolute;left:0;top:0;height:100%;width:{{bar_fill}}%;background:{{lb_color}};border-radius:5px;transition:width .4s"></div>
+      <div style="position:absolute;left:{{target_pos}}%;top:-3px;height:16px;width:3px;background:#2d6a4f;border-radius:1px;z-index:2"></div>
+      <div style="position:absolute;left:70%;top:-3px;height:16px;width:3px;background:#c0392b;border-radius:1px;z-index:2"></div>
     </div>
     <div style="margin-top:4px;font-size:11px;color:var(--ink3)">
       Industry range: <strong>28–32%</strong> for full-service restaurants
