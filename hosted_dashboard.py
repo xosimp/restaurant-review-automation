@@ -382,6 +382,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--ember2:#e8956a;--green:#2d6a4f;--green-bg:#eaf4ee;--red:#c0392b;--red-bg:#fdf0ef;--amber:#b7791f;--amber-bg:#fef9ec;--blue:#1a56cc;--blue-bg:#e8f0fe;--r:8px}
 body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);font-size:14px;line-height:1.6}
+body::before{content:'';position:fixed;inset:0;z-index:-1;background:linear-gradient(160deg,#f5ede4 0%,#f7f4ef 35%,#f0ece4 70%,#ede8df 100%);pointer-events:none}
+body::after{content:'';position:fixed;inset:0;z-index:-1;opacity:0.035;pointer-events:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");background-repeat:repeat;background-size:300px 300px}
 .hdr{background:var(--ink);height:56px;display:flex;align-items:center;padding:0 28px;justify-content:space-between;position:sticky;top:0;z-index:100}
 .hdr-left{display:flex;align-items:center;gap:16px}
 .hdr-logo{font-family:'DM Serif Display',serif;font-size:16px;color:var(--paper)}
@@ -396,7 +398,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 .tab:hover{color:var(--paper)}
 .tab.active{color:var(--paper);border-bottom-color:var(--ember)}
 .tab .badge{font-size:10px;padding:1px 5px;border-radius:10px;background:rgba(255,255,255,.1);margin-left:4px}
-.panel{display:none;padding:24px 28px;max-width:1080px}
+.panel{display:none;padding:24px 28px;max-width:1080px;background:transparent}
 .panel.active{display:block}
 .slabel{font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:8px}
 .stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:20px}
