@@ -1082,7 +1082,7 @@ function clientUpload(dataType, input) {
         </div>
       </div>
 
-      <div class="slabel" style="margin-top:auto;padding-top:28px">Understaffed days — possible missed revenue ⚠</div>
+      <div class="slabel" style="margin-top:14px">Understaffed days — possible missed revenue ⚠</div>
       <div class="card" style="flex:1;position:relative;overflow:hidden;padding:0">
         {% set row_count = labor.understaffed_days|length %}
         <div style="position:absolute;bottom:0;left:0;right:0;top:0;background:linear-gradient(to top,rgba(200,75,47,0.18) 0%,rgba(239,159,39,0.10) {{[row_count * 18 + 12, 55]|min}}%,rgba(239,159,39,0.0) 70%);pointer-events:none;z-index:0"></div>
