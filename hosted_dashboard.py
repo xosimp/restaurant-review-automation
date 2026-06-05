@@ -1023,12 +1023,12 @@ function clientUpload(dataType, input) {
         {% set is_top_cost = loop.first %}
         <tr style="{% if is_top_cost %}background:linear-gradient(to right,#f5d5d5,#fdf0f0,white);border-left:3px solid #c0392b;{% else %}border-left:3px solid transparent;{% endif %}">
           <td style="color:var(--ink3);font-size:11px">{{d.date}}</td>
-          <td style="font-weight:{% if is_top_cost %}700{% else %}500{% endif %}">{{d.day}}{% if is_worst %} <span style="font-size:9px;font-weight:700;background:#fde8e8;color:#c0392b;padding:1px 5px;border-radius:8px;margin-left:4px;vertical-align:middle">most expensive</span>{% endif %}</td>
+          <td style="font-weight:{% if is_top_cost %}700{% else %}500{% endif %}">{{d.day}}{% if is_top_cost %} <span style="font-size:9px;font-weight:700;background:#fde8e8;color:#c0392b;padding:1px 5px;border-radius:8px;margin-left:4px;vertical-align:middle">most expensive</span>{% endif %}</td>
           <td>${{d.sales|int|format_num}}</td>
-          <td style="font-weight:{% if is_worst %}700{% else %}400{% endif %};color:{% if is_worst %}var(--red){% else %}var(--ink){% endif %}">${{d.labor_cost|format_num}}</td>
+          <td style="font-weight:{% if is_top_cost %}700{% else %}400{% endif %};color:{% if is_top_cost %}var(--red){% else %}var(--ink){% endif %}">${{d.labor_cost|format_num}}</td>
           <td><span class="pill {{'pill-red' if d.labor_pct>35 else 'pill-amber'}}">{{d.labor_pct}}%</span></td>
           {% if diff > 0 %}
-          <td style="color:{% if is_worst %}var(--red){% else %}var(--ink3){% endif %};font-size:11px;font-weight:{% if is_worst %}700{% else %}500{% endif %}">+{{diff}}% over</td>
+          <td style="color:{% if is_top_cost %}var(--red){% else %}var(--ink3){% endif %};font-size:11px;font-weight:{% if is_top_cost %}700{% else %}500{% endif %}">+{{diff}}% over</td>
           {% else %}
           <td style="color:var(--green);font-size:11px;font-weight:500">{{diff}}% under ✓</td>
           {% endif %}
