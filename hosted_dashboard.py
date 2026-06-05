@@ -1082,20 +1082,25 @@ function clientUpload(dataType, input) {
       </div>
 
       <div class="slabel" style="margin-top:auto;padding-top:16px">Understaffed days</div>
-      <div class="card"><table class="tbl">
-        <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor %</th></tr></thead>
-        <tbody>
-        {% for d in labor.understaffed_days %}
-        <tr>
-          <td>{{d.date}}</td><td style="font-weight:500">{{d.day}}</td>
-          <td>${{d.sales|int|format_num}}</td>
-          <td><span class="pill pill-green">{{d.labor_pct}}%</span></td>
-        </tr>
-        {% else %}
-        <tr><td colspan="4" style="color:var(--ink3);font-style:italic;padding:10px">None flagged</td></tr>
-        {% endfor %}
-        </tbody>
-      </table></div>
+      <div class="card" style="flex:1;position:relative;overflow:hidden;padding:0">
+        {% set row_count = labor.understaffed_days|length %}
+        {% set gradient_h = [row_count * 44 + 42, 999]|min %}
+        <div style="position:absolute;bottom:0;left:0;right:0;height:{{gradient_h}}px;background:linear-gradient(to top,#c84b2f 0%,#ef9f27 60%,rgba(239,159,39,0.08) 100%);pointer-events:none;z-index:0"></div>
+        <table class="tbl" style="position:relative;z-index:1">
+          <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor %</th></tr></thead>
+          <tbody>
+          {% for d in labor.understaffed_days %}
+          <tr>
+            <td>{{d.date}}</td><td style="font-weight:500">{{d.day}}</td>
+            <td>${{d.sales|int|format_num}}</td>
+            <td><span class="pill pill-green">{{d.labor_pct}}%</span></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" style="color:var(--ink3);font-style:italic;padding:10px">None flagged</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
   <!-- Labor trend chart -->
