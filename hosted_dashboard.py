@@ -1987,6 +1987,7 @@ function switchTab(n,btn){
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor'){renderBars();loadLaborTrend();}
   if(n==='account')loadBillingInfo();
+  if(n==='marketing'&&!mktLoaded)loadMktInsight();
   history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
 }
@@ -2271,7 +2272,19 @@ function renderBars(){
     tline.style.display='block';
   }
 }
-var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false;
+var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false;
+function loadMktInsight(){
+  mktLoaded=true;
+  var el=document.getElementById('mkt-insight');
+  if(!el)return;
+  fetch('/api/mkt-insight').then(function(r){return r.json();}).then(function(d){
+    el.innerHTML=d.insight||'Marketing brief unavailable.';
+    el.classList.remove('insight-loading');
+  }).catch(function(){
+    el.textContent='Marketing brief unavailable — check back shortly.';
+    el.classList.remove('insight-loading');
+  });
+}
 function loadLaborInsight(){
   laborLoaded=true;
   fetch('/api/labor-insight').then(function(r){return r.json();}).then(function(d){
@@ -4954,6 +4967,51 @@ def review_insight_api(current_user):
         import traceback
         print(f"[review-insight ERROR] {_re}\n{traceback.format_exc()}")
         return jsonify(insight="Analysis unavailable — check back shortly.", error=str(_re)), 500
+
+@app.route("/api/mkt-insight")
+@login_required
+def mkt_insight_api(current_user):
+    try:
+        from marketing import get_profile_for_restaurant, get_recent_content, get_upcoming_holidays, generate_content
+        from models import get_restaurant
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        restaurant = get_restaurant(current_user["restaurant_id"])
+        name = restaurant.name if restaurant else "your restaurant"
+        owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
+        rid = current_user["restaurant_id"]
+        p = get_profile_for_restaurant(rid)
+        recent = get_recent_content(rid, limit=5)
+        now = datetime.now(ZoneInfo("America/Chicago"))
+        upcoming = get_upcoming_holidays(now.replace(tzinfo=None))
+        recent_str = ", ".join(r["topic"] for r in recent) if recent else "none yet"
+        greeting = f"{owner}," if owner else "Hi,"
+        prompt = f"""You are the Cavnar AI Marketing Consultant for {name}.
+Write a short, punchy weekly marketing brief for {owner or "the owner"} — 3-4 sentences max.
+
+Restaurant: {p["name"]} in {p["neighborhood"]}. Known for: {p["known_for"]}.
+Voice: {p["voice"]}.
+Upcoming holidays in 30 days: {upcoming if upcoming else "none"}.
+Recent content generated: {recent_str}.
+
+Structure exactly like this — no headers, no bullets, just two short paragraphs:
+Paragraph 1: Start with "{greeting}" then give 1 specific marketing opportunity this week based on the season/upcoming holidays/day of week.
+Paragraph 2: One concrete content suggestion with a specific angle they haven't used recently. End with a one-line encouragement.
+
+Tone: warm, direct, like a trusted advisor. No corporate language. Under 80 words total."""
+        import anthropic as _anth
+        _client = _anth.Anthropic(api_key=__import__("os").getenv("ANTHROPIC_API_KEY"))
+        msg = _client.messages.create(
+            model=__import__("os").getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+            max_tokens=200,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        from hosted_dashboard import format_insight_html
+        insight = msg.content[0].text.strip()
+        return jsonify(insight=format_insight_html(insight))
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify(insight=f"Marketing brief unavailable. ({str(e)[:60]})")
 
 @app.route("/api/labor-insight")
 @login_required
