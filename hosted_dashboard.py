@@ -1174,7 +1174,8 @@ function clientUpload(dataType, input) {
 
       <!-- Right: DOW breakdown -->
       <div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">This period by day</div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:4px">By day of week</div>
+        <div style="font-size:10px;color:var(--ink3);margin-bottom:8px">From your uploaded CSV{% if labor.date_range and labor.date_range.start %} ({{labor.date_range.start}} – {{labor.date_range.end}}){% endif %}</div>
         <div style="position:relative">
           <div class="day-bars" id="day-bars" style="height:120px;display:flex;align-items:flex-end;gap:4px;position:relative;z-index:1"></div>
           <div id="dow-target-line" style="position:absolute;left:0;right:0;bottom:0;height:2px;background:#ef9f27;opacity:0.6;z-index:2;pointer-events:none"></div>
@@ -2816,17 +2817,12 @@ textarea{resize:vertical;min-height:60px}
           <div class="hint">Default is 30%. Adjust if this restaurant has a different target (e.g. fine dining may run 35%, fast casual may target 25%).</div>
         </div>
       </div>
-    </div>
-  </div>
-
-  <!-- Staff scheduling constraints -->
-  <div class="section-card">
-    <div class="section-hdr"><div class="section-title">Staff scheduling constraints</div></div>
-    <div class="section-body">
-      <p style="font-size:13px;color:var(--ink2);margin-bottom:14px;line-height:1.6">
-        Add constraints per staff member — fixed days, availability limits, guaranteed hours.
-        These apply automatically every time an optimized schedule is generated.
-      </p>
+      <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--paper3)">
+        <div style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Staff scheduling constraints</div>
+        <p style="font-size:13px;color:var(--ink2);margin-bottom:14px;line-height:1.6">
+          Add constraints per staff member — fixed days, availability limits, overtime allowances.
+          The AI consultant and schedule generator always respect these.
+        </p>
       {% if staff_notes %}
       <div style="margin-bottom:14px">
         {% for note in staff_notes %}
@@ -2858,6 +2854,7 @@ textarea{resize:vertical;min-height:60px}
         Examples: "Always works Mon/Wed/Fri" · "Can't work after 9pm" · "Guaranteed 30h/week" · "Part-time, max 20h"
       </div>
       <div style="font-size:12px;margin-top:8px;display:none" id="staff-note-result"></div>
+      </div>
     </div>
   </div>
 
