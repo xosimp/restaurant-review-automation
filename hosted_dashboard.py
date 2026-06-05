@@ -5287,6 +5287,34 @@ try:
 except Exception as _boot_e:
     print(f"Admin seed error: {_boot_e}")
 
+# ── Ryan labor history seed (synchronous — needed before first page load) ─────
+try:
+    from models import save_labor_snapshot as _sls_boot, get_labor_history as _glh_boot, get_conn as _gc_lb
+    from datetime import datetime as _dt_lb, timedelta as _td_lb
+    _conn_lb = _gc_lb()
+    _ryan_lb = _conn_lb.execute("SELECT id FROM users WHERE email=?", ("ryancavnar@gmail.com",)).fetchone()
+    _conn_lb.close()
+    if _ryan_lb:
+        from models import get_restaurant as _gr_lb
+        _conn_lb2 = _gc_lb()
+        _rrow_lb = _conn_lb2.execute("SELECT id FROM restaurants WHERE owner_email=?", ("ryancavnar@gmail.com",)).fetchone()
+        _conn_lb2.close()
+        if _rrow_lb:
+            _ryan_rid_lb = _rrow_lb[0]
+            if not _glh_boot(_ryan_rid_lb, limit=1):
+                _now_lb = _dt_lb.now()
+                _lh = [(-49,34.2,42800,125200),(-42,33.1,44100,133200),(-35,31.8,45600,143400),
+                       (-28,32.5,43200,132900),(-21,31.2,46800,150000),(-14,30.8,47200,153200),
+                       (-7,30.9,45900,148500),(0,30.9,45900,148500)]
+                for _off,_pct,_lab,_sal in _lh:
+                    _sls_boot(_ryan_rid_lb,
+                        (_now_lb+_td_lb(days=_off)).strftime("%Y-%m-%d"),
+                        (_now_lb+_td_lb(days=_off+13)).strftime("%Y-%m-%d"),
+                        _pct, _lab, _sal)
+                print("Ryan labor history seeded (sync)")
+except Exception as _lb_e:
+    print(f"Ryan labor history seed error: {_lb_e}")
+
 try:
     from scheduler import start_scheduler as _ss
     _ss()
@@ -5781,30 +5809,6 @@ Sparkling Water,Beverage,case,6,9,22.00,0.8,6,0.0"""
         except Exception as _ryan_csv_e:
                 print(f"  Ryan inventory CSV seed error: {_ryan_csv_e}")
 
-        # Seed 8 weeks of labor history for the trend chart
-        try:
-            from models import save_labor_snapshot as _sls_ryan, get_labor_history as _glh_ryan
-            from datetime import datetime as _dt_ls, timedelta as _td_ls
-            _now_ls = _dt_ls.now()
-            # Only seed if no history exists yet
-            if not _glh_ryan(ryan_rid, limit=1):
-                _labor_history = [
-                    (-49, 34.2, 42800, 125200),  # w8 — high
-                    (-42, 33.1, 44100, 133200),  # w7
-                    (-35, 31.8, 45600, 143400),  # w6 — improving
-                    (-28, 32.5, 43200, 132900),  # w5 — slight bump
-                    (-21, 31.2, 46800, 150000),  # w4
-                    (-14, 30.8, 47200, 153200),  # w3 — near target
-                    (-7,  30.9, 45900, 148500),  # w2
-                    (0,   30.9, 45900, 148500),  # w1 current
-                ]
-                for _offset, _pct, _labor, _sales in _labor_history:
-                    _start = (_now_ls + _td_ls(days=_offset)).strftime("%Y-%m-%d")
-                    _end   = (_now_ls + _td_ls(days=_offset + 13)).strftime("%Y-%m-%d")
-                    _sls_ryan(ryan_rid, _start, _end, _pct, _labor, _sales)
-                print("  Ryan's labor history seeded (8 weeks).\n")
-        except Exception as _ryan_ls_e:
-            print(f"  Ryan labor history seed error: {_ryan_ls_e}")
     except Exception as _do_seed_e:
         print(f"  Ryan full seed error: {_do_seed_e}")
 
