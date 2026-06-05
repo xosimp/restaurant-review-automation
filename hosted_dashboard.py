@@ -1399,6 +1399,7 @@ function clientUpload(dataType, input) {
     <button class="btn-secondary" onclick="genContent()">Regenerate</button>
     <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none">Post to Instagram ↗</button>
     <button class="btn-primary" id="fb-post-btn" onclick="postToFacebook()" style="display:none;background:#1877f2">Post to Facebook ↗</button>
+    <button class="btn-primary" id="fb-post-btn" onclick="postToFacebook()" style="display:none;background:#1877f2">Post to Facebook ↗</button>
   </div>
   <div style="margin-top:10px;font-size:11px;color:var(--ink3);display:none" id="recent-topics-row">
     <span style="font-weight:600;color:var(--ink)">Recent topics:</span> <span id="recent-topics-list">Loading…</span>
@@ -2439,7 +2440,7 @@ function genContent(fromCalendar){
     .then(function(d){
       box.style.fontStyle='normal';
       box.style.color='var(--ink2)';
-      box.textContent=d.content||'Generation failed — try again.';
+      box.innerHTML=(d.content||'Generation failed — try again.').replace(/\n/g,'<br>');
       box.style.fontStyle='normal';box.style.color='var(--ink)';
       var hint=document.getElementById('output-hint');if(hint)hint.style.display='block';
       var igBtn=document.getElementById('ig-post-btn');
