@@ -382,7 +382,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--ember2:#e8956a;--green:#2d6a4f;--green-bg:#eaf4ee;--red:#c0392b;--red-bg:#fdf0ef;--amber:#b7791f;--amber-bg:#fef9ec;--blue:#1a56cc;--blue-bg:#e8f0fe;--r:8px}
 body{font-family:'DM Sans',sans-serif;background:transparent;color:var(--ink);font-size:14px;line-height:1.6}
-html{background:linear-gradient(160deg,#f5ede4 0%,#f7f4ef 35%,#f0ece4 70%,#ede8df 100%) fixed;min-height:100%}
+html{background:linear-gradient(160deg,#f5ede4 0%,#f7f4ef 35%,#f0ece4 70%,#ede8df 100%);background-attachment:fixed;min-height:100%}
 .hdr{background:var(--ink);height:56px;display:flex;align-items:center;padding:0 28px;justify-content:space-between;position:sticky;top:0;z-index:100}
 .hdr-left{display:flex;align-items:center;gap:16px}
 .hdr-logo{font-family:'DM Serif Display',serif;font-size:16px;color:var(--paper)}
