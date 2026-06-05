@@ -1399,7 +1399,6 @@ function clientUpload(dataType, input) {
     <button class="btn-secondary" onclick="genContent()">Regenerate</button>
     <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none">Post to Instagram ↗</button>
     <button class="btn-primary" id="fb-post-btn" onclick="postToFacebook()" style="display:none;background:#1877f2">Post to Facebook ↗</button>
-    <button class="btn-primary" id="fb-post-btn" onclick="postToFacebook()" style="display:none;background:#1877f2">Post to Facebook ↗</button>
   </div>
   <div style="margin-top:10px;font-size:11px;color:var(--ink3);display:none" id="recent-topics-row">
     <span style="font-weight:600;color:var(--ink)">Recent topics:</span> <span id="recent-topics-list">Loading…</span>
@@ -2497,7 +2496,7 @@ function loadCal(){
     if(rangeEl && weekRange) rangeEl.textContent = 'Week of ' + weekRange;
     window._calIdeas = d.ideas;
     var platformColors = {
-      'Instagram':'#e1306c','Facebook':'#1877f2','Email':'#2d6a4f',
+      'Instagram':'#e1306c','Instagram & FB':'#e1306c','Facebook':'#1877f2','Email':'#2d6a4f',
       'Google':'#4285f4','SMS':'#ef9f27'
     };
     var html = '';
