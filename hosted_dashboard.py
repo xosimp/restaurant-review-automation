@@ -1102,10 +1102,10 @@ function clientUpload(dataType, input) {
     </div>
     <div id="labor-trend-labels" style="display:flex;gap:12px;font-size:10px;color:var(--ink3)"></div>
     <div style="margin-top:8px;display:flex;gap:12px;font-size:10px;color:var(--ink3)">
-      <span><span style="color:var(--red)">■</span> Over 32%</span>
-      <span><span style="color:#ef9f27">■</span> 28–32%</span>
-      <span><span style="color:#6fcf97">■</span> Under 28%</span>
-      <span style="margin-left:auto;color:var(--ink3)">Target: 30%</span>
+      <span><span style="color:var(--red)">■</span> Over {{labor_target|default(30.0)|int}}%</span>
+      <span><span style="color:#ef9f27">■</span> {{(labor_target|default(30.0)-3)|int}}–{{labor_target|default(30.0)|int}}%</span>
+      <span><span style="color:#6fcf97">■</span> Under {{(labor_target|default(30.0)-3)|int}}%</span>
+      <span style="margin-left:auto;color:var(--ink3)">Target: {{labor_target|default(30.0)}}%</span>
     </div>
   </div>
 </div>
@@ -5287,34 +5287,6 @@ try:
 except Exception as _boot_e:
     print(f"Admin seed error: {_boot_e}")
 
-# ── Ryan labor history seed (synchronous — needed before first page load) ─────
-try:
-    from models import save_labor_snapshot as _sls_boot, get_labor_history as _glh_boot, get_conn as _gc_lb
-    from datetime import datetime as _dt_lb, timedelta as _td_lb
-    _conn_lb = _gc_lb()
-    _ryan_lb = _conn_lb.execute("SELECT id FROM users WHERE email=?", ("ryancavnar@gmail.com",)).fetchone()
-    _conn_lb.close()
-    if _ryan_lb:
-        from models import get_restaurant as _gr_lb
-        _conn_lb2 = _gc_lb()
-        _rrow_lb = _conn_lb2.execute("SELECT id FROM restaurants WHERE owner_email=?", ("ryancavnar@gmail.com",)).fetchone()
-        _conn_lb2.close()
-        if _rrow_lb:
-            _ryan_rid_lb = _rrow_lb[0]
-            if not _glh_boot(_ryan_rid_lb, limit=1):
-                _now_lb = _dt_lb.now()
-                _lh = [(-49,34.2,42800,125200),(-42,33.1,44100,133200),(-35,31.8,45600,143400),
-                       (-28,32.5,43200,132900),(-21,31.2,46800,150000),(-14,30.8,47200,153200),
-                       (-7,30.9,45900,148500),(0,30.9,45900,148500)]
-                for _off,_pct,_lab,_sal in _lh:
-                    _sls_boot(_ryan_rid_lb,
-                        (_now_lb+_td_lb(days=_off)).strftime("%Y-%m-%d"),
-                        (_now_lb+_td_lb(days=_off+13)).strftime("%Y-%m-%d"),
-                        _pct, _lab, _sal)
-                print("Ryan labor history seeded (sync)")
-except Exception as _lb_e:
-    print(f"Ryan labor history seed error: {_lb_e}")
-
 try:
     from scheduler import start_scheduler as _ss
     _ss()
@@ -5809,6 +5781,23 @@ Sparkling Water,Beverage,case,6,9,22.00,0.8,6,0.0"""
         except Exception as _ryan_csv_e:
                 print(f"  Ryan inventory CSV seed error: {_ryan_csv_e}")
 
+        # Seed labor history for trend chart — runs here where ryan_rid is available
+        try:
+            from models import save_labor_snapshot as _sls_r2, get_labor_history as _glh_r2
+            from datetime import datetime as _dt_r2, timedelta as _td_r2
+            if not _glh_r2(ryan_rid, limit=1):
+                _now_r2 = _dt_r2.now()
+                _lh_r2 = [(-49,34.2,42800,125200),(-42,33.1,44100,133200),(-35,31.8,45600,143400),
+                           (-28,32.5,43200,132900),(-21,31.2,46800,150000),(-14,30.8,47200,153200),
+                           (-7,30.9,45900,148500),(0,30.9,45900,148500)]
+                for _off_r2,_pct_r2,_lab_r2,_sal_r2 in _lh_r2:
+                    _sls_r2(ryan_rid,
+                        (_now_r2+_td_r2(days=_off_r2)).strftime("%Y-%m-%d"),
+                        (_now_r2+_td_r2(days=_off_r2+13)).strftime("%Y-%m-%d"),
+                        _pct_r2, _lab_r2, _sal_r2)
+                print("  Ryan labor history seeded (8 weeks).\n")
+        except Exception as _lh_e2:
+            print(f"  Ryan labor history seed error: {_lh_e2}")
     except Exception as _do_seed_e:
         print(f"  Ryan full seed error: {_do_seed_e}")
 
