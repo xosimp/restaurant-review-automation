@@ -1367,6 +1367,19 @@ function clientUpload(dataType, input) {
     {% endif %}
   </div>
 
+  <!-- Posting overlay -->
+  <div id="posting-overlay" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.85);align-items:center;justify-content:center">
+    <div style="text-align:center">
+      <div style="font-family:'DM Serif Display',serif;font-size:22px;color:var(--paper);margin-bottom:8px">Cavnar <span style="color:var(--ember)">AI</span></div>
+      <div id="posting-overlay-msg" style="font-size:13px;color:#c0b8b0;margin-bottom:20px">Posting your content…</div>
+      <div style="display:flex;gap:6px;justify-content:center">
+        <div style="width:8px;height:8px;border-radius:50%;background:var(--ember);animation:pulse-dot 1.2s ease-in-out infinite"></div>
+        <div style="width:8px;height:8px;border-radius:50%;background:var(--ember);animation:pulse-dot 1.2s ease-in-out 0.2s infinite"></div>
+        <div style="width:8px;height:8px;border-radius:50%;background:var(--ember);animation:pulse-dot 1.2s ease-in-out 0.4s infinite"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- AI marketing brief -->
   <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
@@ -1779,9 +1792,14 @@ var _fbConnected = {% if restaurant.fb_page_token and restaurant.fb_page_id %}tr
 
 function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},2600);}
 function disconnectInstagram(){
+  var btn=event&&event.target;
+  if(btn){btn.textContent='Disconnecting…';btn.style.opacity='0.6';btn.disabled=true;}
   fetch('/api/instagram-disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(d.ok){ toast('Instagram & Facebook disconnected'); setTimeout(function(){location.reload();},800); }
-    else { toast('Error disconnecting — try again'); }
+    else {
+      if(btn){btn.textContent='Disconnect';btn.style.opacity='1';btn.disabled=false;}
+      toast('Error disconnecting — try again');
+    }
   });
 }
 
@@ -2271,21 +2289,45 @@ function postToInstagram(){
   var el=document.getElementById('mkoutput');
   var content=(el.innerText||el.textContent||'').trim();
   if(!content||content==='Select a type and click Generate.')return toast('Generate content first');
+  var overlay=document.getElementById('posting-overlay');
+  var msg=document.getElementById('posting-overlay-msg');
+  var btn=document.getElementById('ig-post-btn');
+  if(msg)msg.textContent='Posting to Instagram…';
+  if(overlay)overlay.style.display='flex';
+  if(btn){btn.style.opacity='0.6';btn.disabled=true;}
   fetch('/api/post-to-instagram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content})})
     .then(function(r){return r.json();}).then(function(d){
+      if(overlay)overlay.style.display='none';
+      if(btn){btn.style.opacity='1';btn.disabled=false;}
       if(d.ok){toast('Posted to Instagram ✓');}
       else{toast(d.error||'Post failed — try again');}
-    }).catch(function(){toast('Post failed — check connection');});
+    }).catch(function(){
+      if(overlay)overlay.style.display='none';
+      if(btn){btn.style.opacity='1';btn.disabled=false;}
+      toast('Post failed — check connection');
+    });
 }
 function postToFacebook(){
   var el=document.getElementById('mkoutput');
   var content=(el.innerText||el.textContent||'').trim();
   if(!content||content==='Select a type and click Generate.')return toast('Generate content first');
+  var overlay=document.getElementById('posting-overlay');
+  var msg=document.getElementById('posting-overlay-msg');
+  var btn=document.getElementById('fb-post-btn');
+  if(msg)msg.textContent='Posting to Facebook…';
+  if(overlay)overlay.style.display='flex';
+  if(btn){btn.style.opacity='0.6';btn.disabled=true;}
   fetch('/api/post-to-facebook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content})})
     .then(function(r){return r.json();}).then(function(d){
+      if(overlay)overlay.style.display='none';
+      if(btn){btn.style.opacity='1';btn.disabled=false;}
       if(d.ok){toast('Posted to Facebook ✓');}
       else{toast(d.error||'Post failed — try again');}
-    }).catch(function(){toast('Post failed — check connection');});
+    }).catch(function(){
+      if(overlay)overlay.style.display='none';
+      if(btn){btn.style.opacity='1';btn.disabled=false;}
+      toast('Post failed — check connection');
+    });
 }
 function loadRecentTopics(){
   fetch('/api/recent-topics').then(function(r){return r.json();}).then(function(d){
