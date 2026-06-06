@@ -372,11 +372,14 @@ def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
         upcoming_holidays = ', '.join(filtered) if filtered else None
 
     menu_context = f"\nMenu & current specials: {p['menu_notes']}\nReference specific dishes and specials in content ideas when relevant." if p.get('menu_notes') else ""
+    never_clause = f"Never use these words or phrases: {p['never_say']}." if p.get('never_say') else ""
 
     prompt = f"""Generate a 7-day social media content calendar for {p['name']}, 
 a {p['vibe']} in {p['neighborhood']}.
 
 Known for: {p['known_for']}{menu_context}
+Brand voice: {p['voice']}
+{never_clause}
 TODAY'S DATE: {today_str} (this is the real current date — do not assume any other date)
 Upcoming holidays/events in the next 30 days: {upcoming_holidays if upcoming_holidays else "No major holidays"}
 Recently generated content (avoid repeating these): {recent_topics}
