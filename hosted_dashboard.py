@@ -5137,9 +5137,12 @@ def verify_2fa():
         csrf4 = _sec5.token_hex(16)
         try:
             _rest_v = get_restaurant(uid)
+            print(f"[verify_2fa] uid={uid} rest={_rest_v is not None}")
             _email_v = _rest_v.owner_email if _rest_v else ""
+            print(f"[verify_2fa] email={_email_v}")
             masked = _email_v[:2] + "***@" + _email_v.split("@")[-1] if "@" in _email_v else "your registered email"
-        except Exception:
+        except Exception as _e_v:
+            print(f"[verify_2fa] error: {_e_v}")
             masked = "your registered email"
         if rest.two_fa_code != code_entered:
             resp_err = make_response(render_template_string(TWO_FA_HTML,
