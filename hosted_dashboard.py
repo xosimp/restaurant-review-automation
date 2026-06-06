@@ -5145,6 +5145,7 @@ def verify_2fa():
             print(f"[verify_2fa] error: {_e_v}")
             masked = "your registered email"
         print(f"[verify_2fa] stored={repr(rest.two_fa_code)} entered={repr(code_entered)}")
+        print(f"[verify_2fa] stored={repr(rest.two_fa_code)} entered={repr(code_entered)}")
         if rest.two_fa_code != code_entered:
             resp_err = make_response(render_template_string(TWO_FA_HTML,
                 masked_email=masked, error="Incorrect code. Try again.",
