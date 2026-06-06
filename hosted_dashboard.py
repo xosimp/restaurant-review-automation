@@ -1788,7 +1788,7 @@ function clientUpload(dataType, input) {
       <!-- Step 1: Intro -->
       <div id="twofa-step1">
         <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">Enable two-factor authentication</div>
-        <p style="font-size:13px;color:var(--ink3);margin-bottom:20px;line-height:1.6">Each time you sign in from a new device, we&rsquo;ll send a 6-digit code to <strong>{{restaurant.billing_email or restaurant.owner_email or "your email"}}</strong>. You&rsquo;ll need to enter it to access your dashboard.</p>
+        <p style="font-size:13px;color:var(--ink3);margin-bottom:20px;line-height:1.6">Each time you sign in from a new device, we&rsquo;ll send a 6-digit code to <strong>{{restaurant.owner_email or "your email"}}</strong>. You&rsquo;ll need to enter it to access your dashboard.</p>
         <div style="background:#f7f4ef;border-radius:8px;padding:14px;margin-bottom:20px;font-size:12px;color:var(--ink2);line-height:1.6">
           <strong>What to expect:</strong><br>
           • Sign in normally with username + password<br>
@@ -1796,7 +1796,7 @@ function clientUpload(dataType, input) {
           • Enter the code to complete sign in<br>
           • Check "Remember device" to skip for 30 days
         </div>
-        <button onclick="twoFAStep2()" class="btn-primary" style="width:100%;padding:11px">Send me a test code &rarr;</button>
+        <button onclick="twoFAStep2(this)" id="twofa-send-btn" class="btn-primary" style="width:100%;padding:11px;transition:opacity .15s">Send me a test code &rarr;</button>
       </div>
 
       <!-- Step 2: Verify test code -->
@@ -2931,11 +2931,12 @@ function toggle2FA(enable){
       else toast(d.error||'Failed to disable 2FA');
     });
 }
-function twoFAStep2(){
+function twoFAStep2(btn){
+  if(btn){btn.textContent='Sending…';btn.disabled=true;}
   // Send test code
   fetch('/api/send-2fa-test',{method:'POST'})
     .then(function(r){return r.json();}).then(function(d){
-      if(!d.ok){toast(d.error||'Could not send code — check your billing email is set');return;}
+      if(!d.ok){if(btn){btn.textContent='Send me a test code →';btn.disabled=false;}toast(d.error||'Could not send code — check your account email');return;}
       document.getElementById('twofa-step1').style.display='none';
       document.getElementById('twofa-step2').style.display='block';
       document.getElementById('twofa-masked-email').textContent=d.masked||'your email';
@@ -5507,9 +5508,9 @@ def send_2fa_test(current_user):
     rest = get_restaurant(current_user["restaurant_id"])
     if not rest:
         return jsonify(ok=False, error="Restaurant not found")
-    email = rest.billing_email or rest.owner_email or ""
+    email = rest.owner_email or ""
     if not email or "@" not in email:
-        return jsonify(ok=False, error="No email address found. Set your billing email in account settings first.")
+        return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email.")
     code = str(random.randint(100000, 999999))
     expires = (_dt5.datetime.now() + _dt5.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
     update_restaurant(current_user["restaurant_id"], {"two_fa_code": code, "two_fa_expires": expires})
