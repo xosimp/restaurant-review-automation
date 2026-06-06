@@ -1779,7 +1779,6 @@ var _fbConnected = {% if restaurant.fb_page_token and restaurant.fb_page_id %}tr
 
 function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},2600);}
 function disconnectInstagram(){
-  if(!confirm('Disconnect Instagram & Facebook? You will need to reconnect to post directly.')) return;
   fetch('/api/instagram-disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(d.ok){ toast('Instagram & Facebook disconnected'); setTimeout(function(){location.reload();},800); }
     else { toast('Error disconnecting — try again'); }
