@@ -1257,6 +1257,7 @@ def instagram_callback():
     pages = r3.json().get("data", [])
     ig_user_id = None
     page_token = long_token
+    matched_page = None
 
     for page in pages:
         r4 = _req.get(f"https://graph.facebook.com/v19.0/{page['id']}", params={
@@ -1267,6 +1268,7 @@ def instagram_callback():
         if ig_data:
             ig_user_id = ig_data.get("id")
             page_token = page.get("access_token", long_token)
+            matched_page = page
             break
 
     if not ig_user_id:
@@ -1287,10 +1289,14 @@ def instagram_callback():
             "ig_user_id": ig_user_id,
             "ig_token_expires": expires,
         }
-        # Also save Facebook page token/id if we found a page
-        if pages:
+        # Save Facebook page token/id from the matched page
+        if matched_page:
+            update_data["fb_page_token"]    = matched_page.get("access_token", long_token)
+            update_data["fb_page_id"]       = matched_page.get("id", "")
+            update_data["fb_token_expires"] = expires
+        elif pages:
             update_data["fb_page_token"]    = pages[0].get("access_token", long_token)
-            update_data["fb_page_id"]       = pages[0].get("id","")
+            update_data["fb_page_id"]       = pages[0].get("id", "")
             update_data["fb_token_expires"] = expires
         _update_r(rid, update_data)
         print(f"Instagram+Facebook connected for restaurant {rid}, expires {expires}")
