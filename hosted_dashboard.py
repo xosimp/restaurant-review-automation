@@ -2925,7 +2925,7 @@ function toggle2FA(enable){
   // Disable — simple confirm
   if(!confirm('Disable two-factor authentication? Your account will only require your password to sign in.'))return;
   fetch('/api/toggle-2fa',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({enabled:false}))
+    body:JSON.stringify({enabled:false})})
     .then(function(r){return r.json();}).then(function(d){
       if(d.ok){toast('2FA disabled');setTimeout(function(){location.reload();},800);}
       else toast(d.error||'Failed to disable 2FA');
