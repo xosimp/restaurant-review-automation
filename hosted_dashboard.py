@@ -5178,7 +5178,6 @@ def resend_2fa():
     from models import get_restaurant, update_restaurant
     data_r = request.get_json() or {}
     pending_token_r = data_r.get("pending_token", "")
-    print(f"[resend_2fa] token={pending_token_r[:20] if pending_token_r else None}")
     try:
         import base64 as _b64_r
         decoded_r = _b64_r.urlsafe_b64decode(pending_token_r.encode()).decode()
