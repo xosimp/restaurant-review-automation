@@ -1381,6 +1381,24 @@ def instagram_disconnect(current_user):
     update_restaurant(current_user["restaurant_id"], {"ig_token": "", "ig_user_id": "", "fb_page_token": "", "fb_page_id": ""})
     return jsonify(ok=True)
 
+@admin_bp.route("/api/debug-insights")
+@login_required
+def debug_insights(current_user):
+    import requests as _req
+    from models import get_restaurant
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    post_id = "1206793632506765_122108397639307271"
+    results = {}
+    # Try FB page token
+    r1 = _req.get(f"https://graph.facebook.com/v19.0/{post_id}/insights",
+        params={"metric":"post_impressions,post_engaged_users","access_token": restaurant.fb_page_token}, timeout=5)
+    results["fb_page_token_test"] = r1.json()
+    # Try getting post directly
+    r2 = _req.get(f"https://graph.facebook.com/v19.0/{post_id}",
+        params={"fields":"id,message,created_time,likes.summary(true),comments.summary(true)","access_token": restaurant.fb_page_token}, timeout=5)
+    results["post_direct"] = r2.json()
+    return __import__('flask').jsonify(results)
+
 @admin_bp.route("/api/post-insights")
 @login_required
 def post_insights(current_user):
