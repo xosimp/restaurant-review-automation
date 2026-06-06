@@ -5152,6 +5152,7 @@ def verify_2fa():
                 pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
             resp_err.set_cookie("csrf_token", csrf4, httponly=True, samesite="Lax")
             return resp_err
+        print(f"[verify_2fa] now={now} expires={expires} expired={now > expires}")
         if now > expires:
             resp_exp = make_response(render_template_string(TWO_FA_HTML,
                 masked_email=masked, error="Code expired. Request a new one.",
