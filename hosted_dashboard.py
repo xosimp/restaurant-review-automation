@@ -2268,7 +2268,8 @@ function renderBars(){
 }
 var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false;
 function postToInstagram(){
-  var content=document.getElementById('mkoutput').textContent;
+  var el=document.getElementById('mkoutput');
+  var content=(el.innerText||el.textContent||'').trim();
   if(!content||content==='Select a type and click Generate.')return toast('Generate content first');
   fetch('/api/post-to-instagram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content})})
     .then(function(r){return r.json();}).then(function(d){
@@ -2277,9 +2278,10 @@ function postToInstagram(){
     }).catch(function(){toast('Post failed — check connection');});
 }
 function postToFacebook(){
-  var content=document.getElementById('mkoutput').textContent;
+  var el=document.getElementById('mkoutput');
+  var content=(el.innerText||el.textContent||'').trim();
   if(!content||content==='Select a type and click Generate.')return toast('Generate content first');
-  fetch('/api/post-to-facebook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:content})})
+  fetch('/api/post-to-facebook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content})})
     .then(function(r){return r.json();}).then(function(d){
       if(d.ok){toast('Posted to Facebook ✓');}
       else{toast(d.error||'Post failed — try again');}
