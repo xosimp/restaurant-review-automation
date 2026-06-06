@@ -1409,7 +1409,7 @@ function clientUpload(dataType, input) {
     <button class="btn-primary" onclick="genContent()">Generate ↗</button>
   </div>
   <div style="position:relative">
-    <div class="output-box" id="mkoutput" contenteditable="true" style="color:var(--ink3);font-style:italic;outline:none;cursor:text;padding-bottom:22px" title="Click to edit before posting">Select a type and click Generate.</div>
+    <div class="output-box" id="mkoutput" contenteditable="true" style="color:var(--ink3);font-style:italic;outline:none;cursor:text;padding-bottom:22px" title="Click to edit before posting" oninput="updateCharCount()">Select a type and click Generate.</div>
     <div id="char-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="char-count">0</span> <span id="char-limit-label"></span><span id="char-over" style="color:var(--red);display:none"> over limit</span></div>
     <div id="sms-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="sms-char-count">0</span>/160<span id="sms-over" style="color:var(--red);display:none"> over</span></div>
   </div>
@@ -2341,6 +2341,33 @@ function postToFacebook(){
       if(btn){btn.style.opacity='1';btn.disabled=false;}
       toast('Post failed — check connection');
     });
+}
+function updateCharCount(){
+  var el=document.getElementById('mkoutput');
+  var selBtn=document.querySelector('.ct-btn.selected');
+  var selType=selBtn&&selBtn.dataset?selBtn.dataset.type:'';
+  var isIg=selType==='instagram_post'||selType==='happy_hour'||selType==='event_announcement';
+  var isGoogle=selType==='google_promo';
+  var isSms=selType==='loyalty_nudge';
+  var len=(el.innerText||el.textContent||'').length;
+  if(isIg){
+    var cc=document.getElementById('char-count');
+    var co=document.getElementById('char-over');
+    if(cc)cc.textContent=len;
+    if(cc)cc.style.color=len>2200?'var(--red)':len>1800?'#ef9f27':'var(--ink3)';
+    if(co)co.style.display=len>2200?'inline':'none';
+  } else if(isGoogle){
+    var cc2=document.getElementById('char-count');
+    var co2=document.getElementById('char-over');
+    if(cc2)cc2.textContent=len;
+    if(cc2)cc2.style.color=len>1500?'var(--red)':len>1200?'#ef9f27':'var(--ink3)';
+    if(co2)co2.style.display=len>1500?'inline':'none';
+  } else if(isSms){
+    var sc=document.getElementById('sms-char-count');
+    var so=document.getElementById('sms-over');
+    if(sc)sc.textContent=len;
+    if(so)so.style.display=len>160?'inline':'none';
+  }
 }
 function loadRecentTopics(){
   fetch('/api/recent-topics').then(function(r){return r.json();}).then(function(d){
