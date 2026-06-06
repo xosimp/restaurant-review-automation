@@ -2008,7 +2008,7 @@ function switchTab(n,btn){
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor'){renderBars();loadLaborTrend();}
   if(n==='account')loadBillingInfo();
-  if(n==='marketing'&&!mktLoaded){loadMktInsight();loadRecentTopics();loadPostInsights();}
+  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||!_mi.textContent.trim()||_mi.textContent.trim()==='Loading marketing brief…')){loadMktInsight();}if(!mktLoaded){loadRecentTopics();loadPostInsights();mktLoaded=true;}}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
