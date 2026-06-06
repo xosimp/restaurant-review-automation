@@ -340,7 +340,7 @@ def mark_calendar_idea_used(restaurant_id: int, content_type: str, topic: str):
 
 
 def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
-    """Generate a week of content ideas using Claude."""
+    """Generate a week of content ideas using Claude. v2"""
     p = get_profile_for_restaurant(restaurant_id)
     from datetime import datetime as _dt, timedelta as _td
     from zoneinfo import ZoneInfo as _ZI
