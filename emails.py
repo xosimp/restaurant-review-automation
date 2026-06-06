@@ -5,6 +5,39 @@ import os
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 FROM_EMAIL     = os.getenv("FROM_EMAIL", "will@cavnar.ai")
 
+def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: str = None):
+    """Send 2FA verification code email."""
+    if not RESEND_API_KEY:
+        return False
+    import requests
+    greeting = f"Hi {owner_name}," if owner_name else "Hi,"
+    html = f"""
+    <div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
+      <div style="text-align:center;margin-bottom:24px">
+        <span style="font-family:Georgia,serif;font-size:22px;color:#0e0c0a">Cavnar</span>
+        <span style="font-family:Georgia,serif;font-size:22px;color:#c84b2f">AI</span>
+      </div>
+      <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
+        <p style="color:#3a3530;font-size:15px;margin:0 0 16px">{greeting}</p>
+        <p style="color:#3a3530;font-size:15px;margin:0 0 24px">Your verification code for <strong>{restaurant_name}</strong>:</p>
+        <div style="text-align:center;margin:24px 0">
+          <span style="font-family:monospace;font-size:36px;font-weight:700;letter-spacing:10px;color:#c84b2f;background:#fdf0ef;padding:16px 24px;border-radius:8px;display:inline-block">{code}</span>
+        </div>
+        <p style="color:#7a736a;font-size:13px;text-align:center;margin:16px 0 0">This code expires in <strong>10 minutes</strong>. If you didn't request this, ignore this email.</p>
+      </div>
+      <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
+    </div>
+    """
+    try:
+        resp = requests.post("https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json={"from": f"Cavnar AI <{FROM_EMAIL}>", "to": [to_email],
+                  "subject": f"Your Cavnar AI verification code: {code}", "html": html},
+            timeout=10)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
 def send_payment_email(to_email, restaurant_name, tier=None,
                        module_count: int = None):
     """Send payment email with a dynamically generated Stripe checkout link."""

@@ -366,6 +366,84 @@ input:focus{border-color:var(--ember)}
 </body>
 </html>"""
 
+TWO_FA_HTML = (
+    "<!DOCTYPE html><html lang=\"en\"><head>"
+    "<meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+    "<title>Verify &mdash; Cavnar AI</title>"
+    "<link href=\"https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap\" rel=\"stylesheet\">"
+    "<style>"
+    "*{box-sizing:border-box;margin:0;padding:0}"
+    "body{font-family:\'DM Sans\',sans-serif;background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 100%);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}"
+    ".card{background:white;border-radius:14px;padding:40px 36px;max-width:420px;width:100%;box-shadow:0 4px 24px rgba(0,0,0,0.08)}"
+    ".logo{text-align:center;margin-bottom:28px;font-family:\'DM Serif Display\',serif;font-size:24px;color:#0e0c0a}"
+    ".logo span{color:#c84b2f}"
+    "h2{font-size:18px;font-weight:700;color:#0e0c0a;margin-bottom:8px;text-align:center}"
+    "p{font-size:13px;color:#7a736a;text-align:center;margin-bottom:24px;line-height:1.6}"
+    ".code-input{display:flex;gap:8px;justify-content:center;margin-bottom:20px}"
+    ".code-input input{width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;color:#0e0c0a;outline:none;transition:border-color .15s}"
+    ".code-input input:focus{border-color:#c84b2f}"
+    ".btn{width:100%;padding:12px;background:#c84b2f;color:white;border:none;border-radius:8px;font-family:\'DM Sans\',sans-serif;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:12px;transition:background .15s}"
+    ".btn:hover{background:#a83d25}"
+    ".btn-link{width:100%;padding:10px;background:none;color:#7a736a;border:1px solid #e0dbd0;border-radius:8px;font-family:\'DM Sans\',sans-serif;font-size:13px;cursor:pointer}"
+    ".error{color:#c0392b;font-size:13px;text-align:center;margin-bottom:16px;padding:10px;background:#fdf0ef;border-radius:6px;border:1px solid #f5c6c2}"
+    ".remember{display:flex;align-items:center;gap:8px;font-size:12px;color:#7a736a;margin-bottom:16px;justify-content:center;cursor:pointer}"
+    ".hint{font-size:11px;color:#7a736a;text-align:center;margin-top:8px}"
+    "</style></head><body>"
+    "<div class=\"card\">"
+    "<div class=\"logo\">Cavnar <span>AI</span></div>"
+    "<h2>Check your email</h2>"
+    "<p>We sent a 6-digit code to<br><strong>{{ masked_email }}</strong><br>Enter it below to sign in.</p>"
+    "{% if error %}<div class=\"error\">{{ error }}</div>{% endif %}"
+    "<form method=\"POST\" action=\"/verify-2fa\" id=\"twofa-form\">"
+    "<input type=\"hidden\" name=\"csrf_token\" value=\"{{ csrf_token }}\">"
+    "<input type=\"hidden\" name=\"pending_token\" value=\"{{ pending_token }}\">"
+    "<input type=\"hidden\" name=\"next_url\" value=\"{{ next_url }}\">"
+    "<div class=\"code-input\">"
+    "<input type=\"text\" maxlength=\"1\" id=\"c0\" inputmode=\"numeric\" autocomplete=\"one-time-code\">"
+    "<input type=\"text\" maxlength=\"1\" id=\"c1\" inputmode=\"numeric\">"
+    "<input type=\"text\" maxlength=\"1\" id=\"c2\" inputmode=\"numeric\">"
+    "<input type=\"text\" maxlength=\"1\" id=\"c3\" inputmode=\"numeric\">"
+    "<input type=\"text\" maxlength=\"1\" id=\"c4\" inputmode=\"numeric\">"
+    "<input type=\"text\" maxlength=\"1\" id=\"c5\" inputmode=\"numeric\">"
+    "</div>"
+    "<input type=\"hidden\" name=\"code\" id=\"full-code\">"
+    "<label class=\"remember\"><input type=\"checkbox\" name=\"remember_device\" id=\"remember\" value=\"1\"> Remember this device for 30 days</label>"
+    "<button type=\"submit\" class=\"btn\">Verify &rarr;</button>"
+    "<button type=\"button\" class=\"btn-link\" onclick=\"resendCode()\">Resend code</button>"
+    "</form>"
+    "<p class=\"hint\"><a href=\"/login\" style=\"color:#7a736a\">Back to login</a></p>"
+    "</div>"
+    "<script>"
+    "var inputs=document.querySelectorAll(\'.code-input input\');"
+    "inputs.forEach(function(inp,i){"
+    "  inp.addEventListener(\'input\',function(){"
+    "    if(inp.value.length===1&&i<5)inputs[i+1].focus();"
+    "    var code=\'\';inputs.forEach(function(x){code+=x.value;});"
+    "    document.getElementById(\'full-code\').value=code;"
+    "    if(code.length===6)document.getElementById(\'twofa-form\').submit();"
+    "  });"
+    "  inp.addEventListener(\'keydown\',function(e){"
+    "    if(e.key===\'Backspace\'&&!inp.value&&i>0)inputs[i-1].focus();"
+    "  });"
+    "  inp.addEventListener(\'paste\',function(e){"
+    "    var t=(e.clipboardData||window.clipboardData).getData(\'text\').replace(/[^0-9]/g,\'\').slice(0,6);"
+    "    for(var j=0;j<t.length;j++){if(inputs[j])inputs[j].value=t[j];}"
+    "    document.getElementById(\'full-code\').value=t;"
+    "    if(t.length===6){setTimeout(function(){document.getElementById(\'twofa-form\').submit();},100);}"
+    "    e.preventDefault();"
+    "  });"
+    "});"
+    "inputs[0].focus();"
+    "function resendCode(){"
+    "  fetch(\'/resend-2fa\',{method:\'POST\',headers:{\'Content-Type\':\'application/json\'},"
+    "    body:JSON.stringify({pending_token:document.querySelector(\'[name=pending_token]\').value})})"
+    "    .then(function(r){return r.json();}).then(function(d){"
+    "      if(d.ok)alert(\'New code sent!\');else alert(\'Could not resend. Try logging in again.\');"
+    "    });"
+    "}"
+    "</script></body></html>"
+)
+
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2771,6 +2849,14 @@ function loadLaborTrend(){
   });
 }
 function exportReviews(){window.location='/api/export-reviews';}
+function toggle2FA(enable){
+  fetch('/api/toggle-2fa',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({enabled:enable})})
+    .then(function(r){return r.json();}).then(function(d){
+      if(d.ok){toast(enable?'Two-factor authentication enabled':'2FA disabled');setTimeout(function(){location.reload();},800);}
+      else toast(d.error||'Failed to update 2FA settings');
+    });
+}
 function sendReferral(){
   var name = document.getElementById('referral-name').value.trim();
   var email = document.getElementById('referral-email').value.trim();
@@ -4835,8 +4921,56 @@ def login():
             _record_failed_attempt(ip)
             return render_template_string(LOGIN_HTML, error="Invalid username or password")
         _clear_attempts(ip)
-        token = create_session(user["id"])
         next_url = request.args.get("next", "/admin" if user["is_admin"] else "/")
+
+        # Check if 2FA is enabled and device not remembered
+        try:
+            from models import get_restaurant
+            rest = get_restaurant(user["id"]) if not user.get("is_admin") else None
+            _device_cookie = request.cookies.get("device_token_" + str(user["id"]), "")
+            _2fa_on = rest and rest.two_fa_enabled and not user.get("is_admin")
+            _device_ok = _device_cookie and _device_cookie == getattr(rest, "two_fa_device_token", "")
+        except Exception:
+            _2fa_on = False
+            _device_ok = False
+
+        if _2fa_on and not _device_ok:
+            # Generate and send 2FA code
+            import random, datetime as _dt2
+            from models import update_restaurant, get_restaurant
+            code = str(random.randint(100000, 999999))
+            expires = (_dt2.datetime.now() + _dt2.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+            update_restaurant(user["id"], {"two_fa_code": code, "two_fa_expires": expires})
+            # Send email
+            try:
+                rest2 = get_restaurant(user["id"])
+                email = rest2.billing_email or rest2.owner_name or username
+                if "@" in email:
+                    from emails import send_2fa_code
+                    owner = rest2.owner_name or None
+                    send_2fa_code(email, rest2.name or "your restaurant", code, owner)
+                    masked = email[:2] + "***@" + email.split("@")[-1] if "@" in email else email
+                else:
+                    masked = "your registered email"
+            except Exception:
+                masked = "your registered email"
+            # Store pending session
+            import secrets as _sec3
+            pending = _sec3.token_hex(24)
+            import flask as _fl2
+            _fl2.session["pending_uid"] = user["id"]
+            _fl2.session["pending_token"] = pending
+            _fl2.session["pending_next"] = next_url
+            _fl2.session["pending_masked"] = masked
+            import secrets as _sec4
+            csrf3 = _sec4.token_hex(16)
+            resp3 = make_response(render_template_string(TWO_FA_HTML,
+                masked_email=masked, error=None,
+                pending_token=pending, next_url=next_url, csrf_token=csrf3))
+            resp3.set_cookie("csrf_token", csrf3, httponly=True, samesite="Lax")
+            return resp3
+
+        token = create_session(user["id"])
         resp = make_response(redirect(next_url))
         _on_railway = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
         resp.set_cookie("session_token", token, max_age=30*24*3600,
@@ -4847,6 +4981,85 @@ def login():
     resp2 = make_response(render_template_string(LOGIN_HTML, error=None))
     resp2.set_cookie("csrf_token", csrf2, httponly=True, samesite="Lax")
     return resp2
+
+@app.route("/verify-2fa", methods=["GET","POST"])
+def verify_2fa():
+    import flask as _fl3
+    import datetime as _dt3
+    from models import get_restaurant, update_restaurant
+    if request.method == "POST":
+        pending_token = request.form.get("pending_token","")
+        code_entered  = request.form.get("code","").strip()
+        next_url      = request.form.get("next_url", "/")
+        remember      = request.form.get("remember_device","")
+        uid = _fl3.session.get("pending_uid")
+        stored_token = _fl3.session.get("pending_token")
+        if not uid or stored_token != pending_token:
+            return redirect("/login")
+        rest = get_restaurant(uid)
+        if not rest:
+            return redirect("/login")
+        # Check code
+        now = _dt3.datetime.now()
+        try:
+            expires = _dt3.datetime.strptime(rest.two_fa_expires, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            expires = now
+        import secrets as _sec5
+        csrf4 = _sec5.token_hex(16)
+        masked = _fl3.session.get("pending_masked", "your email")
+        if rest.two_fa_code != code_entered:
+            resp_err = make_response(render_template_string(TWO_FA_HTML,
+                masked_email=masked, error="Incorrect code. Try again.",
+                pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
+            resp_err.set_cookie("csrf_token", csrf4, httponly=True, samesite="Lax")
+            return resp_err
+        if now > expires:
+            resp_exp = make_response(render_template_string(TWO_FA_HTML,
+                masked_email=masked, error="Code expired. Request a new one.",
+                pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
+            resp_exp.set_cookie("csrf_token", csrf4, httponly=True, samesite="Lax")
+            return resp_exp
+        # Code correct — clear it and create session
+        update_restaurant(uid, {"two_fa_code": "", "two_fa_expires": ""})
+        _fl3.session.pop("pending_uid", None)
+        _fl3.session.pop("pending_token", None)
+        token = create_session(uid)
+        _on_railway = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
+        resp_ok = make_response(redirect(next_url or "/"))
+        resp_ok.set_cookie("session_token", token, max_age=30*24*3600,
+                           httponly=True, secure=_on_railway, samesite="Lax")
+        if remember == "1":
+            import secrets as _sec6
+            dev_tok = _sec6.token_hex(32)
+            update_restaurant(uid, {"two_fa_device_token": dev_tok})
+            resp_ok.set_cookie("device_token_"+str(uid), dev_tok,
+                               max_age=30*24*3600, httponly=True,
+                               secure=_on_railway, samesite="Lax")
+        return resp_ok
+    return redirect("/login")
+
+@app.route("/resend-2fa", methods=["POST"])
+def resend_2fa():
+    import flask as _fl4, random, datetime as _dt4
+    from models import get_restaurant, update_restaurant
+    uid = _fl4.session.get("pending_uid")
+    if not uid:
+        return jsonify(ok=False, error="Session expired")
+    rest = get_restaurant(uid)
+    if not rest:
+        return jsonify(ok=False)
+    code = str(random.randint(100000, 999999))
+    expires = (_dt4.datetime.now() + _dt4.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+    update_restaurant(uid, {"two_fa_code": code, "two_fa_expires": expires})
+    try:
+        email = rest.billing_email or ""
+        if "@" in email:
+            from emails import send_2fa_code
+            send_2fa_code(email, rest.name or "your restaurant", code, rest.owner_name)
+    except Exception:
+        pass
+    return jsonify(ok=True)
 
 @app.route("/logout")
 def logout():
@@ -5171,6 +5384,15 @@ def review_insight_api(current_user):
         import traceback
         print(f"[review-insight ERROR] {_re}\n{traceback.format_exc()}")
         return jsonify(insight="Analysis unavailable — check back shortly.", error=str(_re)), 500
+
+@app.route("/api/toggle-2fa", methods=["POST"])
+@login_required
+def toggle_2fa(current_user):
+    from models import update_restaurant
+    data = request.get_json() or {}
+    enabled = 1 if data.get("enabled") else 0
+    update_restaurant(current_user["restaurant_id"], {"two_fa_enabled": enabled})
+    return jsonify(ok=True)
 
 @app.route("/api/recent-topics")
 @login_required
