@@ -436,7 +436,7 @@ TWO_FA_HTML = (
     "inputs[0].focus();"
     "function resendCode(){"
     "  fetch(\'/resend-2fa\',{method:\'POST\',headers:{\'Content-Type\':\'application/json\'},"
-    "    body:JSON.stringify({pending_token:document.querySelector(\'[name=pending_token]\').value})})"
+    "    body:JSON.stringify({pending_token:(document.querySelector(\'[name=pending_token]\')||{}).value||\'\'})})"
     "    .then(function(r){return r.json();}).then(function(d){"
     "      if(d.ok)alert(\'New code sent!\');else alert(\'Could not resend. Try logging in again.\');"
     "    });"
@@ -5178,6 +5178,7 @@ def resend_2fa():
     from models import get_restaurant, update_restaurant
     data_r = request.get_json() or {}
     pending_token_r = data_r.get("pending_token", "")
+    print(f"[resend_2fa] token={pending_token_r[:20] if pending_token_r else None}")
     try:
         import base64 as _b64_r
         decoded_r = _b64_r.urlsafe_b64decode(pending_token_r.encode()).decode()
