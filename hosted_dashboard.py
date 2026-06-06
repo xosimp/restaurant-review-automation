@@ -1775,6 +1775,7 @@ function saveDraft(id) {
 // CSRF token for POST requests
 var _csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
 var _igConnected = {% if restaurant.ig_token %}true{% else %}false{% endif %};
+var _fbConnected = {% if restaurant.fb_page_token and restaurant.fb_page_id %}true{% else %}false{% endif %};
 
 function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},2600);}
 function disconnectInstagram(){
@@ -2451,7 +2452,8 @@ function genContent(fromCalendar){
       var hint=document.getElementById('output-hint');if(hint)hint.style.display='block';
       var igBtn=document.getElementById('ig-post-btn');
       var fbBtn=document.getElementById('fb-post-btn');
-      if(_igConnected){if(igBtn)igBtn.style.display='inline-block';if(fbBtn)fbBtn.style.display='inline-block';}
+      if(_igConnected&&igBtn)igBtn.style.display='inline-block';
+if(_fbConnected&&fbBtn)fbBtn.style.display='inline-block';
       loadRecentTopics();
       var selBtn=document.querySelector('.ct-btn.selected');
       var isSms=selBtn&&selBtn.dataset&&selBtn.dataset.type==='loyalty_nudge';
