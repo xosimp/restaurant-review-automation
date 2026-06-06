@@ -2959,6 +2959,8 @@ function twoFAVerify(){
   var code='';
   digits.forEach(function(d){code+=d.value;});
   if(code.length<6){document.getElementById('twofa-setup-error').textContent='Enter all 6 digits';document.getElementById('twofa-setup-error').style.display='block';return;}
+  var btn=document.querySelector('#twofa-step2 .btn-primary');
+  if(btn){btn.textContent='Verifying…';btn.disabled=true;}
   fetch('/api/verify-2fa-setup',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({code:code})})
     .then(function(r){return r.json();}).then(function(d){
@@ -2966,9 +2968,14 @@ function twoFAVerify(){
         document.getElementById('twofa-step2').style.display='none';
         document.getElementById('twofa-step3').style.display='block';
       } else {
+        if(btn){btn.textContent='Verify & enable 2FA';btn.disabled=false;}
         document.getElementById('twofa-setup-error').textContent=d.error||'Incorrect code — try again';
         document.getElementById('twofa-setup-error').style.display='block';
       }
+    }).catch(function(){
+      if(btn){btn.textContent='Verify & enable 2FA';btn.disabled=false;}
+      document.getElementById('twofa-setup-error').textContent='Something went wrong — try again';
+      document.getElementById('twofa-setup-error').style.display='block';
     });
 }
 function sendReferral(){
@@ -5536,8 +5543,16 @@ def verify_2fa_setup(current_user):
     if rest.two_fa_code != code:
         return jsonify(ok=False, error="Incorrect code. Try again.")
     try:
-        expires = _dt6.datetime.strptime(rest.two_fa_expires, "%Y-%m-%d %H:%M:%S")
-        if _dt6.datetime.now() > expires:
+        exp_str = (rest.two_fa_expires or "").strip()
+        expired = True
+        for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M"]:
+            try:
+                expires = _dt6.datetime.strptime(exp_str, fmt)
+                expired = _dt6.datetime.now() > expires
+                break
+            except Exception:
+                continue
+        if expired:
             return jsonify(ok=False, error="Code expired. Click resend.")
     except Exception:
         return jsonify(ok=False, error="Code expired. Click resend.")
