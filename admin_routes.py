@@ -1431,19 +1431,34 @@ def post_insights(current_user):
             try:
                 # Use correct token per platform
                 _token = restaurant.fb_page_token if row["post_platform"] == "facebook" else restaurant.ig_token
-                _metric = "post_impressions,post_engaged_users,post_reactions_by_type_total" if row["post_platform"] == "facebook" else "reach,impressions,likes,comments_count,saved"
-                r = _req.get(
-                    f"https://graph.facebook.com/v19.0/{row['post_id']}/insights",
-                    params={
-                        "metric": _metric,
-                        "access_token": _token
-                    },
-                    timeout=5
-                )
                 metrics = {}
-                if r.status_code == 200:
-                    for m in r.json().get("data", []):
-                        metrics[m["name"]] = m.get("values", [{}])[-1].get("value", 0)
+                if row["post_platform"] == "facebook":
+                    # Facebook: get likes/comments directly from the post object
+                    r = _req.get(
+                        f"https://graph.facebook.com/v19.0/{row['post_id']}",
+                        params={
+                            "fields": "likes.summary(true),comments.summary(true),shares",
+                            "access_token": _token
+                        },
+                        timeout=5
+                    )
+                    if r.status_code == 200:
+                        d = r.json()
+                        metrics["likes"] = d.get("likes", {}).get("summary", {}).get("total_count", 0)
+                        metrics["comments"] = d.get("comments", {}).get("summary", {}).get("total_count", 0)
+                        metrics["shares"] = d.get("shares", {}).get("count", 0)
+                else:
+                    r = _req.get(
+                        f"https://graph.facebook.com/v19.0/{row['post_id']}/insights",
+                        params={
+                            "metric": "reach,impressions,likes,comments_count,saved",
+                            "access_token": _token
+                        },
+                        timeout=5
+                    )
+                    if r.status_code == 200:
+                        for m in r.json().get("data", []):
+                            metrics[m["name"]] = m.get("values", [{}])[-1].get("value", 0)
                 results.append({
                     "topic": row["topic"],
                     "post_id": row["post_id"],
