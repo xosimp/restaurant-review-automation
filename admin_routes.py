@@ -1370,6 +1370,55 @@ def instagram_disconnect(current_user):
     update_restaurant(current_user["restaurant_id"], {"ig_token": "", "ig_user_id": "", "fb_page_token": "", "fb_page_id": ""})
     return jsonify(ok=True)
 
+@admin_bp.route("/api/post-insights")
+@login_required
+def post_insights(current_user):
+    """Fetch engagement metrics for posted content."""
+    import requests as _req
+    from models import get_conn, get_restaurant
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    if not restaurant or not restaurant.ig_token:
+        return jsonify(ok=False, error="Not connected")
+    try:
+        conn = get_conn()
+        rows = conn.execute(
+            """SELECT topic, post_id, post_platform, created_at
+               FROM marketing_content_log
+               WHERE restaurant_id=? AND post_id IS NOT NULL
+               ORDER BY created_at DESC LIMIT 10""",
+            (current_user["restaurant_id"],)
+        ).fetchall()
+        conn.close()
+        results = []
+        for row in rows:
+            if not row["post_id"]:
+                continue
+            try:
+                r = _req.get(
+                    f"https://graph.facebook.com/v19.0/{row['post_id']}/insights",
+                    params={
+                        "metric": "reach,impressions,likes,comments_count,saved",
+                        "access_token": restaurant.ig_token
+                    },
+                    timeout=5
+                )
+                metrics = {}
+                if r.status_code == 200:
+                    for m in r.json().get("data", []):
+                        metrics[m["name"]] = m.get("values", [{}])[-1].get("value", 0)
+                results.append({
+                    "topic": row["topic"],
+                    "post_id": row["post_id"],
+                    "platform": row["post_platform"],
+                    "metrics": metrics
+                })
+            except Exception:
+                results.append({"topic": row["topic"], "post_id": row["post_id"],
+                               "platform": row["post_platform"], "metrics": {}})
+        return jsonify(ok=True, posts=results)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
 @admin_bp.route("/api/post-to-facebook", methods=["POST"])
 @login_required
 def post_to_facebook(current_user):

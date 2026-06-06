@@ -243,7 +243,8 @@ def get_recent_content(restaurant_id: int, limit: int = 5) -> list:
         return []
 
 
-def log_content(restaurant_id: int, content_type: str, topic: str):
+def log_content(restaurant_id: int, content_type: str, topic: str,
+                post_id: str = None, post_platform: str = None):
     """Log generated content for memory."""
     if not restaurant_id:
         return
@@ -255,11 +256,21 @@ def log_content(restaurant_id: int, content_type: str, topic: str):
             restaurant_id INTEGER NOT NULL,
             content_type TEXT,
             topic TEXT,
+            post_id TEXT,
+            post_platform TEXT,
             created_at TEXT DEFAULT (datetime('now'))
         )""")
+        try:
+            conn.execute("ALTER TABLE marketing_content_log ADD COLUMN post_id TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE marketing_content_log ADD COLUMN post_platform TEXT")
+        except Exception:
+            pass
         conn.execute(
-            "INSERT INTO marketing_content_log (restaurant_id, content_type, topic) VALUES (?,?,?)",
-            (restaurant_id, content_type, topic)
+            "INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, post_platform) VALUES (?,?,?,?,?)",
+            (restaurant_id, content_type, topic, post_id, post_platform)
         )
         conn.commit()
         conn.close()

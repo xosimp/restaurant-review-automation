@@ -2008,7 +2008,7 @@ function switchTab(n,btn){
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor'){renderBars();loadLaborTrend();}
   if(n==='account')loadBillingInfo();
-  if(n==='marketing'&&!mktLoaded){loadMktInsight();loadRecentTopics();}
+  if(n==='marketing'&&!mktLoaded){loadMktInsight();loadRecentTopics();loadPostInsights();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
@@ -2305,7 +2305,8 @@ function postToInstagram(){
   if(msg)msg.textContent='Posting to Instagram…';
   if(overlay)overlay.style.display='flex';
   if(btn){btn.style.opacity='0.6';btn.disabled=true;}
-  fetch('/api/post-to-instagram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content})})
+  var _igTopic=window._lastPostedTopic||'';
+  fetch('/api/post-to-instagram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content,topic:_igTopic})})
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
@@ -2357,6 +2358,37 @@ function markTopicPosted(platform){
     }
   }
 }
+function loadPostInsights(){
+  fetch('/api/post-insights').then(function(r){return r.json();}).then(function(d){
+    if(!d.ok||!d.posts||!d.posts.length)return;
+    var list=document.getElementById('recent-topics-list');
+    if(!list)return;
+    for(var i=0;i<d.posts.length;i++){
+      var post=d.posts[i];
+      var m=post.metrics||{};
+      var reach=m.reach||m.impressions||0;
+      var likes=m.likes||0;
+      if(!reach&&!likes)continue;
+      var chips=list.querySelectorAll('span[data-topic]');
+      for(var j=0;j<chips.length;j++){
+        if(chips[j].getAttribute('data-topic')===post.topic){
+          var badge=chips[j].querySelector('.insights-badge');
+          if(!badge){
+            badge=document.createElement('span');
+            badge.className='insights-badge';
+            badge.style.cssText='font-size:9px;color:#2d6a4f;font-weight:600;margin-left:3px;';
+            chips[j].appendChild(badge);
+          }
+          var txt='';
+          if(reach)txt+=reach.toLocaleString()+' reach';
+          if(likes)txt+=(txt?' · ':'')+likes+' likes';
+          badge.textContent=txt?' • '+txt:'';
+          break;
+        }
+      }
+    }
+  }).catch(function(){});
+}
 function updateCharCount(){
   var el=document.getElementById('mkoutput');
   var selBtn=document.querySelector('.ct-btn.selected');
@@ -2392,7 +2424,7 @@ function loadRecentTopics(){
       if(d.topics&&d.topics.length){
         var chips='';
         for(var i=0;i<d.topics.length;i++){
-          chips+='<span style="background:#fef0e8;color:#a84020;font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid #f5cdb0;white-space:nowrap;font-weight:500">'+d.topics[i]+'</span>';
+          chips+='<span data-topic="'+d.topics[i]+'" style="background:#fef0e8;color:#a84020;font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid #f5cdb0;white-space:nowrap;font-weight:500">'+d.topics[i]+'</span>';
         }
         list.innerHTML=chips;
       } else {
