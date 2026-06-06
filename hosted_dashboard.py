@@ -2008,7 +2008,7 @@ function switchTab(n,btn){
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor'){renderBars();loadLaborTrend();}
   if(n==='account')loadBillingInfo();
-  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||!_mi.textContent.trim()||_mi.textContent.trim()==='Loading marketing brief…')){loadMktInsight();}if(!mktLoaded){loadRecentTopics();loadPostInsights();mktLoaded=true;}}
+  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…')){loadMktInsight();}loadRecentTopics();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
@@ -2421,6 +2421,7 @@ function loadRecentTopics(){
     var row=document.getElementById('recent-topics-row');
     var list=document.getElementById('recent-topics-list');
     if(row&&list){
+      list.innerHTML='';
       if(d.topics&&d.topics.length){
         var chips='';
         for(var i=0;i<d.topics.length;i++){
@@ -2431,6 +2432,7 @@ function loadRecentTopics(){
         list.innerHTML='<span style="font-size:11px;color:var(--ink3);font-style:italic">none yet</span>';
       }
       row.style.display='';
+      loadPostInsights();
     }
   }).catch(function(){});
 }
