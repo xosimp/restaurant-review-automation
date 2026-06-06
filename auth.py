@@ -176,6 +176,7 @@ def delete_session(token: str, db_path: str = DB_PATH):
     conn.close()
 
 def update_last_login(user_id: int, db_path: str = DB_PATH):
+    from zoneinfo import ZoneInfo as _ZI_a
     """Update last_login timestamp for a user."""
     conn = get_conn(db_path)
     conn.execute(
