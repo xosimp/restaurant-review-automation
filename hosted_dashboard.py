@@ -1540,7 +1540,24 @@ function clientUpload(dataType, input) {
     <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:16px" id="intel-insight-card">
       {{ competitor_data.insight | format_intel }}
     </div>
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Nearby competitors</div>
+
+    {% if mod_reviews and rstats.avg_rating %}
+    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Your rating vs. competitors</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:700;color:#0d1b2a">{{restaurant.name}}: <span style="color:#f59e0b">{{rstats.avg_rating}}★</span></span>
+        {% for c in competitor_data.competitors %}
+        {% set diff = rstats.avg_rating - c.rating %}
+        <span style="font-size:12px;color:var(--ink3)">· {{c.name}}: <span style="color:{{'#16a34a' if diff > 0 else ('#dc2626' if diff < 0 else '#6b7280')}}">{{c.rating}}★</span></span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Nearby competitors</div>
+      <button onclick="refreshCompetitorIntel(this)" style="background:transparent;border:1px solid var(--paper3);color:var(--ink3);padding:5px 12px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer">Refresh</button>
+    </div>
     <div style="display:flex;flex-direction:column;gap:10px" id="comp-cards-static">
       {% for c in competitor_data.competitors %}
       <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px">
@@ -1555,12 +1572,41 @@ function clientUpload(dataType, input) {
           {{r.text[:120]}}{{'...' if r.text|length > 120 else ''}}
         </div>
         {% endfor %}
+        {% if c.reviews|length > 2 %}
+        <div id="extra-reviews-{{loop.index}}" style="display:none;padding-top:6px;border-top:1px solid var(--paper3)">
+          {% for r in c.reviews[2:] %}
+          <div style="font-size:11px;color:var(--ink3);padding:6px 0;border-top:1px solid var(--paper3);line-height:1.5">
+            <span style="color:{{'#16a34a' if r.rating >= 4 else '#dc2626'}}">★</span>
+            {{r.text[:120]}}{{'...' if r.text|length > 120 else ''}}
+          </div>
+          {% endfor %}
+        </div>
+        <button onclick="toggleExtraReviews({{loop.index}}, this)" style="margin-top:6px;background:transparent;border:none;font-size:11px;color:#4a9eca;cursor:pointer;padding:0;font-family:'DM Sans',sans-serif">Show {{c.reviews|length - 2}} more review{{'s' if c.reviews|length - 2 > 1 else ''}}</button>
+        {% endif %}
       </div>
       {% endfor %}
     </div>
     {% if competitor_updated_at %}
     {% set d = competitor_updated_at[:10].split('-') %}
-    <div style="font-size:11px;color:var(--ink3);margin-top:12px">Last updated: {{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}</div>
+    {% set days_old = ((now_ct - competitor_updated_at[:10])|int) if false else 0 %}
+    <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
+      <div style="font-size:11px;color:var(--ink3)" id="intel-updated-label">Last updated: {{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}</div>
+      <div id="intel-stale-badge" style="display:none;font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;padding:2px 7px;border-radius:10px">Consider refreshing</div>
+    </div>
+    <script>
+    (function(){
+      var updated = "{{competitor_updated_at[:10]}}";
+      var parts = updated.split('-');
+      var updatedMs = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2])).getTime();
+      var daysOld = Math.floor((Date.now() - updatedMs) / 86400000);
+      if(daysOld >= 7){
+        var badge = document.getElementById('intel-stale-badge');
+        var label = document.getElementById('intel-updated-label');
+        if(badge) badge.style.display = 'inline-block';
+        if(label) label.textContent = 'Last updated: {{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}} (' + daysOld + ' days ago)';
+      }
+    })();
+    </script>
     {% endif %}
   {% else %}
   <div style="background:var(--paper2);border-radius:var(--r);padding:24px;text-align:center">
@@ -3046,6 +3092,18 @@ function loadCompetitorIntel(){
   }).catch(function(){
     loading.style.display='none';empty.style.display='block';
   });
+}
+function toggleExtraReviews(idx, btn){
+  var el = document.getElementById('extra-reviews-'+idx);
+  if(!el) return;
+  if(el.style.display === 'none' || el.style.display === ''){
+    el.style.display = 'block';
+    btn.textContent = 'Show less';
+  } else {
+    el.style.display = 'none';
+    var count = el.querySelectorAll('div').length;
+    btn.textContent = 'Show ' + count + ' more review' + (count > 1 ? 's' : '');
+  }
 }
 function refreshCompetitorIntel(btn){
   // Show branded loading overlay
