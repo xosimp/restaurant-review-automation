@@ -403,8 +403,19 @@ Rules:
     try:
         ideas = json.loads(raw)
         # Inject real dates into each idea based on day name
+        # Strip any date contamination from AI (e.g. "Thursday, June 5" -> "Thursday")
+        valid_days = {"Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"}
         for idea in ideas:
-            day_name = idea.get("day", "")
+            raw_day = idea.get("day", "")
+            # Extract just the day name if AI added extra text
+            day_name = raw_day.split(",")[0].split(" ")[0].strip()
+            if day_name not in valid_days:
+                # Try to find a valid day name anywhere in the string
+                for vd in valid_days:
+                    if vd in raw_day:
+                        day_name = vd
+                        break
+            idea["day"] = day_name
             idea["date"] = days_map.get(day_name, "")
         # Sort by date so calendar always shows Mon→Sun order
         day_order = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
