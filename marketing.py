@@ -345,11 +345,14 @@ def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
     from datetime import datetime as _dt, timedelta as _td
     from zoneinfo import ZoneInfo as _ZI
     now = _dt.now(_ZI('America/Chicago')).replace(tzinfo=None)
-    # Always start from tomorrow — never show today or past days
-    # Then round up to the nearest Monday for a clean Mon-Sun week
-    tomorrow = now + _td(days=1)
-    days_since_monday = tomorrow.weekday()
-    start = tomorrow - _td(days=days_since_monday)  # Monday of tomorrow's week
+    # Always show the NEXT full Mon-Sun week from today
+    # Find next Monday (if today is Mon-Wed show this week, Thu-Sun show next)
+    days_since_monday = now.weekday()  # Mon=0 ... Sun=6
+    if days_since_monday <= 2:  # Mon/Tue/Wed — show current week
+        start = now - _td(days=days_since_monday)
+    else:  # Thu/Fri/Sat/Sun — show next week's Monday
+        days_to_next_monday = 7 - days_since_monday
+        start = now + _td(days=days_to_next_monday)
     days_map = {}
     for i in range(7):
         d = start + _td(days=i)

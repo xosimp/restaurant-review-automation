@@ -1368,14 +1368,14 @@ function clientUpload(dataType, input) {
   </div>
 
   <!-- Posting overlay -->
-  <div id="posting-overlay" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.85);align-items:center;justify-content:center">
+  <div id="posting-overlay" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.88);align-items:center;justify-content:center">
     <div style="text-align:center">
-      <div style="font-family:'DM Serif Display',serif;font-size:22px;color:var(--paper);margin-bottom:8px">Cavnar <span style="color:var(--ember)">AI</span></div>
-      <div id="posting-overlay-msg" style="font-size:13px;color:#c0b8b0;margin-bottom:20px">Posting your content…</div>
-      <div style="display:flex;gap:6px;justify-content:center">
-        <div style="width:8px;height:8px;border-radius:50%;background:var(--ember);animation:pulse-dot 1.2s ease-in-out infinite"></div>
-        <div style="width:8px;height:8px;border-radius:50%;background:var(--ember);animation:pulse-dot 1.2s ease-in-out 0.2s infinite"></div>
-        <div style="width:8px;height:8px;border-radius:50%;background:var(--ember);animation:pulse-dot 1.2s ease-in-out 0.4s infinite"></div>
+      <div style="font-family:'DM Serif Display',serif;font-size:32px;color:var(--paper);margin-bottom:6px;letter-spacing:-.5px">Cavnar <span style="color:var(--ember)">AI</span></div>
+      <div id="posting-overlay-msg" style="font-size:15px;color:#c0b8b0;margin-bottom:28px;font-weight:500">Posting your content…</div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <div style="width:10px;height:10px;border-radius:50%;background:var(--ember);animation:upulse 1.1s ease-in-out infinite"></div>
+        <div style="width:10px;height:10px;border-radius:50%;background:var(--ember);animation:upulse 1.1s ease-in-out .18s infinite"></div>
+        <div style="width:10px;height:10px;border-radius:50%;background:var(--ember);animation:upulse 1.1s ease-in-out .36s infinite"></div>
       </div>
     </div>
   </div>
@@ -2011,7 +2011,7 @@ function switchTab(n,btn){
   if(n==='labor'){renderBars();loadLaborTrend();}
   if(n==='account')loadBillingInfo();
   if(n==='marketing'&&!mktLoaded){loadMktInsight();loadRecentTopics();}
-  if(n==='marketing'){var cg=document.getElementById('cal-grid');if(cg&&cg.querySelector('.no-data'))loadCal();}
+  if(n==='marketing'){var cg=document.getElementById('cal-grid');var wr=document.getElementById('cal-week-range');if(cg&&cg.querySelector('.no-data')&&(!wr||!wr.textContent))loadCal();}
   history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
 }
@@ -2349,7 +2349,7 @@ function loadRecentTopics(){
       if(d.topics&&d.topics.length){
         var chips='';
         for(var i=0;i<d.topics.length;i++){
-          chips+='<span style="background:white;color:var(--ink2);font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid var(--paper3);white-space:nowrap">'+d.topics[i]+'</span>';
+          chips+='<span style="background:#fef0e8;color:#a84020;font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid #f5cdb0;white-space:nowrap;font-weight:500">'+d.topics[i]+'</span>';
         }
         list.innerHTML=chips;
       } else {
