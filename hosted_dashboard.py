@@ -5067,7 +5067,7 @@ def login():
             # Send email
             try:
                 rest2 = get_restaurant(_rid)
-                email = rest2.billing_email or rest2.owner_name or username
+                email = rest2.owner_email or ""
                 if "@" in email:
                     from emails import send_2fa_code
                     owner = rest2.owner_name or None
