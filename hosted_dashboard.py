@@ -5053,7 +5053,6 @@ def login():
             _2fa_on = rest and rest.two_fa_enabled and not user.get("is_admin")
             _device_ok = _device_cookie and _device_cookie == getattr(rest, "two_fa_device_token", "")
         except Exception as _e_2fa:
-            print(f"[2FA check error] {_e_2fa}")
             _2fa_on = False
             _device_ok = False
 
@@ -5137,22 +5136,17 @@ def verify_2fa():
         csrf4 = _sec5.token_hex(16)
         try:
             _rest_v = get_restaurant(uid)
-            print(f"[verify_2fa] uid={uid} rest={_rest_v is not None}")
             _email_v = _rest_v.owner_email if _rest_v else ""
-            print(f"[verify_2fa] email={_email_v}")
             masked = _email_v[:2] + "***@" + _email_v.split("@")[-1] if "@" in _email_v else "your registered email"
         except Exception as _e_v:
             print(f"[verify_2fa] error: {_e_v}")
             masked = "your registered email"
-        print(f"[verify_2fa] stored={repr(rest.two_fa_code)} entered={repr(code_entered)}")
-        print(f"[verify_2fa] stored={repr(rest.two_fa_code)} entered={repr(code_entered)}")
         if rest.two_fa_code != code_entered:
             resp_err = make_response(render_template_string(TWO_FA_HTML,
                 masked_email=masked, error="Incorrect code. Try again.",
                 pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
             resp_err.set_cookie("csrf_token", csrf4, httponly=True, samesite="Lax")
             return resp_err
-        print(f"[verify_2fa] now={now} expires={expires} expired={now > expires}")
         if now > expires:
             resp_exp = make_response(render_template_string(TWO_FA_HTML,
                 masked_email=masked, error="Code expired. Request a new one.",
