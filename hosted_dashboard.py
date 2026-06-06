@@ -2009,7 +2009,7 @@ function switchTab(n,btn){
   if(n==='labor'){renderBars();loadLaborTrend();}
   if(n==='account')loadBillingInfo();
   if(n==='marketing'&&!mktLoaded){loadMktInsight();loadRecentTopics();}
-  if(n==='marketing'){var cg=document.getElementById('cal-grid');var wr=document.getElementById('cal-week-range');if(cg&&cg.querySelector('.no-data')&&(!wr||!wr.textContent))loadCal();}
+  // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
 }
