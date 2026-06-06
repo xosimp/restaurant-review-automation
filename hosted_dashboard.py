@@ -1406,8 +1406,24 @@ function clientUpload(dataType, input) {
     <button class="btn-primary" onclick="genContent()">Generate ↗</button>
   </div>
   <div class="output-box" id="mkoutput" contenteditable="true" style="color:var(--ink3);font-style:italic;outline:none;cursor:text" title="Click to edit before posting">Select a type and click Generate.</div>
-  <div style="font-size:10px;color:var(--ink3);margin-top:4px" id="output-hint" style="display:none">✏ Click the output above to edit — trim to the version you want before copying or posting</div>
-  <div id="sms-counter" style="display:none;font-size:11px;margin-top:4px;color:var(--ink3)">
+  <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center">
+    <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').textContent).then(function(){toast('Copied');})">Copy</button>
+    <button class="btn-secondary" onclick="genContent()">Regenerate</button>
+    <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none">Post to Instagram ↗</button>
+    <button class="btn-primary" id="fb-post-btn" onclick="postToFacebook()" style="display:none;background:#1877f2">Post to Facebook ↗</button>
+    <span id="output-hint" style="display:none;font-size:10px;color:var(--ink3);margin-left:4px">✏ Edit above before posting</span>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-top:8px;min-height:22px">
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:5px" id="recent-topics-row">
+      <span style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink3)">Recent:</span>
+      <span id="recent-topics-list" style="display:flex;flex-wrap:wrap;gap:5px"></span>
+    </div>
+    <div id="post-history-row" style="display:none;font-size:10px;color:var(--ink3);display:flex;align-items:center;gap:6px">
+      <span style="font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--ink3)">Posted:</span>
+      <span id="post-history-list" style="display:flex;gap:6px;flex-wrap:wrap"></span>
+    </div>
+  </div>
+  <div style="display:none;font-size:10px;margin-top:4px;color:var(--ink3)" id="sms-counter">
     <span id="sms-char-count">0</span>/160 characters
     <span id="sms-over" style="color:var(--red);display:none"> — over limit, trim before sending</span>
   </div>
@@ -1415,20 +1431,7 @@ function clientUpload(dataType, input) {
     <span id="char-count">0</span> characters <span id="char-limit-label"></span>
     <span id="char-over" style="color:var(--red);display:none"> — over limit</span>
   </div>
-  <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
-    <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').textContent).then(function(){toast('Copied');})">Copy</button>
-    <button class="btn-secondary" onclick="genContent()">Regenerate</button>
-    <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none">Post to Instagram ↗</button>
-    <button class="btn-primary" id="fb-post-btn" onclick="postToFacebook()" style="display:none;background:#1877f2">Post to Facebook ↗</button>
-  </div>
-  <div id="post-history-row" style="display:none;margin-top:8px;font-size:10px;color:var(--ink3)">
-    <span style="font-weight:600;text-transform:uppercase;letter-spacing:.5px">Posted:</span> <span id="post-history-list"></span>
-  </div>
-  <div style="margin-top:10px;display:none;align-items:center;flex-wrap:wrap;gap:6px" id="recent-topics-row">
-    <span style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink3);margin-right:2px">Recent:</span>
-    <span id="recent-topics-list" style="display:flex;flex-wrap:wrap;gap:5px"></span>
-  </div>
-  <div style="margin-top:6px;font-size:11px;color:var(--ink3);padding:6px 10px;background:var(--paper2);border-radius:6px;display:inline-block">
+  <div style="margin-top:10px;font-size:11px;color:var(--ink3);padding:6px 10px;background:var(--paper2);border-radius:6px;display:inline-block">
     📊 Restaurants posting weekly Google Business updates get <strong>3–7× more direction requests</strong> — use the content calendar below to stay consistent.
   </div>
 
@@ -2311,7 +2314,7 @@ function postToInstagram(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Instagram ✓');var _now=new Date();var _lbl=_now.toLocaleDateString('en-US',{month:'short',day:'numeric'});var _ph=document.getElementById('post-history-list');var _pr=document.getElementById('post-history-row');if(_ph){_ph.innerHTML=(_ph.innerHTML?_ph.innerHTML+' · ':'')+'὏8 IG on '+_lbl;}if(_pr)_pr.style.display='block';}
+      if(d.ok){toast('Posted to Instagram ✓');var _now=new Date();var _lbl=_now.toLocaleDateString('en-US',{month:'short',day:'numeric'});var _ph=document.getElementById('post-history-list');var _pr=document.getElementById('post-history-row');if(_ph){_ph.innerHTML+='<span style="background:#fce8e8;color:#a83020;font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid #f5bfbf;font-weight:500">IG '+_lbl+'</span>';}if(_pr){_pr.style.display='flex';}}
       else{toast(d.error||'Post failed — try again');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
@@ -2355,7 +2358,7 @@ function loadRecentTopics(){
       } else {
         list.innerHTML='<span style="font-size:11px;color:var(--ink3);font-style:italic">none yet</span>';
       }
-      row.style.display='flex';
+      row.style.display='';
     }
   }).catch(function(){});
 }
