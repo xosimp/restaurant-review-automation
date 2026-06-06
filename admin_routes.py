@@ -1204,6 +1204,7 @@ def instagram_connect(current_user):
         "client_id":     app_id,
         "redirect_uri":  redirect_uri,
         "scope":         scope,
+        "auth_type":     "rerequest",
         "response_type": "code",
         "state":         state,
     })
