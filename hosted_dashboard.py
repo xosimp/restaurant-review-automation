@@ -1779,6 +1779,25 @@ function clientUpload(dataType, input) {
     </div>
   </div>
 
+  <!-- Two-factor authentication -->
+  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+      <div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:6px">Two-factor authentication</div>
+        <div style="font-size:13px;color:var(--ink2);line-height:1.5">When enabled, a 6-digit code is sent to your email each time you sign in from a new device.</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+        {% if restaurant.two_fa_enabled %}
+        <span style="font-size:11px;color:#2d6a4f;font-weight:600">✓ Enabled</span>
+        <button onclick="toggle2FA(false)" class="btn-secondary" style="font-size:11px;padding:6px 12px">Disable</button>
+        {% else %}
+        <span style="font-size:11px;color:var(--ink3)">Disabled</span>
+        <button onclick="toggle2FA(true)" class="btn-primary" style="font-size:11px;padding:6px 12px">Enable 2FA</button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
   <!-- Full width bottom row -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px" class="account-two-col">
 
