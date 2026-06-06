@@ -2345,19 +2345,20 @@ function markTopicPosted(platform){
   var topic=window._lastPostedTopic||'';
   if(!topic)return;
   var list=document.getElementById('recent-topics-list');
-  if(!list)return;
-  var chips=list.querySelectorAll('span');
+  if(!list){setTimeout(function(){markTopicPosted(platform);},500);return;}
+  var chips=list.querySelectorAll('span[data-topic]');
   for(var i=0;i<chips.length;i++){
-    if(chips[i].textContent.trim()===topic){
-      // Already has posted badge?
-      if(chips[i].querySelector)return;
-      chips[i].innerHTML=topic+' <span style="color:#2d6a4f;font-weight:700;font-size:9px">✓ '+platform+'</span>';
+    if(chips[i].getAttribute('data-topic')===topic){
+      if(chips[i].querySelector('.posted-badge'))return;
+      chips[i].innerHTML=topic+' <span class="posted-badge" style="color:#2d6a4f;font-weight:700;font-size:9px">✓ '+platform+'</span>';
       chips[i].style.background='#eaf4ee';
       chips[i].style.borderColor='#a7d7b8';
       chips[i].style.color='#2d5a3d';
       return;
     }
   }
+  // Chips not rendered yet — wait and retry
+  setTimeout(function(){markTopicPosted(platform);},600);
 }
 function loadPostInsights(){
   fetch('/api/post-insights').then(function(r){return r.json();}).then(function(d){
