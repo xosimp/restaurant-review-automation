@@ -5047,11 +5047,13 @@ def login():
         # Check if 2FA is enabled and device not remembered
         try:
             from models import get_restaurant
-            rest = get_restaurant(user["id"]) if not user.get("is_admin") else None
-            _device_cookie = request.cookies.get("device_token_" + str(user["id"]), "")
+            _rid = user.get("restaurant_id")
+            rest = get_restaurant(_rid) if _rid and not user.get("is_admin") else None
+            _device_cookie = request.cookies.get("device_token_" + str(_rid), "")
             _2fa_on = rest and rest.two_fa_enabled and not user.get("is_admin")
             _device_ok = _device_cookie and _device_cookie == getattr(rest, "two_fa_device_token", "")
-        except Exception:
+        except Exception as _e_2fa:
+            print(f"[2FA check error] {_e_2fa}")
             _2fa_on = False
             _device_ok = False
 
@@ -5061,10 +5063,10 @@ def login():
             from models import update_restaurant, get_restaurant
             code = str(random.randint(100000, 999999))
             expires = (_dt2.datetime.now() + _dt2.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
-            update_restaurant(user["id"], {"two_fa_code": code, "two_fa_expires": expires})
+            update_restaurant(_rid, {"two_fa_code": code, "two_fa_expires": expires})
             # Send email
             try:
-                rest2 = get_restaurant(user["id"])
+                rest2 = get_restaurant(_rid)
                 email = rest2.billing_email or rest2.owner_name or username
                 if "@" in email:
                     from emails import send_2fa_code
@@ -5079,7 +5081,7 @@ def login():
             import secrets as _sec3
             pending = _sec3.token_hex(24)
             # Encode uid into pending token: "uid:token"
-            pending_signed = str(user["id"]) + ":" + pending
+            pending_signed = str(_rid) + ":" + pending
             import base64 as _b64
             pending_encoded = _b64.urlsafe_b64encode(pending_signed.encode()).decode()
             import secrets as _sec4
