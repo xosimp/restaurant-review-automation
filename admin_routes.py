@@ -1396,13 +1396,11 @@ def debug_insights(current_user):
     post_id = "1206793632506765_122108397639307271"
     results = {}
     # Try FB page token
-    r1 = _req.get(f"https://graph.facebook.com/v19.0/{post_id}/insights",
-        params={"metric":"post_impressions,post_engaged_users","access_token": restaurant.fb_page_token}, timeout=5)
-    results["fb_page_token_test"] = r1.json()
-    # Try getting post directly
-    r2 = _req.get(f"https://graph.facebook.com/v19.0/{post_id}",
-        params={"fields":"id,message,created_time,likes.summary(true),comments.summary(true)","access_token": restaurant.fb_page_token}, timeout=5)
-    results["post_direct"] = r2.json()
+    r1 = _req.get(f"https://graph.facebook.com/v19.0/{post_id}",
+        params={"fields":"id,message,likes.summary(true),comments.summary(true),shares","access_token": restaurant.fb_page_token}, timeout=5)
+    results["post_with_likes"] = r1.json()
+    results["fb_page_id"] = restaurant.fb_page_id
+    results["fb_token_present"] = bool(restaurant.fb_page_token)
     return __import__('flask').jsonify(results)
 
 @admin_bp.route("/api/post-insights")
