@@ -2328,7 +2328,8 @@ function postToFacebook(){
   if(msg)msg.textContent='Posting to Facebook…';
   if(overlay)overlay.style.display='flex';
   if(btn){btn.style.opacity='0.6';btn.disabled=true;}
-  fetch('/api/post-to-facebook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content})})
+  var _fbTopic=window._lastPostedTopic||'';
+  fetch('/api/post-to-facebook',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content,topic:_fbTopic})})
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
