@@ -1405,11 +1405,14 @@ def post_insights(current_user):
             if not row["post_id"]:
                 continue
             try:
+                # Use correct token per platform
+                _token = restaurant.fb_page_token if row["post_platform"] == "facebook" else restaurant.ig_token
+                _metric = "post_impressions,post_engaged_users,post_reactions_by_type_total" if row["post_platform"] == "facebook" else "reach,impressions,likes,comments_count,saved"
                 r = _req.get(
                     f"https://graph.facebook.com/v19.0/{row['post_id']}/insights",
                     params={
-                        "metric": "reach,impressions,likes,comments_count,saved",
-                        "access_token": restaurant.ig_token
+                        "metric": _metric,
+                        "access_token": _token
                     },
                     timeout=5
                 )
