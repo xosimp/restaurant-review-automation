@@ -5133,19 +5133,19 @@ Known for: {p["known_for"]}.
 Brand voice: {p["voice"]}.
 {menu_clause}
 {never_clause}
-Upcoming holidays in 30 days: {upcoming if upcoming else "none"}.
+ALL upcoming holidays in next 30 days (mention ALL of them, not just one): {upcoming if upcoming else "none"}.
 Recent content generated (do NOT repeat these): {recent_str}.
 
 Structure exactly like this — no headers, no bullets, just two short paragraphs:
 Paragraph 1: Start with "{greeting}" then give 1 specific marketing opportunity this week tied to the season, upcoming holidays, or a gap in recent content.
 Paragraph 2: One concrete content suggestion with a specific angle. Reference real menu items if provided. End with a one-line encouragement.
 
-Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No corporate language. Under 90 words total."""
+Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No corporate language. Under 110 words total. If multiple holidays are coming up, mention both briefly."""
         import anthropic as _anth
         _client = _anth.Anthropic(api_key=__import__("os").getenv("ANTHROPIC_API_KEY"))
         msg = _client.messages.create(
             model=__import__("os").getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-            max_tokens=200,
+            max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
         insight = msg.content[0].text.strip()
