@@ -5078,19 +5078,28 @@ def mkt_insight_api(current_user):
         upcoming = get_upcoming_holidays(now.replace(tzinfo=None))
         recent_str = ", ".join(r["topic"] for r in recent) if recent else "none yet"
         greeting = f"{owner}," if owner else "Hi,"
+        never_clause = f"Never use these words or phrases: {p['never_say']}." if p.get("never_say") else ""
+        menu_clause = f"Current menu/specials: {p['menu_notes']}." if p.get("menu_notes") else ""
+        skip_h = [h.strip().lower() for h in (p.get("skip_holidays") or "").split(",") if h.strip()]
+        if skip_h and upcoming:
+            upcoming = ", ".join(h for h in upcoming.split(", ") if not any(s in h.lower() for s in skip_h)) or None
         prompt = f"""You are the Cavnar AI Marketing Consultant for {name}.
 Write a short, punchy weekly marketing brief for {owner or "the owner"} — 3-4 sentences max.
 
-Restaurant: {p["name"]} in {p["neighborhood"]}. Known for: {p["known_for"]}.
-Voice: {p["voice"]}.
+Restaurant: {p["name"]} in {p["neighborhood"]}.
+Vibe: {p["vibe"]}.
+Known for: {p["known_for"]}.
+Brand voice: {p["voice"]}.
+{menu_clause}
+{never_clause}
 Upcoming holidays in 30 days: {upcoming if upcoming else "none"}.
-Recent content generated: {recent_str}.
+Recent content generated (do NOT repeat these): {recent_str}.
 
 Structure exactly like this — no headers, no bullets, just two short paragraphs:
-Paragraph 1: Start with "{greeting}" then give 1 specific marketing opportunity this week based on the season/upcoming holidays/day of week.
-Paragraph 2: One concrete content suggestion with a specific angle they haven't used recently. End with a one-line encouragement.
+Paragraph 1: Start with "{greeting}" then give 1 specific marketing opportunity this week tied to the season, upcoming holidays, or a gap in recent content.
+Paragraph 2: One concrete content suggestion with a specific angle. Reference real menu items if provided. End with a one-line encouragement.
 
-Tone: warm, direct, like a trusted advisor. No corporate language. Under 80 words total."""
+Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No corporate language. Under 90 words total."""
         import anthropic as _anth
         _client = _anth.Anthropic(api_key=__import__("os").getenv("ANTHROPIC_API_KEY"))
         msg = _client.messages.create(
