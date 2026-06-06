@@ -1425,10 +1425,7 @@ function clientUpload(dataType, input) {
       <span style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink3)">Recent:</span>
       <span id="recent-topics-list" style="display:flex;flex-wrap:wrap;gap:5px"></span>
     </div>
-    <div id="post-history-row" style="display:none;font-size:10px;color:var(--ink3);display:flex;align-items:center;gap:6px">
-      <span style="font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--ink3)">Posted:</span>
-      <span id="post-history-list" style="display:flex;gap:6px;flex-wrap:wrap"></span>
-    </div>
+
   </div>
 
 
@@ -2312,7 +2309,7 @@ function postToInstagram(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Instagram ✓');var _now=new Date();var _lbl=_now.toLocaleDateString('en-US',{month:'short',day:'numeric'});var _ph=document.getElementById('post-history-list');var _pr=document.getElementById('post-history-row');if(_ph){_ph.innerHTML+='<span style="background:#fce8e8;color:#a83020;font-size:10px;padding:2px 8px;border-radius:10px;border:1px solid #f5bfbf;font-weight:500">IG '+_lbl+'</span>';}if(_pr){_pr.style.display='flex';}}
+      if(d.ok){toast('Posted to Instagram ✓');markTopicPosted('IG');}
       else{toast(d.error||'Post failed — try again');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
@@ -2334,13 +2331,31 @@ function postToFacebook(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Facebook ✓');var _now2=new Date();var _lbl2=_now2.toLocaleDateString('en-US',{month:'short',day:'numeric'});var _ph2=document.getElementById('post-history-list');var _pr2=document.getElementById('post-history-row');if(_ph2){_ph2.innerHTML=(_ph2.innerHTML?_ph2.innerHTML+' · ':'')+'Ὅ8 FB on '+_lbl2;}if(_pr2)_pr2.style.display='block';}
+      if(d.ok){toast('Posted to Facebook ✓');markTopicPosted('FB');}
       else{toast(d.error||'Post failed — try again');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
       toast('Post failed — check connection');
     });
+}
+function markTopicPosted(platform){
+  var topic=window._lastPostedTopic||'';
+  if(!topic)return;
+  var list=document.getElementById('recent-topics-list');
+  if(!list)return;
+  var chips=list.querySelectorAll('span');
+  for(var i=0;i<chips.length;i++){
+    if(chips[i].textContent.trim()===topic){
+      // Already has posted badge?
+      if(chips[i].querySelector)return;
+      chips[i].innerHTML=topic+' <span style="color:#2d6a4f;font-weight:700;font-size:9px">✓ '+platform+'</span>';
+      chips[i].style.background='#eaf4ee';
+      chips[i].style.borderColor='#a7d7b8';
+      chips[i].style.color='#2d5a3d';
+      return;
+    }
+  }
 }
 function updateCharCount(){
   var el=document.getElementById('mkoutput');
@@ -2523,6 +2538,7 @@ function genContent(fromCalendar){
   box.style.fontStyle='italic';
   box.style.color='var(--ink3)';
   box.textContent='Generating…';
+  window._lastPostedTopic = topic;
   fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic:topic,from_calendar:!!fromCalendar})})
     .then(function(r){return r.json();})
     .then(function(d){
