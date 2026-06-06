@@ -1198,7 +1198,7 @@ def instagram_connect(current_user):
     from flask import redirect as flask_redirect
     app_id       = os.getenv("META_APP_ID","")
     redirect_uri = os.getenv("META_REDIRECT_URI", "https://dashboard.cavnar.ai/instagram/callback")
-    scope        = "instagram_basic,instagram_content_publish,pages_read_engagement,pages_show_list,business_management"
+    scope        = "instagram_basic,instagram_content_publish,instagram_manage_insights,pages_read_engagement,pages_show_list,business_management"
     state        = str(current_user["restaurant_id"])
     params = urllib.parse.urlencode({
         "client_id":     app_id,
