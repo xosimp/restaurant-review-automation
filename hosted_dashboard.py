@@ -1394,7 +1394,11 @@ function clientUpload(dataType, input) {
   <div class="slabel">Content type</div>
   <div class="ct-grid">{% for ct in ctypes %}
     <div class="ct-btn {{'selected' if loop.first}}" data-type="{{ct.id}}" onclick="selectCt('{{ct.id}}',this)">
-      <div class="ct-label">{{ct.label}}</div><div class="ct-desc">{{ct.description}}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:4px">
+        <div class="ct-label">{{ct.label}}</div>
+        {% if ct.id in ['instagram_post','google_promo'] %}<span style="font-size:8px;font-weight:700;background:var(--ember);color:white;padding:1px 5px;border-radius:8px;letter-spacing:.3px;flex-shrink:0">popular</span>{% endif %}
+      </div>
+      <div class="ct-desc">{{ct.description}}</div>
     </div>{% endfor %}
   </div>
   <div class="topic-row">
@@ -1407,11 +1411,18 @@ function clientUpload(dataType, input) {
     <span id="sms-char-count">0</span>/160 characters
     <span id="sms-over" style="color:var(--red);display:none"> — over limit, trim before sending</span>
   </div>
+  <div id="char-counter" style="display:none;font-size:10px;margin-top:4px;color:var(--ink3)">
+    <span id="char-count">0</span> characters <span id="char-limit-label"></span>
+    <span id="char-over" style="color:var(--red);display:none"> — over limit</span>
+  </div>
   <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
     <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').textContent).then(function(){toast('Copied');})">Copy</button>
     <button class="btn-secondary" onclick="genContent()">Regenerate</button>
     <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none">Post to Instagram ↗</button>
     <button class="btn-primary" id="fb-post-btn" onclick="postToFacebook()" style="display:none;background:#1877f2">Post to Facebook ↗</button>
+  </div>
+  <div id="post-history-row" style="display:none;margin-top:8px;font-size:10px;color:var(--ink3)">
+    <span style="font-weight:600;text-transform:uppercase;letter-spacing:.5px">Posted:</span> <span id="post-history-list"></span>
   </div>
   <div style="margin-top:10px;display:none;align-items:center;flex-wrap:wrap;gap:6px" id="recent-topics-row">
     <span style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink3);margin-right:2px">Recent:</span>
@@ -2000,6 +2011,7 @@ function switchTab(n,btn){
   if(n==='labor'){renderBars();loadLaborTrend();}
   if(n==='account')loadBillingInfo();
   if(n==='marketing'&&!mktLoaded){loadMktInsight();loadRecentTopics();}
+  if(n==='marketing'){var cg=document.getElementById('cal-grid');if(cg&&cg.querySelector('.no-data'))loadCal();}
   history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
 }
@@ -2299,7 +2311,7 @@ function postToInstagram(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Instagram ✓');}
+      if(d.ok){toast('Posted to Instagram ✓');var _now=new Date();var _lbl=_now.toLocaleDateString('en-US',{month:'short',day:'numeric'});var _ph=document.getElementById('post-history-list');var _pr=document.getElementById('post-history-row');if(_ph){_ph.innerHTML=(_ph.innerHTML?_ph.innerHTML+' · ':'')+'὏8 IG on '+_lbl;}if(_pr)_pr.style.display='block';}
       else{toast(d.error||'Post failed — try again');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
@@ -2321,7 +2333,7 @@ function postToFacebook(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Facebook ✓');}
+      if(d.ok){toast('Posted to Facebook ✓');var _now2=new Date();var _lbl2=_now2.toLocaleDateString('en-US',{month:'short',day:'numeric'});var _ph2=document.getElementById('post-history-list');var _pr2=document.getElementById('post-history-row');if(_ph2){_ph2.innerHTML=(_ph2.innerHTML?_ph2.innerHTML+' · ':'')+'Ὅ8 FB on '+_lbl2;}if(_pr2)_pr2.style.display='block';}
       else{toast(d.error||'Post failed — try again');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
@@ -2497,14 +2509,39 @@ function genContent(fromCalendar){
 if(_fbConnected&&fbBtn)fbBtn.style.display='inline-block';
       loadRecentTopics();
       var selBtn=document.querySelector('.ct-btn.selected');
-      var isSms=selBtn&&selBtn.dataset&&selBtn.dataset.type==='loyalty_nudge';
+      var selType=selBtn&&selBtn.dataset?selBtn.dataset.type:'';
+      var isSms=selType==='loyalty_nudge';
+      var isIg=selType==='instagram_post'||selType==='happy_hour'||selType==='event_announcement';
+      var isGoogle=selType==='google_promo';
       var counter=document.getElementById('sms-counter');
+      var charCtr=document.getElementById('char-counter');
+      var charCountEl=document.getElementById('char-count');
+      var charLbl=document.getElementById('char-limit-label');
+      var charOver=document.getElementById('char-over');
+      var contentLen=(d.content||'').length;
       if(isSms){
-        var charCount=(d.content||'').length;
-        document.getElementById('sms-char-count').textContent=charCount;
-        document.getElementById('sms-over').style.display=charCount>160?'inline':'none';
-        counter.style.display='block';
-      } else { if(counter)counter.style.display='none'; }
+        document.getElementById('sms-char-count').textContent=contentLen;
+        document.getElementById('sms-over').style.display=contentLen>160?'inline':'none';
+        if(counter)counter.style.display='block';
+        if(charCtr)charCtr.style.display='none';
+      } else if(isIg){
+        if(counter)counter.style.display='none';
+        if(charCtr)charCtr.style.display='block';
+        if(charCountEl)charCountEl.textContent=contentLen;
+        if(charLbl)charLbl.textContent='/ 2,200 Instagram limit';
+        if(charOver)charOver.style.display=contentLen>2200?'inline':'none';
+        if(charCountEl)charCountEl.style.color=contentLen>2200?'var(--red)':contentLen>1800?'#ef9f27':'var(--ink3)';
+      } else if(isGoogle){
+        if(counter)counter.style.display='none';
+        if(charCtr)charCtr.style.display='block';
+        if(charCountEl)charCountEl.textContent=contentLen;
+        if(charLbl)charLbl.textContent='/ 1,500 Google post limit';
+        if(charOver)charOver.style.display=contentLen>1500?'inline':'none';
+        if(charCountEl)charCountEl.style.color=contentLen>1500?'var(--red)':contentLen>1200?'#ef9f27':'var(--ink3)';
+      } else {
+        if(counter)counter.style.display='none';
+        if(charCtr)charCtr.style.display='none';
+      }
     })
     .catch(function(){
       box.style.color='var(--red)';
@@ -2566,6 +2603,10 @@ function loadCal(){
 function generateFromCalIdx(idx) {
   var i = window._calIdeas && window._calIdeas[idx];
   if (!i) return;
+  // Highlight active card
+  document.querySelectorAll('.cal-card').forEach(function(c){c.style.outline='none';});
+  var btns=document.querySelectorAll('.cal-card button[data-idx]');
+  for(var b=0;b<btns.length;b++){if(btns[b].dataset.idx==idx){var card=btns[b].closest('.cal-card');if(card)card.style.outline='2px solid var(--ember)';break;}}
   generateFromCal(i.type || 'instagram_post', i.angle || '');
 }
 function generateFromCal(type, topic) {
