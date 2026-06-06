@@ -5075,19 +5075,18 @@ def login():
                     masked = "your registered email"
             except Exception:
                 masked = "your registered email"
-            # Store pending session
+            # Store pending token in DB so it works across Gunicorn workers
             import secrets as _sec3
             pending = _sec3.token_hex(24)
-            import flask as _fl2
-            _fl2.session["pending_uid"] = user["id"]
-            _fl2.session["pending_token"] = pending
-            _fl2.session["pending_next"] = next_url
-            _fl2.session["pending_masked"] = masked
+            # Encode uid into pending token: "uid:token"
+            pending_signed = str(user["id"]) + ":" + pending
+            import base64 as _b64
+            pending_encoded = _b64.urlsafe_b64encode(pending_signed.encode()).decode()
             import secrets as _sec4
             csrf3 = _sec4.token_hex(16)
             resp3 = make_response(render_template_string(TWO_FA_HTML,
                 masked_email=masked, error=None,
-                pending_token=pending, next_url=next_url, csrf_token=csrf3))
+                pending_token=pending_encoded, next_url=next_url, csrf_token=csrf3))
             resp3.set_cookie("csrf_token", csrf3, httponly=True, samesite="Lax")
             return resp3
 
@@ -5113,9 +5112,15 @@ def verify_2fa():
         code_entered  = request.form.get("code","").strip()
         next_url      = request.form.get("next_url", "/")
         remember      = request.form.get("remember_device","")
-        uid = _fl3.session.get("pending_uid")
-        stored_token = _fl3.session.get("pending_token")
-        if not uid or stored_token != pending_token:
+        # Decode uid from token
+        try:
+            import base64 as _b64_v
+            decoded = _b64_v.urlsafe_b64decode(pending_token.encode()).decode()
+            uid_str, _ = decoded.split(":", 1)
+            uid = int(uid_str)
+        except Exception:
+            return redirect("/login")
+        if not uid:
             return redirect("/login")
         rest = get_restaurant(uid)
         if not rest:
@@ -5128,7 +5133,12 @@ def verify_2fa():
             expires = now
         import secrets as _sec5
         csrf4 = _sec5.token_hex(16)
-        masked = _fl3.session.get("pending_masked", "your email")
+        try:
+            _rest_v = get_restaurant(uid)
+            _email_v = _rest_v.owner_email if _rest_v else ""
+            masked = _email_v[:2] + "***@" + _email_v.split("@")[-1] if "@" in _email_v else "your registered email"
+        except Exception:
+            masked = "your registered email"
         if rest.two_fa_code != code_entered:
             resp_err = make_response(render_template_string(TWO_FA_HTML,
                 masked_email=masked, error="Incorrect code. Try again.",
@@ -5164,7 +5174,15 @@ def verify_2fa():
 def resend_2fa():
     import flask as _fl4, random, datetime as _dt4
     from models import get_restaurant, update_restaurant
-    uid = _fl4.session.get("pending_uid")
+    data_r = request.get_json() or {}
+    pending_token_r = data_r.get("pending_token", "")
+    try:
+        import base64 as _b64_r
+        decoded_r = _b64_r.urlsafe_b64decode(pending_token_r.encode()).decode()
+        uid_r, _ = decoded_r.split(":", 1)
+        uid = int(uid_r)
+    except Exception:
+        return jsonify(ok=False, error="Session expired — please log in again")
     if not uid:
         return jsonify(ok=False, error="Session expired")
     rest = get_restaurant(uid)
