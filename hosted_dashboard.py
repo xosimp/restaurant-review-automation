@@ -1385,6 +1385,9 @@ function clientUpload(dataType, input) {
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Marketing Brief</div>
     <div class="insight-text insight-loading" id="mkt-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px">Loading marketing brief…</div>
+    <div style="margin-top:12px;padding-top:10px;border-top:1px solid #3d2e1e;font-size:11px;color:var(--ember2);padding-left:4px">
+      📊 Restaurants posting weekly Google Business updates get <strong style="color:var(--ember)">3–7× more direction requests</strong> — use the content calendar below to stay consistent.
+    </div>
   </div>
 
   <div style="font-size:11px;color:var(--ink3);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
@@ -1431,9 +1434,7 @@ function clientUpload(dataType, input) {
     <span id="char-count">0</span> characters <span id="char-limit-label"></span>
     <span id="char-over" style="color:var(--red);display:none"> — over limit</span>
   </div>
-  <div style="margin-top:10px;font-size:11px;color:var(--ink3);padding:6px 10px;background:var(--paper2);border-radius:6px;display:inline-block">
-    📊 Restaurants posting weekly Google Business updates get <strong>3–7× more direction requests</strong> — use the content calendar below to stay consistent.
-  </div>
+
 
   <div style="margin-top:24px;background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
