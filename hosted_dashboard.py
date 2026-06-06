@@ -2337,7 +2337,7 @@ function loadRecentTopics(){
       if(d.topics&&d.topics.length){
         var chips='';
         for(var i=0;i<d.topics.length;i++){
-          chips+='<span style="background:var(--paper2);color:var(--ink2);font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid var(--paper3);white-space:nowrap">'+d.topics[i]+'</span>';
+          chips+='<span style="background:white;color:var(--ink2);font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid var(--paper3);white-space:nowrap">'+d.topics[i]+'</span>';
         }
         list.innerHTML=chips;
       } else {
