@@ -1400,8 +1400,9 @@ function clientUpload(dataType, input) {
     <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none">Post to Instagram ↗</button>
     <button class="btn-primary" id="fb-post-btn" onclick="postToFacebook()" style="display:none;background:#1877f2">Post to Facebook ↗</button>
   </div>
-  <div style="margin-top:10px;font-size:11px;color:var(--ink3);display:none" id="recent-topics-row">
-    <span style="font-weight:600;color:var(--ink)">Recent topics:</span> <span id="recent-topics-list">Loading…</span>
+  <div style="margin-top:10px;display:none;align-items:center;flex-wrap:wrap;gap:6px" id="recent-topics-row">
+    <span style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink3);margin-right:2px">Recent:</span>
+    <span id="recent-topics-list" style="display:flex;flex-wrap:wrap;gap:5px"></span>
   </div>
   <div style="margin-top:6px;font-size:11px;color:var(--ink3);padding:6px 10px;background:var(--paper2);border-radius:6px;display:inline-block">
     📊 Restaurants posting weekly Google Business updates get <strong>3–7× more direction requests</strong> — use the content calendar below to stay consistent.
@@ -1773,7 +1774,7 @@ function saveDraft(id) {
 }
 // CSRF token for POST requests
 var _csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
-var _igConnected = {{"true" if restaurant.ig_token else "false"}};
+var _igConnected = {% if restaurant.ig_token %}true{% else %}false{% endif %};
 
 function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},2600);}
 function disconnectInstagram(){
@@ -2290,11 +2291,15 @@ function loadRecentTopics(){
     var list=document.getElementById('recent-topics-list');
     if(row&&list){
       if(d.topics&&d.topics.length){
-        list.textContent=d.topics.join(' · ');
+        var chips='';
+        for(var i=0;i<d.topics.length;i++){
+          chips+='<span style="background:var(--paper2);color:var(--ink2);font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid var(--paper3);white-space:nowrap">'+d.topics[i]+'</span>';
+        }
+        list.innerHTML=chips;
       } else {
-        list.textContent='none yet — generate some content to build history';
+        list.innerHTML='<span style="font-size:11px;color:var(--ink3);font-style:italic">none yet</span>';
       }
-      row.style.display='block';
+      row.style.display='flex';
     }
   }).catch(function(){});
 }
