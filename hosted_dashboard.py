@@ -1408,7 +1408,11 @@ function clientUpload(dataType, input) {
     <input class="topic-input" id="mktopic" placeholder="Topic or occasion — e.g. new spring menu, Sunday brunch special…">
     <button class="btn-primary" onclick="genContent()">Generate ↗</button>
   </div>
-  <div class="output-box" id="mkoutput" contenteditable="true" style="color:var(--ink3);font-style:italic;outline:none;cursor:text" title="Click to edit before posting">Select a type and click Generate.</div>
+  <div style="position:relative">
+    <div class="output-box" id="mkoutput" contenteditable="true" style="color:var(--ink3);font-style:italic;outline:none;cursor:text;padding-bottom:22px" title="Click to edit before posting">Select a type and click Generate.</div>
+    <div id="char-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="char-count">0</span> <span id="char-limit-label"></span><span id="char-over" style="color:var(--red);display:none"> over limit</span></div>
+    <div id="sms-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="sms-char-count">0</span>/160<span id="sms-over" style="color:var(--red);display:none"> over</span></div>
+  </div>
   <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center">
     <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').textContent).then(function(){toast('Copied');})">Copy</button>
     <button class="btn-secondary" onclick="genContent()">Regenerate</button>
@@ -1426,14 +1430,7 @@ function clientUpload(dataType, input) {
       <span id="post-history-list" style="display:flex;gap:6px;flex-wrap:wrap"></span>
     </div>
   </div>
-  <div style="display:none;font-size:10px;margin-top:4px;color:var(--ink3)" id="sms-counter">
-    <span id="sms-char-count">0</span>/160 characters
-    <span id="sms-over" style="color:var(--red);display:none"> — over limit, trim before sending</span>
-  </div>
-  <div id="char-counter" style="display:none;font-size:10px;margin-top:4px;color:var(--ink3)">
-    <span id="char-count">0</span> characters <span id="char-limit-label"></span>
-    <span id="char-over" style="color:var(--red);display:none"> — over limit</span>
-  </div>
+
 
 
   <div style="margin-top:24px;background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">

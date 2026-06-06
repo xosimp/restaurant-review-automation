@@ -345,20 +345,15 @@ def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
     from datetime import datetime as _dt, timedelta as _td
     from zoneinfo import ZoneInfo as _ZI
     now = _dt.now(_ZI('America/Chicago')).replace(tzinfo=None)
-    # Always show the NEXT full Mon-Sun week from today
-    # Find next Monday (if today is Mon-Wed show this week, Thu-Sun show next)
-    days_since_monday = now.weekday()  # Mon=0 ... Sun=6
-    if days_since_monday <= 2:  # Mon/Tue/Wed — show current week
-        start = now - _td(days=days_since_monday)
-    else:  # Thu/Fri/Sat/Sun — show next week's Monday
-        days_to_next_monday = 7 - days_since_monday
-        start = now + _td(days=days_to_next_monday)
+    # Sunday-based week — always show Sun through Sat of the CURRENT week
+    # Week never changes until a new Sunday arrives
+    days_since_sunday = (now.weekday() + 1) % 7  # Sun=0, Mon=1, ..., Sat=6
+    start = now - _td(days=days_since_sunday)  # Most recent Sunday
     days_map = {}
     for i in range(7):
         d = start + _td(days=i)
         dn = d.strftime("%A")
-        if dn not in days_map:
-            days_map[dn] = d.strftime("%-m/%-d")
+        days_map[dn] = d.strftime("%-m/%-d")
     week_range = f"{start.strftime('%-m/%-d')} – {(start + _td(days=6)).strftime('%-m/%-d/%y')}"
     current_month = now.strftime("%B")
     today_str = now.strftime("%B %d, %Y")
@@ -412,8 +407,8 @@ Rules:
             day_name = idea.get("day", "")
             idea["date"] = days_map.get(day_name, "")
         # Sort by date so calendar always shows Mon→Sun order
-        day_order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-        ideas.sort(key=lambda x: day_order.index(x.get("day","Monday")) if x.get("day","") in day_order else 7)
+        day_order = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
+        ideas.sort(key=lambda x: day_order.index(x.get("day","Sunday")) if x.get("day","") in day_order else 7)
         # Attach week_range to first idea for the UI to read
         if ideas:
             ideas[0]["week_range"] = week_range
