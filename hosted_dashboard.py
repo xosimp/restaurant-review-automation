@@ -1510,16 +1510,16 @@ function clientUpload(dataType, input) {
 
   <div style="margin-top:24px;background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-      <div class="slabel" style="margin:0">Content calendar</div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Content Calendar</div>
       <div style="display:flex;gap:6px">
         <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week ↺</button>
-        <button class="btn-secondary" style="font-size:10px;padding:5px 10px" id="cal-download-btn" onclick="downloadCal()" style="display:none">Download CSV ↓</button>
+        <button class="btn-secondary" id="cal-download-btn" onclick="downloadCal()" style="font-size:10px;padding:5px 10px;display:none">Download CSV ↓</button>
       </div>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
       <span id="cal-week-range" style="font-size:11px;color:var(--ink3);font-weight:500"></span>
     </div>
-    <div class="cal-grid" id="cal-grid"><div class="no-data" style="grid-column:1/-1;padding:20px">Click "Generate week" for content ideas.</div></div>
+    <div class="cal-grid" id="cal-grid"><div class="no-data" style="grid-column:1/-1;padding:24px;text-align:center;color:var(--ink3);font-size:13px;font-style:italic">Click "Generate week ↺" above to build your content calendar.</div></div>
   </div>
 
 </div>
