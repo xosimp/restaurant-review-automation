@@ -5195,7 +5195,7 @@ def resend_2fa():
     expires = (_dt4.datetime.now() + _dt4.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
     update_restaurant(uid, {"two_fa_code": code, "two_fa_expires": expires})
     try:
-        email = rest.billing_email or ""
+        email = rest.owner_email or ""
         if "@" in email:
             from emails import send_2fa_code
             send_2fa_code(email, rest.name or "your restaurant", code, rest.owner_name)
