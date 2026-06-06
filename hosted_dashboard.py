@@ -1780,19 +1780,68 @@ function clientUpload(dataType, input) {
   </div>
 
   <!-- Two-factor authentication -->
+  <!-- 2FA setup modal -->
+  <div id="twofa-modal" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center">
+    <div style="background:white;border-radius:14px;padding:32px;max-width:420px;width:90%;position:relative">
+      <button onclick="document.getElementById('twofa-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
+
+      <!-- Step 1: Intro -->
+      <div id="twofa-step1">
+        <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">Enable two-factor authentication</div>
+        <p style="font-size:13px;color:var(--ink3);margin-bottom:20px;line-height:1.6">Each time you sign in from a new device, we&rsquo;ll send a 6-digit code to <strong>{{restaurant.billing_email or restaurant.owner_email or "your email"}}</strong>. You&rsquo;ll need to enter it to access your dashboard.</p>
+        <div style="background:#f7f4ef;border-radius:8px;padding:14px;margin-bottom:20px;font-size:12px;color:var(--ink2);line-height:1.6">
+          <strong>What to expect:</strong><br>
+          • Sign in normally with username + password<br>
+          • A code arrives in your email within seconds<br>
+          • Enter the code to complete sign in<br>
+          • Check "Remember device" to skip for 30 days
+        </div>
+        <button onclick="twoFAStep2()" class="btn-primary" style="width:100%;padding:11px">Send me a test code &rarr;</button>
+      </div>
+
+      <!-- Step 2: Verify test code -->
+      <div id="twofa-step2" style="display:none">
+        <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">Check your email</div>
+        <p style="font-size:13px;color:var(--ink3);margin-bottom:20px;line-height:1.6">We sent a test code to <strong id="twofa-masked-email"></strong>. Enter it below to confirm 2FA is working.</p>
+        <div style="display:flex;gap:8px;justify-content:center;margin-bottom:16px" id="twofa-setup-inputs">
+          <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
+          <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
+          <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
+          <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
+          <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
+          <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
+        </div>
+        <div id="twofa-setup-error" style="display:none;color:#c0392b;font-size:12px;text-align:center;margin-bottom:12px"></div>
+        <button onclick="twoFAVerify()" class="btn-primary" style="width:100%;padding:11px;margin-bottom:10px">Verify &amp; enable 2FA</button>
+        <button onclick="twoFAStep2()" class="btn-secondary" style="width:100%;padding:9px;font-size:12px">Resend code</button>
+      </div>
+
+      <!-- Step 3: Success -->
+      <div id="twofa-step3" style="display:none;text-align:center">
+        <div style="font-size:40px;margin-bottom:16px">✅</div>
+        <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">2FA is now active</div>
+        <p style="font-size:13px;color:var(--ink3);margin-bottom:24px;line-height:1.6">Your account is protected. You&rsquo;ll receive a verification code by email each time you sign in from a new device.</p>
+        <button onclick="document.getElementById('twofa-modal').style.display='none';location.reload();" class="btn-primary" style="padding:10px 28px">Done</button>
+      </div>
+    </div>
+  </div>
+
   <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:14px">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
       <div>
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:6px">Two-factor authentication</div>
-        <div style="font-size:13px;color:var(--ink2);line-height:1.5">When enabled, a 6-digit code is sent to your email each time you sign in from a new device.</div>
+        {% if restaurant.two_fa_enabled %}
+        <div style="font-size:13px;color:var(--ink2);line-height:1.5">✓ Your account is protected with email verification on new device sign-ins.</div>
+        {% else %}
+        <div style="font-size:13px;color:var(--ink2);line-height:1.5">Add an extra layer of security. A code is sent to your email on each new sign-in.</div>
+        {% endif %}
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
         {% if restaurant.two_fa_enabled %}
-        <span style="font-size:11px;color:#2d6a4f;font-weight:600">✓ Enabled</span>
+        <span style="font-size:11px;font-weight:700;color:#2d6a4f;background:#eaf4ee;padding:3px 10px;border-radius:10px">✓ Enabled</span>
         <button onclick="toggle2FA(false)" class="btn-secondary" style="font-size:11px;padding:6px 12px">Disable</button>
         {% else %}
-        <span style="font-size:11px;color:var(--ink3)">Disabled</span>
-        <button onclick="toggle2FA(true)" class="btn-primary" style="font-size:11px;padding:6px 12px">Enable 2FA</button>
+        <button onclick="document.getElementById('twofa-modal').style.display='flex'" class="btn-primary" style="font-size:11px;padding:7px 14px">Enable 2FA &rarr;</button>
         {% endif %}
       </div>
     </div>
@@ -2869,11 +2918,56 @@ function loadLaborTrend(){
 }
 function exportReviews(){window.location='/api/export-reviews';}
 function toggle2FA(enable){
+  if(enable){
+    document.getElementById('twofa-modal').style.display='flex';
+    return;
+  }
+  // Disable — simple confirm
+  if(!confirm('Disable two-factor authentication? Your account will only require your password to sign in.'))return;
   fetch('/api/toggle-2fa',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({enabled:enable})})
+    body:JSON.stringify({enabled:false}))
     .then(function(r){return r.json();}).then(function(d){
-      if(d.ok){toast(enable?'Two-factor authentication enabled':'2FA disabled');setTimeout(function(){location.reload();},800);}
-      else toast(d.error||'Failed to update 2FA settings');
+      if(d.ok){toast('2FA disabled');setTimeout(function(){location.reload();},800);}
+      else toast(d.error||'Failed to disable 2FA');
+    });
+}
+function twoFAStep2(){
+  // Send test code
+  fetch('/api/send-2fa-test',{method:'POST'})
+    .then(function(r){return r.json();}).then(function(d){
+      if(!d.ok){toast(d.error||'Could not send code — check your billing email is set');return;}
+      document.getElementById('twofa-step1').style.display='none';
+      document.getElementById('twofa-step2').style.display='block';
+      document.getElementById('twofa-masked-email').textContent=d.masked||'your email';
+      // Wire up digit inputs
+      var digits=document.querySelectorAll('.twofa-setup-digit');
+      digits.forEach(function(inp,i){
+        inp.value='';
+        inp.addEventListener('input',function(){
+          if(inp.value.length===1&&i<5)digits[i+1].focus();
+        });
+        inp.addEventListener('keydown',function(e){
+          if(e.key==='Backspace'&&!inp.value&&i>0)digits[i-1].focus();
+        });
+      });
+      digits[0].focus();
+    });
+}
+function twoFAVerify(){
+  var digits=document.querySelectorAll('.twofa-setup-digit');
+  var code='';
+  digits.forEach(function(d){code+=d.value;});
+  if(code.length<6){document.getElementById('twofa-setup-error').textContent='Enter all 6 digits';document.getElementById('twofa-setup-error').style.display='block';return;}
+  fetch('/api/verify-2fa-setup',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({code:code})})
+    .then(function(r){return r.json();}).then(function(d){
+      if(d.ok){
+        document.getElementById('twofa-step2').style.display='none';
+        document.getElementById('twofa-step3').style.display='block';
+      } else {
+        document.getElementById('twofa-setup-error').textContent=d.error||'Incorrect code — try again';
+        document.getElementById('twofa-setup-error').style.display='block';
+      }
     });
 }
 function sendReferral(){
@@ -5403,6 +5497,53 @@ def review_insight_api(current_user):
         import traceback
         print(f"[review-insight ERROR] {_re}\n{traceback.format_exc()}")
         return jsonify(insight="Analysis unavailable — check back shortly.", error=str(_re)), 500
+
+@app.route("/api/send-2fa-test", methods=["POST"])
+@login_required
+def send_2fa_test(current_user):
+    """Send a test 2FA code to verify email before enabling."""
+    import random, datetime as _dt5
+    from models import get_restaurant, update_restaurant
+    rest = get_restaurant(current_user["restaurant_id"])
+    if not rest:
+        return jsonify(ok=False, error="Restaurant not found")
+    email = rest.billing_email or rest.owner_email or ""
+    if not email or "@" not in email:
+        return jsonify(ok=False, error="No email address found. Set your billing email in account settings first.")
+    code = str(random.randint(100000, 999999))
+    expires = (_dt5.datetime.now() + _dt5.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+    update_restaurant(current_user["restaurant_id"], {"two_fa_code": code, "two_fa_expires": expires})
+    try:
+        from emails import send_2fa_code
+        send_2fa_code(email, rest.name or "your restaurant", code, rest.owner_name)
+    except Exception as e:
+        return jsonify(ok=False, error=f"Failed to send email: {str(e)[:60]}")
+    masked = email[:2] + "***@" + email.split("@")[-1]
+    return jsonify(ok=True, masked=masked)
+
+@app.route("/api/verify-2fa-setup", methods=["POST"])
+@login_required
+def verify_2fa_setup(current_user):
+    """Verify the test code and enable 2FA."""
+    import datetime as _dt6
+    from models import get_restaurant, update_restaurant
+    data = request.get_json() or {}
+    code = data.get("code", "").strip()
+    rest = get_restaurant(current_user["restaurant_id"])
+    if not rest:
+        return jsonify(ok=False, error="Not found")
+    if rest.two_fa_code != code:
+        return jsonify(ok=False, error="Incorrect code. Try again.")
+    try:
+        expires = _dt6.datetime.strptime(rest.two_fa_expires, "%Y-%m-%d %H:%M:%S")
+        if _dt6.datetime.now() > expires:
+            return jsonify(ok=False, error="Code expired. Click resend.")
+    except Exception:
+        return jsonify(ok=False, error="Code expired. Click resend.")
+    update_restaurant(current_user["restaurant_id"], {
+        "two_fa_enabled": 1, "two_fa_code": "", "two_fa_expires": ""
+    })
+    return jsonify(ok=True)
 
 @app.route("/api/toggle-2fa", methods=["POST"])
 @login_required
