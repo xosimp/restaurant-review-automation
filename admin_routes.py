@@ -1351,7 +1351,18 @@ def post_to_instagram(current_user):
         err = r2.json().get("error",{}).get("message","Publish failed")
         return jsonify(ok=False, error=err)
 
-    return jsonify(ok=True, post_id=r2.json().get("id"))
+    post_id = r2.json().get("id")
+    # Save post_id for engagement tracking
+    try:
+        from marketing import log_content as _lc
+        _data = request.get_json() or {}
+        _topic = _data.get("topic", "")
+        if _topic and post_id:
+            _lc(current_user["restaurant_id"], "instagram_post", _topic,
+                post_id=post_id, post_platform="instagram")
+    except Exception as _e:
+        print(f"[insights] failed to log post_id: {_e}")
+    return jsonify(ok=True, post_id=post_id)
 
 @admin_bp.route("/api/instagram-status")
 @login_required
