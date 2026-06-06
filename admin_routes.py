@@ -1448,7 +1448,16 @@ def post_to_facebook(current_user):
         err = r.json().get("error",{}).get("message","Unknown error")
         print(f"FB post failed: {r.text}")
         return jsonify(ok=False, error=err)
-    return jsonify(ok=True, post_id=r.json().get("id"))
+    post_id = r.json().get("id")
+    try:
+        from marketing import log_content as _lc_fb
+        _topic_fb = data.get("topic", "")
+        if _topic_fb and post_id:
+            _lc_fb(current_user["restaurant_id"], "facebook_post", _topic_fb,
+                   post_id=post_id, post_platform="facebook")
+    except Exception as _e_fb:
+        print(f"[insights] failed to log fb post_id: {_e_fb}")
+    return jsonify(ok=True, post_id=post_id)
 
 @admin_bp.route("/admin/api/client-usage/<int:restaurant_id>")
 @admin_required
