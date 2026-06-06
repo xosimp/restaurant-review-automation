@@ -1414,7 +1414,7 @@ function clientUpload(dataType, input) {
     <div id="sms-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="sms-char-count">0</span>/160<span id="sms-over" style="color:var(--red);display:none"> over</span></div>
   </div>
   <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center">
-    <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').textContent).then(function(){toast('Copied');})">Copy</button>
+    <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').innerText||document.getElementById('mkoutput').textContent).then(function(){toast('Copied');})">Copy</button>
     <button class="btn-secondary" onclick="genContent()">Regenerate</button>
     <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none">Post to Instagram ↗</button>
     <button class="btn-primary" id="fb-post-btn" onclick="postToFacebook()" style="display:none;background:#1877f2">Post to Facebook ↗</button>
@@ -1434,7 +1434,7 @@ function clientUpload(dataType, input) {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
       <div class="slabel" style="margin:0">Content calendar</div>
       <div style="display:flex;gap:6px">
-        <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week ↗</button>
+        <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week ↺</button>
         <button class="btn-secondary" style="font-size:10px;padding:5px 10px" id="cal-download-btn" onclick="downloadCal()" style="display:none">Download CSV ↓</button>
       </div>
     </div>
@@ -2407,11 +2407,13 @@ function loadMktInsight(){
   var el=document.getElementById('mkt-insight');
   if(!el)return;
   fetch('/api/mkt-insight').then(function(r){return r.json();}).then(function(d){
-    el.innerHTML=d.insight||'Marketing brief unavailable.';
+    el.innerHTML=d.insight||'Marketing brief unavailable — check back shortly.';
     el.classList.remove('insight-loading');
+    mktLoaded=true;
   }).catch(function(){
     el.textContent='Marketing brief unavailable — check back shortly.';
     el.classList.remove('insight-loading');
+    mktLoaded=false;
   });
 }
 function loadLaborInsight(){
@@ -2538,13 +2540,13 @@ function genContent(fromCalendar){
   box.style.fontStyle='italic';
   box.style.color='var(--ink3)';
   box.textContent='Generating…';
-  window._lastPostedTopic = topic;
   fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic:topic,from_calendar:!!fromCalendar})})
     .then(function(r){return r.json();})
     .then(function(d){
       box.style.fontStyle='normal';
       box.style.color='var(--ink2)';
       box.textContent=d.content||'Generation failed — try again.';
+      window._lastPostedTopic=topic;
       box.style.fontStyle='normal';box.style.color='var(--ink)';
       var hint=document.getElementById('output-hint');if(hint)hint.style.display='block';
       var igBtn=document.getElementById('ig-post-btn');
