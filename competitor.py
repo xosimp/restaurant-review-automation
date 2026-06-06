@@ -23,44 +23,44 @@ def fetch_menu_notes_from_places(google_place_id: str) -> str:
         data = r.json()
         if data.get("status") != "OK":
             return ""
-        result = data.get("result", {})
+        place_data = data.get("result", {})
 
         parts = []
 
         # Editorial summary (Google's own description)
-        summary = result.get("editorial_summary", {}).get("overview", "")
+        summary = place_data.get("editorial_summary", {}).get("overview", "")
         if summary:
             parts.append(f"Google description: {summary}")
 
         # Meal services
         meal_flags = []
-        if result.get("serves_breakfast"): meal_flags.append("breakfast")
-        if result.get("serves_brunch"): meal_flags.append("brunch")
-        if result.get("serves_lunch"): meal_flags.append("lunch")
-        if result.get("serves_dinner"): meal_flags.append("dinner")
+        if place_data.get("serves_breakfast"): meal_flags.append("breakfast")
+        if place_data.get("serves_brunch"): meal_flags.append("brunch")
+        if place_data.get("serves_lunch"): meal_flags.append("lunch")
+        if place_data.get("serves_dinner"): meal_flags.append("dinner")
         if meal_flags:
             parts.append(f"Serves: {', '.join(meal_flags)}")
 
         # Drinks
         drinks = []
-        if result.get("serves_beer"): drinks.append("beer")
-        if result.get("serves_wine"): drinks.append("wine")
-        if result.get("serves_cocktails"): drinks.append("cocktails")
+        if place_data.get("serves_beer"): drinks.append("beer")
+        if place_data.get("serves_wine"): drinks.append("wine")
+        if place_data.get("serves_cocktails"): drinks.append("cocktails")
         if drinks:
             parts.append(f"Drinks: {', '.join(drinks)}")
 
-        if result.get("serves_vegetarian_food"):
+        if place_data.get("serves_vegetarian_food"):
             parts.append("Vegetarian options available")
 
         # Cuisine types
         generic = {"restaurant","food","point_of_interest","establishment","bar","cafe"}
-        types = [t.replace("_restaurant","").replace("_"," ") 
-                 for t in result.get("types", []) if t not in generic]
+        types = [t.replace("_restaurant","").replace("_"," ")
+                 for t in place_data.get("types", []) if t not in generic]
         if types:
             parts.append(f"Cuisine type: {', '.join(types[:3])}")
 
         # Menu URL — try to parse it for actual menu items
-        menu_url = result.get("menu_url", "") or result.get("website", "")
+        menu_url = place_data.get("menu_url", "") or place_data.get("website", "")
         if menu_url:
             parts.append(f"Menu URL: {menu_url}")
             try:
@@ -70,9 +70,7 @@ def fetch_menu_notes_from_places(google_place_id: str) -> str:
             except Exception:
                 pass
 
-        result = "\n".join(parts) if parts else ""
-
-        return result
+        return "\n".join(parts) if parts else ""
     except Exception as e:
         print(f"[fetch_menu_notes] error: {e}")
         return ""
@@ -424,9 +422,7 @@ Tone: sharp, direct, trusted business advisor. No generic advice. Name specific 
             max_tokens=800,
             messages=[{"role": "user", "content": prompt}]
         )
-        raw = msg.content[0].text.strip()
-        import re as _re_c
-        return raw
+        return msg.content[0].text.strip()
     except Exception as e:
         print(f"[Competitor] generate_competitor_insight error: {e}")
         return ""
@@ -449,8 +445,6 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
             for pid in custom_ids:
                 if pid not in existing_ids:
                     try:
-                        # Fetch basic info for this custom competitor
-                        custom_details = get_nearby_competitors.__wrapped__(pid) if hasattr(get_nearby_competitors, '__wrapped__') else None
                         details_url = "https://maps.googleapis.com/maps/api/place/details/json"
                         import requests as _req
                         r = _req.get(details_url, params={
@@ -464,7 +458,7 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
                                 "place_id": pid,
                                 "name": d["name"],
                                 "rating": d.get("rating", 0),
-                                "user_ratings_total": d.get("user_ratings_total", 0),
+                                "review_count": d.get("user_ratings_total", 0),
                                 "types": d.get("types", []),
                                 "custom": True,
                             })
@@ -489,15 +483,18 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         )
 
         # Store in DB
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _ZI
+        _now_ct = _dt.now(_ZI("America/Chicago")).replace(tzinfo=None)
         result = {
             "competitors": competitors,
             "insight": insight,
-            "generated_at": __import__("datetime").datetime.now().strftime("%Y-%m-%d"),
+            "generated_at": _now_ct.strftime("%Y-%m-%d"),
         }
         conn = get_conn()
         conn.execute(
-            "UPDATE restaurants SET competitor_intel=?, competitor_updated_at=datetime('now') WHERE id=?",
-            (json.dumps(result), restaurant_id)
+            "UPDATE restaurants SET competitor_intel=?, competitor_updated_at=? WHERE id=?",
+            (json.dumps(result), _now_ct.strftime("%Y-%m-%d %H:%M:%S"), restaurant_id)
         )
         conn.commit()
         conn.close()
