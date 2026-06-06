@@ -6031,8 +6031,11 @@ def update_digest_day(current_user):
 @login_required
 def dismiss_welcome(current_user):
     """Mark user as having seen welcome banner by updating last_login."""
-    from auth import update_last_login
-    update_last_login(current_user["id"])
+    try:
+        from auth import update_last_login
+        update_last_login(current_user["id"])
+    except Exception as _e:
+        print(f"[dismiss-welcome] update_last_login error: {_e}")
     try:
         from models import log_event
         log_event(current_user["restaurant_id"], "login")
