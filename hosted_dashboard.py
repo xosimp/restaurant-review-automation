@@ -106,17 +106,21 @@ def format_intel_filter(text):
                 html_parts.append(flush_bullets(current_section, bullets))
             current_section = "What competitors are doing poorly"
             bullets = []
-        elif re.match(r"Recommendations?:?\s*$", line, re.I):
+        elif re.search(r"Recommendations?", line, re.I) and not line.startswith("-") and not re.match(r"^[0-9]", line):
             if current_section and bullets:
                 html_parts.append(flush_bullets(current_section, bullets))
             current_section = "recommendations"
             bullets = []
         elif line.startswith("-") and current_section != "recommendations":
-            bullets.append(re.sub(r'\*+', '', line.lstrip("- ")).strip())
+            b = re.sub(r'\*+', '', line.lstrip("- ")).strip()
+            if b:
+                bullets.append(b)
         elif re.match(r"^[0-9]+[.)]\s+", line):
             rec_lines.append(re.sub(r'\*+', '', re.sub(r"^[0-9]+[.)]\s+", "", line)).strip())
-        elif current_section == "recommendations" and line and not re.match(r"Recommendations?:?", line, re.I):
-            rec_lines.append(re.sub(r'\*+', '', line).strip())
+        elif current_section == "recommendations" and line and not re.search(r"Recommendations?", line, re.I):
+            cleaned = re.sub(r'\*+', '', line).strip()
+            if cleaned:
+                rec_lines.append(cleaned)
 
     if current_section and current_section != "recommendations" and bullets:
         html_parts.append(flush_bullets(current_section, bullets))
@@ -151,14 +155,16 @@ def extract_recs_filter(text):
         line = line.strip()
         if not line:
             continue
-        if re.match(r"Recommendations?:?\s*$", line, re.I):
+        if re.search(r"Recommendations?", line, re.I) and not line.startswith("-") and not re.match(r"^[0-9]", line):
             in_recs = True
             continue
         if in_recs:
             if re.match(r"^[0-9]+[.)]\s+", line):
                 recs.append(re.sub(r'\*+', '', re.sub(r"^[0-9]+[.)]\s+", "", line)).strip())
             elif not re.match(r"^(WHAT COMPETITORS)", line, re.I):
-                recs.append(re.sub(r'\*+', '', line).strip())
+                cleaned = re.sub(r'\*+', '', line).strip()
+                if cleaned:
+                    recs.append(cleaned)
     return [r for r in recs if r]
 
 
@@ -212,12 +218,14 @@ def format_intel_body_filter(text):
                 html_parts.append(_flush(current_section, bullets))
             current_section = "What competitors are doing poorly"
             bullets = []
-        elif re.match(r"Recommendations?:?\s*$", line, re.I):
+        elif re.search(r"Recommendations?", line, re.I) and not line.startswith("-") and not re.match(r"^[0-9]", line):
             if current_section and bullets:
                 html_parts.append(_flush(current_section, bullets))
             break
         elif line.startswith("-"):
-            bullets.append(re.sub(r'\*+', '', line.lstrip("- ")).strip())
+            b = re.sub(r'\*+', '', line.lstrip("- ")).strip()
+            if b:
+                bullets.append(b)
     if current_section and bullets:
         html_parts.append(_flush(current_section, bullets))
     if not html_parts:
@@ -1635,15 +1643,16 @@ function clientUpload(dataType, input) {
         <div style="font-size:24px;font-weight:800;color:#0d1b2a;letter-spacing:-1px;line-height:1">{{comp_count}}</div>
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Competitors tracked</div>
       </div>
+      {% set avg_color = '#16a34a' if avg_comp_rating >= 4.5 else ('#22c55e' if avg_comp_rating >= 4.0 else ('#84cc16' if avg_comp_rating >= 3.5 else '#f59e0b')) %}
       <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
-        <div style="font-size:24px;font-weight:800;color:#f59e0b;letter-spacing:-1px;line-height:1">{{avg_comp_rating}}★</div>
+        <div style="font-size:24px;font-weight:800;letter-spacing:-1px;line-height:1;color:{{avg_color}}">{{avg_comp_rating}}★</div>
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Avg competitor rating</div>
       </div>
       {% if mod_reviews and rstats.avg_rating %}
       {% set own_vs_avg = (rstats.avg_rating - avg_comp_rating) | round(1) %}
       <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
-        <div style="font-size:24px;font-weight:800;letter-spacing:-1px;line-height:1;color:{{'#16a34a' if own_vs_avg >= 0 else '#dc2626'}}">{{rstats.avg_rating}}★</div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Your rating <span style="color:{{'#16a34a' if own_vs_avg >= 0 else '#dc2626'}}">{{'▲' if own_vs_avg > 0 else ('▼' if own_vs_avg < 0 else '—')}}{{own_vs_avg|abs if own_vs_avg != 0 else ''}}</span></div>
+        <div style="font-size:24px;font-weight:800;letter-spacing:-1px;line-height:1;color:#0d1b2a">{{rstats.avg_rating}}★</div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Your rating <span style="color:{{'#16a34a' if own_vs_avg > 0 else ('#dc2626' if own_vs_avg < 0 else 'var(--ink3)')}}">{% if own_vs_avg > 0 %}▲{{own_vs_avg}} above avg{% elif own_vs_avg < 0 %}▼{{own_vs_avg|abs}} below avg{% endif %}</span></div>
       </div>
       {% else %}
       <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
@@ -1670,22 +1679,22 @@ function clientUpload(dataType, input) {
 
     <!-- Rating bar chart -->
     {% if mod_reviews and rstats.avg_rating %}
+    {% set your_bar_color = '#4a9eca' if rstats.avg_rating >= avg_comp_rating else '#f97316' %}
     <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;margin-bottom:16px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Rating comparison</div>
       <div style="display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;align-items:center;gap:10px">
           <div style="width:130px;font-size:12px;font-weight:700;color:#0d1b2a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">{{restaurant.name}}</div>
           <div style="flex:1;background:#f3f4f6;border-radius:3px;height:10px;overflow:hidden">
-            <div style="height:100%;width:{{((rstats.avg_rating / 5) * 100)|int}}%;background:#4a9eca;border-radius:3px"></div>
+            <div style="height:100%;width:{{((rstats.avg_rating / 5) * 100)|int}}%;background:{{your_bar_color}};border-radius:3px"></div>
           </div>
-          <div style="width:36px;font-size:12px;font-weight:700;color:#4a9eca;text-align:right;flex-shrink:0">{{rstats.avg_rating}}</div>
+          <div style="width:36px;font-size:12px;font-weight:700;color:{{your_bar_color}};text-align:right;flex-shrink:0">{{rstats.avg_rating}}</div>
         </div>
         {% for c in competitor_data.competitors %}
-        {% set diff = rstats.avg_rating - c.rating %}
         <div style="display:flex;align-items:center;gap:10px">
           <div style="width:130px;font-size:12px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">{{c.name}}</div>
           <div style="flex:1;background:#f3f4f6;border-radius:3px;height:10px;overflow:hidden">
-            <div style="height:100%;width:{{((c.rating / 5) * 100)|int}}%;background:{{'#16a34a' if diff > 0 else ('#dc2626' if diff < 0 else '#9ca3af')}};border-radius:3px;opacity:0.7"></div>
+            <div style="height:100%;width:{{((c.rating / 5) * 100)|int}}%;background:#9ca3af;border-radius:3px"></div>
           </div>
           <div style="width:36px;font-size:12px;color:var(--ink3);text-align:right;flex-shrink:0">{{c.rating}}</div>
         </div>
@@ -1712,8 +1721,8 @@ function clientUpload(dataType, input) {
           <div style="display:flex;align-items:center;gap:8px">
             {% if mod_reviews and rstats.avg_rating %}
             {% set diff = (rstats.avg_rating - c.rating) | round(1) %}
-            <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;background:{{'#dcfce7' if diff > 0 else ('#fee2e2' if diff < 0 else '#f3f4f6')}};color:{{'#16a34a' if diff > 0 else ('#dc2626' if diff < 0 else '#6b7280')}}">
-              {{'▲' if diff > 0 else ('▼' if diff < 0 else '—')}}{{diff|abs if diff != 0 else ''}} you
+            <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;background:{{'#dcfce7' if diff > 0 else ('#fff7ed' if diff < 0 else '#f3f4f6')}};color:{{'#16a34a' if diff > 0 else ('#f97316' if diff < 0 else '#6b7280')}}">
+              {% if diff > 0 %}▲{{diff}} ahead{% elif diff < 0 %}▼{{diff|abs}} behind{% else %}tied{% endif %}
             </span>
             {% endif %}
             <div style="font-size:12px;color:#f59e0b">{{c.rating}}★ <span style="color:var(--ink3)">{{c.review_count}} reviews</span></div>
