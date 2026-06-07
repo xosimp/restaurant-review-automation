@@ -97,7 +97,21 @@ def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "") -> st
         text = text[:8000]
         if len(text) < 50:
             return ""
-        return _extract_menu_with_ai(text, restaurant_name)
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+        extract_prompt = (
+            "Extract the key menu items from this restaurant menu text. "
+            "Return a concise summary: Signature dishes: [list]. Appetizers: [list]. "
+            "Mains: [list]. Desserts: [list]. Drinks: [list]. "
+            "Only include actual menu items. Max 300 words. "
+            "If no menu items found, respond with exactly: NO_MENU_FOUND\n\nMenu text:\n" + text
+        )
+        msg = client.messages.create(
+            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+            max_tokens=400,
+            messages=[{"role": "user", "content": extract_prompt}]
+        )
+        result = msg.content[0].text.strip()
+        return "" if "NO_MENU_FOUND" in result or len(result) < 30 else result
     except Exception as e:
         print(f"[fetch_menu_from_pdf_bytes] error: {e}")
         return ""
@@ -143,10 +157,10 @@ def fetch_menu_from_url(menu_url: str) -> str:
         ]
         page_text = ""
         session = _req.Session()
-        for profile in browser_profiles:
+        for i, profile in enumerate(browser_profiles):
             try:
                 # Small random delay between retries — looks more human
-                if page_text == "" and browser_profiles.index(profile) > 0:
+                if page_text == "" and i > 0:
                     _time.sleep(_random.uniform(0.5, 1.5))
                 r = session.get(menu_url, headers=profile, timeout=12, allow_redirects=True)
                 if r.status_code == 200 and len(r.text) > 500:
@@ -206,11 +220,15 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
         data = r.json()
         if data.get("status") != "OK":
             return []
-        loc = data["result"]["geometry"]["location"]
-        lat, lng = loc["lat"], loc["lng"]
-        own_name = data["result"].get("name", "")
-        own_types = data["result"].get("types", [])
-        own_price = data["result"].get("price_level")
+        result_data = data.get("result", {})
+        geometry = result_data.get("geometry", {})
+        location = geometry.get("location", {})
+        if not location.get("lat") or not location.get("lng"):
+            return []
+        lat, lng = location["lat"], location["lng"]
+        own_name = result_data.get("name", "")
+        own_types = result_data.get("types", [])
+        own_price = result_data.get("price_level")
 
         # Build a keyword from the restaurant's type to filter similar competitors
         # Exclude generic types that apply to everything
@@ -240,13 +258,19 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
             params["keyword"] = meal_keyword
 
         r2 = requests.get(nearby_url, params=params)
-        places = r2.json().get("results", [])
+        r2_data = r2.json()
+        if r2_data.get("status") not in ("OK", "ZERO_RESULTS"):
+            print(f"[Competitor] Nearby search error: {r2_data.get('status')} {r2_data.get('error_message','')}")
+        places = r2_data.get("results", [])
 
         # If keyword search returns too few, fall back to broader search
         if len(places) < 3:
             params.pop("keyword", None)
             r2 = requests.get(nearby_url, params=params)
-            places = r2.json().get("results", [])
+            r2_data = r2.json()
+            if r2_data.get("status") not in ("OK", "ZERO_RESULTS"):
+                print(f"[Competitor] Fallback search error: {r2_data.get('status')} {r2_data.get('error_message','')}")
+            places = r2_data.get("results", [])
 
         # Filter: skip self, skip fast food chains, prefer similar price level
         fast_food_chains = {"mcdonald", "burger king", "wendy", "taco bell", "subway",
@@ -449,7 +473,7 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
                         import requests as _req
                         r = _req.get(details_url, params={
                             "place_id": pid,
-                            "fields": "name,rating,user_ratings_total,types",
+                            "fields": "name,rating,user_ratings_total,types,vicinity",
                             "key": PLACES_API_KEY,
                         })
                         d = r.json().get("result", {})
@@ -459,6 +483,7 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
                                 "name": d["name"],
                                 "rating": d.get("rating", 0),
                                 "review_count": d.get("user_ratings_total", 0),
+                                "vicinity": d.get("vicinity", ""),
                                 "types": d.get("types", []),
                                 "custom": True,
                             })

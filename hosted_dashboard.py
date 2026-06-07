@@ -51,6 +51,7 @@ app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB global upload limit
 def format_intel_filter(text):
     """Parse structured competitor intel into formatted HTML matching labor/inventory style."""
     import re
+    from markupsafe import Markup, escape as _esc
     if not text:
         return '<p style="color:var(--ink3);font-size:13px">Analysis unavailable.</p>'
 
@@ -64,7 +65,6 @@ def format_intel_filter(text):
     html_parts = []
     lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
 
-    # Split into intro and sections
     intro_lines = []
     section_lines = []
     in_section = False
@@ -77,11 +77,8 @@ def format_intel_filter(text):
             intro_lines.append(line)
 
     if intro_lines:
-        intro_text = " ".join(intro_lines)
-        from markupsafe import escape as _esc
-        html_parts.append('<p style="font-size:13px;color:#374151;line-height:1.7;margin-bottom:14px">' + str(_esc(intro_text)) + "</p>")
+        html_parts.append('<p style="font-size:13px;color:#374151;line-height:1.7;margin-bottom:14px">' + str(_esc(" ".join(intro_lines))) + "</p>")
 
-    # Parse sections
     current_section = None
     bullets = []
     rec_lines = []
@@ -92,7 +89,6 @@ def format_intel_filter(text):
         is_good = "WELL" in section_name.upper()
         color = "#16a34a" if is_good else "#dc2626"
         icon = "✓" if is_good else "✗"
-        from markupsafe import escape as _esc
         out = '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:' + color + ';margin:14px 0 8px">' + section_name + "</div>"
         for b in b_list:
             out += (
@@ -142,11 +138,8 @@ def format_intel_filter(text):
             )
 
     if not html_parts:
-        return '<p style="font-size:13px;color:#374151;line-height:1.7">' + text + "</p>"
+        return '<p style="font-size:13px;color:#374151;line-height:1.7">' + str(_esc(text)) + "</p>"
 
-    from markupsafe import Markup, escape as _esc
-    # Sanitize: escape any HTML that came through from AI output in text nodes
-    # html_parts contains our own safe HTML structure — only the text content needs escaping
     return Markup("".join(html_parts))
 
 
