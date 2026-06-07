@@ -5797,7 +5797,9 @@ Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No co
         return jsonify(insight=format_insight_html(insight))
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify(insight=f"Marketing brief unavailable. ({str(e)[:60]})")
+        err = str(e)[:120]
+        print(f"[MktInsight] ERROR: {err}")
+        return jsonify(insight=f"Marketing brief unavailable. Error: {err}")
 
 @app.route("/api/labor-insight")
 @login_required
