@@ -1941,26 +1941,6 @@ function clientUpload(dataType, input) {
         </div>
       </div>
 
-      <!-- Google Business -->
-      {% if mod_reviews %}
-      <div style="border-top:1px solid var(--paper3);padding-top:12px;margin-bottom:12px">
-        <div style="display:flex;align-items:center;justify-content:space-between">
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Google Business</div>
-            <div style="font-size:11px;color:var(--ink3)">{% if restaurant.gmb_refresh_token %}Auto-posting replies to Google{% else %}Connect to auto-post replies{% endif %}</div>
-          </div>
-          {% if restaurant.gmb_refresh_token %}
-          <div style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:10px;font-weight:700;color:#2d6a4f;background:#eaf4ee;padding:2px 8px;border-radius:10px">&#10003; Connected</span>
-            <button onclick="gmbDisconnect()" class="btn btn-skip" style="font-size:11px;padding:4px 10px">Disconnect</button>
-          </div>
-          {% else %}
-          <button onclick="gmbConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 12px">Connect &rarr;</button>
-          {% endif %}
-        </div>
-      </div>
-      {% endif %}
-
       <!-- Change password -->
       <div style="border-top:1px solid var(--paper3);padding-top:12px">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px">Change password</div>
