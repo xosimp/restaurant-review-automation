@@ -1573,7 +1573,7 @@ function clientUpload(dataType, input) {
         </div>
         {% endfor %}
         {% if c.reviews|length > 2 %}
-        <div id="extra-reviews-{{loop.index}}" style="display:none;padding-top:6px;border-top:1px solid var(--paper3)">
+        <div id="extra-reviews-{{loop.index}}" style="display:none">
           {% for r in c.reviews[2:] %}
           <div style="font-size:11px;color:var(--ink3);padding:6px 0;border-top:1px solid var(--paper3);line-height:1.5">
             <span style="color:{{'#16a34a' if r.rating >= 4 else '#dc2626'}}">★</span>
