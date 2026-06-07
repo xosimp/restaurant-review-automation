@@ -2287,7 +2287,7 @@ function switchTab(n,btn){
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor'){renderBars();loadLaborTrend();}
   if(n==='account')loadBillingInfo();
-  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…')){loadMktInsight();}loadRecentTopics();}
+  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
@@ -5797,9 +5797,8 @@ Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No co
         return jsonify(insight=format_insight_html(insight))
     except Exception as e:
         import traceback; traceback.print_exc()
-        err = str(e)[:120]
-        print(f"[MktInsight] ERROR: {err}")
-        return jsonify(insight=f"Marketing brief unavailable. Error: {err}")
+        print(f"[MktInsight] ERROR: {str(e)}")
+        return jsonify(insight=f"Marketing brief unavailable — check back shortly.")
 
 @app.route("/api/labor-insight")
 @login_required
