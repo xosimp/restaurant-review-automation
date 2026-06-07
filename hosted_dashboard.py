@@ -54,6 +54,15 @@ def format_intel_filter(text):
     if not text:
         return '<p style="color:var(--ink3);font-size:13px">Analysis unavailable.</p>'
 
+    # Normalize: strip markdown, em-dashes to hyphens, headers onto own lines, split inline bullets/numbers
+    text = re.sub(r'\*+', '', text)
+    text = re.sub(r'[–—]', '-', text)
+    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING WELL):?', '\nWHAT COMPETITORS ARE DOING WELL:\n', text)
+    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING POORLY):?', '\nWHAT COMPETITORS ARE DOING POORLY:\n', text)
+    text = re.sub(r'(?i)Recommendations?:?', '\nRecommendations:\n', text)
+    text = re.sub(r'(?<=[.!?])\s+-\s+', '\n- ', text)
+    text = re.sub(r'(?<=\S)\s+(\d+[.)]\s)', r'\n\1', text)
+
     html_parts = []
     lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
 
@@ -149,6 +158,13 @@ def extract_recs_filter(text):
     import re
     if not text:
         return []
+    text = re.sub(r'\*+', '', text)
+    text = re.sub(r'[–—]', '-', text)
+    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING WELL):?', '\nWHAT COMPETITORS ARE DOING WELL:\n', text)
+    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING POORLY):?', '\nWHAT COMPETITORS ARE DOING POORLY:\n', text)
+    text = re.sub(r'(?i)Recommendations?:?', '\nRecommendations:\n', text)
+    text = re.sub(r'(?<=[.!?])\s+-\s+', '\n- ', text)
+    text = re.sub(r'(?<=\S)\s+(\d+[.)]\s)', r'\n\1', text)
     recs = []
     in_recs = False
     for line in text.strip().split("\n"):
@@ -175,6 +191,13 @@ def format_intel_body_filter(text):
     from markupsafe import Markup, escape as _esc
     if not text:
         return Markup('')
+    text = re.sub(r'\*+', '', text)
+    text = re.sub(r'[–—]', '-', text)
+    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING WELL):?', '\nWHAT COMPETITORS ARE DOING WELL:\n', text)
+    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING POORLY):?', '\nWHAT COMPETITORS ARE DOING POORLY:\n', text)
+    text = re.sub(r'(?i)Recommendations?:?', '\nRecommendations:\n', text)
+    text = re.sub(r'(?<=[.!?])\s+-\s+', '\n- ', text)
+    text = re.sub(r'(?<=\S)\s+(\d+[.)]\s)', r'\n\1', text)
     html_parts = []
     lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
     intro_lines = []
