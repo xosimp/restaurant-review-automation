@@ -54,14 +54,12 @@ def format_intel_filter(text):
     if not text:
         return '<p style="color:var(--ink3);font-size:13px">Analysis unavailable.</p>'
 
-    # Normalize: strip markdown, em-dashes to hyphens, headers onto own lines, split inline bullets/numbers
+    # Normalize: strip markdown, em-dashes to hyphens, ensure section headers on own lines
     text = re.sub(r'\*+', '', text)
     text = re.sub(r'[–—]', '-', text)
-    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING WELL):?', '\nWHAT COMPETITORS ARE DOING WELL:\n', text)
-    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING POORLY):?', '\nWHAT COMPETITORS ARE DOING POORLY:\n', text)
-    text = re.sub(r'(?i)Recommendations?:?', '\nRecommendations:\n', text)
-    text = re.sub(r'(?<=[.!?])\s+-\s+', '\n- ', text)
-    text = re.sub(r'(?<=\S)\s+(\d+[.)]\s)', r'\n\1', text)
+    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING WELL):', '\nWHAT COMPETITORS ARE DOING WELL:\n', text)
+    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING POORLY):', '\nWHAT COMPETITORS ARE DOING POORLY:\n', text)
+    text = re.sub(r'(?i)Recommendations?:', '\nRecommendations:\n', text)
 
     html_parts = []
     lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
@@ -160,28 +158,29 @@ def extract_recs_filter(text):
         return []
     text = re.sub(r'\*+', '', text)
     text = re.sub(r'[–—]', '-', text)
-    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING WELL):?', '\nWHAT COMPETITORS ARE DOING WELL:\n', text)
-    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING POORLY):?', '\nWHAT COMPETITORS ARE DOING POORLY:\n', text)
-    text = re.sub(r'(?i)Recommendations?:?', '\nRecommendations:\n', text)
-    text = re.sub(r'(?<=[.!?])\s+-\s+', '\n- ', text)
-    text = re.sub(r'(?<=\S)\s+(\d+[.)]\s)', r'\n\1', text)
+    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING WELL):', '\nWHAT COMPETITORS ARE DOING WELL:\n', text)
+    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING POORLY):', '\nWHAT COMPETITORS ARE DOING POORLY:\n', text)
+    text = re.sub(r'(?i)Recommendations?:', '\nRecommendations:\n', text)
     recs = []
     in_recs = False
     for line in text.strip().split("\n"):
         line = line.strip()
         if not line:
             continue
-        if re.search(r"Recommendations?", line, re.I) and not line.startswith("-") and not re.match(r"^[0-9]", line):
+        if re.match(r"^Recommendations?:\s*$", line, re.I):
             in_recs = True
             continue
         if in_recs:
-            if re.match(r"^[0-9]+[.)]\s+", line):
-                recs.append(re.sub(r'\*+', '', re.sub(r"^[0-9]+[.)]\s+", "", line)).strip())
-            elif not re.match(r"^(WHAT COMPETITORS)", line, re.I):
-                cleaned = re.sub(r'\*+', '', line).strip()
-                if cleaned:
-                    recs.append(cleaned)
-    return [r for r in recs if r]
+            # Split any inline numbered items on this line before processing
+            parts = re.split(r'(?<=\S)\s+(?=\d+[.)]\s)', line)
+            for part in parts:
+                part = part.strip()
+                if not part:
+                    continue
+                part = re.sub(r'^[0-9]+[.)]\s+', '', part).strip()
+                if part and not re.match(r'^(WHAT COMPETITORS|Recommendations?)', part, re.I):
+                    recs.append(part)
+    return recs[:3]
 
 
 @app.template_filter("format_intel_body")
@@ -193,11 +192,9 @@ def format_intel_body_filter(text):
         return Markup('')
     text = re.sub(r'\*+', '', text)
     text = re.sub(r'[–—]', '-', text)
-    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING WELL):?', '\nWHAT COMPETITORS ARE DOING WELL:\n', text)
-    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING POORLY):?', '\nWHAT COMPETITORS ARE DOING POORLY:\n', text)
-    text = re.sub(r'(?i)Recommendations?:?', '\nRecommendations:\n', text)
-    text = re.sub(r'(?<=[.!?])\s+-\s+', '\n- ', text)
-    text = re.sub(r'(?<=\S)\s+(\d+[.)]\s)', r'\n\1', text)
+    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING WELL):', '\nWHAT COMPETITORS ARE DOING WELL:\n', text)
+    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING POORLY):', '\nWHAT COMPETITORS ARE DOING POORLY:\n', text)
+    text = re.sub(r'(?i)Recommendations?:', '\nRecommendations:\n', text)
     html_parts = []
     lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
     intro_lines = []
