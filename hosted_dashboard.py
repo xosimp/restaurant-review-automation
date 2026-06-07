@@ -85,10 +85,10 @@ def format_intel_filter(text):
         is_good = "WELL" in section_name.upper()
         color = "#16a34a" if is_good else "#dc2626"
         icon = "✓" if is_good else "✗"
+        from markupsafe import escape as _esc
         out = '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:' + color + ';margin:14px 0 8px">' + section_name + "</div>"
         for b in b_list:
-            from markupsafe import escape as _esc
-        out += (
+            out += (
                 '<div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start">'
                 + '<span style="flex-shrink:0;color:' + color + ';font-weight:700;font-size:13px">' + icon + "</span>"
                 + '<span style="font-size:13px;color:#374151;line-height:1.6">' + str(_esc(b)) + "</span></div>"
@@ -136,6 +136,92 @@ def format_intel_filter(text):
     from markupsafe import Markup, escape as _esc
     # Sanitize: escape any HTML that came through from AI output in text nodes
     # html_parts contains our own safe HTML structure — only the text content needs escaping
+    return Markup("".join(html_parts))
+
+
+@app.template_filter("extract_recs")
+def extract_recs_filter(text):
+    """Parse recommendation lines from competitor insight. Returns list of strings."""
+    import re
+    if not text:
+        return []
+    recs = []
+    in_recs = False
+    for line in text.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if re.match(r"Recommendations?:?\s*$", line, re.I):
+            in_recs = True
+            continue
+        if in_recs:
+            if re.match(r"^[0-9]+[.)]\s+", line):
+                recs.append(re.sub(r'\*+', '', re.sub(r"^[0-9]+[.)]\s+", "", line)).strip())
+            elif not re.match(r"^(WHAT COMPETITORS)", line, re.I):
+                recs.append(re.sub(r'\*+', '', line).strip())
+    return [r for r in recs if r]
+
+
+@app.template_filter("format_intel_body")
+def format_intel_body_filter(text):
+    """Same as format_intel but omits recommendations — only intro + well/poorly."""
+    import re
+    from markupsafe import Markup, escape as _esc
+    if not text:
+        return Markup('')
+    html_parts = []
+    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+    intro_lines = []
+    section_lines = []
+    in_section = False
+    for line in lines:
+        if re.match(r"^(WHAT COMPETITORS|Recommendations?:?)", line, re.I):
+            in_section = True
+        if in_section:
+            section_lines.append(line)
+        else:
+            intro_lines.append(line)
+    if intro_lines:
+        html_parts.append('<p style="font-size:13px;color:#374151;line-height:1.7;margin-bottom:14px">' + str(_esc(" ".join(intro_lines))) + "</p>")
+    current_section = None
+    bullets = []
+
+    def _flush(section_name, b_list):
+        if not b_list:
+            return ""
+        is_good = "WELL" in section_name.upper()
+        color = "#16a34a" if is_good else "#dc2626"
+        icon = "✓" if is_good else "✗"
+        out = '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:' + color + ';margin:14px 0 8px">' + section_name + "</div>"
+        for b in b_list:
+            out += (
+                '<div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start">'
+                + '<span style="flex-shrink:0;color:' + color + ';font-weight:700;font-size:13px">' + icon + "</span>"
+                + '<span style="font-size:13px;color:#374151;line-height:1.6">' + str(_esc(b)) + "</span></div>"
+            )
+        return out
+
+    for line in section_lines:
+        if re.match(r"WHAT COMPETITORS ARE DOING WELL", line, re.I):
+            if current_section and bullets:
+                html_parts.append(_flush(current_section, bullets))
+            current_section = "What competitors are doing well"
+            bullets = []
+        elif re.match(r"WHAT COMPETITORS ARE DOING POORLY", line, re.I):
+            if current_section and bullets:
+                html_parts.append(_flush(current_section, bullets))
+            current_section = "What competitors are doing poorly"
+            bullets = []
+        elif re.match(r"Recommendations?:?\s*$", line, re.I):
+            if current_section and bullets:
+                html_parts.append(_flush(current_section, bullets))
+            break
+        elif line.startswith("-"):
+            bullets.append(re.sub(r'\*+', '', line.lstrip("- ")).strip())
+    if current_section and bullets:
+        html_parts.append(_flush(current_section, bullets))
+    if not html_parts:
+        return Markup('<p style="font-size:13px;color:#374151;line-height:1.7">' + str(_esc(text)) + "</p>")
     return Markup("".join(html_parts))
 
 
@@ -1537,23 +1623,83 @@ function clientUpload(dataType, input) {
   </div>
 
   {% if competitor_data %}
-    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:16px" id="intel-insight-card">
-      {{ competitor_data.insight | format_intel }}
+    {% set recs = competitor_data.insight | extract_recs %}
+    {% set comp_count = competitor_data.competitors | length %}
+    {% set ns = namespace(rating_sum=0) %}
+    {% for c in competitor_data.competitors %}{% set ns.rating_sum = ns.rating_sum + c.rating %}{% endfor %}
+    {% set avg_comp_rating = (ns.rating_sum / comp_count) | round(1) if comp_count > 0 else 0 %}
+
+    <!-- Summary stat row -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
+        <div style="font-size:24px;font-weight:800;color:#0d1b2a;letter-spacing:-1px;line-height:1">{{comp_count}}</div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Competitors tracked</div>
+      </div>
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
+        <div style="font-size:24px;font-weight:800;color:#f59e0b;letter-spacing:-1px;line-height:1">{{avg_comp_rating}}★</div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Avg competitor rating</div>
+      </div>
+      {% if mod_reviews and rstats.avg_rating %}
+      {% set own_vs_avg = (rstats.avg_rating - avg_comp_rating) | round(1) %}
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
+        <div style="font-size:24px;font-weight:800;letter-spacing:-1px;line-height:1;color:{{'#16a34a' if own_vs_avg >= 0 else '#dc2626'}}">{{rstats.avg_rating}}★</div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Your rating <span style="color:{{'#16a34a' if own_vs_avg >= 0 else '#dc2626'}}">{{'▲' if own_vs_avg > 0 else ('▼' if own_vs_avg < 0 else '—')}}{{own_vs_avg|abs if own_vs_avg != 0 else ''}}</span></div>
+      </div>
+      {% else %}
+      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
+        <div style="font-size:24px;font-weight:800;color:#0d1b2a;letter-spacing:-1px;line-height:1">{{recs | length}}</div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Action items</div>
+      </div>
+      {% endif %}
     </div>
 
-    {% if mod_reviews and rstats.avg_rating %}
-    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Your rating vs. competitors</div>
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span style="font-size:13px;font-weight:700;color:#0d1b2a">{{restaurant.name}}: <span style="color:#f59e0b">{{rstats.avg_rating}}★</span></span>
-        {% for c in competitor_data.competitors %}
-        {% set diff = rstats.avg_rating - c.rating %}
-        <span style="font-size:12px;color:var(--ink3)">· {{c.name}}: <span style="color:{{'#16a34a' if diff > 0 else ('#dc2626' if diff < 0 else '#6b7280')}}">{{c.rating}}★</span></span>
+    <!-- Recommendations — most prominent, first -->
+    {% if recs %}
+    <div style="margin-bottom:16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c84b2f;margin-bottom:10px">Action items for this week</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        {% for rec in recs %}
+        <div style="background:white;border:1px solid var(--paper3);border-left:3px solid #c84b2f;border-radius:var(--r);padding:12px 16px;display:flex;gap:12px;align-items:flex-start">
+          <span style="flex-shrink:0;width:22px;height:22px;border-radius:50%;background:#c84b2f;color:white;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px">{{loop.index}}</span>
+          <span style="font-size:13px;color:#374151;line-height:1.6;font-weight:500">{{rec}}</span>
+        </div>
         {% endfor %}
       </div>
     </div>
     {% endif %}
 
+    <!-- Rating bar chart -->
+    {% if mod_reviews and rstats.avg_rating %}
+    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;margin-bottom:16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Rating comparison</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:130px;font-size:12px;font-weight:700;color:#0d1b2a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">{{restaurant.name}}</div>
+          <div style="flex:1;background:#f3f4f6;border-radius:3px;height:10px;overflow:hidden">
+            <div style="height:100%;width:{{((rstats.avg_rating / 5) * 100)|int}}%;background:#4a9eca;border-radius:3px"></div>
+          </div>
+          <div style="width:36px;font-size:12px;font-weight:700;color:#4a9eca;text-align:right;flex-shrink:0">{{rstats.avg_rating}}</div>
+        </div>
+        {% for c in competitor_data.competitors %}
+        {% set diff = rstats.avg_rating - c.rating %}
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:130px;font-size:12px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">{{c.name}}</div>
+          <div style="flex:1;background:#f3f4f6;border-radius:3px;height:10px;overflow:hidden">
+            <div style="height:100%;width:{{((c.rating / 5) * 100)|int}}%;background:{{'#16a34a' if diff > 0 else ('#dc2626' if diff < 0 else '#9ca3af')}};border-radius:3px;opacity:0.7"></div>
+          </div>
+          <div style="width:36px;font-size:12px;color:var(--ink3);text-align:right;flex-shrink:0">{{c.rating}}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Intel body: intro + well/poorly only -->
+    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:16px" id="intel-insight-card">
+      {{ competitor_data.insight | format_intel_body }}
+    </div>
+
+    <!-- Competitor cards -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Nearby competitors</div>
       <button onclick="refreshCompetitorIntel(this)" style="background:transparent;border:1px solid var(--paper3);color:var(--ink3);padding:5px 12px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer">Refresh</button>
@@ -1563,7 +1709,15 @@ function clientUpload(dataType, input) {
       <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
           <div style="font-weight:600;font-size:13px">{{c.name}}</div>
-          <div style="font-size:12px;color:#f59e0b">{{c.rating}}★ <span style="color:var(--ink3)">{{c.review_count}} reviews</span></div>
+          <div style="display:flex;align-items:center;gap:8px">
+            {% if mod_reviews and rstats.avg_rating %}
+            {% set diff = (rstats.avg_rating - c.rating) | round(1) %}
+            <span style="font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;background:{{'#dcfce7' if diff > 0 else ('#fee2e2' if diff < 0 else '#f3f4f6')}};color:{{'#16a34a' if diff > 0 else ('#dc2626' if diff < 0 else '#6b7280')}}">
+              {{'▲' if diff > 0 else ('▼' if diff < 0 else '—')}}{{diff|abs if diff != 0 else ''}} you
+            </span>
+            {% endif %}
+            <div style="font-size:12px;color:#f59e0b">{{c.rating}}★ <span style="color:var(--ink3)">{{c.review_count}} reviews</span></div>
+          </div>
         </div>
         <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">{{c.vicinity}}</div>
         {% for r in c.reviews[:2] %}
@@ -1586,9 +1740,10 @@ function clientUpload(dataType, input) {
       </div>
       {% endfor %}
     </div>
+
+    <!-- Last updated + stale badge -->
     {% if competitor_updated_at %}
     {% set d = competitor_updated_at[:10].split('-') %}
-    {% set days_old = ((now_ct - competitor_updated_at[:10])|int) if false else 0 %}
     <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
       <div style="font-size:11px;color:var(--ink3)" id="intel-updated-label">Last updated: {{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}</div>
       <div id="intel-stale-badge" style="display:none;font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;padding:2px 7px;border-radius:10px">Consider refreshing</div>
@@ -1608,6 +1763,7 @@ function clientUpload(dataType, input) {
     })();
     </script>
     {% endif %}
+
   {% else %}
   <div style="background:var(--paper2);border-radius:var(--r);padding:24px;text-align:center">
     <div style="font-size:13px;color:var(--ink3);margin-bottom:12px">No competitor data yet. Click Refresh to analyze your neighborhood.</div>
