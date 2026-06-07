@@ -1800,231 +1800,24 @@ function clientUpload(dataType, input) {
 <!-- ACCOUNT -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account">
 
-  <!-- Hero consultant banner -->
-  <div style="background:var(--ink);border-radius:var(--r);padding:20px 24px;margin-bottom:24px;display:flex;align-items:center;gap:20px" class="acct-hero">
-    <div style="width:60px;height:60px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 3px #c84b2f55,0 0 20px 6px #c84b2f22;overflow:hidden;background:#1a1410">
-      <img src="/static/will.png" style="width:100%;height:110%;object-fit:cover;object-position:center 20%">
-    </div>
-    <div style="flex:1">
-      <div style="font-family:'DM Serif Display',serif;font-size:18px;color:var(--paper);margin-bottom:2px">Will Cavnar</div>
-      <div style="font-size:12px;color:#7a736a;margin-bottom:10px">Founder, Cavnar AI · Your dedicated restaurant intelligence consultant</div>
-      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-        <a href="mailto:will@cavnar.ai" style="font-size:12px;color:var(--ember);text-decoration:none;font-weight:600">will@cavnar.ai</a>
-        <span style="color:#2a2520">·</span>
-        <span style="font-size:12px;color:#5a5450">Same-day response</span>
-        <span style="color:#2a2520">·</span>
-        <a href="https://calendly.com/will-cavnar/30min" target="_blank" style="font-size:12px;color:#7a736a;text-decoration:none">Book a call</a>
-      </div>
-    </div>
-    <div style="text-align:right;flex-shrink:0" class="acct-hero-right">
-      <div style="font-size:10px;color:#4a4540;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Restaurant</div>
-      <div style="font-size:14px;font-weight:600;color:var(--paper)">{{restaurant.name}}</div>
-    </div>
-  </div>
-
-  <!-- Three column top row -->
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px" class="account-top-row">
-
-    <!-- Account info -->
-    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Account</div>
-      <table style="font-size:13px;width:100%">
-        <tr><td style="color:var(--ink3);padding:4px 0;width:80px">Email</td><td style="font-weight:500;font-size:12px">{{restaurant.owner_email}}</td></tr>
-        <tr><td style="color:var(--ink3);padding:4px 0">Username</td><td style="font-weight:500">{{current_user.username}}</td></tr>
-      </table>
-    </div>
-
-    <!-- Billing -->
-    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px" id="billing-card">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Billing</div>
-      <div id="billing-loading" style="font-size:13px;color:var(--ink3)">Loading…</div>
-      <div id="billing-content" style="display:none">
-        <div style="margin-bottom:8px">
-          <div style="font-size:10px;color:var(--ink3);margin-bottom:2px">Next charge</div>
-          <div style="font-size:15px;font-weight:600;color:var(--ink)" id="billing-next-prominent">—</div>
-        </div>
-        <div style="font-size:10px;color:var(--ink3);margin-bottom:2px">Amount</div>
-        <div style="font-size:15px;font-weight:600;color:var(--ink);margin-bottom:8px" id="billing-amount-prominent">—</div>
-        <div style="font-size:12px;color:var(--ink3);margin-bottom:4px" id="billing-status"></div>
-        <div style="font-size:12px;color:var(--ink3);margin-bottom:10px" id="billing-pm"></div>
-        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
-          <a id="billing-portal-link" href="#" target="_blank" style="font-size:12px;color:var(--ember);text-decoration:none;font-weight:600">Manage payment →</a>
-          <a id="billing-invoice-link" href="#" target="_blank" style="font-size:12px;color:var(--ink3);text-decoration:none;font-weight:500">View invoice history →</a>
-        </div>
-      </div>
-      <div id="billing-no-sub" style="display:none;font-size:12px;color:var(--ink3)">
-        No active subscription. <a href="mailto:will@cavnar.ai" style="color:var(--ember)">Contact Will</a>
-      </div>
-    </div>
-
-    <!-- Setup status -->
-    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Setup status</div>
-      {% if mod_reviews %}
-      <div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px">
-        {% if restaurant.reviews_live %}<span style="color:var(--green)">✓</span><span>Reviews live</span>
-        {% else %}<span style="color:#ef9f27">○</span><span style="color:var(--ink3)">Reviews pending</span>{% endif %}
-      </div>
-      {% endif %}
-      {% if mod_labor %}
-      <div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px">
-        {% if labor.is_live %}<span style="color:var(--green)">✓</span><span>Labor live</span>
-        {% else %}<span style="color:#ef9f27">○</span><span style="color:var(--ink3)">Labor pending</span>{% endif %}
-      </div>
-      {% endif %}
-      {% if mod_inventory %}
-      <div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px">
-        {% if inv.is_live %}<span style="color:var(--green)">✓</span><span>Inventory live</span>
-        {% else %}<span style="color:#ef9f27">○</span><span style="color:var(--ink3)">Inventory pending</span>{% endif %}
-      </div>
-      {% endif %}
-      {% if mod_marketing %}
-      <div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12px">
-        <span style="color:var(--green)">✓</span><span>Marketing ready</span>
-      </div>
-      {% endif %}
-    </div>
-  </div>
-
-  <!-- Google Business Connect -->
-  {% if mod_reviews %}
-  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:14px">
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Google Business — Auto-post replies</div>
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-      <div>
-        {% if restaurant.gmb_refresh_token %}
-        <div style="display:flex;align-items:center;gap:8px;font-size:13px">
-          <span style="color:var(--green);font-size:16px">✓</span>
-          <div>
-            <div style="font-weight:600;color:var(--ink)">Google Business connected</div>
-            <div style="font-size:11px;color:var(--ink3)">Approved responses post automatically to Google</div>
-          </div>
-        </div>
-        {% else %}
-        <div>
-          <div style="font-size:13px;font-weight:500;color:var(--ink);margin-bottom:2px">Connect Google Business</div>
-          <div style="font-size:11px;color:var(--ink3)">Approved responses will auto-post — no more copy/paste</div>
-        </div>
-        {% endif %}
-      </div>
-      <div style="display:flex;gap:8px">
-        {% if restaurant.gmb_refresh_token %}
-        <button onclick="gmbDisconnect()" class="btn btn-skip" style="font-size:11px">Disconnect</button>
-        {% else %}
-        <button onclick="gmbConnect()" class="btn btn-approve" style="font-size:12px;padding:7px 16px">
-          Connect Google Business →
-        </button>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- Two column second row -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px" class="account-two-col">
-
-    <!-- What's included -->
-    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">What's included</div>
-      {% if mod_reviews %}
-      <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--paper3)">
-        <span style="font-size:14px">⭐</span>
-        <div style="flex:1">
-          <div style="font-size:12px;font-weight:600">Review Intelligence</div>
-          <div style="font-size:11px;color:var(--ink3)">AI drafts responses — you approve</div>
-        </div>
-        <span style="font-size:10px;font-weight:600;color:var(--green);background:var(--green-bg);padding:2px 7px;border-radius:20px">Active</span>
-      </div>
-      {% endif %}
-      {% if mod_labor %}
-      <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--paper3)">
-        <span style="font-size:14px">📊</span>
-        <div style="flex:1">
-          <div style="font-size:12px;font-weight:600">Labor Optimizer</div>
-          <div style="font-size:11px;color:var(--ink3)">Weekly labor cost analysis</div>
-        </div>
-        <span style="font-size:10px;font-weight:600;color:var(--green);background:var(--green-bg);padding:2px 7px;border-radius:20px">Active</span>
-      </div>
-      {% endif %}
-      {% if mod_inventory %}
-      <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--paper3)">
-        <span style="font-size:14px">📦</span>
-        <div style="flex:1">
-          <div style="font-size:12px;font-weight:600">Inventory Control</div>
-          <div style="font-size:11px;color:var(--ink3)">Food cost & waste analysis</div>
-        </div>
-        <span style="font-size:10px;font-weight:600;color:var(--green);background:var(--green-bg);padding:2px 7px;border-radius:20px">Active</span>
-      </div>
-      {% endif %}
-      {% if mod_marketing %}
-      <div style="display:flex;align-items:center;gap:10px;padding:6px 0">
-        <span style="font-size:14px">📣</span>
-        <div style="flex:1">
-          <div style="font-size:12px;font-weight:600">Marketing Autopilot</div>
-          <div style="font-size:11px;color:var(--ink3)">AI content in your voice</div>
-        </div>
-        <span style="font-size:10px;font-weight:600;color:var(--green);background:var(--green-bg);padding:2px 7px;border-radius:20px">Active</span>
-      </div>
-      {% endif %}
-      {% if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing %}
-      <div style="font-size:12px;color:var(--ink3)">No modules active. Contact Will.</div>
-      {% endif %}
-    </div>
-
-    <!-- Change password + digest -->
-    <div style="display:flex;flex-direction:column;gap:14px">
-      {% if mod_reviews %}
-      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Weekly digest email</div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <select id="digest-day-select" style="padding:6px 8px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px">
-            {% for d in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
-            <option value="{{d}}" {{"selected" if restaurant.digest_day==d}}>{{d|title}}</option>
-            {% endfor %}
-          </select>
-          <select id="digest-enabled-select" style="padding:6px 8px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px">
-            <option value="1" {{"selected" if restaurant.digest_enabled}}>Enabled</option>
-            <option value="0" {{"selected" if not restaurant.digest_enabled}}>Disabled</option>
-          </select>
-          <button onclick="saveDigestDay()" style="padding:6px 14px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer">Save</button>
-          <span id="digest-save-status" style="font-size:11px;display:none"></span>
-        </div>
-      </div>
-      {% endif %}
-      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Change password</div>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <input class="form-input" type="password" id="pw-current" placeholder="Current password" style="font-size:12px">
-          <input class="form-input" type="password" id="pw-new" placeholder="New password (min 8 chars)" style="font-size:12px">
-          <input class="form-input" type="password" id="pw-confirm" placeholder="Confirm new password" style="font-size:12px">
-          <button class="btn-primary" onclick="changePassword()" style="font-size:12px;padding:8px 16px;width:fit-content">Update password</button>
-          <div id="pw-status" style="font-size:11px;margin-top:2px;display:none"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Two-factor authentication -->
-  <!-- 2FA setup modal -->
+  <!-- 2FA modal (moved to top so it's always in DOM) -->
   <div id="twofa-modal" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center">
     <div style="background:white;border-radius:14px;padding:32px;max-width:420px;width:90%;position:relative">
       <button onclick="document.getElementById('twofa-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
-
       <!-- Step 1: Intro -->
       <div id="twofa-step1">
         <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">Enable two-factor authentication</div>
         <p style="font-size:13px;color:var(--ink3);margin-bottom:20px;line-height:1.6">Each time you sign in from a new device, we&rsquo;ll send a 6-digit code to <strong>{{restaurant.owner_email or "your email"}}</strong>. You&rsquo;ll need to enter it to access your dashboard.</p>
         <div style="background:#f7f4ef;border-radius:8px;padding:14px;margin-bottom:20px;font-size:12px;color:var(--ink2);line-height:1.6">
           <strong>What to expect:</strong><br>
-          • Sign in normally with username + password<br>
-          • A code arrives in your email within seconds<br>
-          • Enter the code to complete sign in<br>
-          • Check "Remember device" to skip for 30 days
+          &bull; Sign in normally with username + password<br>
+          &bull; A code arrives in your email within seconds<br>
+          &bull; Enter the code to complete sign in<br>
+          &bull; Check &ldquo;Remember device&rdquo; to skip for 30 days
         </div>
         <button onclick="twoFAStep2(this)" id="twofa-send-btn" class="btn-primary" style="width:100%;padding:11px;transition:opacity .15s">Send me a test code &rarr;</button>
       </div>
-
-      <!-- Step 2: Verify test code -->
+      <!-- Step 2: Verify -->
       <div id="twofa-step2" style="display:none">
         <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">Check your email</div>
         <p style="font-size:13px;color:var(--ink3);margin-bottom:20px;line-height:1.6">We sent a test code to <strong id="twofa-masked-email"></strong>. Enter it below to confirm 2FA is working.</p>
@@ -2040,10 +1833,9 @@ function clientUpload(dataType, input) {
         <button onclick="twoFAVerify()" class="btn-primary" style="width:100%;padding:11px;margin-bottom:10px">Verify &amp; enable 2FA</button>
         <button onclick="twoFAStep2()" class="btn-secondary" style="width:100%;padding:9px;font-size:12px">Resend code</button>
       </div>
-
       <!-- Step 3: Success -->
       <div id="twofa-step3" style="display:none;text-align:center">
-        <div style="font-size:40px;margin-bottom:16px">✅</div>
+        <div style="font-size:40px;margin-bottom:16px">&#x2705;</div>
         <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">2FA is now active</div>
         <p style="font-size:13px;color:var(--ink3);margin-bottom:24px;line-height:1.6">Your account is protected. You&rsquo;ll receive a verification code by email each time you sign in from a new device.</p>
         <button onclick="document.getElementById('twofa-modal').style.display='none';location.reload();" class="btn-primary" style="padding:10px 28px">Done</button>
@@ -2051,60 +1843,180 @@ function clientUpload(dataType, input) {
     </div>
   </div>
 
-  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:14px">
-    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
-      <div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:6px">Two-factor authentication</div>
-        {% if restaurant.two_fa_enabled %}
-        <div style="font-size:13px;color:var(--ink2);line-height:1.5">✓ Your account is protected with email verification on new device sign-ins.</div>
-        {% else %}
-        <div style="font-size:13px;color:var(--ink2);line-height:1.5">Add an extra layer of security. A code is sent to your email on each new sign-in.</div>
-        {% endif %}
+  <!-- SECTION 1: Consultant hero card -->
+  <div style="background:var(--ink);border-radius:var(--r);padding:24px 28px;margin-bottom:16px">
+    <div style="display:flex;align-items:flex-start;gap:20px" class="acct-hero">
+      <div style="width:72px;height:72px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 3px #c84b2f55,0 0 20px 6px #c84b2f22;overflow:hidden;background:#1a1410">
+        <img src="/static/will.png" style="width:100%;height:110%;object-fit:cover;object-position:center 20%">
       </div>
-      <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
-        {% if restaurant.two_fa_enabled %}
-        <span style="font-size:11px;font-weight:700;color:#2d6a4f;background:#eaf4ee;padding:3px 10px;border-radius:10px">✓ Enabled</span>
-        <button onclick="toggle2FA(false)" class="btn-secondary" style="font-size:11px;padding:6px 12px">Disable</button>
-        {% else %}
-        <button onclick="document.getElementById('twofa-modal').style.display='flex'" class="btn-primary" style="font-size:11px;padding:7px 14px">Enable 2FA &rarr;</button>
-        {% endif %}
+      <div style="flex:1">
+        <div style="font-family:'DM Serif Display',serif;font-size:20px;color:var(--paper);margin-bottom:3px">Will Cavnar</div>
+        <div style="font-size:12px;color:#7a736a;margin-bottom:14px">Founder, Cavnar AI &middot; Your dedicated restaurant intelligence consultant</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <a href="mailto:will@cavnar.ai" style="display:inline-flex;align-items:center;gap:6px;background:var(--ember);color:white;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600">&#9993; Email Will</a>
+          <a href="https://calendly.com/will-cavnar/30min" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:#1e3a52;color:#a8cfe0;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600">&#128197; Book a call</a>
+          <span style="font-size:12px;color:#4a4540;display:inline-flex;align-items:center;padding:8px 0">Same-day response</span>
+        </div>
+      </div>
+      <div style="text-align:right;flex-shrink:0" class="acct-hero-right">
+        <div style="font-size:10px;color:#4a4540;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Restaurant</div>
+        <div style="font-size:15px;font-weight:700;color:var(--paper);margin-bottom:12px">{{restaurant.name}}</div>
+        <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
+          {% if mod_reviews %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px">&#10003; Reviews</span>{% endif %}
+          {% if mod_labor %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px">&#10003; Labor</span>{% endif %}
+          {% if mod_inventory %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px">&#10003; Inventory</span>{% endif %}
+          {% if mod_marketing %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px">&#10003; Marketing</span>{% endif %}
+          {% if restaurant.google_place_id %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px">&#10003; Intel</span>{% endif %}
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- Full width bottom row -->
+  <!-- SECTION 2: Account settings + Billing -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px" class="account-two-col">
 
-    <!-- Support -->
-    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Support</div>
-      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">Questions, data requests, or anything not working — reach out directly.</p>
-      <a href="mailto:will@cavnar.ai" style="display:inline-block;background:var(--ember);color:white;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600">Email Will →</a>
+    <!-- Left: all settings in one card -->
+    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px">
+
+      <!-- Identity -->
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Account</div>
+      <table style="font-size:13px;width:100%;margin-bottom:14px">
+        <tr><td style="color:var(--ink3);padding:4px 0;width:80px;font-size:12px">Email</td><td style="font-weight:500;font-size:12px">{{restaurant.owner_email}}</td></tr>
+        <tr><td style="color:var(--ink3);padding:4px 0;font-size:12px">Username</td><td style="font-weight:500;font-size:12px">{{current_user.username}}</td></tr>
+      </table>
+
+      <!-- Security -->
+      <div style="border-top:1px solid var(--paper3);padding-top:12px;margin-bottom:12px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Security</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Two-factor authentication</div>
+            <div style="font-size:11px;color:var(--ink3)">{% if restaurant.two_fa_enabled %}Email code on new device sign-ins{% else %}Adds email code on new sign-ins{% endif %}</div>
+          </div>
+          {% if restaurant.two_fa_enabled %}
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:10px;font-weight:700;color:#2d6a4f;background:#eaf4ee;padding:2px 8px;border-radius:10px">&#10003; On</span>
+            <button onclick="toggle2FA(false)" class="btn-secondary" style="font-size:11px;padding:4px 10px">Disable</button>
+          </div>
+          {% else %}
+          <button onclick="document.getElementById('twofa-modal').style.display='flex'" class="btn-primary" style="font-size:11px;padding:5px 12px">Enable &rarr;</button>
+          {% endif %}
+        </div>
+        {% if mod_reviews %}
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Weekly digest</div>
+            <div style="font-size:11px;color:var(--ink3)">Review summary email</div>
+          </div>
+          <div style="display:flex;gap:5px;align-items:center">
+            <select id="digest-enabled-select" style="padding:4px 6px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px">
+              <option value="1" {{"selected" if restaurant.digest_enabled}}>On</option>
+              <option value="0" {{"selected" if not restaurant.digest_enabled}}>Off</option>
+            </select>
+            <select id="digest-day-select" style="padding:4px 6px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px">
+              {% for d in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
+              <option value="{{d}}" {{"selected" if restaurant.digest_day==d}}>{{d|title}}</option>
+              {% endfor %}
+            </select>
+            <button onclick="saveDigestDay()" style="padding:4px 10px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer">Save</button>
+            <span id="digest-save-status" style="font-size:11px;display:none"></span>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- Google Business -->
+      {% if mod_reviews %}
+      <div style="border-top:1px solid var(--paper3);padding-top:12px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Google Business</div>
+            <div style="font-size:11px;color:var(--ink3)">{% if restaurant.gmb_refresh_token %}Auto-posting replies to Google{% else %}Connect to auto-post replies{% endif %}</div>
+          </div>
+          {% if restaurant.gmb_refresh_token %}
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:10px;font-weight:700;color:#2d6a4f;background:#eaf4ee;padding:2px 8px;border-radius:10px">&#10003; Connected</span>
+            <button onclick="gmbDisconnect()" class="btn btn-skip" style="font-size:11px;padding:4px 10px">Disconnect</button>
+          </div>
+          {% else %}
+          <button onclick="gmbConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 12px">Connect &rarr;</button>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Change password -->
+      <div style="border-top:1px solid var(--paper3);padding-top:12px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px">Change password</div>
+        <div style="display:flex;flex-direction:column;gap:7px">
+          <input class="form-input" type="password" id="pw-current" placeholder="Current password" style="font-size:12px">
+          <input class="form-input" type="password" id="pw-new" placeholder="New password (min 8 chars)" style="font-size:12px">
+          <input class="form-input" type="password" id="pw-confirm" placeholder="Confirm new password" style="font-size:12px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <button class="btn-primary" onclick="changePassword()" style="font-size:12px;padding:7px 16px">Update password</button>
+            <div id="pw-status" style="font-size:11px;display:none"></div>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- Refer a restaurant -->
-    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Refer a restaurant</div>
-      <div style="font-size:12px;color:var(--ink2);line-height:1.6;margin-bottom:10px">Know another owner? Send an intro — get <strong>one free month ($300)</strong> if they sign up.</div>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
+    <!-- Right: Billing -->
+    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px" id="billing-card">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:14px">Billing</div>
+      <div id="billing-loading" style="font-size:13px;color:var(--ink3)">Loading&hellip;</div>
+      <div id="billing-content" style="display:none">
+        <div style="margin-bottom:16px">
+          <div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Next charge</div>
+          <div style="font-size:26px;font-weight:800;color:var(--ink);letter-spacing:-0.5px;line-height:1" id="billing-next-prominent">—</div>
+        </div>
+        <div style="margin-bottom:16px">
+          <div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Amount</div>
+          <div style="font-size:26px;font-weight:800;color:var(--ink);letter-spacing:-0.5px;line-height:1" id="billing-amount-prominent">—</div>
+        </div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:4px" id="billing-status"></div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:16px" id="billing-pm"></div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <a id="billing-portal-link" href="#" target="_blank" style="font-size:13px;color:var(--ember);text-decoration:none;font-weight:600">Manage payment method &rarr;</a>
+          <a id="billing-invoice-link" href="#" target="_blank" style="font-size:13px;color:var(--ink3);text-decoration:none;font-weight:500">View invoice history &rarr;</a>
+        </div>
+      </div>
+      <div id="billing-no-sub" style="display:none;font-size:12px;color:var(--ink3)">
+        No active subscription. <a href="mailto:will@cavnar.ai" style="color:var(--ember)">Contact Will</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION 3: Community strip -->
+  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:0" class="account-two-col">
+    <!-- Referral -->
+    <div style="padding-right:24px">
+      <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:3px">Know another restaurant owner?</div>
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:10px;line-height:1.5">Send them an intro &mdash; get <strong style="color:var(--ink)">one free month ($300)</strong> if they sign up.</div>
+      <div style="display:flex;flex-direction:column;gap:7px">
+        <div style="display:flex;gap:6px">
           <input type="text" id="referral-name" placeholder="Restaurant name" style="flex:1;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none">
           <input type="email" id="referral-email" placeholder="Owner email" style="flex:1;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none">
         </div>
-        <textarea id="referral-note" rows="2" placeholder="Optional personal note…" style="padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none;resize:vertical"></textarea>
+        <textarea id="referral-note" rows="2" placeholder="Optional personal note&hellip;" style="padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;outline:none;resize:vertical"></textarea>
         <div style="display:flex;align-items:center;gap:8px">
           <button onclick="sendReferral()" style="background:var(--ember);color:white;border:none;padding:7px 16px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer">Send referral</button>
           <span id="referral-status" style="font-size:11px;display:none"></span>
         </div>
       </div>
     </div>
+    <!-- Support -->
+    <div style="border-left:1px solid var(--paper3);padding-left:24px">
+      <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:3px">Need anything?</div>
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:16px;line-height:1.5">Questions, data requests, or something not working &mdash; reach out directly. Same-day response, always.</div>
+      <a href="mailto:will@cavnar.ai" style="display:inline-block;background:var(--ember);color:white;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Email Will &rarr;</a>
+    </div>
   </div>
 
-  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px;margin-bottom:14px">
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Cancel subscription</div>
-    <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">No cancellation fees. Cancel before your next billing date to avoid the next charge.</p>
-    <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%0A%0AI%20would%20like%20to%20cancel%20my%20Cavnar%20AI%20subscription%20for%20{{restaurant.name}}.%0A%0APer%20the%2030-day%20notice%20policy%2C%20I%20understand%20my%20account%20will%20remain%20active%20through%20the%20end%20of%20my%20current%20billing%20period%20and%20for%2030%20days%20after%20this%20notice." style="display:inline-block;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500;border:1px solid var(--paper3);color:var(--ink3)">Request cancellation</a>
-    <p style="font-size:11px;color:var(--ink3);margin-top:6px">Cancellations require 30 days written notice. Your account stays active through the end of your current billing period.</p>
+  <!-- Cancel — minimal text link -->
+  <div style="text-align:center;padding:4px 0 8px">
+    <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%0A%0AI%20would%20like%20to%20cancel%20my%20Cavnar%20AI%20subscription%20for%20{{restaurant.name}}.%0A%0APer%20the%2030-day%20notice%20policy%2C%20I%20understand%20my%20account%20will%20remain%20active%20through%20the%20end%20of%20my%20current%20billing%20period%20and%20for%2030%20days%20after%20this%20notice." style="font-size:11px;color:var(--ink3);text-decoration:none">Request cancellation</a>
+    <span style="font-size:11px;color:var(--paper3);margin:0 6px">&middot;</span>
+    <span style="font-size:11px;color:var(--ink3)">30 days written notice required</span>
   </div>
 
 </div>
