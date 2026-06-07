@@ -877,15 +877,31 @@ function clientUpload(dataType, input) {
     <span id="new-reviews-text"></span>
     <span style="font-size:11px;color:#c84b2f;font-weight:600">Click to refresh →</span>
   </div>
-  {% if not restaurant.reviews_live and not restaurant.gmb_refresh_token %}
-  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#8a6a00;display:flex;align-items:center;gap:8px">
-    <span>⚠</span><span><strong>Sample data</strong> — example reviews showing how the dashboard works. Your live Google and Yelp reviews will appear here automatically once connected.</span>
+  <!-- Google Business connect banner -->
+  <div style="background:white;border:1px solid var(--paper3);border-radius:8px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <div style="display:flex;align-items:center;gap:10px">
+      {% if restaurant.gmb_refresh_token %}
+      <span style="font-size:16px;color:var(--green)">&#10003;</span>
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--ink)">Google Business connected</div>
+        <div style="font-size:11px;color:var(--ink3)">Approved responses post automatically to Google &mdash; no more copy/paste</div>
+      </div>
+      {% else %}
+      <span style="font-size:16px;color:#ef9f27">&#9679;</span>
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--ink)">Connect Google Business</div>
+        <div style="font-size:11px;color:var(--ink3)">Auto-post approved responses directly to Google &mdash; no more copy/paste</div>
+      </div>
+      {% endif %}
+    </div>
+    <div style="flex-shrink:0">
+      {% if restaurant.gmb_refresh_token %}
+      <button onclick="gmbDisconnect()" class="btn btn-skip" style="font-size:11px">Disconnect</button>
+      {% else %}
+      <button onclick="gmbConnect()" class="btn btn-approve" style="font-size:12px;padding:7px 16px">Connect &rarr;</button>
+      {% endif %}
+    </div>
   </div>
-  {% elif restaurant.gmb_refresh_token and not restaurant.reviews_live %}
-  <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#2d6a4f;display:flex;align-items:center;gap:8px">
-    <span>✓</span><span><strong>Google Business connected</strong> — new reviews will sync automatically. Sample reviews shown below until your first live review comes in.</span>
-  </div>
-  {% endif %}
   <div class="stat-row">
     <div class="stat {{'ok' if rstats.avg_rating >= 4.5 else ('warn' if rstats.avg_rating >= 3.5 else 'hi')}}"><div class="stat-n">{{rstats.avg_rating}}</div><div class="stat-l">Avg rating</div></div>
     <div class="stat {{'hi' if rstats.urgent > 0 else 'ok'}}" id="stat-urgent"><div class="stat-n" id="stat-urgent-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
@@ -1880,15 +1896,36 @@ function clientUpload(dataType, input) {
 
       <!-- Identity -->
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Account</div>
-      <table style="font-size:13px;width:100%;margin-bottom:14px">
+      <table style="font-size:13px;width:100%;margin-bottom:10px">
         <tr><td style="color:var(--ink3);padding:4px 0;width:80px;font-size:12px">Email</td><td style="font-weight:500;font-size:12px">{{restaurant.owner_email}}</td></tr>
         <tr><td style="color:var(--ink3);padding:4px 0;font-size:12px">Username</td><td style="font-weight:500;font-size:12px">{{current_user.username}}</td></tr>
       </table>
+      {% if mod_reviews %}
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--ink)">Weekly digest</div>
+          <div style="font-size:11px;color:var(--ink3)">Review summary email</div>
+        </div>
+        <div style="display:flex;gap:5px;align-items:center">
+          <select id="digest-enabled-select" style="padding:4px 6px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px">
+            <option value="1" {{"selected" if restaurant.digest_enabled}}>On</option>
+            <option value="0" {{"selected" if not restaurant.digest_enabled}}>Off</option>
+          </select>
+          <select id="digest-day-select" style="padding:4px 6px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px">
+            {% for d in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
+            <option value="{{d}}" {{"selected" if restaurant.digest_day==d}}>{{d|title}}</option>
+            {% endfor %}
+          </select>
+          <button onclick="saveDigestDay()" style="padding:4px 10px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer">Save</button>
+          <span id="digest-save-status" style="font-size:11px;display:none"></span>
+        </div>
+      </div>
+      {% endif %}
 
       <!-- Security -->
       <div style="border-top:1px solid var(--paper3);padding-top:12px;margin-bottom:12px">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Security</div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between">
           <div>
             <div style="font-size:12px;font-weight:600;color:var(--ink)">Two-factor authentication</div>
             <div style="font-size:11px;color:var(--ink3)">{% if restaurant.two_fa_enabled %}Email code on new device sign-ins{% else %}Adds email code on new sign-ins{% endif %}</div>
@@ -1902,27 +1939,6 @@ function clientUpload(dataType, input) {
           <button onclick="document.getElementById('twofa-modal').style.display='flex'" class="btn-primary" style="font-size:11px;padding:5px 12px">Enable &rarr;</button>
           {% endif %}
         </div>
-        {% if mod_reviews %}
-        <div style="display:flex;align-items:center;justify-content:space-between">
-          <div>
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Weekly digest</div>
-            <div style="font-size:11px;color:var(--ink3)">Review summary email</div>
-          </div>
-          <div style="display:flex;gap:5px;align-items:center">
-            <select id="digest-enabled-select" style="padding:4px 6px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px">
-              <option value="1" {{"selected" if restaurant.digest_enabled}}>On</option>
-              <option value="0" {{"selected" if not restaurant.digest_enabled}}>Off</option>
-            </select>
-            <select id="digest-day-select" style="padding:4px 6px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px">
-              {% for d in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
-              <option value="{{d}}" {{"selected" if restaurant.digest_day==d}}>{{d|title}}</option>
-              {% endfor %}
-            </select>
-            <button onclick="saveDigestDay()" style="padding:4px 10px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer">Save</button>
-            <span id="digest-save-status" style="font-size:11px;display:none"></span>
-          </div>
-        </div>
-        {% endif %}
       </div>
 
       <!-- Google Business -->
