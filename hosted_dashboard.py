@@ -172,7 +172,7 @@ def extract_recs_filter(text):
             continue
         if in_recs:
             # Split any inline numbered items on this line before processing
-            parts = re.split(r'(?<=\S)\s+(?=\d+[.)]\s)', line)
+            parts = re.split(r'(?<=\S)\s+(?=\d+\.\s+[A-Z])', line)
             for part in parts:
                 part = part.strip()
                 if not part:
@@ -241,6 +241,7 @@ def format_intel_body_filter(text):
         elif re.search(r"Recommendations?", line, re.I) and not line.startswith("-") and not re.match(r"^[0-9]", line):
             if current_section and bullets:
                 html_parts.append(_flush(current_section, bullets))
+            bullets = []
             break
         elif line.startswith("-"):
             b = re.sub(r'\*+', '', line.lstrip("- ")).strip()
