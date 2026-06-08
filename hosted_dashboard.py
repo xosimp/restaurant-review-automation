@@ -2306,14 +2306,26 @@ function loadSentimentTrend(){
 }
 function loadReviewInsight(){
   reviewInsightLoaded=true;
+  var el=document.getElementById('review-insight');
+  if(!el)return;
+  try{
+    var cached=sessionStorage.getItem('review_insight');
+    var cachedAt=parseInt(sessionStorage.getItem('review_insight_at')||'0',10);
+    var fourHours=4*60*60*1000;
+    if(cached&&cachedAt&&(Date.now()-cachedAt)<fourHours){
+      el.innerHTML=cached;
+      el.classList.remove('insight-loading');
+      return;
+    }
+  }catch(e){}
   fetch('/api/review-insight').then(function(r){return r.json();}).then(function(d){
-    var el=document.getElementById('review-insight');
-    if(!el)return;
-    el.innerHTML=d.insight||'Analysis unavailable.';
+    var html=d.insight||'Analysis unavailable.';
+    el.innerHTML=html;
     el.classList.remove('insight-loading');
+    try{sessionStorage.setItem('review_insight',html);sessionStorage.setItem('review_insight_at',String(Date.now()));}catch(e){}
   }).catch(function(){
-    var el=document.getElementById('review-insight');
-    if(el){el.textContent='Analysis unavailable — check back shortly.';el.classList.remove('insight-loading');}
+    el.textContent='Analysis unavailable — check back shortly.';
+    el.classList.remove('insight-loading');
   });
 }
 function filterByTopic(category){
