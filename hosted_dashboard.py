@@ -904,6 +904,24 @@ function clientUpload(dataType, input) {
       {% endif %}
     </div>
   </div>
+  <!-- Value banner -->
+  <div style="background:var(--ink);border-radius:var(--r);padding:14px 20px;margin-bottom:14px;display:flex;align-items:stretch;position:relative;overflow:hidden">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
+    <div style="display:flex;flex:1;padding-left:16px;gap:0;flex-wrap:wrap">
+      <div style="flex:1;min-width:90px;padding-right:20px">
+        <div style="font-size:32px;font-weight:800;color:white;letter-spacing:-1.5px;line-height:1">{{rstats.responded}}</div>
+        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Responses sent</div>
+      </div>
+      <div style="flex:1;min-width:90px;padding:0 20px;border-left:1px solid #2a2520">
+        <div style="font-size:32px;font-weight:800;color:var(--ember);letter-spacing:-1.5px;line-height:1">{{rstats.response_rate}}<span style="font-size:18px">%</span></div>
+        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Response rate</div>
+      </div>
+      <div style="flex:1;min-width:90px;padding-left:20px;border-left:1px solid #2a2520">
+        <div style="font-size:32px;font-weight:800;color:white;letter-spacing:-1.5px;line-height:1">{{rstats.total}}</div>
+        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Reviews on record</div>
+      </div>
+    </div>
+  </div>
   <div class="stat-row">
     <div class="stat {{'ok' if rstats.avg_rating >= 4.5 else ('warn' if rstats.avg_rating >= 3.5 else 'hi')}}"><div class="stat-n">{{rstats.avg_rating}}</div><div class="stat-l">Avg rating</div></div>
     <div class="stat {{'hi' if rstats.urgent > 0 else 'ok'}}" id="stat-urgent"><div class="stat-n" id="stat-urgent-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
@@ -1198,6 +1216,33 @@ function clientUpload(dataType, input) {
     </div>
   </div>
 
+  <!-- Value banner -->
+  {% if labor.is_live %}
+  <div style="background:var(--ink);border-radius:var(--r);padding:14px 20px;margin-bottom:16px;display:flex;align-items:stretch;position:relative;overflow:hidden">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#6fcf97"></div>
+    <div style="display:flex;flex:1;padding-left:16px;gap:0;flex-wrap:wrap">
+      <div style="flex:1;min-width:100px;padding-right:20px">
+        <div style="font-size:32px;font-weight:800;color:#6fcf97;letter-spacing:-1.5px;line-height:1">${{labor.potential_savings|int|format_num}}</div>
+        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Savings identified/mo</div>
+      </div>
+      {% if labor_overtime_cost > 0 %}
+      <div style="flex:1;min-width:100px;padding:0 20px;border-left:1px solid #2a2520">
+        <div style="font-size:32px;font-weight:800;color:#ef9f27;letter-spacing:-1.5px;line-height:1">${{labor_overtime_cost|format_num}}</div>
+        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Overtime premium flagged</div>
+      </div>
+      {% endif %}
+      <div style="flex:1;min-width:100px;padding-left:20px;border-left:1px solid #2a2520">
+        <div style="font-size:32px;font-weight:800;color:#f87171;letter-spacing:-1.5px;line-height:1">{{labor.overstaffed_days|length}}</div>
+        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Overstaffed days</div>
+      </div>
+      <div style="flex:1;min-width:100px;padding-left:20px;border-left:1px solid #2a2520">
+        <div style="font-size:32px;font-weight:800;color:#f87171;letter-spacing:-1.5px;line-height:1">{{labor.overtime_risk|selectattr('status','equalto','overtime')|list|length}}</div>
+        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Overtime flags</div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Stats row -->
 
   <div class="stat-row">
@@ -1442,6 +1487,26 @@ function clientUpload(dataType, input) {
       <div style="font-size:12px;color:#a8d5b5;margin-top:3px">${{inv.recoverable_monthly|int|format_num}}/mo recoverable</div>
     </div>
   </div>
+  <!-- Value banner -->
+  {% if inv.is_live %}
+  <div style="background:var(--ink);border-radius:var(--r);padding:14px 20px;margin-bottom:14px;display:flex;align-items:stretch;position:relative;overflow:hidden">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#6fcf97"></div>
+    <div style="display:flex;flex:1;padding-left:16px;gap:0;flex-wrap:wrap">
+      <div style="flex:1;min-width:90px;padding-right:20px">
+        <div style="font-size:32px;font-weight:800;color:#6fcf97;letter-spacing:-1.5px;line-height:1">${{inv.recoverable_monthly|int|format_num}}</div>
+        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Recoverable/mo</div>
+      </div>
+      <div style="flex:1;min-width:90px;padding:0 20px;border-left:1px solid #2a2520">
+        <div style="font-size:32px;font-weight:800;color:{{'#f87171' if inv.critical_low|length > 0 else 'white'}};letter-spacing:-1.5px;line-height:1">{{inv.critical_low|length}}</div>
+        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Items critical low</div>
+      </div>
+      <div style="flex:1;min-width:90px;padding-left:20px;border-left:1px solid #2a2520">
+        <div style="font-size:32px;font-weight:800;color:{{'#ef9f27' if inv.waste_rate_pct > 5 else 'white'}};letter-spacing:-1.5px;line-height:1">{{inv.waste_rate_pct}}<span style="font-size:18px">%</span></div>
+        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Waste rate this week</div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
   <div class="stat-row">
     <div class="stat hi"><div class="stat-n">${{inv.total_waste_cost_week|format_num}}</div><div class="stat-l">Waste/week</div></div>
     <div class="stat hi"><div class="stat-n">${{inv.monthly_waste_projection|int|format_num}}</div><div class="stat-l">Projected/mo</div></div>
@@ -1570,6 +1635,27 @@ function clientUpload(dataType, input) {
     <button onclick="igConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 14px">Connect Instagram →</button>
     {% endif %}
   </div>
+
+  <!-- Value banner -->
+  {% if mkt_stats.generated > 0 %}
+  <div style="background:var(--ink);border-radius:var(--r);padding:14px 20px;margin-bottom:14px;display:flex;align-items:stretch;position:relative;overflow:hidden">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
+    <div style="display:flex;flex:1;padding-left:16px;gap:0;flex-wrap:wrap">
+      <div style="flex:1;min-width:90px;padding-right:20px">
+        <div style="font-size:32px;font-weight:800;color:white;letter-spacing:-1.5px;line-height:1">{{mkt_stats.generated}}</div>
+        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Posts generated</div>
+      </div>
+      <div style="flex:1;min-width:90px;padding:0 20px;border-left:1px solid #2a2520">
+        <div style="font-size:32px;font-weight:800;color:{{'#6fcf97' if mkt_stats.published > 0 else 'white'}};letter-spacing:-1.5px;line-height:1">{{mkt_stats.published}}</div>
+        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Published to social</div>
+      </div>
+      <div style="flex:1;min-width:90px;padding-left:20px;border-left:1px solid #2a2520">
+        <div style="font-size:32px;font-weight:800;color:var(--ember);letter-spacing:-1.5px;line-height:1">{{mkt_stats.this_month}}</div>
+        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">This month</div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   <!-- Posting overlay -->
   <div id="posting-overlay" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.88);align-items:center;justify-content:center">
@@ -5725,6 +5811,29 @@ def index(current_user):
         except Exception:
             competitor_data = None
 
+    # Labor overtime premium cost (0.5× blended rate on hours over 40/week)
+    _hourly_rate = float(restaurant.hourly_rate or 26.0) if restaurant else 26.0
+    _ot_premium = 0
+    for _ot in labor.get("overtime_risk", []):
+        if _ot.get("status") == "overtime":
+            _ot_premium += max(0, _ot.get("hours", 0) - 40) * _hourly_rate * 0.5
+    labor_overtime_cost = int(round(_ot_premium))
+
+    # Marketing activity stats
+    try:
+        _conn_mkt = get_conn()
+        _conn_mkt.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
+            content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
+            created_at TEXT DEFAULT (datetime('now')))""")
+        _mkt_gen   = _conn_mkt.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=?", (rid,)).fetchone()[0] or 0
+        _mkt_pub   = _conn_mkt.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND post_platform IS NOT NULL", (rid,)).fetchone()[0] or 0
+        _mkt_month = _conn_mkt.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')", (rid,)).fetchone()[0] or 0
+        _conn_mkt.close()
+        mkt_stats = {"generated": _mkt_gen, "published": _mkt_pub, "this_month": _mkt_month}
+    except Exception:
+        mkt_stats = {"generated": 0, "published": 0, "this_month": 0}
+
     import secrets as _sec
     csrf_token = request.cookies.get('csrf_token') or _sec.token_hex(16)
     return render_template_string(DASHBOARD_HTML,
@@ -5740,6 +5849,8 @@ def index(current_user):
         now=datetime.now().strftime("%b %d, %Y"),
         viewing_as=current_user.get("is_admin", 0),
         labor_target=float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0,
+        labor_overtime_cost=labor_overtime_cost,
+        mkt_stats=mkt_stats,
         competitor_data=competitor_data,
         competitor_updated_at=restaurant.competitor_updated_at if restaurant else None)
 
