@@ -162,7 +162,7 @@ def get_sessions_for_user(user_id: int, current_token: str = None,
             "is_current": row["token"] == current_token,
             "created_at": row["created_at"],
             "last_active": row["last_active"],
-            "ip_address": row["ip_address"] or "Unknown",
+            "ip_address": row["ip_address"] or "",
             "user_agent": row["user_agent"] or "",
         })
     return result

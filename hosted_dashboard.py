@@ -1872,11 +1872,11 @@ function clientUpload(dataType, input) {
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <a href="mailto:will@cavnar.ai" style="display:inline-flex;align-items:center;gap:6px;background:var(--ember);color:white;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600">&#9993; Email Will</a>
           <a href="https://calendly.com/will-cavnar/30min" target="_blank" style="display:inline-flex;align-items:center;gap:6px;background:#1e3a52;color:#a8cfe0;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600">&#128197; Book a call</a>
-          <span style="font-size:12px;color:#4a4540;display:inline-flex;align-items:center;padding:8px 0">Same-day response</span>
+          <span style="font-size:12px;color:#9a9188;display:inline-flex;align-items:center;padding:8px 0">Same-day response</span>
         </div>
       </div>
       <div style="text-align:right;flex-shrink:0" class="acct-hero-right">
-        <div style="font-size:10px;color:#4a4540;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Restaurant</div>
+        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Restaurant</div>
         <div style="font-size:15px;font-weight:700;color:var(--paper);margin-bottom:12px">{{restaurant.name}}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;justify-items:end">
           {% if mod_reviews %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px;white-space:nowrap">&#10003; Reviews</span>{% else %}<span></span>{% endif %}
@@ -6065,7 +6065,7 @@ def list_sessions(current_user):
         # (handles sessions created before UA/IP tracking was added)
         if s.get("is_current"):
             ua = live_ua or ua
-            if not s.get("ip_address") or s["ip_address"] in ("", "unknown"):
+            if not s.get("ip_address") or s["ip_address"].lower() in ("", "unknown"):
                 s["ip_address"] = live_ip
         device = _parse_ua(ua)
         browser = _parse_browser(ua)
