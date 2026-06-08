@@ -1962,11 +1962,10 @@ function clientUpload(dataType, input) {
           </div>
           <div id="sessions-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
         </div>
-      </div>
-
-      <!-- Change password link -->
-      <div style="border-top:1px solid var(--paper3);padding-top:12px">
-        <button onclick="document.getElementById('pw-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:var(--ink);padding:0;display:flex;align-items:center;gap:4px">Change password <span style="color:var(--ember)">&rarr;</span></button>
+        <!-- Change password link — inside security section -->
+        <div style="border-top:1px solid var(--paper3);padding-top:10px;margin-top:10px">
+          <button onclick="document.getElementById('pw-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:var(--ink);padding:0;display:flex;align-items:center;gap:4px">Change password <span style="color:var(--ember)">&rarr;</span></button>
+        </div>
       </div>
 
       <!-- Change password modal -->
@@ -3302,9 +3301,10 @@ function loadSessions(){
       var la=s.last_active?s.last_active.replace('T',' ').substring(0,16):'';
       var borderStyle=i>0?'border-top:1px solid var(--paper3)':'';
       html+='<div style="padding:5px 0;'+borderStyle+'">';
-      html+='<span style="font-weight:500;color:var(--ink)">'+s.device+' &mdash; '+s.browser+'</span>'+badge+'<br>';
+      var deviceLabel=s.browser?s.device+' — '+s.browser:s.device;
+      html+='<span style="font-weight:500;color:var(--ink)">'+deviceLabel+'</span>'+badge+'<br>';
       html+='<span style="color:var(--ink3)">'+s.ip_address+'</span>';
-      if(la){html+='<span style="color:var(--paper3);margin:0 4px">&middot;</span><span style="color:var(--ink3)">'+la+' CT</span>';}
+      if(s.last_active){html+='<span style="color:var(--paper3);margin:0 4px">&middot;</span><span style="color:var(--ink3)">'+s.last_active+'</span>';}
       html+='</div>';
     }
     el.innerHTML=html;
@@ -6020,9 +6020,9 @@ def list_sessions(current_user):
             m = _re_ua3.search(r'Mac OS X ([\d_]+)', ua)
             ver = m.group(1).replace("_", ".") if m else ""
             return "Mac" + (" " + ver if ver else "")
-        if "Linux" in ua: return "Linux"
         if "CrOS" in ua: return "Chromebook"
-        return "Unknown device"
+        if "Linux" in ua: return "Linux"
+        return None  # unknown — will be handled below
     def _parse_browser(ua):
         ua = ua or ""
         import re as _re_b
@@ -6039,11 +6039,42 @@ def list_sessions(current_user):
         if "Safari/" in ua:
             m = _re_b.search(r'Version/([\d.]+)', ua)
             return "Safari" + (" " + m.group(1).split(".")[0] if m else "")
-        return "Browser"
+        return None  # unknown
+    def _fmt_ct(ts):
+        """Convert UTC sqlite timestamp to CT M/D/YY h:MM AM/PM."""
+        if not ts:
+            return ""
+        try:
+            from datetime import datetime as _dt_s, timezone as _tz_s, timedelta as _td_s
+            from zoneinfo import ZoneInfo as _ZI_s
+            # SQLite stores as 'YYYY-MM-DD HH:MM:SS' UTC
+            dt_utc = _dt_s.strptime(ts[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=_tz_s.utc)
+            dt_ct = dt_utc.astimezone(_ZI_s("America/Chicago"))
+            hour = dt_ct.hour % 12 or 12
+            ampm = "AM" if dt_ct.hour < 12 else "PM"
+            return "{}/{}/{} {}:{:02d} {} CT".format(
+                dt_ct.month, dt_ct.day, str(dt_ct.year)[2:],
+                hour, dt_ct.minute, ampm)
+        except Exception:
+            return ts[:16]
     for s in sessions:
-        s["device"] = _parse_ua(s["user_agent"])
-        s["browser"] = _parse_browser(s["user_agent"])
-        s.pop("user_agent", None)
+        ua = s.pop("user_agent", "") or ""
+        device = _parse_ua(ua)
+        browser = _parse_browser(ua)
+        if device and browser:
+            s["device"] = device
+            s["browser"] = browser
+        elif device:
+            s["device"] = device
+            s["browser"] = "Browser"
+        elif browser:
+            s["device"] = "Unknown device"
+            s["browser"] = browser
+        else:
+            # No UA stored — mark as current device if applicable
+            s["device"] = "This device" if s.get("is_current") else "Unknown device"
+            s["browser"] = ""
+        s["last_active"] = _fmt_ct(s.get("last_active", ""))
     return jsonify(sessions=sessions)
 
 
