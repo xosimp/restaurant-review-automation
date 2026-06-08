@@ -18,7 +18,8 @@ from models import (init_db, get_conn, approve_response,
 from auth import (init_auth, verify_password, create_session,
                   get_session_user, delete_session, create_user,
                   list_users, update_password,
-                  get_sessions_for_user, revoke_other_sessions)
+                  get_sessions_for_user, revoke_other_sessions,
+                  get_user_by_restaurant_id)
 from dotenv import load_dotenv
 import pathlib
 load_dotenv(pathlib.Path(__file__).parent / ".env")
@@ -2179,10 +2180,8 @@ function saveDraft(id) {
         document.getElementById('draft-actions-'+id).innerHTML =
           '<span class="btn btn-approved">✓ Approved</span>';
         document.getElementById('draft-actions-'+id).style.display='flex';
-        updateReviewStats();
-        toast('Response saved and approved');
-      }
-    });
+      } else { toast('Approve failed — try again'); }
+    }).catch(function(){ toast('Network error — try again'); });
   }).catch(function(){ toast('Network error — try again'); });
 }
 // CSRF token for POST requests
@@ -2239,7 +2238,8 @@ function gmbDisconnect(){
   if(!confirm('Disconnect Google Business? Responses will no longer auto-post.')) return;
   fetch('/auth/google/disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(d.ok){ toast('Google Business disconnected'); setTimeout(function(){location.reload();},800); }
-  });
+    else{ toast('Error disconnecting — try again'); }
+  }).catch(function(){ toast('Network error — try again'); });
 }
 
 function loadSentimentTrend(){
@@ -2650,8 +2650,8 @@ function skipR(id){
         actions.style.display='flex';
       }
       toast('Skipped — edit or regenerate below');
-    }
-  });
+    } else { toast('Skip failed — try again'); }
+  }).catch(function(){ toast('Network error — try again'); });
 }
 var dowData={{labor.dow_summary|tojson}};
 var laborDateRange={{labor.date_range|tojson if labor.date_range else 'null'}};
@@ -3134,7 +3134,6 @@ function saveDigestDay() {
     status.style.display='inline';
     if(data.ok) {
       status.style.color='var(--green)'; status.textContent='✓ Saved';
-      document.getElementById('digest-day-current').textContent=day.charAt(0).toUpperCase()+day.slice(1);
       setTimeout(function(){status.style.display='none';},2500);
     } else { status.style.color='var(--red)'; status.textContent='Save failed'; }
   }).catch(function(){ status.style.color='var(--red)'; status.textContent='Save failed'; });
@@ -5566,7 +5565,11 @@ def verify_2fa():
         _fl3.session.pop("pending_token", None)
         _ip_2fa = _get_client_ip()
         _ua_2fa = request.headers.get("User-Agent", "")
-        token = create_session(uid, ip_address=_ip_2fa, user_agent=_ua_2fa)
+        # uid is restaurant_id — look up the actual user_id for the session
+        _user_for_session = get_user_by_restaurant_id(uid)
+        if not _user_for_session:
+            return redirect("/login")
+        token = create_session(_user_for_session["id"], ip_address=_ip_2fa, user_agent=_ua_2fa)
         # Login notification
         try:
             _rest_ln2 = get_restaurant(uid)

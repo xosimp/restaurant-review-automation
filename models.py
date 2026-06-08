@@ -1022,7 +1022,7 @@ def get_all_restaurants(db_path: str = DB_PATH) -> list:
     result = []
     for row in rows:
         try:
-            result.append(row_to_restaurant(row))
+            result.append(get_restaurant(row["id"], db_path))
         except Exception:
             pass
     return result
@@ -1043,6 +1043,7 @@ def get_restaurants_for_digest(day: str, db_path: str = DB_PATH) -> list:
 def update_last_fetched(restaurant_id: int, db_path: str = DB_PATH):
     """Record when reviews were last fetched for a restaurant."""
     from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo as _ZI_m
     conn = get_conn(db_path)
     conn.execute("UPDATE restaurants SET last_fetched_at=? WHERE id=?",
                  (datetime.now(_ZI_m('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'), restaurant_id))

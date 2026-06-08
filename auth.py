@@ -84,6 +84,15 @@ def get_user_by_username(username: str, db_path: str = DB_PATH) -> Optional[dict
     conn.close()
     return dict(row) if row else None
 
+def get_user_by_restaurant_id(restaurant_id: int, db_path: str = DB_PATH) -> Optional[dict]:
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT * FROM users WHERE restaurant_id=? AND is_active=1 AND is_admin=0 LIMIT 1",
+        (restaurant_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
 def get_user_by_id(user_id: int, db_path: str = DB_PATH) -> Optional[dict]:
     conn = get_conn(db_path)
     row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
