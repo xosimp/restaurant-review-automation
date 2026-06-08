@@ -1964,8 +1964,8 @@ function clientUpload(dataType, input) {
       <table style="font-size:13px;width:100%;margin-bottom:10px">
         <tr>
           <td style="color:var(--ink3);padding:4px 0;width:80px;font-size:12px">Email</td>
-          <td style="font-weight:500;font-size:12px" id="acct-email-display">{{restaurant.owner_email}}</td>
-          <td style="text-align:right;padding:4px 0"><button onclick="document.getElementById('email-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;color:var(--ink);padding:0;display:flex;align-items:center;gap:3px">Update <span style="color:var(--ember)">&rarr;</span></button></td>
+          <td style="font-weight:500;font-size:12px;width:100%" id="acct-email-display">{{restaurant.owner_email}}</td>
+          <td style="text-align:right;padding:4px 0;white-space:nowrap"><button onclick="document.getElementById('email-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;color:var(--ink);padding:0;display:flex;align-items:center;gap:3px">Update <span style="color:var(--ember)">&rarr;</span></button></td>
         </tr>
         <tr><td style="color:var(--ink3);padding:4px 0;font-size:12px">Username</td><td style="font-weight:500;font-size:12px" colspan="2">{{current_user.username}}</td></tr>
       </table>
