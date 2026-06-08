@@ -1947,20 +1947,19 @@ function clientUpload(dataType, input) {
             <div style="font-size:12px;font-weight:600;color:var(--ink)">Sign-in notifications</div>
             <div style="font-size:11px;color:var(--ink3)">Email me whenever someone signs in</div>
           </div>
-          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-            <div style="position:relative;width:36px;height:20px" onclick="toggleLoginNotify(this)">
-              <input type="checkbox" id="login-notify-check" style="opacity:0;width:0;height:0;position:absolute" {{"checked" if restaurant.login_notify else ""}}>
+          <div style="display:flex;align-items:center;gap:6px;cursor:pointer" onclick="toggleLoginNotify()">
+            <div style="position:relative;width:36px;height:20px">
               <div id="login-notify-track" style="position:absolute;inset:0;border-radius:10px;background:{{'#c84b2f' if restaurant.login_notify else '#d1c9bd'}};transition:background .2s"></div>
               <div id="login-notify-thumb" style="position:absolute;top:2px;left:{{'18px' if restaurant.login_notify else '2px'}};width:16px;height:16px;border-radius:50%;background:white;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:left .2s"></div>
             </div>
             <span style="font-size:11px;color:var(--ink3)" id="login-notify-label">{{"On" if restaurant.login_notify else "Off"}}</span>
-          </label>
+          </div>
         </div>
         <!-- Active sessions -->
         <div>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
             <div style="font-size:12px;font-weight:600;color:var(--ink)">Active sessions</div>
-            <button onclick="revokeOtherSessions(this)" style="font-size:11px;color:var(--ember);background:none;border:none;cursor:pointer;padding:0;font-family:'DM Sans',sans-serif">Sign out all other devices</button>
+            <button onclick="revokeOtherSessions(this)" id="revoke-sessions-btn" style="font-size:11px;color:white;background:#c84b2f;border:none;border-radius:20px;padding:3px 10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600;transition:background .2s">Sign out all other devices</button>
           </div>
           <div id="sessions-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
         </div>
@@ -3260,17 +3259,13 @@ function changePassword(){
   if(nw.length<8){st.style.display='block';st.style.color='var(--red)';st.textContent='Password must be at least 8 characters';return}
   fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(function(r){return r.json()}).then(function(d){st.style.display='block';if(d.ok){st.style.color='var(--green)';st.textContent='Password updated';document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-confirm').value='';}else{st.style.color='var(--red)';st.textContent=d.error||'Update failed'}})}
 
-function toggleLoginNotify(wrapper){
-  var chk=document.getElementById('login-notify-check');
-  var track=document.getElementById('login-notify-track');
-  var thumb=document.getElementById('login-notify-thumb');
-  var lbl=document.getElementById('login-notify-label');
-  var nowOn=!chk.checked;
-  chk.checked=nowOn;
-  track.style.background=nowOn?'#c84b2f':'#d1c9bd';
-  thumb.style.left=nowOn?'18px':'2px';
-  lbl.textContent=nowOn?'On':'Off';
-  fetch('/api/toggle-login-notify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:nowOn})}).catch(function(){});
+var _loginNotifyOn={{'true' if restaurant.login_notify else 'false'}};
+function toggleLoginNotify(){
+  _loginNotifyOn=!_loginNotifyOn;
+  document.getElementById('login-notify-track').style.background=_loginNotifyOn?'#c84b2f':'#d1c9bd';
+  document.getElementById('login-notify-thumb').style.left=_loginNotifyOn?'18px':'2px';
+  document.getElementById('login-notify-label').textContent=_loginNotifyOn?'On':'Off';
+  fetch('/api/toggle-login-notify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:_loginNotifyOn})}).catch(function(){});
 }
 
 function loadSessions(){
@@ -3283,11 +3278,12 @@ function loadSessions(){
       var s=d.sessions[i];
       var badge=s.is_current?'<span style="font-size:10px;font-weight:700;color:#2d6a4f;background:#eaf4ee;padding:1px 6px;border-radius:8px;margin-left:6px">This device</span>':'';
       var la=s.last_active?s.last_active.replace('T',' ').substring(0,16):'';
-      html+='<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--paper3)">';
-      html+='<div><span style="font-weight:500;color:var(--ink)">'+s.device+' &mdash; '+s.browser+'</span>'+badge+'<br>';
+      var borderStyle=i>0?'border-top:1px solid var(--paper3)':'';
+      html+='<div style="padding:5px 0;'+borderStyle+'">';
+      html+='<span style="font-weight:500;color:var(--ink)">'+s.device+' &mdash; '+s.browser+'</span>'+badge+'<br>';
       html+='<span style="color:var(--ink3)">'+s.ip_address+'</span>';
       if(la){html+='<span style="color:var(--paper3);margin:0 4px">&middot;</span><span style="color:var(--ink3)">'+la+' CT</span>';}
-      html+='</div></div>';
+      html+='</div>';
     }
     el.innerHTML=html;
   }).catch(function(){el.textContent='Could not load sessions.';});
@@ -3297,9 +3293,20 @@ function revokeOtherSessions(btn){
   btn.textContent='Signing out...';
   btn.disabled=true;
   fetch('/api/sessions/revoke-others',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
-    if(d.ok){btn.textContent='Done ✔';loadSessions();}
-    else{btn.textContent='Sign out all other devices';btn.disabled=false;}
-  }).catch(function(){btn.textContent='Sign out all other devices';btn.disabled=false;});
+    if(d.ok){
+      btn.textContent='Done ✔';
+      btn.style.background='#2d6a4f';
+      loadSessions();
+    } else {
+      btn.textContent='Sign out all other devices';
+      btn.style.background='#c84b2f';
+      btn.disabled=false;
+    }
+  }).catch(function(){
+    btn.textContent='Sign out all other devices';
+    btn.style.background='#c84b2f';
+    btn.disabled=false;
+  });
 }
 
 // Load sessions when account tab is active
