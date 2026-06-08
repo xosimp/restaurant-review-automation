@@ -701,6 +701,10 @@ function clientUpload(dataType, input) {
         </div>
       </div>
       <div id="gap-dollar" style="font-size:13px;color:var(--ember2);margin-top:6px;font-weight:500">{% if labor.overall_labor_pct > labor.labor_target|default(30.0) %}Your labor is at {{labor.overall_labor_pct}}% vs {{labor.labor_target|default(30.0)}}% target — loading gap calculation…{% else %}Your labor is on target at {{labor.overall_labor_pct}}% — great work.{% endif %}</div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <span style="font-size:11px;color:var(--ink3);background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:3px 10px">Revenue (2 wks) &nbsp;<strong style="color:var(--paper)">${{labor.total_sales|int|format_num}}</strong></span>
+        <span style="font-size:11px;color:var(--ink3);background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:3px 10px">Labor cost (2 wks) &nbsp;<strong style="color:{% if labor.overall_labor_pct > (labor.labor_target|default(30.0)) + 5 %}#ff9b8a{% elif labor.overall_labor_pct > (labor.labor_target|default(30.0)) %}#ef9f27{% else %}#6fcf97{% endif %}">${{labor.total_labor_cost|int|format_num}}</strong></span>
+      </div>
     </div>
     <div style="text-align:right">
       <div id="gap-amount" style="font-family:'DM Serif Display',serif;font-size:36px;color:var(--ember2);line-height:1">—</div>
@@ -711,16 +715,6 @@ function clientUpload(dataType, input) {
       </button>
 
     </div>
-  </div>
-
-  <!-- Stats row -->
-
-  <div class="stat-row">
-    <div class="stat"><div class="stat-n">${{labor.total_sales|int|format_num}}</div><div class="stat-l">Revenue (2 wks)</div></div>
-    <div class="stat {{"hi" if labor.overall_labor_pct > (labor.labor_target|default(30.0)) + 5 else ("warn" if labor.overall_labor_pct > (labor.labor_target|default(30.0)) else "ok")}}"><div class="stat-n">${{labor.total_labor_cost|int|format_num}}</div><div class="stat-l">Labor cost (2 wks)</div></div>
-    <div class="stat {{'hi' if labor.overall_labor_pct > (labor_target|default(30.0)) + 3 else ('warn' if labor.overall_labor_pct > (labor_target|default(30.0)) else 'ok')}}"><div class="stat-n">{{labor.overall_labor_pct}}%</div><div class="stat-l">Labor %</div></div>
-    <div class="stat {{"hi" if labor.overstaffed_days|length > 0 else "ok"}}"><div class="stat-n">{{labor.overstaffed_days|length}}</div><div class="stat-l">Overstaffed days</div></div>
-    <div class="stat {{"hi" if labor.overtime_risk|length > 0 else "ok"}}"><div class="stat-n">{{labor.overtime_risk|length}}</div><div class="stat-l">Overtime risk</div></div>
   </div>
 
   <!-- Labor savings summary -->
