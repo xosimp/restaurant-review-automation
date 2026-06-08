@@ -904,24 +904,6 @@ function clientUpload(dataType, input) {
       {% endif %}
     </div>
   </div>
-  <!-- Value banner -->
-  <div style="background:var(--ink);border-radius:var(--r);padding:14px 20px;margin-bottom:14px;display:flex;align-items:stretch;position:relative;overflow:hidden">
-    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
-    <div style="display:flex;flex:1;padding-left:16px;gap:0;flex-wrap:wrap">
-      <div style="flex:1;min-width:90px;padding-right:20px">
-        <div style="font-size:32px;font-weight:800;color:white;letter-spacing:-1.5px;line-height:1">{{rstats.responded}}</div>
-        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Responses sent</div>
-      </div>
-      <div style="flex:1;min-width:90px;padding:0 20px;border-left:1px solid #2a2520">
-        <div style="font-size:32px;font-weight:800;color:var(--ember);letter-spacing:-1.5px;line-height:1">{{rstats.response_rate}}<span style="font-size:18px">%</span></div>
-        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Response rate</div>
-      </div>
-      <div style="flex:1;min-width:90px;padding-left:20px;border-left:1px solid #2a2520">
-        <div style="font-size:32px;font-weight:800;color:white;letter-spacing:-1.5px;line-height:1">{{rstats.total}}</div>
-        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Reviews on record</div>
-      </div>
-    </div>
-  </div>
   <div class="stat-row">
     <div class="stat {{'ok' if rstats.avg_rating >= 4.5 else ('warn' if rstats.avg_rating >= 3.5 else 'hi')}}"><div class="stat-n">{{rstats.avg_rating}}</div><div class="stat-l">Avg rating</div></div>
     <div class="stat {{'hi' if rstats.urgent > 0 else 'ok'}}" id="stat-urgent"><div class="stat-n" id="stat-urgent-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
@@ -1216,33 +1198,6 @@ function clientUpload(dataType, input) {
     </div>
   </div>
 
-  <!-- Value banner -->
-  {% if labor.is_live %}
-  <div style="background:var(--ink);border-radius:var(--r);padding:14px 20px;margin-bottom:16px;display:flex;align-items:stretch;position:relative;overflow:hidden">
-    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#6fcf97"></div>
-    <div style="display:flex;flex:1;padding-left:16px;gap:0;flex-wrap:wrap">
-      <div style="flex:1;min-width:100px;padding-right:20px">
-        <div style="font-size:32px;font-weight:800;color:#6fcf97;letter-spacing:-1.5px;line-height:1">${{labor.potential_savings|int|format_num}}</div>
-        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Savings identified/mo</div>
-      </div>
-      {% if labor_overtime_cost > 0 %}
-      <div style="flex:1;min-width:100px;padding:0 20px;border-left:1px solid #2a2520">
-        <div style="font-size:32px;font-weight:800;color:#ef9f27;letter-spacing:-1.5px;line-height:1">${{labor_overtime_cost|format_num}}</div>
-        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Overtime premium flagged</div>
-      </div>
-      {% endif %}
-      <div style="flex:1;min-width:100px;padding-left:20px;border-left:1px solid #2a2520">
-        <div style="font-size:32px;font-weight:800;color:#f87171;letter-spacing:-1.5px;line-height:1">{{labor.overstaffed_days|length}}</div>
-        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Overstaffed days</div>
-      </div>
-      <div style="flex:1;min-width:100px;padding-left:20px;border-left:1px solid #2a2520">
-        <div style="font-size:32px;font-weight:800;color:#f87171;letter-spacing:-1.5px;line-height:1">{{labor.overtime_risk|selectattr('status','equalto','overtime')|list|length}}</div>
-        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Overtime flags</div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
   <!-- Stats row -->
 
   <div class="stat-row">
@@ -1487,26 +1442,6 @@ function clientUpload(dataType, input) {
       <div style="font-size:12px;color:#a8d5b5;margin-top:3px">${{inv.recoverable_monthly|int|format_num}}/mo recoverable</div>
     </div>
   </div>
-  <!-- Value banner -->
-  {% if inv.is_live %}
-  <div style="background:var(--ink);border-radius:var(--r);padding:14px 20px;margin-bottom:14px;display:flex;align-items:stretch;position:relative;overflow:hidden">
-    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:#6fcf97"></div>
-    <div style="display:flex;flex:1;padding-left:16px;gap:0;flex-wrap:wrap">
-      <div style="flex:1;min-width:90px;padding-right:20px">
-        <div style="font-size:32px;font-weight:800;color:#6fcf97;letter-spacing:-1.5px;line-height:1">${{inv.recoverable_monthly|int|format_num}}</div>
-        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Recoverable/mo</div>
-      </div>
-      <div style="flex:1;min-width:90px;padding:0 20px;border-left:1px solid #2a2520">
-        <div style="font-size:32px;font-weight:800;color:{{'#f87171' if inv.critical_low|length > 0 else 'white'}};letter-spacing:-1.5px;line-height:1">{{inv.critical_low|length}}</div>
-        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Items critical low</div>
-      </div>
-      <div style="flex:1;min-width:90px;padding-left:20px;border-left:1px solid #2a2520">
-        <div style="font-size:32px;font-weight:800;color:{{'#ef9f27' if inv.waste_rate_pct > 5 else 'white'}};letter-spacing:-1.5px;line-height:1">{{inv.waste_rate_pct}}<span style="font-size:18px">%</span></div>
-        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Waste rate this week</div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
   <div class="stat-row">
     <div class="stat hi"><div class="stat-n">${{inv.total_waste_cost_week|format_num}}</div><div class="stat-l">Waste/week</div></div>
     <div class="stat hi"><div class="stat-n">${{inv.monthly_waste_projection|int|format_num}}</div><div class="stat-l">Projected/mo</div></div>
@@ -1619,43 +1554,44 @@ function clientUpload(dataType, input) {
 <!-- MARKETING -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing">
 
-  <!-- Instagram & Facebook connect — compact status bar -->
-  <div style="display:flex;align-items:center;justify-content:space-between;background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:10px 14px;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+  <!-- Instagram & Facebook connect bar with inline activity stats -->
+  <div style="display:flex;align-items:center;background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:10px 14px;margin-bottom:14px;gap:12px">
+    <!-- Connection status -->
+    <div style="flex:1;min-width:0">
+      {% if restaurant.ig_token %}
+      <div style="display:flex;align-items:center;gap:6px;font-size:12px">
+        <span style="color:var(--green);font-weight:700">✓</span>
+        <span style="font-weight:600;color:var(--ink)">Instagram &amp; Facebook connected</span>
+        <span style="color:var(--ink3)">— post directly below</span>
+      </div>
+      {% else %}
+      <div style="font-size:12px;color:var(--ink3)">Connect Instagram &amp; Facebook to post generated content directly</div>
+      {% endif %}
+    </div>
+    <!-- Activity stats -->
+    <div style="display:flex;align-items:center;gap:0;border-left:1px solid var(--paper3);border-right:1px solid var(--paper3);padding:0 16px;margin:0 4px;flex-shrink:0">
+      <div style="text-align:center;padding:0 14px">
+        <div style="font-size:18px;font-weight:800;color:var(--ink);letter-spacing:-0.5px;line-height:1" id="mkt-stat-generated">{{mkt_stats.generated if mkt_stats.generated > 0 else '—'}}</div>
+        <div style="font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin-top:3px;white-space:nowrap">Generated</div>
+      </div>
+      <div style="width:1px;height:28px;background:var(--paper3)"></div>
+      <div style="text-align:center;padding:0 14px">
+        <div style="font-size:18px;font-weight:800;color:{{'#2d6a4f' if mkt_stats.published > 0 else 'var(--ink)'}};letter-spacing:-0.5px;line-height:1" id="mkt-stat-published">{{mkt_stats.published if mkt_stats.published > 0 else '—'}}</div>
+        <div style="font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin-top:3px;white-space:nowrap">Published</div>
+      </div>
+      <div style="width:1px;height:28px;background:var(--paper3)"></div>
+      <div style="text-align:center;padding:0 14px">
+        <div style="font-size:18px;font-weight:800;color:{{'var(--ember)' if mkt_stats.this_month > 0 else 'var(--ink)'}};letter-spacing:-0.5px;line-height:1" id="mkt-stat-month">{{mkt_stats.this_month if mkt_stats.this_month > 0 else '—'}}</div>
+        <div style="font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin-top:3px;white-space:nowrap">This month</div>
+      </div>
+    </div>
+    <!-- Action button -->
     {% if restaurant.ig_token %}
-    <div style="display:flex;align-items:center;gap:6px;font-size:12px">
-      <span style="color:var(--green);font-weight:700">✓</span>
-      <span style="font-weight:600;color:var(--ink)">Instagram &amp; Facebook connected</span>
-      <span style="color:var(--ink3)">— generate content and post directly below</span>
-    </div>
-    <button onclick="disconnectInstagram(this)" class="btn btn-skip" style="font-size:11px;padding:4px 10px">Disconnect</button>
+    <button onclick="disconnectInstagram(this)" class="btn btn-skip" style="font-size:11px;padding:4px 10px;flex-shrink:0">Disconnect</button>
     {% else %}
-    <div style="display:flex;align-items:center;gap:6px;font-size:12px">
-      <span style="color:var(--ink3)">Connect Instagram &amp; Facebook to post generated content directly — no copy/paste</span>
-    </div>
-    <button onclick="igConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 14px">Connect Instagram →</button>
+    <button onclick="igConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 14px;flex-shrink:0">Connect Instagram →</button>
     {% endif %}
   </div>
-
-  <!-- Value banner -->
-  {% if mkt_stats.generated > 0 %}
-  <div style="background:var(--ink);border-radius:var(--r);padding:14px 20px;margin-bottom:14px;display:flex;align-items:stretch;position:relative;overflow:hidden">
-    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
-    <div style="display:flex;flex:1;padding-left:16px;gap:0;flex-wrap:wrap">
-      <div style="flex:1;min-width:90px;padding-right:20px">
-        <div style="font-size:32px;font-weight:800;color:white;letter-spacing:-1.5px;line-height:1">{{mkt_stats.generated}}</div>
-        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Posts generated</div>
-      </div>
-      <div style="flex:1;min-width:90px;padding:0 20px;border-left:1px solid #2a2520">
-        <div style="font-size:32px;font-weight:800;color:{{'#6fcf97' if mkt_stats.published > 0 else 'white'}};letter-spacing:-1.5px;line-height:1">{{mkt_stats.published}}</div>
-        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">Published to social</div>
-      </div>
-      <div style="flex:1;min-width:90px;padding-left:20px;border-left:1px solid #2a2520">
-        <div style="font-size:32px;font-weight:800;color:var(--ember);letter-spacing:-1.5px;line-height:1">{{mkt_stats.this_month}}</div>
-        <div style="font-size:10px;color:#9a9188;text-transform:uppercase;letter-spacing:.1em;margin-top:5px">This month</div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
 
   <!-- Posting overlay -->
   <div id="posting-overlay" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.88);align-items:center;justify-content:center">
@@ -2499,7 +2435,7 @@ function switchTab(n,btn){
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor'){renderBars();loadLaborTrend();}
   if(n==='account'){loadBillingInfo();loadSessions();}
-  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();}
+  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();loadMktStats();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
@@ -2801,7 +2737,7 @@ function postToInstagram(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Instagram ✓');markTopicPosted('IG');clearMktOutput();}
+      if(d.ok){toast('Posted to Instagram ✓');markTopicPosted('IG');clearMktOutput();loadMktStats();}
       else{toast(d.error||'Post failed — try again');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
@@ -2824,7 +2760,7 @@ function postToFacebook(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Facebook ✓');markTopicPosted('FB');clearMktOutput();}
+      if(d.ok){toast('Posted to Facebook ✓');markTopicPosted('FB');clearMktOutput();loadMktStats();}
       else{toast(d.error||'Post failed — try again');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
@@ -2932,6 +2868,18 @@ function loadRecentTopics(){
       row.style.display='';
       loadPostInsights();
     }
+  }).catch(function(){});
+}
+function loadMktStats(){
+  fetch('/api/mkt-stats').then(function(r){return r.json();}).then(function(d){
+    if(!d.ok)return;
+    var setEl=function(id,val){var el=document.getElementById(id);if(!el)return;el.textContent=val>0?val:'—';};
+    var setColor=function(id,val,col){var el=document.getElementById(id);if(!el)return;el.style.color=val>0?col:'var(--ink)';};
+    setEl('mkt-stat-generated',d.generated);
+    setEl('mkt-stat-published',d.published);
+    setEl('mkt-stat-month',d.this_month);
+    setColor('mkt-stat-published',d.published,'#2d6a4f');
+    setColor('mkt-stat-month',d.this_month,'#c84b2f');
   }).catch(function(){});
 }
 function loadMktInsight(){
@@ -3100,6 +3048,7 @@ function genContent(fromCalendar){
       if(_igConnected&&igBtn)igBtn.style.display='inline-block';
 if(_fbConnected&&fbBtn)fbBtn.style.display='inline-block';
       loadRecentTopics();
+      loadMktStats();
       var selBtn=document.querySelector('.ct-btn.selected');
       var selType=selBtn&&selBtn.dataset?selBtn.dataset.type:'';
       var isSms=selType==='loyalty_nudge';
@@ -6131,6 +6080,24 @@ def recent_topics_api(current_user):
         return jsonify(topics=topics)
     except Exception as e:
         return jsonify(topics=[])
+
+@app.route("/api/mkt-stats")
+@login_required
+def mkt_stats_api(current_user):
+    rid = current_user["restaurant_id"]
+    try:
+        conn = get_conn()
+        conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
+            content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
+            created_at TEXT DEFAULT (datetime('now')))""")
+        gen   = conn.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=?", (rid,)).fetchone()[0] or 0
+        pub   = conn.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND post_platform IS NOT NULL", (rid,)).fetchone()[0] or 0
+        month = conn.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')", (rid,)).fetchone()[0] or 0
+        conn.close()
+        return jsonify(ok=True, generated=gen, published=pub, this_month=month)
+    except Exception as e:
+        return jsonify(ok=False, generated=0, published=0, this_month=0)
 
 @app.route("/api/mkt-insight")
 @login_required
