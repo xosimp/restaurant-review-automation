@@ -1561,7 +1561,7 @@ function clientUpload(dataType, input) {
       <span style="font-weight:600;color:var(--ink)">Instagram &amp; Facebook connected</span>
       <span style="color:var(--ink3)">— generate content and post directly below</span>
     </div>
-    <button onclick="disconnectInstagram()" class="btn btn-skip" style="font-size:11px;padding:4px 10px">Disconnect</button>
+    <button onclick="disconnectInstagram(this)" class="btn btn-skip" style="font-size:11px;padding:4px 10px">Disconnect</button>
     {% else %}
     <div style="display:flex;align-items:center;gap:6px;font-size:12px">
       <span style="color:var(--ink3)">Connect Instagram &amp; Facebook to post generated content directly — no copy/paste</span>
@@ -2191,8 +2191,7 @@ var _igConnected = {% if restaurant.ig_token %}true{% else %}false{% endif %};
 var _fbConnected = {% if restaurant.fb_page_token and restaurant.fb_page_id %}true{% else %}false{% endif %};
 
 function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},2600);}
-function disconnectInstagram(){
-  var btn=event&&event.target;
+function disconnectInstagram(btn){
   if(btn){btn.textContent='Disconnecting…';btn.style.opacity='0.6';btn.disabled=true;}
   fetch('/api/instagram-disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(d.ok){ toast('Instagram & Facebook disconnected'); setTimeout(function(){location.reload();},800); }
@@ -2200,6 +2199,9 @@ function disconnectInstagram(){
       if(btn){btn.textContent='Disconnect';btn.style.opacity='1';btn.disabled=false;}
       toast('Error disconnecting — try again');
     }
+  }).catch(function(){
+    if(btn){btn.textContent='Disconnect';btn.style.opacity='1';btn.disabled=false;}
+    toast('Network error — try again');
   });
 }
 
@@ -2701,7 +2703,7 @@ function postToInstagram(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Instagram ✓');markTopicPosted('IG');}
+      if(d.ok){toast('Posted to Instagram ✓');markTopicPosted('IG');clearMktOutput();}
       else{toast(d.error||'Post failed — try again');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
@@ -2724,13 +2726,18 @@ function postToFacebook(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Facebook ✓');markTopicPosted('FB');}
+      if(d.ok){toast('Posted to Facebook ✓');markTopicPosted('FB');clearMktOutput();}
       else{toast(d.error||'Post failed — try again');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
       toast('Post failed — check connection');
     });
+}
+function clearMktOutput(){
+  var el=document.getElementById('mkoutput');
+  if(el){el.innerHTML='<span style="color:var(--ink3)">Select a type and click Generate.</span>';}
+  window._lastPostedTopic='';
 }
 function markTopicPosted(platform){
   var topic=window._lastPostedTopic||'';
@@ -2833,10 +2840,24 @@ function loadMktInsight(){
   mktLoaded=true;
   var el=document.getElementById('mkt-insight');
   if(!el)return;
+  // Check sessionStorage cache (4-hour TTL) to avoid regenerating on every page reload
+  try{
+    var cached=sessionStorage.getItem('mkt_brief');
+    var cachedAt=parseInt(sessionStorage.getItem('mkt_brief_at')||'0',10);
+    var fourHours=4*60*60*1000;
+    if(cached&&cachedAt&&(Date.now()-cachedAt)<fourHours){
+      el.innerHTML=cached;
+      el.classList.remove('insight-loading');
+      mktLoaded=true;
+      return;
+    }
+  }catch(e){}
   fetch('/api/mkt-insight').then(function(r){return r.json();}).then(function(d){
-    el.innerHTML=d.insight||'Marketing brief unavailable — check back shortly.';
+    var html=d.insight||'Marketing brief unavailable — check back shortly.';
+    el.innerHTML=html;
     el.classList.remove('insight-loading');
     mktLoaded=true;
+    try{sessionStorage.setItem('mkt_brief',html);sessionStorage.setItem('mkt_brief_at',String(Date.now()));}catch(e){}
   }).catch(function(){
     el.textContent='Marketing brief unavailable — check back shortly.';
     el.classList.remove('insight-loading');
