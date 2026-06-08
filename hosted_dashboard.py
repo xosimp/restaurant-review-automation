@@ -1962,8 +1962,12 @@ function clientUpload(dataType, input) {
       <!-- Identity -->
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Account</div>
       <table style="font-size:13px;width:100%;margin-bottom:10px">
-        <tr><td style="color:var(--ink3);padding:4px 0;width:80px;font-size:12px">Email</td><td style="font-weight:500;font-size:12px">{{restaurant.owner_email}}</td></tr>
-        <tr><td style="color:var(--ink3);padding:4px 0;font-size:12px">Username</td><td style="font-weight:500;font-size:12px">{{current_user.username}}</td></tr>
+        <tr>
+          <td style="color:var(--ink3);padding:4px 0;width:80px;font-size:12px">Email</td>
+          <td style="font-weight:500;font-size:12px" id="acct-email-display">{{restaurant.owner_email}}</td>
+          <td style="text-align:right;padding:4px 0"><button onclick="document.getElementById('email-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;color:var(--ink);padding:0;display:flex;align-items:center;gap:3px">Update <span style="color:var(--ember)">&rarr;</span></button></td>
+        </tr>
+        <tr><td style="color:var(--ink3);padding:4px 0;font-size:12px">Username</td><td style="font-weight:500;font-size:12px" colspan="2">{{current_user.username}}</td></tr>
       </table>
       {% if mod_reviews %}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
@@ -2048,6 +2052,21 @@ function clientUpload(dataType, input) {
         </div>
       </div>
     </div>
+
+  <!-- Email update modal -->
+  <div id="email-modal" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center">
+    <div style="background:white;border-radius:14px;padding:28px;max-width:380px;width:90%;position:relative">
+      <button onclick="closeEmailModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
+      <div style="font-size:16px;font-weight:700;color:var(--ink);margin-bottom:4px">Update email</div>
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:16px">Enter your current password to confirm the change.</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <input class="form-input" type="email" id="email-new" placeholder="New email address" style="font-size:13px">
+        <input class="form-input" type="password" id="email-pw" placeholder="Current password" style="font-size:13px">
+        <button class="btn-primary" onclick="updateEmail()" style="font-size:13px;padding:9px 16px;width:100%">Update email</button>
+        <div id="email-status" style="font-size:12px;text-align:center;display:none"></div>
+      </div>
+    </div>
+  </div>
 
     <!-- Right: Billing -->
     <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px" id="billing-card">
@@ -3318,6 +3337,34 @@ function dismissWelcome(){
   var b=document.getElementById('welcome-banner');
   if(b) b.style.display='none';
   fetch('/api/dismiss-welcome', {method:'POST'});
+}
+function closeEmailModal(){
+  document.getElementById('email-modal').style.display='none';
+  document.getElementById('email-new').value='';
+  document.getElementById('email-pw').value='';
+  var st=document.getElementById('email-status');
+  st.style.display='none';st.textContent='';
+}
+function updateEmail(){
+  var newEmail=document.getElementById('email-new').value.trim();
+  var pw=document.getElementById('email-pw').value;
+  var st=document.getElementById('email-status');
+  if(!newEmail){st.style.display='block';st.style.color='var(--red)';st.textContent='Enter a new email address';return;}
+  if(newEmail.indexOf('@')<1||newEmail.indexOf('.')<0){st.style.display='block';st.style.color='var(--red)';st.textContent='Enter a valid email address';return;}
+  if(!pw){st.style.display='block';st.style.color='var(--red)';st.textContent='Enter your current password';return;}
+  st.style.display='block';st.style.color='var(--ink3)';st.textContent='Updating...';
+  fetch('/api/update-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({new_email:newEmail,current_password:pw})}).then(function(r){return r.json()}).then(function(d){
+    if(d.ok){
+      closeEmailModal();
+      var disp=document.getElementById('acct-email-display');
+      if(disp) disp.textContent=newEmail;
+      toast('Email updated successfully');
+    } else {
+      st.style.display='block';st.style.color='var(--red)';st.textContent=d.error||'Update failed';
+    }
+  }).catch(function(){
+    st.style.display='block';st.style.color='var(--red)';st.textContent='Network error — try again';
+  });
 }
 function closePwModal(){
   document.getElementById('pw-modal').style.display='none';
@@ -6059,6 +6106,35 @@ def change_password(current_user):
     if len(new_pw) < 8:
         return jsonify(ok=False, error="Password must be at least 8 characters")
     update_password(current_user["id"], new_pw)
+    return jsonify(ok=True)
+
+@app.route("/api/update-email", methods=["POST"])
+@login_required
+def update_email_route(current_user):
+    data = request.get_json()
+    new_email = (data.get("new_email") or "").strip().lower()
+    current_pw = data.get("current_password", "")
+    if not new_email:
+        return jsonify(ok=False, error="Email address is required")
+    import re as _re_email
+    if not _re_email.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", new_email):
+        return jsonify(ok=False, error="Enter a valid email address")
+    # Verify current password
+    user = verify_password(current_user["username"], current_pw)
+    if not user:
+        return jsonify(ok=False, error="Current password is incorrect")
+    # Check email not already taken by another user
+    conn = get_conn()
+    existing = conn.execute("SELECT id FROM users WHERE email=? AND id!=?", (new_email, current_user["id"])).fetchone()
+    if existing:
+        conn.close()
+        return jsonify(ok=False, error="That email is already in use")
+    # Update users.email
+    conn.execute("UPDATE users SET email=? WHERE id=?", (new_email, current_user["id"]))
+    # Update restaurant.owner_email so notifications/digest still work
+    conn.execute("UPDATE restaurants SET owner_email=? WHERE id=?", (new_email, current_user["restaurant_id"]))
+    conn.commit()
+    conn.close()
     return jsonify(ok=True)
 
 @app.route("/api/sessions", methods=["GET"])
