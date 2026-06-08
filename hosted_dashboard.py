@@ -1878,12 +1878,11 @@ function clientUpload(dataType, input) {
       <div style="text-align:right;flex-shrink:0" class="acct-hero-right">
         <div style="font-size:10px;color:#4a4540;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Restaurant</div>
         <div style="font-size:15px;font-weight:700;color:var(--paper);margin-bottom:12px">{{restaurant.name}}</div>
-        <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
-          {% if mod_reviews %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px">&#10003; Reviews</span>{% endif %}
-          {% if mod_labor %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px">&#10003; Labor</span>{% endif %}
-          {% if mod_inventory %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px">&#10003; Inventory</span>{% endif %}
-          {% if mod_marketing %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px">&#10003; Marketing</span>{% endif %}
-          {% if restaurant.google_place_id %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px">&#10003; Intel</span>{% endif %}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;justify-items:end">
+          {% if mod_reviews %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px;white-space:nowrap">&#10003; Reviews</span>{% else %}<span></span>{% endif %}
+          {% if mod_labor %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px;white-space:nowrap">&#10003; Labor</span>{% else %}<span></span>{% endif %}
+          {% if mod_inventory %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px;white-space:nowrap">&#10003; Inventory</span>{% else %}<span></span>{% endif %}
+          {% if mod_marketing %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px;white-space:nowrap">&#10003; Marketing</span>{% else %}<span></span>{% endif %}
         </div>
       </div>
     </div>
@@ -1959,22 +1958,28 @@ function clientUpload(dataType, input) {
         <div>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
             <div style="font-size:12px;font-weight:600;color:var(--ink)">Active sessions</div>
-            <button onclick="revokeOtherSessions(this)" id="revoke-sessions-btn" style="font-size:11px;color:white;background:#c84b2f;border:none;border-radius:20px;padding:3px 10px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:600;transition:background .2s">Sign out all other devices</button>
+            <button onclick="revokeOtherSessions(this)" id="revoke-sessions-btn" class="btn-primary" style="font-size:11px;padding:5px 12px;transition:background .2s">Sign out all other devices</button>
           </div>
           <div id="sessions-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
         </div>
       </div>
 
-      <!-- Change password -->
+      <!-- Change password link -->
       <div style="border-top:1px solid var(--paper3);padding-top:12px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px">Change password</div>
-        <div style="display:flex;flex-direction:column;gap:7px">
-          <input class="form-input" type="password" id="pw-current" placeholder="Current password" style="font-size:12px">
-          <input class="form-input" type="password" id="pw-new" placeholder="New password (min 8 chars)" style="font-size:12px">
-          <input class="form-input" type="password" id="pw-confirm" placeholder="Confirm new password" style="font-size:12px">
-          <div style="display:flex;align-items:center;gap:8px">
-            <button class="btn-primary" onclick="changePassword()" style="font-size:12px;padding:7px 16px">Update password</button>
-            <div id="pw-status" style="font-size:11px;display:none"></div>
+        <button onclick="document.getElementById('pw-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:var(--ink);padding:0;display:flex;align-items:center;gap:4px">Change password <span style="color:var(--ember)">&rarr;</span></button>
+      </div>
+
+      <!-- Change password modal -->
+      <div id="pw-modal" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center">
+        <div style="background:white;border-radius:14px;padding:28px;max-width:380px;width:90%;position:relative">
+          <button onclick="closePwModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
+          <div style="font-size:16px;font-weight:700;color:var(--ink);margin-bottom:16px">Change password</div>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <input class="form-input" type="password" id="pw-current" placeholder="Current password" style="font-size:13px">
+            <input class="form-input" type="password" id="pw-new" placeholder="New password (min 8 chars)" style="font-size:13px">
+            <input class="form-input" type="password" id="pw-confirm" placeholder="Confirm new password" style="font-size:13px">
+            <button class="btn-primary" onclick="changePassword()" style="font-size:13px;padding:9px 16px;width:100%">Update password</button>
+            <div id="pw-status" style="font-size:12px;text-align:center;display:none"></div>
           </div>
         </div>
       </div>
@@ -3250,6 +3255,14 @@ function dismissWelcome(){
   if(b) b.style.display='none';
   fetch('/api/dismiss-welcome', {method:'POST'});
 }
+function closePwModal(){
+  document.getElementById('pw-modal').style.display='none';
+  document.getElementById('pw-current').value='';
+  document.getElementById('pw-new').value='';
+  document.getElementById('pw-confirm').value='';
+  var st=document.getElementById('pw-status');
+  st.style.display='none';st.textContent='';
+}
 function changePassword(){
   var cur=document.getElementById('pw-current').value;
   var nw=document.getElementById('pw-new').value;
@@ -3257,7 +3270,15 @@ function changePassword(){
   var st=document.getElementById('pw-status');
   if(nw!==conf){st.style.display='block';st.style.color='var(--red)';st.textContent='Passwords do not match';return}
   if(nw.length<8){st.style.display='block';st.style.color='var(--red)';st.textContent='Password must be at least 8 characters';return}
-  fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(function(r){return r.json()}).then(function(d){st.style.display='block';if(d.ok){st.style.color='var(--green)';st.textContent='Password updated';document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-confirm').value='';}else{st.style.color='var(--red)';st.textContent=d.error||'Update failed'}})}
+  fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(function(r){return r.json()}).then(function(d){
+    if(d.ok){
+      closePwModal();
+      toast('Password updated successfully');
+    } else {
+      st.style.display='block';st.style.color='var(--red)';st.textContent=d.error||'Update failed';
+    }
+  })
+}
 
 var _loginNotifyOn={{'true' if restaurant.login_notify else 'false'}};
 function toggleLoginNotify(){
@@ -3265,6 +3286,7 @@ function toggleLoginNotify(){
   document.getElementById('login-notify-track').style.background=_loginNotifyOn?'#c84b2f':'#d1c9bd';
   document.getElementById('login-notify-thumb').style.left=_loginNotifyOn?'18px':'2px';
   document.getElementById('login-notify-label').textContent=_loginNotifyOn?'On':'Off';
+  toast(_loginNotifyOn?'Sign-in notifications enabled':'Sign-in notifications disabled');
   fetch('/api/toggle-login-notify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:_loginNotifyOn})}).catch(function(){});
 }
 
@@ -5984,17 +6006,39 @@ def list_sessions(current_user):
         ua = ua or ""
         if "iPhone" in ua: return "iPhone"
         if "iPad" in ua: return "iPad"
-        if "Android" in ua: return "Android"
-        if "Windows" in ua: return "Windows"
-        if "Macintosh" in ua or "Mac OS" in ua: return "Mac"
+        if "Android" in ua:
+            import re as _re_ua
+            m = _re_ua.search(r'Android[\s/]+([\d.]+)', ua)
+            return "Android" + (" " + m.group(1) if m else "")
+        if "Windows NT" in ua:
+            import re as _re_ua2
+            m = _re_ua2.search(r'Windows NT ([\d.]+)', ua)
+            nt = {"10.0":"10","6.3":"8.1","6.2":"8","6.1":"7"}.get(m.group(1) if m else "", "")
+            return "Windows" + (" " + nt if nt else "")
+        if "Macintosh" in ua or "Mac OS X" in ua:
+            import re as _re_ua3
+            m = _re_ua3.search(r'Mac OS X ([\d_]+)', ua)
+            ver = m.group(1).replace("_", ".") if m else ""
+            return "Mac" + (" " + ver if ver else "")
         if "Linux" in ua: return "Linux"
+        if "CrOS" in ua: return "Chromebook"
         return "Unknown device"
     def _parse_browser(ua):
         ua = ua or ""
-        if "Edg/" in ua: return "Edge"
-        if "Chrome/" in ua: return "Chrome"
-        if "Firefox/" in ua: return "Firefox"
-        if "Safari/" in ua: return "Safari"
+        import re as _re_b
+        if "Edg/" in ua:
+            m = _re_b.search(r'Edg/([\d.]+)', ua)
+            return "Edge" + (" " + m.group(1).split(".")[0] if m else "")
+        if "OPR/" in ua or "Opera/" in ua: return "Opera"
+        if "Chrome/" in ua:
+            m = _re_b.search(r'Chrome/([\d.]+)', ua)
+            return "Chrome" + (" " + m.group(1).split(".")[0] if m else "")
+        if "Firefox/" in ua:
+            m = _re_b.search(r'Firefox/([\d.]+)', ua)
+            return "Firefox" + (" " + m.group(1).split(".")[0] if m else "")
+        if "Safari/" in ua:
+            m = _re_b.search(r'Version/([\d.]+)', ua)
+            return "Safari" + (" " + m.group(1).split(".")[0] if m else "")
         return "Browser"
     for s in sessions:
         s["device"] = _parse_ua(s["user_agent"])
