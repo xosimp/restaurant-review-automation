@@ -314,9 +314,13 @@ def add_security_headers(response):
     )
     return response
 
-# Register admin blueprint
+# Register blueprints
 from admin_routes import admin_bp
+from webhook_routes import webhook_bp
+from social_routes import social_bp
 app.register_blueprint(admin_bp)
+app.register_blueprint(webhook_bp)
+app.register_blueprint(social_bp)
 _secret_key = os.getenv("SECRET_KEY", "")
 if not _secret_key:
     _secret_key = os.urandom(32).hex()
