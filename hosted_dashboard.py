@@ -1905,7 +1905,7 @@ function clientUpload(dataType, input) {
         </div>
         <div style="margin-bottom:6px">
           <div style="font-size:11px;color:var(--ink3)">Email</div>
-          <div style="font-size:12px;font-weight:500;color:var(--ink)">{{restaurant.owner_email or '—'}}</div>
+          <div style="font-size:12px;font-weight:500;color:var(--ink)" id="profile-email-display">{{restaurant.owner_email or '—'}}</div>
         </div>
         <div>
           <div style="font-size:11px;color:var(--ink3)">Phone</div>
@@ -3391,6 +3391,8 @@ function updateEmail(){
       closeEmailModal();
       var disp=document.getElementById('acct-email-display');
       if(disp) disp.textContent=newEmail;
+      var profDisp=document.getElementById('profile-email-display');
+      if(profDisp) profDisp.textContent=newEmail;
       toast('Email updated successfully');
     } else {
       st.style.display='block';st.style.color='var(--red)';st.textContent=d.error||'Update failed';
@@ -3439,11 +3441,14 @@ function loadSessions(){
   if(!el)return;
   fetch('/api/sessions').then(function(r){return r.json()}).then(function(d){
     if(!d.sessions||!d.sessions.length){el.textContent='No active sessions found.';return;}
+    var revokeBtn=document.getElementById('revoke-sessions-btn');
+    var otherCount=0;
+    for(var j=0;j<d.sessions.length;j++){if(!d.sessions[j].is_current)otherCount++;}
+    if(revokeBtn){revokeBtn.style.display=otherCount>0?'':'none';}
     var html='';
     for(var i=0;i<d.sessions.length;i++){
       var s=d.sessions[i];
       var badge=s.is_current?'<span style="font-size:10px;font-weight:700;color:#2d6a4f;background:#eaf4ee;padding:1px 6px;border-radius:8px;margin-left:6px">This device</span>':'';
-      var la=s.last_active?s.last_active.replace('T',' ').substring(0,16):'';
       var borderStyle=i>0?'border-top:1px solid var(--paper3)':'';
       html+='<div style="padding:5px 0;'+borderStyle+'">';
       var deviceLabel=s.browser?s.device+' — '+s.browser:s.device;
