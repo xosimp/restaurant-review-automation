@@ -1084,16 +1084,42 @@ def get_review_stats(restaurant_id):
             SUM(response_status='drafted')                                              AS drafted,
             SUM(urgency='high' AND response_status NOT IN ('posted','approved','skipped')) AS urgent,
             SUM(response_status='posted')                                               AS posted,
-            SUM(response_status IN ('posted','approved'))                               AS responded
+            SUM(response_status IN ('posted','approved'))                               AS responded,
+            SUM(response_status='skipped')                                              AS skipped,
+            SUM(review_date >= date('now','start of month'))                            AS this_month,
+            SUM(review_date >= date('now','-30 days'))                                  AS last_30d,
+            AVG(CASE WHEN review_date >= date('now','-30 days') THEN rating END)        AS avg_rating_30d
         FROM reviews WHERE processed=1 AND restaurant_id=?
     """, (restaurant_id,)).fetchone()
+
+    # Average response time in hours (approved_at - review_date)
+    rt_row = conn.execute("""
+        SELECT AVG(
+            (julianday(approved_at) - julianday(review_date)) * 24
+        ) AS avg_hrs
+        FROM reviews
+        WHERE restaurant_id=? AND response_status IN ('posted','approved')
+          AND approved_at IS NOT NULL AND review_date IS NOT NULL
+    """, (restaurant_id,)).fetchone()
+
     conn.close()
     total     = rows["total"]     or 0
     posted    = rows["posted"]    or 0
     responded = rows["responded"] or 0
     drafted   = rows["drafted"]   or 0
+    skipped   = rows["skipped"]   or 0
+    this_month = rows["this_month"] or 0
+    last_30d  = rows["last_30d"]  or 0
     # Response rate = approved+posted / total
     response_rate = round((responded / total * 100) if total > 0 else 0, 1)
+    avg_rating_30d = round(rows["avg_rating_30d"] or 0, 1)
+    # Avg response time — cap at reasonable max for display
+    avg_hrs_raw = rt_row["avg_hrs"] if rt_row and rt_row["avg_hrs"] else None
+    if avg_hrs_raw and avg_hrs_raw > 0:
+        avg_response_hours = round(avg_hrs_raw, 1)
+    else:
+        avg_response_hours = None
+
     return dict(
         total             = total,
         positive          = rows["positive"]  or 0,
@@ -1101,10 +1127,15 @@ def get_review_stats(restaurant_id):
         neutral           = rows["neutral"]   or 0,
         urgent            = rows["urgent"]    or 0,
         avg_rating        = round(rows["avg_rating"] or 0, 1),
+        avg_rating_30d    = avg_rating_30d,
         awaiting_approval = drafted,
         posted            = posted,
         responded         = responded,
+        skipped           = skipped,
+        this_month        = this_month,
+        last_30d          = last_30d,
         response_rate     = response_rate,
+        avg_response_hours= avg_response_hours,
     )
 
 def get_sentiment_trend(restaurant_id, weeks=8):

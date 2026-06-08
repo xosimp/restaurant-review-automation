@@ -316,6 +316,45 @@ function clientUpload(dataType, input) {
   </nav>
 </div>
 
+<!-- TOTAL SAVINGS WIDGET -->
+{% if savings_breakdown and savings_breakdown.total > 0 %}
+<div style="background:linear-gradient(135deg,#0d2b1a 0%,#0a1f13 100%);border-bottom:1px solid #1a3d24;padding:12px 28px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+  <div style="display:flex;align-items:center;gap:8px">
+    <span style="font-size:16px">💰</span>
+    <div>
+      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:1px">Total value delivered</div>
+      <div style="font-size:22px;font-weight:800;color:white;letter-spacing:-0.5px">${{savings_breakdown.total|format_num}}</div>
+    </div>
+  </div>
+  <div style="display:flex;gap:20px;flex-wrap:wrap">
+    {% if savings_breakdown.reviews > 0 %}
+    <div style="text-align:center">
+      <div style="font-size:14px;font-weight:700;color:white">${{savings_breakdown.reviews|format_num}}</div>
+      <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Reviews</div>
+    </div>
+    {% endif %}
+    {% if savings_breakdown.labor > 0 %}
+    <div style="text-align:center">
+      <div style="font-size:14px;font-weight:700;color:white">${{savings_breakdown.labor|format_num}}</div>
+      <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Labor</div>
+    </div>
+    {% endif %}
+    {% if savings_breakdown.inventory > 0 %}
+    <div style="text-align:center">
+      <div style="font-size:14px;font-weight:700;color:white">${{savings_breakdown.inventory|format_num}}</div>
+      <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Inventory/mo</div>
+    </div>
+    {% endif %}
+    {% if savings_breakdown.marketing > 0 %}
+    <div style="text-align:center">
+      <div style="font-size:14px;font-weight:700;color:white">${{savings_breakdown.marketing|format_num}}</div>
+      <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Marketing</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 <!-- REVIEWS -->
 <div class="panel {{'active' if mod_reviews}}" id="panel-reviews">
   <!-- New reviews notification banner -->
@@ -349,14 +388,46 @@ function clientUpload(dataType, input) {
     </div>
   </div>
   <div class="stat-row">
-    <div class="stat {{'ok' if rstats.avg_rating >= 4.5 else ('warn' if rstats.avg_rating >= 3.5 else 'hi')}}"><div class="stat-n">{{rstats.avg_rating}}</div><div class="stat-l">Avg rating</div></div>
+    <div class="stat {{'ok' if rstats.avg_rating >= 4.5 else ('warn' if rstats.avg_rating >= 3.5 else 'hi')}}">
+      <div class="stat-n">{{rstats.avg_rating}}</div>
+      <div class="stat-l">Avg rating{% if rstats.avg_rating_30d and rstats.avg_rating_30d != rstats.avg_rating %} <span style="font-size:9px;color:var(--ink3)">({{rstats.avg_rating_30d}} last 30d)</span>{% endif %}</div>
+    </div>
     <div class="stat {{'hi' if rstats.urgent > 0 else 'ok'}}" id="stat-urgent"><div class="stat-n" id="stat-urgent-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
     <div class="stat {{'ok' if rstats.awaiting_approval <= 2 else 'warn'}}" id="stat-pending"><div class="stat-n" id="stat-pending-n">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:11px;color:#2d6a4f;margin-left:4px">↓</span></div><div class="stat-l">To approve</div></div>
+    <div class="stat ok">
+      <div class="stat-n">{{rstats.this_month}}</div>
+      <div class="stat-l">This month</div>
+    </div>
+    <div class="stat {{'ok' if rstats.response_rate >= 40 else ('warn' if rstats.response_rate >= 15 else 'hi')}}">
+      <div class="stat-n">{{rstats.response_rate}}%</div>
+      <div class="stat-l">Response rate</div>
+    </div>
+    <div class="stat ok">
+      <div class="stat-n">{{rstats.responded}}</div>
+      <div class="stat-l">Total responded</div>
+    </div>
+    {% if rstats.avg_response_hours %}
+    <div class="stat ok">
+      <div class="stat-n" style="font-size:{% if rstats.avg_response_hours >= 100 %}14px{% else %}18px{% endif %}">
+        {% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}
+      </div>
+      <div class="stat-l">Avg response time</div>
+    </div>
+    {% endif %}
     <div class="stat {{'ok' if restaurant.reviews_live or restaurant.gmb_refresh_token else 'warn'}}">
       <div class="stat-n" style="font-size:14px;margin-top:4px">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
       <div class="stat-l">Review source</div>
     </div>
   </div>
+  {% if savings_breakdown and savings_breakdown.reviews > 0 %}
+  <div style="background:linear-gradient(to right,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
+    <div style="font-size:12px;color:#a3d9b8;line-height:1.5">
+      <strong style="color:#6fcf97">${{savings_breakdown.reviews|format_num}}</strong> saved in review management —
+      {{rstats.responded}} responses at ~$5 each vs. outsourcing to a reputation service
+    </div>
+    <div style="font-size:11px;color:#6fcf97;font-weight:700;white-space:nowrap;margin-left:12px">{{rstats.response_rate}}% rate</div>
+  </div>
+  {% endif %}
 
   <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
@@ -651,6 +722,34 @@ function clientUpload(dataType, input) {
     <div class="stat {{"hi" if labor.overstaffed_days|length > 0 else "ok"}}"><div class="stat-n">{{labor.overstaffed_days|length}}</div><div class="stat-l">Overstaffed days</div></div>
     <div class="stat {{"hi" if labor.overtime_risk|length > 0 else "ok"}}"><div class="stat-n">{{labor.overtime_risk|length}}</div><div class="stat-l">Overtime risk</div></div>
   </div>
+
+  <!-- Labor savings summary -->
+  {% if savings_breakdown and savings_breakdown.labor > 0 %}
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
+    <div style="background:linear-gradient(135deg,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:12px 16px;text-align:center">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6fcf97;margin-bottom:4px">Monthly savings potential</div>
+      <div style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_monthly|format_num}}</div>
+      <div style="font-size:10px;color:#6fcf97;margin-top:2px">if schedule optimized</div>
+    </div>
+    <div style="background:linear-gradient(135deg,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:12px 16px;text-align:center">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6fcf97;margin-bottom:4px">Annual savings potential</div>
+      <div style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_annual|format_num}}</div>
+      <div style="font-size:10px;color:#6fcf97;margin-top:2px">extrapolated yearly</div>
+    </div>
+    {% if savings_breakdown.labor_overtime > 0 %}
+    <div style="background:linear-gradient(135deg,#2b0d0d,#3d1414);border:1px solid #5c2020;border-radius:8px;padding:12px 16px;text-align:center">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#ff9b8a;margin-bottom:4px">Overtime premium this period</div>
+      <div style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_overtime|format_num}}</div>
+      <div style="font-size:10px;color:#ff9b8a;margin-top:2px">0.5× rate on hours over 40</div>
+    </div>
+    {% endif %}
+    <div style="background:linear-gradient(135deg,#1a1410,#201a12);border:1px solid #3d2e1e;border-radius:8px;padding:12px 16px;text-align:center">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ember2);margin-bottom:4px">Overstaffed days</div>
+      <div style="font-size:22px;font-weight:800;color:white">{{labor.overstaffed_days|length}}</div>
+      <div style="font-size:10px;color:var(--ember2);margin-top:2px">vs {{labor.understaffed_days|length}} understaffed</div>
+    </div>
+  </div>
+  {% endif %}
 
   <!-- Labor % vs industry benchmark bar -->
   {% set lp = labor.overall_labor_pct %}
@@ -1028,6 +1127,13 @@ function clientUpload(dataType, input) {
         <div style="font-size:18px;font-weight:800;color:{{'var(--ember)' if mkt_stats.this_month > 0 else 'var(--ink)'}};letter-spacing:-0.5px;line-height:1" id="mkt-stat-month">{{mkt_stats.this_month if mkt_stats.this_month > 0 else '—'}}</div>
         <div style="font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin-top:3px;white-space:nowrap">This month</div>
       </div>
+      {% if mkt_stats.agency_value > 0 %}
+      <div style="width:1px;height:28px;background:var(--paper3)"></div>
+      <div style="text-align:center;padding:0 14px">
+        <div style="font-size:16px;font-weight:800;color:#2d6a4f;letter-spacing:-0.5px;line-height:1">${{mkt_stats.agency_value|format_num}}</div>
+        <div style="font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin-top:3px;white-space:nowrap">Agency equiv. saved</div>
+      </div>
+      {% endif %}
     </div>
     <!-- Action button -->
     {% if restaurant.ig_token %}

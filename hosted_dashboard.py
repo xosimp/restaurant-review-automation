@@ -614,10 +614,64 @@ def index(current_user):
         _mkt_gen   = _conn_mkt.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=?", (rid,)).fetchone()[0] or 0
         _mkt_pub   = _conn_mkt.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND post_platform IS NOT NULL", (rid,)).fetchone()[0] or 0
         _mkt_month = _conn_mkt.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')", (rid,)).fetchone()[0] or 0
+        # Months active = months since restaurant created_at (floor, min 1)
+        _created_row = _conn_mkt.execute("SELECT created_at FROM restaurants WHERE id=?", (rid,)).fetchone()
         _conn_mkt.close()
-        mkt_stats = {"generated": _mkt_gen, "published": _mkt_pub, "this_month": _mkt_month}
+        if _created_row and _created_row[0]:
+            from datetime import datetime as _dt_mkt
+            try:
+                _created = _dt_mkt.fromisoformat(_created_row[0][:10])
+                _now_mkt = _dt_mkt.now()
+                _months_active = max(1, (_now_mkt.year - _created.year) * 12 + (_now_mkt.month - _created.month))
+            except Exception:
+                _months_active = 1
+        else:
+            _months_active = 1
+        # Agency equivalent: $1,500/mo social media manager baseline
+        _mkt_agency_value = _months_active * 1500 if int(restaurant.module_marketing or 0) else 0
+        mkt_stats = {
+            "generated":     _mkt_gen,
+            "published":     _mkt_pub,
+            "this_month":    _mkt_month,
+            "months_active": _months_active,
+            "agency_value":  _mkt_agency_value,
+            "avg_per_month": round(_mkt_pub / _months_active, 1) if _months_active else 0,
+        }
     except Exception:
-        mkt_stats = {"generated": 0, "published": 0, "this_month": 0}
+        mkt_stats = {"generated": 0, "published": 0, "this_month": 0,
+                     "months_active": 1, "agency_value": 0, "avg_per_month": 0}
+
+    # ── Total savings breakdown ────────────────────────────────────────────────
+    # Reviews value: each managed response saves ~$5 vs outsourcing to a rep service
+    _reviews_value = int(rstats.get("responded", 0)) * 5
+    # Labor value: weekly potential savings × 4.33 (monthly) + overtime premium recovered
+    _labor_monthly = int(round(labor.get("potential_savings", 0) * 4.33))
+    _labor_value   = _labor_monthly + labor_overtime_cost
+    # Inventory value: monthly recoverable waste
+    _inv_value = int(inv.get("recoverable_monthly", 0))
+    # Marketing value: agency equivalent already computed
+    _mkt_value = mkt_stats["agency_value"]
+    # Only count modules that are active
+    _mod_r = int(restaurant.module_reviews or 0)
+    _mod_l = int(restaurant.module_labor or 0)
+    _mod_i = int(restaurant.module_inventory or 0)
+    _mod_m = int(restaurant.module_marketing or 0)
+    savings_breakdown = {
+        "reviews":   _reviews_value if _mod_r else 0,
+        "labor":     _labor_value   if _mod_l else 0,
+        "inventory": _inv_value     if _mod_i else 0,
+        "marketing": _mkt_value     if _mod_m else 0,
+        "total":     ((_reviews_value if _mod_r else 0) +
+                      (_labor_value   if _mod_l else 0) +
+                      (_inv_value     if _mod_i else 0) +
+                      (_mkt_value     if _mod_m else 0)),
+        # Monthly recurring savings (labor + inventory are monthly; reviews/marketing already cumulative)
+        "labor_monthly":    _labor_monthly if _mod_l else 0,
+        "inv_monthly":      _inv_value     if _mod_i else 0,
+        "labor_annual":     int(_labor_monthly * 12) if _mod_l else 0,
+        "inv_annual":       int(_inv_value * 12)     if _mod_i else 0,
+        "labor_overtime":   labor_overtime_cost       if _mod_l else 0,
+    }
 
     import secrets as _sec
     csrf_token = request.cookies.get('csrf_token') or _sec.token_hex(16)
@@ -636,6 +690,7 @@ def index(current_user):
         labor_target=float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0,
         labor_overtime_cost=labor_overtime_cost,
         mkt_stats=mkt_stats,
+        savings_breakdown=savings_breakdown,
         competitor_data=competitor_data,
         competitor_updated_at=restaurant.competitor_updated_at if restaurant else None)
 
