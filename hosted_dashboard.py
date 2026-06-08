@@ -1888,7 +1888,72 @@ function clientUpload(dataType, input) {
     </div>
   </div>
 
-  <!-- SECTION 2: Account settings + Billing -->
+  <!-- SECTION 2: Restaurant profile (read-only) -->
+  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Your Restaurant Profile</div>
+      <a href="mailto:will@cavnar.ai?subject=Profile update for {{restaurant.name}}" style="font-size:11px;color:var(--ember);text-decoration:none;font-weight:600">Request an update &rarr;</a>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0" class="profile-grid">
+
+      <!-- Col 1: Who -->
+      <div style="padding-right:20px;border-right:1px solid var(--paper3)">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">Contact</div>
+        <div style="margin-bottom:6px">
+          <div style="font-size:11px;color:var(--ink3)">Owner</div>
+          <div style="font-size:12px;font-weight:500;color:var(--ink)">{{restaurant.owner_name or '—'}}</div>
+        </div>
+        <div style="margin-bottom:6px">
+          <div style="font-size:11px;color:var(--ink3)">Email</div>
+          <div style="font-size:12px;font-weight:500;color:var(--ink)">{{restaurant.owner_email or '—'}}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--ink3)">Phone</div>
+          <div style="font-size:12px;font-weight:500;color:var(--ink)">{{restaurant.owner_phone or '—'}}</div>
+        </div>
+      </div>
+
+      <!-- Col 2: What -->
+      <div style="padding:0 20px;border-right:1px solid var(--paper3)">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">About</div>
+        <div style="margin-bottom:6px">
+          <div style="font-size:11px;color:var(--ink3)">Location</div>
+          <div style="font-size:12px;font-weight:500;color:var(--ink)">{{restaurant.neighborhood or '—'}}</div>
+        </div>
+        <div style="margin-bottom:6px">
+          <div style="font-size:11px;color:var(--ink3)">Atmosphere</div>
+          <div style="font-size:12px;font-weight:500;color:var(--ink)">{{restaurant.vibe or '—'}}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--ink3)">Known for</div>
+          <div style="font-size:12px;font-weight:500;color:var(--ink)">{{restaurant.known_for or '—'}}</div>
+        </div>
+      </div>
+
+      <!-- Col 3: How the AI writes -->
+      <div style="padding-left:20px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">How the AI writes for you</div>
+        <div style="margin-bottom:6px">
+          <div style="font-size:11px;color:var(--ink3)">Brand voice</div>
+          <div style="font-size:12px;font-weight:500;color:var(--ink);line-height:1.5">{{restaurant.voice_notes or '—'}}</div>
+        </div>
+        {% if restaurant.never_say %}
+        <div style="margin-bottom:6px">
+          <div style="font-size:11px;color:var(--ink3)">Never says</div>
+          <div style="font-size:12px;font-weight:500;color:var(--ink)">{{restaurant.never_say}}</div>
+        </div>
+        {% endif %}
+        {% if restaurant.menu_notes %}
+        <div>
+          <div style="font-size:11px;color:var(--ink3)">Menu highlights</div>
+          <div style="font-size:12px;font-weight:500;color:var(--ink);line-height:1.5">{{restaurant.menu_notes}}</div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION 3: Account settings + Billing -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px" class="account-two-col">
 
     <!-- Left: all settings in one card -->
