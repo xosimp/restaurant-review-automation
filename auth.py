@@ -252,7 +252,7 @@ def login_required(f):
     def decorated(*args, **kwargs):
         user = get_current_user()
         if not user:
-            return redirect(url_for("login", next=request.path))
+            return redirect(url_for("auth.login", next=request.path))
         return f(*args, **kwargs, current_user=user)
     return decorated
 
@@ -261,6 +261,6 @@ def admin_required(f):
     def decorated(*args, **kwargs):
         user = get_current_user()
         if not user or not user["is_admin"]:
-            return redirect(url_for("login"))
+            return redirect(url_for("auth.login"))
         return f(*args, **kwargs, current_user=user)
     return decorated
