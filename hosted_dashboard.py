@@ -1963,7 +1963,7 @@ function clientUpload(dataType, input) {
           <div id="sessions-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
         </div>
         <!-- Change password link — inside security section -->
-        <div style="border-top:1px solid var(--paper3);padding-top:10px;margin-top:10px">
+        <div style="padding-top:10px;margin-top:2px">
           <button onclick="document.getElementById('pw-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:var(--ink);padding:0;display:flex;align-items:center;gap:4px">Change password <span style="color:var(--ember)">&rarr;</span></button>
         </div>
       </div>
@@ -6057,8 +6057,16 @@ def list_sessions(current_user):
                 hour, dt_ct.minute, ampm)
         except Exception:
             return ts[:16]
+    live_ua = request.headers.get("User-Agent", "")
+    live_ip = _get_client_ip()
     for s in sessions:
         ua = s.pop("user_agent", "") or ""
+        # For the current session, always use the live request UA/IP
+        # (handles sessions created before UA/IP tracking was added)
+        if s.get("is_current"):
+            ua = live_ua or ua
+            if not s.get("ip_address") or s["ip_address"] in ("", "unknown"):
+                s["ip_address"] = live_ip
         device = _parse_ua(ua)
         browser = _parse_browser(ua)
         if device and browser:
@@ -6071,8 +6079,7 @@ def list_sessions(current_user):
             s["device"] = "Unknown device"
             s["browser"] = browser
         else:
-            # No UA stored — mark as current device if applicable
-            s["device"] = "This device" if s.get("is_current") else "Unknown device"
+            s["device"] = "Unknown device"
             s["browser"] = ""
         s["last_active"] = _fmt_ct(s.get("last_active", ""))
     return jsonify(sessions=sessions)
