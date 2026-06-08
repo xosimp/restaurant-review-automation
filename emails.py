@@ -38,6 +38,60 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
     except Exception:
         return False
 
+def send_login_notification(to_email: str, restaurant_name: str,
+                            ip: str = None, user_agent: str = None):
+    """Send sign-in notification email."""
+    if not RESEND_API_KEY:
+        return False
+    import requests
+    from datetime import datetime
+    try:
+        from zoneinfo import ZoneInfo
+        now_str = datetime.now(ZoneInfo("America/Chicago")).strftime("%b %d, %Y at %I:%M %p CT")
+    except Exception:
+        now_str = datetime.utcnow().strftime("%b %d, %Y at %H:%M UTC")
+    # Parse UA into readable string
+    ua = user_agent or ""
+    if "iPhone" in ua: device = "iPhone"
+    elif "iPad" in ua: device = "iPad"
+    elif "Android" in ua: device = "Android"
+    elif "Windows" in ua: device = "Windows PC"
+    elif "Macintosh" in ua or "Mac OS" in ua: device = "Mac"
+    else: device = "Unknown device"
+    if "Edg/" in ua: browser = "Edge"
+    elif "Chrome/" in ua: browser = "Chrome"
+    elif "Firefox/" in ua: browser = "Firefox"
+    elif "Safari/" in ua: browser = "Safari"
+    else: browser = "Browser"
+    html = f"""
+    <div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
+      <div style="text-align:center;margin-bottom:24px">
+        <span style="font-family:Georgia,serif;font-size:22px;color:#0e0c0a">Cavnar</span>
+        <span style="font-family:Georgia,serif;font-size:22px;color:#c84b2f">AI</span>
+      </div>
+      <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
+        <p style="color:#3a3530;font-size:15px;margin:0 0 16px">New sign-in to <strong>{restaurant_name}</strong></p>
+        <table style="width:100%;font-size:14px;color:#3a3530;border-collapse:collapse">
+          <tr><td style="padding:6px 0;color:#7a736a;width:90px">Time</td><td style="padding:6px 0"><strong>{now_str}</strong></td></tr>
+          <tr><td style="padding:6px 0;color:#7a736a">Device</td><td style="padding:6px 0"><strong>{device} &mdash; {browser}</strong></td></tr>
+          <tr><td style="padding:6px 0;color:#7a736a">IP address</td><td style="padding:6px 0"><strong>{ip or 'Unknown'}</strong></td></tr>
+        </table>
+        <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed. If you don&rsquo;t recognize this sign-in, <a href="mailto:will@cavnar.ai" style="color:#c84b2f">contact Will immediately</a> and change your password.</p>
+      </div>
+      <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
+    </div>
+    """
+    try:
+        resp = requests.post("https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json={"from": f"Cavnar AI <{FROM_EMAIL}>", "to": [to_email],
+                  "subject": f"New sign-in to your Cavnar AI dashboard", "html": html},
+            timeout=10)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
 def send_payment_email(to_email, restaurant_name, tier=None,
                        module_count: int = None):
     """Send payment email with a dynamically generated Stripe checkout link."""

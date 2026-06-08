@@ -33,20 +33,27 @@ CREATE TABLE IF NOT EXISTS sessions (
     user_id         INTEGER NOT NULL REFERENCES users(id),
     created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     expires_at      TEXT    NOT NULL,
-    last_active     TEXT    NOT NULL DEFAULT (datetime('now'))
+    last_active     TEXT    NOT NULL DEFAULT (datetime('now')),
+    ip_address      TEXT,
+    user_agent      TEXT
 );
 """
 
 def init_auth(db_path: str = DB_PATH):
-    # Add last_active column if missing (migration)
-    try:
-        import sqlite3 as _sql
-        conn_m = _sql.connect(db_path)
-        conn_m.execute("ALTER TABLE sessions ADD COLUMN last_active TEXT NOT NULL DEFAULT (datetime('now'))")
-        conn_m.commit()
-        conn_m.close()
-    except Exception:
-        pass  # Column already exists
+    # Migrations
+    for col_sql in [
+        "ALTER TABLE sessions ADD COLUMN last_active TEXT NOT NULL DEFAULT (datetime('now'))",
+        "ALTER TABLE sessions ADD COLUMN ip_address TEXT",
+        "ALTER TABLE sessions ADD COLUMN user_agent TEXT",
+    ]:
+        try:
+            import sqlite3 as _sql
+            conn_m = _sql.connect(db_path)
+            conn_m.execute(col_sql)
+            conn_m.commit()
+            conn_m.close()
+        except Exception:
+            pass  # Column already exists
     conn = sqlite3.connect(db_path)
     conn.executescript(AUTH_SCHEMA)
     conn.commit()
@@ -120,18 +127,55 @@ def list_users(db_path: str = DB_PATH) -> list[dict]:
 # ── Session management ────────────────────────────────────────────────────────
 
 def create_session(user_id: int, days: int = 30,
+                   ip_address: str = None, user_agent: str = None,
                    db_path: str = DB_PATH) -> str:
     token = secrets.token_urlsafe(32)
     from datetime import timedelta
     expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
     conn = get_conn(db_path)
-    # Clean old sessions for this user
-    conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
-    conn.execute("INSERT INTO sessions (token, user_id, expires_at) VALUES (?,?,?)",
-                 (token, user_id, expires))
+    # Prune expired sessions for this user (keep active ones for multi-device support)
+    conn.execute("DELETE FROM sessions WHERE user_id=? AND expires_at <= datetime('now')", (user_id,))
+    conn.execute(
+        "INSERT INTO sessions (token, user_id, expires_at, ip_address, user_agent) VALUES (?,?,?,?,?)",
+        (token, user_id, expires, ip_address or "", user_agent or "")
+    )
     conn.commit()
     conn.close()
     return token
+
+
+def get_sessions_for_user(user_id: int, current_token: str = None,
+                          db_path: str = DB_PATH) -> list:
+    """Return all active sessions for a user, marking which is current."""
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT token, created_at, last_active, ip_address, user_agent
+        FROM sessions
+        WHERE user_id=? AND expires_at > datetime('now')
+        ORDER BY last_active DESC
+    """, (user_id,)).fetchall()
+    conn.close()
+    result = []
+    for row in rows:
+        result.append({
+            "token_hint": row["token"][-6:],
+            "is_current": row["token"] == current_token,
+            "created_at": row["created_at"],
+            "last_active": row["last_active"],
+            "ip_address": row["ip_address"] or "Unknown",
+            "user_agent": row["user_agent"] or "",
+        })
+    return result
+
+
+def revoke_other_sessions(user_id: int, current_token: str,
+                          db_path: str = DB_PATH):
+    """Delete all sessions for a user except the current one."""
+    conn = get_conn(db_path)
+    conn.execute("DELETE FROM sessions WHERE user_id=? AND token!=?",
+                 (user_id, current_token))
+    conn.commit()
+    conn.close()
 
 INACTIVITY_HOURS = 8  # Log out after 8 hours of inactivity
 

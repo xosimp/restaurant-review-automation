@@ -17,7 +17,8 @@ from models import (init_db, get_conn, approve_response,
                     get_platform_breakdown, get_sentiment_trend)
 from auth import (init_auth, verify_password, create_session,
                   get_session_user, delete_session, create_user,
-                  list_users, update_password)
+                  list_users, update_password,
+                  get_sessions_for_user, revoke_other_sessions)
 from dotenv import load_dotenv
 import pathlib
 load_dotenv(pathlib.Path(__file__).parent / ".env")
@@ -1925,7 +1926,8 @@ function clientUpload(dataType, input) {
       <!-- Security -->
       <div style="border-top:1px solid var(--paper3);padding-top:12px;margin-bottom:12px">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Security</div>
-        <div style="display:flex;align-items:center;justify-content:space-between">
+        <!-- 2FA -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
           <div>
             <div style="font-size:12px;font-weight:600;color:var(--ink)">Two-factor authentication</div>
             <div style="font-size:11px;color:var(--ink3)">{% if restaurant.two_fa_enabled %}Email code on new device sign-ins{% else %}Adds email code on new sign-ins{% endif %}</div>
@@ -1938,6 +1940,29 @@ function clientUpload(dataType, input) {
           {% else %}
           <button onclick="document.getElementById('twofa-modal').style.display='flex'" class="btn-primary" style="font-size:11px;padding:5px 12px">Enable &rarr;</button>
           {% endif %}
+        </div>
+        <!-- Sign-in notifications -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Sign-in notifications</div>
+            <div style="font-size:11px;color:var(--ink3)">Email me whenever someone signs in</div>
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <div style="position:relative;width:36px;height:20px" onclick="toggleLoginNotify(this)">
+              <input type="checkbox" id="login-notify-check" style="opacity:0;width:0;height:0;position:absolute" {{"checked" if restaurant.login_notify else ""}}>
+              <div id="login-notify-track" style="position:absolute;inset:0;border-radius:10px;background:{{'#c84b2f' if restaurant.login_notify else '#d1c9bd'}};transition:background .2s"></div>
+              <div id="login-notify-thumb" style="position:absolute;top:2px;left:{{'18px' if restaurant.login_notify else '2px'}};width:16px;height:16px;border-radius:50%;background:white;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:left .2s"></div>
+            </div>
+            <span style="font-size:11px;color:var(--ink3)" id="login-notify-label">{{"On" if restaurant.login_notify else "Off"}}</span>
+          </label>
+        </div>
+        <!-- Active sessions -->
+        <div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Active sessions</div>
+            <button onclick="revokeOtherSessions(this)" style="font-size:11px;color:var(--ember);background:none;border:none;cursor:pointer;padding:0;font-family:'DM Sans',sans-serif">Sign out all other devices</button>
+          </div>
+          <div id="sessions-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
         </div>
       </div>
 
@@ -2286,7 +2311,7 @@ function switchTab(n,btn){
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'&&!invLoaded)loadInvInsight();
   if(n==='labor'){renderBars();loadLaborTrend();}
-  if(n==='account')loadBillingInfo();
+  if(n==='account'){loadBillingInfo();loadSessions();}
   if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
@@ -3233,7 +3258,55 @@ function changePassword(){
   var st=document.getElementById('pw-status');
   if(nw!==conf){st.style.display='block';st.style.color='var(--red)';st.textContent='Passwords do not match';return}
   if(nw.length<8){st.style.display='block';st.style.color='var(--red)';st.textContent='Password must be at least 8 characters';return}
-  fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(r=>r.json()).then(d=>{st.style.display='block';if(d.ok){st.style.color='var(--green)';st.textContent='Password updated';document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-confirm').value='';}else{st.style.color='var(--red)';st.textContent=d.error||'Update failed'}})}
+  fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(function(r){return r.json()}).then(function(d){st.style.display='block';if(d.ok){st.style.color='var(--green)';st.textContent='Password updated';document.getElementById('pw-current').value='';document.getElementById('pw-new').value='';document.getElementById('pw-confirm').value='';}else{st.style.color='var(--red)';st.textContent=d.error||'Update failed'}})}
+
+function toggleLoginNotify(wrapper){
+  var chk=document.getElementById('login-notify-check');
+  var track=document.getElementById('login-notify-track');
+  var thumb=document.getElementById('login-notify-thumb');
+  var lbl=document.getElementById('login-notify-label');
+  var nowOn=!chk.checked;
+  chk.checked=nowOn;
+  track.style.background=nowOn?'#c84b2f':'#d1c9bd';
+  thumb.style.left=nowOn?'18px':'2px';
+  lbl.textContent=nowOn?'On':'Off';
+  fetch('/api/toggle-login-notify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:nowOn})}).catch(function(){});
+}
+
+function loadSessions(){
+  var el=document.getElementById('sessions-list');
+  if(!el)return;
+  fetch('/api/sessions').then(function(r){return r.json()}).then(function(d){
+    if(!d.sessions||!d.sessions.length){el.textContent='No active sessions found.';return;}
+    var html='';
+    for(var i=0;i<d.sessions.length;i++){
+      var s=d.sessions[i];
+      var badge=s.is_current?'<span style="font-size:10px;font-weight:700;color:#2d6a4f;background:#eaf4ee;padding:1px 6px;border-radius:8px;margin-left:6px">This device</span>':'';
+      var la=s.last_active?s.last_active.replace('T',' ').substring(0,16):'';
+      html+='<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--paper3)">';
+      html+='<div><span style="font-weight:500;color:var(--ink)">'+s.device+' &mdash; '+s.browser+'</span>'+badge+'<br>';
+      html+='<span style="color:var(--ink3)">'+s.ip_address+'</span>';
+      if(la){html+='<span style="color:var(--paper3);margin:0 4px">&middot;</span><span style="color:var(--ink3)">'+la+' CT</span>';}
+      html+='</div></div>';
+    }
+    el.innerHTML=html;
+  }).catch(function(){el.textContent='Could not load sessions.';});
+}
+
+function revokeOtherSessions(btn){
+  btn.textContent='Signing out...';
+  btn.disabled=true;
+  fetch('/api/sessions/revoke-others',{method:'POST'}).then(function(r){return r.json()}).then(function(d){
+    if(d.ok){btn.textContent='Done ✔';loadSessions();}
+    else{btn.textContent='Sign out all other devices';btn.disabled=false;}
+  }).catch(function(){btn.textContent='Sign out all other devices';btn.disabled=false;});
+}
+
+// Load sessions when account tab is active
+(function(){
+  var panel=document.getElementById('panel-account');
+  if(panel&&panel.classList.contains('active')){loadSessions();}
+})();
 
 </script>
 </body>
@@ -5236,7 +5309,17 @@ def login():
             resp3.set_cookie("csrf_token", csrf3, httponly=True, samesite="Lax")
             return resp3
 
-        token = create_session(user["id"])
+        _ua = request.headers.get("User-Agent", "")
+        token = create_session(user["id"], ip_address=ip, user_agent=_ua)
+        # Send login notification email if enabled
+        try:
+            from models import get_restaurant as _gr_ln
+            _rest_ln = _gr_ln(user.get("restaurant_id")) if user.get("restaurant_id") else None
+            if _rest_ln and getattr(_rest_ln, "login_notify", 0) and _rest_ln.owner_email:
+                from emails import send_login_notification
+                send_login_notification(_rest_ln.owner_email, _rest_ln.name or "", ip, _ua)
+        except Exception as _ln_e:
+            print(f"[LoginNotify] {_ln_e}")
         resp = make_response(redirect(next_url))
         _on_railway = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
         resp.set_cookie("session_token", token, max_age=30*24*3600,
@@ -5302,7 +5385,17 @@ def verify_2fa():
         update_restaurant(uid, {"two_fa_code": "", "two_fa_expires": ""})
         _fl3.session.pop("pending_uid", None)
         _fl3.session.pop("pending_token", None)
-        token = create_session(uid)
+        _ip_2fa = _get_client_ip()
+        _ua_2fa = request.headers.get("User-Agent", "")
+        token = create_session(uid, ip_address=_ip_2fa, user_agent=_ua_2fa)
+        # Login notification
+        try:
+            _rest_ln2 = get_restaurant(uid)
+            if _rest_ln2 and getattr(_rest_ln2, "login_notify", 0) and _rest_ln2.owner_email:
+                from emails import send_login_notification
+                send_login_notification(_rest_ln2.owner_email, _rest_ln2.name or "", _ip_2fa, _ua_2fa)
+        except Exception as _ln2_e:
+            print(f"[LoginNotify2FA] {_ln2_e}")
         _on_railway = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
         resp_ok = make_response(redirect(next_url or "/"))
         resp_ok.set_cookie("session_token", token, max_age=30*24*3600,
@@ -5873,6 +5966,53 @@ def change_password(current_user):
         return jsonify(ok=False, error="Password must be at least 8 characters")
     update_password(current_user["id"], new_pw)
     return jsonify(ok=True)
+
+@app.route("/api/sessions", methods=["GET"])
+@login_required
+def list_sessions(current_user):
+    token = request.cookies.get("session_token", "")
+    sessions = get_sessions_for_user(current_user["id"], current_token=token)
+    # Parse UA into a readable label
+    def _parse_ua(ua):
+        ua = ua or ""
+        if "iPhone" in ua: return "iPhone"
+        if "iPad" in ua: return "iPad"
+        if "Android" in ua: return "Android"
+        if "Windows" in ua: return "Windows"
+        if "Macintosh" in ua or "Mac OS" in ua: return "Mac"
+        if "Linux" in ua: return "Linux"
+        return "Unknown device"
+    def _parse_browser(ua):
+        ua = ua or ""
+        if "Edg/" in ua: return "Edge"
+        if "Chrome/" in ua: return "Chrome"
+        if "Firefox/" in ua: return "Firefox"
+        if "Safari/" in ua: return "Safari"
+        return "Browser"
+    for s in sessions:
+        s["device"] = _parse_ua(s["user_agent"])
+        s["browser"] = _parse_browser(s["user_agent"])
+        s.pop("user_agent", None)
+    return jsonify(sessions=sessions)
+
+
+@app.route("/api/sessions/revoke-others", methods=["POST"])
+@login_required
+def revoke_other_sessions_route(current_user):
+    token = request.cookies.get("session_token", "")
+    revoke_other_sessions(current_user["id"], current_token=token)
+    return jsonify(ok=True)
+
+
+@app.route("/api/toggle-login-notify", methods=["POST"])
+@login_required
+def toggle_login_notify(current_user):
+    from models import update_restaurant
+    data = request.get_json()
+    enabled = 1 if data.get("enabled") else 0
+    update_restaurant(current_user["restaurant_id"], {"login_notify": enabled})
+    return jsonify(ok=True)
+
 
 # ── Admin routes ──────────────────────────────────────────────────────────────
 
