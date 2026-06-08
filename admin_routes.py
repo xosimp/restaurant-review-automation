@@ -3,7 +3,7 @@ admin_routes.py — Cavnar AI admin, infrastructure and API routes
 Registered as a Flask Blueprint in hosted_dashboard.py
 """
 from flask import (Blueprint, request, jsonify, redirect, url_for,
-                   render_template_string, make_response, send_file, Response, session)
+                   render_template, make_response, send_file, Response, session)
 import os, json, io, csv as _csv_mod
 from datetime import datetime
 from functools import wraps
@@ -30,20 +30,6 @@ def sanitize(value, max_len=1000):
     value = re.sub(r'(?i)javascript\s*:', '', value)
     # Truncate
     return value[:max_len].strip() or None
-
-# HTML templates - imported lazily to avoid circular imports
-def _get_templates():
-    import hosted_dashboard as _hd
-    return _hd.ADMIN_HTML, _hd.CLIENT_SETTINGS_HTML, _hd.CLIENT_DATA_HTML
-
-def _get_admin_html():
-    return _get_templates()[0]
-
-def _get_settings_html():
-    return _get_templates()[1]
-
-def _get_data_html():
-    return _get_templates()[2]
 
 # Pull config from environment
 RESEND_API_KEY        = os.getenv("RESEND_API_KEY", "")
@@ -185,7 +171,7 @@ def admin(current_user):
         print(f"Activity feed error: {e}")
         activity_feed = []
 
-    return render_template_string(_get_admin_html(),
+    return render_template('admin.html',
         current_user=current_user, users=enriched,
         location_groups=location_groups,
         mrr=mrr,
@@ -330,7 +316,7 @@ def client_data_page(restaurant_id, current_user):
         return "Restaurant not found", 404
     data        = get_client_data(restaurant_id) or {}
     staff_notes = get_staff_notes(restaurant_id)
-    return render_template_string(_get_data_html(),
+    return render_template('client_data.html',
         current_user=current_user,
         restaurant=restaurant,
         data=data,
@@ -394,7 +380,7 @@ def client_settings_page(restaurant_id, current_user):
     client_data = get_client_data(restaurant_id) or {}
     from models import get_staff_notes
     staff_notes = get_staff_notes(restaurant_id)
-    return render_template_string(_get_settings_html(),
+    return render_template('client_settings.html',
         current_user=current_user,
         restaurant=restaurant,
         client_data=client_data,

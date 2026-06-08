@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reset Password — Cavnar AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:#f5f3f0;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{background:white;border-radius:12px;padding:40px;width:100%;max-width:380px;border:1px solid #e5e0db}
+.logo{font-size:20px;font-weight:600;margin-bottom:28px;color:#0e0c0a}
+.logo em{color:#c84b2f;font-style:italic}
+h2{font-size:16px;font-weight:600;margin-bottom:8px;color:#0e0c0a}
+p{font-size:13px;color:#7a736a;line-height:1.6;margin-bottom:20px}
+label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:#4a4540;display:block;margin-bottom:6px}
+input{width:100%;padding:10px 12px;border:1px solid #e5e0db;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;outline:none;margin-bottom:14px}
+input:focus{border-color:#c84b2f}
+.btn{width:100%;padding:11px;background:#c84b2f;color:white;border:none;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer}
+.back{display:block;text-align:center;margin-top:16px;font-size:12px;color:#7a736a;text-decoration:none}
+.error{background:#fef2f2;border:1px solid #f5c6c2;border-radius:8px;padding:14px;font-size:13px;color:#c84b2f;margin-bottom:16px}
+</style></head><body>
+<div class="card">
+  <div class="logo">Cavnar <em>AI</em></div>
+  {% if not valid %}
+  <div class="error">This reset link has expired or is invalid. <a href="/forgot-password" style="color:#c84b2f">Request a new one.</a></div>
+  {% else %}
+  <h2>Choose a new password</h2>
+  <p>Must be at least 8 characters.</p>
+  <form method="POST" id="resetForm">
+    <label>New password</label>
+    <input type="password" name="password" id="pw" placeholder="Min 8 characters" minlength="8" required>
+    <label>Confirm password</label>
+    <input type="password" name="confirm" id="cpw" placeholder="Confirm password" minlength="8" required>
+    <div id="pw-err" style="font-size:12px;color:#c84b2f;margin-bottom:10px;display:none">Passwords don't match.</div>
+    <button type="submit" class="btn">Set new password</button>
+  </form>
+  <script>
+  document.getElementById('resetForm').onsubmit=function(e){
+    if(document.getElementById('pw').value!==document.getElementById('cpw').value){
+      e.preventDefault();
+      document.getElementById('pw-err').style.display='block';
+    }
+  };
+  </script>
+  {% endif %}
+  <a href="/login" class="back">Back to sign in</a>
+</div>
+</body></html>

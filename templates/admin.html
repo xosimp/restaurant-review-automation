@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cavnar AI — Admin</title>
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="shortcut icon" href="/favicon.ico">
+<meta name="theme-color" content="#0e0c0a">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--green:#2d6a4f;--green-bg:#eaf4ee;--r:8px}
+body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);font-size:14px}
+.hdr{background:var(--ink);height:54px;display:flex;align-items:center;padding:0 28px;justify-content:space-between}
+.hdr-logo{font-family:'DM Serif Display',serif;font-size:16px;color:var(--paper)}
+.hdr-logo em{color:#e8956a;font-style:italic}
+.hdr-badge{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;background:var(--ember);color:white;border-radius:4px;margin-left:10px}
+.logout-btn{font-size:11px;color:var(--ink3);text-decoration:none;padding:5px 10px;border:1px solid #2a2520;border-radius:4px}
+.container{max-width:900px;margin:0 auto;padding:32px 24px}
+.section-title{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:10px}
+.card{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:20px;margin-bottom:20px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-group{display:flex;flex-direction:column;gap:4px}
+.form-group.full{grid-column:1/-1}
+label{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3)}
+input,select{padding:9px 12px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;color:var(--ink);background:white;outline:none;transition:border .15s;width:100%}
+input:focus,select:focus{border-color:var(--ember)}
+.btn{padding:9px 18px;border-radius:6px;border:none;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s}
+.btn-primary{background:var(--ember);color:white}
+.btn-primary:hover{background:#a83d25}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--ink3);padding:8px 12px;border-bottom:1px solid var(--paper3);background:var(--paper2)}
+.tbl td{padding:10px 12px;border-bottom:1px solid var(--paper3);overflow:visible}
+.tbl tr:last-child td{border-bottom:none}
+.badge-active{background:var(--green-bg);color:var(--green);font-size:10px;padding:2px 7px;border-radius:20px;font-weight:500}
+.status-msg{padding:10px 14px;border-radius:6px;font-size:13px;margin-top:10px;display:none}
+.status-ok{background:var(--green-bg);color:var(--green);border:1px solid #b7dfca}
+.status-err{background:#fdf0ef;color:var(--ember);border:1px solid #f5c6c2}
+.action-menu{position:relative;display:inline-block}
+.action-menu-btn{padding:5px 12px;border-radius:4px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;color:var(--ink2);white-space:nowrap}
+.action-menu-btn:hover{background:var(--ink);color:white;border-color:var(--ink)}
+.action-dropdown{display:none;position:absolute;right:0;top:calc(100% + 4px);background:white;border:1px solid var(--paper3);border-radius:6px;box-shadow:0 6px 20px rgba(14,12,10,.15);min-width:175px;z-index:9999}
+.action-dropdown.open{display:block}
+.action-item{display:block;width:100%;box-sizing:border-box;text-align:left;padding:9px 14px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink2);background:white;border:none;border-bottom:1px solid var(--paper3);cursor:pointer;white-space:nowrap}
+.action-item:last-child{border-bottom:none}
+.action-item:hover{background:var(--paper2);color:var(--ink)}
+.action-item-danger{color:#c0392b}
+.action-item-danger:hover{background:#fdf0ef;color:#c0392b}
+.action-item-success{color:var(--green)}
+.action-item-success:hover{background:var(--green-bg);color:var(--green)}
+.group-filter-btn{padding:3px 10px;border-radius:20px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;cursor:pointer;color:var(--ink2);transition:all .15s}
+.group-filter-btn:hover,.group-filter-btn.active{background:var(--ink);color:white;border-color:var(--ink)}
+</style>
+</head>
+<body>
+<header class="hdr">
+  <div style="display:flex;align-items:center">
+    <div class="hdr-logo">Cavnar <em>AI</em></div>
+    <span class="hdr-badge">Admin</span>
+  </div>
+  <a href="/logout" class="logout-btn">Sign out</a>
+</header>
+<div class="container">
+
+  <!-- MRR Stats Bar -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:24px">
+    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Active Clients</div>
+      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:var(--paper)">{{users|selectattr('is_active')|selectattr('is_admin','equalto',0)|list|length}}</div>
+    </div>
+    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">MRR</div>
+      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:#6fcf97">${{mrr|default(0)|int|format_num}}</div>
+    </div>
+    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Annual Run Rate</div>
+      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:#6fcf97">${{(mrr|default(0)*12)|int|format_num}}</div>
+    </div>
+    <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
+      <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Contracts Signed</div>
+      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:var(--ember)">{{users|selectattr('contract_status','equalto','signed')|selectattr('is_admin','equalto',0)|list|length}} / {{users|selectattr('is_active')|selectattr('is_admin','equalto',0)|list|length}}</div>
+    </div>
+  </div>
+
+  <div class="section-title">Create new client account</div>
+  <div class="card">
+    <div class="form-grid">
+      <div class="form-group"><label>Restaurant name</label><input type="text" id="r-name" placeholder="Maplewood Kitchen"></div>
+      <div class="form-group"><label>Owner email</label><input type="email" id="r-email" placeholder="owner@restaurant.com"></div>
+      <div class="form-group"><label>Dashboard username</label><input type="text" id="u-username" placeholder="maplewoodkitchen"></div>
+      <div class="form-group"><label>Owner / GM name</label><input type="text" id="r-owner-name" placeholder="e.g. Sarah"></div>
+      <div class="form-group">
+        <label>Temporary password</label>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="text" id="u-password" placeholder="Click Generate →" style="flex:1">
+          <button type="button" onclick="genPassword()"
+            style="padding:9px 12px;background:#c84b2f;color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">
+            Generate
+          </button>
+          <button type="button" onclick="copyPassword()" id="copy-pw-btn"
+            style="padding:9px 12px;background:white;color:var(--ink2);border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;white-space:nowrap;flex-shrink:0">
+            Copy
+          </button>
+        </div>
+      </div>
+      <div class="form-group"><label>Owner phone number</label><input type="text" id="r-phone" placeholder="(312) 555-0100"></div>
+      <div class="form-group"><label>Location group (optional)</label><input type="text" id="r-group" placeholder="e.g. Syrup" list="existing-groups"><datalist id="existing-groups">{% for g in location_groups %}<option value="{{g}}">{% endfor %}</datalist></div>
+      <div class="form-group"><label>Location name (optional)</label><input type="text" id="r-location" placeholder="e.g. Lincoln Park"></div>
+      <div class="form-group"><label>Google Place ID (optional)</label><input type="text" id="r-google" placeholder="ChIJ..."></div>
+      <div class="form-group"><label>Yelp Business ID (optional)</label><input type="text" id="r-yelp" placeholder="restaurant-name-chicago"></div>
+      <div class="form-group full"><label>Owner voice notes (for AI drafting)</label><input type="text" id="r-voice" placeholder="Warm, casual tone. Always invite guests back. Never sound corporate."></div>
+      <div class="form-group full">
+        <label>Modules (check all that apply)</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
+          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;letter-spacing:0;text-transform:none">
+            <input type="checkbox" id="mod-reviews" value="reviews" checked style="width:14px;height:14px;accent-color:#c84b2f">
+            Review Intelligence — $300/mo
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;letter-spacing:0;text-transform:none">
+            <input type="checkbox" id="mod-labor" value="labor" style="width:14px;height:14px;accent-color:#c84b2f">
+            Labor Optimizer — $300/mo
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;letter-spacing:0;text-transform:none">
+            <input type="checkbox" id="mod-inventory" value="inventory" style="width:14px;height:14px;accent-color:#c84b2f">
+            Inventory Control — $300/mo
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-size:13px;font-weight:400;letter-spacing:0;text-transform:none">
+            <input type="checkbox" id="mod-marketing" value="marketing" style="width:14px;height:14px;accent-color:#c84b2f">
+            Marketing Autopilot — $300/mo
+          </label>
+        </div>
+
+      </div>
+    </div>
+    <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:8px 14px;margin-top:14px;font-size:12px;color:#2d6a4f">
+      ✓ Contract sent automatically on creation. Payment link and welcome email sent automatically after client signs.
+    </div>
+    <button class="btn btn-primary" style="margin-top:12px" onclick="createClient()">Create client account</button>
+    <div class="status-msg" id="create-status"></div>
+  </div>
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+    <div class="section-title" style="margin-bottom:0">Active client accounts</div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <input type="text" id="client-search" placeholder="Search clients…" oninput="searchClients(this.value)"
+        style="padding:6px 12px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;width:200px;outline:none">
+      {% if location_groups %}
+      <span style="font-size:11px;color:var(--ink3)">Filter:</span>
+      <button onclick="filterGroup('')" class="group-filter-btn active" id="filter-all">All</button>
+      {% for g in location_groups %}
+      <button onclick="filterGroup('{{g}}')" class="group-filter-btn" id="filter-{{g|replace(' ','-')}}">{{g}}</button>
+      {% endfor %}
+      {% endif %}
+    </div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:10px">
+      {% for user in users %}
+      <div class="client-row card" data-group="{{user.location_group or ''}}" style="padding:14px 18px">
+
+        <!-- Top row: name + health + actions -->
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong style="font-size:14px">{{user.restaurant_name}}</strong>
+            {% if user.location_group %}<span style="font-size:11px;color:var(--ink3)">{{user.location_group}}{% if user.location_name %} · {{user.location_name}}{% endif %}</span>{% endif %}
+            {% if user.internal_notes %}<span title="{{user.internal_notes}}" style="cursor:help;font-size:10px;background:var(--amber-bg);color:var(--amber);padding:1px 6px;border-radius:10px;font-weight:500">note</span>{% endif %}
+
+            <!-- Health pill -->
+            {% set hc = {'green':'#2d6a4f','amber':'#b7791f','red':'#c84b2f'} %}
+            {% set hbg = {'green':'#eaf4ee','amber':'#fef9ec','red':'#fef2f2'} %}
+            {% set hl = user.health or 'amber' %}
+            <span style="font-size:10px;font-weight:700;padding:2px 9px;border-radius:20px;background:{{hbg[hl]}};color:{{hc[hl]}}">{{hl|upper}}</span>
+
+            <!-- Billing -->
+            {% set bc = {'trial':'#b7791f','active':'#2d6a4f','paused':'#6b7280','churned':'#c0392b'} %}
+            <span style="font-size:10px;font-weight:500;padding:2px 8px;border-radius:20px;background:{% if user.billing_status=='active' %}var(--green-bg){% elif user.billing_status=='trial' %}var(--amber-bg){% else %}#f3f4f6{% endif %};color:{{bc.get(user.billing_status,'#6b7280')}}">{{(user.billing_status or 'trial')|title}}</span>
+
+            <!-- Contract -->
+            {% if not user.is_admin %}
+              {% if user.contract_status == 'signed' %}<span style="font-size:10px;color:#2d6a4f;font-weight:600">✓ Signed</span>
+              {% elif user.contract_status == 'sent' %}<span style="font-size:10px;color:#b7791f;font-weight:600">⏳ Contract pending</span>
+              {% else %}<span style="font-size:10px;color:#9ca3af">No contract</span>{% endif %}
+            {% endif %}
+
+            <!-- Pending reviews -->
+            {% if user.pending_reviews > 0 %}
+            <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:{% if user.pending_reviews > 5 %}#fef2f2{% else %}#fef9ec{% endif %};color:{% if user.pending_reviews > 5 %}#c84b2f{% else %}#b7791f{% endif %}">
+              {{user.pending_reviews}} reviews pending
+            </span>
+            {% endif %}
+          </div>
+
+          <!-- Actions -->
+          {% if not user.is_admin %}
+          <div class="action-menu" id="menu-wrap-{{user.id}}" style="flex-shrink:0">
+            <button class="action-menu-btn" onclick="toggleMenu({{user.id}})">Actions ▾</button>
+            <div class="action-dropdown" id="menu-{{user.id}}">
+              <button class="action-item" onclick="window.location='/admin/client-settings/{{user.restaurant_id}}'">Settings</button>
+              <button class="action-item" onclick="window.location='/admin/client-data/{{user.restaurant_id}}'">Manage data</button>
+              <button class="action-item" onclick="window.location='/admin/view-as/{{user.restaurant_id}}'">View as client</button>
+              {% if user.is_active %}
+              <div class="action-divider"></div>
+              <button class="action-item" onclick="resendPayment({{user.restaurant_id}},'{{user.email}}','{{user.billing_status}}');closeMenu({{user.id}})">Resend payment link</button>
+              <button class="action-item" onclick="resendContract({{user.restaurant_id}});closeMenu({{user.id}})">Resend contract</button>
+              <button class="action-item" onclick="fetchReviewsNow({{user.restaurant_id}});closeMenu({{user.id}})">Fetch reviews now</button>
+              <button class="action-item" onclick="seedReviews({{user.restaurant_id}});closeMenu({{user.id}})">Seed sample reviews</button>
+              <div class="action-divider"></div>
+              <button class="action-item action-item-danger" onclick="deactivateClient({{user.id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Deactivate</button>
+              {% else %}
+              <div class="action-divider"></div>
+              <button class="action-item action-item-success" onclick="reactivateClient({{user.id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Reactivate</button>
+              {% endif %}
+            </div>
+          </div>
+          {% endif %}
+        </div>
+
+        <!-- Detail row + usage toggle -->
+        <div style="display:flex;flex-wrap:wrap;gap:16px;font-size:11px;color:var(--ink3);border-top:1px solid var(--paper2);padding-top:8px;margin-top:2px;align-items:center">
+          <span><strong style="color:var(--ink2)">User:</strong> {{user.username}}</span>
+          <span><strong style="color:var(--ink2)">Email:</strong> {{user.email}}</span>
+          {% if user.phone %}<span><strong style="color:var(--ink2)">Phone:</strong> {{user.phone}}</span>{% endif %}
+          <span><strong style="color:var(--ink2)">Modules:</strong>
+            {% set mods = [] %}
+            {% if user.module_reviews %}{% set _ = mods.append('Reviews') %}{% endif %}
+            {% if user.module_labor %}{% set _ = mods.append('Labor') %}{% endif %}
+            {% if user.module_inventory %}{% set _ = mods.append('Inventory') %}{% endif %}
+            {% if user.module_marketing %}{% set _ = mods.append('Marketing') %}{% endif %}
+            {{ mods|join(', ') if mods else 'None' }}
+          </span>
+          <span><strong style="color:var(--ink2)">Last login:</strong> {% if user.last_login and user.last_login|length >= 10 %}{% set d=user.last_login[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}Never{% endif %}</span>
+          {% if user.last_active_tab %}<span><strong style="color:var(--ink2)">Last tab:</strong> {{user.last_active_tab}}</span>{% endif %}
+          <span><strong style="color:var(--ink2)">Reviews fetched:</strong> {{user.last_fetched_at or 'Never'}}</span>
+          <span><strong style="color:var(--ink2)">Account:</strong> {% if user.is_active %}<span style="color:#2d6a4f">Active</span>{% else %}<span style="color:#9ca3af">Inactive</span>{% endif %}</span>
+          {% if not user.is_admin %}
+          <button onclick="toggleUsage({{user.restaurant_id}}, this)" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;padding:0;font-weight:500;margin-left:auto">Show usage ▾</button>
+          {% endif %}
+        </div>
+        {% if not user.is_admin %}
+        <div id="usage-{{user.restaurant_id}}" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--paper2)">
+          <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:6px">30-day usage</div>
+          <div id="usage-data-{{user.restaurant_id}}" style="font-size:12px;color:var(--ink3)">Loading...</div>
+        </div>
+        {% endif %}
+
+      </div>
+      {% else %}
+      <div class="card" style="padding:16px;color:var(--ink3);font-style:italic">No clients yet — create one above.</div>
+      {% endfor %}
+  </div>
+</div>
+
+<script>
+function filterGroup(group) {
+  document.querySelectorAll('.group-filter-btn').forEach(b=>b.classList.remove('active'));
+  const activeBtn = group ? document.getElementById('filter-'+group.replace(/ /g,'-')) : document.getElementById('filter-all');
+  if(activeBtn) activeBtn.classList.add('active');
+  document.querySelectorAll('.client-row').forEach(row=>{
+    if(!group || row.dataset.group===group) row.style.display='';
+    else row.style.display='none';
+  });
+}
+function genPassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  let pw = '';
+  for(let i=0;i<10;i++) pw += chars[Math.floor(Math.random()*chars.length)];
+  document.getElementById('u-password').value = pw;
+  const btn = document.getElementById('copy-pw-btn');
+  btn.textContent = 'Copy';
+  btn.style.color = 'var(--ink2)';
+}
+function copyPassword() {
+  const pw = document.getElementById('u-password').value;
+  if(!pw) { return; }
+  navigator.clipboard.writeText(pw).then(() => {
+    const btn = document.getElementById('copy-pw-btn');
+    btn.textContent = '✓ Copied';
+    btn.style.color = 'var(--green)';
+    setTimeout(() => { btn.textContent = 'Copy'; btn.style.color = 'var(--ink2)'; }, 2000);
+  });
+}
+function toggleUsage(rid, btn){
+  const div = document.getElementById('usage-'+rid);
+  if(!div) return;
+  if(div.style.display === 'none'){
+    div.style.display = 'block';
+    btn.textContent = 'Hide usage ▴';
+    const dataDiv = document.getElementById('usage-data-'+rid);
+    if(dataDiv.textContent === 'Loading...'){
+      fetch('/admin/api/client-usage/'+rid).then(r=>r.json()).then(d=>{
+        if(!d.ok){ dataDiv.textContent = 'No data yet.'; return; }
+        const tabs = d.tab_counts || {};
+        const events = d.event_counts || {};
+        let html = '';
+        if(Object.keys(tabs).length){
+          html += '<div style="margin-bottom:6px"><strong style="color:var(--ink2)">Tab views:</strong> ';
+          html += Object.entries(tabs).sort((a,b)=>b[1]-a[1]).map(([k,v])=>k+' ('+v+')').join(' · ');
+          html += '</div>';
+        }
+        if(events.login) html += '<span style="margin-right:12px">🔑 Logins: <strong>'+events.login+'</strong></span>';
+        if(events.review_approved) html += '<span style="margin-right:12px">✓ Approvals: <strong>'+events.review_approved+'</strong></span>';
+        if(events.csv_upload) html += '<span>📤 CSV uploads: <strong>'+events.csv_upload+'</strong></span>';
+        if(!html) html = 'No activity logged yet.';
+        dataDiv.innerHTML = html;
+      }).catch(function(){ dataDiv.textContent = 'Error loading usage.'; });
+    }
+  } else {
+    div.style.display = 'none';
+    btn.textContent = 'Show usage ▾';
+  }
+}
+
+function toast(msg){
+  let t = document.getElementById('admin-toast');
+  if(!t){
+    t = document.createElement('div');
+    t.id = 'admin-toast';
+    t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#0e0c0a;color:white;padding:10px 20px;border-radius:8px;font-size:13px;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  setTimeout(()=>{ t.style.opacity = '0'; }, 2600);
+}
+
+function toggleMenu(id) {
+  event.stopPropagation();
+  const menu = document.getElementById('menu-'+id);
+  const isOpen = menu.classList.contains('open');
+  document.querySelectorAll('.action-dropdown').forEach(m => m.classList.remove('open'));
+  if(!isOpen) menu.classList.add('open');
+}
+function closeMenu(id) {
+  setTimeout(() => {
+    const menu = document.getElementById('menu-'+id);
+    if(menu) menu.classList.remove('open');
+  }, 100);
+}
+document.addEventListener('click', function(e) {
+  if(!e.target.closest('.action-menu')) {
+    document.querySelectorAll('.action-dropdown').forEach(m => m.classList.remove('open'));
+  }
+});
+async function createClient() {
+  const btn = document.querySelector('.btn-primary');
+  const status = document.getElementById('create-status');
+  btn.textContent = 'Creating…'; btn.disabled = true;
+  const payload = {
+    restaurant_name: document.getElementById('r-name').value,
+    owner_email:     document.getElementById('r-email').value,
+    username:        document.getElementById('u-username').value,
+    password:        document.getElementById('u-password').value,
+    google_place_id: document.getElementById('r-google').value,
+    yelp_business_id:document.getElementById('r-yelp').value,
+    owner_name:      document.getElementById('r-owner-name') ? document.getElementById('r-owner-name').value : '',
+    voice_notes:     document.getElementById('r-voice').value,
+    owner_phone:     document.getElementById('r-phone').value,
+    location_group:  document.getElementById('r-group') ? document.getElementById('r-group').value : '',
+    location_name:   document.getElementById('r-location') ? document.getElementById('r-location').value : '',
+    module_reviews:  document.getElementById('mod-reviews').checked ? 1 : 0,
+    module_labor:    document.getElementById('mod-labor').checked ? 1 : 0,
+    module_inventory:document.getElementById('mod-inventory').checked ? 1 : 0,
+    module_marketing:document.getElementById('mod-marketing').checked ? 1 : 0,
+
+  };
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    const res = await fetch('/admin/create-client', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    const data = await res.json();
+    status.style.display = 'block';
+    if (data.ok) {
+      status.className = 'status-msg status-ok';
+      let msg = '✓ Client created — username: ' + payload.username;
+      if (data.docusign_skipped) msg += '. (DocuSign unavailable — send contract manually)';
+      status.textContent = msg;
+      setTimeout(() => location.reload(), 1800);
+    } else {
+      status.className = 'status-msg status-err';
+      status.textContent = data.error || 'Something went wrong';
+    }
+  } catch(e) {
+    status.style.display = 'block';
+    status.className = 'status-msg status-err';
+    if(e.name === 'AbortError') {
+      status.textContent = 'Request timed out — check Railway logs and try again';
+    } else {
+      status.textContent = 'Request failed: ' + e.message;
+    }
+  }
+  btn.textContent = 'Create client account'; btn.disabled = false;
+}
+function searchClients(query) {
+  const q = query.toLowerCase();
+  document.querySelectorAll('.client-row').forEach(row => {
+    const text = row.textContent.toLowerCase();
+    row.style.display = (!q || text.includes(q)) ? '' : 'none';
+  });
+}
+
+async function resendContract(restaurantId) {
+  const btn = event.target;
+  btn.textContent = 'Sending…'; btn.disabled = true;
+  const res = await fetch('/admin/resend-contract/' + restaurantId, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) {
+    btn.textContent = '✓ Sent';
+    setTimeout(() => { btn.textContent = 'Resend contract'; btn.disabled = false; }, 3000);
+  } else {
+    btn.textContent = 'Error: ' + (data.error || 'failed');
+    btn.disabled = false;
+  }
+}
+
+async function resendPayment(restaurantId, email, billing) {
+  const btn = event.target;
+  btn.textContent = 'Sending…'; btn.disabled = true;
+  const res = await fetch('/admin/resend-payment/' + restaurantId, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) {
+    btn.textContent = '✓ Sent';
+    btn.style.background = '#eaf2ed';
+    setTimeout(() => { btn.textContent = 'Resend payment'; btn.disabled = false; }, 3000);
+  } else {
+    btn.textContent = 'Error';
+    btn.disabled = false;
+    console.error(data.error);
+  }
+}
+
+async function fetchReviewsNow(rid){
+  if(!confirm('Fetch latest reviews from Google/Yelp for this restaurant?')) return;
+  const btn = event.target;
+  btn.textContent = 'Fetching...'; btn.disabled = true;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(()=>controller.abort(), 30000);
+    const res = await fetch('/admin/fetch-reviews/'+rid, {method:'POST', signal:controller.signal});
+    clearTimeout(timeout);
+    const data = await res.json();
+    if(data.ok){
+      const n = data.new_reviews || data.new_count || 0;
+      toast('Fetched ' + n + ' new reviews ✓' + (data.errors&&data.errors.length?' ('+data.errors.length+' warnings)':''));
+    } else {
+      toast('Error: ' + (data.error||'unknown'));
+    }
+  } catch(e) {
+    if(e.name==='AbortError') toast('Timed out — try again or check Railway logs');
+    else toast('Fetch failed: '+e.message);
+  }
+  btn.textContent = 'Fetch reviews now'; btn.disabled = false;
+}
+
+async function seedReviews(restaurantId) {
+  const btn = event.target;
+  btn.textContent = 'Seeding…'; btn.disabled = true;
+  const res = await fetch('/admin/seed-reviews/' + restaurantId, {method:'POST'});
+  const data = await res.json();
+  if (data.ok) {
+    btn.textContent = '✓ Seeded ' + data.seeded + ' reviews';
+    setTimeout(() => { btn.textContent = 'Seed reviews'; btn.disabled = false; }, 3000);
+  } else {
+    btn.textContent = 'Error'; btn.disabled = false;
+  }
+}
+
+async function deactivateClient(id, name) {
+  const btn = event.target;
+  btn.textContent = 'Deactivating...';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/admin/deactivate-client/' + id, {method:'POST', headers:{'Content-Type':'application/json'}});
+    const data = await res.json();
+    if (data.ok) { location.reload(); }
+    else { btn.textContent = 'Error'; console.error(data); }
+  } catch(e) { btn.textContent = 'Error'; console.error(e); }
+}
+async function reactivateClient(id, name) {
+  const btn = event.target;
+  btn.textContent = 'Reactivating...';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/admin/reactivate-client/' + id, {method:'POST', headers:{'Content-Type':'application/json'}});
+    const data = await res.json();
+    if (data.ok) { location.reload(); }
+    else { btn.textContent = 'Error'; console.error(data); }
+  } catch(e) { btn.textContent = 'Error'; console.error(e); }
+}
+
+async function addStaffNote() {
+  const name = document.getElementById('staff-name').value.trim();
+  const notes = document.getElementById('staff-constraint').value.trim();
+  const result = document.getElementById('staff-note-result');
+  if(!name || !notes) { showResult(result, false, 'Enter both a name and constraint'); return; }
+  const form = new FormData();
+  form.append('employee_name', name);
+  form.append('notes', notes);
+  const res = await fetch('/admin/staff-notes/' + restaurantId, {method:'POST', body: form});
+  const data = await res.json();
+  if(data.ok) {
+    showResult(result, true, '✓ Constraint saved');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    showResult(result, false, data.error || 'Save failed');
+  }
+}
+async function deleteNote(noteId) {
+  const res = await fetch('/admin/staff-notes/' + noteId + '/delete', {method:'POST'});
+  const data = await res.json();
+  if(data.ok) location.reload();
+}
+</script>
+  <!-- Email Log -->
+  <div style="max-width:860px;margin:0 auto">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 8px">
+    <div class="section-title" style="margin-bottom:0">Email log</div>
+    <span style="font-size:11px;color:var(--ink3)">Last 50 emails sent</span>
+  </div>
+  <div class="card" style="padding:0;overflow:auto;margin-bottom:32px">
+    <table class="tbl">
+      <thead><tr><th>Time</th><th>Client</th><th>Type</th><th>To</th></tr></thead>
+      <tbody>
+      {% for log in email_log %}
+      <tr>
+        <td style="font-size:11px;color:var(--ink3);white-space:nowrap">
+          {% if log.sent_at and log.sent_at|length >= 10 %}{% set d=log.sent_at[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}—{% endif %}
+          <span style="color:var(--paper3)"> · </span>{% set hr=log.sent_at[11:13]|int %}{% set mn=log.sent_at[14:16] %}{% set ampm='am' if hr < 12 else 'pm' %}{% set hr12=hr if hr <= 12 else hr-12 %}{% set hr12=12 if hr12==0 else hr12 %}{{hr12}}:{{mn}}{{ampm}}
+        </td>
+        <td style="font-size:12px">{{log.restaurant_name or '—'}}</td>
+        <td>
+          {% set type_colors = {'welcome':'#2d6a4f','payment':'#b7791f','contract':'#1a56cc','digest':'#7a736a'} %}
+          <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;
+            background:{{'#eaf4ee' if log.email_type=='welcome' else ('#fef9ec' if log.email_type=='payment' else ('#e8f0fe' if log.email_type=='contract' else '#f3f4f6'))}};
+            color:{{type_colors.get(log.email_type,'#6b7280')}}">
+            {{log.email_type|title}}
+          </span>
+        </td>
+        <td style="font-size:12px;color:var(--ink3)">{{log.to_email}}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" style="color:var(--ink3);font-style:italic;padding:16px">No emails logged yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  </div>
+
+  <!-- Activity Feed -->
+  <div style="max-width:860px;margin:0 auto 32px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 8px">
+      <div class="section-title" style="margin-bottom:0">Activity feed</div>
+      <span style="font-size:11px;color:var(--ink3)">Recent client actions</span>
+    </div>
+    <div class="card" style="padding:0;overflow:auto">
+      <table class="tbl">
+        <thead><tr><th>Time</th><th>Client</th><th>Action</th></tr></thead>
+        <tbody>
+        {% if activity_feed %}
+          {% for item in activity_feed %}
+          <tr>
+            <td style="font-size:11px;color:var(--ink3);white-space:nowrap">
+              {% if item.ts %}
+                {% if item.ts and item.ts|length >= 10 %}{% set d=item.ts[:10].split('-') %}{{d[1]|int}}/{{d[2]|int}}/{{d[0][2:]}}{% else %}—{% endif %}
+                <span style="color:var(--paper3)"> · </span>
+                {% set hr=item.ts[11:13]|int %}{% set mn=item.ts[14:16] %}
+                {% set ampm='am' if hr < 12 else 'pm' %}
+                {% set hr12=hr if hr<=12 else hr-12 %}{% set hr12=12 if hr12==0 else hr12 %}
+                {{hr12}}:{{mn}}{{ampm}} CT
+              {% else %}—{% endif %}
+            </td>
+            <td style="font-size:12px">{{item.restaurant or '—'}}</td>
+            <td>
+              <span style="font-size:12px;color:{{item.color or '#6b7280'}}">{{item.action}}</span>
+            </td>
+          </tr>
+          {% endfor %}
+        {% else %}
+          <tr><td colspan="3" style="color:var(--ink3);font-style:italic;padding:16px">No activity yet.</td></tr>
+        {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<footer style="background:var(--ink);padding:14px 28px;display:flex;align-items:center;justify-content:space-between">
+  <span style="font-size:11px;color:#4a4540">© 2026 Cavnar AI LLC</span>
+  <div style="display:flex;gap:16px;align-items:center">
+    <a href="https://cavnar.ai/privacy" target="_blank" style="font-size:11px;color:#4a4540;text-decoration:none">Privacy Policy</a>
+    <a href="https://cavnar.ai" target="_blank" style="font-size:11px;color:#4a4540;text-decoration:none">cavnar.ai</a>
+  </div>
+</footer>
+</body>
+</html>
