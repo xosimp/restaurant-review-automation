@@ -933,6 +933,142 @@ def gbp_listing_update(current_user):
     return jsonify(**result)
 
 
+# ── AI Visibility ─────────────────────────────────────────────────────────────
+
+@client_bp.route("/api/ai-visibility")
+@login_required
+def ai_visibility(current_user):
+    import anthropic as _anth
+    rid = current_user["restaurant_id"]
+    r = get_restaurant(rid)
+    if not r:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+
+    name        = r.name or ""
+    neighborhood = r.neighborhood or ""
+    vibe        = r.vibe or ""
+    known_for   = r.known_for or ""
+    descriptor  = vibe or known_for or "restaurant"
+    location    = neighborhood or "the area"
+
+    if neighborhood:
+        queries = [
+            "Best " + descriptor + " in " + neighborhood,
+            "Top restaurants in " + neighborhood,
+            "Where to eat in " + neighborhood + " tonight",
+        ]
+    else:
+        queries = [
+            "Best " + descriptor + " restaurant near me",
+            "Top local restaurants for " + (known_for or "dinner"),
+            "Highly rated " + descriptor + " spots to visit",
+        ]
+
+    _cl = _anth.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+    query_results = []
+    appeared_count = 0
+
+    for q in queries:
+        try:
+            msg = _cl.messages.create(
+                model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+                max_tokens=250,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        "You are a helpful local dining guide. Answer the following question as if "
+                        "recommending restaurants from your knowledge. Name specific places if you know "
+                        "them. Keep your answer under 120 words. Question: " + q
+                    )
+                }]
+            )
+            answer = msg.content[0].text if msg.content else ""
+            appeared = name.lower().strip() in answer.lower() if name else False
+            if appeared:
+                appeared_count += 1
+            query_results.append({"query": q, "answer": answer[:300], "appeared": appeared})
+        except Exception as e:
+            query_results.append({"query": q, "answer": "Could not fetch answer.", "appeared": False})
+
+    # GBP completeness score
+    gbp_data = {}
+    gbp_connected = bool(r.gmb_refresh_token and r.gmb_location_id)
+    if gbp_connected:
+        try:
+            from gmb import get_gbp_listing
+            gbp_result = get_gbp_listing(rid)
+            if gbp_result.get("ok"):
+                gbp_data = gbp_result
+        except Exception:
+            pass
+
+    checklist = []
+    gbp_score = 0
+
+    if gbp_connected:
+        gbp_score += 20
+        checklist.append({"label": "Google Business Profile connected", "done": True, "pts": 20})
+    else:
+        checklist.append({"label": "Connect Google Business Profile", "done": False, "pts": 20})
+
+    has_phone = bool(gbp_data.get("phone"))
+    if has_phone:
+        gbp_score += 10
+        checklist.append({"label": "Phone number in GBP", "done": True, "pts": 10})
+    else:
+        checklist.append({"label": "Add phone number to GBP", "done": False, "pts": 10})
+
+    has_website = bool(gbp_data.get("website"))
+    if has_website:
+        gbp_score += 15
+        checklist.append({"label": "Website linked in GBP", "done": True, "pts": 15})
+    else:
+        checklist.append({"label": "Add website URL to GBP", "done": False, "pts": 15})
+
+    desc = gbp_data.get("description", "")
+    if desc and len(desc) >= 50:
+        gbp_score += 25
+        checklist.append({"label": "Business description written (50+ chars)", "done": True, "pts": 25})
+    elif desc:
+        gbp_score += 10
+        checklist.append({"label": "Expand GBP description — currently too short", "done": False, "pts": 15})
+    else:
+        checklist.append({"label": "Write a business description in GBP", "done": False, "pts": 25})
+
+    rstats = get_review_stats(rid)
+    resp_rate = rstats.get("response_rate", 0) if rstats else 0
+    if resp_rate >= 50:
+        gbp_score += 20
+        checklist.append({"label": "Strong review response rate (50%+)", "done": True, "pts": 20})
+    elif resp_rate >= 20:
+        gbp_score += 10
+        checklist.append({"label": "Increase review response rate to 50%+", "done": False, "pts": 10})
+    else:
+        checklist.append({"label": "Start responding to Google reviews", "done": False, "pts": 20})
+
+    has_profile = bool(r.vibe or r.known_for or r.neighborhood)
+    if has_profile:
+        gbp_score += 10
+        checklist.append({"label": "Restaurant profile complete (neighborhood, vibe, known for)", "done": True, "pts": 10})
+    else:
+        checklist.append({"label": "Complete restaurant profile in Account settings", "done": False, "pts": 10})
+
+    ai_score = round((appeared_count / len(queries)) * 100) if queries else 0
+
+    return jsonify(
+        ok=True,
+        restaurant_name=name,
+        neighborhood=neighborhood,
+        queries=query_results,
+        appeared_count=appeared_count,
+        total_queries=len(queries),
+        ai_score=ai_score,
+        gbp_score=gbp_score,
+        checklist=checklist,
+        gbp_connected=gbp_connected,
+    )
+
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 # ── Ryan seed (module-level — runs under Gunicorn AND direct python) ─────────
