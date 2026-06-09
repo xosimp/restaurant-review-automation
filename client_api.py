@@ -911,6 +911,28 @@ def review_request_stats(current_user):
     return jsonify(**get_review_request_stats(current_user["restaurant_id"]))
 
 
+# ── GBP Listings ──────────────────────────────────────────────────────────────
+
+@client_bp.route("/api/gbp-listing", methods=["GET"])
+@login_required
+def gbp_listing_get(current_user):
+    from gmb import get_gbp_listing
+    return jsonify(**get_gbp_listing(current_user["restaurant_id"]))
+
+
+@client_bp.route("/api/gbp-listing", methods=["POST"])
+@login_required
+def gbp_listing_update(current_user):
+    from gmb import update_gbp_listing
+    data = request.get_json() or {}
+    fields = {}
+    if "phone"       in data: fields["phone"]       = data["phone"].strip()
+    if "website"     in data: fields["website"]     = data["website"].strip()
+    if "description" in data: fields["description"] = data["description"].strip()
+    result = update_gbp_listing(current_user["restaurant_id"], fields)
+    return jsonify(**result)
+
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 # ── Ryan seed (module-level — runs under Gunicorn AND direct python) ─────────

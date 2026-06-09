@@ -1560,6 +1560,46 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     </div>
   </div>
 
+  <!-- SECTION: Google Business Profile Listings Editor -->
+  {% if restaurant.gmb_refresh_token %}
+  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:20px;margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#1a56cc;margin-bottom:3px">Google Business Profile</div>
+        <div style="font-size:13px;font-weight:600;color:var(--ink)" id="gbp-title-display">Loading…</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="gbp-save-status" style="font-size:11px;color:#2d6a4f;display:none">✓ Saved to Google</span>
+        <button onclick="saveGbpListing(this)" id="gbp-save-btn" style="padding:7px 16px;background:#1a56cc;color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#1344a8'" onmouseout="this.style.background='#1a56cc'">Save to Google →</button>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label style="font-size:11px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Phone number</label>
+        <input id="gbp-phone" type="tel" placeholder="Loading…" style="width:100%;font-family:'DM Sans',sans-serif;font-size:13px;padding:8px 11px;border:1px solid var(--paper3);border-radius:6px;outline:none;color:var(--ink);box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Website URL</label>
+        <input id="gbp-website" type="url" placeholder="Loading…" style="width:100%;font-family:'DM Sans',sans-serif;font-size:13px;padding:8px 11px;border:1px solid var(--paper3);border-radius:6px;outline:none;color:var(--ink);box-sizing:border-box">
+      </div>
+    </div>
+    <div>
+      <label style="font-size:11px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Business description <span style="font-weight:400;text-transform:none;letter-spacing:0">(shows on Google)</span></label>
+      <textarea id="gbp-description" rows="3" placeholder="Loading…" style="width:100%;font-family:'DM Sans',sans-serif;font-size:13px;padding:8px 11px;border:1px solid var(--paper3);border-radius:6px;outline:none;color:var(--ink);resize:vertical;line-height:1.5;box-sizing:border-box;max-length:750"></textarea>
+      <div style="font-size:10px;color:var(--ink3);margin-top:3px">Google allows up to 750 characters. Changes go live on Google within a few minutes.</div>
+    </div>
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--paper3);display:flex;gap:16px;flex-wrap:wrap">
+      <div style="font-size:11px;color:var(--ink3)">Yelp &nbsp;<span style="color:var(--amber);font-weight:600">Manual</span> — <a href="https://biz.yelp.com" target="_blank" style="color:var(--ink3)">update on Yelp →</a></div>
+      <div style="font-size:11px;color:var(--ink3)">Apple Maps &nbsp;<span style="color:var(--amber);font-weight:600">Manual</span> — <a href="https://businessconnect.apple.com" target="_blank" style="color:var(--ink3)">update on Apple Business Connect →</a></div>
+    </div>
+  </div>
+  {% else %}
+  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:20px;margin-bottom:14px;border-left:3px solid var(--amber)">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--amber);margin-bottom:6px">Google Business Profile</div>
+    <div style="font-size:13px;color:var(--ink2)">Connect Google Business from the <strong>Reviews</strong> tab to manage your listing — phone, website, and description — directly from this dashboard.</div>
+  </div>
+  {% endif %}
+
   <!-- SECTION 3: Account settings + Billing -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px" class="account-two-col">
 
@@ -2316,6 +2356,58 @@ function loadReviewRequestStats(){
 }
 
 loadReviewRequestStats();
+
+// ── GBP Listing editor ─────────────────────────────────────
+function loadGbpListing(){
+  var phoneEl = document.getElementById('gbp-phone');
+  var webEl   = document.getElementById('gbp-website');
+  var descEl  = document.getElementById('gbp-description');
+  var titleEl = document.getElementById('gbp-title-display');
+  if(!phoneEl) return;
+  fetch('/api/gbp-listing').then(function(r){ return r.json(); }).then(function(d){
+    if(!d.ok){
+      if(titleEl) titleEl.textContent = 'Could not load — check Google connection';
+      return;
+    }
+    if(titleEl) titleEl.textContent = d.title       || 'Your business';
+    if(phoneEl) phoneEl.value       = d.phone       || '';
+    if(webEl)   webEl.value         = d.website     || '';
+    if(descEl)  descEl.value        = d.description || '';
+  }).catch(function(){
+    if(titleEl) titleEl.textContent = 'Failed to load';
+  });
+}
+
+function saveGbpListing(btn){
+  var phone = (document.getElementById('gbp-phone')       || {}).value || '';
+  var web   = (document.getElementById('gbp-website')     || {}).value || '';
+  var desc  = (document.getElementById('gbp-description') || {}).value || '';
+  var orig  = btn.textContent;
+  btn.textContent = 'Saving…';
+  btn.disabled = true;
+  fetch('/api/gbp-listing', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({phone: phone, website: web, description: desc})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    btn.disabled = false;
+    btn.textContent = orig;
+    if(d.ok){
+      var status = document.getElementById('gbp-save-status');
+      if(status){ status.style.display = 'inline'; setTimeout(function(){ status.style.display = 'none'; }, 3000); }
+      toast('Google Business Profile updated ✓');
+    } else {
+      toast('Error: ' + (d.error || 'Could not save'));
+    }
+  }).catch(function(){
+    btn.disabled = false;
+    btn.textContent = orig;
+    toast('Failed to save — check connection');
+  });
+}
+
+loadGbpListing();
+
 function maybeShowCongrats(rrate){
   if(rrate < 100) return;
   if(localStorage.getItem('cavnar_congrats_shown')) return;

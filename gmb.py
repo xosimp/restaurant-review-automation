@@ -214,3 +214,80 @@ def is_connected(restaurant_id: int) -> bool:
     from models import get_restaurant
     r = get_restaurant(restaurant_id)
     return bool(r and r.gmb_refresh_token)
+
+
+# ── Listing read/write ────────────────────────────────────────────────────────
+
+def get_gbp_listing(restaurant_id: int) -> dict:
+    """
+    Fetch current business info from GBP.
+    Returns dict with primaryPhone, websiteUri, description, title.
+    """
+    from models import get_restaurant
+    r = get_restaurant(restaurant_id)
+    if not r or not r.gmb_refresh_token or not r.gmb_location_id:
+        return {"ok": False, "error": "Google Business not connected"}
+    token = get_valid_token(restaurant_id)
+    if not token:
+        return {"ok": False, "error": "Could not refresh Google token"}
+    try:
+        resp = requests.get(
+            f"https://mybusiness.googleapis.com/v4/{r.gmb_location_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return {"ok": False, "error": f"GBP API {resp.status_code}: {resp.text[:200]}"}
+        data = resp.json()
+        return {
+            "ok":          True,
+            "title":       data.get("locationName", ""),
+            "phone":       data.get("primaryPhone", ""),
+            "website":     data.get("websiteUrl", ""),
+            "description": data.get("profile", {}).get("description", ""),
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def update_gbp_listing(restaurant_id: int, fields: dict) -> dict:
+    """
+    PATCH the GBP listing with updated fields.
+    fields: dict with any subset of {phone, website, description}
+    """
+    from models import get_restaurant
+    r = get_restaurant(restaurant_id)
+    if not r or not r.gmb_refresh_token or not r.gmb_location_id:
+        return {"ok": False, "error": "Google Business not connected"}
+    token = get_valid_token(restaurant_id)
+    if not token:
+        return {"ok": False, "error": "Could not refresh Google token"}
+
+    body       = {}
+    mask_parts = []
+    if "phone" in fields:
+        body["primaryPhone"] = fields["phone"]
+        mask_parts.append("primaryPhone")
+    if "website" in fields:
+        body["websiteUrl"] = fields["website"]
+        mask_parts.append("websiteUrl")
+    if "description" in fields:
+        body.setdefault("profile", {})["description"] = fields["description"]
+        mask_parts.append("profile.description")
+
+    if not mask_parts:
+        return {"ok": False, "error": "No fields to update"}
+
+    try:
+        resp = requests.patch(
+            f"https://mybusiness.googleapis.com/v4/{r.gmb_location_id}",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            params={"updateMask": ",".join(mask_parts)},
+            json=body,
+            timeout=10,
+        )
+        if resp.status_code in (200, 201):
+            return {"ok": True}
+        return {"ok": False, "error": f"GBP API {resp.status_code}: {resp.text[:300]}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
