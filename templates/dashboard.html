@@ -396,6 +396,25 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       {% endif %}
     </div>
   </div>
+
+  <!-- Review request card -->
+  <div class="card" style="padding:14px 18px;margin-bottom:14px;border-left:3px solid #4a9eca;background:linear-gradient(to right,#e8f4fd,white)">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#1a56cc;margin-bottom:3px">Request a review</div>
+        <div style="font-size:12px;color:var(--ink3)">Send a customer a direct link to leave a Google review — takes 60 seconds for them</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="rr-name"  type="text"  placeholder="Customer name (optional)" style="font-family:'DM Sans',sans-serif;font-size:12px;padding:7px 11px;border:1px solid var(--paper3);border-radius:6px;width:180px;outline:none;color:var(--ink)">
+        <input id="rr-email" type="email" placeholder="Email address" style="font-family:'DM Sans',sans-serif;font-size:12px;padding:7px 11px;border:1px solid var(--paper3);border-radius:6px;width:190px;outline:none;color:var(--ink)">
+        <button onclick="sendReviewRequest(this)" style="padding:7px 16px;background:#1a56cc;color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s" onmouseover="this.style.background='#1344a8'" onmouseout="this.style.background='#1a56cc'">Send request →</button>
+      </div>
+    </div>
+    <div id="rr-stat" style="margin-top:8px;font-size:11px;color:var(--ink3)">
+      Sent this month: <strong id="rr-sent-mo">—</strong> &nbsp;·&nbsp; All time: <strong id="rr-sent-total">—</strong>
+    </div>
+  </div>
+
   <div class="stat-row">
     <!-- 1. How am I doing overall? -->
     <div class="stat {{'ok' if rstats.avg_rating >= 4.5 else ('warn' if rstats.avg_rating >= 3.5 else 'hi')}}" id="stat-rating">
@@ -2250,6 +2269,53 @@ setInterval(function(){
     updateReviewStats();
   }
 }, 15000);
+
+// ── Review request sender ──────────────────────────────────
+function sendReviewRequest(btn){
+  var nameEl  = document.getElementById('rr-name');
+  var emailEl = document.getElementById('rr-email');
+  var email   = (emailEl ? emailEl.value : '').trim();
+  var name    = (nameEl  ? nameEl.value  : '').trim();
+  if(!email || email.indexOf('@') === -1){
+    toast('Please enter a valid email address');
+    if(emailEl) emailEl.focus();
+    return;
+  }
+  var orig = btn.textContent;
+  btn.textContent = 'Sending…';
+  btn.disabled = true;
+  fetch('/api/send-review-request', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: name, email: email})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    btn.disabled = false;
+    btn.textContent = orig;
+    if(d.ok){
+      toast('Review request sent to ' + email + ' ✓');
+      emailEl.value = '';
+      nameEl.value  = '';
+      loadReviewRequestStats();
+    } else {
+      toast('Error: ' + (d.error || 'Failed to send'));
+    }
+  }).catch(function(){
+    btn.disabled = false;
+    btn.textContent = orig;
+    toast('Failed to send — check connection');
+  });
+}
+
+function loadReviewRequestStats(){
+  fetch('/api/review-request-stats').then(function(r){ return r.json(); }).then(function(d){
+    var moEl    = document.getElementById('rr-sent-mo');
+    var totalEl = document.getElementById('rr-sent-total');
+    if(moEl)    moEl.textContent    = d.sent_this_month || 0;
+    if(totalEl) totalEl.textContent = d.total_sent      || 0;
+  }).catch(function(){});
+}
+
+loadReviewRequestStats();
 function maybeShowCongrats(rrate){
   if(rrate < 100) return;
   if(localStorage.getItem('cavnar_congrats_shown')) return;

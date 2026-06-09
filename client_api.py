@@ -824,6 +824,93 @@ def client_upload_data(current_user):
     return jsonify(ok=True, rows=len(rows), message=f"{len(rows)} rows loaded successfully")
 
 
+# ── Review request ────────────────────────────────────────────────────────────
+
+@client_bp.route("/api/send-review-request", methods=["POST"])
+@login_required
+def send_review_request(current_user):
+    try:
+        data          = request.get_json() or {}
+        customer_name  = (data.get("name") or "").strip()
+        customer_email = (data.get("email") or "").strip().lower()
+        if not customer_email or "@" not in customer_email:
+            return jsonify(ok=False, error="Valid email required"), 400
+
+        rid        = current_user["restaurant_id"]
+        restaurant = get_restaurant(rid)
+        if not restaurant:
+            return jsonify(ok=False, error="Restaurant not found"), 404
+
+        # Build Google review link
+        place_id    = restaurant.google_place_id or ""
+        review_url  = (f"https://search.google.com/local/writereview?placeid={place_id}"
+                       if place_id else "https://g.page/r/review")
+        first_name  = customer_name.split()[0] if customer_name else "there"
+        rest_name   = restaurant.name or "us"
+
+        # Send via Resend
+        import resend as _resend
+        _resend.api_key = os.getenv("RESEND_API_KEY", "")
+        if not _resend.api_key:
+            return jsonify(ok=False, error="Email not configured"), 500
+
+        html_body = f"""
+        <div style="font-family:'DM Sans',Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f7f4ef">
+          <div style="background:white;border-radius:12px;padding:32px;border:1px solid #e0dbd0">
+            <div style="font-family:Georgia,serif;font-size:22px;color:#0e0c0a;margin-bottom:4px">
+              Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+            </div>
+            <div style="font-size:11px;color:#7a736a;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid #e0dbd0">
+              On behalf of {rest_name}
+            </div>
+            <p style="font-size:15px;color:#3a3530;line-height:1.6;margin:0 0 16px">
+              Hi {first_name},
+            </p>
+            <p style="font-size:15px;color:#3a3530;line-height:1.6;margin:0 0 24px">
+              Thank you for dining with us at <strong>{rest_name}</strong>. We hope you had a great experience — we'd love to hear your thoughts.
+            </p>
+            <a href="{review_url}" style="display:inline-block;background:#c84b2f;color:white;text-decoration:none;padding:12px 28px;border-radius:8px;font-size:14px;font-weight:600;letter-spacing:.3px">
+              Leave a Google review →
+            </a>
+            <p style="font-size:12px;color:#7a736a;margin-top:24px;line-height:1.5">
+              It only takes 60 seconds and helps other guests find us. We read every review.
+            </p>
+          </div>
+          <p style="font-size:10px;color:#a09080;text-align:center;margin-top:16px">
+            Sent via Cavnar AI · <a href="https://dashboard.cavnar.ai" style="color:#a09080">cavnar.ai</a>
+          </p>
+        </div>"""
+
+        _resend.Emails.send({
+            "from":    "reviews@cavnar.ai",
+            "to":      customer_email,
+            "subject": f"How was your visit to {rest_name}?",
+            "html":    html_body,
+        })
+
+        # Log the request
+        from models import get_conn as _gc
+        conn = _gc()
+        conn.execute(
+            "INSERT INTO review_requests (restaurant_id, customer_name, customer_email) VALUES (?,?,?)",
+            (rid, customer_name, customer_email)
+        )
+        conn.commit()
+        conn.close()
+
+        return jsonify(ok=True)
+
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+
+@client_bp.route("/api/review-request-stats")
+@login_required
+def review_request_stats(current_user):
+    from models import get_review_request_stats
+    return jsonify(**get_review_request_stats(current_user["restaurant_id"]))
+
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 # ── Ryan seed (module-level — runs under Gunicorn AND direct python) ─────────

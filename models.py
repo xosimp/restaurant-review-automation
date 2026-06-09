@@ -354,6 +354,15 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN gmb_location_id TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_token_expires TEXT",
         "ALTER TABLE reviews ADD COLUMN review_name TEXT",
+        """CREATE TABLE IF NOT EXISTS review_requests (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
+            customer_name TEXT,
+            customer_email TEXT NOT NULL,
+            sent_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            method        TEXT NOT NULL DEFAULT 'email',
+            status        TEXT NOT NULL DEFAULT 'sent'
+        )""",
     ]
     for m in migrations:
         try:
@@ -1322,3 +1331,18 @@ def mark_onboarding_sent(restaurant_id: int, email_type: str, db_path: str = DB_
         conn.close()
     except Exception as e:
         print(f"mark_onboarding_sent error: {e}")
+
+def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """Return count of review requests sent this month."""
+    conn = get_conn(db_path)
+    row = conn.execute("""
+        SELECT
+            COUNT(*) AS total_sent,
+            SUM(sent_at >= date('now','start of month')) AS sent_this_month
+        FROM review_requests WHERE restaurant_id=?
+    """, (restaurant_id,)).fetchone()
+    conn.close()
+    return {
+        "total_sent":      row["total_sent"]      or 0,
+        "sent_this_month": row["sent_this_month"] or 0,
+    }
