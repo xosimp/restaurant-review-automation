@@ -916,8 +916,26 @@ def review_request_stats(current_user):
 @client_bp.route("/api/gbp-listing", methods=["GET"])
 @login_required
 def gbp_listing_get(current_user):
-    from gmb import get_gbp_listing
-    return jsonify(**get_gbp_listing(current_user["restaurant_id"]))
+    from gmb import get_gbp_listing, get_valid_token, get_gmb_account_id, get_gmb_location_id
+    from models import get_restaurant, update_restaurant
+    rid = current_user["restaurant_id"]
+    r = get_restaurant(rid)
+    # Token present but location missing — try to discover it now
+    if r and r.gmb_refresh_token and not r.gmb_location_id:
+        try:
+            token = get_valid_token(rid)
+            if token:
+                account_id = get_gmb_account_id(token)
+                if account_id:
+                    location_id = get_gmb_location_id(token, account_id, r.google_place_id or "")
+                    if location_id:
+                        update_restaurant(rid, {
+                            "gmb_account_id":  account_id,
+                            "gmb_location_id": location_id,
+                        })
+        except Exception as e:
+            print(f"[GBP] auto-discover location failed: {e}")
+    return jsonify(**get_gbp_listing(rid))
 
 
 @client_bp.route("/api/gbp-listing", methods=["POST"])

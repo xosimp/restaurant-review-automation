@@ -2412,15 +2412,24 @@ function loadGbpListing(){
   if(!phoneEl) return;
   fetch('/api/gbp-listing').then(function(r){ return r.json(); }).then(function(d){
     if(!d.ok){
-      if(titleEl) titleEl.textContent = 'Could not load — check Google connection';
+      if(titleEl) titleEl.textContent = 'Could not load — try disconnecting and reconnecting Google';
+      if(phoneEl) phoneEl.placeholder = '';
+      if(webEl)   webEl.placeholder   = '';
+      if(descEl)  descEl.placeholder  = '';
       return;
     }
     if(titleEl) titleEl.textContent = d.title       || 'Your business';
     if(phoneEl) phoneEl.value       = d.phone       || '';
     if(webEl)   webEl.value         = d.website     || '';
     if(descEl)  descEl.value        = d.description || '';
+    if(phoneEl) phoneEl.placeholder = '';
+    if(webEl)   webEl.placeholder   = '';
+    if(descEl)  descEl.placeholder  = '';
   }).catch(function(){
     if(titleEl) titleEl.textContent = 'Failed to load';
+    if(phoneEl) phoneEl.placeholder = '';
+    if(webEl)   webEl.placeholder   = '';
+    if(descEl)  descEl.placeholder  = '';
   });
 }
 
