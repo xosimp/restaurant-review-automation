@@ -1086,20 +1086,20 @@ def get_review_stats(restaurant_id):
             SUM(response_status='posted')                                               AS posted,
             SUM(response_status IN ('posted','approved'))                               AS responded,
             SUM(response_status='skipped')                                              AS skipped,
-            SUM(review_date >= date('now','start of month'))                            AS this_month,
+            SUM(response_status IN ('posted','approved') AND approved_at >= date('now','start of month')) AS responded_this_month,
             SUM(review_date >= date('now','-30 days'))                                  AS last_30d,
             AVG(CASE WHEN review_date >= date('now','-30 days') THEN rating END)        AS avg_rating_30d
         FROM reviews WHERE processed=1 AND restaurant_id=?
     """, (restaurant_id,)).fetchone()
 
-    # Average response time in hours (approved_at - review_date)
+    # Average response time in hours (approved_at - fetched_at = time in system before response)
     rt_row = conn.execute("""
         SELECT AVG(
-            (julianday(approved_at) - julianday(review_date)) * 24
+            (julianday(approved_at) - julianday(COALESCE(fetched_at, review_date))) * 24
         ) AS avg_hrs
         FROM reviews
         WHERE restaurant_id=? AND response_status IN ('posted','approved')
-          AND approved_at IS NOT NULL AND review_date IS NOT NULL
+          AND approved_at IS NOT NULL
     """, (restaurant_id,)).fetchone()
 
     conn.close()
@@ -1108,7 +1108,7 @@ def get_review_stats(restaurant_id):
     responded = rows["responded"] or 0
     drafted   = rows["drafted"]   or 0
     skipped   = rows["skipped"]   or 0
-    this_month = rows["this_month"] or 0
+    this_month = rows["responded_this_month"] or 0
     last_30d  = rows["last_30d"]  or 0
     # Response rate = approved+posted / total
     response_rate = round((responded / total * 100) if total > 0 else 0, 1)
@@ -1132,7 +1132,7 @@ def get_review_stats(restaurant_id):
         posted            = posted,
         responded         = responded,
         skipped           = skipped,
-        this_month        = this_month,
+        this_month        = this_month,   # responded this calendar month
         last_30d          = last_30d,
         response_rate     = response_rate,
         avg_response_hours= avg_response_hours,

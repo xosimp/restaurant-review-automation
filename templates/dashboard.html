@@ -397,47 +397,43 @@ function clientUpload(dataType, input) {
     </div>
   </div>
   <div class="stat-row">
-    <div class="stat {{'ok' if rstats.avg_rating >= 4.5 else ('warn' if rstats.avg_rating >= 3.5 else 'hi')}}">
-      <div class="stat-n">{{rstats.avg_rating}}</div>
-      <div class="stat-l">Avg rating{% if rstats.avg_rating_30d and rstats.avg_rating_30d != rstats.avg_rating %} <span style="font-size:9px;color:var(--ink3)">({{rstats.avg_rating_30d}} last 30d)</span>{% endif %}</div>
+    <div class="stat {{'ok' if rstats.avg_rating >= 4.5 else ('warn' if rstats.avg_rating >= 3.5 else 'hi')}}" id="stat-rating">
+      <div class="stat-n" id="stat-rating-n">{{rstats.avg_rating}}</div>
+      <div class="stat-l">Avg rating</div>
     </div>
     <div class="stat {{'hi' if rstats.urgent > 0 else 'ok'}}" id="stat-urgent"><div class="stat-n" id="stat-urgent-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
     <div class="stat {{'ok' if rstats.awaiting_approval <= 2 else 'warn'}}" id="stat-pending"><div class="stat-n" id="stat-pending-n">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:11px;color:#2d6a4f;margin-left:4px">↓</span></div><div class="stat-l">To approve</div></div>
-    <div class="stat ok">
-      <div class="stat-n">{{rstats.this_month}}</div>
-      <div class="stat-l">This month</div>
+    <div class="stat ok" id="stat-this-month">
+      <div class="stat-n" id="stat-this-month-n">{{rstats.this_month}}</div>
+      <div class="stat-l">Responded/mo</div>
     </div>
-    <div class="stat {{'ok' if rstats.response_rate >= 40 else ('warn' if rstats.response_rate >= 15 else 'hi')}}">
-      <div class="stat-n">{{rstats.response_rate}}%</div>
+    <div class="stat {{'ok' if rstats.response_rate >= 40 else ('warn' if rstats.response_rate >= 15 else 'hi')}}" id="stat-rate">
+      <div class="stat-n" id="stat-rate-n">{{rstats.response_rate}}%</div>
       <div class="stat-l">Response rate</div>
     </div>
-    <div class="stat ok">
-      <div class="stat-n">{{rstats.responded}}</div>
+    <div class="stat ok" id="stat-responded">
+      <div class="stat-n" id="stat-responded-n">{{rstats.responded}}</div>
       <div class="stat-l">Total responded</div>
     </div>
-    {% if rstats.avg_response_hours %}
-    <div class="stat ok">
-      <div class="stat-n" style="font-size:{% if rstats.avg_response_hours >= 100 %}14px{% else %}18px{% endif %}">
-        {% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}
+    <div class="stat ok" id="stat-resp-time">
+      <div class="stat-n" id="stat-resp-time-n" style="font-size:{% if rstats.avg_response_hours and rstats.avg_response_hours >= 100 %}14px{% else %}18px{% endif %}">
+        {% if rstats.avg_response_hours %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}
       </div>
       <div class="stat-l">Avg response time</div>
     </div>
-    {% endif %}
     <div class="stat {{'ok' if restaurant.reviews_live or restaurant.gmb_refresh_token else 'warn'}}">
       <div class="stat-n" style="font-size:14px;margin-top:4px">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
       <div class="stat-l">Review source</div>
     </div>
   </div>
-  {% if savings_breakdown and savings_breakdown.reviews > 0 %}
-  <div style="background:linear-gradient(to right,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
+  <div id="review-savings-bar" style="display:{% if savings_breakdown and savings_breakdown.reviews > 0 %}flex{% else %}none{% endif %};background:linear-gradient(to right,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:10px 16px;margin-bottom:14px;align-items:center;justify-content:space-between">
     <div style="font-size:12px;color:#a3d9b8;line-height:1.5">
-      <strong style="color:#6fcf97">${{savings_breakdown.reviews|format_num}}</strong> saved in review management —
-      {{rstats.responded}} responses at ~$5 each vs. outsourcing to a reputation service
+      <strong style="color:#6fcf97" id="review-savings-amt">${{savings_breakdown.reviews|format_num if savings_breakdown else '0'}}</strong> saved in review management —
+      <span id="review-savings-count">{{rstats.responded}}</span> responses at ~$5 each vs. outsourcing to a reputation service
       <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Podium & Birdeye charge $299–$399/mo for review response management — $5/response is the conservative mid-range equivalent.</span></span>
     </div>
-    <div style="font-size:11px;color:#6fcf97;font-weight:700;white-space:nowrap;margin-left:12px">{{rstats.response_rate}}% rate</div>
+    <div style="font-size:11px;color:#6fcf97;font-weight:700;white-space:nowrap;margin-left:12px" id="review-savings-rate">{{rstats.response_rate}}% rate</div>
   </div>
-  {% endif %}
 
   <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
@@ -2160,8 +2156,73 @@ function updateReviewStats(){
         setUrgentClass(urgentEl, urgCurr);
       }
     }
+
+    // ── Avg rating ─────────────────────────────────────────
+    var ratingEl = document.getElementById('stat-rating');
+    var ratingNEl = document.getElementById('stat-rating-n');
+    if(ratingEl && ratingNEl && d.avg_rating !== undefined){
+      ratingNEl.textContent = d.avg_rating;
+      ratingEl.className = 'stat ' + (d.avg_rating >= 4.5 ? 'ok' : d.avg_rating >= 3.5 ? 'warn' : 'hi');
+    }
+
+    // ── Responded this month ───────────────────────────────
+    var thisMonthEl  = document.getElementById('stat-this-month');
+    var thisMonthNEl = document.getElementById('stat-this-month-n');
+    if(thisMonthNEl) thisMonthNEl.textContent = d.this_month || 0;
+
+    // ── Response rate stat card ────────────────────────────
+    var rateEl  = document.getElementById('stat-rate');
+    var rateNEl = document.getElementById('stat-rate-n');
+    if(rateEl && rateNEl){
+      rateNEl.textContent = (d.response_rate || 0) + '%';
+      rateEl.className = 'stat ' + (d.response_rate >= 40 ? 'ok' : d.response_rate >= 15 ? 'warn' : 'hi');
+    }
+
+    // ── Total responded ────────────────────────────────────
+    var respondedNEl = document.getElementById('stat-responded-n');
+    if(respondedNEl) respondedNEl.textContent = d.responded || 0;
+
+    // ── Avg response time ──────────────────────────────────
+    var respTimeNEl = document.getElementById('stat-resp-time-n');
+    if(respTimeNEl){
+      var hrs = d.avg_response_hours;
+      if(hrs && hrs > 0){
+        var tStr = hrs < 24 ? hrs + 'h' : hrs < 168 ? Math.floor(hrs/24) + 'd' : Math.floor(hrs/168) + 'w';
+        respTimeNEl.textContent = tStr;
+        respTimeNEl.style.fontSize = hrs >= 100 ? '14px' : '18px';
+      } else {
+        respTimeNEl.textContent = '—';
+      }
+    }
+
+    // ── Review savings bar ─────────────────────────────────
+    var savingsBar  = document.getElementById('review-savings-bar');
+    var savingsAmt  = document.getElementById('review-savings-amt');
+    var savingsCount= document.getElementById('review-savings-count');
+    var savingsRate = document.getElementById('review-savings-rate');
+    var responded   = d.responded || 0;
+    var reviewSavings = responded * 5;
+    if(savingsBar){
+      if(reviewSavings > 0){
+        savingsBar.style.display = 'flex';
+        if(savingsAmt)   savingsAmt.textContent   = '$' + reviewSavings.toLocaleString();
+        if(savingsCount) savingsCount.textContent  = responded;
+        if(savingsRate)  savingsRate.textContent   = (d.response_rate || 0) + '% rate';
+      } else {
+        savingsBar.style.display = 'none';
+      }
+    }
+
   }).catch(function(){});
 }
+
+// ── Auto-poll every 15 seconds when on reviews tab ────────
+setInterval(function(){
+  var reviewPanel = document.getElementById('panel-reviews');
+  if(reviewPanel && reviewPanel.classList.contains('active')){
+    updateReviewStats();
+  }
+}, 15000);
 function maybeShowCongrats(rrate){
   if(rrate < 100) return;
   if(localStorage.getItem('cavnar_congrats_shown')) return;
