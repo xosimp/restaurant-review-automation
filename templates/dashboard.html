@@ -424,6 +424,7 @@ function clientUpload(dataType, input) {
     <div style="font-size:12px;color:#a3d9b8;line-height:1.5">
       <strong style="color:#6fcf97">${{savings_breakdown.reviews|format_num}}</strong> saved in review management —
       {{rstats.responded}} responses at ~$5 each vs. outsourcing to a reputation service
+      <div style="font-size:10px;color:#6fcf97;opacity:0.7;margin-top:3px">Podium & Birdeye charge $299–$399/mo for review response management — $5/response is the conservative mid-range equivalent</div>
     </div>
     <div style="font-size:11px;color:#6fcf97;font-weight:700;white-space:nowrap;margin-left:12px">{{rstats.response_rate}}% rate</div>
   </div>
@@ -724,17 +725,20 @@ function clientUpload(dataType, input) {
       <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6fcf97;margin-bottom:4px">Monthly savings potential</div>
       <div style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_monthly|format_num}}</div>
       <div style="font-size:10px;color:#6fcf97;margin-top:2px">if schedule optimized</div>
+      <div style="font-size:9px;color:#6fcf97;opacity:0.65;margin-top:4px">Weekly overspend × 4.33 weeks — based on your actual sales & labor %</div>
     </div>
     <div style="background:linear-gradient(135deg,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:12px 16px;text-align:center">
       <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6fcf97;margin-bottom:4px">Annual savings potential</div>
       <div style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_annual|format_num}}</div>
       <div style="font-size:10px;color:#6fcf97;margin-top:2px">extrapolated yearly</div>
+      <div style="font-size:9px;color:#6fcf97;opacity:0.65;margin-top:4px">Monthly savings × 12 months</div>
     </div>
     {% if savings_breakdown.labor_overtime > 0 %}
     <div style="background:linear-gradient(135deg,#2b0d0d,#3d1414);border:1px solid #5c2020;border-radius:8px;padding:12px 16px;text-align:center">
       <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#ff9b8a;margin-bottom:4px">Overtime premium this period</div>
       <div style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_overtime|format_num}}</div>
       <div style="font-size:10px;color:#ff9b8a;margin-top:2px">0.5× rate on hours over 40</div>
+      <div style="font-size:9px;color:#ff9b8a;opacity:0.65;margin-top:4px">Hours over 40 × hourly rate × 0.5 (FLSA overtime rule)</div>
     </div>
     {% endif %}
     <div style="background:linear-gradient(135deg,#1a1410,#201a12);border:1px solid #3d2e1e;border-radius:8px;padding:12px 16px;text-align:center">
@@ -977,6 +981,7 @@ function clientUpload(dataType, input) {
       <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#a8d5b5;margin-bottom:4px">Recoverable with better ordering</div>
       <div style="font-size:28px;font-weight:800;color:#6fcf97;letter-spacing:-1px">${{inv.annual_recoverable|int|format_num}}<span style="font-size:14px;font-weight:600;color:#a8d5b5">/yr</span></div>
       <div style="font-size:12px;color:#a8d5b5;margin-top:3px">${{inv.recoverable_monthly|int|format_num}}/mo recoverable</div>
+      <div style="font-size:10px;color:#a8d5b5;opacity:0.7;margin-top:4px">65% of logged waste cost — industry estimate for avoidable spoilage with optimized par levels</div>
     </div>
   </div>
   <div class="stat-row">
@@ -1126,6 +1131,7 @@ function clientUpload(dataType, input) {
       <div style="text-align:center;padding:0 14px">
         <div style="font-size:16px;font-weight:800;color:#2d6a4f;letter-spacing:-0.5px;line-height:1">${{mkt_stats.agency_value|format_num}}</div>
         <div style="font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin-top:3px;white-space:nowrap">Agency equiv. saved</div>
+        <div style="font-size:9px;color:var(--ink3);margin-top:2px;white-space:nowrap">$1,500/mo × {{mkt_stats.months_active}} mo active</div>
       </div>
       {% endif %}
     </div>
