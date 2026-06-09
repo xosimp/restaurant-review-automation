@@ -295,6 +295,19 @@ def format_num(v):
     try: return f"{float(v):,.0f}"
     except: return v
 
+@app.template_filter('format_date')
+def format_date_filter(d):
+    """Format YYYY-MM-DD or ISO date string as M/D/YY (e.g. 6/8/26)."""
+    if not d:
+        return ''
+    try:
+        from datetime import datetime as _dt
+        s = str(d)[:10]
+        dt = _dt.strptime(s, '%Y-%m-%d')
+        return f"{dt.month}/{dt.day}/{str(dt.year)[2:]}"
+    except Exception:
+        return str(d)[:10]
+
 @app.after_request
 def add_security_headers(response):
     """Add security headers to every response."""

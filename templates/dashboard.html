@@ -27,7 +27,7 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .calc-tip{position:relative;display:inline-flex;align-items:center;margin-top:5px;cursor:default}
 .calc-tip .tip-icon{width:14px;height:14px;flex-shrink:0;color:rgba(255,255,255,.55);transition:color .15s}
 .calc-tip:hover .tip-icon{color:rgba(255,255,255,.95)}
-.calc-tip .tip-text{display:none;position:absolute;bottom:calc(100% + 7px);right:0;left:auto;background:#1a1714;color:rgba(250,248,245,.9);font-size:10px;font-weight:400;line-height:1.5;padding:8px 11px;border-radius:7px;width:240px;white-space:normal;border:1px solid rgba(255,255,255,.12);z-index:99;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.5)}
+.calc-tip .tip-text{display:none;position:absolute;top:calc(100% + 7px);right:0;left:auto;bottom:auto;background:#1a1714;color:rgba(250,248,245,.9);font-size:10px;font-weight:400;line-height:1.5;padding:8px 11px;border-radius:7px;width:240px;white-space:normal;border:1px solid rgba(255,255,255,.12);z-index:99;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.5)}
 .calc-tip:hover .tip-text{display:block}
 .calc-tip-light .tip-icon{color:rgba(0,0,0,.38)}
 .calc-tip-light:hover .tip-icon{color:var(--ink2)}
@@ -583,7 +583,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
         <div class="card-sub">
           <span class="stars">{% for i in range(5) %}{{('★' if i<r.rating else '☆')}}{% endfor %}</span>
           <span class="pbadge {{'pg' if r.platform=='google' else 'py'}}">{{r.platform}}</span>
-          {% if r.review_date %}<span>{{r.review_date[:10]}}</span>{% endif %}
+          {% if r.review_date %}<span>{{r.review_date|format_date}}</span>{% endif %}
         </div>
       </div>
       <span class="schip {{'sp' if r.sentiment=='positive' else ('sn' if r.sentiment=='negative' else 'su')}}">{{r.sentiment or 'neutral'}}</span>
@@ -1144,7 +1144,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       <div style="text-align:center;padding:0 14px;position:relative">
         <div style="position:relative;display:inline-block">
           <div style="font-size:16px;font-weight:800;color:#2d6a4f;letter-spacing:-0.5px;line-height:1">${{mkt_stats.agency_value|format_num}}</div>
-          <span class="calc-tip calc-tip-light calc-tip-super"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text" style="left:auto;right:0;transform:none">$1,500/mo × {{mkt_stats.months_active}} months active. Based on average U.S. social media manager rate — agencies typically charge $1,500–$3,000/mo.</span></span>
+          <span class="calc-tip calc-tip-light calc-tip-super"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">$1,500/mo × {{mkt_stats.months_active}} months active. Based on average U.S. social media manager rate — agencies typically charge $1,500–$3,000/mo.</span></span>
         </div>
         <div style="font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin-top:3px;white-space:nowrap">Agency equiv. saved</div>
       </div>
