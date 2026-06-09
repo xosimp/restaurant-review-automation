@@ -1092,14 +1092,16 @@ def get_review_stats(restaurant_id):
         FROM reviews WHERE processed=1 AND restaurant_id=?
     """, (restaurant_id,)).fetchone()
 
-    # Average response time in hours (approved_at - fetched_at = time in system before response)
+    # Average response time in hours (review_date → approved_at) — industry standard definition.
+    # Matches how Google/Podium/Birdeye measure it: time from when customer wrote review
+    # to when response appeared. Capped at 30 days in display layer to handle demo data.
     rt_row = conn.execute("""
         SELECT AVG(
-            (julianday(approved_at) - julianday(COALESCE(fetched_at, review_date))) * 24
+            (julianday(approved_at) - julianday(review_date)) * 24
         ) AS avg_hrs
         FROM reviews
         WHERE restaurant_id=? AND response_status IN ('posted','approved')
-          AND approved_at IS NOT NULL
+          AND approved_at IS NOT NULL AND review_date IS NOT NULL
     """, (restaurant_id,)).fetchone()
 
     conn.close()
