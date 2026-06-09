@@ -27,7 +27,7 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .calc-tip{position:relative;display:inline-flex;align-items:center;margin-top:5px;cursor:default}
 .calc-tip .tip-icon{width:14px;height:14px;flex-shrink:0;color:rgba(255,255,255,.55);transition:color .15s}
 .calc-tip:hover .tip-icon{color:rgba(255,255,255,.95)}
-.calc-tip .tip-text{display:none;position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);background:#1a1714;color:rgba(250,248,245,.9);font-size:10px;font-weight:400;line-height:1.5;padding:8px 11px;border-radius:7px;width:230px;white-space:normal;border:1px solid rgba(255,255,255,.12);z-index:99;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.5)}
+.calc-tip .tip-text{display:none;position:absolute;bottom:calc(100% + 7px);right:0;left:auto;background:#1a1714;color:rgba(250,248,245,.9);font-size:10px;font-weight:400;line-height:1.5;padding:8px 11px;border-radius:7px;width:240px;white-space:normal;border:1px solid rgba(255,255,255,.12);z-index:99;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.5)}
 .calc-tip:hover .tip-text{display:block}
 .calc-tip-light .tip-icon{color:rgba(0,0,0,.38)}
 .calc-tip-light:hover .tip-icon{color:var(--ink2)}
@@ -326,42 +326,43 @@ function clientUpload(dataType, input) {
 </div>
 
 <!-- TOTAL SAVINGS WIDGET -->
-{% if savings_breakdown and savings_breakdown.total > 0 %}
-<div style="background:linear-gradient(135deg,#0d2b1a 0%,#0a1f13 100%);border-bottom:1px solid #1a3d24;padding:12px 28px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+{% set _sb = savings_breakdown or {} %}
+<div id="global-savings-banner" style="display:{% if _sb.total and _sb.total > 0 %}flex{% else %}none{% endif %};background:linear-gradient(135deg,#0d2b1a 0%,#0a1f13 100%);border-bottom:1px solid #1a3d24;padding:12px 28px;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
   <div style="display:flex;align-items:center;gap:8px">
     <span style="font-size:16px">💰</span>
     <div>
       <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:1px">Total value delivered</div>
-      <div style="font-size:22px;font-weight:800;color:white;letter-spacing:-0.5px">${{savings_breakdown.total|format_num}}</div>
+      <div id="global-savings-total" style="font-size:22px;font-weight:800;color:white;letter-spacing:-0.5px">${{_sb.total|format_num if _sb.total else '0'}}</div>
     </div>
   </div>
   <div style="display:flex;gap:20px;flex-wrap:wrap">
-    {% if savings_breakdown.reviews > 0 %}
-    <div style="text-align:center">
-      <div style="font-size:14px;font-weight:700;color:white">${{savings_breakdown.reviews|format_num}}</div>
+    <div id="global-reviews-chip" style="text-align:center;display:{% if _sb.reviews and _sb.reviews > 0 %}block{% else %}none{% endif %}">
+      <div id="global-reviews-amt" style="font-size:14px;font-weight:700;color:white">${{_sb.reviews|format_num if _sb.reviews else '0'}}</div>
       <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Reviews</div>
     </div>
-    {% endif %}
-    {% if savings_breakdown.labor > 0 %}
+    {% if _sb.labor and _sb.labor > 0 %}
     <div style="text-align:center">
-      <div style="font-size:14px;font-weight:700;color:white">${{savings_breakdown.labor|format_num}}</div>
+      <div style="font-size:14px;font-weight:700;color:white">${{_sb.labor|format_num}}</div>
       <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Labor</div>
     </div>
     {% endif %}
-    {% if savings_breakdown.inventory > 0 %}
+    {% if _sb.inventory and _sb.inventory > 0 %}
     <div style="text-align:center">
-      <div style="font-size:14px;font-weight:700;color:white">${{savings_breakdown.inventory|format_num}}</div>
+      <div style="font-size:14px;font-weight:700;color:white">${{_sb.inventory|format_num}}</div>
       <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Inventory/mo</div>
     </div>
     {% endif %}
-    {% if savings_breakdown.marketing > 0 %}
+    {% if _sb.marketing and _sb.marketing > 0 %}
     <div style="text-align:center">
-      <div style="font-size:14px;font-weight:700;color:white">${{savings_breakdown.marketing|format_num}}</div>
+      <div style="font-size:14px;font-weight:700;color:white">${{_sb.marketing|format_num}}</div>
       <div style="font-size:10px;color:#6fcf97;letter-spacing:.5px;text-transform:uppercase">Marketing</div>
     </div>
     {% endif %}
   </div>
 </div>
+<script>
+var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing or 0)}};
+</script>
 {% endif %}
 
 <!-- REVIEWS -->
@@ -397,30 +398,38 @@ function clientUpload(dataType, input) {
     </div>
   </div>
   <div class="stat-row">
+    <!-- 1. How am I doing overall? -->
     <div class="stat {{'ok' if rstats.avg_rating >= 4.5 else ('warn' if rstats.avg_rating >= 3.5 else 'hi')}}" id="stat-rating">
       <div class="stat-n" id="stat-rating-n">{{rstats.avg_rating}}</div>
       <div class="stat-l">Avg rating</div>
     </div>
-    <div class="stat {{'hi' if rstats.urgent > 0 else 'ok'}}" id="stat-urgent"><div class="stat-n" id="stat-urgent-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
-    <div class="stat {{'ok' if rstats.awaiting_approval <= 2 else 'warn'}}" id="stat-pending"><div class="stat-n" id="stat-pending-n">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:11px;color:#2d6a4f;margin-left:4px">↓</span></div><div class="stat-l">To approve</div></div>
-    <div class="stat ok" id="stat-this-month">
-      <div class="stat-n" id="stat-this-month-n">{{rstats.this_month}}</div>
-      <div class="stat-l">Responded/mo</div>
-    </div>
+    <!-- 2. What's the sentiment? -->
     <div class="stat {{'ok' if rstats.positive_pct >= 70 else ('warn' if rstats.positive_pct >= 50 else 'hi')}}" id="stat-positive">
       <div class="stat-n" id="stat-positive-n">{{rstats.positive_pct}}%</div>
       <div class="stat-l">Positive</div>
     </div>
+    <!-- 3. How many reviews am I getting? -->
     <div class="stat ok" id="stat-received-mo">
       <div class="stat-n" id="stat-received-mo-n">{{rstats.received_this_month}}</div>
-      <div class="stat-l">Reviews/mo</div>
+      <div class="stat-l">Received/mo</div>
     </div>
+    <!-- 4. What needs immediate attention? -->
+    <div class="stat {{'hi' if rstats.urgent > 0 else 'ok'}}" id="stat-urgent"><div class="stat-n" id="stat-urgent-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
+    <!-- 5. What do I need to do right now? -->
+    <div class="stat {{'ok' if rstats.awaiting_approval <= 2 else 'warn'}}" id="stat-pending"><div class="stat-n" id="stat-pending-n">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:11px;color:#2d6a4f;margin-left:4px">↓</span></div><div class="stat-l">To approve</div></div>
+    <!-- 6. How much have I responded this month? -->
+    <div class="stat ok" id="stat-this-month">
+      <div class="stat-n" id="stat-this-month-n">{{rstats.this_month}}</div>
+      <div class="stat-l">Responded/mo</div>
+    </div>
+    <!-- 7. How fast am I responding? -->
     <div class="stat ok" id="stat-resp-time">
       <div class="stat-n" id="stat-resp-time-n" style="font-size:{% if rstats.avg_response_hours and rstats.avg_response_hours >= 100 %}14px{% else %}18px{% endif %}">
         {% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}
       </div>
       <div class="stat-l">Avg response time</div>
     </div>
+    <!-- 8. Is this live data? -->
     <div class="stat {{'ok' if restaurant.reviews_live or restaurant.gmb_refresh_token else 'warn'}}">
       <div class="stat-n" style="font-size:14px;margin-top:4px">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
       <div class="stat-l">Review source</div>
@@ -2198,18 +2207,34 @@ function updateReviewStats(){
       }
     }
 
+    // ── Global savings banner ──────────────────────────────
+    var reviewSavingsGlobal = (d.responded || 0) * 5;
+    var totalSavings = reviewSavingsGlobal + (_staticSavings || 0);
+    var globalBanner   = document.getElementById('global-savings-banner');
+    var globalTotal    = document.getElementById('global-savings-total');
+    var globalRevChip  = document.getElementById('global-reviews-chip');
+    var globalRevAmt   = document.getElementById('global-reviews-amt');
+    if(globalBanner){
+      if(totalSavings > 0){
+        globalBanner.style.display = 'flex';
+        if(globalTotal) globalTotal.textContent = '$' + totalSavings.toLocaleString();
+        if(globalRevChip) globalRevChip.style.display = reviewSavingsGlobal > 0 ? 'block' : 'none';
+        if(globalRevAmt)  globalRevAmt.textContent  = '$' + reviewSavingsGlobal.toLocaleString();
+      }
+    }
+
     // ── Review savings bar ─────────────────────────────────
     var savingsBar  = document.getElementById('review-savings-bar');
     var savingsAmt  = document.getElementById('review-savings-amt');
     var savingsCount= document.getElementById('review-savings-count');
     var savingsRate = document.getElementById('review-savings-rate');
-    var responded   = d.responded || 0;
-    var reviewSavings = responded * 5;
+    var _resp       = d.responded || 0;
+    var reviewSavings = _resp * 5;
     if(savingsBar){
       if(reviewSavings > 0){
         savingsBar.style.display = 'flex';
         if(savingsAmt)   savingsAmt.textContent   = '$' + reviewSavings.toLocaleString();
-        if(savingsCount) savingsCount.textContent  = responded;
+        if(savingsCount) savingsCount.textContent  = _resp;
         if(savingsRate)  savingsRate.textContent   = (d.response_rate || 0) + '% rate';
       } else {
         savingsBar.style.display = 'none';
