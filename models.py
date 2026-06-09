@@ -1087,6 +1087,7 @@ def get_review_stats(restaurant_id):
             SUM(response_status IN ('posted','approved'))                               AS responded,
             SUM(response_status='skipped')                                              AS skipped,
             SUM(response_status IN ('posted','approved') AND approved_at >= date('now','start of month')) AS responded_this_month,
+            SUM(review_date >= date('now','start of month'))                            AS received_this_month,
             SUM(review_date >= date('now','-30 days'))                                  AS last_30d,
             AVG(CASE WHEN review_date >= date('now','-30 days') THEN rating END)        AS avg_rating_30d
         FROM reviews WHERE processed=1 AND restaurant_id=?
@@ -1122,9 +1123,13 @@ def get_review_stats(restaurant_id):
     else:
         avg_response_hours = None
 
+    positive = rows["positive"] or 0
+    positive_pct = round(positive / total * 100) if total > 0 else 0
+
     return dict(
         total             = total,
-        positive          = rows["positive"]  or 0,
+        positive          = positive,
+        positive_pct      = positive_pct,
         negative          = rows["negative"]  or 0,
         neutral           = rows["neutral"]   or 0,
         urgent            = rows["urgent"]    or 0,
@@ -1134,7 +1139,8 @@ def get_review_stats(restaurant_id):
         posted            = posted,
         responded         = responded,
         skipped           = skipped,
-        this_month        = this_month,   # responded this calendar month
+        this_month        = this_month,              # responded this calendar month
+        received_this_month = rows["received_this_month"] or 0,  # reviews received this month
         last_30d          = last_30d,
         response_rate     = response_rate,
         avg_response_hours= avg_response_hours,
