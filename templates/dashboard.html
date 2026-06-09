@@ -25,12 +25,12 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .logout-btn{font-size:11px;color:var(--ink3);text-decoration:none;padding:5px 10px;border:1px solid #2a2520;border-radius:4px;transition:all .15s}
 .logout-btn:hover{color:var(--paper);border-color:var(--paper)}
 .calc-tip{position:relative;display:inline-flex;align-items:center;margin-top:5px;cursor:default}
-.calc-tip .tip-icon{font-size:10px;color:rgba(255,255,255,.35);border:1px solid rgba(255,255,255,.2);border-radius:50%;width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center;line-height:1;font-style:normal;transition:color .15s,border-color .15s}
-.calc-tip:hover .tip-icon{color:rgba(255,255,255,.8);border-color:rgba(255,255,255,.6)}
-.calc-tip .tip-text{display:none;position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1a1714;color:rgba(250,248,245,.85);font-size:10px;line-height:1.5;padding:7px 10px;border-radius:6px;white-space:nowrap;max-width:260px;white-space:normal;width:220px;border:1px solid rgba(255,255,255,.1);z-index:99;pointer-events:none;box-shadow:0 4px 12px rgba(0,0,0,.4)}
+.calc-tip .tip-icon{font-size:9px;font-weight:700;font-style:normal;color:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.5);border-radius:50%;width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center;line-height:1;flex-shrink:0;transition:color .15s,border-color .15s,background .15s}
+.calc-tip:hover .tip-icon{color:#fff;border-color:#fff;background:rgba(255,255,255,.15)}
+.calc-tip .tip-text{display:none;position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);background:#1a1714;color:rgba(250,248,245,.9);font-size:10px;font-weight:400;line-height:1.5;padding:8px 11px;border-radius:7px;width:230px;white-space:normal;border:1px solid rgba(255,255,255,.12);z-index:99;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.5)}
 .calc-tip:hover .tip-text{display:block}
-.calc-tip-light .tip-icon{color:rgba(0,0,0,.3);border-color:rgba(0,0,0,.2)}
-.calc-tip-light:hover .tip-icon{color:rgba(0,0,0,.7);border-color:rgba(0,0,0,.5)}
+.calc-tip-light .tip-icon{color:rgba(0,0,0,.45);border-color:rgba(0,0,0,.35)}
+.calc-tip-light:hover .tip-icon{color:var(--ink);border-color:var(--ink);background:rgba(0,0,0,.06)}
 .calc-tip-light .tip-text{background:#fff;color:var(--ink2);border-color:var(--paper3);box-shadow:0 4px 12px rgba(0,0,0,.12)}
 .tabs{display:flex;gap:2px;padding:0 28px;background:var(--ink);border-top:1px solid #1a1714}
 .tab{padding:8px 16px;border-radius:0;border:none;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;color:rgba(250,248,245,.45);background:transparent;transition:all .2s;border-bottom:2px solid transparent}
@@ -432,7 +432,7 @@ function clientUpload(dataType, input) {
     <div style="font-size:12px;color:#a3d9b8;line-height:1.5">
       <strong style="color:#6fcf97">${{savings_breakdown.reviews|format_num}}</strong> saved in review management —
       {{rstats.responded}} responses at ~$5 each vs. outsourcing to a reputation service
-      <span class="calc-tip"><i class="tip-icon">ⓘ</i><span class="tip-text">Podium & Birdeye charge $299–$399/mo for review response management — $5/response is the conservative mid-range equivalent.</span></span>
+      <span class="calc-tip"><i class="tip-icon">i</i><span class="tip-text">Podium & Birdeye charge $299–$399/mo for review response management — $5/response is the conservative mid-range equivalent.</span></span>
     </div>
     <div style="font-size:11px;color:#6fcf97;font-weight:700;white-space:nowrap;margin-left:12px">{{rstats.response_rate}}% rate</div>
   </div>
@@ -733,20 +733,20 @@ function clientUpload(dataType, input) {
       <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6fcf97;margin-bottom:4px">Monthly savings potential</div>
       <div style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_monthly|format_num}}</div>
       <div style="font-size:10px;color:#6fcf97;margin-top:2px">if schedule optimized</div>
-      <span class="calc-tip"><i class="tip-icon">ⓘ</i><span class="tip-text">Weekly overspend × 4.33 weeks, based on your actual sales and labor % vs target.</span></span>
+      <span class="calc-tip"><i class="tip-icon">i</i><span class="tip-text">Weekly overspend × 4.33 weeks, based on your actual sales and labor % vs target.</span></span>
     </div>
     <div style="background:linear-gradient(135deg,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:12px 16px;text-align:center">
       <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6fcf97;margin-bottom:4px">Annual savings potential</div>
       <div style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_annual|format_num}}</div>
       <div style="font-size:10px;color:#6fcf97;margin-top:2px">extrapolated yearly</div>
-      <span class="calc-tip"><i class="tip-icon">ⓘ</i><span class="tip-text">Monthly savings potential × 12 months.</span></span>
+      <span class="calc-tip"><i class="tip-icon">i</i><span class="tip-text">Monthly savings potential × 12 months.</span></span>
     </div>
     {% if savings_breakdown.labor_overtime > 0 %}
     <div style="background:linear-gradient(135deg,#2b0d0d,#3d1414);border:1px solid #5c2020;border-radius:8px;padding:12px 16px;text-align:center">
       <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#ff9b8a;margin-bottom:4px">Overtime premium this period</div>
       <div style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_overtime|format_num}}</div>
       <div style="font-size:10px;color:#ff9b8a;margin-top:2px">0.5× rate on hours over 40</div>
-      <span class="calc-tip"><i class="tip-icon">ⓘ</i><span class="tip-text">Hours over 40 × hourly rate × 0.5 — standard FLSA overtime premium.</span></span>
+      <span class="calc-tip"><i class="tip-icon">i</i><span class="tip-text">Hours over 40 × hourly rate × 0.5 — standard FLSA overtime premium.</span></span>
     </div>
     {% endif %}
     <div style="background:linear-gradient(135deg,#1a1410,#201a12);border:1px solid #3d2e1e;border-radius:8px;padding:12px 16px;text-align:center">
@@ -989,7 +989,7 @@ function clientUpload(dataType, input) {
       <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#a8d5b5;margin-bottom:4px">Recoverable with better ordering</div>
       <div style="font-size:28px;font-weight:800;color:#6fcf97;letter-spacing:-1px">${{inv.annual_recoverable|int|format_num}}<span style="font-size:14px;font-weight:600;color:#a8d5b5">/yr</span></div>
       <div style="font-size:12px;color:#a8d5b5;margin-top:3px">${{inv.recoverable_monthly|int|format_num}}/mo recoverable</div>
-      <span class="calc-tip calc-tip-light"><i class="tip-icon">ⓘ</i><span class="tip-text">65% of your logged waste cost — industry estimate for avoidable spoilage with optimized par levels and ordering.</span></span>
+      <span class="calc-tip"><i class="tip-icon">i</i><span class="tip-text">65% of your logged waste cost — industry estimate for avoidable spoilage with optimized par levels and ordering.</span></span>
     </div>
   </div>
   <div class="stat-row">
@@ -1139,7 +1139,7 @@ function clientUpload(dataType, input) {
       <div style="text-align:center;padding:0 14px">
         <div style="font-size:16px;font-weight:800;color:#2d6a4f;letter-spacing:-0.5px;line-height:1">${{mkt_stats.agency_value|format_num}}</div>
         <div style="font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin-top:3px;white-space:nowrap">Agency equiv. saved</div>
-        <span class="calc-tip calc-tip-light" style="justify-content:center"><i class="tip-icon">ⓘ</i><span class="tip-text">$1,500/mo × {{mkt_stats.months_active}} months active. Based on average U.S. social media manager rate — agencies typically charge $1,500–$3,000/mo.</span></span>
+        <span class="calc-tip calc-tip-light" style="justify-content:center"><i class="tip-icon">i</i><span class="tip-text">$1,500/mo × {{mkt_stats.months_active}} months active. Based on average U.S. social media manager rate — agencies typically charge $1,500–$3,000/mo.</span></span>
       </div>
       {% endif %}
     </div>
