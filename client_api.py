@@ -913,6 +913,45 @@ def review_request_stats(current_user):
 
 # ── GBP Listings ──────────────────────────────────────────────────────────────
 
+@client_bp.route("/api/gbp-debug")
+@login_required
+def gbp_debug(current_user):
+    import requests as _req
+    from gmb import get_valid_token, get_gmb_account_id
+    from models import get_restaurant
+    rid = current_user["restaurant_id"]
+    r = get_restaurant(rid)
+    out = {
+        "has_refresh_token": bool(r.gmb_refresh_token),
+        "has_location_id":   bool(r.gmb_location_id),
+        "stored_location_id": r.gmb_location_id or None,
+        "stored_account_id":  r.gmb_account_id or None,
+        "google_place_id":    r.google_place_id or None,
+    }
+    token = get_valid_token(rid)
+    out["token_ok"] = bool(token)
+    if token:
+        # Raw accounts call
+        try:
+            resp = _req.get("https://mybusiness.googleapis.com/v4/accounts",
+                            headers={"Authorization": "Bearer " + token}, timeout=10)
+            out["accounts_status"] = resp.status_code
+            out["accounts_body"]   = resp.json()
+        except Exception as e:
+            out["accounts_error"] = str(e)
+        # Raw locations call if we have account_id
+        acct = r.gmb_account_id or get_gmb_account_id(token)
+        if acct:
+            try:
+                resp2 = _req.get("https://mybusiness.googleapis.com/v4/" + acct + "/locations",
+                                 headers={"Authorization": "Bearer " + token}, timeout=10)
+                out["locations_status"] = resp2.status_code
+                out["locations_body"]   = resp2.json()
+            except Exception as e:
+                out["locations_error"] = str(e)
+    return jsonify(out)
+
+
 @client_bp.route("/api/gbp-listing", methods=["GET"])
 @login_required
 def gbp_listing_get(current_user):
