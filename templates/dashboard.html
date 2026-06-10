@@ -2759,9 +2759,15 @@ function loadRecentTopics(){
   }).catch(function(){});
 }
 var _metricsPoller=null;
+function refreshMetrics(){
+  fetch('/api/post-insights').then(function(r){return r.json();}).then(function(d){
+    if(d.ok)loadRecentTopics();
+  }).catch(function(){});
+}
 function startMetricsPoller(){
   if(_metricsPoller)return;
-  _metricsPoller=setInterval(function(){loadRecentTopics();},60000);
+  refreshMetrics();
+  _metricsPoller=setInterval(refreshMetrics,60000);
 }
 function stopMetricsPoller(){
   if(_metricsPoller){clearInterval(_metricsPoller);_metricsPoller=null;}
