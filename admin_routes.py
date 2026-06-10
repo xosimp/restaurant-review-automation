@@ -825,6 +825,17 @@ def terms_page():
         html = "<h1>Terms of Service</h1><p>Coming soon. Contact will@cavnar.ai</p>"
     return Response(html, mimetype="text/html")
 
+@admin_bp.route("/.well-known/security.txt")
+def security_txt():
+    from flask import Response
+    content = (
+        "Contact: mailto:will@cavnar.ai\n"
+        "Preferred-Languages: en\n"
+        "Policy: https://cavnar.ai/privacy\n"
+        "Expires: 2027-01-01T00:00:00.000Z\n"
+    )
+    return Response(content, mimetype="text/plain")
+
 @admin_bp.route("/sitemap.xml")
 def sitemap():
     from flask import Response
