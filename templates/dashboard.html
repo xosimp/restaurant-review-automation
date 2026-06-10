@@ -2668,20 +2668,30 @@ function loadPostInsights(){
       var chips=list.querySelectorAll('span[data-topic]');
       for(var j=0;j<chips.length;j++){
         if(chips[j].getAttribute('data-topic')===post.topic){
-          if(chips[j].querySelector('.insights-badge'))break;
-          var parts=[];
-          if(reach)parts.push('<span title="Reach">👁 '+reach.toLocaleString()+'</span>');
-          if(likes)parts.push('<span title="Likes">♥ '+likes+'</span>');
-          if(comments)parts.push('<span title="Comments">💬 '+comments+'</span>');
-          if(!parts.length)break;
-          var badge=document.createElement('span');
-          badge.className='insights-badge';
-          badge.style.cssText='display:block;font-size:9px;color:#2d6a4f;font-weight:600;margin-top:3px;line-height:1.4;';
-          badge.innerHTML=parts.join(' · ');
-          chips[j].style.flexDirection='column';
-          chips[j].style.alignItems='flex-start';
-          chips[j].style.display='inline-flex';
-          chips[j].appendChild(badge);
+          // Re-apply posted (green) state on reload
+          if(!chips[j].querySelector('.posted-badge')){
+            chips[j].innerHTML=post.topic+' <span class="posted-badge" style="color:#2d6a4f;font-weight:700;font-size:9px">✓ '+post.platform+'</span>';
+            chips[j].style.background='#eaf4ee';
+            chips[j].style.borderColor='#a7d7b8';
+            chips[j].style.color='#2d5a3d';
+          }
+          // Add metrics below if available
+          if(!chips[j].querySelector('.insights-badge')){
+            var parts=[];
+            if(reach)parts.push('<span title="Reach">👁 '+reach.toLocaleString()+'</span>');
+            if(likes)parts.push('<span title="Likes">♥ '+likes+'</span>');
+            if(comments)parts.push('<span title="Comments">💬 '+comments+'</span>');
+            if(parts.length){
+              var badge=document.createElement('span');
+              badge.className='insights-badge';
+              badge.style.cssText='display:block;font-size:9px;color:#2d6a4f;font-weight:600;margin-top:3px;line-height:1.4;';
+              badge.innerHTML=parts.join(' · ');
+              chips[j].style.flexDirection='column';
+              chips[j].style.alignItems='flex-start';
+              chips[j].style.display='inline-flex';
+              chips[j].appendChild(badge);
+            }
+          }
           break;
         }
       }
