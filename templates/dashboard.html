@@ -1216,7 +1216,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   </div>
   <div class="topic-row">
     <input class="topic-input" id="mktopic" placeholder="Topic or occasion — e.g. new spring menu, Sunday brunch special…">
-    <button class="btn-primary" onclick="genContent()">Generate ↗</button>
+    <button class="btn-primary" onclick="genContent()">Generate <span style="font-size:15px">↺</span></button>
   </div>
   <div style="position:relative">
     <div class="output-box" id="mkoutput" contenteditable="true" style="color:var(--ink3);font-style:italic;outline:none;cursor:text;padding-bottom:22px" title="Click to edit before posting" oninput="updateCharCount()">Select a type and click Generate.</div>
@@ -1244,7 +1244,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Content Calendar</div>
       <div style="display:flex;gap:6px">
-        <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week ↺</button>
+        <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week <span style="font-size:15px">↺</span></button>
         <button class="btn-secondary" id="cal-download-btn" onclick="downloadCal()" style="font-size:10px;padding:5px 10px;display:none">Download CSV ↓</button>
       </div>
     </div>
