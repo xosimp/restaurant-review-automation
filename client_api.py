@@ -273,6 +273,35 @@ def mkt_insight_api(current_user):
         skip_h = [h.strip().lower() for h in (p.get("skip_holidays") or "").split(",") if h.strip()]
         if skip_h and upcoming:
             upcoming = ", ".join(h for h in upcoming.split(", ") if not any(s in h.lower() for s in skip_h)) or None
+        # Pull post performance data for trend context
+        perf_clause = ""
+        try:
+            from models import get_conn as _gc
+            _conn = _gc()
+            _perf_rows = _conn.execute(
+                """SELECT topic, post_platform, reach, impressions, engaged, likes, comments
+                   FROM marketing_content_log
+                   WHERE restaurant_id=? AND post_id IS NOT NULL
+                     AND (reach > 0 OR impressions > 0 OR likes > 0)
+                   ORDER BY created_at DESC LIMIT 10""",
+                (rid,)
+            ).fetchall()
+            _conn.close()
+            if _perf_rows:
+                _lines = []
+                for _r in _perf_rows:
+                    _parts = []
+                    if _r["reach"]:       _parts.append(str(_r["reach"]) + " reach")
+                    if _r["impressions"]: _parts.append(str(_r["impressions"]) + " impressions")
+                    if _r["engaged"]:     _parts.append(str(_r["engaged"]) + " engaged")
+                    if _r["likes"]:       _parts.append(str(_r["likes"]) + " likes")
+                    if _r["comments"]:    _parts.append(str(_r["comments"]) + " comments")
+                    if _parts:
+                        _lines.append(_r["topic"] + " (" + _r["post_platform"] + "): " + ", ".join(_parts))
+                if _lines:
+                    perf_clause = "\n\nRecent post performance data:\n" + "\n".join(_lines) + "\nUse this to identify what content resonates most and suggest doubling down on high-performing topics or formats."
+        except Exception:
+            pass
         prompt = f"""You are the Cavnar AI Marketing Consultant for {name}.
 Write a short, punchy weekly marketing brief for {owner or "the owner"} — 3-4 sentences max.
 
@@ -283,13 +312,13 @@ Brand voice: {p["voice"]}.
 {menu_clause}
 {never_clause}
 ALL upcoming holidays in next 30 days (mention ALL of them, not just one): {upcoming if upcoming else "none"}.
-Recent content generated (do NOT repeat these): {recent_str}.
+Recent content generated (do NOT repeat these): {recent_str}.{perf_clause}
 
 Structure exactly like this — no headers, no bullets, just two short paragraphs:
-Paragraph 1: Start with "{greeting}" then give 1 specific marketing opportunity this week tied to the season, upcoming holidays, or a gap in recent content.
+Paragraph 1: Start with "{greeting}" then give 1 specific marketing opportunity this week tied to the season, upcoming holidays, or a gap in recent content. If post performance data is available, mention what's working.
 Paragraph 2: One concrete content suggestion with a specific angle. Reference real menu items if provided. End with a one-line encouragement.
 
-Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No corporate language. Under 110 words total. If multiple holidays are coming up, mention both briefly."""
+Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No corporate language. Under 120 words total. If multiple holidays are coming up, mention both briefly."""
         import anthropic as _anth
         _client = _anth.Anthropic(api_key=__import__("os").getenv("ANTHROPIC_API_KEY"))
         msg = _client.messages.create(

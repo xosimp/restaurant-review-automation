@@ -235,58 +235,93 @@ def post_insights(current_user):
         return jsonify(ok=False, error="Not connected")
     try:
         conn = get_conn()
+        # Add metrics columns if they don't exist yet
+        for col in ("reach", "impressions", "engaged", "likes", "comments", "shares"):
+            try:
+                conn.execute(f"ALTER TABLE marketing_content_log ADD COLUMN {col} INTEGER DEFAULT 0")
+            except Exception:
+                pass
+        conn.commit()
         rows = conn.execute(
-            """SELECT topic, post_id, post_platform, created_at
+            """SELECT id, topic, post_id, post_platform, created_at,
+                      reach, impressions, engaged, likes, comments, shares
                FROM marketing_content_log
                WHERE restaurant_id=? AND post_id IS NOT NULL
                ORDER BY created_at DESC LIMIT 10""",
             (current_user["restaurant_id"],)
         ).fetchall()
-        conn.close()
         results = []
         for row in rows:
             if not row["post_id"]:
                 continue
             try:
-                # Use correct token per platform
                 _token = restaurant.fb_page_token if row["post_platform"] == "facebook" else restaurant.ig_token
+                if not _token:
+                    results.append({"topic": row["topic"], "post_id": row["post_id"],
+                                    "platform": row["post_platform"], "metrics": {}})
+                    continue
                 metrics = {}
                 if row["post_platform"] == "facebook":
-                    # Facebook: get likes/comments directly from the post object
+                    # Basic engagement: likes, comments, shares
                     r = _req.get(
-                        f"https://graph.facebook.com/v19.0/{row['post_id']}",
-                        params={
-                            "fields": "likes.summary(true),comments.summary(true),shares",
-                            "access_token": _token
-                        },
+                        "https://graph.facebook.com/v19.0/" + row["post_id"],
+                        params={"fields": "likes.summary(true),comments.summary(true),shares",
+                                "access_token": _token},
                         timeout=5
                     )
                     if r.status_code == 200:
                         d = r.json()
-                        metrics["likes"] = d.get("likes", {}).get("summary", {}).get("total_count", 0)
+                        metrics["likes"]    = d.get("likes", {}).get("summary", {}).get("total_count", 0)
                         metrics["comments"] = d.get("comments", {}).get("summary", {}).get("total_count", 0)
-                        metrics["shares"] = d.get("shares", {}).get("count", 0)
+                        metrics["shares"]   = d.get("shares", {}).get("count", 0)
+                    # Reach + impressions via Page Insights API
+                    r2 = _req.get(
+                        "https://graph.facebook.com/v19.0/" + row["post_id"] + "/insights",
+                        params={"metric": "post_impressions,post_impressions_unique,post_engaged_users",
+                                "access_token": _token},
+                        timeout=5
+                    )
+                    if r2.status_code == 200:
+                        for m in r2.json().get("data", []):
+                            val = m.get("values", [{}])[-1].get("value", 0) if m.get("values") else m.get("value", 0)
+                            if m["name"] == "post_impressions":
+                                metrics["impressions"] = val
+                            elif m["name"] == "post_impressions_unique":
+                                metrics["reach"] = val
+                            elif m["name"] == "post_engaged_users":
+                                metrics["engaged"] = val
                 else:
                     r = _req.get(
-                        f"https://graph.facebook.com/v19.0/{row['post_id']}/insights",
-                        params={
-                            "metric": "reach,impressions,likes,comments_count,saved",
-                            "access_token": _token
-                        },
+                        "https://graph.facebook.com/v19.0/" + row["post_id"] + "/insights",
+                        params={"metric": "reach,impressions,likes,comments_count,saved",
+                                "access_token": _token},
                         timeout=5
                     )
                     if r.status_code == 200:
                         for m in r.json().get("data", []):
                             metrics[m["name"]] = m.get("values", [{}])[-1].get("value", 0)
+                # Write metrics back to DB for AI trend analysis
+                if metrics:
+                    conn.execute(
+                        """UPDATE marketing_content_log
+                           SET reach=?, impressions=?, engaged=?, likes=?, comments=?, shares=?
+                           WHERE id=?""",
+                        (metrics.get("reach", 0), metrics.get("impressions", 0),
+                         metrics.get("engaged", 0), metrics.get("likes", 0),
+                         metrics.get("comments", 0), metrics.get("shares", 0),
+                         row["id"])
+                    )
+                    conn.commit()
                 results.append({
-                    "topic": row["topic"],
-                    "post_id": row["post_id"],
+                    "topic":    row["topic"],
+                    "post_id":  row["post_id"],
                     "platform": row["post_platform"],
-                    "metrics": metrics
+                    "metrics":  metrics
                 })
             except Exception:
                 results.append({"topic": row["topic"], "post_id": row["post_id"],
                                "platform": row["post_platform"], "metrics": {}})
+        conn.close()
         return jsonify(ok=True, posts=results)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
