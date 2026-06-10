@@ -222,6 +222,12 @@ def recent_topics_api(current_user):
         from models import get_conn
         rid = current_user["restaurant_id"]
         conn = get_conn()
+        for col in ("post_id", "post_platform", "reach", "impressions", "likes", "comments"):
+            try:
+                conn.execute("ALTER TABLE marketing_content_log ADD COLUMN " + col + " TEXT")
+                conn.commit()
+            except Exception:
+                pass
         rows = conn.execute(
             """SELECT topic, post_id, post_platform, reach, impressions, likes, comments
                FROM marketing_content_log
