@@ -127,7 +127,7 @@ def get_profile_for_restaurant(restaurant_id: int = None) -> dict:
 CONTENT_TYPES = [
     {
         "id": "instagram_post",
-        "label": "Instagram post",
+        "label": "Instagram/FB post",
         "icon": "camera",
         "description": "Caption + hashtags for a food or ambiance photo",
     },

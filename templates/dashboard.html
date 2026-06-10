@@ -1173,7 +1173,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     {% if restaurant.ig_token %}
     <button onclick="disconnectInstagram(this)" class="btn btn-skip" style="font-size:11px;padding:4px 10px;flex-shrink:0">Disconnect</button>
     {% else %}
-    <button onclick="igConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 14px;flex-shrink:0">Connect Instagram →</button>
+    <button onclick="igConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 14px;flex-shrink:0">Connect Instagram/FB →</button>
     {% endif %}
   </div>
 
@@ -1244,7 +1244,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Content Calendar</div>
       <div style="display:flex;gap:6px">
-        <button class="btn-secondary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week <span style="font-size:15px">↺</span></button>
+        <button class="btn-primary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week <span style="font-size:15px">↺</span></button>
         <button class="btn-secondary" id="cal-download-btn" onclick="downloadCal()" style="font-size:10px;padding:5px 10px;display:none">Download CSV ↓</button>
       </div>
     </div>
