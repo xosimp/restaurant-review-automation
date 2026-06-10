@@ -268,10 +268,27 @@ def log_content(restaurant_id: int, content_type: str, topic: str,
             conn.execute("ALTER TABLE marketing_content_log ADD COLUMN post_platform TEXT")
         except Exception:
             pass
-        conn.execute(
-            "INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, post_platform) VALUES (?,?,?,?,?)",
-            (restaurant_id, content_type, topic, post_id, post_platform)
-        )
+        if post_id:
+            # Update the most recent unposted row for this topic instead of inserting a duplicate
+            updated = conn.execute(
+                """UPDATE marketing_content_log SET post_id=?, post_platform=?
+                   WHERE id=(
+                     SELECT id FROM marketing_content_log
+                     WHERE restaurant_id=? AND topic=? AND post_id IS NULL
+                     ORDER BY created_at DESC LIMIT 1
+                   )""",
+                (post_id, post_platform, restaurant_id, topic)
+            ).rowcount
+            if not updated:
+                conn.execute(
+                    "INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, post_platform) VALUES (?,?,?,?,?)",
+                    (restaurant_id, content_type, topic, post_id, post_platform)
+                )
+        else:
+            conn.execute(
+                "INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_id, post_platform) VALUES (?,?,?,?,?)",
+                (restaurant_id, content_type, topic, post_id, post_platform)
+            )
         conn.commit()
         conn.close()
     except Exception:
