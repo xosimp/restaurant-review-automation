@@ -231,7 +231,7 @@ def post_insights(current_user):
     import requests as _req
     from models import get_conn, get_restaurant
     restaurant = get_restaurant(current_user["restaurant_id"])
-    if not restaurant or not restaurant.ig_token:
+    if not restaurant or (not restaurant.ig_token and not restaurant.fb_page_token):
         return jsonify(ok=False, error="Not connected")
     try:
         conn = get_conn()

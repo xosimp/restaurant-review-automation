@@ -220,9 +220,15 @@ def review_insight_api(current_user):
 def recent_topics_api(current_user):
     try:
         from marketing import get_recent_content
-        recent = get_recent_content(current_user["restaurant_id"], limit=8)
-        topics = [r["topic"] for r in recent if r.get("topic")][:8]
-        return jsonify(topics=topics)
+        recent = get_recent_content(current_user["restaurant_id"], limit=16)
+        seen = []
+        for r in recent:
+            t = r.get("topic")
+            if t and t not in seen:
+                seen.append(t)
+            if len(seen) >= 8:
+                break
+        return jsonify(topics=seen)
     except Exception as e:
         return jsonify(topics=[])
 
