@@ -2902,16 +2902,23 @@ function loadInvTrend(){
 }
 var selCt='{{ctypes[0].id if ctypes}}';
 function selectCt(id,el){selCt=id;document.querySelectorAll('.ct-btn').forEach(function(b){b.classList.remove('selected');});el.classList.add('selected');}
+var _genInFlight=false;
 function genContent(fromCalendar){
+  if(_genInFlight)return;
   var topic=document.getElementById('mktopic').value.trim();
   if(!topic){toast('Enter a topic');return;}
+  var btn=document.querySelector('.btn-primary[onclick*="genContent"]');
   var box=document.getElementById('mkoutput');
+  _genInFlight=true;
+  if(btn){btn.disabled=true;btn.style.opacity='0.6';}
   box.style.fontStyle='italic';
   box.style.color='var(--ink3)';
   box.textContent='Generating…';
   fetch('/api/generate-content',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:selCt,topic:topic,from_calendar:!!fromCalendar})})
     .then(function(r){return r.json();})
     .then(function(d){
+      _genInFlight=false;
+      if(btn){btn.disabled=false;btn.style.opacity='';}
       box.style.fontStyle='normal';
       box.style.color='var(--ink2)';
       box.textContent=d.content||'Generation failed — try again.';
@@ -2963,6 +2970,8 @@ if(_fbConnected&&fbBtn)fbBtn.style.display='inline-block';
       box.style.color='var(--red)';
       box.style.fontStyle='italic';
       box.textContent='Content generation unavailable — check back shortly.';
+      _genInFlight=false;
+      if(btn){btn.disabled=false;btn.style.opacity='';}
     });
 }
 function downloadCal(){
