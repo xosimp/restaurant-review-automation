@@ -89,10 +89,10 @@ def get_valid_token(restaurant_id: int) -> str | None:
 # ── Account/Location discovery ────────────────────────────────────────────────
 
 def get_gmb_account_id(access_token: str) -> str | None:
-    """Get the first GMB account ID for this user."""
+    """Get the first GBP account ID using the current Account Management API."""
     try:
         resp = requests.get(
-            "https://mybusiness.googleapis.com/v4/accounts",
+            "https://mybusinessaccountmanagement.googleapis.com/v1/accounts",
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=10,
         )
@@ -108,24 +108,20 @@ def get_gmb_account_id(access_token: str) -> str | None:
 
 def get_gmb_location_id(access_token: str, account_id: str, place_id: str) -> str | None:
     """
-    Find the GMB location matching the restaurant's Google Place ID.
-    Returns the location name e.g. "accounts/123/locations/456".
+    Find the GBP location using the current Business Information API.
+    Returns the location name e.g. "locations/456".
     """
     try:
         resp = requests.get(
-            f"https://mybusiness.googleapis.com/v4/{account_id}/locations",
+            f"https://mybusinessbusinessinformation.googleapis.com/v1/{account_id}/locations",
             headers={"Authorization": f"Bearer {access_token}"},
+            params={"readMask": "name,title,phoneNumbers,websiteUri,profile"},
             timeout=10,
         )
         resp.raise_for_status()
         locations = resp.json().get("locations", [])
-        for loc in locations:
-            # Match by place ID if available
-            if loc.get("locationKey", {}).get("placeId") == place_id:
-                return loc["name"]
-        # If no match by place ID, return first location
         if locations:
-            return locations[0]["name"]
+            return locations[0]["name"]  # e.g. "locations/456"
         return None
     except Exception as e:
         print(f"[GMB] get_gmb_location_id error: {e}")
@@ -136,15 +132,15 @@ def get_gmb_location_id(access_token: str, account_id: str, place_id: str) -> st
 
 def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: int) -> list:
     """
-    Fetch reviews using Business Profile API — returns proper review names
-    needed for posting replies.
+    Fetch reviews using the current Business Profile Reviews API.
+    location_id format: "locations/456"
     """
     from models import Review
     try:
         resp = requests.get(
-            f"https://mybusiness.googleapis.com/v4/{location_id}/reviews",
+            f"https://mybusinessreviews.googleapis.com/v1/{location_id}/reviews",
             headers={"Authorization": f"Bearer {access_token}"},
-            params={"pageSize": 50, "orderBy": "updateTime desc"},
+            params={"pageSize": 50},
             timeout=10,
         )
         resp.raise_for_status()
@@ -191,7 +187,7 @@ def post_reply(restaurant_id: int, review_name: str, reply_text: str) -> dict:
         return {"ok": False, "error": "Google Business not connected"}
 
     try:
-        url  = f"https://mybusiness.googleapis.com/v4/{review_name}/reply"
+        url  = f"https://mybusinessreviews.googleapis.com/v1/{review_name}/reply"
         resp = requests.put(
             url,
             headers={
@@ -232,8 +228,9 @@ def get_gbp_listing(restaurant_id: int) -> dict:
         return {"ok": False, "error": "Could not refresh Google token"}
     try:
         resp = requests.get(
-            f"https://mybusiness.googleapis.com/v4/{r.gmb_location_id}",
+            f"https://mybusinessbusinessinformation.googleapis.com/v1/{r.gmb_location_id}",
             headers={"Authorization": f"Bearer {token}"},
+            params={"readMask": "name,title,phoneNumbers,websiteUri,profile"},
             timeout=10,
         )
         if resp.status_code != 200:
@@ -241,9 +238,9 @@ def get_gbp_listing(restaurant_id: int) -> dict:
         data = resp.json()
         return {
             "ok":          True,
-            "title":       data.get("locationName", ""),
-            "phone":       data.get("primaryPhone", ""),
-            "website":     data.get("websiteUrl", ""),
+            "title":       data.get("title", ""),
+            "phone":       data.get("phoneNumbers", {}).get("primaryPhone", ""),
+            "website":     data.get("websiteUri", ""),
             "description": data.get("profile", {}).get("description", ""),
         }
     except Exception as e:
@@ -266,11 +263,11 @@ def update_gbp_listing(restaurant_id: int, fields: dict) -> dict:
     body       = {}
     mask_parts = []
     if "phone" in fields:
-        body["primaryPhone"] = fields["phone"]
-        mask_parts.append("primaryPhone")
+        body["phoneNumbers"] = {"primaryPhone": fields["phone"]}
+        mask_parts.append("phoneNumbers.primaryPhone")
     if "website" in fields:
-        body["websiteUrl"] = fields["website"]
-        mask_parts.append("websiteUrl")
+        body["websiteUri"] = fields["website"]
+        mask_parts.append("websiteUri")
     if "description" in fields:
         body.setdefault("profile", {})["description"] = fields["description"]
         mask_parts.append("profile.description")
@@ -280,7 +277,7 @@ def update_gbp_listing(restaurant_id: int, fields: dict) -> dict:
 
     try:
         resp = requests.patch(
-            f"https://mybusiness.googleapis.com/v4/{r.gmb_location_id}",
+            f"https://mybusinessbusinessinformation.googleapis.com/v1/{r.gmb_location_id}",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             params={"updateMask": ",".join(mask_parts)},
             json=body,

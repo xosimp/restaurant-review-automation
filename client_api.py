@@ -933,7 +933,7 @@ def gbp_debug(current_user):
     if token:
         # Raw accounts call
         try:
-            resp = _req.get("https://mybusiness.googleapis.com/v4/accounts",
+            resp = _req.get("https://mybusinessaccountmanagement.googleapis.com/v1/accounts",
                             headers={"Authorization": "Bearer " + token}, timeout=10)
             out["accounts_status"] = resp.status_code
             out["accounts_body"]   = resp.json()
@@ -943,8 +943,11 @@ def gbp_debug(current_user):
         acct = r.gmb_account_id or get_gmb_account_id(token)
         if acct:
             try:
-                resp2 = _req.get("https://mybusiness.googleapis.com/v4/" + acct + "/locations",
-                                 headers={"Authorization": "Bearer " + token}, timeout=10)
+                resp2 = _req.get(
+                    "https://mybusinessbusinessinformation.googleapis.com/v1/" + acct + "/locations",
+                    headers={"Authorization": "Bearer " + token},
+                    params={"readMask": "name,title,phoneNumbers,websiteUri,profile"},
+                    timeout=10)
                 out["locations_status"] = resp2.status_code
                 out["locations_body"]   = resp2.json()
             except Exception as e:
