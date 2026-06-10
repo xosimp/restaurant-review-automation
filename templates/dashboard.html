@@ -2664,21 +2664,24 @@ function loadPostInsights(){
       var m=post.metrics||{};
       var reach=m.reach||m.impressions||0;
       var likes=m.likes||0;
-      if(!reach&&!likes)continue;
+      var comments=m.comments||m.comments_count||0;
       var chips=list.querySelectorAll('span[data-topic]');
       for(var j=0;j<chips.length;j++){
         if(chips[j].getAttribute('data-topic')===post.topic){
-          var badge=chips[j].querySelector('.insights-badge');
-          if(!badge){
-            badge=document.createElement('span');
-            badge.className='insights-badge';
-            badge.style.cssText='font-size:9px;color:#2d6a4f;font-weight:600;margin-left:3px;';
-            chips[j].appendChild(badge);
-          }
-          var txt='';
-          if(reach)txt+=reach.toLocaleString()+' reach';
-          if(likes)txt+=(txt?' · ':'')+likes+' likes';
-          badge.textContent=txt?' • '+txt:'';
+          if(chips[j].querySelector('.insights-badge'))break;
+          var parts=[];
+          if(reach)parts.push('<span title="Reach">👁 '+reach.toLocaleString()+'</span>');
+          if(likes)parts.push('<span title="Likes">♥ '+likes+'</span>');
+          if(comments)parts.push('<span title="Comments">💬 '+comments+'</span>');
+          if(!parts.length)break;
+          var badge=document.createElement('span');
+          badge.className='insights-badge';
+          badge.style.cssText='display:block;font-size:9px;color:#2d6a4f;font-weight:600;margin-top:3px;line-height:1.4;';
+          badge.innerHTML=parts.join(' · ');
+          chips[j].style.flexDirection='column';
+          chips[j].style.alignItems='flex-start';
+          chips[j].style.display='inline-flex';
+          chips[j].appendChild(badge);
           break;
         }
       }
