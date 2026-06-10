@@ -813,6 +813,18 @@ def privacy_page():
         html = "<h1>Privacy Policy</h1><p>Coming soon. Contact will@cavnar.ai</p>"
     return Response(html, mimetype="text/html")
 
+@admin_bp.route("/terms")
+def terms_page():
+    from flask import Response
+    import os as _os
+    try:
+        html_path = _os.path.join(_os.path.dirname(__file__), "terms.html")
+        with open(html_path, "r") as f:
+            html = f.read()
+    except FileNotFoundError:
+        html = "<h1>Terms of Service</h1><p>Coming soon. Contact will@cavnar.ai</p>"
+    return Response(html, mimetype="text/html")
+
 @admin_bp.route("/sitemap.xml")
 def sitemap():
     from flask import Response
