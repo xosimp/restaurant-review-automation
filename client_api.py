@@ -339,8 +339,7 @@ def inv_insight_api(current_user):
 def gen_content(current_user):
     data = request.get_json()
     from marketing import generate_content, mark_calendar_idea_used
-    user = get_current_user()
-    rid = user["restaurant_id"] if user else None
+    rid = current_user["restaurant_id"] if current_user else None
     content_type = data.get("type","instagram_post")
     topic = data.get("topic","")
     result = generate_content(content_type, topic, restaurant_id=rid)
