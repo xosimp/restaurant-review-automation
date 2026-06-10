@@ -219,13 +219,35 @@ def review_insight_api(current_user):
 @login_required
 def recent_topics_api(current_user):
     try:
-        from marketing import get_recent_content
-        recent = get_recent_content(current_user["restaurant_id"], limit=16)
+        from models import get_conn
+        rid = current_user["restaurant_id"]
+        conn = get_conn()
+        rows = conn.execute(
+            """SELECT topic, post_id, post_platform, reach, impressions, likes, comments
+               FROM marketing_content_log
+               WHERE restaurant_id=? ORDER BY created_at DESC LIMIT 16""",
+            (rid,)
+        ).fetchall()
+        conn.close()
         seen = []
-        for r in recent:
-            t = r.get("topic")
-            if t and t not in seen:
-                seen.append(t)
+        seen_topics = set()
+        for r in rows:
+            t = r["topic"]
+            if not t or t in seen_topics:
+                continue
+            seen_topics.add(t)
+            entry = {"topic": t, "posted": bool(r["post_id"]), "platform": r["post_platform"] or ""}
+            m = {}
+            reach = (r["reach"] or 0)
+            impressions = (r["impressions"] or 0)
+            likes = (r["likes"] or 0)
+            comments = (r["comments"] or 0)
+            if reach:       m["reach"]       = reach
+            if impressions: m["impressions"] = impressions
+            if likes:       m["likes"]       = likes
+            if comments:    m["comments"]    = comments
+            entry["metrics"] = m
+            seen.append(entry)
             if len(seen) >= 8:
                 break
         return jsonify(topics=seen)
