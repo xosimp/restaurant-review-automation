@@ -262,23 +262,23 @@ def post_insights(current_user):
                     continue
                 metrics = {}
                 if row["post_platform"] == "facebook":
-                    # Basic engagement: likes, comments, shares
+                    # Basic engagement via post fields
                     r = _req.get(
                         "https://graph.facebook.com/v19.0/" + row["post_id"],
-                        params={"fields": "likes.summary(true),comments.summary(true),shares",
+                        params={"fields": "reactions.limit(0).summary(true),comments.limit(0).summary(true),shares",
                                 "access_token": _token},
                         timeout=5
                     )
                     print(f"[insights] FB engagement status={r.status_code} body={r.text[:300]}")
                     if r.status_code == 200:
                         d = r.json()
-                        metrics["likes"]    = d.get("likes", {}).get("summary", {}).get("total_count", 0)
+                        metrics["likes"]    = d.get("reactions", {}).get("summary", {}).get("total_count", 0)
                         metrics["comments"] = d.get("comments", {}).get("summary", {}).get("total_count", 0)
                         metrics["shares"]   = d.get("shares", {}).get("count", 0)
                     # Reach + impressions via Page Insights API
                     r2 = _req.get(
                         "https://graph.facebook.com/v19.0/" + row["post_id"] + "/insights",
-                        params={"metric": "post_impressions,post_impressions_unique,post_engaged_users",
+                        params={"metric": "post_impressions,post_impressions_unique",
                                 "period": "lifetime",
                                 "access_token": _token},
                         timeout=5
@@ -291,8 +291,6 @@ def post_insights(current_user):
                                 metrics["impressions"] = val
                             elif m["name"] == "post_impressions_unique":
                                 metrics["reach"] = val
-                            elif m["name"] == "post_engaged_users":
-                                metrics["engaged"] = val
                 else:
                     r = _req.get(
                         "https://graph.facebook.com/v19.0/" + row["post_id"] + "/insights",
