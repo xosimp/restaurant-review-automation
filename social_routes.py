@@ -353,3 +353,52 @@ def post_to_facebook(current_user):
         print(f"[insights] failed to log fb post_id: {_e_fb}")
     return jsonify(ok=True, post_id=post_id)
 
+
+@social_bp.route("/api/meta-review-test")
+@login_required
+def meta_review_test(current_user):
+    """Temporary endpoint to trigger required Meta App Review test calls."""
+    import requests as _req
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    if not restaurant or not restaurant.fb_page_token or not restaurant.fb_page_id:
+        return jsonify(ok=False, error="Facebook not connected")
+
+    fb_token   = restaurant.fb_page_token
+    fb_page_id = restaurant.fb_page_id
+    ig_token   = restaurant.ig_token
+    ig_user_id = restaurant.ig_user_id
+    results    = {}
+
+    # read_insights test call
+    r1 = _req.get(
+        "https://graph.facebook.com/v19.0/" + fb_page_id + "/insights",
+        params={"metric": "post_impressions,post_impressions_unique", "period": "week", "access_token": fb_token},
+        timeout=10
+    )
+    results["read_insights"] = {"status": r1.status_code, "body": r1.json()}
+
+    # pages_manage_engagement — get a post then like it
+    r2 = _req.get(
+        "https://graph.facebook.com/v19.0/" + fb_page_id + "/feed",
+        params={"fields": "id", "limit": 1, "access_token": fb_token},
+        timeout=10
+    )
+    post_id = (r2.json().get("data") or [{}])[0].get("id")
+    if post_id:
+        r3 = _req.post(
+            "https://graph.facebook.com/v19.0/" + post_id + "/likes",
+            data={"access_token": fb_token},
+            timeout=10
+        )
+        results["pages_manage_engagement"] = {"status": r3.status_code, "body": r3.json()}
+
+    # instagram_manage_insights test call
+    if ig_token and ig_user_id:
+        r4 = _req.get(
+            "https://graph.facebook.com/v19.0/" + ig_user_id + "/insights",
+            params={"metric": "reach", "period": "day", "access_token": ig_token},
+            timeout=10
+        )
+        results["instagram_manage_insights"] = {"status": r4.status_code, "body": r4.json()}
+
+    return jsonify(ok=True, results=results)
