@@ -417,9 +417,8 @@ def gen_content(current_user):
 @login_required
 def content_calendar(current_user):
     from marketing import get_content_calendar_ideas
-    user = get_current_user()
     return jsonify(ideas=get_content_calendar_ideas(
-        restaurant_id=user["restaurant_id"] if user else None))
+        restaurant_id=current_user["restaurant_id"]))
 
 @client_bp.route("/api/regenerate-draft/<int:review_id>", methods=["POST"])
 @login_required

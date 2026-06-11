@@ -2694,8 +2694,9 @@ function updateCharCount(){
   var selType=selBtn&&selBtn.dataset?selBtn.dataset.type:'';
   var isIg=selType==='instagram_post'||selType==='happy_hour'||selType==='event_announcement';
   var isGoogle=selType==='google_promo';
+  var _rawText=(el.innerText||el.textContent||'').trim();
   var isSms=selType==='loyalty_nudge';
-  var len=(el.innerText||el.textContent||'').length;
+  var len=(_rawText==='Select a type and click Generate.'||_rawText==='')?0:_rawText.length;
   if(isIg){
     var cc=document.getElementById('char-count');
     var co=document.getElementById('char-over');
