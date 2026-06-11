@@ -161,6 +161,10 @@ def post_to_instagram(current_user):
 
     creation_id = r1.json().get("id")
 
+    # Wait for Instagram to process the image before publishing
+    import time as _time
+    _time.sleep(4)
+
     # Publish the media
     r2 = _req.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/media_publish", data={
         "creation_id":  creation_id,
