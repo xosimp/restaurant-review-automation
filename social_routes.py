@@ -145,21 +145,14 @@ def post_to_instagram(current_user):
     ig_user_id = restaurant.ig_user_id
     token      = restaurant.ig_token
 
-    if image_url:
-        # Image post
-        r1 = _req.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/media", data={
-            "image_url":    image_url,
-            "caption":      caption,
-            "access_token": token,
-        })
-    else:
-        # Text/caption only — requires a placeholder image or use carousel
-        # For now use a simple image-less post via threads endpoint
-        r1 = _req.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/media", data={
-            "media_type":   "REELS",
-            "caption":      caption,
-            "access_token": token,
-        })
+    if not image_url:
+        return jsonify(ok=False, error="Instagram requires an image. Paste a public image URL into the Image URL field before posting.")
+
+    r1 = _req.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/media", data={
+        "image_url":    image_url,
+        "caption":      caption,
+        "access_token": token,
+    })
 
     if r1.status_code != 200:
         err = r1.json().get("error",{}).get("message","Unknown error")
