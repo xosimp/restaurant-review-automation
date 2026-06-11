@@ -406,15 +406,6 @@ def meta_review_test(current_user):
             if r1.status_code == 200:
                 break
 
-    # pages_manage_engagement — post a comment on the FB post
-    if fb_post_id:
-        r3 = _req.post(
-            "https://graph.facebook.com/v19.0/" + fb_post_id + "/comments",
-            data={"message": "Thank you for your engagement!", "access_token": fb_token},
-            timeout=10
-        )
-        results["pages_manage_engagement"] = {"status": r3.status_code, "body": r3.json()}
-
     # instagram_manage_insights
     if ig_token and ig_user_id:
         r4 = _req.get(
