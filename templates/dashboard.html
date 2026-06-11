@@ -2732,10 +2732,11 @@ function loadRecentTopics(){
           var metrics=t.metrics||{};
           var chip=document.createElement('span');
           chip.setAttribute('data-topic',topic);
+          var displayTopic=topic.length>40?topic.substring(0,40).trim()+'…':topic;
           if(posted){
             chip.style.cssText='background:#eaf4ee;color:#2d5a3d;font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid #a7d7b8;white-space:nowrap;font-weight:500;display:inline-flex;flex-direction:column;align-items:flex-start;vertical-align:top';
             var topLine=document.createElement('span');
-            topLine.innerHTML=topic+' <span class="posted-badge" style="color:#2d6a4f;font-weight:700;font-size:9px">&#10003; '+platform+'</span>';
+            topLine.innerHTML=displayTopic+' <span class="posted-badge" style="color:#2d6a4f;font-weight:700;font-size:9px">&#10003; '+platform+'</span>';
             chip.appendChild(topLine);
             var reach=metrics.reach||metrics.impressions||0;
             var likes=metrics.likes||0;
@@ -2753,7 +2754,7 @@ function loadRecentTopics(){
             }
           } else {
             chip.style.cssText='background:#fef0e8;color:#a84020;font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid #f5cdb0;white-space:nowrap;font-weight:500';
-            chip.textContent=topic;
+            chip.textContent=displayTopic;
           }
           frag.appendChild(chip);
         }
