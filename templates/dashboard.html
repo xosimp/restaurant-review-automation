@@ -1219,7 +1219,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     <button class="btn-primary" onclick="genContent()">Generate <span style="font-size:15px">↺</span></button>
   </div>
   <div style="position:relative">
-    <div class="output-box" id="mkoutput" contenteditable="true" style="color:var(--ink3);font-style:italic;outline:none;cursor:text;padding-bottom:22px" title="Click to edit before posting" oninput="updateCharCount()">Select a type and click Generate.</div>
+    <div class="output-box" id="mkoutput" contenteditable="true" style="outline:none;cursor:text;padding-bottom:22px" title="Click to edit before posting" oninput="updateCharCount()"><span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Select a type and click Generate.</span></div>
     <div id="char-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="char-count">0</span> <span id="char-limit-label"></span><span id="char-over" style="color:var(--red);display:none"> over limit</span></div>
     <div id="sms-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="sms-char-count">0</span>/160<span id="sms-over" style="color:var(--red);display:none"> over</span></div>
   </div>
@@ -2121,23 +2121,6 @@ document.addEventListener('DOMContentLoaded', function(){
   }
   // Initialize filter so count label is accurate on page load
   filterReviews();
-  // Contenteditable placeholder behavior for mkoutput
-  var _mko=document.getElementById('mkoutput');
-  var _ph='Select a type and click Generate.';
-  if(_mko){
-    _mko.addEventListener('focus',function(){
-      if((this.innerText||this.textContent||'').trim()===_ph){
-        this.innerHTML='';
-        this.style.color='var(--ink)';
-        this.style.fontStyle='normal';
-      }
-    });
-    _mko.addEventListener('blur',function(){
-      if(!(this.innerText||this.textContent||'').trim()){
-        this.innerHTML='<span style="color:var(--ink3);font-style:italic">'+_ph+'</span>';
-      }
-    });
-  }
 });
 var rfilter='{{rfilter}}';
 function setRF(f,btn){
@@ -2649,7 +2632,7 @@ function postToFacebook(){
 }
 function clearMktOutput(){
   var el=document.getElementById('mkoutput');
-  if(el){el.innerHTML='<span style="color:var(--ink3)">Select a type and click Generate.</span>';}
+  if(el){el.innerHTML='<span contenteditable="false" style="color:var(--ink3);font-style:italic;pointer-events:none;user-select:none">Select a type and click Generate.</span>';}
   window._lastPostedTopic='';
   var charCountEl=document.getElementById('char-count');
   var charOver=document.getElementById('char-over');
