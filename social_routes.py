@@ -265,7 +265,7 @@ def post_insights(current_user):
                     # Basic engagement via post fields
                     r = _req.get(
                         "https://graph.facebook.com/v19.0/" + row["post_id"],
-                        params={"fields": "reactions.limit(0).summary(true),comments.limit(0).summary(true),shares",
+                        params={"fields": "reactions.summary(true),comments.summary(true),shares",
                                 "access_token": _token},
                         timeout=5
                     )
