@@ -369,41 +369,53 @@ def meta_review_test(current_user):
     ig_user_id = restaurant.ig_user_id
     results    = {}
 
-    # Get a real post ID from the page feed first
-    r_feed = _req.get(
-        "https://graph.facebook.com/v19.0/" + fb_page_id + "/feed",
-        params={"fields": "id", "limit": 1, "access_token": fb_token},
-        timeout=10
-    )
-    feed_post_id = (r_feed.json().get("data") or [{}])[0].get("id")
+    # Get a FB post ID from the database
+    fb_post_id = None
+    try:
+        conn = get_conn()
+        row = conn.execute(
+            "SELECT post_id FROM marketing_content_log WHERE restaurant_id=? AND post_platform='facebook' AND post_id IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+            (current_user["restaurant_id"],)
+        ).fetchone()
+        if row:
+            fb_post_id = row["post_id"]
+        conn.close()
+    except Exception:
+        pass
 
-    # read_insights test call — post-level impressions
-    if feed_post_id:
-        r1 = _req.get(
-            "https://graph.facebook.com/v19.0/" + feed_post_id + "/insights",
-            params={"metric": "post_impressions,post_impressions_unique", "period": "lifetime", "access_token": fb_token},
+    # Fall back to feed API if no DB post found
+    if not fb_post_id:
+        r_feed = _req.get(
+            "https://graph.facebook.com/v19.0/" + fb_page_id + "/feed",
+            params={"fields": "id", "limit": 1, "access_token": fb_token},
             timeout=10
         )
-        results["read_insights"] = {"status": r1.status_code, "body": r1.json()}
-    else:
-        # Fall back to page-level metric
-        r1 = _req.get(
-            "https://graph.facebook.com/v19.0/" + fb_page_id + "/insights",
-            params={"metric": "page_impressions", "period": "week", "access_token": fb_token},
-            timeout=10
-        )
-        results["read_insights"] = {"status": r1.status_code, "body": r1.json()}
+        fb_post_id = (r_feed.json().get("data") or [{}])[0].get("id")
 
-    # pages_manage_engagement — like a post
-    if feed_post_id:
+    results["fb_post_id_found"] = fb_post_id
+
+    # read_insights — try multiple metrics until one succeeds
+    if fb_post_id:
+        for metric in ["post_impressions,post_impressions_unique", "post_activity", "post_clicks"]:
+            r1 = _req.get(
+                "https://graph.facebook.com/v19.0/" + fb_post_id + "/insights",
+                params={"metric": metric, "period": "lifetime", "access_token": fb_token},
+                timeout=10
+            )
+            results["read_insights_" + metric.split(",")[0]] = {"status": r1.status_code, "body": r1.json()}
+            if r1.status_code == 200:
+                break
+
+    # pages_manage_engagement — post a comment on the FB post
+    if fb_post_id:
         r3 = _req.post(
-            "https://graph.facebook.com/v19.0/" + feed_post_id + "/likes",
-            data={"access_token": fb_token},
+            "https://graph.facebook.com/v19.0/" + fb_post_id + "/comments",
+            data={"message": "Thank you for your engagement!", "access_token": fb_token},
             timeout=10
         )
         results["pages_manage_engagement"] = {"status": r3.status_code, "body": r3.json()}
 
-    # instagram_manage_insights test call
+    # instagram_manage_insights
     if ig_token and ig_user_id:
         r4 = _req.get(
             "https://graph.facebook.com/v19.0/" + ig_user_id + "/insights",
