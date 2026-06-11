@@ -272,6 +272,22 @@ def post_insights(current_user):
                         metrics["likes"]    = d.get("reactions", {}).get("summary", {}).get("total_count", 0)
                         metrics["comments"] = d.get("comments", {}).get("summary", {}).get("total_count", 0)
                         metrics["shares"]   = d.get("shares", {}).get("count", 0)
+                    # Reach + impressions via Page Insights API
+                    r2 = _req.get(
+                        "https://graph.facebook.com/v19.0/" + row["post_id"] + "/insights",
+                        params={"metric": "post_impressions,post_impressions_unique",
+                                "period": "lifetime",
+                                "access_token": _token},
+                        timeout=5
+                    )
+                    print(f"[insights] FB insights status={r2.status_code} body={r2.text[:300]}")
+                    if r2.status_code == 200:
+                        for m in r2.json().get("data", []):
+                            val = m.get("values", [{}])[-1].get("value", 0) if m.get("values") else m.get("value", 0)
+                            if m["name"] == "post_impressions":
+                                metrics["impressions"] = val
+                            elif m["name"] == "post_impressions_unique":
+                                metrics["reach"] = val
                 else:
                     r = _req.get(
                         "https://graph.facebook.com/v19.0/" + row["post_id"] + "/insights",
