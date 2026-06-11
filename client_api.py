@@ -235,24 +235,38 @@ def recent_topics_api(current_user):
             (rid,)
         ).fetchall()
         conn.close()
-        seen = []
-        seen_topics = set()
+        topic_map = {}
+        topic_order = []
         for r in rows:
             t = r["topic"]
-            if not t or t in seen_topics:
+            if not t:
                 continue
-            seen_topics.add(t)
-            entry = {"topic": t, "posted": bool(r["post_id"]), "platform": r["post_platform"] or ""}
-            m = {}
-            reach = (r["reach"] or 0)
-            impressions = (r["impressions"] or 0)
-            likes = (r["likes"] or 0)
-            comments = (r["comments"] or 0)
-            if reach:       m["reach"]       = reach
-            if impressions: m["impressions"] = impressions
-            if likes:       m["likes"]       = likes
-            if comments:    m["comments"]    = comments
-            entry["metrics"] = m
+            if t not in topic_map:
+                topic_map[t] = {"topic": t, "posted": False, "platforms": [], "metrics": {}}
+                topic_order.append(t)
+            entry = topic_map[t]
+            if r["post_id"]:
+                entry["posted"] = True
+                plat = (r["post_platform"] or "").strip()
+                if plat and plat not in entry["platforms"]:
+                    entry["platforms"].append(plat)
+            m = entry["metrics"]
+            if not m.get("reach") and r["reach"]:       m["reach"]       = int(r["reach"] or 0)
+            if not m.get("impressions") and r["impressions"]: m["impressions"] = int(r["impressions"] or 0)
+            if not m.get("likes") and r["likes"]:       m["likes"]       = int(r["likes"] or 0)
+            if not m.get("comments") and r["comments"]: m["comments"]    = int(r["comments"] or 0)
+
+        seen = []
+        for t in topic_order:
+            entry = topic_map[t]
+            platforms = entry["platforms"]
+            if len(platforms) > 1:
+                entry["platform"] = " + ".join(p.replace("facebook","FB").replace("instagram","IG") for p in platforms)
+            elif platforms:
+                entry["platform"] = platforms[0]
+            else:
+                entry["platform"] = ""
+            del entry["platforms"]
             seen.append(entry)
             if len(seen) >= 8:
                 break
