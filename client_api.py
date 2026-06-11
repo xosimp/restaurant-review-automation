@@ -270,9 +270,9 @@ def mkt_stats_api(current_user):
             id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
             content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
             created_at TEXT DEFAULT (datetime('now')))""")
-        gen   = conn.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=?", (rid,)).fetchone()[0] or 0
-        pub   = conn.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND post_platform IS NOT NULL", (rid,)).fetchone()[0] or 0
-        month = conn.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')", (rid,)).fetchone()[0] or 0
+        gen   = conn.execute("SELECT COUNT(DISTINCT topic) FROM marketing_content_log WHERE restaurant_id=?", (rid,)).fetchone()[0] or 0
+        pub   = conn.execute("SELECT COUNT(DISTINCT topic) FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL", (rid,)).fetchone()[0] or 0
+        month = conn.execute("SELECT COUNT(DISTINCT topic) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')", (rid,)).fetchone()[0] or 0
         conn.close()
         return jsonify(ok=True, generated=gen, published=pub, this_month=month)
     except Exception as e:

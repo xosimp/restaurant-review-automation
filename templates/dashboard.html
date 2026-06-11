@@ -2634,6 +2634,10 @@ function clearMktOutput(){
   var el=document.getElementById('mkoutput');
   if(el){el.innerHTML='<span style="color:var(--ink3)">Select a type and click Generate.</span>';}
   window._lastPostedTopic='';
+  var charCtr=document.getElementById('char-counter');
+  var smsCtr=document.getElementById('sms-counter');
+  if(charCtr)charCtr.style.display='none';
+  if(smsCtr)smsCtr.style.display='none';
 }
 function markTopicPosted(platform){
   loadRecentTopics();
