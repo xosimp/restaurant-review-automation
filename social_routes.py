@@ -369,24 +369,35 @@ def meta_review_test(current_user):
     ig_user_id = restaurant.ig_user_id
     results    = {}
 
-    # read_insights test call
-    r1 = _req.get(
-        "https://graph.facebook.com/v19.0/" + fb_page_id + "/insights",
-        params={"metric": "post_impressions,post_impressions_unique", "period": "week", "access_token": fb_token},
-        timeout=10
-    )
-    results["read_insights"] = {"status": r1.status_code, "body": r1.json()}
-
-    # pages_manage_engagement — get a post then like it
-    r2 = _req.get(
+    # Get a real post ID from the page feed first
+    r_feed = _req.get(
         "https://graph.facebook.com/v19.0/" + fb_page_id + "/feed",
         params={"fields": "id", "limit": 1, "access_token": fb_token},
         timeout=10
     )
-    post_id = (r2.json().get("data") or [{}])[0].get("id")
-    if post_id:
+    feed_post_id = (r_feed.json().get("data") or [{}])[0].get("id")
+
+    # read_insights test call — post-level impressions
+    if feed_post_id:
+        r1 = _req.get(
+            "https://graph.facebook.com/v19.0/" + feed_post_id + "/insights",
+            params={"metric": "post_impressions,post_impressions_unique", "period": "lifetime", "access_token": fb_token},
+            timeout=10
+        )
+        results["read_insights"] = {"status": r1.status_code, "body": r1.json()}
+    else:
+        # Fall back to page-level metric
+        r1 = _req.get(
+            "https://graph.facebook.com/v19.0/" + fb_page_id + "/insights",
+            params={"metric": "page_impressions", "period": "week", "access_token": fb_token},
+            timeout=10
+        )
+        results["read_insights"] = {"status": r1.status_code, "body": r1.json()}
+
+    # pages_manage_engagement — like a post
+    if feed_post_id:
         r3 = _req.post(
-            "https://graph.facebook.com/v19.0/" + post_id + "/likes",
+            "https://graph.facebook.com/v19.0/" + feed_post_id + "/likes",
             data={"access_token": fb_token},
             timeout=10
         )
