@@ -259,6 +259,24 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         except Exception:
             specific_reviews = " No specific reviews to highlight."
 
+        # Response backlog — how many reviews still unresponded
+        backlog_context = ""
+        try:
+            from models import get_conn as _gc_bl
+            _conn_bl = _gc_bl()
+            _backlog = _conn_bl.execute(
+                """SELECT COUNT(*) as cnt FROM reviews
+                   WHERE restaurant_id=? AND response_status IN ('pending','draft')
+                   AND draft_response IS NOT NULL AND draft_response != ''""",
+                (report.restaurant_id,)
+            ).fetchone()
+            _conn_bl.close()
+            _bl_cnt = _backlog["cnt"] if _backlog else 0
+            if _bl_cnt > 0:
+                backlog_context = f"\n- {_bl_cnt} review{'s' if _bl_cnt != 1 else ''} still awaiting a response (drafted but not posted)"
+        except Exception:
+            pass
+
         greeting = f"Hi {owner_name}" if owner_name else "Hi"
         from datetime import datetime as _dt_rpt
         from zoneinfo import ZoneInfo as _ZI_rpt
@@ -309,7 +327,7 @@ This week's data:
 - Positive: {pos}, Negative: {neg}
 - Urgent reviews: {urgent_count}
 - Top themes: {top_themes or "nothing notable"}
-- Period: {report.period_start} to {report.period_end}{wow_context}{extra_context}{module_instruction}
+- Period: {report.period_start} to {report.period_end}{wow_context}{extra_context}{backlog_context}{module_instruction}
 
 Today: {today_rpt}
 

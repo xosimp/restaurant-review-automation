@@ -106,7 +106,8 @@ def draft_response(review_id: int, rating: int, text: str,
     theme_note = get_recurring_themes(restaurant_id) if (restaurant_id and sentiment == "negative") else ""
 
     # Never say
-    never_note = f"\nNever use these words or phrases: {never_say}." if never_say else ""
+    opener_ban = "\nNever open with 'Thank you for your review', 'Thank you for your feedback', or any variation — start with something specific to what they actually said."
+    never_note = opener_ban + (f" Also never use: {never_say}." if never_say else "")
 
     # Sign off
     sign_off_name = sign_off or restaurant_name
