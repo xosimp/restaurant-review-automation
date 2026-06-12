@@ -1259,16 +1259,6 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
 
 <!-- COMPETITOR INTEL -->
 <div class="panel" id="panel-competitor">
-  <div style="background:linear-gradient(135deg,#0d1b2a,#1a2d40);border-radius:var(--r);padding:20px 24px;margin-bottom:20px;border:1px solid #1e3a52">
-    <div style="display:flex;align-items:center;justify-content:space-between">
-      <div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#4a9eca;margin-bottom:6px">Cavnar AI · Competitor Intelligence</div>
-        <div style="font-family:'DM Serif Display',serif;font-size:20px;color:#e8f4fd">What your neighbors are doing</div>
-      </div>
-
-    </div>
-  </div>
-
   <!-- AI Visibility Checker -->
   <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:20px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
@@ -1312,6 +1302,18 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px">Optimization Checklist</div>
         <div id="aiv-checklist" style="display:flex;flex-direction:column;gap:2px"></div>
       </div>
+    </div>
+  </div>
+
+  <div style="background:linear-gradient(135deg,#0d1b2a,#1a2d40);border-radius:var(--r);padding:20px 24px;margin-bottom:20px;border:1px solid #1e3a52">
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#4a9eca;margin-bottom:6px">Cavnar AI · Competitor Intelligence</div>
+        <div style="font-family:'DM Serif Display',serif;font-size:20px;color:#e8f4fd">What your neighbors are doing</div>
+      </div>
+      {% if not competitor_data %}
+      <button onclick="refreshCompetitorIntel(this)" style="background:#4a9eca;color:white;border:none;padding:9px 20px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer">Fetch competitor data</button>
+      {% endif %}
     </div>
   </div>
 
@@ -1458,11 +1460,6 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     </script>
     {% endif %}
 
-  {% else %}
-  <div style="background:var(--paper2);border-radius:var(--r);padding:24px;text-align:center">
-    <div style="font-size:13px;color:var(--ink3);margin-bottom:12px">No competitor data yet. Click Refresh to analyze your neighborhood.</div>
-    <button onclick="refreshCompetitorIntel(this)" style="background:#4a9eca;color:white;border:none;padding:9px 20px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer">Fetch competitor data</button>
-  </div>
   {% endif %}
   <div id="comp-refresh-result" style="margin-top:12px;font-size:12px;display:none"></div>
 </div>
