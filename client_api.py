@@ -149,24 +149,39 @@ def review_insight_api(current_user):
         top_issues = get_top_issues(rid, days=90, limit=5)
         now_chi = _dt_ri.now(_ZI_ri('America/Chicago'))
         today_str = now_chi.strftime("%B %d, %Y")
-        # Week-over-week comparison
         from models import get_conn as _gc_ri
         _conn_ri = _gc_ri()
-        last_week = _conn_ri.execute("""
+        # 4-week rolling trend
+        weekly_rows = _conn_ri.execute("""
+            SELECT strftime('%Y-W%W', fetched_at) as week,
+                   COUNT(*) as cnt,
+                   ROUND(AVG(rating),2) as avg_r,
+                   ROUND(SUM(CASE WHEN sentiment='negative' THEN 1 ELSE 0 END)*100.0/COUNT(*),1) as neg_pct
+            FROM reviews
+            WHERE restaurant_id=? AND fetched_at >= datetime('now','-28 days')
+            GROUP BY week ORDER BY week
+        """, (rid,)).fetchall()
+        this_week = _conn_ri.execute("""
             SELECT COUNT(*) as cnt, AVG(rating) as avg_r,
-                   SUM(sentiment='negative') as neg
+                   SUM(CASE WHEN sentiment='negative' THEN 1 ELSE 0 END) as neg,
+                   SUM(CASE WHEN urgency='high' AND response_status NOT IN ('posted','skipped') THEN 1 ELSE 0 END) as urgent
+            FROM reviews
+            WHERE restaurant_id=? AND fetched_at >= datetime('now','-7 days')
+        """, (rid,)).fetchone()
+        last_week = _conn_ri.execute("""
+            SELECT COUNT(*) as cnt, AVG(rating) as avg_r
             FROM reviews
             WHERE restaurant_id=? AND fetched_at >= datetime('now','-14 days')
               AND fetched_at < datetime('now','-7 days')
         """, (rid,)).fetchone()
-        this_week = _conn_ri.execute("""
-            SELECT COUNT(*) as cnt, AVG(rating) as avg_r,
-                   SUM(sentiment='negative') as neg,
-                   SUM(urgency='high' AND response_status NOT IN ('posted','skipped')) as urgent
+        # Topic persistence — issues appearing in 2+ of the last 4 weeks
+        topic_weeks = _conn_ri.execute("""
+            SELECT category, strftime('%Y-W%W', fetched_at) as week
             FROM reviews
-            WHERE restaurant_id=? AND fetched_at >= datetime('now','-7 days')
-        """, (rid,)).fetchone()
-        # Recent urgent reviews text
+            WHERE restaurant_id=? AND fetched_at >= datetime('now','-28 days')
+              AND category IS NOT NULL AND category != ''
+            GROUP BY category, week
+        """, (rid,)).fetchall()
         urgent_rows = _conn_ri.execute("""
             SELECT text FROM reviews
             WHERE restaurant_id=? AND urgency='high'
@@ -174,16 +189,45 @@ def review_insight_api(current_user):
             ORDER BY fetched_at DESC LIMIT 2
         """, (rid,)).fetchall()
         _conn_ri.close()
+
+        # Build week-over-week string
         wow_str = ""
         if last_week and last_week["cnt"] > 0 and this_week and this_week["cnt"] > 0:
             diff = (this_week["cnt"] or 0) - last_week["cnt"]
             rdiff = round(((this_week["avg_r"] or 0) - (last_week["avg_r"] or 0)), 1)
             wow_str = f"vs last week: {'+' if diff>=0 else ''}{diff} reviews, avg rating {'up' if rdiff>0 else 'down' if rdiff<0 else 'unchanged'} {abs(rdiff) if rdiff!=0 else ''}."
+
+        # Build 4-week rating trend string
+        trend_str = ""
+        if len(weekly_rows) >= 3:
+            ratings = [r["avg_r"] for r in weekly_rows if r["avg_r"]]
+            if len(ratings) >= 3:
+                if all(ratings[i] <= ratings[i+1] for i in range(len(ratings)-1)):
+                    trend_str = f"Rating IMPROVING {len(ratings)} weeks straight ({ratings[0]}★ → {ratings[-1]}★)."
+                elif all(ratings[i] >= ratings[i+1] for i in range(len(ratings)-1)):
+                    trend_str = f"Rating DECLINING {len(ratings)} weeks straight ({ratings[0]}★ → {ratings[-1]}★). Flag this."
+                else:
+                    trend_str = f"Rating unstable last {len(ratings)} weeks: {' → '.join(str(r) + '★' for r in ratings)}."
+            neg_pcts = [r["neg_pct"] for r in weekly_rows if r["neg_pct"] is not None]
+            if len(neg_pcts) >= 3 and neg_pcts[-1] > neg_pcts[0] + 5:
+                trend_str += f" Negative % rising: {neg_pcts[0]}% → {neg_pcts[-1]}%."
+
+        # Persistent topics (same issue 2+ weeks in a row)
+        persist_str = ""
+        from collections import defaultdict as _dd_ri
+        _topic_map = _dd_ri(set)
+        for row in topic_weeks:
+            _topic_map[row["category"]].add(row["week"])
+        persistent = [t for t, wks in _topic_map.items() if len(wks) >= 2]
+        if persistent:
+            persist_str = f"Recurring complaints (2+ weeks): {', '.join(persistent[:3])}."
+
         urgent_texts = "; ".join(f'"{r["text"][:80]}"' for r in urgent_rows) if urgent_rows else "none"
         issues_str = ", ".join(f"{i['label']} ({i['count']})" for i in top_issues) if top_issues else "no data"
         owner_name = restaurant.owner_name if restaurant else None
         rest_name  = restaurant.name if restaurant else "this restaurant"
         name_line  = f"Owner: {owner_name}" if owner_name else ""
+        trend_block = (f"4-week trend: {trend_str}\n" if trend_str else "") + (f"Persistent issues: {persist_str}\n" if persist_str else "")
         prompt = (
             f"You are a restaurant reputation assistant. Output ONLY a 3-line snapshot.\n\n"
             f"Restaurant: {rest_name} | Today: {today_str}\n"
@@ -191,12 +235,13 @@ def review_insight_api(current_user):
             f"{rstats['positive']} pos / {rstats['negative']} neg / {rstats['neutral']} neutral | "
             f"{rstats['urgent']} urgent | response rate {rstats['response_rate']}%\n"
             f"Top topics: {issues_str} | {wow_str}\n"
+            f"{trend_block}"
             f"Urgent excerpts: {urgent_texts}\n\n"
             "Return EXACTLY this format — 3 lines:\n"
-            "\U0001f4ca This week: [1 punchy sentence on the most important number. Be specific.]\n"
-            "\u26a0\ufe0f Watch: [1 sentence on the biggest risk — urgent review theme, low response rate, or negative pattern. Skip if nothing urgent.]\n"
+            "\U0001f4ca This week: [1 punchy sentence on the most important number or multi-week trend. Be specific.]\n"
+            "\u26a0\ufe0f Watch: [1 sentence on the biggest risk — multi-week declining trend, recurring complaint, rising negative %, or urgent review. Skip if nothing notable.]\n"
             "\u2705 Do today: [1 concrete action — e.g. 'Respond to Amanda L.s 1-star review about cold food.' Never generic.]\n\n"
-            "Rules: no markdown, no extra lines, no preamble. Each line max 20 words. Never invent data."
+            "Rules: no markdown, no extra lines, no preamble. Each line max 20 words. Never invent data. Prioritize multi-week trends over single-week blips."
         )
 
         msg = _client_ri.messages.create(
@@ -315,7 +360,7 @@ def mkt_insight_api(current_user):
         skip_h = [h.strip().lower() for h in (p.get("skip_holidays") or "").split(",") if h.strip()]
         if skip_h and upcoming:
             upcoming = ", ".join(h for h in upcoming.split(", ") if not any(s in h.lower() for s in skip_h)) or None
-        # Pull post performance data for trend context
+        # Pull post performance with weekly trend detection
         perf_clause = ""
         try:
             from models import get_conn as _gc
@@ -325,23 +370,56 @@ def mkt_insight_api(current_user):
                    FROM marketing_content_log
                    WHERE restaurant_id=? AND post_id IS NOT NULL
                      AND (reach > 0 OR impressions > 0 OR likes > 0)
-                   ORDER BY created_at DESC LIMIT 10""",
+                   ORDER BY created_at DESC LIMIT 20""",
+                (rid,)
+            ).fetchall()
+            _weekly = _conn.execute(
+                """SELECT strftime('%Y-W%W', created_at) as week,
+                          ROUND(AVG(CASE WHEN reach > 0 THEN reach END), 0) as avg_reach,
+                          ROUND(AVG(CASE WHEN impressions > 0 THEN impressions END), 0) as avg_imp,
+                          COUNT(*) as posts
+                   FROM marketing_content_log
+                   WHERE restaurant_id=? AND post_id IS NOT NULL
+                     AND created_at >= datetime('now', '-56 days')
+                   GROUP BY week ORDER BY week""",
                 (rid,)
             ).fetchall()
             _conn.close()
+            _perf_lines = []
             if _perf_rows:
-                _lines = []
-                for _r in _perf_rows:
+                _sorted = sorted(_perf_rows, key=lambda r: (r["reach"] or 0) + (r["impressions"] or 0), reverse=True)
+                for _r in _sorted[:3]:
                     _parts = []
-                    if _r["reach"]:       _parts.append(str(_r["reach"]) + " reach")
-                    if _r["impressions"]: _parts.append(str(_r["impressions"]) + " impressions")
-                    if _r["engaged"]:     _parts.append(str(_r["engaged"]) + " engaged")
-                    if _r["likes"]:       _parts.append(str(_r["likes"]) + " likes")
-                    if _r["comments"]:    _parts.append(str(_r["comments"]) + " comments")
+                    if _r["reach"]:       _parts.append(str(int(_r["reach"])) + " reach")
+                    if _r["impressions"]: _parts.append(str(int(_r["impressions"])) + " impr")
+                    if _r["likes"]:       _parts.append(str(int(_r["likes"])) + " likes")
                     if _parts:
-                        _lines.append(_r["topic"] + " (" + _r["post_platform"] + "): " + ", ".join(_parts))
-                if _lines:
-                    perf_clause = "\n\nRecent post performance data:\n" + "\n".join(_lines) + "\nUse this to identify what content resonates most and suggest doubling down on high-performing topics or formats."
+                        _perf_lines.append("BEST: " + _r["topic"] + " (" + _r["post_platform"] + "): " + ", ".join(_parts))
+                for _r in _sorted[-3:]:
+                    _parts = []
+                    if _r["reach"]:       _parts.append(str(int(_r["reach"])) + " reach")
+                    if _r["impressions"]: _parts.append(str(int(_r["impressions"])) + " impr")
+                    if _parts:
+                        _perf_lines.append("WEAK: " + _r["topic"] + " (" + _r["post_platform"] + "): " + ", ".join(_parts))
+            _trend_lines = []
+            if len(_weekly) >= 3:
+                _reach_vals = [w["avg_reach"] for w in _weekly if w["avg_reach"]]
+                if len(_reach_vals) >= 3:
+                    if all(_reach_vals[i] >= _reach_vals[i+1] for i in range(len(_reach_vals)-1)):
+                        _trend_lines.append("Reach DECLINING " + str(len(_reach_vals)) + " weeks straight (" + str(int(_reach_vals[0])) + " to " + str(int(_reach_vals[-1])) + ") — strategy pivot needed.")
+                    elif all(_reach_vals[i] <= _reach_vals[i+1] for i in range(len(_reach_vals)-1)):
+                        _trend_lines.append("Reach GROWING " + str(len(_reach_vals)) + " weeks straight (" + str(int(_reach_vals[0])) + " to " + str(int(_reach_vals[-1])) + ") — double down on what's working.")
+                    else:
+                        _diff_pct = round((_reach_vals[-1] - _reach_vals[0]) / max(_reach_vals[0], 1) * 100)
+                        if abs(_diff_pct) > 20:
+                            _trend_lines.append("Reach " + ("up" if _diff_pct > 0 else "down") + " " + str(abs(int(_diff_pct))) + "% over last " + str(len(_reach_vals)) + " weeks.")
+            if _perf_lines or _trend_lines:
+                perf_clause = "\n\nSocial performance data:"
+                if _trend_lines:
+                    perf_clause += "\nTrend: " + " ".join(_trend_lines)
+                if _perf_lines:
+                    perf_clause += "\n" + "\n".join(_perf_lines)
+                perf_clause += "\nDouble down on BEST topics. Rethink or avoid WEAK ones. Reference the trend when advising."
         except Exception:
             pass
         prompt = f"""You are the Cavnar AI Marketing Consultant for {name}.

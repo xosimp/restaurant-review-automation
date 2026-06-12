@@ -81,13 +81,35 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         # Pull labor and inventory context if available
         labor_context = ""
         inventory_context = ""
+        marketing_context = ""
         try:
             from labor import analyse_shifts_for_restaurant
             labor = analyse_shifts_for_restaurant(report.restaurant_id)
-            if labor and labor.get("summary"):
+            if labor and labor.get("labor_pct"):
                 lp = labor.get("labor_pct", 0)
                 ot_risk = labor.get("overtime_risk", [])
-                labor_context = f"Labor cost this week: {lp:.1f}% of revenue. Overtime risk: {len(ot_risk)} employee(s)." if lp else ""
+                labor_context = f"Labor: {lp:.1f}% of revenue this week"
+                if ot_risk:
+                    labor_context += f", {len(ot_risk)} overtime risk"
+                # Pull labor trend from history
+                try:
+                    from models import get_conn as _gc_lr
+                    _conn_lr = _gc_lr()
+                    _lh = _conn_lr.execute(
+                        """SELECT labor_pct, period_start FROM labor_history
+                           WHERE restaurant_id=? ORDER BY period_start DESC LIMIT 3""",
+                        (report.restaurant_id,)
+                    ).fetchall()
+                    _conn_lr.close()
+                    if len(_lh) >= 2:
+                        _vals = [r["labor_pct"] for r in reversed(_lh)]
+                        if _vals[-1] > _vals[0] + 1.5:
+                            labor_context += f" — trending UP from {_vals[0]:.1f}% ({len(_vals)} weeks)"
+                        elif _vals[-1] < _vals[0] - 1.5:
+                            labor_context += f" — trending DOWN from {_vals[0]:.1f}% ({len(_vals)} weeks, improving)"
+                except Exception:
+                    pass
+                labor_context += "."
         except Exception:
             pass
         try:
@@ -95,10 +117,57 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             inv = load_inventory_for_restaurant(report.restaurant_id)
             if inv:
                 analysis = analyse_inventory(inv)
-                waste = analysis.get("top_waste", [])
-                low = analysis.get("critical_low", [])
-                if waste or low:
-                    inventory_context = f"Top food waste item: {waste[0][0] if waste else 'none'}. Critical low stock: {low[0][0] if low else 'none'}."
+                waste = analysis.get("waste_items", [])
+                low = analysis.get("critical_low_stock", [])
+                top_waste = waste[0]["item"] if waste else None
+                inventory_context = f"Inventory: top waste item is {top_waste}" if top_waste else ""
+                # Pull inventory trend from history
+                try:
+                    from models import get_conn as _gc_iv
+                    _conn_iv = _gc_iv()
+                    import json as _json_rpt
+                    _prev = _conn_iv.execute(
+                        """SELECT waste_json FROM inventory_history
+                           WHERE restaurant_id=? AND week_end < date('now','-1 day')
+                           ORDER BY week_end DESC LIMIT 1""",
+                        (report.restaurant_id,)
+                    ).fetchone()
+                    _conn_iv.close()
+                    if _prev and _prev["waste_json"]:
+                        _prev_data = _json_rpt.loads(_prev["waste_json"])
+                        _prev_total = _prev_data.get("total_waste_cost", 0)
+                        _curr_total = analysis.get("total_waste_cost_week", 0)
+                        if _prev_total > 0 and _curr_total > 0:
+                            _diff = _curr_total - _prev_total
+                            _pct = round(abs(_diff) / _prev_total * 100, 0)
+                            if abs(_diff) > 20:
+                                inventory_context += f" (waste {'UP' if _diff > 0 else 'DOWN'} {int(_pct)}% vs last week)"
+                except Exception:
+                    pass
+                if low:
+                    inventory_context += f", {low[0]} critically low"
+                if inventory_context:
+                    inventory_context += "."
+        except Exception:
+            pass
+        # Pull recent marketing post performance for email context
+        try:
+            from models import get_conn as _gc_mkt
+            _conn_mkt = _gc_mkt()
+            _mkt_rows = _conn_mkt.execute(
+                """SELECT topic, reach, impressions, likes
+                   FROM marketing_content_log
+                   WHERE restaurant_id=? AND post_id IS NOT NULL
+                     AND (reach > 0 OR impressions > 0 OR likes > 0)
+                   ORDER BY created_at DESC LIMIT 5""",
+                (report.restaurant_id,)
+            ).fetchall()
+            _conn_mkt.close()
+            if _mkt_rows:
+                _best = max(_mkt_rows, key=lambda r: (r["reach"] or 0) + (r["impressions"] or 0))
+                _br = (_best["reach"] or 0) + (_best["impressions"] or 0)
+                if _br > 0:
+                    marketing_context = f"Marketing: best recent post was '{_best['topic']}' ({_br} reach+impr)."
         except Exception:
             pass
 
@@ -107,6 +176,8 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             extra_context += f"\n- {labor_context}"
         if inventory_context:
             extra_context += f"\n- {inventory_context}"
+        if marketing_context:
+            extra_context += f"\n- {marketing_context}"
 
         # Pull last week's stats for comparison
         wow_context = ""
@@ -182,12 +253,12 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         if has_all_four:
             module_instruction = """
 
-This client has all 4 modules active. Write 3-4 sentences total covering ALL of these:
-- Reviews: overall rating picture, any urgent or notable review to call out by reviewer name
-- Labor: mention the labor % and whether it's trending up or down if data is available
-- Inventory: mention the top waste item or a win if waste improved
-- Marketing: one actionable content or engagement suggestion for the week ahead
-Do NOT focus only on reviews. Each module deserves at least a mention."""
+This client has all 4 modules active. Write 4-5 sentences total covering ALL of these:
+- Reviews: overall rating picture, call out any multi-week trend if present, mention any urgent reviewer by name
+- Labor: state the labor % and explicitly note if it is trending up or down vs prior weeks (data provided above)
+- Inventory: mention whether waste improved or worsened vs last week (% change if available), name the top waste item
+- Marketing: if post performance data is available, name the best-performing topic and suggest the owner double down on it or try a specific new angle
+Do NOT focus only on reviews. Every module must get a specific data point — no vague sentences."""
         elif modules_active:
             active_list = "Review Intelligence, " + ", ".join(modules_active)
             module_instruction = f"\n\nActive modules: {active_list}. Cover each active module — not just reviews."
