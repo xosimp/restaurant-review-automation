@@ -334,6 +334,27 @@ def generate_content(content_type: str, topic: str,
     # Build explicit location context so AI doesn't invent geography
     location_context = f"\nLocation context: {p['neighborhood']}. Setting/vibe: {p['vibe']}. Only use these details when describing the restaurant's physical setting — do not add any geographic details not mentioned here."
 
+    # Pull top-performing content topics from DB to guide style
+    perf_context = ""
+    if restaurant_id:
+        try:
+            from models import get_conn as _gc_mc
+            _conn_mc = _gc_mc()
+            _top = _conn_mc.execute(
+                """SELECT topic, post_platform, reach, impressions, likes
+                   FROM marketing_content_log
+                   WHERE restaurant_id=? AND post_id IS NOT NULL
+                     AND (reach > 0 OR impressions > 0 OR likes > 0)
+                   ORDER BY (COALESCE(reach,0) + COALESCE(impressions,0)) DESC LIMIT 3""",
+                (restaurant_id,)
+            ).fetchall()
+            _conn_mc.close()
+            if _top:
+                _top_lines = [r["topic"] + " (" + (r["post_platform"] or "social") + ", " + str(int((r["reach"] or 0) + (r["impressions"] or 0))) + " reach+impr)" for r in _top]
+                perf_context = "\nTop-performing past posts (highest reach/impressions) — use these as style and angle inspiration:\n" + "\n".join(_top_lines)
+        except Exception:
+            pass
+
     prompt = prompt_template.format(
         restaurant=p["name"],
         neighborhood=p["neighborhood"],
@@ -341,7 +362,7 @@ def generate_content(content_type: str, topic: str,
         voice=p["voice"],
         known_for=p["known_for"],
         topic=topic,
-    ) + location_context + recent_context + seasonal_context + never_clause + menu_clause
+    ) + location_context + recent_context + seasonal_context + never_clause + menu_clause + perf_context
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),

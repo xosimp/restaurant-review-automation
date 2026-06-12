@@ -434,10 +434,13 @@ Write 2-3 short bullet points (starting with -) about what nearby competitors ar
 WHAT COMPETITORS ARE DOING POORLY:
 Write 2-3 short bullet points (starting with -) about real weaknesses or complaints in competitor reviews that {restaurant_name} could exploit. Be specific — name the restaurant and the specific complaint.
 
+PRICE POSITIONING:
+Write 1-2 sentences only. Based on price-related language in competitor reviews ("overpriced", "great value", "worth it", "too expensive", "affordable"), identify whether competitors are perceived as overpriced or good value — and what pricing angle {restaurant_name} should lean into. Skip this section entirely if no price signals appear in the reviews.
+
 Recommendations:
 1. [First concrete action {restaurant_name} can take this week based on the gaps above]
-2. [Second specific differentiator to emphasize]
-3. [Third tactical move to capture dissatisfied competitor customers]
+2. [Second specific differentiator to emphasize — could be service, atmosphere, value, or a specific strength competitors lack]
+3. [Third tactical move to capture dissatisfied competitor customers this week]
 
 Tone: sharp, direct, trusted business advisor. No generic advice. Name specific competitors and cite specific review themes. Always use $ signs before dollar amounts."""
 

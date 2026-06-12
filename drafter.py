@@ -98,7 +98,7 @@ def draft_response(review_id: int, rating: int, text: str,
             f'  Example ({e["rating"]}★): "{e["review"][:100]}" → "{e["response"]}"'
             for e in approved_examples
         ])
-        style_block = f"\nApproved examples — match this exact tone and style:\n{ex_lines}\n"
+        style_block = f"\nApproved response examples — study these carefully and extract the owner's style: sentence length, formality level, how they handle complaints vs praise, whether they use first names, how they invite guests back. Replicate that style precisely:\n{ex_lines}\n"
     else:
         style_block = get_approved_examples(restaurant_id) if restaurant_id else ""
 
@@ -128,6 +128,7 @@ Voice: {voice_notes or "Warm, genuine, never corporate. Always invite guests bac
 Sign off as: {sign_off_name}
 {reviewer_line}
 Length: {length_note}{never_note}{style_block}{theme_note}{health_note}
+LANGUAGE: Detect the language of the review. If the review is NOT in English, write your response in that same language. If it is in English, respond in English.
 CRITICAL: If the reviewer mentions specific issues (cold food, slow service, wrong order, noise, parking, staff) — address each one directly by name. Never give a generic apology for a specific complaint.
 
 Review ({rating}/5 stars, {sentiment}):

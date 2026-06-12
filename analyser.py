@@ -22,7 +22,13 @@ Return this exact shape:
   "urgency": "high" | "normal"
 }}
 
-urgency is "high" only if the review mentions food safety, injury, or legal threats."""
+urgency is "high" if ANY of these are present:
+- Food safety, illness, food poisoning, allergic reaction, foreign object in food
+- Physical injury on premises
+- Legal threats, lawsuit, attorney
+- Explicit threat to contact health department or BBB
+- Threatening, abusive, or discriminatory language directed at staff
+- Direct staff misconduct complaint (harassment, theft, dishonesty)"""
 
 
 def analyse_review(review_id: int, rating: int, text: str) -> dict:
