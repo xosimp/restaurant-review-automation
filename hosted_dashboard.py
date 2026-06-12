@@ -516,7 +516,14 @@ Sitemap: https://cavnar.ai/sitemap.xml"""
 
 
 @app.route("/")
-@login_required  
+def index_public():
+    from auth import get_current_user
+    current_user = get_current_user()
+    if not current_user:
+        return render_template("landing.html")
+    return index(current_user)
+
+@login_required
 def index(current_user):
     if current_user.get("is_admin"):
         return redirect("/admin")
