@@ -445,8 +445,8 @@ Recommendations:
 Tone: sharp, direct, trusted business advisor. No generic advice. Name specific competitors and cite specific review themes. Always use $ signs before dollar amounts."""
 
         msg = client.messages.create(
-            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-            max_tokens=800,
+            model=os.getenv("CLAUDE_REPORTER_MODEL", "claude-sonnet-4-6"),
+            max_tokens=900,
             messages=[{"role": "user", "content": prompt}]
         )
         return msg.content[0].text.strip()
