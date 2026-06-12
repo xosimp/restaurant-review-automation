@@ -171,6 +171,42 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         except Exception:
             pass
 
+        # Cross-module correlation — find patterns that span multiple modules
+        correlation_context = ""
+        try:
+            signals = []
+            # Labor up + food quality complaints = understaffed kitchen signal
+            _labor_up = "trending UP" in labor_context
+            _food_complaints = any(
+                (i[0] if isinstance(i, tuple) else i.get("label","")).lower()
+                in ("food_quality", "wait_time", "service")
+                for i in (report.top_issues or [])[:5]
+            )
+            if _labor_up and _food_complaints:
+                signals.append("Labor % is rising the same period food quality/wait complaints increased — possible understaffing causing kitchen pressure. Worth investigating connection.")
+
+            # Inventory waste up + negative reviews both rising = volume spike signal
+            _waste_up = "UP" in inventory_context
+            _neg_rising = neg > pos * 0.4 if (pos + neg) > 3 else False
+            if _waste_up and _neg_rising:
+                signals.append("Food waste and negative reviews are both elevated this week — higher-than-expected volume may be the common cause (over-ordering met by service strain).")
+
+            # Labor trending down + review sentiment improving = scheduling optimization working
+            _labor_down = "trending DOWN" in labor_context
+            if _labor_down and pos > neg * 2 and pos >= 3:
+                signals.append("Labor costs are improving AND guest sentiment is strong — the scheduling adjustments appear to be working without hurting the guest experience.")
+
+            # Marketing performance up + no corresponding review volume increase = awareness not converting
+            _mkt_good = marketing_context and "reach+impr" in marketing_context
+            _reviews_low = report.total_reviews < 3
+            if _mkt_good and _reviews_low:
+                signals.append("Social posts are getting good reach but review volume is low — guests are seeing the content but not being prompted to leave reviews. Consider adding a review ask to post captions.")
+
+            if signals:
+                correlation_context = "\n\nCross-module patterns detected (mention the most relevant one in your summary):\n" + "\n".join(f"- {s}" for s in signals)
+        except Exception:
+            pass
+
         extra_context = ""
         if labor_context:
             extra_context += f"\n- {labor_context}"
@@ -178,6 +214,8 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             extra_context += f"\n- {inventory_context}"
         if marketing_context:
             extra_context += f"\n- {marketing_context}"
+        if correlation_context:
+            extra_context += correlation_context
 
         # Pull last week's stats for comparison
         wow_context = ""
@@ -286,8 +324,8 @@ Rules:
 - 3-4 sentences for single module clients, 4-5 sentences for full system clients"""
 
         msg = client.messages.create(
-            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-            max_tokens=500,
+            model=os.getenv("CLAUDE_REPORTER_MODEL", "claude-sonnet-4-6"),
+            max_tokens=600,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = msg.content[0].text.strip()
