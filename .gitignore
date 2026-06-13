@@ -10,3 +10,9 @@ hosted_dashboard_recovered.py
 hosted_dashboard_condensed_backup.py
 hosted_dashboard_recovered.py
 .DS_Store
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+!.env.example
