@@ -175,13 +175,22 @@ def review_insight_api(current_user):
               AND fetched_at < datetime('now','-7 days')
         """, (rid,)).fetchone()
         # Topic persistence — issues appearing in 2+ of the last 4 weeks
-        topic_weeks = _conn_ri.execute("""
-            SELECT category, strftime('%Y-W%W', fetched_at) as week
+        # categories is a JSON array; pull raw rows and parse in Python
+        topic_rows = _conn_ri.execute("""
+            SELECT categories, strftime('%Y-W%W', fetched_at) as week
             FROM reviews
             WHERE restaurant_id=? AND fetched_at >= datetime('now','-28 days')
-              AND category IS NOT NULL AND category != ''
-            GROUP BY category, week
+              AND categories IS NOT NULL AND categories != '' AND categories != '[]'
         """, (rid,)).fetchall()
+        import json as _json_ri
+        topic_weeks = []
+        for row in topic_rows:
+            try:
+                cats = _json_ri.loads(row["categories"]) if row["categories"] else []
+            except Exception:
+                cats = []
+            for cat in cats:
+                topic_weeks.append({"category": cat, "week": row["week"]})
         urgent_rows = _conn_ri.execute("""
             SELECT text FROM reviews
             WHERE restaurant_id=? AND urgency='high'
