@@ -306,12 +306,12 @@ def check_stale_inventory():
         stale = []
 
         for r in restaurants:
-            if not r.module_inventory or not r.is_active:
+            if not r.module_inventory or r.billing_status not in ("trial", "active"):
                 continue
             # Check updated_at on inventory data
             conn = __import__('models').get_conn()
             row = conn.execute(
-                "SELECT updated_at, inventory_source FROM restaurant_data WHERE restaurant_id=? LIMIT 1",
+                "SELECT updated_at, inventory_source FROM client_data WHERE restaurant_id=? LIMIT 1",
                 (r.id,)
             ).fetchone()
             conn.close()
@@ -724,7 +724,7 @@ def check_inactive_clients():
 
 
 def scheduler_loop():
-    global _last_fetch_date, _last_digest_date
+    global _last_fetch_date, _last_digest_date, _last_backup_date
     log.info("Scheduler started — review fetch every 4hr (8am/12pm/4pm/8pm CT), digests 9am on client's chosen day")
 
 

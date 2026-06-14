@@ -161,9 +161,16 @@ def post_to_instagram(current_user):
 
     creation_id = r1.json().get("id")
 
-    # Wait for Instagram to process the image before publishing
+    # Poll until Instagram finishes processing the media container (max 20s)
     import time as _time
-    _time.sleep(4)
+    for _ in range(10):
+        _time.sleep(2)
+        _status = _req.get(
+            f"https://graph.facebook.com/v19.0/{creation_id}",
+            params={"fields": "status_code", "access_token": token}
+        ).json().get("status_code", "")
+        if _status == "FINISHED":
+            break
 
     # Publish the media
     r2 = _req.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/media_publish", data={

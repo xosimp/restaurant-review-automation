@@ -85,8 +85,8 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         try:
             from labor import analyse_shifts_for_restaurant
             labor = analyse_shifts_for_restaurant(report.restaurant_id)
-            if labor and labor.get("labor_pct"):
-                lp = labor.get("labor_pct", 0)
+            if labor and labor.get("overall_labor_pct"):
+                lp = labor.get("overall_labor_pct", 0)
                 ot_risk = labor.get("overtime_risk", [])
                 labor_context = f"Labor: {lp:.1f}% of revenue this week"
                 if ot_risk:
@@ -114,11 +114,11 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             pass
         try:
             from inventory import load_inventory_for_restaurant, analyse_inventory
-            inv = load_inventory_for_restaurant(report.restaurant_id)
+            inv, _ = load_inventory_for_restaurant(report.restaurant_id)
             if inv:
                 analysis = analyse_inventory(inv)
                 waste = analysis.get("waste_items", [])
-                low = analysis.get("critical_low_stock", [])
+                low = analysis.get("critical_low", [])
                 top_waste = waste[0]["item"] if waste else None
                 inventory_context = f"Inventory: top waste item is {top_waste}" if top_waste else ""
                 # Pull inventory trend from history
@@ -266,7 +266,7 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             _conn_bl = _gc_bl()
             _backlog = _conn_bl.execute(
                 """SELECT COUNT(*) as cnt FROM reviews
-                   WHERE restaurant_id=? AND response_status IN ('pending','draft')
+                   WHERE restaurant_id=? AND response_status IN ('pending','drafted')
                    AND draft_response IS NOT NULL AND draft_response != ''""",
                 (report.restaurant_id,)
             ).fetchone()

@@ -8,6 +8,7 @@ Deploy:       Railway (connect GitHub repo, set env vars)
 import os, json
 from datetime import datetime, timedelta
 from functools import wraps
+PORT = int(os.getenv("PORT", 5000))
 from flask import (Flask, render_template, request,
                    jsonify, redirect, url_for, make_response, send_file, session)
 from emails import send_payment_email, send_welcome_email
