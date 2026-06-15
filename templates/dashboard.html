@@ -1293,11 +1293,21 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:5px">AI Appearance Rate</div>
           <div id="aiv-score-label" style="font-size:11px;color:var(--ink3);margin-top:3px"></div>
         </div>
-        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;text-align:center">
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;text-align:center;cursor:pointer" onclick="toggleGbpChecklist()">
           <div id="aiv-gbp-num" style="font-size:32px;font-weight:800;color:#16a34a;letter-spacing:-1px;line-height:1">—</div>
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:5px">GBP Completeness</div>
           <div id="aiv-gbp-label" style="font-size:11px;color:var(--ink3);margin-top:3px"></div>
+          <div style="font-size:10px;color:#7c3aed;margin-top:5px;font-weight:600">tap to see breakdown &#9660;</div>
         </div>
+      </div>
+
+      <!-- GBP Checklist Breakdown -->
+      <div id="aiv-gbp-checklist" style="display:none;margin-bottom:16px;background:#f9fafb;border:1px solid var(--paper3);border-radius:8px;overflow:hidden">
+        <div style="padding:10px 14px;background:white;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:11px;font-weight:700;color:#0d1b2a">GBP Completeness Breakdown</div>
+          <div style="font-size:10px;color:var(--ink3)">Each item = 10 pts toward your score</div>
+        </div>
+        <div id="aiv-gbp-items" style="padding:8px 0"></div>
       </div>
 
       <div id="aiv-disclaimer" style="display:none;background:#fef9ec;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:12px;color:#92400e;line-height:1.5;margin-bottom:12px"></div>
@@ -3397,6 +3407,39 @@ function renderAIVisibility(d) {
     else if (d.gbp_score >= 40) gbpLbl.textContent = 'Needs work';
     else gbpLbl.textContent = 'Critical gaps';
   }
+
+  // Render GBP checklist breakdown
+  var gbpItemsEl = document.getElementById('aiv-gbp-items');
+  if (gbpItemsEl && d.checklist) {
+    var chtml = '';
+    for (var ci = 0; ci < d.checklist.length; ci++) {
+      var item = d.checklist[ci];
+      var icon = item.done
+        ? '<span style="width:18px;height:18px;border-radius:50%;background:#dcfce7;color:#16a34a;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0">&#10003;</span>'
+        : (item.needs_gmb
+          ? '<span style="width:18px;height:18px;border-radius:50%;background:#f3f4f6;color:#9ca3af;font-size:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0">&#128274;</span>'
+          : '<span style="width:18px;height:18px;border-radius:50%;background:#fee2e2;color:#dc2626;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0">&#8999;</span>');
+      var ptsTag = item.done
+        ? '<span style="font-size:9px;font-weight:700;color:#16a34a;background:#dcfce7;padding:1px 6px;border-radius:8px;flex-shrink:0">+' + item.pts + ' pts</span>'
+        : '<span style="font-size:9px;font-weight:700;color:#9ca3af;background:#f3f4f6;padding:1px 6px;border-radius:8px;flex-shrink:0">+' + item.pts + ' pts</span>';
+      var lockTag = item.needs_gmb && !item.done ? '<span style="font-size:9px;color:#9ca3af;font-style:italic;margin-left:4px">needs GBP connect</span>' : '';
+      chtml += '<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 14px;border-bottom:1px solid var(--paper3)">';
+      chtml += icon;
+      chtml += '<div style="flex:1;min-width:0">';
+      chtml += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">';
+      chtml += '<span style="font-size:12px;font-weight:' + (item.done ? '500' : '600') + ';color:' + (item.done ? 'var(--ink3)' : '#0d1b2a') + '">' + item.label + '</span>';
+      chtml += ptsTag + lockTag;
+      chtml += '</div>';
+      if (!item.done && item.action && !item.needs_gmb) {
+        chtml += '<div style="font-size:11px;color:#7c3aed;margin-top:2px">' + item.action + '</div>';
+      } else if (!item.done && item.needs_gmb) {
+        chtml += '<div style="font-size:11px;color:#9ca3af;margin-top:2px">' + item.action + '</div>';
+      }
+      chtml += '</div>';
+      chtml += '</div>';
+    }
+    gbpItemsEl.innerHTML = chtml;
+  }
   var qEl = document.getElementById('aiv-queries');
   if (qEl && d.queries) {
     var qhtml = '';
@@ -3548,6 +3591,15 @@ function renderAIVisibility(d) {
   }
   roadmapEl.innerHTML = html;
   if (footerEl) footerEl.style.display = 'block';
+}
+
+function toggleGbpChecklist() {
+  var el = document.getElementById('aiv-gbp-checklist');
+  if (!el) return;
+  var open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  var tap = el.previousElementSibling ? el.previousElementSibling.querySelector('div:last-child') : null;
+  if (tap) tap.innerHTML = open ? 'tap to see breakdown &#9660;' : 'tap to hide &#9650;';
 }
 
 function toggleAivWhy(idx, btn) {

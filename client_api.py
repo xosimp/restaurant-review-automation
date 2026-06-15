@@ -1214,7 +1214,9 @@ def ai_visibility(current_user):
         except Exception:
             query_results.append({"query": q, "answer": "Could not fetch answer.", "appeared": False})
 
-    # GBP completeness score
+    # GBP completeness score — 10 items x 10 pts = 100
+    # Items 1-6: checkable from our own DB (no GMB OAuth needed)
+    # Items 7-10: require GMB OAuth connection
     gbp_data = {}
     gbp_connected = bool(r.gmb_refresh_token and r.gmb_location_id)
     if gbp_connected:
@@ -1229,53 +1231,136 @@ def ai_visibility(current_user):
     checklist = []
     gbp_score = 0
 
-    if gbp_connected:
-        gbp_score += 20
-        checklist.append({"label": "Google Business Profile connected", "done": True, "pts": 20})
-    else:
-        checklist.append({"label": "Connect Google Business Profile", "done": False, "pts": 20})
-
-    has_phone = bool(gbp_data.get("phone"))
-    if has_phone:
+    # 1. Google Place ID — lets AI tools index the right location
+    if bool(r.google_place_id):
         gbp_score += 10
-        checklist.append({"label": "Phone number in GBP", "done": True, "pts": 10})
+        checklist.append({"label": "Google Place ID connected", "done": True, "pts": 10,
+                          "action": "Done — AI tools can find your location", "needs_gmb": False})
     else:
-        checklist.append({"label": "Add phone number to GBP", "done": False, "pts": 10})
+        checklist.append({"label": "Add your Google Place ID", "done": False, "pts": 10,
+                          "action": "Go to Account → paste your Google Place ID so AI tools can index you",
+                          "needs_gmb": False})
 
-    has_website = bool(gbp_data.get("website"))
-    if has_website:
-        gbp_score += 15
-        checklist.append({"label": "Website linked in GBP", "done": True, "pts": 15})
-    else:
-        checklist.append({"label": "Add website URL to GBP", "done": False, "pts": 15})
-
-    desc = gbp_data.get("description", "")
-    if desc and len(desc) >= 50:
-        gbp_score += 25
-        checklist.append({"label": "Business description written (50+ chars)", "done": True, "pts": 25})
-    elif desc:
+    # 2. Yelp profile linked — Perplexity and ChatGPT pull heavily from Yelp
+    if bool(r.yelp_business_id):
         gbp_score += 10
-        checklist.append({"label": "Expand GBP description — currently too short", "done": False, "pts": 15})
+        checklist.append({"label": "Yelp profile linked", "done": True, "pts": 10,
+                          "action": "Done — Perplexity indexes Yelp heavily", "needs_gmb": False})
     else:
-        checklist.append({"label": "Write a business description in GBP", "done": False, "pts": 25})
+        checklist.append({"label": "Link your Yelp business profile", "done": False, "pts": 10,
+                          "action": "Go to Account → add your Yelp business ID (find it in your Yelp URL)",
+                          "needs_gmb": False})
 
+    # 3. Menu URL — AI tools surface menus directly in search results
+    if bool(r.menu_url):
+        gbp_score += 10
+        checklist.append({"label": "Menu URL added", "done": True, "pts": 10,
+                          "action": "Done — AI tools can surface your menu in results", "needs_gmb": False})
+    else:
+        checklist.append({"label": "Add your menu URL", "done": False, "pts": 10,
+                          "action": "Go to Account → add a link to your online menu",
+                          "needs_gmb": False})
+
+    # 4. Restaurant profile — vibe + known_for + neighborhood power all AI queries
+    has_full_profile = bool(r.neighborhood and r.vibe and r.known_for)
+    if has_full_profile:
+        gbp_score += 10
+        checklist.append({"label": "Restaurant profile fully filled in", "done": True, "pts": 10,
+                          "action": "Done — neighborhood, vibe, and specialties all set", "needs_gmb": False})
+    else:
+        missing = [f for f, v in [("neighborhood", r.neighborhood), ("vibe", r.vibe), ("known for", r.known_for)] if not v]
+        checklist.append({"label": "Complete restaurant profile (" + ", ".join(missing) + " missing)", "done": False, "pts": 10,
+                          "action": "Go to Account → fill in neighborhood, vibe, and what you're known for",
+                          "needs_gmb": False})
+
+    # 5. Review volume — AI systems rank by review count; 50+ is the threshold for appearing
     rstats = get_review_stats(rid)
     resp_rate = rstats.get("response_rate", 0) if rstats else 0
-    if resp_rate >= 50:
-        gbp_score += 20
-        checklist.append({"label": "Strong review response rate (50%+)", "done": True, "pts": 20})
-    elif resp_rate >= 20:
+    review_total = rstats.get("total", 0) if rstats else 0
+    if review_total >= 50:
         gbp_score += 10
-        checklist.append({"label": "Increase review response rate to 50%+", "done": False, "pts": 10})
+        checklist.append({"label": "50+ Google reviews", "done": True, "pts": 10,
+                          "action": "Done — strong review volume boosts AI ranking", "needs_gmb": False})
+    elif review_total >= 20:
+        gbp_score += 5
+        checklist.append({"label": "Build to 50+ Google reviews (" + str(review_total) + " so far)", "done": False, "pts": 10,
+                          "action": "Send review requests to recent customers — 50+ reviews is the AI visibility threshold",
+                          "needs_gmb": False})
     else:
-        checklist.append({"label": "Start responding to Google reviews", "done": False, "pts": 20})
+        checklist.append({"label": "Build to 50+ Google reviews (" + str(review_total) + " so far)", "done": False, "pts": 10,
+                          "action": "Send review requests after every visit — this is the #1 driver of AI search ranking",
+                          "needs_gmb": False})
 
-    has_profile = bool(r.vibe or r.known_for or r.neighborhood)
-    if has_profile:
+    # 6. Review response rate — active engagement signals a healthy business to AI tools
+    if resp_rate >= 75:
         gbp_score += 10
-        checklist.append({"label": "Restaurant profile complete (neighborhood, vibe, known for)", "done": True, "pts": 10})
+        checklist.append({"label": "Excellent review response rate (" + str(resp_rate) + "%)", "done": True, "pts": 10,
+                          "action": "Done — responding to reviews signals an active, trusted business", "needs_gmb": False})
+    elif resp_rate >= 40:
+        gbp_score += 5
+        checklist.append({"label": "Increase response rate to 75%+ (currently " + str(resp_rate) + "%)", "done": False, "pts": 10,
+                          "action": "Use the Reviews tab to draft and post responses — AI tools reward active owner engagement",
+                          "needs_gmb": False})
     else:
-        checklist.append({"label": "Complete restaurant profile in Account settings", "done": False, "pts": 10})
+        checklist.append({"label": "Start responding to Google reviews (currently " + str(resp_rate) + "%)", "done": False, "pts": 10,
+                          "action": "Go to Reviews → use AI-drafted responses to reply — aim for 75%+ response rate",
+                          "needs_gmb": False})
+
+    # 7. GBP OAuth connected — unlocks real-time profile data and future auto-posting
+    if gbp_connected:
+        gbp_score += 10
+        checklist.append({"label": "Google Business Profile connected", "done": True, "pts": 10,
+                          "action": "Done — real-time GBP data is active", "needs_gmb": False})
+    else:
+        checklist.append({"label": "Connect Google Business Profile (OAuth)", "done": False, "pts": 10,
+                          "action": "Go to Account → Connect GBP to unlock live profile editing and Google Posts",
+                          "needs_gmb": True})
+
+    # 8. Business description — keyword-rich descriptions are indexed by every AI search tool
+    desc = gbp_data.get("description", "")
+    if desc and len(desc) >= 150:
+        gbp_score += 10
+        checklist.append({"label": "Business description written (" + str(len(desc)) + " chars)", "done": True, "pts": 10,
+                          "action": "Done — description feeds AI search results directly", "needs_gmb": False})
+    elif desc:
+        gbp_score += 4
+        checklist.append({"label": "Expand GBP description to 150+ chars (currently " + str(len(desc)) + ")", "done": False, "pts": 10,
+                          "action": "In Google Business Profile → Info → Description: add cuisine type, atmosphere, and signature dishes",
+                          "needs_gmb": True})
+    else:
+        checklist.append({"label": "Write a keyword-rich GBP business description", "done": False, "pts": 10,
+                          "action": "In Google Business Profile → Info → Description: mention cuisine, ambiance, and top dishes (150+ chars)",
+                          "needs_gmb": True})
+
+    # 9. Phone number in GBP — basic trust signal; missing phone = incomplete listing
+    has_phone = bool(gbp_data.get("phone"))
+    if gbp_connected and has_phone:
+        gbp_score += 10
+        checklist.append({"label": "Phone number in GBP", "done": True, "pts": 10,
+                          "action": "Done", "needs_gmb": False})
+    elif gbp_connected and not has_phone:
+        checklist.append({"label": "Add phone number to GBP", "done": False, "pts": 10,
+                          "action": "In Google Business Profile → Info → Phone: add your primary number",
+                          "needs_gmb": False})
+    else:
+        checklist.append({"label": "Add phone number to GBP", "done": False, "pts": 10,
+                          "action": "In Google Business Profile → Info → Phone: add your primary number",
+                          "needs_gmb": True})
+
+    # 10. Website linked in GBP — AI tools follow the website link to gather more context
+    has_website = bool(gbp_data.get("website"))
+    if gbp_connected and has_website:
+        gbp_score += 10
+        checklist.append({"label": "Website linked in GBP", "done": True, "pts": 10,
+                          "action": "Done — AI tools crawl your website for menu and about content", "needs_gmb": False})
+    elif gbp_connected and not has_website:
+        checklist.append({"label": "Add website URL to GBP", "done": False, "pts": 10,
+                          "action": "In Google Business Profile → Info → Website: add your restaurant's website",
+                          "needs_gmb": False})
+    else:
+        checklist.append({"label": "Add website URL to GBP", "done": False, "pts": 10,
+                          "action": "In Google Business Profile → Info → Website: add your restaurant's website",
+                          "needs_gmb": True})
 
     ai_score = round((appeared_count / len(queries)) * 100) if queries else 0
 
