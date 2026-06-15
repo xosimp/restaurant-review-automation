@@ -1271,7 +1271,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
 
     <div id="aiv-idle" style="background:#f9f8ff;border:1px solid #e5e0ff;border-radius:8px;padding:16px;text-align:center">
       <div style="font-size:13px;color:#374151">See how often your restaurant appears when someone asks an AI for local dining recommendations.</div>
-      <div style="font-size:11px;color:var(--ink3);margin-top:6px">Powered by Claude AI &middot; Takes ~10 seconds</div>
+      <div style="font-size:11px;color:var(--ink3);margin-top:6px">Powered by Perplexity AI live search &middot; Takes ~10 seconds</div>
     </div>
 
     <div id="aiv-loading" style="display:none;text-align:center;padding:28px 0">
@@ -1292,6 +1292,8 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
           <div id="aiv-gbp-label" style="font-size:11px;color:var(--ink3);margin-top:3px"></div>
         </div>
       </div>
+
+      <div id="aiv-disclaimer" style="display:none;background:#fef9ec;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:12px;color:#92400e;line-height:1.5;margin-bottom:12px"></div>
 
       <div style="margin-bottom:16px">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px">AI Query Results</div>
@@ -3356,7 +3358,16 @@ function renderAIVisibility(d) {
   if (scoreLbl) {
     if (d.ai_score >= 67) scoreLbl.textContent = 'Strong AI presence';
     else if (d.ai_score >= 34) scoreLbl.textContent = 'Moderate presence';
-    else scoreLbl.textContent = 'Low — optimize GBP first';
+    else scoreLbl.textContent = 'Not yet indexed by AI search';
+  }
+  var aivNote = document.getElementById('aiv-disclaimer');
+  if (aivNote) {
+    if (d.ai_score === 0) {
+      aivNote.textContent = 'Most independent restaurants aren\'t indexed by AI search yet — this is normal and expected. More reviews, a complete GBP profile, and online mentions are what get you there. That\'s exactly what this platform drives.';
+      aivNote.style.display = 'block';
+    } else {
+      aivNote.style.display = 'none';
+    }
   }
   var gbpEl = document.getElementById('aiv-gbp-num');
   var gbpLbl = document.getElementById('aiv-gbp-label');

@@ -1161,7 +1161,6 @@ def gbp_listing_update(current_user):
 @client_bp.route("/api/ai-visibility")
 @login_required
 def ai_visibility(current_user):
-    import anthropic as _anth
     rid = current_user["restaurant_id"]
     r = get_restaurant(rid)
     if not r:
@@ -1187,30 +1186,29 @@ def ai_visibility(current_user):
             "Highly rated " + descriptor + " spots to visit",
         ]
 
-    _cl = _anth.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+    import requests as _pplx_req
+    _pplx_key = os.getenv("PERPLEXITY_API_KEY", "")
     query_results = []
     appeared_count = 0
 
     for q in queries:
         try:
-            msg = _cl.messages.create(
-                model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-                max_tokens=250,
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        "You are a helpful local dining guide. Answer the following question as if "
-                        "recommending restaurants from your knowledge. Name specific places if you know "
-                        "them. Keep your answer under 120 words. Question: " + q
-                    )
-                }]
+            resp = _pplx_req.post(
+                "https://api.perplexity.ai/chat/completions",
+                headers={"Authorization": f"Bearer {_pplx_key}", "Content-Type": "application/json"},
+                json={
+                    "model": "sonar",
+                    "messages": [{"role": "user", "content": q + " in Chicago"}],
+                    "max_tokens": 300,
+                },
+                timeout=15
             )
-            answer = msg.content[0].text if msg.content else ""
-            appeared = name.lower().strip() in answer.lower() if name else False
+            answer = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") if resp.status_code == 200 else ""
+            appeared = name.lower().strip() in answer.lower() if name and answer else False
             if appeared:
                 appeared_count += 1
-            query_results.append({"query": q, "answer": answer[:300], "appeared": appeared})
-        except Exception as e:
+            query_results.append({"query": q, "answer": answer[:400], "appeared": appeared})
+        except Exception:
             query_results.append({"query": q, "answer": "Could not fetch answer.", "appeared": False})
 
     # GBP completeness score
