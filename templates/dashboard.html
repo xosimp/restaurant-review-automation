@@ -292,7 +292,7 @@ function clientUpload(dataType, input) {
     👁 Viewing as client — {{ restaurant.name }}. This is exactly what they see.
   </span>
   <a href="/admin/stop-viewing" style="font-size:11px;color:rgba(255,255,255,.8);text-decoration:none;padding:3px 10px;border:1px solid rgba(255,255,255,.4);border-radius:4px">
-    ← Back to admin
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-right:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M9.5 5.5l-3 2.5 3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>Back to admin
   </a>
 </div>
 {% endif %}
@@ -375,7 +375,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   <!-- New reviews notification banner -->
   <div id="new-reviews-banner" style="display:none;background:#1a1410;color:#f0ebe0;padding:10px 16px;border-radius:6px;margin-bottom:12px;font-size:13px;cursor:pointer;align-items:center;justify-content:space-between" onclick="window.location.reload()">
     <span id="new-reviews-text"></span>
-    <span style="font-size:11px;color:#c84b2f;font-weight:600">Click to refresh →</span>
+    <span style="font-size:11px;color:#c84b2f;font-weight:600">Click to refresh<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
   </div>
   <!-- Google Business connect banner -->
   <div style="background:white;border:1px solid var(--paper3);border-radius:8px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px">
@@ -398,7 +398,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       {% if restaurant.gmb_refresh_token %}
       <button onclick="gmbDisconnect()" class="btn btn-skip" style="font-size:11px">Disconnect</button>
       {% else %}
-      <button onclick="gmbConnect()" class="btn btn-approve" style="font-size:12px;padding:7px 16px">Connect &rarr;</button>
+      <button onclick="gmbConnect()" class="btn btn-approve" style="font-size:12px;padding:7px 16px">Connect<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       {% endif %}
     </div>
   </div>
@@ -413,7 +413,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input id="rr-name"  type="text"  placeholder="Customer name (optional)" style="font-family:'DM Sans',sans-serif;font-size:12px;padding:7px 11px;border:1px solid var(--paper3);border-radius:6px;width:180px;outline:none;color:var(--ink)">
         <input id="rr-email" type="email" placeholder="Email address" style="font-family:'DM Sans',sans-serif;font-size:12px;padding:7px 11px;border:1px solid var(--paper3);border-radius:6px;width:190px;outline:none;color:var(--ink)">
-        <button onclick="sendReviewRequest(this)" style="padding:7px 16px;background:#1a56cc;color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s" onmouseover="this.style.background='#1344a8'" onmouseout="this.style.background='#1a56cc'">Send request →</button>
+        <button onclick="sendReviewRequest(this)" style="padding:7px 16px;background:#1a56cc;color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s" onmouseover="this.style.background='#1344a8'" onmouseout="this.style.background='#1a56cc'">Send request<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
     </div>
     <div id="rr-stat" style="margin-top:8px;font-size:11px;color:var(--ink3)">
@@ -528,7 +528,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
           <span style="color:#2d6a4f">▲ {{p.positive}} positive</span>
           <span style="color:#c0392b">▼ {{p.negative}} negative</span>
         </div>
-        <div style="margin-top:8px;font-size:10px;color:var(--ink3);letter-spacing:.3px">Click to view {{p.platform|title}} reviews ↓</div>
+        <div style="margin-top:8px;font-size:10px;color:var(--ink3);letter-spacing:.3px">Click to view {{p.platform|title}} reviews<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       </div>
     {% endfor %}
     </div>
@@ -593,7 +593,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       <button class="fpill {{'active' if rfilter=='positive'}}" onclick="setRF('positive',this)">Positive</button>
     </div>
     <span class="count-lbl">{{reviews|length}} review{{'s' if reviews|length!=1}}</span>
-    <button class="btn btn-skip" style="margin-left:auto" onclick="exportReviews()">Export CSV ↓</button>
+    <button class="btn btn-skip" style="margin-left:auto" onclick="exportReviews()">Export CSV<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
   {% if reviews %}
   {% set colors=['#c84b2f','#2d6a4f','#b7791f','#1a56cc','#6b4fa0','#1e7a8c'] %}
@@ -733,7 +733,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
           </span>
           {% endif %}
         </div>
-        <div style="color:var(--ink3);font-size:20px">→</div>
+        <div style="color:var(--ink3)"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" style="vertical-align:middle"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".12"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         <div>
           <span style="font-family:'DM Serif Display',serif;font-size:32px;color:#6fcf97;line-height:1">{{labor_target|default(30.0)}}%</span>
           <span style="font-size:13px;color:var(--ink3);margin-left:4px">target</span>
@@ -750,7 +750,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       <div style="font-size:11px;color:var(--ink3);margin-top:4px">estimated monthly overspend</div>
 
       <button onclick="downloadSchedule(this)" style="margin-top:12px;padding:9px 18px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#a83d25'" onmouseout="this.style.background='var(--ember)'">
-        Download optimized schedule ↓
+        Download optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
 
     </div>
@@ -1179,7 +1179,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     {% if restaurant.ig_token %}
     <button onclick="disconnectInstagram(this)" class="btn btn-skip" style="font-size:11px;padding:4px 10px;flex-shrink:0">Disconnect</button>
     {% else %}
-    <button onclick="igConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 14px;flex-shrink:0">Connect Instagram/FB →</button>
+    <button onclick="igConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 14px;flex-shrink:0">Connect Instagram/FB<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     {% endif %}
   </div>
 
@@ -1208,7 +1208,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
 
   <div style="font-size:11px;color:var(--ink3);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
     <span>Pick a content type, add a topic, hit Generate. The AI writes in {{restaurant.name}}'s voice.</span>
-    <a href="mailto:will@cavnar.ai?subject=Update my marketing voice profile — {{restaurant.name}}" style="color:var(--ember);font-size:11px;font-weight:600;text-decoration:none">Update brand voice →</a>
+    <a href="mailto:will@cavnar.ai?subject=Update my marketing voice profile — {{restaurant.name}}" style="color:var(--ember);font-size:11px;font-weight:600;text-decoration:none">Update brand voice<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
   </div>
   <div class="slabel">Content type</div>
   <div class="ct-grid">{% for ct in ctypes %}
@@ -1252,7 +1252,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Content Calendar</div>
       <div style="display:flex;gap:6px">
         <button class="btn-primary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week <span style="font-size:15px">↺</span></button>
-        <button class="btn-secondary" id="cal-download-btn" onclick="downloadCal()" style="font-size:10px;padding:5px 10px;display:none">Download CSV ↓</button>
+        <button class="btn-secondary" id="cal-download-btn" onclick="downloadCal()" style="font-size:10px;padding:5px 10px;display:none">Download CSV<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
@@ -1273,7 +1273,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#7c3aed;margin-bottom:4px">AI Search Presence</div>
           <div style="font-weight:700;font-size:15px;color:#0d1b2a">AI Visibility Score</div>
         </div>
-        <span id="aiv-collapse-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f3f0ff;border:1px solid #e5e0ff;color:#7c3aed;font-size:10px;margin-top:10px;transition:transform .25s;flex-shrink:0">&#9660;</span>
+        <span id="aiv-collapse-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f3f0ff;border:1px solid #e5e0ff;color:#7c3aed;margin-top:10px;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
       </div>
       <button onclick="runAIVisibility(this)" id="aiv-run-btn" style="background:#7c3aed;color:white;border:none;padding:7px 16px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer">Check Visibility</button>
     </div>
@@ -1307,7 +1307,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
           <div id="aiv-gbp-num" style="font-size:32px;font-weight:800;color:#6b7280;letter-spacing:-1px;line-height:1">—</div>
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:5px">GBP Completeness</div>
           <div id="aiv-gbp-label" style="font-size:11px;color:var(--ink3);margin-top:3px"></div>
-          <div id="aiv-gbp-toggle-txt" style="font-size:10px;color:var(--ink3);margin-top:5px;font-weight:600">tap to see breakdown &#9660;</div>
+          <div id="aiv-gbp-toggle-txt" style="font-size:10px;color:var(--ink3);margin-top:5px;font-weight:600">tap to see breakdown<svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:3px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".15"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         </div>
       </div>
 
@@ -1525,7 +1525,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
           &bull; Enter the code to complete sign in<br>
           &bull; Check &ldquo;Remember device&rdquo; to skip for 30 days
         </div>
-        <button onclick="twoFAStep2(this)" id="twofa-send-btn" class="btn-primary" style="width:100%;padding:11px;transition:opacity .15s">Send me a test code &rarr;</button>
+        <button onclick="twoFAStep2(this)" id="twofa-send-btn" class="btn-primary" style="width:100%;padding:11px;transition:opacity .15s">Send me a test code<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
       <!-- Step 2: Verify -->
       <div id="twofa-step2" style="display:none">
@@ -1585,7 +1585,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:14px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Your Restaurant Profile</div>
-      <a href="mailto:will@cavnar.ai?subject=Profile update for {{restaurant.name}}" style="font-size:11px;color:var(--ember);text-decoration:none;font-weight:600">Request an update &rarr;</a>
+      <a href="mailto:will@cavnar.ai?subject=Profile update for {{restaurant.name}}" style="font-size:11px;color:var(--ember);text-decoration:none;font-weight:600">Request an update<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0" class="profile-grid">
 
@@ -1656,7 +1656,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <span id="gbp-save-status" style="font-size:11px;color:#2d6a4f;display:none">✓ Saved to Google</span>
-        <button onclick="saveGbpListing(this)" id="gbp-save-btn" style="padding:7px 16px;background:#1a56cc;color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#1344a8'" onmouseout="this.style.background='#1a56cc'">Save to Google →</button>
+        <button onclick="saveGbpListing(this)" id="gbp-save-btn" style="padding:7px 16px;background:#1a56cc;color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#1344a8'" onmouseout="this.style.background='#1a56cc'">Save to Google<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
@@ -1675,8 +1675,8 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       <div style="font-size:10px;color:var(--ink3);margin-top:3px">Google allows up to 750 characters. Changes go live on Google within a few minutes.</div>
     </div>
     <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--paper3);display:flex;gap:16px;flex-wrap:wrap">
-      <div style="font-size:11px;color:var(--ink3)">Yelp &nbsp;<span style="color:var(--amber);font-weight:600">Manual</span> — <a href="https://biz.yelp.com" target="_blank" style="color:var(--ink3)">update on Yelp →</a></div>
-      <div style="font-size:11px;color:var(--ink3)">Apple Maps &nbsp;<span style="color:var(--amber);font-weight:600">Manual</span> — <a href="https://businessconnect.apple.com" target="_blank" style="color:var(--ink3)">update on Apple Business Connect →</a></div>
+      <div style="font-size:11px;color:var(--ink3)">Yelp &nbsp;<span style="color:var(--amber);font-weight:600">Manual</span> — <a href="https://biz.yelp.com" target="_blank" style="color:var(--ink3)">update on Yelp<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a></div>
+      <div style="font-size:11px;color:var(--ink3)">Apple Maps &nbsp;<span style="color:var(--amber);font-weight:600">Manual</span> — <a href="https://businessconnect.apple.com" target="_blank" style="color:var(--ink3)">update on Apple Business Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a></div>
     </div>
   </div>
   {% else %}
@@ -1698,7 +1698,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
         <tr>
           <td style="color:var(--ink3);padding:4px 0;width:80px;font-size:12px">Email</td>
           <td style="font-weight:500;font-size:12px;width:100%" id="acct-email-display">{{restaurant.owner_email}}</td>
-          <td style="text-align:right;padding:4px 0;white-space:nowrap"><button onclick="document.getElementById('email-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;color:var(--ink);padding:0;display:flex;align-items:center;gap:3px">Update <span style="color:var(--ember)">&rarr;</span></button></td>
+          <td style="text-align:right;padding:4px 0;white-space:nowrap"><button onclick="document.getElementById('email-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Update<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></td>
         </tr>
         <tr><td style="color:var(--ink3);padding:4px 0;font-size:12px">Username</td><td style="font-weight:500;font-size:12px" colspan="2">{{current_user.username}}</td></tr>
       </table>
@@ -1739,7 +1739,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
             <button onclick="toggle2FA(false)" class="btn-secondary" style="font-size:11px;padding:4px 10px">Disable</button>
           </div>
           {% else %}
-          <button onclick="document.getElementById('twofa-modal').style.display='flex'" class="btn-primary" style="font-size:11px;padding:5px 12px">Enable &rarr;</button>
+          <button onclick="document.getElementById('twofa-modal').style.display='flex'" class="btn-primary" style="font-size:11px;padding:5px 12px">Enable<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           {% endif %}
         </div>
         <!-- Sign-in notifications -->
@@ -1766,7 +1766,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
         </div>
         <!-- Change password link — inside security section -->
         <div style="padding-top:10px;margin-top:2px">
-          <button onclick="document.getElementById('pw-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:var(--ink);padding:0;display:flex;align-items:center;gap:4px">Change password <span style="color:var(--ember)">&rarr;</span></button>
+          <button onclick="document.getElementById('pw-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:4px">Change password<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
       </div>
 
@@ -1817,8 +1817,8 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
         <div style="font-size:12px;color:var(--ink3);margin-bottom:4px" id="billing-status"></div>
         <div style="font-size:12px;color:var(--ink3);margin-bottom:16px" id="billing-pm"></div>
         <div style="display:flex;flex-direction:column;gap:8px">
-          <a id="billing-portal-link" href="#" target="_blank" style="font-size:13px;color:var(--ember);text-decoration:none;font-weight:600">Manage payment method &rarr;</a>
-          <a id="billing-invoice-link" href="#" target="_blank" style="font-size:13px;color:var(--ink3);text-decoration:none;font-weight:500">View invoice history &rarr;</a>
+          <a id="billing-portal-link" href="#" target="_blank" style="font-size:13px;color:var(--ember);text-decoration:none;font-weight:600">Manage payment method<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+          <a id="billing-invoice-link" href="#" target="_blank" style="font-size:13px;color:var(--ink3);text-decoration:none;font-weight:500">View invoice history<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
         </div>
       </div>
       <div id="billing-no-sub" style="display:none;font-size:12px;color:var(--ink3)">
@@ -1849,7 +1849,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     <div style="border-left:1px solid var(--paper3);padding-left:24px">
       <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:3px">Need anything?</div>
       <div style="font-size:12px;color:var(--ink3);margin-bottom:16px;line-height:1.5">Questions, data requests, or something not working &mdash; reach out directly. Same-day response, always.</div>
-      <a href="mailto:will@cavnar.ai" style="display:inline-block;background:var(--ember);color:white;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Email Will &rarr;</a>
+      <a href="mailto:will@cavnar.ai" style="display:inline-block;background:var(--ember);color:white;padding:8px 18px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Email Will<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
     </div>
   </div>
 
@@ -2932,7 +2932,7 @@ function downloadSchedule(btn){
     if(ct.includes('json')){
       return r.json().then(function(data){
         btn.textContent=data.error||'Error — try again';
-        setTimeout(function(){btn.textContent='Download optimized schedule ↓';btn.disabled=false;},4000);
+        setTimeout(function(){btn.innerHTML='Download optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';btn.disabled=false;},4000);
       });
     }
     return r.blob().then(function(blob){
@@ -2943,11 +2943,11 @@ function downloadSchedule(btn){
       var a=document.createElement('a');
       a.href=url; a.download='optimized_schedule.csv'; a.click();
       btn.textContent='✓ Downloaded';
-      setTimeout(function(){btn.textContent='Download optimized schedule ↓';btn.disabled=false;},3000);
+      setTimeout(function(){btn.innerHTML='Download optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';btn.disabled=false;},3000);
     });
   }).catch(function(){
     btn.textContent='Error — try again';
-    setTimeout(function(){btn.textContent='Download optimized schedule ↓';btn.disabled=false;},4000);
+    setTimeout(function(){btn.innerHTML='Download optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';btn.disabled=false;},4000);
   });
 }
 function loadInvInsight(){
@@ -3120,7 +3120,7 @@ function loadCal(){
       html += '<div class="cal-day-name" style="display:flex;align-items:center;justify-content:space-between">'+i.day+dateLabel+'</div>';
       html += '<div class="cal-platform" style="font-size:10px;font-weight:600;color:'+pColor+';margin:2px 0 4px;padding:1px 6px;background:'+pColor+'18;border-radius:10px;display:inline-block">'+( i.platform||'')+'</div>';
       html += '<div style="font-size:12px;line-height:1.5;margin-top:4px">'+( i.angle||'')+'</div>';
-      html += '<button data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:sans-serif;width:100%">Generate →</button>';
+      html += '<button data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:sans-serif;width:100%">Generate<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
       html += '</div>';
     }
     g.innerHTML=html;
@@ -3232,7 +3232,7 @@ function twoFAStep2(btn){
   // Send test code
   fetch('/api/send-2fa-test',{method:'POST'})
     .then(function(r){return r.json();}).then(function(d){
-      if(!d.ok){if(btn){btn.textContent='Send me a test code →';btn.disabled=false;}toast(d.error||'Could not send code — check your account email');return;}
+      if(!d.ok){if(btn){btn.innerHTML='Send me a test code<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';btn.disabled=false;}toast(d.error||'Could not send code — check your account email');return;}
       document.getElementById('twofa-step1').style.display='none';
       document.getElementById('twofa-step2').style.display='block';
       document.getElementById('twofa-masked-email').textContent=d.masked||'your email';
@@ -3625,7 +3625,7 @@ function renderAIVisibility(d) {
     html += '<div class="aiv-why-text" id="aiv-why-' + k + '" style="font-size:12px;color:#374151;line-height:1.6;margin-bottom:10px;display:none">' + c.why + '</div>';
     html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
     if (!c.done) {
-      html += '<button class="aiv-card-btn" onclick="' + c.actionFn + '" style="background:' + c.color + ';color:white;border:none;padding:7px 14px;border-radius:7px;font-family:\'DM Sans\',sans-serif;font-size:11px;font-weight:600">' + c.action + ' →</button>';
+      html += '<button class="aiv-card-btn" onclick="' + c.actionFn + '" style="background:' + c.color + ';color:white;border:none;padding:7px 14px;border-radius:7px;font-family:\'DM Sans\',sans-serif;font-size:11px;font-weight:600">' + c.action + '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
     } else {
       html += '<div></div>';
     }
@@ -3653,7 +3653,7 @@ function toggleGbpChecklist() {
   if (!el) return;
   var open = el.style.display !== 'none';
   el.style.display = open ? 'none' : 'block';
-  if (txt) txt.innerHTML = open ? 'tap to see breakdown &#9660;' : 'tap to hide &#9650;';
+  if (txt) txt.innerHTML = open ? 'tap to see breakdown<svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:3px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".15"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>' : 'tap to hide<svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:3px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".15"/><path d="M5.5 9.5l2.5-3 2.5 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   if (!open) {
     var items = document.getElementById('aiv-gbp-items');
     if (items) {
