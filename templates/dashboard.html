@@ -3398,7 +3398,8 @@ function renderAIVisibility(d) {
       var badge = q.appeared
         ? '<span style="background:#dcfce7;color:#16a34a;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;flex-shrink:0;white-space:nowrap">&#10003; Appeared</span>'
         : '<span style="background:#fee2e2;color:#dc2626;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;flex-shrink:0;white-space:nowrap">Not mentioned</span>';
-      var snippet = q.answer.substring(0, 200) + (q.answer.length > 200 ? '...' : '');
+      var cleanAnswer = q.answer.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
+      var snippet = cleanAnswer.substring(0, 200) + (cleanAnswer.length > 200 ? '...' : '');
       qhtml += '<div style="background:white;border:1px solid var(--paper3);border-radius:8px;padding:10px 12px">';
       qhtml += '<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px">';
       qhtml += '<span style="font-size:12px;font-weight:600;color:#0d1b2a;flex:1">&ldquo;' + q.query + '&rdquo;</span>' + badge;
@@ -3436,7 +3437,7 @@ function renderAIVisibility(d) {
       title: 'Get more Google reviews',
       why: 'AI search tools rank restaurants by review volume and recency. Mio Modo has 270+ reviews — that\'s why it leads every query. The more reviews you have, the more AI systems trust you.',
       action: 'Send a review request',
-      actionFn: 'document.getElementById(\'request-review-email\') && document.getElementById(\'request-review-email\').focus()',
+      actionFn: 'document.getElementById(\'rr-email\') && document.getElementById(\'rr-email\').focus(); switchTab(\'reviews\', document.getElementById(\'tab-reviews\'))',
       impact: 'Highest impact',
       impactColor: '#16a34a',
       done: reviewsDone,
@@ -3464,7 +3465,7 @@ function renderAIVisibility(d) {
       title: 'Complete your Google Business Profile',
       why: 'Perplexity, ChatGPT, and Google AI all pull directly from GBP data — hours, photos, menu, description. A complete profile is the single fastest way to become indexable by AI search.',
       action: 'Open GBP settings',
-      actionFn: 'document.getElementById(\'tab-intel\') && document.getElementById(\'tab-intel\').click()',
+      actionFn: 'switchTab(\'competitor\', document.getElementById(\'tab-competitor\'))',
       impact: 'Fast win',
       impactColor: '#0ea5e9',
       done: gbpDone,
