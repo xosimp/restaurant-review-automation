@@ -398,7 +398,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   </div>
 
   <!-- Review request card -->
-  <div class="card" style="padding:14px 18px;margin-bottom:14px;border-left:3px solid #4a9eca;background:linear-gradient(to right,#e8f4fd,white)">
+  <div id="rr-card" class="card" style="padding:14px 18px;margin-bottom:14px;border-left:3px solid #4a9eca;background:linear-gradient(to right,#e8f4fd,white)">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
       <div>
         <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#1a56cc;margin-bottom:3px">Request a review</div>
@@ -3444,7 +3444,7 @@ function renderAIVisibility(d) {
       title: 'Get more Google reviews',
       why: 'AI search tools rank restaurants by review volume and recency. Mio Modo has 270+ reviews — that\'s why it leads every query. The more reviews you have, the more AI systems trust you.',
       action: 'Send a review request',
-      actionFn: 'document.getElementById(\'rr-email\') && document.getElementById(\'rr-email\').focus(); switchTab(\'reviews\', document.getElementById(\'tab-reviews\'))',
+      actionFn: 'switchTab(\'reviews\', document.getElementById(\'tab-reviews\')); setTimeout(function(){ var c=document.getElementById(\'rr-card\'); if(c){ c.scrollIntoView({behavior:\'smooth\',block:\'start\'}); } var e=document.getElementById(\'rr-email\'); if(e) e.focus(); }, 150);',
       impact: 'Highest impact',
       impactColor: '#16a34a',
       done: reviewsDone,

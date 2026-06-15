@@ -1170,20 +1170,23 @@ def ai_visibility(current_user):
     neighborhood = r.neighborhood or ""
     vibe        = r.vibe or ""
     known_for   = r.known_for or ""
-    descriptor  = vibe or known_for or "restaurant"
-    location    = neighborhood or "the area"
+    # Use just the city portion (before any em dash or comma-detail) for clean queries
+    city = neighborhood.split("—")[0].split(",")[0].strip() if neighborhood else ""
+    city_full = neighborhood.split("—")[0].strip() if neighborhood else ""
+    # Short cuisine descriptor from known_for first word(s), fallback to "restaurant"
+    cuisine = (known_for.split(",")[0].strip() if known_for else "") or "restaurant"
 
-    if neighborhood:
+    if city:
         queries = [
-            "Best " + descriptor + " in " + neighborhood,
-            "Top restaurants in " + neighborhood,
-            "Where to eat in " + neighborhood + " tonight",
+            name + " restaurant in " + city_full,
+            "Top restaurants in " + city_full,
+            "Best " + cuisine + " in " + city_full,
         ]
     else:
         queries = [
-            "Best " + descriptor + " restaurant near me",
-            "Top local restaurants for " + (known_for or "dinner"),
-            "Highly rated " + descriptor + " spots to visit",
+            name + " restaurant",
+            "Top local " + cuisine + " restaurants",
+            "Best " + cuisine + " restaurant near me",
         ]
 
     import requests as _pplx_req
