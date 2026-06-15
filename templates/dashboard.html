@@ -1260,14 +1260,18 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
 <!-- COMPETITOR INTEL -->
 <div class="panel" id="panel-competitor">
   <!-- AI Visibility Checker -->
-  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:20px">
+  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:20px" id="aiv-card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#7c3aed;margin-bottom:4px">AI Search Presence</div>
-        <div style="font-weight:700;font-size:15px;color:#0d1b2a">AI Visibility Score</div>
+      <div style="display:flex;align-items:center;gap:10px;cursor:pointer" onclick="toggleAivCard()">
+        <div>
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#7c3aed;margin-bottom:4px">AI Search Presence</div>
+          <div style="font-weight:700;font-size:15px;color:#0d1b2a">AI Visibility Score</div>
+        </div>
+        <span id="aiv-collapse-arrow" style="font-size:14px;color:#7c3aed;margin-top:12px;transition:transform .2s">&#9660;</span>
       </div>
       <button onclick="runAIVisibility(this)" id="aiv-run-btn" style="background:#7c3aed;color:white;border:none;padding:7px 16px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer">Check Visibility</button>
     </div>
+    <div id="aiv-body">
 
     <div id="aiv-idle" style="background:#f9f8ff;border:1px solid #e5e0ff;border-radius:8px;padding:16px;text-align:center">
       <div style="font-size:13px;color:#374151">See how often your restaurant appears when someone asks an AI for local dining recommendations.</div>
@@ -1334,6 +1338,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       <!-- Legacy checklist hidden but kept for data -->
       <div id="aiv-checklist" style="display:none"></div>
     </div>
+  </div><!-- /aiv-body -->
   </div>
 
   <div style="background:linear-gradient(135deg,#0d1b2a,#1a2d40);border-radius:var(--r);padding:20px 24px;margin-bottom:20px;border:1px solid #1e3a52">
@@ -1429,7 +1434,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     <!-- Competitor cards -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Nearby competitors</div>
-      <button onclick="refreshCompetitorIntel(this)" style="background:transparent;border:1px solid var(--paper3);color:var(--ink3);padding:5px 12px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer">Refresh</button>
+      <button onclick="refreshCompetitorIntel(this)" style="background:#f97316;border:none;color:white;padding:5px 12px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer">Refresh</button>
     </div>
     <div style="display:flex;flex-direction:column;gap:10px" id="comp-cards-static">
       {% for c in competitor_data.competitors %}
@@ -3334,7 +3339,7 @@ function refreshCompetitorIntel(btn){
   fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     btn.textContent='Refresh';btn.disabled=false;
     if(overlay) overlay.style.display = 'none';
-    if(d.ok){toast('Competitor data updated');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},800);}
+    if(d.ok){toast('Competitor data updated');setTimeout(function(){loadCompetitorIntel();},400);}
     else{toast('Error: '+(d.error||'failed'));}
   }).catch(function(){
     btn.textContent='Refresh';btn.disabled=false;
@@ -3591,6 +3596,15 @@ function renderAIVisibility(d) {
   }
   roadmapEl.innerHTML = html;
   if (footerEl) footerEl.style.display = 'block';
+}
+
+function toggleAivCard() {
+  var body = document.getElementById('aiv-body');
+  var arrow = document.getElementById('aiv-collapse-arrow');
+  if (!body) return;
+  var collapsed = body.style.display === 'none';
+  body.style.display = collapsed ? '' : 'none';
+  if (arrow) arrow.style.transform = collapsed ? '' : 'rotate(-90deg)';
 }
 
 function toggleGbpChecklist() {
