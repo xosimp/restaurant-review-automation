@@ -1300,10 +1300,22 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
         <div id="aiv-queries" style="display:flex;flex-direction:column;gap:8px"></div>
       </div>
 
-      <div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px">Optimization Checklist</div>
-        <div id="aiv-checklist" style="display:flex;flex-direction:column;gap:2px"></div>
+      <!-- Action Plan -->
+      <div id="aiv-action-plan" style="margin-top:4px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Your AI Visibility Roadmap</div>
+          <div style="flex:1;height:1px;background:var(--paper3)"></div>
+          <div id="aiv-roadmap-pts" style="font-size:10px;font-weight:700;color:#7c3aed"></div>
+        </div>
+        <div id="aiv-roadmap-cards" style="display:flex;flex-direction:column;gap:10px"></div>
+        <div id="aiv-roadmap-footer" style="margin-top:14px;background:linear-gradient(135deg,#7c3aed11,#4f46e511);border:1px solid #e5e0ff;border-radius:10px;padding:14px 16px;display:none">
+          <div style="font-size:12px;font-weight:700;color:#4f46e5;margin-bottom:4px">What happens when you improve this?</div>
+          <div style="font-size:12px;color:#374151;line-height:1.6">AI search tools like Perplexity, ChatGPT, and Google AI pull from the same sources — Google reviews, Yelp, food blogs, and online directories. Every review you get, every response you post, and every complete profile field makes you more likely to appear when someone asks AI where to eat. Most independent restaurants aren't there yet. <strong>The ones that are get there through consistency.</strong></div>
+        </div>
       </div>
+
+      <!-- Legacy checklist hidden but kept for data -->
+      <div id="aiv-checklist" style="display:none"></div>
     </div>
   </div>
 
@@ -3397,18 +3409,148 @@ function renderAIVisibility(d) {
     qEl.innerHTML = qhtml;
   }
   var cEl = document.getElementById('aiv-checklist');
-  if (cEl && d.checklist) {
-    var chtml = '';
-    for (var j = 0; j < d.checklist.length; j++) {
-      var item = d.checklist[j];
-      var icon = item.done
-        ? '<span style="flex-shrink:0;width:18px;height:18px;border-radius:50%;background:#16a34a;color:white;font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center">&#10003;</span>'
-        : '<span style="flex-shrink:0;width:18px;height:18px;border-radius:50%;background:#f3f4f6;border:1.5px solid #d1d5db;color:#9ca3af;font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center">!</span>';
-      var textStyle = item.done ? 'font-size:12px;color:#9ca3af;text-decoration:line-through;flex:1' : 'font-size:12px;color:#0d1b2a;flex:1';
-      var pts = item.done ? '' : '<span style="font-size:10px;font-weight:700;color:#16a34a;flex-shrink:0">+' + item.pts + ' pts</span>';
-      chtml += '<div style="display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--paper3)">' + icon + '<span style="' + textStyle + '">' + item.label + '</span>' + pts + '</div>';
+  if (cEl && d.checklist) { cEl.innerHTML = ''; }
+
+  // Build roadmap cards
+  var roadmapEl = document.getElementById('aiv-roadmap-cards');
+  var footerEl = document.getElementById('aiv-roadmap-footer');
+  var ptsEl = document.getElementById('aiv-roadmap-pts');
+  if (!roadmapEl) return;
+
+  var gbpDone = d.gbp_score >= 80;
+  var reviewsDone = false;
+  var responseDone = false;
+  if (d.checklist) {
+    for (var ci = 0; ci < d.checklist.length; ci++) {
+      if (d.checklist[ci].label.indexOf('review') > -1 && d.checklist[ci].done) reviewsDone = true;
+      if (d.checklist[ci].label.indexOf('respond') > -1 && d.checklist[ci].done) responseDone = true;
     }
-    cEl.innerHTML = chtml;
+  }
+
+  var cards = [
+    {
+      icon: '⭐',
+      color: '#f59e0b',
+      bg: '#fffbeb',
+      border: '#fde68a',
+      title: 'Get more Google reviews',
+      why: 'AI search tools rank restaurants by review volume and recency. Mio Modo has 270+ reviews — that\'s why it leads every query. The more reviews you have, the more AI systems trust you.',
+      action: 'Send a review request',
+      actionFn: 'document.getElementById(\'request-review-email\') && document.getElementById(\'request-review-email\').focus()',
+      impact: 'Highest impact',
+      impactColor: '#16a34a',
+      done: reviewsDone,
+      timeframe: 'Ongoing'
+    },
+    {
+      icon: '💬',
+      color: '#7c3aed',
+      bg: '#f9f8ff',
+      border: '#e5e0ff',
+      title: 'Respond to every review',
+      why: 'Response rate signals to Google that your listing is actively managed. Active listings rank higher in local search and are more likely to be cited by AI tools that pull from Google data.',
+      action: 'Go to review queue',
+      actionFn: 'document.getElementById(\'tab-reviews\') && document.getElementById(\'tab-reviews\').click()',
+      impact: 'High impact',
+      impactColor: '#7c3aed',
+      done: responseDone,
+      timeframe: '24–48 hrs each'
+    },
+    {
+      icon: '📍',
+      color: '#0ea5e9',
+      bg: '#f0f9ff',
+      border: '#bae6fd',
+      title: 'Complete your Google Business Profile',
+      why: 'Perplexity, ChatGPT, and Google AI all pull directly from GBP data — hours, photos, menu, description. A complete profile is the single fastest way to become indexable by AI search.',
+      action: 'Open GBP settings',
+      actionFn: 'document.getElementById(\'tab-intel\') && document.getElementById(\'tab-intel\').click()',
+      impact: 'Fast win',
+      impactColor: '#0ea5e9',
+      done: gbpDone,
+      timeframe: '15 min one-time'
+    },
+    {
+      icon: '📣',
+      color: '#ec4899',
+      bg: '#fdf2f8',
+      border: '#fbcfe8',
+      title: 'Post consistently on social',
+      why: 'Food blogs and social content get indexed by search engines, which AI tools then pull from. Regular posts with your restaurant name, neighborhood, and cuisine type build the online footprint AI needs to find you.',
+      action: 'Go to marketing',
+      actionFn: 'document.getElementById(\'tab-marketing\') && document.getElementById(\'tab-marketing\').click()',
+      impact: 'Long-term',
+      impactColor: '#ec4899',
+      done: false,
+      timeframe: '2–3x per week'
+    }
+  ];
+
+  // Inject CSS for animations once
+  if (!document.getElementById('aiv-anim-style')) {
+    var styleEl = document.createElement('style');
+    styleEl.id = 'aiv-anim-style';
+    styleEl.textContent = '@keyframes aivSlideIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}' +
+      '.aiv-card{animation:aivSlideIn .35s ease both}' +
+      '.aiv-card-btn{transition:background .15s,transform .1s;cursor:pointer}' +
+      '.aiv-card-btn:hover{transform:translateY(-1px)}' +
+      '.aiv-expand-btn{transition:color .15s;cursor:pointer}' +
+      '.aiv-expand-btn:hover{color:#7c3aed!important}' +
+      '.aiv-bar-fill{transition:width 1.2s cubic-bezier(.4,0,.2,1)}';
+    document.head.appendChild(styleEl);
+  }
+
+  var totalPtsLeft = 0;
+  for (var pi = 0; pi < cards.length; pi++) { if (!cards[pi].done) totalPtsLeft++; }
+  if (ptsEl) ptsEl.textContent = totalPtsLeft > 0 ? totalPtsLeft + ' action' + (totalPtsLeft > 1 ? 's' : '') + ' to grow your score' : 'All steps complete';
+
+  var html = '';
+  for (var k = 0; k < cards.length; k++) {
+    var c = cards[k];
+    var delay = (k * 80) + 'ms';
+    var doneStyle = c.done ? 'opacity:.55;' : '';
+    var doneBadge = c.done
+      ? '<span style="background:#dcfce7;color:#16a34a;font-size:10px;font-weight:700;padding:2px 9px;border-radius:10px;flex-shrink:0">Done</span>'
+      : '<span style="background:' + c.impactColor + '18;color:' + c.impactColor + ';font-size:10px;font-weight:700;padding:2px 9px;border-radius:10px;flex-shrink:0">' + c.impact + '</span>';
+
+    html += '<div class="aiv-card" style="' + doneStyle + 'animation-delay:' + delay + ';background:' + c.bg + ';border:1.5px solid ' + c.border + ';border-radius:12px;padding:14px 16px">';
+    // Header row
+    html += '<div style="display:flex;align-items:flex-start;gap:12px">';
+    html += '<div style="width:36px;height:36px;border-radius:10px;background:white;border:1px solid ' + c.border + ';display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">' + c.icon + '</div>';
+    html += '<div style="flex:1;min-width:0">';
+    html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">';
+    html += '<span style="font-size:13px;font-weight:700;color:#0d1b2a">' + c.title + '</span>' + doneBadge;
+    html += '</div>';
+    html += '<div style="font-size:11px;color:var(--ink3)">' + c.timeframe + '</div>';
+    html += '</div>';
+    html += '</div>';
+    // Why it matters (expandable)
+    html += '<div style="margin:10px 0 0 48px">';
+    html += '<div class="aiv-why-text" id="aiv-why-' + k + '" style="font-size:12px;color:#374151;line-height:1.6;margin-bottom:10px;display:none">' + c.why + '</div>';
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
+    if (!c.done) {
+      html += '<button class="aiv-card-btn" onclick="' + c.actionFn + '" style="background:' + c.color + ';color:white;border:none;padding:7px 14px;border-radius:7px;font-family:\'DM Sans\',sans-serif;font-size:11px;font-weight:600">' + c.action + ' →</button>';
+    } else {
+      html += '<div></div>';
+    }
+    html += '<span class="aiv-expand-btn" onclick="toggleAivWhy(' + k + ',this)" style="font-size:11px;color:var(--ink3);text-decoration:underline;text-underline-offset:2px;user-select:none">Why this matters</span>';
+    html += '</div>';
+    html += '</div>';
+    html += '</div>';
+  }
+  roadmapEl.innerHTML = html;
+  if (footerEl) footerEl.style.display = 'block';
+}
+
+function toggleAivWhy(idx, btn) {
+  var el = document.getElementById('aiv-why-' + idx);
+  if (!el) return;
+  if (el.style.display === 'none') {
+    el.style.display = 'block';
+    btn.textContent = 'Hide';
+  } else {
+    el.style.display = 'none';
+    btn.textContent = 'Why this matters';
   }
 }
 function checkTabParam(){
