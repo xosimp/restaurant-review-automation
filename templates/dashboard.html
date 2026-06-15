@@ -102,6 +102,12 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .insight-loading{color:var(--ink3);font-style:italic;font-size:12px}
 @keyframes flashGreen{0%{background:#d5ede0;}60%{background:#d5ede0;}100%{background:var(--paper)}}
 @keyframes modalIn{0%{opacity:0;transform:scale(.92) translateY(12px)}100%{opacity:1;transform:scale(1) translateY(0)}}
+@keyframes panelIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+@keyframes cardIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes checkIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+.card{transition:transform .15s ease,box-shadow .15s ease;}
+.card:hover{transform:translateY(-2px);box-shadow:0 4px 22px rgba(13,27,42,.09);}
+.anim-bar{transition:width .75s cubic-bezier(.4,0,.2,1);}
 #congrats-modal{display:none;position:fixed;inset:0;background:rgba(14,12,10,.6);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
 #congrats-modal.show{display:flex}
 #congrats-inner{background:linear-gradient(135deg,#1a1410,#1e1a14);border:1px solid #3d2e1e;border-radius:16px;padding:32px 36px;max-width:480px;width:90%;animation:modalIn .3s ease;position:relative;text-align:center}
@@ -1409,7 +1415,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
         <div style="display:flex;align-items:center;gap:10px">
           <div style="width:130px;font-size:12px;font-weight:700;color:#0d1b2a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">{{restaurant.name}}</div>
           <div style="flex:1;background:#f3f4f6;border-radius:3px;height:10px;overflow:hidden">
-            <div style="height:100%;width:{{((rstats.avg_rating / 5) * 100)|int}}%;background:{{your_bar_color}};border-radius:3px"></div>
+            <div class="anim-bar" data-w="{{((rstats.avg_rating / 5) * 100)|int}}" style="height:100%;width:0%;background:{{your_bar_color}};border-radius:3px"></div>
           </div>
           <div style="width:36px;font-size:12px;font-weight:700;color:{{your_bar_color}};text-align:right;flex-shrink:0">{{rstats.avg_rating}}</div>
         </div>
@@ -1417,7 +1423,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
         <div style="display:flex;align-items:center;gap:10px">
           <div style="width:130px;font-size:12px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">{{c.name}}</div>
           <div style="flex:1;background:#f3f4f6;border-radius:3px;height:10px;overflow:hidden">
-            <div style="height:100%;width:{{((c.rating / 5) * 100)|int}}%;background:#9ca3af;border-radius:3px"></div>
+            <div class="anim-bar" data-w="{{((c.rating / 5) * 100)|int}}" style="height:100%;width:0%;background:#9ca3af;border-radius:3px"></div>
           </div>
           <div style="width:36px;font-size:12px;color:var(--ink3);text-align:right;flex-shrink:0">{{c.rating}}</div>
         </div>
@@ -2133,7 +2139,15 @@ function filterByPlatform(platform){
 function switchTab(n,btn){
   document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});
   document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
-  document.getElementById('panel-'+n).classList.add('active');btn.classList.add('active');
+  var _swPanel = document.getElementById('panel-'+n);
+  _swPanel.classList.add('active');
+  btn.classList.add('active');
+  _swPanel.style.animation = 'none';
+  void _swPanel.offsetWidth;
+  _swPanel.style.animation = 'panelIn .22s ease forwards';
+  animateStatNums('panel-'+n);
+  animateBars('panel-'+n);
+  if(n==='reviews') staggerCards();
   if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'&&!invLoaded)loadInvInsight();
@@ -2146,12 +2160,25 @@ function switchTab(n,btn){
 }
 // Restore active tab from hash on page load
 document.addEventListener('DOMContentLoaded', function(){
+  // Total value delivered count-up
+  var tvEl = document.getElementById('global-savings-total');
+  if (tvEl) {
+    var tvRaw = tvEl.textContent.replace(/[$,]/g,'').trim();
+    var tvNum = parseInt(tvRaw, 10);
+    if (!isNaN(tvNum) && tvNum > 0) countUpMoney(tvEl, tvNum, 1200);
+  }
+
   var hash = window.location.hash.replace('#','');
   var btn = hash ? document.getElementById('tab-'+hash) : null;
   if(btn){ switchTab(hash, btn); }
   else if(document.getElementById('panel-reviews') && document.getElementById('panel-reviews').classList.contains('active')){
     loadReviewInsight();
     loadSentimentTrend();
+    // Animate default reviews panel
+    var rPanel = document.getElementById('panel-reviews');
+    if (rPanel) { rPanel.style.animation = 'panelIn .22s ease forwards'; }
+    animateStatNums('panel-reviews');
+    staggerCards();
   }
   // Initialize filter so count label is accurate on page load
   filterReviews();
@@ -2195,6 +2222,7 @@ function filterReviews(){
     card.style.display=visible?'':'none';
     if(visible)shown++;
   });
+  staggerCards();
   var countEl=document.querySelector('.count-lbl');
   var label=shown+' review'+(shown!==1?'s':'');
   if(topicF) label+=' — '+topicF.replace(/_/g,' ');
@@ -3388,7 +3416,7 @@ function renderAIVisibility(d) {
   if (btn) { btn.textContent = 'Re-run'; btn.disabled = false; }
   var scoreEl = document.getElementById('aiv-score-num');
   var scoreLbl = document.getElementById('aiv-score-label');
-  if (scoreEl) scoreEl.textContent = d.ai_score + '%';
+  if (scoreEl) countUp(scoreEl, d.ai_score, 1000, '', '%', 0);
   if (scoreLbl) {
     if (d.ai_score >= 67) scoreLbl.textContent = 'Strong AI presence';
     else if (d.ai_score >= 34) scoreLbl.textContent = 'Moderate presence';
@@ -3408,7 +3436,7 @@ function renderAIVisibility(d) {
   var gbpBox = document.getElementById('aiv-gbp-box');
   if (gbpEl) {
     var gbpColor = d.gbp_score >= 70 ? '#16a34a' : (d.gbp_score >= 40 ? '#f59e0b' : '#dc2626');
-    gbpEl.textContent = d.gbp_score + '%';
+    countUp(gbpEl, d.gbp_score, 1000, '', '%', 0);
     gbpEl.style.color = gbpColor;
     if (gbpBox) {
       if (d.gbp_score >= 70) { gbpBox.style.background = '#f0fdf4'; gbpBox.style.borderColor = '#bbf7d0'; }
@@ -3626,6 +3654,21 @@ function toggleGbpChecklist() {
   var open = el.style.display !== 'none';
   el.style.display = open ? 'none' : 'block';
   if (txt) txt.innerHTML = open ? 'tap to see breakdown &#9660;' : 'tap to hide &#9650;';
+  if (!open) {
+    var items = document.getElementById('aiv-gbp-items');
+    if (items) {
+      var rows = items.children;
+      for (var gi = 0; gi < rows.length; gi++) {
+        rows[gi].style.opacity = '0';
+        rows[gi].style.animation = 'none';
+        (function(row, delay) {
+          setTimeout(function() {
+            row.style.animation = 'checkIn .2s ease forwards';
+          }, delay);
+        })(rows[gi], gi * 55);
+      }
+    }
+  }
 }
 
 function toggleAivWhy(idx, btn) {
@@ -3665,6 +3708,89 @@ window.addEventListener('load', function(){
     }
   } catch(e) {}
 });
+// ── Animation Utilities ──────────────────────────────────────────────────────
+function countUp(el, target, duration, prefix, suffix, decimals) {
+  if (!el) return;
+  prefix = prefix || '';
+  suffix = suffix || '';
+  decimals = decimals || 0;
+  var startTime = null;
+  function tick(now) {
+    if (!startTime) startTime = now;
+    var elapsed = now - startTime;
+    var progress = Math.min(elapsed / duration, 1);
+    var ease = 1 - Math.pow(1 - progress, 3);
+    var val = target * ease;
+    el.textContent = prefix + (decimals > 0 ? val.toFixed(decimals) : Math.floor(val)) + suffix;
+    if (progress < 1) requestAnimationFrame(tick);
+    else el.textContent = prefix + (decimals > 0 ? target.toFixed(decimals) : target) + suffix;
+  }
+  requestAnimationFrame(tick);
+}
+function countUpMoney(el, target, duration) {
+  if (!el) return;
+  var startTime = null;
+  function tick(now) {
+    if (!startTime) startTime = now;
+    var elapsed = now - startTime;
+    var progress = Math.min(elapsed / duration, 1);
+    var ease = 1 - Math.pow(1 - progress, 3);
+    var val = Math.floor(target * ease);
+    el.textContent = '$' + val.toLocaleString();
+    if (progress < 1) requestAnimationFrame(tick);
+    else el.textContent = '$' + target.toLocaleString();
+  }
+  requestAnimationFrame(tick);
+}
+function animateStatNums(panelId) {
+  var panel = document.getElementById(panelId);
+  if (!panel) return;
+  var els = panel.querySelectorAll('.stat-n');
+  for (var si = 0; si < els.length; si++) {
+    var el = els[si];
+    if (el.dataset.animated) continue;
+    el.dataset.animated = '1';
+    var raw = el.textContent.trim();
+    if (raw.indexOf('h') !== -1 && raw.indexOf('m') !== -1) continue;
+    var isMoney = raw.indexOf('$') !== -1;
+    var isPct = raw.indexOf('%') !== -1;
+    var cleaned = raw.replace(/[$%,\s]/g, '').trim();
+    var num = parseFloat(cleaned);
+    if (isNaN(num)) continue;
+    var dec = (cleaned.indexOf('.') !== -1) ? 1 : 0;
+    if (isMoney) countUpMoney(el, num, 900);
+    else countUp(el, num, 900, '', isPct ? '%' : '', dec);
+  }
+}
+function animateBars(panelId) {
+  var panel = document.getElementById(panelId);
+  if (!panel) return;
+  var bars = panel.querySelectorAll('.anim-bar');
+  for (var bi = 0; bi < bars.length; bi++) {
+    (function(bar) {
+      var target = bar.dataset.w || '0';
+      bar.style.width = '0%';
+      setTimeout(function() { bar.style.width = target + '%'; }, 100);
+    })(bars[bi]);
+  }
+}
+function staggerCards() {
+  var cards = document.querySelectorAll('[id^="rc-"]');
+  var idx = 0;
+  for (var sci = 0; sci < cards.length; sci++) {
+    if (cards[sci].style.display === 'none') continue;
+    (function(card, i) {
+      card.style.opacity = '0';
+      card.style.animation = 'none';
+      setTimeout(function() {
+        card.style.animation = 'cardIn .22s ease forwards';
+      }, i * 38);
+    })(cards[sci], Math.min(idx, 18));
+    idx++;
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function dismissWelcome(){
   var b=document.getElementById('welcome-banner');
   if(b) b.style.display='none';
