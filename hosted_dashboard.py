@@ -480,7 +480,7 @@ def create_stripe_checkout(module_count: int, owner_email: str,
             success_url="https://dashboard.cavnar.ai?payment=success",
             cancel_url="https://dashboard.cavnar.ai?payment=cancelled",
             custom_text={
-                "submit": {"message": f"Pay ${module_count*500} setup today. ${module_count*300}/mo starts in 30 days."}
+                "submit": {"message": f"Pay ${module_count*500} setup today. {'$' + str(module_count*3000) + '/yr' if billing_period == 'annual' else '$' + str(module_count*300) + '/mo'} starts in 30 days."}
             },
             metadata={"restaurant": restaurant_name, "modules": str(module_count)},
         )

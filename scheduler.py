@@ -172,7 +172,21 @@ def run_daily_fetch():
 
             # Fetch
             reviews = []
-            if restaurant.google_place_id:
+            if restaurant.gmb_refresh_token:
+                try:
+                    from gmb import get_valid_token, fetch_reviews_via_gmb, get_gmb_account_id, get_gmb_location_id
+                    token = get_valid_token(rid)
+                    if token:
+                        loc_id = restaurant.gmb_location_id
+                        if not loc_id and restaurant.google_place_id:
+                            acct_id = get_gmb_account_id(token)
+                            if acct_id:
+                                loc_id = get_gmb_location_id(token, acct_id, restaurant.google_place_id)
+                        if loc_id:
+                            reviews += fetch_reviews_via_gmb(token, loc_id, rid)
+                except Exception as e:
+                    log.error(f"GMB fetch [{restaurant.name}]: {e}")
+            elif restaurant.google_place_id:
                 try:
                     reviews += fetch_google(restaurant.google_place_id, rid)
                 except Exception as e:
