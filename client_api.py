@@ -1251,15 +1251,11 @@ def ai_visibility(current_user):
                           "action": "Go to Account → add your Yelp business ID (find it in your Yelp URL)",
                           "needs_gmb": False})
 
-    # 3. Menu URL — AI tools surface menus directly in search results
+    # 3. Menu URL — admin sets this; silently award pts if present, hide if not
     if bool(r.menu_url):
         gbp_score += 10
         checklist.append({"label": "Menu URL added", "done": True, "pts": 10,
                           "action": "Done — AI tools can surface your menu in results", "needs_gmb": False})
-    else:
-        checklist.append({"label": "Add your menu URL", "done": False, "pts": 10,
-                          "action": "Go to Account → add a link to your online menu",
-                          "needs_gmb": False})
 
     # 4. Restaurant profile — vibe + known_for + neighborhood power all AI queries
     has_full_profile = bool(r.neighborhood and r.vibe and r.known_for)

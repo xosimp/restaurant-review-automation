@@ -1262,12 +1262,12 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   <!-- AI Visibility Checker -->
   <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:20px" id="aiv-card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <div style="display:flex;align-items:center;gap:10px;cursor:pointer" onclick="toggleAivCard()">
+      <div style="display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none" onclick="toggleAivCard()">
         <div>
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#7c3aed;margin-bottom:4px">AI Search Presence</div>
           <div style="font-weight:700;font-size:15px;color:#0d1b2a">AI Visibility Score</div>
         </div>
-        <span id="aiv-collapse-arrow" style="font-size:14px;color:#7c3aed;margin-top:12px;transition:transform .2s">&#9660;</span>
+        <span id="aiv-collapse-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f3f0ff;border:1px solid #e5e0ff;color:#7c3aed;font-size:10px;margin-top:10px;transition:transform .25s;flex-shrink:0">&#9660;</span>
       </div>
       <button onclick="runAIVisibility(this)" id="aiv-run-btn" style="background:#7c3aed;color:white;border:none;padding:7px 16px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer">Check Visibility</button>
     </div>
@@ -1297,11 +1297,11 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:5px">AI Appearance Rate</div>
           <div id="aiv-score-label" style="font-size:11px;color:var(--ink3);margin-top:3px"></div>
         </div>
-        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;text-align:center;cursor:pointer" onclick="toggleGbpChecklist()">
-          <div id="aiv-gbp-num" style="font-size:32px;font-weight:800;color:#16a34a;letter-spacing:-1px;line-height:1">—</div>
+        <div id="aiv-gbp-box" style="background:#f9fafb;border:1px solid var(--paper3);border-radius:8px;padding:14px;text-align:center;cursor:pointer" onclick="toggleGbpChecklist()">
+          <div id="aiv-gbp-num" style="font-size:32px;font-weight:800;color:#6b7280;letter-spacing:-1px;line-height:1">—</div>
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:5px">GBP Completeness</div>
           <div id="aiv-gbp-label" style="font-size:11px;color:var(--ink3);margin-top:3px"></div>
-          <div style="font-size:10px;color:#7c3aed;margin-top:5px;font-weight:600">tap to see breakdown &#9660;</div>
+          <div id="aiv-gbp-toggle-txt" style="font-size:10px;color:var(--ink3);margin-top:5px;font-weight:600">tap to see breakdown &#9660;</div>
         </div>
       </div>
 
@@ -3339,7 +3339,7 @@ function refreshCompetitorIntel(btn){
   fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     btn.textContent='Refresh';btn.disabled=false;
     if(overlay) overlay.style.display = 'none';
-    if(d.ok){toast('Competitor data updated');setTimeout(function(){loadCompetitorIntel();},400);}
+    if(d.ok){toast('Competitor data updated');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},600);}
     else{toast('Error: '+(d.error||'failed'));}
   }).catch(function(){
     btn.textContent='Refresh';btn.disabled=false;
@@ -3405,13 +3405,25 @@ function renderAIVisibility(d) {
   }
   var gbpEl = document.getElementById('aiv-gbp-num');
   var gbpLbl = document.getElementById('aiv-gbp-label');
-  if (gbpEl) { gbpEl.textContent = d.gbp_score + '%'; gbpEl.style.color = d.gbp_score >= 70 ? '#16a34a' : (d.gbp_score >= 40 ? '#f59e0b' : '#dc2626'); }
+  var gbpBox = document.getElementById('aiv-gbp-box');
+  if (gbpEl) {
+    var gbpColor = d.gbp_score >= 70 ? '#16a34a' : (d.gbp_score >= 40 ? '#f59e0b' : '#dc2626');
+    gbpEl.textContent = d.gbp_score + '%';
+    gbpEl.style.color = gbpColor;
+    if (gbpBox) {
+      if (d.gbp_score >= 70) { gbpBox.style.background = '#f0fdf4'; gbpBox.style.borderColor = '#bbf7d0'; }
+      else if (d.gbp_score >= 40) { gbpBox.style.background = '#fffbeb'; gbpBox.style.borderColor = '#fde68a'; }
+      else { gbpBox.style.background = '#fef2f2'; gbpBox.style.borderColor = '#fecaca'; }
+    }
+  }
   if (gbpLbl) {
     if (d.gbp_score >= 80) gbpLbl.textContent = 'Excellent';
     else if (d.gbp_score >= 60) gbpLbl.textContent = 'Good — a few gaps';
     else if (d.gbp_score >= 40) gbpLbl.textContent = 'Needs work';
     else gbpLbl.textContent = 'Critical gaps';
   }
+  // Cache AI visibility data so page reloads restore it
+  try { sessionStorage.setItem('aiv_cache', JSON.stringify(d)); sessionStorage.setItem('aiv_cache_at', String(Date.now())); } catch(e) {}
 
   // Render GBP checklist breakdown
   var gbpItemsEl = document.getElementById('aiv-gbp-items');
@@ -3609,11 +3621,11 @@ function toggleAivCard() {
 
 function toggleGbpChecklist() {
   var el = document.getElementById('aiv-gbp-checklist');
+  var txt = document.getElementById('aiv-gbp-toggle-txt');
   if (!el) return;
   var open = el.style.display !== 'none';
   el.style.display = open ? 'none' : 'block';
-  var tap = el.previousElementSibling ? el.previousElementSibling.querySelector('div:last-child') : null;
-  if (tap) tap.innerHTML = open ? 'tap to see breakdown &#9660;' : 'tap to hide &#9650;';
+  if (txt) txt.innerHTML = open ? 'tap to see breakdown &#9660;' : 'tap to hide &#9650;';
 }
 
 function toggleAivWhy(idx, btn) {
@@ -3635,7 +3647,24 @@ function checkTabParam(){
     if(btn){switchTab(tab,btn);}
   }
 }
-window.addEventListener('load',checkTabParam);
+window.addEventListener('load', function(){
+  checkTabParam();
+  // Restore AI visibility from sessionStorage cache (survives page reloads)
+  try {
+    var aivCached = sessionStorage.getItem('aiv_cache');
+    var aivCachedAt = parseInt(sessionStorage.getItem('aiv_cache_at') || '0', 10);
+    var fourHours = 4 * 60 * 60 * 1000;
+    if (aivCached && aivCachedAt && (Date.now() - aivCachedAt) < fourHours) {
+      var aivData = JSON.parse(aivCached);
+      _aivData = aivData;
+      // Only auto-render if we're on the competitor/intel tab
+      var compPanel = document.getElementById('panel-competitor');
+      if (compPanel && compPanel.classList.contains('active')) {
+        renderAIVisibility(aivData);
+      }
+    }
+  } catch(e) {}
+});
 function dismissWelcome(){
   var b=document.getElementById('welcome-banner');
   if(b) b.style.display='none';
