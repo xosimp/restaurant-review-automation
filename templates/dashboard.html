@@ -1274,9 +1274,16 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       <div style="font-size:11px;color:var(--ink3);margin-top:6px">Powered by Perplexity AI live search &middot; Takes ~10 seconds</div>
     </div>
 
+    <style>
+      @keyframes aiv-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.35; }
+      }
+      .aiv-pulse { animation: aiv-pulse 2s ease-in-out infinite; }
+    </style>
     <div id="aiv-loading" style="display:none;text-align:center;padding:28px 0">
-      <div style="font-size:13px;font-weight:600;color:#7c3aed" id="aiv-loading-text">Querying AI assistants...</div>
-      <div style="font-size:11px;color:var(--ink3);margin-top:5px">Running 3 local search queries</div>
+      <div class="aiv-pulse" style="font-size:13px;font-weight:600;color:#7c3aed" id="aiv-loading-text">Querying AI assistants...</div>
+      <div class="aiv-pulse" style="font-size:11px;color:var(--ink3);margin-top:5px;animation-delay:0.3s">Running 3 local search queries</div>
     </div>
 
     <div id="aiv-results" style="display:none">
