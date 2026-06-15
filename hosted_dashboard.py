@@ -849,22 +849,22 @@ def _do_seed_ryan():
     try:
         from models import create_restaurant, Restaurant
         ryan_rid = create_restaurant(Restaurant(
-                name="Ryan's Charthouse",
+                name="Gia Mia",
                 owner_email="ryancavnar@gmail.com",
-                google_place_id="ChIJSzCXdo8R3ogRodiPcpYYLGw",
-                neighborhood="Melbourne, Florida — on the Indian River Lagoon waterfront",
-                vibe="casual-elegant waterfront seafood and steakhouse with lagoon views and sunset patio",
-                known_for="prime rib, fresh seafood, waterfront patio, happy hour, early bird specials",
-                yelp_business_id="chart-house-melbourne",
+                google_place_id="ChIJpS0UwhwDD4gRVqMFnJkDLvQ",
+                neighborhood="St. Charles, Illinois — downtown First Street Plaza",
+                vibe="contemporary Italian pizza bar with wood-fired Neapolitan pizzas and a lively bar scene",
+                known_for="wood-fired pizza, fresh pasta, hand-made mozzarella, craft cocktails, patio dining",
+                yelp_business_id="gia-mia-st-charles-st-charles",
                 module_reviews=1, module_labor=1,
                 module_inventory=1, module_marketing=1,
                 billing_status="trial",
         ))
         ryan_pw = os.getenv("RYAN_TEST_PASSWORD", "charthouse123")
         create_user(ryan_rid, "ryan", "ryancavnar@gmail.com", ryan_pw, is_admin=False)
-        print(f"\n  Test client created: ryan / {ryan_pw}\n")
+        print(f"\n  Test client created: ryan / {ryan_pw} (Gia Mia, St. Charles IL)\n")
 
-        # Seed sample reviews for Ryan's Charthouse with realistic Chart House content
+        # Seed sample reviews for Gia Mia with realistic content
         from models import get_conn as _gc_r
         _conn_r = _gc_r()
         import json as _json_r
