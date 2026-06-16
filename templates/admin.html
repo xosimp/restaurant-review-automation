@@ -27,9 +27,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 label{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3)}
 input,select{padding:9px 12px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;color:var(--ink);background:white;outline:none;transition:border .15s;width:100%}
 input:focus,select:focus{border-color:var(--ember)}
-.btn{padding:9px 18px;border-radius:6px;border:none;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s}
+.btn{padding:9px 18px;border-radius:6px;border:none;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
 .btn-primary{background:var(--ember);color:white}
-.btn-primary:hover{background:#a83d25}
+.btn-primary:hover{background:#a83d25;box-shadow:0 4px 14px rgba(200,75,47,.32);transform:translateY(-1px)}
+.btn-primary:active{transform:scale(.97)}
 .tbl{width:100%;border-collapse:collapse;font-size:13px}
 .tbl th{text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--ink3);padding:8px 12px;border-bottom:1px solid var(--paper3);background:var(--paper2)}
 .tbl td{padding:10px 12px;border-bottom:1px solid var(--paper3);overflow:visible}
@@ -39,19 +40,22 @@ input:focus,select:focus{border-color:var(--ember)}
 .status-ok{background:var(--green-bg);color:var(--green);border:1px solid #b7dfca}
 .status-err{background:#fdf0ef;color:var(--ember);border:1px solid #f5c6c2}
 .action-menu{position:relative;display:inline-block}
-.action-menu-btn{padding:5px 12px;border-radius:4px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;color:var(--ink2);white-space:nowrap}
-.action-menu-btn:hover{background:var(--ink);color:white;border-color:var(--ink)}
+.action-menu-btn{padding:5px 12px;border-radius:4px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;color:var(--ink2);white-space:nowrap;transition:background .15s,box-shadow .15s,transform .15s}
+.action-menu-btn:hover{background:var(--ink);color:white;border-color:var(--ink);box-shadow:0 2px 8px rgba(14,12,10,.18);transform:translateY(-1px)}
+.action-menu-btn:active{transform:scale(.97)}
 .action-dropdown{display:none;position:absolute;right:0;top:calc(100% + 4px);background:white;border:1px solid var(--paper3);border-radius:6px;box-shadow:0 6px 20px rgba(14,12,10,.15);min-width:175px;z-index:9999}
 .action-dropdown.open{display:block}
-.action-item{display:block;width:100%;box-sizing:border-box;text-align:left;padding:9px 14px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink2);background:white;border:none;border-bottom:1px solid var(--paper3);cursor:pointer;white-space:nowrap}
+.action-item{display:block;width:100%;box-sizing:border-box;text-align:left;padding:9px 14px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--ink2);background:white;border:none;border-bottom:1px solid var(--paper3);cursor:pointer;white-space:nowrap;transition:background .15s,transform .1s}
 .action-item:last-child{border-bottom:none}
-.action-item:hover{background:var(--paper2);color:var(--ink)}
+.action-item:hover{background:var(--paper2);color:var(--ink);transform:translateX(2px)}
+.action-item:active{transform:scale(.98)}
 .action-item-danger{color:#c0392b}
 .action-item-danger:hover{background:#fdf0ef;color:#c0392b}
 .action-item-success{color:var(--green)}
 .action-item-success:hover{background:var(--green-bg);color:var(--green)}
-.group-filter-btn{padding:3px 10px;border-radius:20px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;cursor:pointer;color:var(--ink2);transition:all .15s}
-.group-filter-btn:hover,.group-filter-btn.active{background:var(--ink);color:white;border-color:var(--ink)}
+.group-filter-btn{padding:3px 10px;border-radius:20px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;cursor:pointer;color:var(--ink2);transition:background .15s,box-shadow .15s,transform .15s}
+.group-filter-btn:hover,.group-filter-btn.active{background:var(--ink);color:white;border-color:var(--ink);box-shadow:0 2px 8px rgba(14,12,10,.18);transform:translateY(-1px)}
+.group-filter-btn:active{transform:scale(.97)}
 </style>
 </head>
 <body>

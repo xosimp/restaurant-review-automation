@@ -42,16 +42,19 @@ textarea{resize:vertical;min-height:60px}
 .toggle::after{content:'';position:absolute;width:16px;height:16px;border-radius:50%;background:white;top:3px;left:3px;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
 .toggle.on::after{left:21px}
 .save-bar{display:flex;align-items:center;gap:12px;margin-top:24px}
-.btn-save{background:var(--ember);color:white;padding:10px 24px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;border:none;cursor:pointer;transition:background .15s}
-.btn-save:hover{background:#a83d25}
-.btn-data{background:white;color:var(--ink2);padding:10px 18px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;border:1px solid var(--paper3);text-decoration:none;transition:all .15s}
-.btn-data:hover{background:var(--paper2)}
+.btn-save{background:var(--ember);color:white;padding:10px 24px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;border:none;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
+.btn-save:hover{background:#a83d25;box-shadow:0 4px 14px rgba(200,75,47,.32);transform:translateY(-1px)}
+.btn-save:active{transform:scale(.97)}
+.btn-data{background:white;color:var(--ink2);padding:10px 18px;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;border:1px solid var(--paper3);text-decoration:none;transition:background .15s,box-shadow .15s,transform .15s}
+.btn-data:hover{background:var(--paper2);box-shadow:0 2px 10px rgba(14,12,10,.1);transform:translateY(-1px)}
+.btn-data:active{transform:scale(.97)}
 .save-status{font-size:12px;display:none}
 .save-ok{color:var(--green)}
 .save-err{color:var(--ember)}
 .action-menu{position:relative;display:inline-block}
-.action-menu-btn{padding:4px 10px;border-radius:4px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;color:var(--ink2);transition:all .15s;white-space:nowrap}
-.action-menu-btn:hover{background:var(--ink);color:white;border-color:var(--ink)}
+.action-menu-btn{padding:4px 10px;border-radius:4px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;color:var(--ink2);transition:background .15s,box-shadow .15s,transform .15s;white-space:nowrap}
+.action-menu-btn:hover{background:var(--ink);color:white;border-color:var(--ink);box-shadow:0 2px 8px rgba(14,12,10,.18);transform:translateY(-1px)}
+.action-menu-btn:active{transform:scale(.97)}
 
 </style>
 </head>

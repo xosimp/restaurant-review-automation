@@ -33,10 +33,11 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .calc-tip-light:hover .tip-icon{color:var(--ink2)}
 .calc-tip-light .tip-text{background:#fff;color:var(--ink2);border-color:var(--paper3);box-shadow:0 4px 12px rgba(0,0,0,.12)}
 .calc-tip-super{position:absolute;top:-2px;right:-17px;margin-top:0}
-.tabs{display:flex;gap:2px;padding:0 28px;background:var(--ink);border-top:1px solid #1a1714}
-.tab{padding:8px 16px;border-radius:0;border:none;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;color:rgba(250,248,245,.45);background:transparent;transition:all .2s;border-bottom:2px solid transparent}
+.tabs{display:flex;gap:2px;padding:0 28px;background:var(--ink);border-top:1px solid #1a1714;position:relative}
+.tab{padding:8px 16px;border-radius:0;border:none;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;color:rgba(250,248,245,.45);background:transparent;transition:color .2s;border-bottom:2px solid transparent;position:relative}
 .tab:hover{color:var(--paper)}
-.tab.active{color:var(--paper);border-bottom-color:var(--ember)}
+.tab.active{color:var(--paper);border-bottom-color:transparent}
+#tab-indicator{position:absolute;bottom:0;left:0;width:0;height:2px;background:var(--ember);transition:left .22s cubic-bezier(.4,0,.2,1),width .22s cubic-bezier(.4,0,.2,1);pointer-events:none;border-radius:1px 1px 0 0}
 .tab .badge{font-size:10px;font-family:'Bricolage Grotesque',sans-serif;font-weight:700;padding:1px 5px;border-radius:10px;background:rgba(255,255,255,.1);margin-left:4px}
 .panel{display:none;padding:24px 28px;max-width:1080px;background:transparent}
 .panel.active{display:block}
@@ -85,11 +86,13 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .draft-lbl{font-size:9px;font-weight:500;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}
 .draft-txt{font-size:12px;color:var(--ink);line-height:1.55;font-style:italic}
 .draft-actions{display:flex;gap:6px;margin-top:7px}
-.btn{padding:6px 14px;border-radius:6px;border:none;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:4px}
+.btn{padding:6px 14px;border-radius:6px;border:none;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s;display:inline-flex;align-items:center;gap:4px}
 .btn-approve{background:var(--green);color:white}
-.btn-approve:hover{background:#1f5c40}
+.btn-approve:hover{background:#1f5c40;box-shadow:0 4px 12px rgba(31,92,64,.28);transform:translateY(-1px)}
+.btn-approve:active{transform:scale(.97)}
 .btn-skip{background:transparent;color:var(--ink3);border:1px solid var(--paper3)}
-.btn-skip:hover{background:var(--paper2)}
+.btn-skip:hover{background:var(--paper2);box-shadow:0 2px 8px rgba(14,12,10,.08);transform:translateY(-1px)}
+.btn-skip:active{transform:scale(.97)}
 .btn-approved{background:var(--green-bg);color:var(--green);border:1px solid #b7dfca;cursor:default}
 .toolbar{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
 .search-wrap{position:relative;max-width:260px}
@@ -176,10 +179,28 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .cal-day{background:white;border:1px solid var(--paper3);border-radius:6px;padding:8px 6px;font-size:10px}
 .cal-day-name{font-weight:500;color:var(--ink2);margin-bottom:3px}
 .cal-platform{font-size:8px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);margin-bottom:2px}
-.btn-primary{background:var(--ember);color:white;padding:8px 16px;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:background .15s}
-.btn-primary:hover{background:#a83d25}
-.btn-secondary{background:white;color:var(--ink2);border:1px solid var(--paper3);padding:8px 16px;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:all .15s}
-.btn-secondary:hover{background:var(--paper2)}
+.btn-primary{background:var(--ember);color:white;padding:8px 16px;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
+.btn-primary:hover{background:#a83d25;box-shadow:0 4px 14px rgba(200,75,47,.32);transform:translateY(-1px)}
+.btn-primary:active{transform:scale(.97)}
+.btn-secondary{background:white;color:var(--ink2);border:1px solid var(--paper3);padding:8px 16px;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
+.btn-secondary:hover{background:var(--paper2);box-shadow:0 2px 10px rgba(14,12,10,.1);transform:translateY(-1px)}
+.btn-secondary:active{transform:scale(.97)}
+/* Blue action buttons (Send request, Save to Google) */
+.btn-blue{background:#1a56cc;color:white;border:none;border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s,box-shadow .15s,transform .15s;display:inline-flex;align-items:center;gap:5px}
+.btn-blue:hover{background:#1344a8;box-shadow:0 4px 14px rgba(26,86,204,.32);transform:translateY(-1px)}
+.btn-blue:active{transform:scale(.97)}
+/* Purple AI visibility button */
+.btn-purple{background:#7c3aed;color:white;border:none;border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
+.btn-purple:hover{background:#6d28d9;box-shadow:0 4px 14px rgba(124,58,237,.32);transform:translateY(-1px)}
+.btn-purple:active{transform:scale(.97)}
+/* Teal competitor button */
+.btn-teal{background:#4a9eca;color:white;border:none;border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
+.btn-teal:hover{background:#3a8ab8;box-shadow:0 4px 14px rgba(74,158,202,.32);transform:translateY(-1px)}
+.btn-teal:active{transform:scale(.97)}
+/* Universal lift for ALL remaining solid inline buttons not covered by a class */
+button:not(.tab):not(.logout-btn):not(.btn):not(.btn-primary):not(.btn-secondary):not(.btn-approve):not(.btn-skip):not(.btn-blue):not(.btn-purple):not(.btn-teal):not([style*="background:none"]):not([style*="background: none"]){transition:background .15s,box-shadow .15s,transform .15s}
+button:not(.tab):not(.logout-btn):not([disabled]):hover{transform:translateY(-1px)}
+button:not(.tab):not(.logout-btn):not([disabled]):active{transform:scale(.97)}
 .toast{position:fixed;bottom:20px;right:20px;padding:9px 16px 9px 13px;border-radius:7px;font-size:12px;font-weight:500;z-index:999;opacity:0;pointer-events:none;border-left:3px solid transparent;background:var(--ink);color:var(--paper);border-left-color:rgba(255,255,255,.18)}
 .toast.toast-success{background:var(--green-bg);color:#166534;border-left-color:var(--green)}
 .toast.toast-error{background:var(--red-bg);color:#991b1b;border-left-color:var(--red)}
@@ -351,15 +372,14 @@ function clientUpload(dataType, input) {
   <button onclick="dismissWelcome()" style="background:transparent;border:1px solid #3a3530;color:#7a736a;padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px;white-space:nowrap;font-family:'Plus Jakarta Sans',sans-serif">Got it ✕</button>
 </div>
 {% endif %}
-<div style="background:var(--ink);padding:0 28px">
-  <nav style="display:flex;gap:0">
+<div class="tabs">
     {% if mod_reviews %}<button class="tab {{'active' if mod_reviews}}" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews <span class="badge" id="reviews-badge" style="{% if rstats.awaiting_approval > 0 %}background:#c0392b;color:white{% else %}display:none{% endif %}">{{rstats.awaiting_approval if rstats.awaiting_approval > 0 else ''}}</span></button>{% endif %}
     {% if mod_labor %}<button class="tab {{'active' if not mod_reviews and mod_labor}}" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
     {% if mod_inventory %}<button class="tab {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="tab-inventory" onclick="switchTab('inventory',this)">Inventory</button>{% endif %}
     {% if mod_marketing %}<button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
     {% if restaurant.google_place_id and mod_reviews and mod_labor and mod_inventory and mod_marketing %}<button class="tab" id="tab-competitor" onclick="switchTab('competitor',this)">Intel</button>{% endif %}
     <button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" onclick="switchTab('account',this)" style="margin-left:auto">Account</button>
-  </nav>
+    <span id="tab-indicator"></span>
 </div>
 
 <!-- TOTAL SAVINGS WIDGET -->
@@ -444,7 +464,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input id="rr-name"  type="text"  placeholder="Customer name (optional)" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;padding:7px 11px;border:1px solid var(--paper3);border-radius:6px;width:180px;outline:none;color:var(--ink)">
         <input id="rr-email" type="email" placeholder="Email address" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;padding:7px 11px;border:1px solid var(--paper3);border-radius:6px;width:190px;outline:none;color:var(--ink)">
-        <button onclick="sendReviewRequest(this)" style="padding:7px 16px;background:#1a56cc;color:white;border:none;border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s" onmouseover="this.style.background='#1344a8'" onmouseout="this.style.background='#1a56cc'">Send request<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button onclick="sendReviewRequest(this)" class="btn-blue" style="padding:7px 16px">Send request<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
     </div>
     <div id="rr-stat" style="margin-top:8px;font-size:11px;color:var(--ink3)">
@@ -787,7 +807,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
         <div style="font-size:13px;color:#6fcf97;font-weight:700">~${{(labor.potential_savings / 2)|int|format_num}}/mo saved</div>
         <div style="font-size:11px;color:#8a8078;margin-top:2px">if schedule adjustments are applied</div>
       </div>
-      <button onclick="document.getElementById('schedule-tooltip').style.display='none'" style="width:100%;padding:10px;background:var(--ember);color:white;border:none;border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer">Got it — open the CSV ✓</button>
+      <button onclick="document.getElementById('schedule-tooltip').style.display='none'" class="btn-primary" style="width:100%;padding:10px;font-size:13px">Got it — open the CSV ✓</button>
     </div>
   </div>
 
@@ -828,7 +848,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       <div id="gap-amount" style="font-size:36px;font-weight:800;color:var(--ember2);line-height:1;letter-spacing:-1px">—</div>
       <div style="font-size:11px;color:var(--ink3);margin-top:4px">estimated monthly overspend</div>
 
-      <button onclick="downloadSchedule(this)" style="margin-top:12px;padding:9px 18px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#a83d25'" onmouseout="this.style.background='var(--ember)'">
+      <button onclick="downloadSchedule(this)" class="btn-primary" style="margin-top:12px;padding:9px 18px">
         Download optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
 
@@ -1354,7 +1374,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
         </div>
         <span id="aiv-collapse-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#f3f0ff;border:1px solid #e5e0ff;color:#7c3aed;margin-top:10px;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
       </div>
-      <button onclick="runAIVisibility(this)" id="aiv-run-btn" style="background:#7c3aed;color:white;border:none;padding:7px 16px;border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer">Check Visibility</button>
+      <button onclick="runAIVisibility(this)" id="aiv-run-btn" class="btn-purple" style="padding:7px 16px">Check Visibility</button>
     </div>
     <div id="aiv-body">
 
@@ -1441,7 +1461,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5"/><circle cx="17" cy="15" r="4" opacity=".4"/><path d="M14 9h6M17 6v6" opacity=".4"/></svg>
       <div class="empty-state-title">No competitor data yet</div>
       <div class="empty-state-sub">See how your ratings, review volume, and reputation stack up against nearby restaurants. Takes about 30 seconds.</div>
-      <button onclick="refreshCompetitorIntel(this)" style="background:#4a9eca;color:white;border:none;padding:8px 20px;border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer">Fetch competitor data</button>
+      <button onclick="refreshCompetitorIntel(this)" class="btn-teal" style="padding:8px 20px">Fetch competitor data</button>
     </div>
   </div>
   {% endif %}
@@ -1527,7 +1547,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     <!-- Competitor cards -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Nearby competitors</div>
-      <button onclick="refreshCompetitorIntel(this)" style="background:var(--ember);border:none;color:white;padding:5px 12px;border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer">Refresh</button>
+      <button onclick="refreshCompetitorIntel(this)" class="btn-primary" style="padding:5px 12px">Refresh</button>
     </div>
     <div style="display:flex;flex-direction:column;gap:10px" id="comp-cards-static">
       {% for c in competitor_data.competitors %}
@@ -1700,7 +1720,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <span id="gbp-save-status" style="font-size:11px;color:#2d6a4f;display:none">✓ Saved to Google</span>
-        <button onclick="saveGbpListing(this)" id="gbp-save-btn" style="padding:7px 16px;background:#1a56cc;color:white;border:none;border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#1344a8'" onmouseout="this.style.background='#1a56cc'">Save to Google<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button onclick="saveGbpListing(this)" id="gbp-save-btn" class="btn-blue" style="padding:7px 16px">Save to Google<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
@@ -1762,7 +1782,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
             <option value="{{d}}" {{"selected" if restaurant.digest_day==d}}>{{d|title}}</option>
             {% endfor %}
           </select>
-          <button onclick="saveDigestDay()" style="padding:4px 10px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer">Save</button>
+          <button onclick="saveDigestDay()" class="btn-primary" style="padding:4px 10px">Save</button>
           <span id="digest-save-status" style="font-size:11px;display:none"></span>
         </div>
       </div>
@@ -1884,7 +1904,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
         </div>
         <textarea id="referral-note" rows="2" placeholder="Optional personal note&hellip;" style="padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;resize:vertical"></textarea>
         <div style="display:flex;align-items:center;gap:8px">
-          <button onclick="sendReferral()" style="background:var(--ember);color:white;border:none;padding:7px 16px;border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer">Send referral</button>
+          <button onclick="sendReferral()" class="btn-primary" style="padding:7px 16px">Send referral</button>
           <span id="referral-status" style="font-size:11px;display:none"></span>
         </div>
       </div>
@@ -2181,12 +2201,19 @@ function filterByPlatform(platform){
   var allPill = document.querySelector('.fpill');
   if(allPill) allPill.classList.add('active');
 }
+function _moveTabIndicator(tabEl){
+  var ind=document.getElementById('tab-indicator');
+  if(!ind||!tabEl)return;
+  ind.style.left=tabEl.offsetLeft+'px';
+  ind.style.width=tabEl.offsetWidth+'px';
+}
 function switchTab(n,btn){
   document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});
   document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
   var _swPanel = document.getElementById('panel-'+n);
   _swPanel.classList.add('active');
   btn.classList.add('active');
+  _moveTabIndicator(btn);
   _swPanel.style.animation = 'none';
   void _swPanel.offsetWidth;
   _swPanel.style.animation = 'panelIn .22s ease forwards';
@@ -2218,6 +2245,17 @@ function switchTab(n,btn){
 }
 // Restore active tab from hash on page load
 document.addEventListener('DOMContentLoaded', function(){
+  // Tab indicator — position on active tab without animation
+  (function(){
+    var activeTab = document.querySelector('.tab.active');
+    var ind = document.getElementById('tab-indicator');
+    if(ind && activeTab){
+      ind.style.transition = 'none';
+      ind.style.left = activeTab.offsetLeft+'px';
+      ind.style.width = activeTab.offsetWidth+'px';
+      setTimeout(function(){ ind.style.transition = ''; }, 50);
+    }
+  })();
   // Total value delivered count-up
   if (!_gbpReload) {
     var tvEl = document.getElementById('global-savings-total');
@@ -3248,7 +3286,7 @@ function loadCal(){
       html += '<div class="cal-day-name" style="display:flex;align-items:center;justify-content:space-between">'+i.day+dateLabel+'</div>';
       html += '<div class="cal-platform" style="font-size:10px;font-weight:600;color:'+pColor+';margin:2px 0 4px;padding:1px 6px;background:'+pColor+'18;border-radius:10px;display:inline-block">'+( i.platform||'')+'</div>';
       html += '<div style="font-size:12px;line-height:1.5;margin-top:4px">'+( i.angle||'')+'</div>';
-      html += '<button data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" style="margin-top:8px;padding:4px 10px;font-size:10px;font-weight:600;background:var(--ember);color:white;border:none;border-radius:4px;cursor:pointer;font-family:sans-serif;width:100%">Generate<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
+      html += '<button data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" class="btn-primary" style="margin-top:8px;padding:4px 10px;font-size:10px;width:100%">Generate<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
       html += '</div>';
     }
     g.innerHTML=html;
