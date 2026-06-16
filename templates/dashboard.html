@@ -2002,7 +2002,7 @@ function gmbConnect(){
     window.removeEventListener('message', gmbHandler);
     if(e.data.gmb === 'connected'){
       toast('Google Business connected ✓','success');
-      setTimeout(function(){location.reload();}, 1000);
+      setTimeout(function(){window.location.hash='account';location.reload();}, 1000);
     } else {
       toast('Connection failed: ' + (e.data.msg || 'unknown error'),'error');
     }
@@ -2013,7 +2013,7 @@ function gmbConnect(){
 function gmbDisconnect(){
   if(!confirm('Disconnect Google Business? Responses will no longer auto-post.')) return;
   fetch('/auth/google/disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
-    if(d.ok){ toast('Google Business disconnected','success'); setTimeout(function(){location.reload();},800); }
+    if(d.ok){ toast('Google Business disconnected','success'); setTimeout(function(){window.location.hash='account';location.reload();},800); }
     else{ toast('Error disconnecting — try again','error'); }
   }).catch(function(){ toast('Network error — try again','error'); });
 }
