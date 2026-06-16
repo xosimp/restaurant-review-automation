@@ -105,21 +105,22 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 @keyframes panelIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
 @keyframes cardIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 @keyframes checkIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
-@keyframes shimmer{0%{background-position:-600px 0}100%{background-position:600px 0}}
-@keyframes toastBounce{0%{opacity:0;transform:translateY(22px) scale(.94)}55%{transform:translateY(-4px) scale(1.02)}100%{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes shimmer{0%{background-position:200% center}100%{background-position:-200% center}}
+@keyframes toastBounce{0%{opacity:0;transform:translateY(28px) scale(.9)}50%{opacity:1;transform:translateY(-10px) scale(1.06)}68%{transform:translateY(4px) scale(.98)}82%{transform:translateY(-4px) scale(1.02)}100%{opacity:1;transform:translateY(0) scale(1)}}
 @keyframes btnPress{0%,100%{transform:scale(1)}40%{transform:scale(.92)}}
-@keyframes fadeSlideUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
-@keyframes shimmerSweep{0%{background-position:-200% center}100%{background-position:300% center}}
-.skeleton{background:linear-gradient(90deg,#ede8df 25%,#f5f0e8 50%,#ede8df 75%);background-size:1000px 100%;animation:shimmer 1.5s ease-in-out infinite;border-radius:5px;color:transparent!important}
+@keyframes fadeSlideUp{from{opacity:0;transform:translateY(32px)}to{opacity:1;transform:translateY(0)}}
+@keyframes btnShimmer{from{background-position:-100% 0}to{background-position:250% 0}}
+.skeleton{background:linear-gradient(90deg,#ede8df 25%,#f5f0e8 50%,#ede8df 75%);background-size:400% 100%;animation:shimmer 1.5s ease-in-out infinite;border-radius:5px;color:transparent!important}
 .card{transition:transform .15s ease,box-shadow .15s ease;}
 .card:hover{transform:translateY(-2px);box-shadow:0 4px 22px rgba(13,27,42,.09);}
 .anim-bar{transition:width .75s cubic-bezier(.4,0,.2,1);}
-.scroll-reveal{opacity:0;transform:translateY(18px);transition:none}
-.scroll-reveal.revealed{animation:fadeSlideUp .4s ease forwards}
+.scroll-reveal{opacity:0;transform:translateY(32px);transition:none}
+.scroll-reveal.revealed{animation:fadeSlideUp .55s cubic-bezier(.25,.46,.45,.94) forwards}
 #aiv-body{overflow:hidden;transition:max-height .32s cubic-bezier(.4,0,.2,1),opacity .22s ease}
-.aiv-shimmer-wrap{position:relative;overflow:hidden}
-.aiv-shimmer-wrap::after{content:'';position:absolute;inset:0;background:linear-gradient(105deg,transparent 35%,rgba(255,255,255,.45) 50%,transparent 65%);background-size:300% 100%;background-position:-200% center;opacity:0;pointer-events:none;transition:opacity .2s}
-.aiv-shimmer-wrap:hover::after{opacity:1;animation:shimmerSweep .65s ease forwards}
+.aiv-card-btn{position:relative;overflow:hidden;transition:background .15s,transform .1s;cursor:pointer}
+.aiv-card-btn::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,.28) 50%,transparent 100%);background-size:200% 100%;background-position:-100% 0;opacity:0;pointer-events:none}
+.aiv-card-btn:hover::after{opacity:1;animation:btnShimmer .6s ease forwards}
+.aiv-card-btn:hover{transform:translateY(-1px)}
 #congrats-modal{display:none;position:fixed;inset:0;background:rgba(14,12,10,.6);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
 #congrats-modal.show{display:flex}
 #congrats-inner{background:linear-gradient(135deg,#1a1410,#1e1a14);border:1px solid #3d2e1e;border-radius:16px;padding:32px 36px;max-width:480px;width:90%;animation:modalIn .3s ease;position:relative;text-align:center}
@@ -165,7 +166,7 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .btn-secondary{background:white;color:var(--ink2);border:1px solid var(--paper3);padding:8px 16px;border-radius:var(--r);font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:all .15s}
 .btn-secondary:hover{background:var(--paper2)}
 .toast{position:fixed;bottom:20px;right:20px;background:var(--ink);color:var(--paper);padding:9px 16px;border-radius:7px;font-size:12px;z-index:999;opacity:0;pointer-events:none}
-.toast.show{animation:toastBounce .38s cubic-bezier(.34,1.56,.64,1) forwards}
+.toast.show{animation:toastBounce .52s ease forwards}
 .change-pw-section{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px;margin-bottom:16px;max-width:400px}
 .form-group{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
 .form-label{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3)}
@@ -1024,12 +1025,12 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   <div style="background:{{inv.banner_gradient}};border-radius:10px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>
       <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#f4a4a4;margin-bottom:4px">Projected annual food waste cost</div>
-      <div style="font-size:32px;font-weight:800;color:#f87171;letter-spacing:-1px">${{inv.annual_waste_projection|int|format_num}}</div>
+      <div style="font-size:32px;font-weight:800;color:#f87171;letter-spacing:-1px"><span id="inv-annual-waste">${{inv.annual_waste_projection|int|format_num}}</span></div>
       <div style="font-size:12px;color:#f4a4a4;margin-top:3px">Based on this week — ${{inv.monthly_waste_projection|int|format_num}}/mo projected</div>
     </div>
     <div style="text-align:right">
       <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#a8d5b5;margin-bottom:4px">Recoverable with better ordering</div>
-      <div style="font-size:28px;font-weight:800;color:#6fcf97;letter-spacing:-1px">${{inv.annual_recoverable|int|format_num}}<span style="font-size:14px;font-weight:600;color:#a8d5b5">/yr</span></div>
+      <div style="font-size:28px;font-weight:800;color:#6fcf97;letter-spacing:-1px"><span id="inv-annual-recoverable">${{inv.annual_recoverable|int|format_num}}</span><span style="font-size:14px;font-weight:600;color:#a8d5b5">/yr</span></div>
       <div style="font-size:12px;color:#a8d5b5;margin-top:3px">${{inv.recoverable_monthly|int|format_num}}/mo recoverable</div>
       <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">65% of your logged waste cost — industry estimate for avoidable spoilage with optimized par levels and ordering.</span></span>
     </div>
@@ -1456,7 +1457,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     </div>
     <div style="display:flex;flex-direction:column;gap:10px" id="comp-cards-static">
       {% for c in competitor_data.competitors %}
-      <div class="scroll-reveal" style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px">
+      <div class="scroll-reveal" data-reveal-delay="{{loop.index0 * 0.1}}s" style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
           <div style="font-weight:600;font-size:13px">{{c.name}}</div>
           <div style="display:flex;align-items:center;gap:8px">
@@ -1933,7 +1934,8 @@ var _csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content ||
 var _igConnected = {% if restaurant.ig_token %}true{% else %}false{% endif %};
 var _fbConnected = {% if restaurant.fb_page_token and restaurant.fb_page_id %}true{% else %}false{% endif %};
 
-function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},2600);}
+var _toastTimer=null;
+function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.remove('show');void t.offsetWidth;t.classList.add('show');if(_toastTimer)clearTimeout(_toastTimer);_toastTimer=setTimeout(function(){t.classList.remove('show');_toastTimer=null;},3600);}
 function disconnectInstagram(btn){
   if(btn){btn.textContent='Disconnecting…';btn.style.opacity='0.6';btn.disabled=true;}
   fetch('/api/instagram-disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
@@ -2064,12 +2066,14 @@ function loadReviewInsight(){
   }catch(e){}
   fetch('/api/review-insight').then(function(r){return r.json();}).then(function(d){
     var html=d.insight||'Analysis unavailable.';
-    el.innerHTML=html;
-    el.classList.remove('insight-loading');
     try{sessionStorage.setItem('review_insight',html);sessionStorage.setItem('review_insight_at',String(Date.now()));}catch(e){}
-  }).catch(function(){
-    el.textContent='Analysis unavailable — check back shortly.';
     el.classList.remove('insight-loading');
+    el.innerHTML=html;
+    var plain=(el.innerText||el.textContent||'').trim();
+    typewriterEffect(el,plain);
+  }).catch(function(){
+    el.classList.remove('insight-loading');
+    el.textContent='Analysis unavailable — check back shortly.';
   });
 }
 function filterByTopic(category){
@@ -2168,7 +2172,13 @@ function switchTab(n,btn){
   }
   if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
-  if(n==='inventory'&&!invLoaded)loadInvInsight();
+  if(n==='inventory'){
+    var _iwEl=document.getElementById('inv-annual-waste');
+    if(_iwEl&&!_iwEl.dataset.animated){_iwEl.dataset.animated='1';var _iwRaw=parseInt((_iwEl.textContent||'').replace(/[$,]/g,'').trim(),10);if(!isNaN(_iwRaw)&&_iwRaw>0)countUpMoney(_iwEl,_iwRaw,1000);}
+    var _irEl=document.getElementById('inv-annual-recoverable');
+    if(_irEl&&!_irEl.dataset.animated){_irEl.dataset.animated='1';var _irRaw=parseInt((_irEl.textContent||'').replace(/[$,]/g,'').trim(),10);if(!isNaN(_irRaw)&&_irRaw>0)countUpMoney(_irEl,_irRaw,1000);}
+    if(!invLoaded)loadInvInsight();
+  }
   if(n==='labor'){renderBars();loadLaborTrend();}
   if(n==='account'){loadBillingInfo();loadSessions();}
   if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();loadMktStats();startMetricsPoller();}else{stopMetricsPoller();}
@@ -2200,6 +2210,10 @@ document.addEventListener('DOMContentLoaded', function(){
   }
   // Initialize filter so count label is accurate on page load
   filterReviews();
+
+  // Init aiv-body max-height so collapse transition works immediately
+  var _aivBody = document.getElementById('aiv-body');
+  if (_aivBody) { _aivBody.style.maxHeight = _aivBody.scrollHeight + 'px'; _aivBody.style.opacity = '1'; }
 
   // 2FA digit auto-advance with focus highlight
   var twoFADigits = document.querySelectorAll('.twofa-setup-digit');
@@ -2233,11 +2247,14 @@ document.addEventListener('DOMContentLoaded', function(){
     var _scrollObs = new IntersectionObserver(function(entries) {
       for (var _ei = 0; _ei < entries.length; _ei++) {
         if (entries[_ei].isIntersecting) {
-          entries[_ei].target.classList.add('revealed');
-          _scrollObs.unobserve(entries[_ei].target);
+          var _revEl = entries[_ei].target;
+          var _revDelay = _revEl.dataset.revealDelay || '0s';
+          _revEl.style.animationDelay = _revDelay;
+          _revEl.classList.add('revealed');
+          _scrollObs.unobserve(_revEl);
         }
       }
-    }, { threshold: 0.12 });
+    }, { threshold: 0.08 });
     var _revEls = document.querySelectorAll('.scroll-reveal');
     for (var _ri = 0; _ri < _revEls.length; _ri++) {
       _scrollObs.observe(_revEls[_ri]);
@@ -2945,13 +2962,15 @@ function loadMktInsight(){
   }catch(e){}
   fetch('/api/mkt-insight').then(function(r){return r.json();}).then(function(d){
     var html=d.insight||'Marketing brief unavailable — check back shortly.';
-    el.innerHTML=html;
-    el.classList.remove('insight-loading');
-    mktLoaded=true;
     try{sessionStorage.setItem('mkt_brief',html);sessionStorage.setItem('mkt_brief_at',String(Date.now()));}catch(e){}
-  }).catch(function(){
-    el.textContent='Marketing brief unavailable — check back shortly.';
     el.classList.remove('insight-loading');
+    el.innerHTML=html;
+    var _mplain=(el.innerText||el.textContent||'').trim();
+    typewriterEffect(el,_mplain);
+    mktLoaded=true;
+  }).catch(function(){
+    el.classList.remove('insight-loading');
+    el.textContent='Marketing brief unavailable — check back shortly.';
     mktLoaded=false;
   });
 }
@@ -2960,15 +2979,14 @@ function loadLaborInsight(){
   fetch('/api/labor-insight').then(function(r){return r.json();}).then(function(d){
     var elLaborInsight=document.getElementById('labor-insight');
     if(elLaborInsight){
-      elLaborInsight.innerHTML=d.insight||'Analysis unavailable.';
       elLaborInsight.classList.remove('insight-loading');
+      elLaborInsight.innerHTML=d.insight||'Analysis unavailable.';
+      var _lplain=(elLaborInsight.innerText||elLaborInsight.textContent||'').trim();
+      typewriterEffect(elLaborInsight,_lplain);
     }
   }).catch(function(){
     var elLaborErr=document.getElementById('labor-insight');
-    if(elLaborErr){
-      elLaborErr.textContent='Analysis unavailable — check back shortly.';
-      elLaborErr.classList.remove('insight-loading');
-    }
+    if(elLaborErr){elLaborErr.classList.remove('insight-loading');elLaborErr.textContent='Analysis unavailable — check back shortly.';}
   });
   fetch('/api/labor-gap').then(function(r){return r.json();}).then(function(d){
     var gapEl=document.getElementById('gap-amount');
@@ -3025,12 +3043,15 @@ function loadInvInsight(){
   invLoaded=true;
   fetch('/api/inv-insight').then(function(r){return r.json();}).then(function(d){
     var elInvInsight=document.getElementById('inv-insight');
-    elInvInsight.innerHTML=d.insight||'Analysis unavailable.';
-    elInvInsight.classList.remove('insight-loading');
+    if(elInvInsight){
+      elInvInsight.classList.remove('insight-loading');
+      elInvInsight.innerHTML=d.insight||'Analysis unavailable.';
+      var _iplain=(elInvInsight.innerText||elInvInsight.textContent||'').trim();
+      typewriterEffect(elInvInsight,_iplain);
+    }
   }).catch(function(){
     var elInvErr=document.getElementById('inv-insight');
-    elInvErr.textContent='Analysis unavailable — check back shortly.';
-    elInvErr.classList.remove('insight-loading');
+    if(elInvErr){elInvErr.classList.remove('insight-loading');elInvErr.textContent='Analysis unavailable — check back shortly.';}
   });
   loadInvTrend();
 }
@@ -3436,22 +3457,13 @@ function toggleExtraReviews(idx, btn){
   }
 }
 function refreshCompetitorIntel(btn){
-  // Show branded loading overlay
-  var overlay = document.getElementById('upload-loading-overlay');
-  var overlayMsg = document.getElementById('upload-loading-message');
-  if(overlay){
-    if(overlayMsg) overlayMsg.textContent = 'Analyzing your competitors...';
-    overlay.style.display = 'flex';
-  }
-  btn.textContent='Refreshing...';btn.disabled=true;
+  btn.textContent='Fetching...';btn.disabled=true;btn.style.opacity='0.7';
   fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
-    btn.textContent='Refresh';btn.disabled=false;
-    if(overlay) overlay.style.display = 'none';
+    btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';
     if(d.ok){toast('Competitor data updated');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},600);}
     else{toast('Error: '+(d.error||'failed'));}
   }).catch(function(){
-    btn.textContent='Refresh';btn.disabled=false;
-    if(overlay) overlay.style.display = 'none';
+    btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';
     toast('Request failed');
   });
 }
@@ -3668,8 +3680,6 @@ function renderAIVisibility(d) {
     styleEl.id = 'aiv-anim-style';
     styleEl.textContent = '@keyframes aivSlideIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}' +
       '.aiv-card{animation:aivSlideIn .35s ease both}' +
-      '.aiv-card-btn{transition:background .15s,transform .1s;cursor:pointer}' +
-      '.aiv-card-btn:hover{transform:translateY(-1px)}' +
       '.aiv-expand-btn{transition:color .15s;cursor:pointer}' +
       '.aiv-expand-btn:hover{color:#7c3aed!important}' +
       '.aiv-bar-fill{transition:width 1.2s cubic-bezier(.4,0,.2,1)}';
@@ -3689,7 +3699,7 @@ function renderAIVisibility(d) {
       ? '<span style="background:#dcfce7;color:#16a34a;font-size:10px;font-weight:700;padding:2px 9px;border-radius:10px;flex-shrink:0">Done</span>'
       : '<span style="background:' + c.impactColor + '18;color:' + c.impactColor + ';font-size:10px;font-weight:700;padding:2px 9px;border-radius:10px;flex-shrink:0">' + c.impact + '</span>';
 
-    html += '<div class="aiv-card aiv-shimmer-wrap" style="' + doneStyle + 'animation-delay:' + delay + ';background:' + c.bg + ';border:1.5px solid ' + c.border + ';border-radius:12px;padding:14px 16px">';
+    html += '<div class="aiv-card" style="' + doneStyle + 'animation-delay:' + delay + ';background:' + c.bg + ';border:1.5px solid ' + c.border + ';border-radius:12px;padding:14px 16px">';
     // Header row
     html += '<div style="display:flex;align-items:flex-start;gap:12px">';
     html += '<div style="width:36px;height:36px;border-radius:10px;background:white;border:1px solid ' + c.border + ';display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">' + c.icon + '</div>';
@@ -3813,7 +3823,7 @@ window.addEventListener('load', function(){
 function typewriterEffect(el, text) {
   var words = text.split(' ');
   var total = words.length;
-  var delay = Math.min(Math.max(Math.round(550 / total), 8), 32);
+  var delay = Math.min(Math.max(Math.round(1400 / total), 16), 55);
   var i = 0;
   el.textContent = '';
   function nextWord() {
