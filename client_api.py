@@ -1161,6 +1161,12 @@ def gbp_listing_update(current_user):
 @client_bp.route("/api/ai-visibility")
 @login_required
 def ai_visibility(current_user):
+    try:
+        return _ai_visibility_inner(current_user)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 200
+
+def _ai_visibility_inner(current_user):
     rid = current_user["restaurant_id"]
     r = get_restaurant(rid)
     if not r:
