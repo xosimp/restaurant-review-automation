@@ -1176,7 +1176,7 @@ def ai_visibility(current_user):
     # Short cuisine descriptor from known_for first word(s), fallback to "restaurant"
     cuisine = (known_for.split(",")[0].strip() if known_for else "") or "restaurant"
 
-    vibe_query = ("Best " + vibe.split(",")[0].strip() + " restaurant in " + city_full) if (vibe and city) else None
+    vibe_query = ("Where can I find " + vibe.strip() + " in " + city_full + "?") if (vibe and city) else None
 
     if city:
         queries = [
