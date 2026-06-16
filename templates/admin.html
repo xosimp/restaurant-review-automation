@@ -8,7 +8,7 @@
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="shortcut icon" href="/favicon.ico">
 <meta name="theme-color" content="#0e0c0a">
-<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--green:#2d6a4f;--green-bg:#eaf4ee;--r:8px}
@@ -68,19 +68,19 @@ input:focus,select:focus{border-color:var(--ember)}
   <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:24px">
     <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
       <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Active Clients</div>
-      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:var(--paper)">{{users|selectattr('is_active')|selectattr('is_admin','equalto',0)|list|length}}</div>
+      <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:28px;color:var(--paper)">{{users|selectattr('is_active')|selectattr('is_admin','equalto',0)|list|length}}</div>
     </div>
     <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
       <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">MRR</div>
-      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:#6fcf97">${{mrr|default(0)|int|format_num}}</div>
+      <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:28px;color:#6fcf97">${{mrr|default(0)|int|format_num}}</div>
     </div>
     <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
       <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Annual Run Rate</div>
-      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:#6fcf97">${{(mrr|default(0)*12)|int|format_num}}</div>
+      <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:28px;color:#6fcf97">${{(mrr|default(0)*12)|int|format_num}}</div>
     </div>
     <div style="background:var(--ink);border-radius:var(--r);padding:14px 16px">
       <div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">Contracts Signed</div>
-      <div style="font-family:'DM Serif Display',serif;font-size:28px;color:var(--ember)">{{users|selectattr('contract_status','equalto','signed')|selectattr('is_admin','equalto',0)|list|length}} / {{users|selectattr('is_active')|selectattr('is_admin','equalto',0)|list|length}}</div>
+      <div style="font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:28px;color:var(--ember)">{{users|selectattr('contract_status','equalto','signed')|selectattr('is_admin','equalto',0)|list|length}} / {{users|selectattr('is_active')|selectattr('is_admin','equalto',0)|list|length}}</div>
     </div>
   </div>
 
