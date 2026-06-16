@@ -42,7 +42,11 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .panel.active{display:block}
 .slabel{font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:8px}
 .stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:20px}
-.stat{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:12px;text-align:center}
+.stat{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:12px;text-align:center;transition:border-color .15s,box-shadow .15s,transform .15s;cursor:default}
+.stat:hover{border-color:var(--paper2);box-shadow:0 2px 8px rgba(14,12,10,.07);transform:translateY(-1px)}
+.stat.hi:hover{border-color:#f0b0aa}
+.stat.ok:hover{border-color:#9dcfb8}
+.stat.warn:hover{border-color:#e0c200}
 .stat.hi{background:var(--red-bg);border-color:#f5c6c2}
 .stat.ok{background:var(--green-bg);border-color:#b7dfca}
 .stat.warn{background:var(--amber-bg);border-color:#f6d860}
@@ -96,6 +100,10 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .fpill.active-red{background:var(--red);color:white;border-color:var(--red)}
 .count-lbl{margin-left:auto;font-size:11px;color:var(--ink3)}
 .no-data{text-align:center;padding:40px;color:var(--ink3);font-family:'Fraunces',serif;font-style:italic;font-size:15px}
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 24px;text-align:center;color:var(--ink3)}
+.empty-state svg{width:40px;height:40px;stroke:var(--paper3);margin-bottom:16px;flex-shrink:0}
+.empty-state-title{font-size:14px;font-weight:600;color:var(--ink2);margin-bottom:6px}
+.empty-state-sub{font-size:12px;color:var(--ink3);line-height:1.6;max-width:300px;margin-bottom:18px}
 .insight{background:var(--ink);border-radius:var(--r);padding:16px 18px;margin-bottom:16px}
 .insight-lbl{font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}
 .insight-text{font-size:12px;line-height:1.7;color:rgba(250,248,245,.85);white-space:pre-wrap}
@@ -111,8 +119,11 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 @keyframes fadeSlideUp{from{opacity:0;transform:translateY(32px)}to{opacity:1;transform:translateY(0)}}
 @keyframes btnShimmer{from{background-position:-100% 0}to{background-position:250% 0}}
 .skeleton{background:rgba(255,255,255,.22);animation:skeletonPulse 1.1s ease-in-out infinite;border-radius:5px;color:transparent!important}
+*:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
+.data-card{transition:box-shadow .15s,transform .15s}
+.data-card:hover{box-shadow:0 4px 14px rgba(14,12,10,.09);transform:translateY(-1px)}
 .card{transition:transform .15s ease,box-shadow .15s ease;}
-.card:hover{transform:translateY(-2px);box-shadow:0 4px 22px rgba(13,27,42,.09);}
+.card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(13,27,42,.11);}
 .anim-bar{transition:width .75s cubic-bezier(.4,0,.2,1);}
 .scroll-reveal{opacity:0;transform:translateY(32px);transition:none}
 .scroll-reveal.revealed{animation:fadeSlideUp .55s cubic-bezier(.25,.46,.45,.94) forwards}
@@ -165,7 +176,10 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .btn-primary:hover{background:#a83d25}
 .btn-secondary{background:white;color:var(--ink2);border:1px solid var(--paper3);padding:8px 16px;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:all .15s}
 .btn-secondary:hover{background:var(--paper2)}
-.toast{position:fixed;bottom:20px;right:20px;background:var(--ink);color:var(--paper);padding:9px 16px;border-radius:7px;font-size:12px;z-index:999;opacity:0;pointer-events:none}
+.toast{position:fixed;bottom:20px;right:20px;padding:9px 16px 9px 13px;border-radius:7px;font-size:12px;font-weight:500;z-index:999;opacity:0;pointer-events:none;border-left:3px solid transparent;background:var(--ink);color:var(--paper);border-left-color:rgba(255,255,255,.18)}
+.toast.toast-success{background:var(--green-bg);color:#166534;border-left-color:var(--green)}
+.toast.toast-error{background:var(--red-bg);color:#991b1b;border-left-color:var(--red)}
+.toast.toast-warning{background:var(--amber-bg);color:#92400e;border-left-color:var(--amber)}
 .toast.show{animation:toastBounce .52s ease forwards}
 .change-pw-section{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px;margin-bottom:16px;max-width:400px}
 .form-group{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
@@ -689,7 +703,12 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   </div>
   {% endfor %}
   {% else %}
-  <div class="no-data">No reviews match this filter.</div>
+  <div class="empty-state">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="M11 8v6M8 11h6" opacity=".4"/></svg>
+    <div class="empty-state-title">No reviews match this filter</div>
+    <div class="empty-state-sub">Try clearing the filters or search term to see all reviews.</div>
+    <button onclick="clearFilters()" class="btn-secondary" style="font-size:11px;padding:6px 14px">Clear filters</button>
+  </div>
   {% endif %}
 </div>
 
@@ -1243,7 +1262,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     <div id="sms-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="sms-char-count">0</span>/160<span id="sms-over" style="color:var(--red);display:none"> over</span></div>
   </div>
   <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center">
-    <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').innerText||document.getElementById('mkoutput').textContent).then(function(){toast('Copied');})">Copy</button>
+    <button class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').innerText||document.getElementById('mkoutput').textContent).then(function(){toast('Copied','success');})">Copy</button>
     <button class="btn-secondary" onclick="genContent()">Regenerate</button>
     <input type="text" id="ig-image-url" placeholder="🖼 Image URL (required for Instagram)" style="display:none;flex:1;min-width:180px;font-size:12px;padding:7px 12px;border:1.5px solid #e1306c55;border-radius:8px;background:#fff0f5;color:var(--ink1);outline:none" onfocus="this.style.borderColor='#e1306c';this.style.background='#fff'" onblur="this.style.borderColor='#e1306c55';this.style.background='#fff0f5'">
     <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>Post to Instagram</button>
@@ -1372,6 +1391,17 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     </div>
   </div>
 
+  {% if not competitor_data %}
+  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);margin-bottom:16px">
+    <div class="empty-state" style="padding:52px 24px">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5"/><circle cx="17" cy="15" r="4" opacity=".4"/><path d="M14 9h6M17 6v6" opacity=".4"/></svg>
+      <div class="empty-state-title">No competitor data yet</div>
+      <div class="empty-state-sub">See how your ratings, review volume, and reputation stack up against nearby restaurants. Takes about 30 seconds.</div>
+      <button onclick="refreshCompetitorIntel(this)" style="background:#4a9eca;color:white;border:none;padding:8px 20px;border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer">Fetch competitor data</button>
+    </div>
+  </div>
+  {% endif %}
+
   {% if competitor_data %}
     {% set recs = competitor_data.insight | extract_recs %}
     {% set comp_count = competitor_data.competitors | length %}
@@ -1381,23 +1411,23 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
 
     <!-- Summary stat row -->
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
-      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
+      <div class="data-card" style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
         <div style="font-size:24px;font-weight:800;color:#0d1b2a;letter-spacing:-1px;line-height:1">{{comp_count}}</div>
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Competitors tracked</div>
       </div>
       {% set avg_color = '#16a34a' if avg_comp_rating >= 4.5 else ('#22c55e' if avg_comp_rating >= 4.0 else ('#84cc16' if avg_comp_rating >= 3.5 else '#f59e0b')) %}
-      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
+      <div class="data-card" style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
         <div style="font-size:24px;font-weight:800;letter-spacing:-1px;line-height:1;color:{{avg_color}}">{{avg_comp_rating}}★</div>
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Avg competitor rating</div>
       </div>
       {% if mod_reviews and rstats.avg_rating %}
       {% set own_vs_avg = (rstats.avg_rating - avg_comp_rating) | round(1) %}
-      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
+      <div class="data-card" style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
         <div style="font-size:24px;font-weight:800;letter-spacing:-1px;line-height:1;color:#0d1b2a">{{rstats.avg_rating}}★</div>
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Your rating <span style="color:{{'#16a34a' if own_vs_avg > 0 else ('#dc2626' if own_vs_avg < 0 else 'var(--ink3)')}}">{% if own_vs_avg > 0 %}▲{{own_vs_avg}} above avg{% elif own_vs_avg < 0 %}▼{{own_vs_avg|abs}} below avg{% endif %}</span></div>
       </div>
       {% else %}
-      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
+      <div class="data-card" style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
         <div style="font-size:24px;font-weight:800;color:#0d1b2a;letter-spacing:-1px;line-height:1">{{recs | length}}</div>
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Action items</div>
       </div>
@@ -1898,25 +1928,25 @@ function regenDraft(id) {
         '<button class="btn btn-skip" onclick="skipR('+id+')">Skip</button>';
       document.getElementById('draft-actions-'+id).style.display='flex';
       document.getElementById('editor-'+id).style.display='none';
-      toast('New draft generated');
+      toast('New draft generated','success');
     } else {
       if (txtEl) txtEl.textContent = 'Error generating — try again';
-      toast('Error: ' + (data.error||'unknown'));
+      toast('Error: ' + (data.error||'unknown'),'error');
     }
   }).catch(function(err){ 
     if(txtEl) txtEl.textContent = 'Error generating — try again';
-    toast(err.message||'Network error — try again'); 
+    toast(err.message||'Network error — try again','error'); 
   });
 }
 function saveDraft(id) {
   var editorEl = document.getElementById('editor-text-'+id);
   var draft = editorEl ? editorEl.value.trim() : '';
-  if (!draft) { toast('Response cannot be empty'); return; }
+  if (!draft) { toast('Response cannot be empty','warning'); return; }
   fetch('/api/save-draft/'+id, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({draft:draft})
   }).then(function(r){return r.json();}).then(function(sd){
-    if (!sd.ok) { toast('Save failed'); return; }
+    if (!sd.ok) { toast('Save failed','error'); return; }
     fetch('/approve/'+id, {method:'POST'}).then(function(r){return r.json();}).then(function(ad){
       if (ad.ok) {
         var txtEl = document.getElementById('draft-txt-'+id);
@@ -1925,9 +1955,9 @@ function saveDraft(id) {
         document.getElementById('draft-actions-'+id).innerHTML =
           '<span class="btn btn-approved">✓ Approved</span>';
         document.getElementById('draft-actions-'+id).style.display='flex';
-      } else { toast('Approve failed — try again'); }
-    }).catch(function(){ toast('Network error — try again'); });
-  }).catch(function(){ toast('Network error — try again'); });
+      } else { toast('Approve failed — try again','error'); }
+    }).catch(function(){ toast('Network error — try again','error'); });
+  }).catch(function(){ toast('Network error — try again','error'); });
 }
 // CSRF token for POST requests
 var _csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
@@ -1935,18 +1965,18 @@ var _igConnected = {% if restaurant.ig_token %}true{% else %}false{% endif %};
 var _fbConnected = {% if restaurant.fb_page_token and restaurant.fb_page_id %}true{% else %}false{% endif %};
 
 var _toastTimer=null;
-function toast(msg){var t=document.getElementById('toast');t.textContent=msg;t.classList.remove('show');void t.offsetWidth;t.classList.add('show');if(_toastTimer)clearTimeout(_toastTimer);_toastTimer=setTimeout(function(){t.classList.remove('show');_toastTimer=null;},3600);}
+function toast(msg,type){var t=document.getElementById('toast');t.textContent=msg;t.className='toast';if(type)t.classList.add('toast-'+type);void t.offsetWidth;t.classList.add('show');if(_toastTimer)clearTimeout(_toastTimer);_toastTimer=setTimeout(function(){t.classList.remove('show');_toastTimer=null;},3600);}
 function disconnectInstagram(btn){
   if(btn){btn.textContent='Disconnecting…';btn.style.opacity='0.6';btn.disabled=true;}
   fetch('/api/instagram-disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
-    if(d.ok){ toast('Instagram & Facebook disconnected'); setTimeout(function(){location.reload();},800); }
+    if(d.ok){ toast('Instagram & Facebook disconnected','success'); setTimeout(function(){location.reload();},800); }
     else {
       if(btn){btn.textContent='Disconnect';btn.style.opacity='1';btn.disabled=false;}
-      toast('Error disconnecting — try again');
+      toast('Error disconnecting — try again','error');
     }
   }).catch(function(){
     if(btn){btn.textContent='Disconnect';btn.style.opacity='1';btn.disabled=false;}
-    toast('Network error — try again');
+    toast('Network error — try again','error');
   });
 }
 
@@ -1956,10 +1986,10 @@ function igConnect(){
     if(!e.data || !e.data.ig) return;
     window.removeEventListener('message', igHandler);
     if(e.data.ig === 'connected'){
-      toast('Instagram & Facebook connected ✓');
+      toast('Instagram & Facebook connected ✓','success');
       setTimeout(function(){location.reload();}, 1000);
     } else {
-      toast('Connection failed: ' + (e.data.msg || 'unknown error'));
+      toast('Connection failed: ' + (e.data.msg || 'unknown error'),'error');
     }
   }
   window.addEventListener('message', igHandler);
@@ -1971,10 +2001,10 @@ function gmbConnect(){
     if(!e.data || !e.data.gmb) return;
     window.removeEventListener('message', gmbHandler);
     if(e.data.gmb === 'connected'){
-      toast('Google Business connected ✓');
+      toast('Google Business connected ✓','success');
       setTimeout(function(){location.reload();}, 1000);
     } else {
-      toast('Connection failed: ' + (e.data.msg || 'unknown error'));
+      toast('Connection failed: ' + (e.data.msg || 'unknown error'),'error');
     }
   }
   window.addEventListener('message', gmbHandler);
@@ -1983,9 +2013,9 @@ function gmbConnect(){
 function gmbDisconnect(){
   if(!confirm('Disconnect Google Business? Responses will no longer auto-post.')) return;
   fetch('/auth/google/disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
-    if(d.ok){ toast('Google Business disconnected'); setTimeout(function(){location.reload();},800); }
-    else{ toast('Error disconnecting — try again'); }
-  }).catch(function(){ toast('Network error — try again'); });
+    if(d.ok){ toast('Google Business disconnected','success'); setTimeout(function(){location.reload();},800); }
+    else{ toast('Error disconnecting — try again','error'); }
+  }).catch(function(){ toast('Network error — try again','error'); });
 }
 
 function loadSentimentTrend(){
@@ -2271,6 +2301,17 @@ function setRF(f,btn){
   btn.classList.add(f==='urgent'?'active-red':'active');
   filterReviews();
 }
+function clearFilters(){
+  rfilter='all';
+  window._topicFilter='';
+  window._platformFilter='';
+  var searchEl=document.getElementById('rsearch');
+  if(searchEl)searchEl.value='';
+  document.querySelectorAll('.fpill').forEach(function(p){p.classList.remove('active','active-red');});
+  var allPill=document.querySelector('.fpill');
+  if(allPill)allPill.classList.add('active');
+  filterReviews();
+}
 function filterReviews(){
   var q=(document.getElementById('rsearch').value||'').toLowerCase().trim();
   var topicF=window._topicFilter||'';
@@ -2506,7 +2547,7 @@ function sendReviewRequest(btn){
   var email   = (emailEl ? emailEl.value : '').trim();
   var name    = (nameEl  ? nameEl.value  : '').trim();
   if(!email || email.indexOf('@') === -1){
-    toast('Please enter a valid email address');
+    toast('Please enter a valid email address','warning');
     if(emailEl) emailEl.focus();
     return;
   }
@@ -2521,17 +2562,17 @@ function sendReviewRequest(btn){
     btn.disabled = false;
     btn.textContent = orig;
     if(d.ok){
-      toast('Review request sent to ' + email + ' ✓');
+      toast('Review request sent to ' + email + ' ✓','success');
       emailEl.value = '';
       nameEl.value  = '';
       loadReviewRequestStats();
     } else {
-      toast('Error: ' + (d.error || 'Failed to send'));
+      toast('Error: ' + (d.error || 'Failed to send'),'error');
     }
   }).catch(function(){
     btn.disabled = false;
     btn.textContent = orig;
-    toast('Failed to send — check connection');
+    toast('Failed to send — check connection','error');
   });
 }
 
@@ -2595,14 +2636,14 @@ function saveGbpListing(btn){
       setTimeout(function(){btn.style.animation='';},240);
       var status = document.getElementById('gbp-save-status');
       if(status){ status.style.display = 'inline'; setTimeout(function(){ status.style.display = 'none'; }, 3000); }
-      toast('Google Business Profile updated ✓');
+      toast('Google Business Profile updated ✓','success');
     } else {
-      toast('Error: ' + (d.error || 'Could not save'));
+      toast('Error: ' + (d.error || 'Could not save'),'error');
     }
   }).catch(function(){
     btn.disabled = false;
     btn.innerHTML = orig;
-    toast('Failed to save — check connection');
+    toast('Failed to save — check connection','error');
   });
 }
 
@@ -2627,7 +2668,7 @@ function approveR(id){
     if(d.auto_posted){
       document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted to Google</span>';
       updateReviewStats();
-      toast('Response approved and posted to Google ✓ — now live');
+      toast('Response approved and posted to Google ✓ — now live','success');
     } else {
       var _plat = document.getElementById('rc-'+id) ? document.getElementById('rc-'+id).dataset.platform : '';
       var _markBtn = _plat === 'yelp'
@@ -2642,7 +2683,7 @@ function approveR(id){
         document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span class="btn btn-approved">✓ Approved</span>'+_markBtn;
       }
       updateReviewStats();
-      toast('Response approved' + (platform === 'google' ? ' and saved ✓' : ' — copy and post to ' + platform + ' manually'));
+      toast('Response approved' + (platform === 'google' ? ' and saved ✓' : ' — copy and post to ' + platform + ' manually'),'success');
     }
   }
 })}
@@ -2655,8 +2696,8 @@ function markPosted(id, btn){
   if(platform === 'yelp'){
     if(draftText){
       navigator.clipboard.writeText(draftText).then(function(){
-        toast('Response copied — opening Yelp to paste it ✓');
-      }).catch(function(){ toast('Opening Yelp...'); });
+        toast('Response copied — opening Yelp to paste it ✓','success');
+      }).catch(function(){ toast('Opening Yelp...','success'); });
     }
     window.open('https://business.yelp.com', '_blank');
   }
@@ -2664,7 +2705,7 @@ function markPosted(id, btn){
     if(d.ok){
       var actions = document.getElementById('draft-actions-'+id);
       if(actions) actions.innerHTML='<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>';
-      if(platform !== 'yelp') toast('Marked as posted');
+      if(platform !== 'yelp') toast('Marked as posted','success');
       updateReviewStats();
     }
   });
@@ -2682,8 +2723,8 @@ function skipR(id){
         actions.style.display='flex';
       }
       toast('Skipped — edit or regenerate below');
-    } else { toast('Skip failed — try again'); }
-  }).catch(function(){ toast('Network error — try again'); });
+    } else { toast('Skip failed — try again','error'); }
+  }).catch(function(){ toast('Network error — try again','error'); });
 }
 var dowData={{labor.dow_summary|tojson}};
 var laborDateRange={{labor.date_range|tojson if labor.date_range else 'null'}};
@@ -2735,7 +2776,7 @@ var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLo
 function postToInstagram(){
   var el=document.getElementById('mkoutput');
   var content=(el.innerText||el.textContent||'').trim();
-  if(!content||content==='Select a type and click Generate.')return toast('Generate content first');
+  if(!content||content==='Select a type and click Generate.')return toast('Generate content first','warning');
   var overlay=document.getElementById('posting-overlay');
   var msg=document.getElementById('posting-overlay-msg');
   var btn=document.getElementById('ig-post-btn');
@@ -2749,18 +2790,18 @@ function postToInstagram(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Instagram ✓');markTopicPosted('IG');clearMktOutput();loadMktStats();}
-      else{toast(d.error||'Post failed — try again');}
+      if(d.ok){toast('Posted to Instagram ✓','success');markTopicPosted('IG');clearMktOutput();loadMktStats();}
+      else{toast(d.error||'Post failed — try again','error');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      toast('Post failed — check connection');
+      toast('Post failed — check connection','error');
     });
 }
 function postToFacebook(){
   var el=document.getElementById('mkoutput');
   var content=(el.innerText||el.textContent||'').trim();
-  if(!content||content==='Select a type and click Generate.')return toast('Generate content first');
+  if(!content||content==='Select a type and click Generate.')return toast('Generate content first','warning');
   var overlay=document.getElementById('posting-overlay');
   var msg=document.getElementById('posting-overlay-msg');
   var btn=document.getElementById('fb-post-btn');
@@ -2772,12 +2813,12 @@ function postToFacebook(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Facebook ✓');markTopicPosted('FB');clearMktOutput();loadMktStats();}
-      else{toast(d.error||'Post failed — try again');}
+      if(d.ok){toast('Posted to Facebook ✓','success');markTopicPosted('FB');clearMktOutput();loadMktStats();}
+      else{toast(d.error||'Post failed — try again','error');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      toast('Post failed — check connection');
+      toast('Post failed — check connection','error');
     });
 }
 function clearMktOutput(){
@@ -3089,7 +3130,7 @@ var _genInFlight=false;
 function genContent(fromCalendar){
   if(_genInFlight)return;
   var topic=document.getElementById('mktopic').value.trim();
-  if(!topic){toast('Enter a topic');return;}
+  if(!topic){toast('Enter a topic','warning');return;}
   var btn=document.querySelector('.btn-primary[onclick*="genContent"]');
   var box=document.getElementById('mkoutput');
   _genInFlight=true;
@@ -3160,7 +3201,7 @@ if(_fbConnected&&fbBtn)fbBtn.style.display='inline-block';
 }
 function downloadCal(){
   var ideas = window._calIdeas;
-  if(!ideas || !ideas.length){ toast('Generate the calendar first'); return; }
+  if(!ideas || !ideas.length){ toast('Generate the calendar first','warning'); return; }
   var rows = [['Day','Platform','Content Idea','Type']];
   ideas.forEach(function(i){
     rows.push([
@@ -3307,8 +3348,8 @@ function toggle2FA(enable){
   fetch('/api/toggle-2fa',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({enabled:false})})
     .then(function(r){return r.json();}).then(function(d){
-      if(d.ok){toast('2FA disabled');setTimeout(function(){location.reload();},800);}
-      else toast(d.error||'Failed to disable 2FA');
+      if(d.ok){toast('2FA disabled','success');setTimeout(function(){location.reload();},800);}
+      else toast(d.error||'Failed to disable 2FA','error');
     });
 }
 function twoFAStep2(btn){
@@ -3316,7 +3357,7 @@ function twoFAStep2(btn){
   // Send test code
   fetch('/api/send-2fa-test',{method:'POST'})
     .then(function(r){return r.json();}).then(function(d){
-      if(!d.ok){if(btn){btn.innerHTML='Send me a test code<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';btn.disabled=false;}toast(d.error||'Could not send code — check your account email');return;}
+      if(!d.ok){if(btn){btn.innerHTML='Send me a test code<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';btn.disabled=false;}toast(d.error||'Could not send code — check your account email','error');return;}
       document.getElementById('twofa-step1').style.display='none';
       document.getElementById('twofa-step2').style.display='block';
       document.getElementById('twofa-masked-email').textContent=d.masked||'your email';
@@ -3452,11 +3493,11 @@ function refreshCompetitorIntel(btn){
   btn.textContent='Fetching...';btn.disabled=true;btn.style.opacity='0.7';
   fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';
-    if(d.ok){toast('Competitor data updated');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},600);}
-    else{toast('Error: '+(d.error||'failed'));}
+    if(d.ok){toast('Competitor data updated','success');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},600);}
+    else{toast('Error: '+(d.error||'failed'),'error');}
   }).catch(function(){
     btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';
-    toast('Request failed');
+    toast('Request failed','error');
   });
 }
 var _aivData = null;
@@ -3496,7 +3537,7 @@ function runAIVisibility(btn) {
     if (btn) { btn.textContent = 'Retry'; btn.disabled = false; }
     document.getElementById('aiv-loading').style.display = 'none';
     document.getElementById('aiv-idle').style.display = 'block';
-    toast('Request failed — try again');
+    toast('Request failed — try again','error');
   });
 }
 function renderAIVisibility(d) {
@@ -3987,7 +4028,7 @@ function updateEmail(){
       if(disp) disp.textContent=newEmail;
       var profDisp=document.getElementById('profile-email-display');
       if(profDisp) profDisp.textContent=newEmail;
-      toast('Email updated successfully');
+      toast('Email updated successfully','success');
     } else {
       st.style.display='block';st.style.color='var(--red)';st.textContent=d.error||'Update failed';
     }
@@ -4013,7 +4054,7 @@ function changePassword(){
   fetch('/api/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:cur,new_password:nw})}).then(function(r){return r.json()}).then(function(d){
     if(d.ok){
       closePwModal();
-      toast('Password updated successfully');
+      toast('Password updated successfully','success');
     } else {
       st.style.display='block';st.style.color='var(--red)';st.textContent=d.error||'Update failed';
     }
@@ -4026,7 +4067,7 @@ function toggleLoginNotify(){
   document.getElementById('login-notify-track').style.background=_loginNotifyOn?'#c84b2f':'#d1c9bd';
   document.getElementById('login-notify-thumb').style.left=_loginNotifyOn?'18px':'2px';
   document.getElementById('login-notify-label').textContent=_loginNotifyOn?'On':'Off';
-  toast(_loginNotifyOn?'Sign-in notifications enabled':'Sign-in notifications disabled');
+  toast(_loginNotifyOn?'Sign-in notifications enabled':'Sign-in notifications disabled','success');
   fetch('/api/toggle-login-notify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:_loginNotifyOn})}).catch(function(){});
 }
 
