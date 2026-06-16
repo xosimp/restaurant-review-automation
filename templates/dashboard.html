@@ -105,9 +105,21 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 @keyframes panelIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
 @keyframes cardIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 @keyframes checkIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+@keyframes shimmer{0%{background-position:-600px 0}100%{background-position:600px 0}}
+@keyframes toastBounce{0%{opacity:0;transform:translateY(22px) scale(.94)}55%{transform:translateY(-4px) scale(1.02)}100%{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes btnPress{0%,100%{transform:scale(1)}40%{transform:scale(.92)}}
+@keyframes fadeSlideUp{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+@keyframes shimmerSweep{0%{background-position:-200% center}100%{background-position:300% center}}
+.skeleton{background:linear-gradient(90deg,#ede8df 25%,#f5f0e8 50%,#ede8df 75%);background-size:1000px 100%;animation:shimmer 1.5s ease-in-out infinite;border-radius:5px;color:transparent!important}
 .card{transition:transform .15s ease,box-shadow .15s ease;}
 .card:hover{transform:translateY(-2px);box-shadow:0 4px 22px rgba(13,27,42,.09);}
 .anim-bar{transition:width .75s cubic-bezier(.4,0,.2,1);}
+.scroll-reveal{opacity:0;transform:translateY(18px);transition:none}
+.scroll-reveal.revealed{animation:fadeSlideUp .4s ease forwards}
+#aiv-body{overflow:hidden;transition:max-height .32s cubic-bezier(.4,0,.2,1),opacity .22s ease}
+.aiv-shimmer-wrap{position:relative;overflow:hidden}
+.aiv-shimmer-wrap::after{content:'';position:absolute;inset:0;background:linear-gradient(105deg,transparent 35%,rgba(255,255,255,.45) 50%,transparent 65%);background-size:300% 100%;background-position:-200% center;opacity:0;pointer-events:none;transition:opacity .2s}
+.aiv-shimmer-wrap:hover::after{opacity:1;animation:shimmerSweep .65s ease forwards}
 #congrats-modal{display:none;position:fixed;inset:0;background:rgba(14,12,10,.6);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
 #congrats-modal.show{display:flex}
 #congrats-inner{background:linear-gradient(135deg,#1a1410,#1e1a14);border:1px solid #3d2e1e;border-radius:16px;padding:32px 36px;max-width:480px;width:90%;animation:modalIn .3s ease;position:relative;text-align:center}
@@ -152,8 +164,8 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .btn-primary:hover{background:#a83d25}
 .btn-secondary{background:white;color:var(--ink2);border:1px solid var(--paper3);padding:8px 16px;border-radius:var(--r);font-family:'DM Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:all .15s}
 .btn-secondary:hover{background:var(--paper2)}
-.toast{position:fixed;bottom:20px;right:20px;background:var(--ink);color:var(--paper);padding:9px 16px;border-radius:7px;font-size:12px;z-index:999;opacity:0;transform:translateY(5px);transition:all .3s;pointer-events:none}
-.toast.show{opacity:1;transform:translateY(0)}
+.toast{position:fixed;bottom:20px;right:20px;background:var(--ink);color:var(--paper);padding:9px 16px;border-radius:7px;font-size:12px;z-index:999;opacity:0;pointer-events:none}
+.toast.show{animation:toastBounce .38s cubic-bezier(.34,1.56,.64,1) forwards}
 .change-pw-section{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px;margin-bottom:16px;max-width:400px}
 .form-group{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
 .form-label{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3)}
@@ -471,7 +483,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Review Intelligence</div>
-    <div class="insight-text insight-loading" id="review-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px">Loading analysis…</div>
+    <div class="insight-text insight-loading" id="review-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:88%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:72%">&nbsp;</div><div class="skeleton" style="height:13px;width:60%">&nbsp;</div></div>
   </div>
 
   {% set rrate = rstats.response_rate %}
@@ -761,20 +773,20 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
     <div style="background:linear-gradient(135deg,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:12px 16px;text-align:center">
       <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6fcf97;margin-bottom:4px">Monthly savings potential</div>
-      <div style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_monthly|format_num}}</div>
+      <div class="labor-num" style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_monthly|format_num}}</div>
       <div style="font-size:10px;color:#6fcf97;margin-top:2px">if schedule optimized</div>
       <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Weekly overspend × 4.33 weeks, based on your actual sales and labor % vs target.</span></span>
     </div>
     <div style="background:linear-gradient(135deg,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:12px 16px;text-align:center">
       <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6fcf97;margin-bottom:4px">Annual savings potential</div>
-      <div style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_annual|format_num}}</div>
+      <div class="labor-num" style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_annual|format_num}}</div>
       <div style="font-size:10px;color:#6fcf97;margin-top:2px">extrapolated yearly</div>
       <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Monthly savings potential × 12 months.</span></span>
     </div>
     {% if savings_breakdown.labor_overtime > 0 %}
     <div style="background:linear-gradient(135deg,#2b0d0d,#3d1414);border:1px solid #5c2020;border-radius:8px;padding:12px 16px;text-align:center">
       <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#ff9b8a;margin-bottom:4px">Overtime premium this period</div>
-      <div style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_overtime|format_num}}</div>
+      <div class="labor-num" style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_overtime|format_num}}</div>
       <div style="font-size:10px;color:#ff9b8a;margin-top:2px">0.5× rate on hours over 40</div>
       <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Hours over 40 × hourly rate × 0.5 — standard FLSA overtime premium.</span></span>
     </div>
@@ -848,7 +860,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Labor Consultant</div>
-    <div class="insight-text insight-loading" id="labor-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px">Loading analysis…</div>
+    <div class="insight-text insight-loading" id="labor-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:88%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:72%">&nbsp;</div><div class="skeleton" style="height:13px;width:60%">&nbsp;</div></div>
   </div>
 
   <!-- Two col: overstaffed table + bar chart -->
@@ -1062,7 +1074,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Food Cost Analysis</div>
-    <div class="insight-text insight-loading" id="inv-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px">Loading analysis…</div>
+    <div class="insight-text insight-loading" id="inv-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:88%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:72%">&nbsp;</div><div class="skeleton" style="height:13px;width:60%">&nbsp;</div></div>
   </div>
 
   <div class="slabel" style="margin-top:16px">Waste cost trend — last 6 weeks</div>
@@ -1200,7 +1212,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Marketing Brief</div>
-    <div class="insight-text insight-loading" id="mkt-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px">Loading marketing brief…</div>
+    <div class="insight-text insight-loading" id="mkt-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:90%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:75%">&nbsp;</div><div class="skeleton" style="height:13px;width:55%">&nbsp;</div></div>
     <div style="margin-top:12px;padding-top:10px;border-top:1px solid #3d2e1e;font-size:11px;color:var(--ember2);padding-left:4px">
       📊 Restaurants posting weekly Google Business updates get <strong style="color:var(--ember)">3–7× more direction requests</strong> — use the content calendar below to stay consistent.
     </div>
@@ -1444,7 +1456,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     </div>
     <div style="display:flex;flex-direction:column;gap:10px" id="comp-cards-static">
       {% for c in competitor_data.competitors %}
-      <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px">
+      <div class="scroll-reveal" style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
           <div style="font-weight:600;font-size:13px">{{c.name}}</div>
           <div style="display:flex;align-items:center;gap:8px">
@@ -2148,6 +2160,12 @@ function switchTab(n,btn){
   animateStatNums('panel-'+n);
   animateBars('panel-'+n);
   if(n==='reviews') staggerCards();
+  if(n==='labor'){
+    var _gapEl=document.getElementById('gap-current-pct');
+    if(_gapEl&&!_gapEl.dataset.animated){_gapEl.dataset.animated='1';var _gapRaw=parseFloat((_gapEl.textContent||'').replace('%','').trim());if(!isNaN(_gapRaw))countUp(_gapEl,_gapRaw,900,'','%',1);}
+    var _lnums=document.querySelectorAll('#panel-labor .labor-num');
+    for(var _li=0;_li<_lnums.length;_li++){(function(el){if(el.dataset.animated)return;el.dataset.animated='1';var raw=el.textContent.replace(/[$,]/g,'').trim();var num=parseInt(raw,10);if(!isNaN(num)&&num>0)countUpMoney(el,num,900);}(_lnums[_li]));}
+  }
   if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'&&!invLoaded)loadInvInsight();
@@ -2182,6 +2200,54 @@ document.addEventListener('DOMContentLoaded', function(){
   }
   // Initialize filter so count label is accurate on page load
   filterReviews();
+
+  // 2FA digit auto-advance with focus highlight
+  var twoFADigits = document.querySelectorAll('.twofa-setup-digit');
+  for (var _di = 0; _di < twoFADigits.length; _di++) {
+    (function(inp, idx) {
+      inp.addEventListener('focus', function() {
+        inp.style.borderColor = 'var(--ember)';
+        inp.style.boxShadow = '0 0 0 3px rgba(200,75,47,.15)';
+        inp.style.transition = 'border-color .15s, box-shadow .15s';
+      });
+      inp.addEventListener('blur', function() {
+        inp.style.borderColor = '#e0dbd0';
+        inp.style.boxShadow = 'none';
+      });
+      inp.addEventListener('keydown', function(e) {
+        if (e.key === 'Backspace' && !inp.value && idx > 0) {
+          twoFADigits[idx - 1].focus();
+        }
+      });
+      inp.addEventListener('input', function() {
+        inp.value = inp.value.replace(/\D/g, '').slice(-1);
+        if (inp.value && idx < twoFADigits.length - 1) {
+          twoFADigits[idx + 1].focus();
+        }
+      });
+    })(twoFADigits[_di], _di);
+  }
+
+  // Scroll-triggered card entrances via IntersectionObserver
+  if (window.IntersectionObserver) {
+    var _scrollObs = new IntersectionObserver(function(entries) {
+      for (var _ei = 0; _ei < entries.length; _ei++) {
+        if (entries[_ei].isIntersecting) {
+          entries[_ei].target.classList.add('revealed');
+          _scrollObs.unobserve(entries[_ei].target);
+        }
+      }
+    }, { threshold: 0.12 });
+    var _revEls = document.querySelectorAll('.scroll-reveal');
+    for (var _ri = 0; _ri < _revEls.length; _ri++) {
+      _scrollObs.observe(_revEls[_ri]);
+    }
+  } else {
+    var _revFallback = document.querySelectorAll('.scroll-reveal');
+    for (var _rfi = 0; _rfi < _revFallback.length; _rfi++) {
+      _revFallback[_rfi].classList.add('revealed');
+    }
+  }
 });
 var rfilter='{{rfilter}}';
 function setRF(f,btn){
@@ -2499,7 +2565,7 @@ function saveGbpListing(btn){
   var phone = (document.getElementById('gbp-phone')       || {}).value || '';
   var web   = (document.getElementById('gbp-website')     || {}).value || '';
   var desc  = (document.getElementById('gbp-description') || {}).value || '';
-  var orig  = btn.textContent;
+  var orig  = btn.innerHTML;
   btn.textContent = 'Saving…';
   btn.disabled = true;
   fetch('/api/gbp-listing', {
@@ -2508,8 +2574,10 @@ function saveGbpListing(btn){
     body: JSON.stringify({phone: phone, website: web, description: desc})
   }).then(function(r){ return r.json(); }).then(function(d){
     btn.disabled = false;
-    btn.textContent = orig;
+    btn.innerHTML = orig;
     if(d.ok){
+      btn.style.animation='btnPress .22s ease';
+      setTimeout(function(){btn.style.animation='';},240);
       var status = document.getElementById('gbp-save-status');
       if(status){ status.style.display = 'inline'; setTimeout(function(){ status.style.display = 'none'; }, 3000); }
       toast('Google Business Profile updated ✓');
@@ -2518,7 +2586,7 @@ function saveGbpListing(btn){
     }
   }).catch(function(){
     btn.disabled = false;
-    btn.textContent = orig;
+    btn.innerHTML = orig;
     toast('Failed to save — check connection');
   });
 }
@@ -2533,7 +2601,10 @@ function maybeShowCongrats(rrate){
   if(modal) modal.classList.add('show');
 }
 function updateResponseRateBar(){ updateReviewStats(); }
-function approveR(id){fetch('/approve/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+function approveR(id){
+  var _appBtn=document.querySelector('#rc-'+id+' .btn-approve');
+  if(_appBtn){_appBtn.style.animation='btnPress .22s ease';setTimeout(function(){if(_appBtn)_appBtn.style.animation='';},240);}
+  fetch('/approve/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
   if(d.ok){
     var card = document.getElementById('rc-'+id);
     card.classList.add('approved');
@@ -3019,10 +3090,10 @@ function genContent(fromCalendar){
       _genInFlight=false;
       if(btn){btn.disabled=false;btn.style.opacity='';}
       box.style.fontStyle='normal';
-      box.style.color='var(--ink2)';
-      box.textContent=d.content||'Generation failed — try again.';
+      box.style.color='var(--ink)';
       window._lastPostedTopic=topic;
-      box.style.fontStyle='normal';box.style.color='var(--ink)';
+      var _genContent = d.content||'Generation failed — try again.';
+      typewriterEffect(box, _genContent);
       var hint=document.getElementById('output-hint');if(hint)hint.style.display='block';
       var igBtn=document.getElementById('ig-post-btn');
       var fbBtn=document.getElementById('fb-post-btn');
@@ -3346,11 +3417,20 @@ function loadCompetitorIntel(){
 function toggleExtraReviews(idx, btn){
   var el = document.getElementById('extra-reviews-'+idx);
   if(!el) return;
-  if(el.style.display === 'none' || el.style.display === ''){
+  el.style.overflow = 'hidden';
+  el.style.transition = 'max-height .3s cubic-bezier(.4,0,.2,1), opacity .25s ease';
+  var isOpen = el.getAttribute('data-open') === '1';
+  if(!isOpen){
     el.style.display = 'block';
+    el.style.maxHeight = '0px';
+    el.style.opacity = '0';
+    el.setAttribute('data-open','1');
+    setTimeout(function(){ el.style.maxHeight = el.scrollHeight + 'px'; el.style.opacity = '1'; }, 10);
     btn.textContent = 'Show less';
   } else {
-    el.style.display = 'none';
+    el.style.maxHeight = el.scrollHeight + 'px';
+    el.setAttribute('data-open','0');
+    setTimeout(function(){ el.style.maxHeight = '0px'; el.style.opacity = '0'; }, 10);
     var count = el.querySelectorAll('div').length;
     btn.textContent = 'Show ' + count + ' more review' + (count > 1 ? 's' : '');
   }
@@ -3609,7 +3689,7 @@ function renderAIVisibility(d) {
       ? '<span style="background:#dcfce7;color:#16a34a;font-size:10px;font-weight:700;padding:2px 9px;border-radius:10px;flex-shrink:0">Done</span>'
       : '<span style="background:' + c.impactColor + '18;color:' + c.impactColor + ';font-size:10px;font-weight:700;padding:2px 9px;border-radius:10px;flex-shrink:0">' + c.impact + '</span>';
 
-    html += '<div class="aiv-card" style="' + doneStyle + 'animation-delay:' + delay + ';background:' + c.bg + ';border:1.5px solid ' + c.border + ';border-radius:12px;padding:14px 16px">';
+    html += '<div class="aiv-card aiv-shimmer-wrap" style="' + doneStyle + 'animation-delay:' + delay + ';background:' + c.bg + ';border:1.5px solid ' + c.border + ';border-radius:12px;padding:14px 16px">';
     // Header row
     html += '<div style="display:flex;align-items:flex-start;gap:12px">';
     html += '<div style="width:36px;height:36px;border-radius:10px;background:white;border:1px solid ' + c.border + ';display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">' + c.icon + '</div>';
@@ -3642,32 +3722,53 @@ function toggleAivCard() {
   var body = document.getElementById('aiv-body');
   var arrow = document.getElementById('aiv-collapse-arrow');
   if (!body) return;
-  var collapsed = body.style.display === 'none';
-  body.style.display = collapsed ? '' : 'none';
-  if (arrow) arrow.style.transform = collapsed ? '' : 'rotate(-90deg)';
+  var isOpen = body.style.maxHeight !== '0px';
+  if (isOpen) {
+    body.style.maxHeight = body.scrollHeight + 'px';
+    body.style.opacity = '1';
+    setTimeout(function() { body.style.maxHeight = '0px'; body.style.opacity = '0'; }, 10);
+    if (arrow) arrow.style.transform = 'rotate(-90deg)';
+  } else {
+    body.style.maxHeight = '2000px';
+    body.style.opacity = '1';
+    if (arrow) arrow.style.transform = '';
+  }
 }
 
 function toggleGbpChecklist() {
   var el = document.getElementById('aiv-gbp-checklist');
   var txt = document.getElementById('aiv-gbp-toggle-txt');
   if (!el) return;
-  var open = el.style.display !== 'none';
-  el.style.display = open ? 'none' : 'block';
-  if (txt) txt.innerHTML = open ? 'tap to see breakdown<svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:3px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".15"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>' : 'tap to hide<svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:3px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".15"/><path d="M5.5 9.5l2.5-3 2.5 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  if (!open) {
-    var items = document.getElementById('aiv-gbp-items');
-    if (items) {
-      var rows = items.children;
-      for (var gi = 0; gi < rows.length; gi++) {
-        rows[gi].style.opacity = '0';
-        rows[gi].style.animation = 'none';
-        (function(row, delay) {
-          setTimeout(function() {
-            row.style.animation = 'checkIn .2s ease forwards';
-          }, delay);
-        })(rows[gi], gi * 55);
+  var SVG_DOWN = '<svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:3px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".15"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var SVG_UP = '<svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:3px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".15"/><path d="M5.5 9.5l2.5-3 2.5 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  el.style.overflow = 'hidden';
+  el.style.transition = 'max-height .28s cubic-bezier(.4,0,.2,1), opacity .22s ease';
+  var isOpen = el.getAttribute('data-open') === '1';
+  if (isOpen) {
+    el.style.maxHeight = el.scrollHeight + 'px';
+    el.setAttribute('data-open','0');
+    setTimeout(function(){ el.style.maxHeight = '0px'; el.style.opacity = '0'; }, 10);
+    if (txt) txt.innerHTML = 'tap to see breakdown' + SVG_DOWN;
+  } else {
+    if (el.style.display === 'none') el.style.display = 'block';
+    el.style.maxHeight = '0px';
+    el.style.opacity = '0';
+    el.setAttribute('data-open','1');
+    setTimeout(function(){ el.style.maxHeight = el.scrollHeight + 'px'; el.style.opacity = '1'; }, 10);
+    if (txt) txt.innerHTML = 'tap to hide' + SVG_UP;
+    setTimeout(function(){
+      var items = document.getElementById('aiv-gbp-items');
+      if (items) {
+        var rows = items.children;
+        for (var gi = 0; gi < rows.length; gi++) {
+          rows[gi].style.opacity = '0';
+          rows[gi].style.animation = 'none';
+          (function(row, delay) {
+            setTimeout(function() { row.style.animation = 'checkIn .2s ease forwards'; }, delay);
+          })(rows[gi], gi * 55);
+        }
       }
-    }
+    }, 50);
   }
 }
 
@@ -3709,6 +3810,20 @@ window.addEventListener('load', function(){
   } catch(e) {}
 });
 // ── Animation Utilities ──────────────────────────────────────────────────────
+function typewriterEffect(el, text) {
+  var words = text.split(' ');
+  var total = words.length;
+  var delay = Math.min(Math.max(Math.round(550 / total), 8), 32);
+  var i = 0;
+  el.textContent = '';
+  function nextWord() {
+    if (i >= total) return;
+    el.textContent += (i > 0 ? ' ' : '') + words[i];
+    i++;
+    if (i < total) setTimeout(nextWord, delay);
+  }
+  nextWord();
+}
 function countUp(el, target, duration, prefix, suffix, decimals) {
   if (!el) return;
   prefix = prefix || '';
@@ -3767,11 +3882,11 @@ function animateBars(panelId) {
   if (!panel) return;
   var bars = panel.querySelectorAll('.anim-bar');
   for (var bi = 0; bi < bars.length; bi++) {
-    (function(bar) {
+    (function(bar, idx) {
       var target = bar.dataset.w || '0';
       bar.style.width = '0%';
-      setTimeout(function() { bar.style.width = target + '%'; }, 100);
-    })(bars[bi]);
+      setTimeout(function() { bar.style.width = target + '%'; }, 80 + idx * 65);
+    })(bars[bi], bi);
   }
 }
 function staggerCards() {
