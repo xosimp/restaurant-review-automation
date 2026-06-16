@@ -1184,11 +1184,27 @@ def _ai_visibility_inner(current_user):
 
     vibe_query = ("Where can I find " + vibe.strip() + " in " + city_full + "?") if (vibe and city) else None
 
+    if vibe and city:
+        vibe_l = vibe.lower()
+        if any(w in vibe_l for w in ["bar", "lively", "cocktail", "drinks", "nightlife"]):
+            occasion = "a night out"
+        elif any(w in vibe_l for w in ["romantic", "intimate", "date"]):
+            occasion = "date night"
+        elif any(w in vibe_l for w in ["family", "kids", "casual"]):
+            occasion = "family dinner"
+        elif any(w in vibe_l for w in ["brunch", "breakfast", "morning"]):
+            occasion = "brunch"
+        else:
+            occasion = "dinner"
+        q3 = "Best restaurants for " + occasion + " in " + city_full
+    else:
+        q3 = "Best " + cuisine + " in " + city_full
+
     if city:
         queries = [
             vibe_query or (name + " restaurant in " + city_full),
             "Top restaurants in " + city_full,
-            "Best " + cuisine + " in " + city_full,
+            q3,
         ]
     else:
         queries = [
