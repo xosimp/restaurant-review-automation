@@ -46,7 +46,7 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .stat.hi{background:var(--red-bg);border-color:#f5c6c2}
 .stat.ok{background:var(--green-bg);border-color:#b7dfca}
 .stat.warn{background:var(--amber-bg);border-color:#f6d860}
-.stat-n{font-family:'Fraunces',serif;font-size:26px;line-height:1}
+.stat-n{font-size:26px;font-weight:800;line-height:1;letter-spacing:-0.5px}
 .stat-l{font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
 .stat.hi .stat-n{color:var(--red)}
 .stat.ok .stat-n{color:var(--green)}
@@ -536,7 +536,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
           {% if is_worst %}<span style="font-size:9px;font-weight:700;background:#fde8e8;color:#c0392b;padding:1px 6px;border-radius:10px">needs attention</span>
           {% elif is_best %}<span style="font-size:9px;font-weight:700;background:#e8f5ee;color:#2d6a4f;padding:1px 6px;border-radius:10px">strongest</span>{% endif %}
         </div>
-        <div style="font-family:'Fraunces',serif;font-size:28px;font-weight:800;color:{{rating_col}};letter-spacing:-1px;line-height:1">{{p.avg_rating}} <span style="font-size:14px;color:var(--ink3)">★</span></div>
+        <div style="font-size:28px;font-weight:800;color:{{rating_col}};letter-spacing:-1px;line-height:1">{{p.avg_rating}} <span style="font-size:14px;color:var(--ink3)">★</span></div>
         <div style="display:flex;gap:10px;margin-top:8px;font-size:11px">
           <span style="color:#2d6a4f">▲ {{p.positive}} positive</span>
           <span style="color:#c0392b">▼ {{p.negative}} negative</span>
@@ -738,7 +738,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       </div>
       <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
         <div>
-          <span id="gap-current-pct" style="font-family:'Fraunces',serif;font-size:48px;color:var(--paper);line-height:1">{{labor.overall_labor_pct}}%</span>
+          <span id="gap-current-pct" style="font-size:48px;font-weight:800;color:var(--paper);line-height:1;letter-spacing:-1px">{{labor.overall_labor_pct}}%</span>
           <span style="font-size:13px;color:var(--ink3);margin-left:6px">current</span>
           {% if labor.trend_delta is not none and labor.trend_delta != 0 %}
           <span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:12px;margin-left:8px;{% if labor.trend_delta > 0 %}background:rgba(192,57,43,0.25);color:#ff9b8a{% else %}background:rgba(45,106,79,0.25);color:#6fcf97{% endif %}">
@@ -748,7 +748,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
         </div>
         <div style="color:var(--ink3)"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" style="vertical-align:middle"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".12"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         <div>
-          <span style="font-family:'Fraunces',serif;font-size:32px;color:#6fcf97;line-height:1">{{labor_target|default(30.0)}}%</span>
+          <span style="font-size:32px;font-weight:800;color:#6fcf97;line-height:1;letter-spacing:-1px">{{labor_target|default(30.0)}}%</span>
           <span style="font-size:13px;color:var(--ink3);margin-left:4px">target</span>
         </div>
       </div>
@@ -759,7 +759,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       </div>
     </div>
     <div style="text-align:right">
-      <div id="gap-amount" style="font-family:'Fraunces',serif;font-size:36px;color:var(--ember2);line-height:1">—</div>
+      <div id="gap-amount" style="font-size:36px;font-weight:800;color:var(--ember2);line-height:1;letter-spacing:-1px">—</div>
       <div style="font-size:11px;color:var(--ink3);margin-top:4px">estimated monthly overspend</div>
 
       <button onclick="downloadSchedule(this)" style="margin-top:12px;padding:9px 18px;background:var(--ember);color:white;border:none;border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s" onmouseover="this.style.background='#a83d25'" onmouseout="this.style.background='var(--ember)'">
@@ -1025,12 +1025,12 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   <div style="background:{{inv.banner_gradient}};border-radius:10px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>
       <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#f4a4a4;margin-bottom:4px">Projected annual food waste cost</div>
-      <div style="font-family:'Fraunces',serif;font-size:32px;font-weight:800;color:#f87171;letter-spacing:-1px"><span id="inv-annual-waste">${{inv.annual_waste_projection|int|format_num}}</span></div>
+      <div style="font-size:32px;font-weight:800;color:#f87171;letter-spacing:-1px"><span id="inv-annual-waste">${{inv.annual_waste_projection|int|format_num}}</span></div>
       <div style="font-size:12px;color:#f4a4a4;margin-top:3px">Based on this week — ${{inv.monthly_waste_projection|int|format_num}}/mo projected</div>
     </div>
     <div style="text-align:right">
       <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#a8d5b5;margin-bottom:4px">Recoverable with better ordering</div>
-      <div style="font-family:'Fraunces',serif;font-size:28px;font-weight:800;color:#6fcf97;letter-spacing:-1px"><span id="inv-annual-recoverable">${{inv.annual_recoverable|int|format_num}}</span><span style="font-size:14px;font-weight:600;color:#a8d5b5">/yr</span></div>
+      <div style="font-size:28px;font-weight:800;color:#6fcf97;letter-spacing:-1px"><span id="inv-annual-recoverable">${{inv.annual_recoverable|int|format_num}}</span><span style="font-size:14px;font-weight:600;color:#a8d5b5">/yr</span></div>
       <div style="font-size:12px;color:#a8d5b5;margin-top:3px">${{inv.recoverable_monthly|int|format_num}}/mo recoverable</div>
       <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">65% of your logged waste cost — industry estimate for avoidable spoilage with optimized par levels and ordering.</span></span>
     </div>
@@ -1312,12 +1312,12 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     <div id="aiv-results" style="display:none">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
         <div style="background:#f9f8ff;border:1px solid #e5e0ff;border-radius:8px;padding:14px;text-align:center">
-          <div id="aiv-score-num" style="font-family:'Fraunces',serif;font-size:32px;font-weight:800;color:#7c3aed;letter-spacing:-1px;line-height:1">—</div>
+          <div id="aiv-score-num" style="font-size:32px;font-weight:800;color:#7c3aed;letter-spacing:-1px;line-height:1">—</div>
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:5px">AI Appearance Rate</div>
           <div id="aiv-score-label" style="font-size:11px;color:var(--ink3);margin-top:3px"></div>
         </div>
         <div id="aiv-gbp-box" style="background:#f9fafb;border:1px solid var(--paper3);border-radius:8px;padding:14px;text-align:center;cursor:pointer" onclick="toggleGbpChecklist()">
-          <div id="aiv-gbp-num" style="font-family:'Fraunces',serif;font-size:32px;font-weight:800;color:#6b7280;letter-spacing:-1px;line-height:1">—</div>
+          <div id="aiv-gbp-num" style="font-size:32px;font-weight:800;color:#6b7280;letter-spacing:-1px;line-height:1">—</div>
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:5px">GBP Completeness</div>
           <div id="aiv-gbp-label" style="font-size:11px;color:var(--ink3);margin-top:3px"></div>
           <div id="aiv-gbp-toggle-txt" style="font-size:10px;color:var(--ink3);margin-top:5px;font-weight:600">tap to see breakdown<svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:3px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".15"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
@@ -1382,23 +1382,23 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     <!-- Summary stat row -->
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
       <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
-        <div style="font-family:'Fraunces',serif;font-size:24px;font-weight:800;color:#0d1b2a;letter-spacing:-1px;line-height:1">{{comp_count}}</div>
+        <div style="font-size:24px;font-weight:800;color:#0d1b2a;letter-spacing:-1px;line-height:1">{{comp_count}}</div>
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Competitors tracked</div>
       </div>
       {% set avg_color = '#16a34a' if avg_comp_rating >= 4.5 else ('#22c55e' if avg_comp_rating >= 4.0 else ('#84cc16' if avg_comp_rating >= 3.5 else '#f59e0b')) %}
       <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
-        <div style="font-family:'Fraunces',serif;font-size:24px;font-weight:800;letter-spacing:-1px;line-height:1;color:{{avg_color}}">{{avg_comp_rating}}★</div>
+        <div style="font-size:24px;font-weight:800;letter-spacing:-1px;line-height:1;color:{{avg_color}}">{{avg_comp_rating}}★</div>
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Avg competitor rating</div>
       </div>
       {% if mod_reviews and rstats.avg_rating %}
       {% set own_vs_avg = (rstats.avg_rating - avg_comp_rating) | round(1) %}
       <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
-        <div style="font-family:'Fraunces',serif;font-size:24px;font-weight:800;letter-spacing:-1px;line-height:1;color:#0d1b2a">{{rstats.avg_rating}}★</div>
+        <div style="font-size:24px;font-weight:800;letter-spacing:-1px;line-height:1;color:#0d1b2a">{{rstats.avg_rating}}★</div>
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Your rating <span style="color:{{'#16a34a' if own_vs_avg > 0 else ('#dc2626' if own_vs_avg < 0 else 'var(--ink3)')}}">{% if own_vs_avg > 0 %}▲{{own_vs_avg}} above avg{% elif own_vs_avg < 0 %}▼{{own_vs_avg|abs}} below avg{% endif %}</span></div>
       </div>
       {% else %}
       <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px 16px;text-align:center">
-        <div style="font-family:'Fraunces',serif;font-size:24px;font-weight:800;color:#0d1b2a;letter-spacing:-1px;line-height:1">{{recs | length}}</div>
+        <div style="font-size:24px;font-weight:800;color:#0d1b2a;letter-spacing:-1px;line-height:1">{{recs | length}}</div>
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Action items</div>
       </div>
       {% endif %}
@@ -1821,11 +1821,11 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       <div id="billing-content" style="display:none">
         <div style="margin-bottom:16px">
           <div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Next charge</div>
-          <div style="font-family:'Fraunces',serif;font-size:26px;font-weight:800;color:var(--ink);letter-spacing:-0.5px;line-height:1" id="billing-next-prominent">—</div>
+          <div style="font-size:26px;font-weight:800;color:var(--ink);letter-spacing:-0.5px;line-height:1" id="billing-next-prominent">—</div>
         </div>
         <div style="margin-bottom:16px">
           <div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Amount</div>
-          <div style="font-family:'Fraunces',serif;font-size:26px;font-weight:800;color:var(--ink);letter-spacing:-0.5px;line-height:1" id="billing-amount-prominent">—</div>
+          <div style="font-size:26px;font-weight:800;color:var(--ink);letter-spacing:-0.5px;line-height:1" id="billing-amount-prominent">—</div>
         </div>
         <div style="font-size:12px;color:var(--ink3);margin-bottom:4px" id="billing-status"></div>
         <div style="font-size:12px;color:var(--ink3);margin-bottom:16px" id="billing-pm"></div>
