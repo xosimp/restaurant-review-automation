@@ -1201,7 +1201,7 @@ def ai_visibility(current_user):
                 headers={"Authorization": f"Bearer {_pplx_key}", "Content-Type": "application/json"},
                 json={
                     "model": "sonar",
-                    "messages": [{"role": "user", "content": q + " in Chicago"}],
+                    "messages": [{"role": "user", "content": q}],
                     "max_tokens": 300,
                 },
                 timeout=15

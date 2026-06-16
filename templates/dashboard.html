@@ -3585,7 +3585,22 @@ function renderAIVisibility(d) {
         ? '<span style="background:#dcfce7;color:#16a34a;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;flex-shrink:0;white-space:nowrap">&#10003; Appeared</span>'
         : '<span style="background:#fee2e2;color:#dc2626;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;flex-shrink:0;white-space:nowrap">Not mentioned</span>';
       var cleanAnswer = q.answer.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/\[\d+\]/g, '');
-      var snippet = cleanAnswer.substring(0, 200) + (cleanAnswer.length > 200 ? '...' : '');
+      var _aiPatterns = [
+        /^If you (?:mean|are (?:looking|referring|asking))[^,\.]{0,80}[,\.]\s*/i,
+        /^Based on (?:the |my )?(?:search results?|available (?:information|sources?|data)|results)[,\.]\s*/i,
+        /^According to (?:the |my )?(?:search results?|available (?:information|sources?|data)|sources?)[,\.]\s*/i,
+        /^From (?:the |my )?(?:search results?|available (?:information|sources?|data)|results)[,\.]\s*/i,
+        /^The (?:search )?results? (?:show|indicate|suggest|reveal)[s]?\s/i,
+        /^(?:Looking at|Reviewing) (?:the )?(?:search )?results?[,\.]\s*/i,
+        /^I (?:found|can see|notice|see) that\s+/i,
+        /^While .{5,80} is (?:a suburb|located|situated|part of)[^\.]+\.\s*/i,
+        /^Note that\s+/i,
+      ];
+      for (var _pi = 0; _pi < _aiPatterns.length; _pi++) {
+        cleanAnswer = cleanAnswer.replace(_aiPatterns[_pi], '');
+      }
+      if (cleanAnswer.length > 0) { cleanAnswer = cleanAnswer.charAt(0).toUpperCase() + cleanAnswer.slice(1); }
+      var snippet = cleanAnswer.substring(0, 220) + (cleanAnswer.length > 220 ? '...' : '');
       qhtml += '<div style="background:white;border:1px solid var(--paper3);border-radius:8px;padding:10px 12px">';
       qhtml += '<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px">';
       qhtml += '<span style="font-size:12px;font-weight:600;color:#0d1b2a;flex:1">&ldquo;' + q.query + '&rdquo;</span>' + badge;
