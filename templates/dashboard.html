@@ -2002,7 +2002,7 @@ function gmbConnect(){
     window.removeEventListener('message', gmbHandler);
     if(e.data.gmb === 'connected'){
       toast('Google Business connected ✓','success');
-      setTimeout(function(){window.location.hash='account';location.reload();}, 1000);
+      setTimeout(function(){sessionStorage.setItem('_gbpReload','1');location.reload();}, 1000);
     } else {
       toast('Connection failed: ' + (e.data.msg || 'unknown error'),'error');
     }
@@ -2013,7 +2013,7 @@ function gmbConnect(){
 function gmbDisconnect(){
   if(!confirm('Disconnect Google Business? Responses will no longer auto-post.')) return;
   fetch('/auth/google/disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
-    if(d.ok){ toast('Google Business disconnected','success'); setTimeout(function(){window.location.hash='account';location.reload();},800); }
+    if(d.ok){ toast('Google Business disconnected','success'); setTimeout(function(){sessionStorage.setItem('_gbpReload','1');location.reload();},800); }
     else{ toast('Error disconnecting — try again','error'); }
   }).catch(function(){ toast('Network error — try again','error'); });
 }
@@ -2772,7 +2772,8 @@ function renderBars(){
     tline.style.display='block';
   }
 }
-var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false;
+var _gbpReload=!!sessionStorage.getItem('_gbpReload');if(_gbpReload)sessionStorage.removeItem('_gbpReload');
+var laborLoaded=false,invLoaded=false,reviewInsightLoaded=_gbpReload,sentimentTrendLoaded=_gbpReload,mktLoaded=false;
 function postToInstagram(){
   var el=document.getElementById('mkoutput');
   var content=(el.innerText||el.textContent||'').trim();
@@ -3953,6 +3954,7 @@ function countUpMoney(el, target, duration) {
   requestAnimationFrame(tick);
 }
 function animateStatNums(panelId) {
+  if (_gbpReload) return;
   var panel = document.getElementById(panelId);
   if (!panel) return;
   var els = panel.querySelectorAll('.stat-n');
