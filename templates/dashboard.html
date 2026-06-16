@@ -3843,6 +3843,9 @@ function typewriterEffect(el, html) {
   // HTML content: render full structure first (preserves colors/layout),
   // then walk text nodes and type them in word-by-word
   el.innerHTML = html;
+  // Hide bullet circle spans so they don't appear as empty colored blobs
+  var circleEls = el.querySelectorAll('span[style*="border-radius:50%"]');
+  for (var ci = 0; ci < circleEls.length; ci++) { circleEls[ci].style.opacity = '0'; }
   var allWords = [];
   var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
   var node = walker.nextNode();
@@ -3864,6 +3867,8 @@ function typewriterEffect(el, html) {
   function nextTw() {
     if (ai >= allWords.length) return;
     var item = allWords[ai++];
+    var par = item.n.parentElement;
+    if (par && par.style && par.style.opacity === '0') { par.style.opacity = '1'; }
     item.n.textContent += item.w;
     if (!item.w.trim()) { nextTw(); } else { setTimeout(nextTw, twDelay); }
   }
