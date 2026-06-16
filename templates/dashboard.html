@@ -2228,7 +2228,7 @@ document.addEventListener('DOMContentLoaded', function(){
   var btn = hash ? document.getElementById('tab-'+hash) : null;
   if(btn){ switchTab(hash, btn); }
   else if(document.getElementById('panel-reviews') && document.getElementById('panel-reviews').classList.contains('active')){
-    if(!_gbpReload){ loadReviewInsight(); loadSentimentTrend(); }
+    loadReviewInsight(); loadSentimentTrend();
     // Animate default reviews panel
     var rPanel = document.getElementById('panel-reviews');
     if (rPanel) { rPanel.style.animation = 'panelIn .22s ease forwards'; }
@@ -2771,7 +2771,7 @@ function renderBars(){
   }
 }
 var _gbpReload=!!sessionStorage.getItem('_gbpReload');if(_gbpReload)sessionStorage.removeItem('_gbpReload');
-var laborLoaded=false,invLoaded=false,reviewInsightLoaded=_gbpReload,sentimentTrendLoaded=_gbpReload,mktLoaded=false;
+var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false;
 function postToInstagram(){
   var el=document.getElementById('mkoutput');
   var content=(el.innerText||el.textContent||'').trim();
