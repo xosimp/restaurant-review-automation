@@ -3825,26 +3825,49 @@ window.addEventListener('load', function(){
 // ── Animation Utilities ──────────────────────────────────────────────────────
 function typewriterEffect(el, html) {
   var hasHtml = html.indexOf('<') !== -1;
-  if (hasHtml) {
-    el.innerHTML = html;
-    el.style.opacity = '0';
-    el.style.transform = 'translateY(5px)';
-    el.style.transition = 'opacity .5s ease, transform .4s ease';
-    setTimeout(function() { el.style.opacity = '1'; el.style.transform = 'translateY(0)'; }, 12);
+  if (!hasHtml) {
+    var words = html.split(' ');
+    var total = words.length;
+    var delay = Math.min(Math.max(Math.round(1400 / total), 16), 55);
+    var i = 0;
+    el.textContent = '';
+    function nextWord() {
+      if (i >= total) return;
+      el.textContent += (i > 0 ? ' ' : '') + words[i];
+      i++;
+      if (i < total) setTimeout(nextWord, delay);
+    }
+    nextWord();
     return;
   }
-  var words = html.split(' ');
-  var total = words.length;
-  var delay = Math.min(Math.max(Math.round(1400 / total), 16), 55);
-  var i = 0;
-  el.textContent = '';
-  function nextWord() {
-    if (i >= total) return;
-    el.textContent += (i > 0 ? ' ' : '') + words[i];
-    i++;
-    if (i < total) setTimeout(nextWord, delay);
+  // HTML content: render full structure first (preserves colors/layout),
+  // then walk text nodes and type them in word-by-word
+  el.innerHTML = html;
+  var allWords = [];
+  var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+  var node = walker.nextNode();
+  while (node) {
+    var txt = node.textContent;
+    if (txt.trim()) {
+      node.textContent = '';
+      var parts = txt.split(/(\s+)/);
+      for (var pi = 0; pi < parts.length; pi++) {
+        if (parts[pi]) allWords.push({n: node, w: parts[pi]});
+      }
+    }
+    node = walker.nextNode();
   }
-  nextWord();
+  var wordCount = 0;
+  for (var wi = 0; wi < allWords.length; wi++) { if (allWords[wi].w.trim()) wordCount++; }
+  var twDelay = Math.min(Math.max(Math.round(1400 / (wordCount || 1)), 16), 55);
+  var ai = 0;
+  function nextTw() {
+    if (ai >= allWords.length) return;
+    var item = allWords[ai++];
+    item.n.textContent += item.w;
+    if (!item.w.trim()) { nextTw(); } else { setTimeout(nextTw, twDelay); }
+  }
+  nextTw();
 }
 function countUp(el, target, duration, prefix, suffix, decimals) {
   if (!el) return;
