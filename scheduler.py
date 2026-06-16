@@ -395,6 +395,37 @@ def check_stale_inventory():
         log.error(f"Stale inventory check error: {e}")
 
 
+def run_toast_sync():
+    """
+    Nightly sync: pull fresh Toast POS data for every connected restaurant
+    and write it into client_data.shifts_csv so the Labor module stays current.
+    Runs at 3am CT — before the 8am review fetch, so labor data is ready for the day.
+    """
+    try:
+        from models import get_all_restaurants
+        from toast import is_connected, sync_to_db
+
+        restaurants = get_all_restaurants()
+        connected   = [r for r in restaurants if is_connected(r.id)]
+
+        if not connected:
+            return
+
+        log.info(f"Toast nightly sync for {len(connected)} restaurant(s)")
+        for r in connected:
+            try:
+                result = sync_to_db(r.id)
+                if result["ok"]:
+                    log.info(f"Toast sync OK for {r.name} — {result.get('rows', '?')} shift rows")
+                else:
+                    log.warning(f"Toast sync failed for {r.name}: {result.get('error')}")
+            except Exception as e:
+                log.error(f"Toast sync error for {r.name}: {e}")
+
+    except Exception as e:
+        log.error(f"run_toast_sync error: {e}")
+
+
 def refresh_expiring_tokens():
     """Refresh Instagram and Facebook tokens expiring within 7 days."""
     try:
@@ -770,6 +801,10 @@ def scheduler_loop():
                                 log.error(f"Competitor analysis failed for {r.name}: {ce}")
                 except Exception as e:
                     log.error(f"Competitor analysis scheduler error: {e}")
+
+            if now.hour == 3 and _last_backup_date != today:
+                log.info("Running nightly Toast POS sync...")
+                run_toast_sync()
 
             if now.hour == 7 and _last_fetch_date != today:
                 log.info("Refreshing expiring IG/FB tokens...")

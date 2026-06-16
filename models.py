@@ -183,6 +183,14 @@ class Restaurant:
     gmb_account_id: Optional[str]        = None
     gmb_location_id: Optional[str]       = None
     gmb_token_expires: Optional[str]     = None
+    # Toast POS credentials (admin-managed, server-to-server only)
+    toast_client_id: Optional[str]       = None
+    toast_client_secret: Optional[str]   = None
+    toast_restaurant_guid: Optional[str] = None
+    toast_access_token: Optional[str]    = None
+    toast_token_expires: Optional[str]   = None
+    toast_last_synced: Optional[str]     = None
+    toast_sync_error: Optional[str]      = None
     pos_system: Optional[str]       = None
     owner_name: Optional[str]       = None
     owner_phone: Optional[str]      = None
@@ -354,6 +362,13 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN gmb_location_id TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_token_expires TEXT",
         "ALTER TABLE reviews ADD COLUMN review_name TEXT",
+        "ALTER TABLE restaurants ADD COLUMN toast_client_id TEXT",
+        "ALTER TABLE restaurants ADD COLUMN toast_client_secret TEXT",
+        "ALTER TABLE restaurants ADD COLUMN toast_restaurant_guid TEXT",
+        "ALTER TABLE restaurants ADD COLUMN toast_access_token TEXT",
+        "ALTER TABLE restaurants ADD COLUMN toast_token_expires TEXT",
+        "ALTER TABLE restaurants ADD COLUMN toast_last_synced TEXT",
+        "ALTER TABLE restaurants ADD COLUMN toast_sync_error TEXT",
         """CREATE TABLE IF NOT EXISTS review_requests (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
@@ -408,7 +423,9 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "hourly_rate","labor_target_pct","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
-        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","login_notify"
+        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","login_notify",
+        "toast_client_id","toast_client_secret","toast_restaurant_guid",
+        "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error"
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -480,6 +497,13 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         gmb_account_id=row["gmb_account_id"] if "gmb_account_id" in row.keys() else None,
         gmb_location_id=row["gmb_location_id"] if "gmb_location_id" in row.keys() else None,
         gmb_token_expires=row["gmb_token_expires"] if "gmb_token_expires" in row.keys() else None,
+        toast_client_id=row["toast_client_id"] if "toast_client_id" in row.keys() else None,
+        toast_client_secret=row["toast_client_secret"] if "toast_client_secret" in row.keys() else None,
+        toast_restaurant_guid=row["toast_restaurant_guid"] if "toast_restaurant_guid" in row.keys() else None,
+        toast_access_token=row["toast_access_token"] if "toast_access_token" in row.keys() else None,
+        toast_token_expires=row["toast_token_expires"] if "toast_token_expires" in row.keys() else None,
+        toast_last_synced=row["toast_last_synced"] if "toast_last_synced" in row.keys() else None,
+        toast_sync_error=row["toast_sync_error"] if "toast_sync_error" in row.keys() else None,
         last_activity=row["last_activity"] if "last_activity" in row.keys() else None,
         owner_name=row["owner_name"] if "owner_name" in row.keys() else None,
         owner_phone=row["owner_phone"] if "owner_phone" in row.keys() else None,

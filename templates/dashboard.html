@@ -792,11 +792,22 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
 <!-- LABOR -->
 <div class="panel {{'active' if not mod_reviews and mod_labor}}" id="panel-labor">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-    <div style="font-size:11px;color:var(--ink3)">{% if labor.is_live %}<span style="color:#2d6a4f;font-weight:600">✓ Live data</span> — upload a new CSV anytime to update{% else %}<span style="color:#8a6a00;font-weight:600">Sample data</span> — upload your shift CSV to see real numbers{% endif %}</div>
-    <label style="display:inline-flex;align-items:center;gap:6px;background:#c84b2f;color:white;padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">
-      {% if labor.is_live %}Update CSV{% else %}📂 Upload shifts CSV{% endif %}
-      <input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)">
-    </label>
+    {% if restaurant and restaurant.toast_restaurant_guid %}
+      <div style="display:flex;align-items:center;gap:6px;font-size:11px">
+        <span style="display:inline-flex;align-items:center;gap:5px;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;padding:4px 10px;border-radius:20px;font-weight:600">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="4" fill="#22c55e"/></svg>
+          Live from Toast POS
+        </span>
+        {% if restaurant.toast_last_synced %}<span style="color:var(--ink3)">· Synced {{ restaurant.toast_last_synced[:10] }}</span>{% endif %}
+      </div>
+      <div style="font-size:11px;color:var(--ink3)">Data updates nightly automatically</div>
+    {% else %}
+      <div style="font-size:11px;color:var(--ink3)">{% if labor.is_live %}<span style="color:#2d6a4f;font-weight:600">✓ Live data</span> — upload a new CSV anytime to update{% else %}<span style="color:#8a6a00;font-weight:600">Sample data</span> — upload your shift CSV to see real numbers{% endif %}</div>
+      <label style="display:inline-flex;align-items:center;gap:6px;background:#c84b2f;color:white;padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">
+        {% if labor.is_live %}Update CSV{% else %}📂 Upload shifts CSV{% endif %}
+        <input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)">
+      </label>
+    {% endif %}
   </div>
 
   <!-- Schedule download tooltip -->

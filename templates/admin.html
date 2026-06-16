@@ -210,6 +210,7 @@ input:focus,select:focus{border-color:var(--ember)}
               <button class="action-item" onclick="fetchReviewsNow({{user.restaurant_id}});closeMenu({{user.id}})">Fetch reviews now</button>
               <button class="action-item" onclick="redraftAll({{user.restaurant_id}});closeMenu({{user.id}})">Re-draft all with AI</button>
               <button class="action-item" onclick="seedReviews({{user.restaurant_id}});closeMenu({{user.id}})">Seed sample reviews</button>
+              <button class="action-item" onclick="openToastModal({{user.restaurant_id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">🍞 Toast POS</button>
               <div class="action-divider"></div>
               <button class="action-item action-item-danger" onclick="deactivateClient({{user.id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Deactivate</button>
               {% else %}
@@ -539,6 +540,138 @@ async function deleteNote(noteId) {
   const data = await res.json();
   if(data.ok) location.reload();
 }
+
+// ── Toast POS modal ───────────────────────────────────────────────────────────
+var _toastRid = null;
+
+function openToastModal(rid, name) {
+  _toastRid = rid;
+  document.getElementById('toast-modal-restaurant').textContent = name;
+  document.getElementById('toast-client-id').value = '';
+  document.getElementById('toast-client-secret').value = '';
+  document.getElementById('toast-guid').value = '';
+  _setToastBanner('', '');
+  document.getElementById('toast-sync-btn').style.display = 'none';
+  document.getElementById('toast-disconnect-btn').style.display = 'none';
+  document.getElementById('toast-save-btn').textContent = 'Test & Save';
+  var modal = document.getElementById('toast-modal');
+  modal.style.display = 'flex';
+  // Load current status
+  fetch('/admin/toast/status/' + rid)
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(d.connected) {
+        _setToastBanner(
+          '✓ Connected — GUID: ' + d.guid_masked +
+          (d.last_synced ? ' · Last synced: ' + d.last_synced.slice(0,16).replace('T',' ') + ' UTC' : '') +
+          (d.sync_error  ? '<br>⚠ Last error: ' + d.sync_error : ''),
+          d.sync_error ? 'warn' : 'ok'
+        );
+        document.getElementById('toast-save-btn').textContent = 'Update credentials';
+        document.getElementById('toast-sync-btn').style.display = 'inline-block';
+        document.getElementById('toast-disconnect-btn').style.display = 'inline-block';
+      }
+    })
+    .catch(function(){});
+}
+
+function closeToastModal() {
+  document.getElementById('toast-modal').style.display = 'none';
+  _toastRid = null;
+}
+
+function _setToastBanner(msg, type) {
+  var b = document.getElementById('toast-status-banner');
+  if(!msg){ b.style.display='none'; return; }
+  b.innerHTML = msg;
+  b.style.display = 'block';
+  if(type === 'ok'){
+    b.style.background = '#f0fdf4'; b.style.border = '1px solid #bbf7d0'; b.style.color = '#166534';
+  } else if(type === 'warn'){
+    b.style.background = '#fffbeb'; b.style.border = '1px solid #fde68a'; b.style.color = '#92400e';
+  } else {
+    b.style.background = '#fef2f2'; b.style.border = '1px solid #fecaca'; b.style.color = '#991b1b';
+  }
+}
+
+async function saveToastCredentials() {
+  var btn = document.getElementById('toast-save-btn');
+  var cid = document.getElementById('toast-client-id').value.trim();
+  var csec = document.getElementById('toast-client-secret').value.trim();
+  var guid = document.getElementById('toast-guid').value.trim();
+  if(!cid || !csec || !guid){
+    _setToastBanner('All three fields are required.', 'err'); return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Testing connection…';
+  _setToastBanner('', '');
+  try {
+    const res = await fetch('/admin/toast/save/' + _toastRid, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({client_id: cid, client_secret: csec, restaurant_guid: guid, test: true})
+    });
+    const data = await res.json();
+    if(data.ok){
+      _setToastBanner('✓ Connected successfully! Starting initial sync…', 'ok');
+      btn.textContent = 'Update credentials';
+      document.getElementById('toast-sync-btn').style.display = 'inline-block';
+      document.getElementById('toast-disconnect-btn').style.display = 'inline-block';
+      // Kick off the first sync automatically
+      await fetch('/admin/toast/sync/' + _toastRid, {method:'POST'});
+      _setToastBanner('✓ Connected — initial sync started. Labor data will update in ~30 seconds.', 'ok');
+      toast('Toast POS connected ✓');
+    } else {
+      _setToastBanner('✗ ' + (data.error || 'Unknown error'), 'err');
+      btn.textContent = 'Test & Save';
+    }
+  } catch(e) {
+    _setToastBanner('✗ Request failed: ' + e.message, 'err');
+    btn.textContent = 'Test & Save';
+  }
+  btn.disabled = false;
+}
+
+async function syncToastNow() {
+  var btn = document.getElementById('toast-sync-btn');
+  btn.disabled = true;
+  btn.textContent = 'Syncing…';
+  try {
+    const res = await fetch('/admin/toast/sync/' + _toastRid, {method:'POST'});
+    const data = await res.json();
+    if(data.ok){
+      _setToastBanner('✓ Sync started — labor data refreshes in ~30 seconds.', 'ok');
+      toast('Toast sync started ✓');
+    } else {
+      _setToastBanner('✗ ' + (data.error || 'Sync failed'), 'err');
+    }
+  } catch(e) {
+    _setToastBanner('✗ Request failed: ' + e.message, 'err');
+  }
+  btn.disabled = false;
+  btn.textContent = '↻ Sync now';
+}
+
+async function disconnectToast() {
+  if(!confirm('Remove Toast POS connection for this restaurant? Existing synced data will remain until overwritten.')) return;
+  try {
+    const res = await fetch('/admin/toast/disconnect/' + _toastRid, {method:'POST'});
+    const data = await res.json();
+    if(data.ok){
+      _setToastBanner('Disconnected.', 'warn');
+      document.getElementById('toast-sync-btn').style.display = 'none';
+      document.getElementById('toast-disconnect-btn').style.display = 'none';
+      document.getElementById('toast-save-btn').textContent = 'Test & Save';
+      toast('Toast disconnected');
+    }
+  } catch(e) {
+    _setToastBanner('✗ ' + e.message, 'err');
+  }
+}
+
+document.addEventListener('click', function(e){
+  if(e.target === document.getElementById('toast-modal')) closeToastModal();
+});
 </script>
   <!-- Email Log -->
   <div style="max-width:860px;margin:0 auto">
@@ -609,6 +742,52 @@ async function deleteNote(noteId) {
         {% endif %}
         </tbody>
       </table>
+    </div>
+  </div>
+</div>
+
+<!-- Toast POS Modal -->
+<div id="toast-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,.55);align-items:center;justify-content:center">
+  <div style="background:white;border-radius:12px;padding:28px 32px;max-width:480px;width:90%;box-shadow:0 12px 48px rgba(14,12,10,.22);position:relative">
+    <button onclick="closeToastModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;color:var(--ink3);cursor:pointer;line-height:1">✕</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <span style="font-size:22px">🍞</span>
+      <div style="font-size:16px;font-weight:700;color:var(--ink)">Toast POS Integration</div>
+    </div>
+    <div id="toast-modal-restaurant" style="font-size:12px;color:var(--ink3);margin-bottom:20px"></div>
+
+    <!-- Status banner -->
+    <div id="toast-status-banner" style="display:none;padding:10px 14px;border-radius:7px;font-size:12px;margin-bottom:16px;line-height:1.5"></div>
+
+    <!-- Credentials form -->
+    <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px">
+      <div>
+        <label style="font-size:11px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Client ID</label>
+        <input id="toast-client-id" type="text" placeholder="e.g. 8f3a2c1d-…" autocomplete="off"
+               style="width:100%;padding:8px 10px;border:1px solid #d0cbc3;border-radius:6px;font-size:13px;font-family:monospace;outline:none">
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Client Secret</label>
+        <input id="toast-client-secret" type="password" placeholder="••••••••••••••••" autocomplete="off"
+               style="width:100%;padding:8px 10px;border:1px solid #d0cbc3;border-radius:6px;font-size:13px;font-family:monospace;outline:none">
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px">Restaurant GUID</label>
+        <input id="toast-guid" type="text" placeholder="e.g. a1b2c3d4-…" autocomplete="off"
+               style="width:100%;padding:8px 10px;border:1px solid #d0cbc3;border-radius:6px;font-size:13px;font-family:monospace;outline:none">
+        <div style="font-size:10px;color:var(--ink3);margin-top:4px">Found in Toast Admin → Integrations → API Access → Location GUID</div>
+      </div>
+    </div>
+
+    <!-- Action buttons -->
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button id="toast-save-btn" onclick="saveToastCredentials()" class="btn-primary" style="padding:9px 18px;font-size:13px">Test &amp; Save</button>
+      <button id="toast-sync-btn" onclick="syncToastNow()" style="display:none;padding:9px 18px;font-size:13px;background:#1a56cc;color:white;border:none;border-radius:6px;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s">↻ Sync now</button>
+      <button id="toast-disconnect-btn" onclick="disconnectToast()" style="display:none;padding:9px 18px;font-size:13px;background:none;border:1px solid #e0dbd0;border-radius:6px;color:#c84b2f;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s">Disconnect</button>
+    </div>
+
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid #f0ece6;font-size:11px;color:var(--ink3);line-height:1.6">
+      <strong>How to get credentials:</strong> Toast Admin → Integrations → API Access → create a new credential set with <em>Labor</em> and <em>Orders</em> permissions. Copy the Client ID, Secret, and Location GUID here.
     </div>
   </div>
 </div>
