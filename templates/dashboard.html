@@ -716,6 +716,49 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   {% endif %}
 </div>
 
+<!-- 2FA setup modal — lives at body level so position:fixed covers full viewport -->
+<div id="twofa-modal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(14,12,10,0.72);align-items:center;justify-content:center">
+  <div style="background:white;border-radius:14px;padding:32px;max-width:420px;width:90%;position:relative">
+    <button onclick="document.getElementById('twofa-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
+    <!-- Step 1: Intro -->
+    <div id="twofa-step1">
+      <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">Enable two-factor authentication</div>
+      <p style="font-size:13px;color:var(--ink3);margin-bottom:20px;line-height:1.6">Each time you sign in from a new device, we&rsquo;ll send a 6-digit code to <strong>{{restaurant.owner_email or "your email"}}</strong>. You&rsquo;ll need to enter it to access your dashboard.</p>
+      <div style="background:#f7f4ef;border-radius:8px;padding:14px;margin-bottom:20px;font-size:12px;color:var(--ink2);line-height:1.6">
+        <strong>What to expect:</strong><br>
+        &bull; Sign in normally with username + password<br>
+        &bull; A code arrives in your email within seconds<br>
+        &bull; Enter the code to complete sign in<br>
+        &bull; Check &ldquo;Remember device&rdquo; to skip for 30 days
+      </div>
+      <button onclick="twoFAStep2(this)" id="twofa-send-btn" class="btn-primary" style="width:100%;padding:11px;transition:opacity .15s">Send me a test code<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    </div>
+    <!-- Step 2: Verify -->
+    <div id="twofa-step2" style="display:none">
+      <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">Check your email</div>
+      <p style="font-size:13px;color:var(--ink3);margin-bottom:20px;line-height:1.6">We sent a test code to <strong id="twofa-masked-email"></strong>. Enter it below to confirm 2FA is working.</p>
+      <div style="display:flex;gap:8px;justify-content:center;margin-bottom:16px" id="twofa-setup-inputs">
+        <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
+        <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
+        <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
+        <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
+        <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
+        <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
+      </div>
+      <div id="twofa-setup-error" style="display:none;color:#c0392b;font-size:12px;text-align:center;margin-bottom:12px"></div>
+      <button onclick="twoFAVerify()" class="btn-primary" style="width:100%;padding:11px;margin-bottom:10px">Verify &amp; enable 2FA</button>
+      <button onclick="twoFAStep2()" class="btn-secondary" style="width:100%;padding:9px;font-size:12px">Resend code</button>
+    </div>
+    <!-- Step 3: Success -->
+    <div id="twofa-step3" style="display:none;text-align:center">
+      <div style="font-size:40px;margin-bottom:16px">&#x2705;</div>
+      <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">2FA is now active</div>
+      <p style="font-size:13px;color:var(--ink3);margin-bottom:24px;line-height:1.6">Your account is protected. You&rsquo;ll receive a verification code by email each time you sign in from a new device.</p>
+      <button onclick="document.getElementById('twofa-modal').style.display='none';location.reload();" class="btn-primary" style="padding:10px 28px">Done</button>
+    </div>
+  </div>
+</div>
+
 <!-- Congratulations modal — fires once when 100% response rate achieved -->
 <div id="congrats-modal"><div id="congrats-inner"><div class="c-ember"></div><div class="c-sub">🎉 100% Response Rate Achieved</div><h2>You're in the top tier.</h2><p>Every single review on your dashboard now has a response. That's rare — and it matters more than most owners realize.</p><div class="c-stat"><strong>35% higher return rates</strong> — guests who see responses come back more often</div><div class="c-stat"><strong>5–9% revenue lift</strong> per star gained — Harvard Business School research on independent restaurants</div><div class="c-stat"><strong>$125k+/yr</strong> in additional revenue possible from a 3.1% sales lift at a casual dining unit</div><p style="margin-top:12px;font-size:12px;color:#a09080">This won't appear again. Keep responding to new reviews to maintain your edge.</p><button id="congrats-close" onclick="document.getElementById('congrats-modal').classList.remove('show')">Got it — keep it up ✓</button></div></div>
 
@@ -1553,49 +1596,6 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
 
 <!-- ACCOUNT -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account">
-
-  <!-- 2FA modal (moved to top so it's always in DOM) -->
-  <div id="twofa-modal" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center">
-    <div style="background:white;border-radius:14px;padding:32px;max-width:420px;width:90%;position:relative">
-      <button onclick="document.getElementById('twofa-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
-      <!-- Step 1: Intro -->
-      <div id="twofa-step1">
-        <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">Enable two-factor authentication</div>
-        <p style="font-size:13px;color:var(--ink3);margin-bottom:20px;line-height:1.6">Each time you sign in from a new device, we&rsquo;ll send a 6-digit code to <strong>{{restaurant.owner_email or "your email"}}</strong>. You&rsquo;ll need to enter it to access your dashboard.</p>
-        <div style="background:#f7f4ef;border-radius:8px;padding:14px;margin-bottom:20px;font-size:12px;color:var(--ink2);line-height:1.6">
-          <strong>What to expect:</strong><br>
-          &bull; Sign in normally with username + password<br>
-          &bull; A code arrives in your email within seconds<br>
-          &bull; Enter the code to complete sign in<br>
-          &bull; Check &ldquo;Remember device&rdquo; to skip for 30 days
-        </div>
-        <button onclick="twoFAStep2(this)" id="twofa-send-btn" class="btn-primary" style="width:100%;padding:11px;transition:opacity .15s">Send me a test code<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-      </div>
-      <!-- Step 2: Verify -->
-      <div id="twofa-step2" style="display:none">
-        <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">Check your email</div>
-        <p style="font-size:13px;color:var(--ink3);margin-bottom:20px;line-height:1.6">We sent a test code to <strong id="twofa-masked-email"></strong>. Enter it below to confirm 2FA is working.</p>
-        <div style="display:flex;gap:8px;justify-content:center;margin-bottom:16px" id="twofa-setup-inputs">
-          <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
-          <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
-          <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
-          <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
-          <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
-          <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
-        </div>
-        <div id="twofa-setup-error" style="display:none;color:#c0392b;font-size:12px;text-align:center;margin-bottom:12px"></div>
-        <button onclick="twoFAVerify()" class="btn-primary" style="width:100%;padding:11px;margin-bottom:10px">Verify &amp; enable 2FA</button>
-        <button onclick="twoFAStep2()" class="btn-secondary" style="width:100%;padding:9px;font-size:12px">Resend code</button>
-      </div>
-      <!-- Step 3: Success -->
-      <div id="twofa-step3" style="display:none;text-align:center">
-        <div style="font-size:40px;margin-bottom:16px">&#x2705;</div>
-        <div style="font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px">2FA is now active</div>
-        <p style="font-size:13px;color:var(--ink3);margin-bottom:24px;line-height:1.6">Your account is protected. You&rsquo;ll receive a verification code by email each time you sign in from a new device.</p>
-        <button onclick="document.getElementById('twofa-modal').style.display='none';location.reload();" class="btn-primary" style="padding:10px 28px">Done</button>
-      </div>
-    </div>
-  </div>
 
   <!-- SECTION 1: Consultant hero card -->
   <div style="background:var(--ink);border-radius:var(--r);padding:24px 28px;margin-bottom:16px">
