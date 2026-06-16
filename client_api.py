@@ -3,7 +3,7 @@ client_api.py — Client-facing API routes and data endpoints
 Registered as a Flask Blueprint in hosted_dashboard.py
 """
 from flask import Blueprint, request, jsonify, redirect, send_file, Response
-import os, json
+import os, json, re
 from datetime import datetime
 
 from models import (get_conn, get_restaurant, update_restaurant, approve_response,
@@ -1176,9 +1176,11 @@ def ai_visibility(current_user):
     # Short cuisine descriptor from known_for first word(s), fallback to "restaurant"
     cuisine = (known_for.split(",")[0].strip() if known_for else "") or "restaurant"
 
+    vibe_query = ("Best " + vibe.split(",")[0].strip() + " restaurant in " + city_full) if (vibe and city) else None
+
     if city:
         queries = [
-            name + " restaurant in " + city_full,
+            vibe_query or (name + " restaurant in " + city_full),
             "Top restaurants in " + city_full,
             "Best " + cuisine + " in " + city_full,
         ]
@@ -1194,6 +1196,11 @@ def ai_visibility(current_user):
     query_results = []
     appeared_count = 0
 
+    def _norm(s):
+        return re.sub(r"[^a-z0-9 ]", "", (s or "").lower().replace("'", "").replace("’", ""))
+
+    norm_name = _norm(name)
+
     for q in queries:
         try:
             resp = _pplx_req.post(
@@ -1201,13 +1208,16 @@ def ai_visibility(current_user):
                 headers={"Authorization": f"Bearer {_pplx_key}", "Content-Type": "application/json"},
                 json={
                     "model": "sonar",
-                    "messages": [{"role": "user", "content": q}],
+                    "messages": [
+                        {"role": "system", "content": "Answer in under 80 words. Recommend specific restaurants by name. Do not include citations, footnotes, or markdown formatting."},
+                        {"role": "user", "content": q},
+                    ],
                     "max_tokens": 300,
                 },
                 timeout=15
             )
             answer = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") if resp.status_code == 200 else ""
-            appeared = name.lower().strip() in answer.lower() if name and answer else False
+            appeared = bool(norm_name) and bool(answer) and norm_name in _norm(answer)
             if appeared:
                 appeared_count += 1
             query_results.append({"query": q, "answer": answer[:400], "appeared": appeared})
