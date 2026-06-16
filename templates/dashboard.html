@@ -3468,7 +3468,7 @@ function runAIVisibility(btn) {
     _aivB.style.opacity = '1';
     if (_aivArrow) _aivArrow.style.transform = '';
   }
-  if (_aivData) { renderAIVisibility(_aivData); return; }
+  _aivData = null;
   if (btn) { btn.textContent = 'Checking...'; btn.disabled = true; }
   document.getElementById('aiv-idle').style.display = 'none';
   document.getElementById('aiv-loading').style.display = 'block';
@@ -3618,6 +3618,7 @@ function renderAIVisibility(d) {
     {
       svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 1.5l1.65 3.35 3.7.54-2.68 2.6.63 3.68L8 9.77l-3.3 1.9.63-3.68L2.65 5.39l3.7-.54L8 1.5z" fill="currentColor"/></svg>',
       color: '#d97706',
+      bg: '#fefce8',
       title: 'Get more Google reviews',
       why: 'AI search tools rank restaurants by review volume and recency. Mio Modo has 270+ reviews — that\'s why it leads every query. The more reviews you have, the more AI systems trust you.',
       action: 'Send a review request',
@@ -3629,6 +3630,7 @@ function renderAIVisibility(d) {
     {
       svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2 3.5A1.5 1.5 0 013.5 2h9A1.5 1.5 0 0114 3.5V10a1.5 1.5 0 01-1.5 1.5H6.2l-3.2 2V3.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>',
       color: '#7c3aed',
+      bg: '#f5f3ff',
       title: 'Respond to every review',
       why: 'Response rate signals to Google that your listing is actively managed. Active listings rank higher in local search and are more likely to be cited by AI tools that pull from Google data.',
       action: 'Go to review queue',
@@ -3640,6 +3642,7 @@ function renderAIVisibility(d) {
     {
       svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="6.5" r="2" stroke="currentColor" stroke-width="1.4"/><path d="M8 2C5.79 2 4 3.79 4 6c0 3.5 4 9 4 9s4-5.5 4-9c0-2.21-1.79-4-4-4z" stroke="currentColor" stroke-width="1.4"/></svg>',
       color: '#0284c7',
+      bg: '#f0f9ff',
       title: 'Complete your Google Business Profile',
       why: 'Perplexity, ChatGPT, and Google AI all pull directly from GBP data — hours, photos, menu, description. A complete profile is the single fastest way to become indexable by AI search.',
       action: 'Open GBP settings',
@@ -3651,6 +3654,7 @@ function renderAIVisibility(d) {
     {
       svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2.5 6h2.8l5.2-3v10L5.3 10H2.5A1 1 0 011.5 9V7a1 1 0 011-1z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.3 10v3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
       color: '#c84b2f',
+      bg: '#fff5f2',
       title: 'Post consistently on social',
       why: 'Food blogs and social content get indexed by search engines, which AI tools then pull from. Regular posts with your restaurant name, neighborhood, and cuisine type build the online footprint AI needs to find you.',
       action: 'Go to marketing',
@@ -3686,7 +3690,7 @@ function renderAIVisibility(d) {
       ? '<span style="font-size:10px;font-weight:600;color:#16a34a;letter-spacing:.04em">&#10003; Done</span>'
       : '<span style="font-size:10px;font-weight:600;color:' + c.color + ';letter-spacing:.04em;text-transform:uppercase">' + c.impact + '</span>';
 
-    html += '<div class="aiv-card" style="' + doneStyle + 'animation-delay:' + delay + ';background:white;border:1px solid var(--paper3);border-left:3px solid ' + c.color + ';border-radius:8px;padding:13px 16px">';
+    html += '<div class="aiv-card" style="' + doneStyle + 'animation-delay:' + delay + ';background:' + c.bg + ';border:1px solid var(--paper3);border-left:3px solid ' + c.color + ';border-radius:8px;padding:13px 16px">';
     html += '<div style="display:flex;align-items:flex-start;gap:11px">';
     html += '<div style="width:28px;height:28px;border-radius:7px;background:' + c.color + '12;display:flex;align-items:center;justify-content:center;color:' + c.color + ';flex-shrink:0;margin-top:1px">' + c.svg + '</div>';
     html += '<div style="flex:1;min-width:0">';
