@@ -641,15 +641,22 @@ def seed_reviews(restaurant_id, current_user):
 
     pending_drafts = get_pending_drafts(restaurant_id, limit=50)
     restaurant = get_restaurant(restaurant_id)
-    voice = restaurant.voice_notes or "Warm, genuine tone. Always invite guests back."
+    from drafter import draft_response as _draft_fn
+    from models import get_approved_examples as _get_ex
+    approved_examples = _get_ex(restaurant_id, limit=4)
     for r in pending_drafts:
-        if r.sentiment == "positive":
-            draft = f"Thank you so much, {r.author}! It means the world to us to hear this — we hope to see you again soon."
-        elif r.sentiment == "negative":
-            draft = f"We're genuinely sorry to hear about your experience, {r.author}. This isn't the standard we hold ourselves to and we'd love the chance to make it right. Please reach out to us directly."
-        else:
-            draft = f"Thank you for taking the time to share your feedback, {r.author}. We appreciate your honesty and hope to see you again."
-        update_draft(r.id, draft)
+        try:
+            _draft_fn(
+                r.id, r.rating, r.text, r.sentiment,
+                restaurant.name,
+                voice_notes=restaurant.voice_notes or "",
+                restaurant_id=restaurant_id,
+                approved_examples=approved_examples,
+                sign_off=restaurant.sign_off_name or restaurant.name,
+                never_say=restaurant.never_say or "",
+            )
+        except Exception as _e:
+            print(f"[seed] draft error [{r.id}]: {_e}")
 
     return jsonify(ok=True, seeded=new_count)
 
@@ -716,21 +723,80 @@ def fetch_reviews_now(restaurant_id, current_user):
     import threading
     def _analyse_and_draft():
         try:
-            from models import get_pending_analysis, get_pending_drafts
+            from models import get_pending_analysis, get_pending_drafts, get_approved_examples
             from analyser import analyse_review
+            from drafter import draft_response
             for r in get_pending_analysis(restaurant_id, limit=50):
                 try: analyse_review(r.id, r.rating, r.text)
                 except Exception: pass
-            from drafter import draft_response
+            approved_examples = get_approved_examples(restaurant_id, limit=4)
             for r in get_pending_drafts(restaurant_id):
-                try: draft_response(r.id, r.rating, r.text, r.sentiment,
-                                    restaurant.name, restaurant.voice_notes or "")
+                try:
+                    draft_response(
+                        r.id, r.rating, r.text, r.sentiment,
+                        restaurant.name,
+                        voice_notes=restaurant.voice_notes or "",
+                        restaurant_id=restaurant_id,
+                        approved_examples=approved_examples,
+                        sign_off=restaurant.sign_off_name or restaurant.name,
+                        never_say=restaurant.never_say or "",
+                    )
                 except Exception: pass
         except Exception as e:
             print(f"[fetch] background error: {e}")
     threading.Thread(target=_analyse_and_draft, daemon=True).start()
 
     return jsonify(ok=True, new_reviews=new_count, errors=errors)
+
+@admin_bp.route("/admin/redraft-all/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def redraft_all(restaurant_id, current_user):
+    """Regenerate AI drafts for all existing reviews — resets non-posted to pending first."""
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found")
+    conn = get_conn()
+    # Reset all drafted/pending reviews so they queue for re-drafting
+    conn.execute(
+        "UPDATE reviews SET response_status='pending', draft_response=NULL WHERE restaurant_id=? AND response_status IN ('drafted','pending')",
+        (restaurant_id,)
+    )
+    conn.commit()
+    conn.close()
+    import threading
+    def _redraft():
+        try:
+            from models import get_pending_drafts, get_approved_examples, get_conn as _gc
+            from analyser import analyse_review
+            from drafter import draft_response
+            # Re-analyse anything missing sentiment
+            _conn = _gc()
+            unanalysed = _conn.execute(
+                "SELECT id, rating, text FROM reviews WHERE restaurant_id=? AND (sentiment IS NULL OR sentiment='') AND processed=0",
+                (restaurant_id,)
+            ).fetchall()
+            _conn.close()
+            for r in unanalysed:
+                try: analyse_review(r["id"], r["rating"], r["text"])
+                except Exception: pass
+            approved_examples = get_approved_examples(restaurant_id, limit=4)
+            for r in get_pending_drafts(restaurant_id, limit=50):
+                try:
+                    draft_response(
+                        r.id, r.rating, r.text, r.sentiment,
+                        restaurant.name,
+                        voice_notes=restaurant.voice_notes or "",
+                        restaurant_id=restaurant_id,
+                        approved_examples=approved_examples,
+                        sign_off=restaurant.sign_off_name or restaurant.name,
+                        never_say=restaurant.never_say or "",
+                    )
+                except Exception as _e:
+                    print(f"[redraft-all] error [{r.id}]: {_e}")
+        except Exception as e:
+            print(f"[redraft-all] background error: {e}")
+    threading.Thread(target=_redraft, daemon=True).start()
+    return jsonify(ok=True)
 
 @admin_bp.route("/admin/view-as/<int:restaurant_id>")
 @admin_required

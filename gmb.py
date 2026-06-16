@@ -140,7 +140,7 @@ def fetch_reviews_via_gmb(access_token: str, location_id: str, restaurant_id: in
         resp = requests.get(
             f"https://mybusinessreviews.googleapis.com/v1/{location_id}/reviews",
             headers={"Authorization": f"Bearer {access_token}"},
-            params={"pageSize": 50},
+            params={"pageSize": 20},
             timeout=10,
         )
         resp.raise_for_status()

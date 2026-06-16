@@ -204,6 +204,7 @@ input:focus,select:focus{border-color:var(--ember)}
               <button class="action-item" onclick="resendPayment({{user.restaurant_id}},'{{user.email}}','{{user.billing_status}}');closeMenu({{user.id}})">Resend payment link</button>
               <button class="action-item" onclick="resendContract({{user.restaurant_id}});closeMenu({{user.id}})">Resend contract</button>
               <button class="action-item" onclick="fetchReviewsNow({{user.restaurant_id}});closeMenu({{user.id}})">Fetch reviews now</button>
+              <button class="action-item" onclick="redraftAll({{user.restaurant_id}});closeMenu({{user.id}})">Re-draft all with AI</button>
               <button class="action-item" onclick="seedReviews({{user.restaurant_id}});closeMenu({{user.id}})">Seed sample reviews</button>
               <div class="action-divider"></div>
               <button class="action-item action-item-danger" onclick="deactivateClient({{user.id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Deactivate</button>
@@ -456,6 +457,24 @@ async function fetchReviewsNow(rid){
     else toast('Fetch failed: '+e.message);
   }
   btn.textContent = 'Fetch reviews now'; btn.disabled = false;
+}
+
+async function redraftAll(rid) {
+  if(!confirm('Reset and re-draft ALL review responses for this restaurant using real AI? This will overwrite existing drafts (posted responses are safe).')) return;
+  const btn = event.target;
+  btn.textContent = 'Re-drafting…'; btn.disabled = true;
+  try {
+    const res = await fetch('/admin/redraft-all/'+rid, {method:'POST'});
+    const data = await res.json();
+    if(data.ok){
+      toast('Re-drafting started — takes ~1 min in background. Refresh client view to see results.');
+    } else {
+      toast('Error: '+(data.error||'unknown'));
+    }
+  } catch(e) {
+    toast('Failed: '+e.message);
+  }
+  btn.textContent = 'Re-draft all with AI'; btn.disabled = false;
 }
 
 async function seedReviews(restaurantId) {
