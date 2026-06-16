@@ -2228,13 +2228,11 @@ document.addEventListener('DOMContentLoaded', function(){
   var btn = hash ? document.getElementById('tab-'+hash) : null;
   if(btn){ switchTab(hash, btn); }
   else if(document.getElementById('panel-reviews') && document.getElementById('panel-reviews').classList.contains('active')){
-    loadReviewInsight();
-    loadSentimentTrend();
+    if(!_gbpReload){ loadReviewInsight(); loadSentimentTrend(); }
     // Animate default reviews panel
     var rPanel = document.getElementById('panel-reviews');
     if (rPanel) { rPanel.style.animation = 'panelIn .22s ease forwards'; }
-    animateStatNums('panel-reviews');
-    staggerCards();
+    if(!_gbpReload){ animateStatNums('panel-reviews'); staggerCards(); }
   }
   // Initialize filter so count label is accurate on page load
   filterReviews();
