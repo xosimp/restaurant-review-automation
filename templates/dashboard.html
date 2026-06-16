@@ -3461,8 +3461,6 @@ function refreshCompetitorIntel(btn){
 }
 var _aivData = null;
 function runAIVisibility(btn) {
-  if (_aivData) { renderAIVisibility(_aivData); return; }
-  if (btn) { btn.textContent = 'Checking...'; btn.disabled = true; }
   var _aivB = document.getElementById('aiv-body');
   var _aivArrow = document.getElementById('aiv-collapse-arrow');
   if (_aivB && _aivB.style.maxHeight === '0px') {
@@ -3470,6 +3468,8 @@ function runAIVisibility(btn) {
     _aivB.style.opacity = '1';
     if (_aivArrow) _aivArrow.style.transform = '';
   }
+  if (_aivData) { renderAIVisibility(_aivData); return; }
+  if (btn) { btn.textContent = 'Checking...'; btn.disabled = true; }
   document.getElementById('aiv-idle').style.display = 'none';
   document.getElementById('aiv-loading').style.display = 'block';
   document.getElementById('aiv-results').style.display = 'none';
@@ -3584,7 +3584,7 @@ function renderAIVisibility(d) {
       var badge = q.appeared
         ? '<span style="background:#dcfce7;color:#16a34a;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;flex-shrink:0;white-space:nowrap">&#10003; Appeared</span>'
         : '<span style="background:#fee2e2;color:#dc2626;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;flex-shrink:0;white-space:nowrap">Not mentioned</span>';
-      var cleanAnswer = q.answer.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
+      var cleanAnswer = q.answer.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1').replace(/\[\d+\]/g, '');
       var snippet = cleanAnswer.substring(0, 200) + (cleanAnswer.length > 200 ? '...' : '');
       qhtml += '<div style="background:white;border:1px solid var(--paper3);border-radius:8px;padding:10px 12px">';
       qhtml += '<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px">';
