@@ -3424,6 +3424,7 @@ function generateSchedule(btn) {
 
       // Schedule table
       var tbody = document.getElementById('sched-tbody');
+      var _constraints = data.staff_constraints || {};
       if (tbody && data.preview_rows && data.preview_rows.length) {
         var tHtml = '';
         var lastDay = '';
@@ -3432,9 +3433,14 @@ function generateSchedule(btn) {
           var day = row.day || '';
           var isNewDay = day !== lastDay;
           var bgStyle = isNewDay ? 'border-top:2px solid rgba(255,255,255,.1)' : 'border-top:1px solid rgba(255,255,255,.04)';
-          tHtml += '<tr style="' + bgStyle + '">';
+          var empName = row.employee || '';
+          var constraintNote = _constraints[empName] || '';
+          var constraintBadge = constraintNote
+            ? ' <span title="' + constraintNote.replace(/"/g, '&quot;') + '" style="font-size:9px;background:rgba(242,153,74,.18);color:#f2994a;padding:1px 5px;border-radius:8px;font-weight:700;vertical-align:middle;cursor:help;letter-spacing:.02em">constraint</span>'
+            : '';
+          tHtml += '<tr style="' + bgStyle + (constraintNote ? ';background:rgba(242,153,74,.04)' : '') + '">';
           tHtml += '<td style="padding:7px 12px;color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + day + '</td>';
-          tHtml += '<td style="padding:7px 12px;color:var(--paper);font-weight:600">' + (row.employee || '') + '</td>';
+          tHtml += '<td style="padding:7px 12px;color:var(--paper);font-weight:600">' + empName + constraintBadge + '</td>';
           tHtml += '<td style="padding:7px 12px;color:var(--ink3)">' + (row.role || '') + '</td>';
           tHtml += '<td style="padding:7px 12px;color:var(--paper);white-space:nowrap">' + (row.shift_start || '') + '–' + (row.shift_end || '') + '</td>';
           tHtml += '<td style="padding:7px 12px;color:#6fcf97;font-weight:600">' + (row.scheduled_hours || '') + '</td>';

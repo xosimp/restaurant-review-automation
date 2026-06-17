@@ -794,6 +794,9 @@ def generate_schedule_json(current_user):
     import csv as _csv_mod, io as _io_sched
     try:
         result = _build_schedule_result(current_user["restaurant_id"])
+        from models import get_staff_notes as _gsn_sched
+        _raw_notes = _gsn_sched(current_user["restaurant_id"]) or []
+        staff_constraints = {n["employee_name"]: n["notes"] for n in _raw_notes}
         # Parse CSV into rows for the preview table + count total scheduled hours
         preview_rows = []
         hours_scheduled = 0.0
@@ -820,6 +823,7 @@ def generate_schedule_json(current_user):
             labor_budget_dollars=result.get("labor_budget_dollars", 0),
             hours_scheduled=hours_scheduled,
             labor_target=result.get("labor_target", 30),
+            staff_constraints=staff_constraints,
         )
     except Exception as e:
         import traceback; traceback.print_exc()
