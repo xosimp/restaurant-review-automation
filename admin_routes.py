@@ -1405,6 +1405,9 @@ def seed_labor_history(current_user):
         "- Cooks: 1 cook always stays through close; cut others 45min–1h early on slow nights.\n"
         "- Bussers cut 30min before close."
     )
+    # Keep role_rates_json NULL — base wages alone (~$12.68/hr blended) don't match
+    # Gia Mia's reported 22.46% which is fully-loaded (wages + 8% payroll taxes + tip-out + workers comp).
+    # The flat $26/hr fallback correctly represents their all-in cost per labor hour.
     conn.execute("""
         UPDATE restaurants SET monthly_revenue_target=?, labor_target_pct=?, hours_notes=?, role_rates_json=NULL
         WHERE id=?
