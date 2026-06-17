@@ -545,6 +545,10 @@ def _seed_gia_mia(db_path: str = DB_PATH):
         """, (2, ds, DAYS_OF_WEEK[d.weekday()], labor_pct, labor_cost, sales, hours))
         d += timedelta(days=1)
 
+    # Commit and close before calling helpers that open their own connections
+    conn.commit()
+    conn.close()
+
     gia_mia_hours = (
         "RESTAURANT HOURS: Open 11:00am daily. "
         "Close: 9:00pm Sun–Wed; 10:00pm Thu–Sat. "
@@ -794,9 +798,6 @@ def _seed_gia_mia(db_path: str = DB_PATH):
 2026-06-14,Sunday,Leo K.,Cook,2:00pm,10:00pm,8.0,8.0,12250,
 2026-06-14,Sunday,James H.,Host,11:00am,5:30pm,6.5,6.5,12250,
 2026-06-14,Sunday,Lena S.,Host,4:00pm,10:30pm,6.5,6.5,12250,"""
-
-    conn.commit()
-    conn.close()
 
     # Use save_client_data so the correct DB path is always used
     save_client_data(2, "shifts", gia_mia_csv, source="seed")
