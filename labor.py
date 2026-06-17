@@ -516,6 +516,23 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             event_lines.append(f"  {ev['name']} ({ev['date_str']}) — {day_label}: staff UP vs typical, expect 20-40% higher covers")
         events_block = "\n\nUpcoming events this week (adjust staffing accordingly):\n" + "\n".join(event_lines)
 
+    # Compute PAR hours budget from YoY projected revenue (or fall back to recent)
+    projected_revenue = 0.0
+    if yoy_context:
+        yoy_sales = [r["yoy_sales"] for r in yoy_context if r.get("yoy_sales")]
+        if yoy_sales:
+            projected_revenue = sum(yoy_sales)
+    if not projected_revenue:
+        projected_revenue = analysis.get("total_sales", 0) * (7 / max(len(set(s.get("date","") for s in shifts if s.get("date"))), 1))
+    hours_budget = round((projected_revenue * (labor_target / 100)) / hourly_rate, 1) if hourly_rate else 0
+    labor_budget_dollars = round(projected_revenue * (labor_target / 100), 0)
+
+    par_block = (f"\n\nPAR HOURS TARGET (non-negotiable):\n"
+                 f"  Projected revenue this week: ${projected_revenue:,.0f}\n"
+                 f"  Labor target: {labor_target}% = ${labor_budget_dollars:,.0f} labor budget\n"
+                 f"  At ${hourly_rate}/hr blended rate → schedule EXACTLY {hours_budget}h total across all shifts\n"
+                 f"  Build the schedule to land within ±5h of this number. Show total hours in summary.")
+
     prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.
 
 CONTEXT:
@@ -524,7 +541,7 @@ CONTEXT:
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
 - Recent labor % by day of week: {dow}
-- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{constraints}
+- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{par_block}{constraints}
 
 Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
@@ -534,14 +551,14 @@ OUTPUT FORMAT — two sections separated by exactly "---SUMMARY---":
 Section 1: CSV schedule
 date,day,employee,role,shift_start,shift_end,scheduled_hours,notes
 
-Section 2: After "---SUMMARY---", write exactly 3 bullet points (start each with "- ") explaining the key scheduling decisions you made. Be specific: name the days, the changes, and why (reference the YoY data or event if relevant). No markdown headers, no asterisks.
+Section 2: After "---SUMMARY---", write exactly 3 bullet points (start each with "- ") explaining the key scheduling decisions you made. Be specific: name the days, total hours scheduled vs PAR target, and why (reference the YoY data or event if relevant). No markdown headers, no asterisks.
 
 SCHEDULING RULES:
 - Use exact dates listed above and real employee names from the staff list
 - Base each day's staffing on the YoY same-day data when available — that is your primary projection
 - For holiday weeks, match staffing to last year's holiday labor hours, not recent averages
 - No employee over 40h for the week
-- Target labor ratio per day: {labor_target}%
+- Total weekly hours MUST be within ±5h of the PAR target ({hours_budget}h)
 - Servers: 4-6h shifts; bartenders/cooks: 5-8h shifts
 - 6-10 shifts per day
 - Notes column: one brief phrase per shift explaining any change (e.g. "YoY match - high Father's Day volume" or "reduced - YoY shows slow Monday")
@@ -582,6 +599,9 @@ SCHEDULING RULES:
         "summary": summary_bullets[:3],
         "week_dates": week_dates,
         "week_days": week_days,
+        "projected_revenue": projected_revenue,
+        "hours_budget": hours_budget,
+        "labor_budget_dollars": labor_budget_dollars,
     }
 
 

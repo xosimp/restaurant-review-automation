@@ -996,6 +996,17 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div id="sched-summary-bullets" style="font-size:12px;color:#c0b8b0;line-height:1.8"></div>
       </div>
 
+      <!-- PAR hours banner -->
+      <div id="sched-par-banner" style="display:none;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(111,207,151,.06)">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+          <div>
+            <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:6px">PAR Hours Check</div>
+            <div id="sched-par-text" style="font-size:12px;color:var(--paper);line-height:1.7"></div>
+          </div>
+          <div id="sched-par-badge" style="font-size:13px;font-weight:800;padding:8px 16px;border-radius:8px;white-space:nowrap"></div>
+        </div>
+      </div>
+
       <!-- Schedule table -->
       <div style="overflow-x:auto;padding:0 0 4px">
         <table id="sched-table" style="width:100%;border-collapse:collapse;font-size:11px;min-width:580px">
@@ -3422,6 +3433,35 @@ function generateSchedule(btn) {
           lastDay = day;
         }
         tbody.innerHTML = tHtml;
+      }
+
+      // PAR hours banner
+      var parBanner = document.getElementById('sched-par-banner');
+      var parText   = document.getElementById('sched-par-text');
+      var parBadge  = document.getElementById('sched-par-badge');
+      if (parBanner && data.hours_budget && data.hours_scheduled) {
+        var budget    = data.hours_budget;
+        var scheduled = data.hours_scheduled;
+        var diff      = Math.round((scheduled - budget) * 10) / 10;
+        var absDiff   = Math.abs(diff);
+        var onTrack   = absDiff <= 5;
+        var proj      = data.projected_revenue ? '$' + Math.round(data.projected_revenue).toLocaleString() : '—';
+        var budgetDol = data.labor_budget_dollars ? '$' + Math.round(data.labor_budget_dollars).toLocaleString() : '—';
+        parText.innerHTML = 'Projected revenue: <strong>' + proj + '</strong> &nbsp;&#xB7;&nbsp; '
+          + 'Labor budget (' + (data.labor_target || 30) + '%): <strong>' + budgetDol + '</strong><br>'
+          + 'PAR target: <strong>' + budget + 'h</strong> &nbsp;&#xB7;&nbsp; '
+          + 'This schedule: <strong>' + scheduled + 'h</strong>';
+        if (onTrack) {
+          parBadge.textContent = '✓ On PAR';
+          parBadge.style.background = 'rgba(111,207,151,.2)';
+          parBadge.style.color = '#6fcf97';
+        } else {
+          var overUnder = diff > 0 ? '+' + absDiff + 'h over' : absDiff + 'h under';
+          parBadge.textContent = overUnder + ' PAR';
+          parBadge.style.background = 'rgba(235,87,87,.18)';
+          parBadge.style.color = '#eb5757';
+        }
+        parBanner.style.display = 'block';
       }
 
       if (panel) panel.style.display = 'block';

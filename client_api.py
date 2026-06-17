@@ -787,14 +787,20 @@ def generate_schedule_json(current_user):
     import csv as _csv_mod, io as _io_sched
     try:
         result = _build_schedule_result(current_user["restaurant_id"])
-        # Parse CSV into rows for the preview table
+        # Parse CSV into rows for the preview table + count total scheduled hours
         preview_rows = []
+        hours_scheduled = 0.0
         try:
             reader = _csv_mod.DictReader(_io_sched.StringIO(result["schedule_csv"]))
             for row in reader:
                 preview_rows.append(dict(row))
+                try:
+                    hours_scheduled += float(row.get("scheduled_hours") or 0)
+                except (ValueError, TypeError):
+                    pass
         except Exception:
             pass
+        hours_scheduled = round(hours_scheduled, 1)
         return jsonify(
             ok=True,
             schedule_csv=result["schedule_csv"],
@@ -802,6 +808,10 @@ def generate_schedule_json(current_user):
             preview_rows=preview_rows,
             week_dates=result.get("week_dates", []),
             week_days=result.get("week_days", []),
+            projected_revenue=result.get("projected_revenue", 0),
+            hours_budget=result.get("hours_budget", 0),
+            labor_budget_dollars=result.get("labor_budget_dollars", 0),
+            hours_scheduled=hours_scheduled,
         )
     except Exception as e:
         import traceback; traceback.print_exc()
