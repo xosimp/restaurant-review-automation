@@ -1111,6 +1111,12 @@ def _seed_ryan_background():
             _refresh_gia_mia_reviews(_ryan_row["id"])
     except Exception as _bg_e:
         print(f"  Ryan seed background error: {_bg_e}")
+    # Seed Gia Mia demo data after Ryan seed completes (avoids concurrent DB writes)
+    try:
+        from models import _auto_seed_demo_clients as _asdc
+        _asdc()
+    except Exception as _gm_e:
+        print(f"  Gia Mia auto-seed error: {_gm_e}")
 
 
 def _ensure_gia_mia_vibe():

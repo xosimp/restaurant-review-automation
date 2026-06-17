@@ -491,9 +491,6 @@ def init_db(db_path: str = DB_PATH):
     # Ensure any columns managed by ensure_columns() are present before seeding
     ensure_columns()
     print(f"Database initialised at {db_path}")
-    import threading as _threading
-    _t = _threading.Thread(target=_auto_seed_demo_clients, daemon=True)
-    _t.start()
 
 
 def _auto_seed_demo_clients():
@@ -507,13 +504,18 @@ def _auto_seed_demo_clients():
 def _seed_gia_mia(db_path: str = DB_PATH):
     """Seed Gia Mia (id=2) labor history + shift CSV unless real upload exists."""
     from datetime import date, timedelta
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=5)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
 
     # Check if real (non-seed) shifts already uploaded
-    row = conn.execute(
-        "SELECT shifts_source FROM client_data WHERE restaurant_id=2"
-    ).fetchone()
+    try:
+        row = conn.execute(
+            "SELECT shifts_source FROM client_data WHERE restaurant_id=2"
+        ).fetchone()
+    except Exception:
+        conn.close()
+        return
     if row and row["shifts_source"] == "upload":
         conn.close()
         return  # preserve real data
