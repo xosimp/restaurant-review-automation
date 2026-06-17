@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone, timedelta
-from flask import Blueprint, jsonify, render_template, request, session, abort
+from flask import Blueprint, jsonify, render_template, request, abort
 from status_manager import (
     get_all_statuses, update_service_status, get_open_incidents,
     get_recent_incidents, get_incident_updates, create_incident,
@@ -67,7 +67,11 @@ def api_status():
 # ── Admin endpoints (require login) ──────────────────────────────────────────
 
 def _require_admin():
-    if not session.get("admin"):
+    from flask import request as _req
+    from models import get_session_user
+    token = _req.cookies.get("session_token")
+    user = get_session_user(token) if token else None
+    if not user or not user.get("is_admin"):
         abort(403)
 
 

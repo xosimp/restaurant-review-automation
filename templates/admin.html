@@ -880,47 +880,54 @@ async function postIncident() {
 </div>
 
 <!-- System Status Modal -->
-<div id="status-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,.55);align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px">
-  <div style="background:#fff;border-radius:12px;width:100%;max-width:620px;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.25)">
-    <button onclick="closeStatusModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;color:var(--ink3);cursor:pointer;line-height:1">✕</button>
-    <div style="padding:24px 24px 0">
+<div id="status-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,.55);align-items:center;justify-content:center;padding:24px 16px">
+  <div style="background:#fff;border-radius:12px;width:100%;max-width:600px;max-height:90vh;overflow-y:auto;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <button onclick="closeStatusModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;color:var(--ink3);cursor:pointer;line-height:1;z-index:1">✕</button>
+
+    <!-- Header -->
+    <div style="padding:22px 24px 16px;border-bottom:1px solid var(--paper3)">
       <div style="font-size:16px;font-weight:700;color:var(--ink)">System Status</div>
       <div style="font-size:12px;color:var(--ink3);margin-top:2px">Manage service status visible at <a href="/status" target="_blank" style="color:var(--ember)">status.cavnar.ai</a></div>
     </div>
 
     <!-- Service statuses -->
-    <div style="padding:20px 24px">
+    <div style="padding:18px 24px">
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:10px">Service Statuses</div>
       <div id="status-services-list" style="color:var(--ink3);font-size:13px">Loading…</div>
     </div>
 
-    <div style="height:1px;background:var(--paper3);margin:0 24px"></div>
+    <div style="height:1px;background:var(--paper3)"></div>
 
     <!-- Post incident -->
-    <div style="padding:20px 24px">
+    <div style="padding:18px 24px">
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:12px">Post Incident</div>
-      <input id="inc-title" type="text" placeholder="Incident title…" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:inherit;font-size:13px;margin-bottom:8px" />
-      <textarea id="inc-body" placeholder="Initial status update message…" rows="2" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:inherit;font-size:13px;resize:vertical;margin-bottom:8px"></textarea>
-      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-        <select id="inc-severity" style="padding:6px 8px;border:1px solid var(--paper3);border-radius:6px;font-family:inherit;font-size:12px">
+      <input id="inc-title" type="text" placeholder="Incident title…" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:inherit;font-size:13px;margin-bottom:8px" />
+      <textarea id="inc-body" placeholder="Initial status update message…" rows="2" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:inherit;font-size:13px;resize:vertical;margin-bottom:10px"></textarea>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <span style="font-size:12px;color:var(--ink3);white-space:nowrap">Severity:</span>
+        <select id="inc-severity" style="padding:6px 8px;border:1px solid var(--paper3);border-radius:7px;font-family:inherit;font-size:12px">
           <option value="degraded">Degraded</option>
           <option value="outage">Outage</option>
           <option value="maintenance">Maintenance</option>
         </select>
-        <div style="font-size:11px;color:var(--ink3)">Affected services:</div>
-        <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="inc-svc-check" value="dashboard"> Dashboard</label>
-        <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="inc-svc-check" value="ai_drafting"> AI Drafting</label>
-        <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="inc-svc-check" value="review_sync"> Review Sync</label>
-        <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="inc-svc-check" value="email"> Email</label>
-        <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="inc-svc-check" value="labor_analytics"> Labor</label>
-        <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="inc-svc-check" value="scheduler"> Scheduler</label>
       </div>
-      <button onclick="postIncident()" class="btn-primary" style="padding:9px 18px;font-size:13px">Post incident</button>
+      <div style="margin-bottom:14px">
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:6px">Affected services:</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+          <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" class="inc-svc-check" value="dashboard"> Dashboard</label>
+          <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" class="inc-svc-check" value="ai_drafting"> AI Drafting</label>
+          <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" class="inc-svc-check" value="review_sync"> Review Sync</label>
+          <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" class="inc-svc-check" value="email"> Email</label>
+          <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" class="inc-svc-check" value="labor_analytics"> Labor</label>
+          <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" class="inc-svc-check" value="scheduler"> Scheduler</label>
+        </div>
+      </div>
+      <button onclick="postIncident()" class="btn-primary">Post incident</button>
     </div>
 
     <div style="padding:12px 24px;background:var(--paper2);border-radius:0 0 12px 12px;display:flex;justify-content:space-between;align-items:center">
       <a href="/status" target="_blank" style="font-size:12px;color:var(--ember);text-decoration:none;font-weight:600">View public status page →</a>
-      <button onclick="closeStatusModal()" style="padding:8px 16px;font-size:13px;background:none;border:1px solid var(--paper3);border-radius:6px;font-family:inherit;cursor:pointer;font-weight:600">Close</button>
+      <button onclick="closeStatusModal()" style="padding:8px 16px;font-size:13px;background:none;border:1px solid var(--paper3);border-radius:7px;font-family:inherit;cursor:pointer;font-weight:600">Close</button>
     </div>
   </div>
 </div>
