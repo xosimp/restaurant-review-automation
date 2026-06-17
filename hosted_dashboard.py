@@ -861,7 +861,7 @@ def _do_seed_ryan():
         from models import create_restaurant, Restaurant
         ryan_rid = create_restaurant(Restaurant(
                 name="Gia Mia",
-                owner_email="will@cavnar.ai",
+                owner_email="cavnarwill@gmail.com",
                 owner_name="Brian",
                 google_place_id="ChIJpS0UwhwDD4gRVqMFnJkDLvQ",
                 neighborhood="St. Charles, Illinois — downtown First Street Plaza",
@@ -874,7 +874,7 @@ def _do_seed_ryan():
                 billing_status="trial",
         ))
         ryan_pw = os.getenv("RYAN_TEST_PASSWORD", "charthouse123")
-        create_user(ryan_rid, "ryan", "will@cavnar.ai", ryan_pw, is_admin=False)
+        create_user(ryan_rid, "ryan", "cavnarwill@gmail.com", ryan_pw, is_admin=False)
         print(f"\n  Test client created: ryan / {ryan_pw} (Gia Mia, St. Charles IL)\n")
 
         # Seed labor history FIRST (no API calls, instant) — always replace on fresh deploy
@@ -1048,7 +1048,7 @@ def _seed_ryan_background():
                 _t_ryan.sleep(1)
         conn = get_conn()
         ryan_exists = conn.execute(
-                "SELECT id FROM users WHERE email=?", ("ryancavnar@gmail.com",)
+                "SELECT id FROM users WHERE username=?", ("ryan",)
         ).fetchone()
         conn.close()
         if not ryan_exists:
@@ -1058,8 +1058,7 @@ def _seed_ryan_background():
         # Always refresh reviews on every deploy so real content stays current
         conn2 = get_conn()
         _ryan_row = conn2.execute(
-            "SELECT r.id FROM restaurants r JOIN users u ON u.restaurant_id=r.id WHERE u.email=?",
-            ("ryancavnar@gmail.com",)
+            "SELECT id FROM restaurants WHERE name=?", ("Gia Mia",)
         ).fetchone()
         conn2.close()
         if _ryan_row:
@@ -1071,10 +1070,9 @@ def _seed_ryan_background():
 def _ensure_gia_mia_vibe():
     try:
         conn = get_conn()
-        # Find by either old or new email
+        # Search by restaurant name — avoids colliding with admin's will@cavnar.ai
         row = conn.execute(
-            "SELECT id FROM restaurants WHERE owner_email IN (?,?)",
-            ("ryancavnar@gmail.com", "will@cavnar.ai")
+            "SELECT id FROM restaurants WHERE name=?", ("Gia Mia",)
         ).fetchone()
         if row:
             conn.execute("""
@@ -1083,14 +1081,14 @@ def _ensure_gia_mia_vibe():
                     vibe=?, known_for=?
                 WHERE id=?
             """, (
-                "will@cavnar.ai", "Brian",
+                "cavnarwill@gmail.com", "Brian",
                 "Contemporary Italian pizza bar with wood-fired Neapolitan pizzas and a lively bar scene",
                 "Wood-fired Neapolitan pizza, fresh pasta, small plates, craft cocktails, half-price wine Wednesdays, patio dining",
                 row["id"],
             ))
             conn.execute(
                 "UPDATE users SET email=? WHERE restaurant_id=? AND username=?",
-                ("will@cavnar.ai", row["id"], "ryan")
+                ("cavnarwill@gmail.com", row["id"], "ryan")
             )
             conn.commit()
             print(f"  Gia Mia profile updated (email, owner, vibe, known_for) on restaurant id={row['id']}")
