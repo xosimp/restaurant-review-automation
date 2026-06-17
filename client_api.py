@@ -703,7 +703,8 @@ def _build_schedule_result(restaurant_id):
     if not shifts:
         raise ValueError("No shift data available — upload shifts CSV first")
     analysis = analyse_shifts_for_restaurant(restaurant_id)
-    rate     = get_hourly_rate(restaurant_id)
+    # Use blended rate from per-role rates if available, otherwise flat rate
+    rate = analysis.get("blended_rate") or get_hourly_rate(restaurant_id)
     target   = float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0
     owner    = restaurant.owner_name if restaurant else None
     staff_notes = get_staff_notes(restaurant_id) or None
@@ -780,6 +781,7 @@ def _build_schedule_result(restaurant_id):
         upcoming_events=upcoming_events if upcoming_events else None,
         monthly_revenue_target=monthly_rev_target,
         hours_notes=getattr(restaurant, 'hours_notes', None),
+        role_rates=analysis.get("role_rates") or {},
     )
     result["restaurant_name"] = restaurant.name if restaurant else "Restaurant"
     return result

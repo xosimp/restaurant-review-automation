@@ -141,19 +141,32 @@ def analyse_shifts_for_restaurant(restaurant_id: int) -> dict:
     shifts = load_shifts_for_restaurant(restaurant_id)
     rate   = get_hourly_rate(restaurant_id)
     target = get_labor_target(restaurant_id)
-    result = analyse_shifts(shifts, hourly_rate=rate, labor_target=target)
+    from models import get_role_rates, compute_blended_rate
+    role_rates = get_role_rates(restaurant_id)
+    blended = compute_blended_rate(shifts, role_rates, fallback=rate)
+    result = analyse_shifts(shifts, hourly_rate=blended, labor_target=target, role_rates=role_rates)
     result['is_live'] = is_live
+    result['blended_rate'] = blended
+    result['role_rates'] = {k: v for k, v in role_rates.items() if k != "_default"}
     return result
+
+
+def _shift_rate(shift: dict, role_rates: dict, fallback: float) -> float:
+    """Return the hourly rate for a single shift based on role."""
+    default = role_rates.get("_default", fallback)
+    return role_rates.get(shift.get("role", ""), default)
 
 
 def analyse_shifts(shifts: list[dict],
                    hourly_rate: float = DEFAULT_HOURLY_RATE,
-                   labor_target: float = 30.0) -> dict:
+                   labor_target: float = 30.0,
+                   role_rates: dict = None) -> dict:
     """Compute labor metrics from raw shift data."""
-    HOURLY_RATE  = hourly_rate
+    if role_rates is None:
+        role_rates = {"_default": hourly_rate}
     LABOR_TARGET = labor_target
-    OVERSTAFF_THRESHOLD = labor_target  # flag any day over target
-    by_day = defaultdict(lambda: {"scheduled": 0, "actual": 0, "sales": 0, "shifts": []})
+    OVERSTAFF_THRESHOLD = labor_target
+    by_day = defaultdict(lambda: {"scheduled": 0, "actual": 0, "sales": 0, "shifts": [], "labor_cost": 0})
     by_employee = defaultdict(lambda: {"scheduled": 0, "actual": 0, "shifts": 0})
     by_dayofweek = defaultdict(lambda: {"labor_cost": 0, "sales": 0, "count": 0})
     overtime_flags = []
@@ -165,26 +178,28 @@ def analyse_shifts(shifts: list[dict],
         sched  = float(s.get("scheduled_hours") or 0)
         actual = float(s.get("actual_hours") or 0)
         sales  = float(s.get("sales_that_day") or s.get("sales") or 0)
+        rate   = _shift_rate(s, role_rates, hourly_rate)
 
         by_day[day]["scheduled"] += sched
         by_day[day]["actual"]    += actual
         by_day[day]["sales"]     = sales
         by_day[day]["shifts"].append(s)
+        by_day[day]["labor_cost"] += actual * rate
 
         by_employee[emp]["scheduled"] += sched
         by_employee[emp]["actual"]    += actual
         by_employee[emp]["shifts"]    += 1
 
-        labor_cost = actual * HOURLY_RATE
+        labor_cost = actual * rate
         by_dayofweek[dow]["labor_cost"] += labor_cost
         by_dayofweek[dow]["sales"]      += sales
         by_dayofweek[dow]["count"]      += 1
 
-    # Find overstaffed days (labor % > 35% of sales)
+    # Find overstaffed days
     overstaffed = []
     understaffed = []
     for date, d in by_day.items():
-        labor_cost = d["actual"] * HOURLY_RATE
+        labor_cost = d["labor_cost"]  # already summed with per-role rates
         labor_pct  = (labor_cost / d["sales"] * 100) if d["sales"] else 0
         d["labor_cost"] = round(labor_cost, 2)
         d["labor_pct"]  = round(labor_pct, 1)
@@ -462,7 +477,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  yoy_context: list = None,
                                  upcoming_events: list = None,
                                  monthly_revenue_target: float = 0.0,
-                                 hours_notes: str = None) -> dict:
+                                 hours_notes: str = None,
+                                 role_rates: dict = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -531,6 +547,15 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     hours_budget = round((projected_revenue * (labor_target / 100)) / hourly_rate, 1) if hourly_rate else 0
     labor_budget_dollars = round(projected_revenue * (labor_target / 100), 0)
 
+    # Build role rates block
+    role_rates_block = ""
+    if role_rates:
+        rate_lines = [f"  {role}: ${rate:.2f}/hr" for role, rate in sorted(role_rates.items()) if role != "_default"]
+        if rate_lines:
+            role_rates_block = (f"\n\nPer-role hourly rates (use for cost-aware scheduling decisions):\n"
+                                + "\n".join(rate_lines)
+                                + f"\n  Blended rate: ${hourly_rate:.2f}/hr (weighted average)")
+
     # Build hours/operations block
     hours_block = ""
     if hours_notes:
@@ -553,7 +578,7 @@ CONTEXT:
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
 - Recent labor % by day of week: {dow}
-- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{hours_block}{par_block}{constraints}
+- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{role_rates_block}{hours_block}{par_block}{constraints}
 
 Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
