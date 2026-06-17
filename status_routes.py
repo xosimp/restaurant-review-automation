@@ -67,9 +67,8 @@ def api_status():
 # ── Admin endpoints (require login) ──────────────────────────────────────────
 
 def _require_admin():
-    from flask import request as _req
-    from models import get_session_user
-    token = _req.cookies.get("session_token")
+    from auth import get_session_user
+    token = request.cookies.get("session_token")
     user = get_session_user(token) if token else None
     if not user or not user.get("is_admin"):
         abort(403)
