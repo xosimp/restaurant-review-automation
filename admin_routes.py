@@ -1405,12 +1405,10 @@ def seed_labor_history(current_user):
         "- Cooks: 1 cook always stays through close; cut others 45min–1h early on slow nights.\n"
         "- Bussers cut 30min before close."
     )
-    # Placeholder rates — update once real numbers confirmed
-    gia_mia_role_rates = '{"Server": 10.0, "Cook": 18.0, "Bartender": 10.0, "Host": 14.0, "Busser": 10.0}'
     conn.execute("""
-        UPDATE restaurants SET monthly_revenue_target=?, labor_target_pct=?, hours_notes=?, role_rates_json=?
+        UPDATE restaurants SET monthly_revenue_target=?, labor_target_pct=?, hours_notes=?, role_rates_json=NULL
         WHERE id=?
-    """, (365000.0, 23.0, gia_mia_hours, gia_mia_role_rates, restaurant_id))
+    """, (365000.0, 23.0, gia_mia_hours, restaurant_id))
     conn.commit()
 
     # Seed realistic Gia Mia shift CSV — 2 weeks reflecting actual metrics
