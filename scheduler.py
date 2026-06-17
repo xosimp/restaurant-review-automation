@@ -481,9 +481,14 @@ def refresh_expiring_tokens():
 
 # ── Scheduler loop ────────────────────────────────────────────────────────────
 
-_last_fetch_date   = None
-_last_digest_date  = None
-_last_backup_date  = None
+_last_fetch_date      = None
+_last_digest_date     = None
+_last_backup_date     = None
+_last_toast_sync_date = None
+_last_onboard_date    = None
+_last_stale_inv_date  = None
+_last_inactive_date   = None
+_last_monthly_date    = None
 
 
 def backup_db():
@@ -771,6 +776,8 @@ def check_inactive_clients():
 
 def scheduler_loop():
     global _last_fetch_date, _last_digest_date, _last_backup_date
+    global _last_toast_sync_date, _last_onboard_date, _last_stale_inv_date
+    global _last_inactive_date, _last_monthly_date
     log.info("Scheduler started — review fetch every 4hr (8am/12pm/4pm/8pm CT), digests 9am on client's chosen day")
 
 
@@ -803,7 +810,8 @@ def scheduler_loop():
                 except Exception as e:
                     log.error(f"Competitor analysis scheduler error: {e}")
 
-            if now.hour == 3 and _last_backup_date != today:
+            if now.hour == 3 and _last_toast_sync_date != today:
+                _last_toast_sync_date = today
                 log.info("Running nightly Toast POS sync...")
                 run_toast_sync()
 
@@ -822,13 +830,15 @@ def scheduler_loop():
                 log.info("Running weekly digest check...")
                 run_weekly_digests()
 
-            if now.hour == 10 and now.weekday() == 0 and _last_digest_date != today:
+            if now.hour == 10 and now.weekday() == 0 and _last_stale_inv_date != today:
+                _last_stale_inv_date = today
                 # Monday 10am — check for stale inventory data
                 log.info("Running stale inventory check...")
                 check_stale_inventory()
 
             # 1st of the month at 9am — send monthly summary to all active clients
-            if now.day == 1 and now.hour == 9 and _last_digest_date != today:
+            if now.day == 1 and now.hour == 9 and _last_monthly_date != today:
+                _last_monthly_date = today
                 log.info("Running monthly summary emails...")
                 try:
                     from emails import send_monthly_summary_email
@@ -853,12 +863,14 @@ def scheduler_loop():
                 except Exception as e:
                     log.error(f"Monthly summary scheduler error: {e}")
 
-            if now.hour == 10 and _last_digest_date != today:
+            if now.hour == 10 and _last_onboard_date != today:
+                _last_onboard_date = today
                 # 10am daily — onboarding email sequence
                 log.info("Running onboarding sequence check...")
                 run_onboarding_sequence()
 
-            if now.hour == 11 and now.weekday() == 0 and _last_digest_date != today:
+            if now.hour == 11 and now.weekday() == 0 and _last_inactive_date != today:
+                _last_inactive_date = today
                 # Monday 11am — inactive client check
                 log.info("Running inactive client check...")
                 check_inactive_clients()

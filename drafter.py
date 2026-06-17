@@ -59,12 +59,12 @@ def draft_response(review_id: int, rating: int, text: str,
     try:
         conn = get_conn()
         row = conn.execute(
-            "SELECT review_name, platform FROM reviews WHERE id=?", (review_id,)
+            "SELECT author, platform FROM reviews WHERE id=?", (review_id,)
         ).fetchone()
         conn.close()
         if row:
             platform = row["platform"] or "google"
-            name = (row["review_name"] or "").strip()
+            name = (row["author"] or "").strip()
             first = name.split()[0] if name else ""
             if len(first) > 1 and first.lower() not in (
                 "a","an","the","anonymous","user","google","yelp","local","guide"
