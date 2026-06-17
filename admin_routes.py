@@ -1387,17 +1387,22 @@ def seed_labor_history(current_user):
     conn.commit()
     # Also set revenue target, labor target, and hours/operations notes
     gia_mia_hours = (
-        "Open 11:00am daily. "
-        "Cooks arrive 8:30am (2.5h before open for prep). "
-        "Servers arrive 10:00am (1h before open for side work and opening duties). "
-        "Hosts and bussers arrive 10:30am. "
-        "Kitchen close: Mon-Thu 9:30pm, Fri-Sat 11:30pm, Sun 9:00pm. "
-        "Last guest: Mon-Thu 10:00pm, Fri-Sat midnight, Sun 9:30pm. "
-        "Closer policy: always keep 2 servers + 1 bartender until close; "
-        "cut remaining servers earlier when projected sales are lower (slow Mon/Tue = cut non-closers by 8:30pm), "
-        "keep full floor on high-volume nights (Fri/Sat = cut non-closers by 9:30pm only). "
-        "Fri/Sat closers: 3 servers + 2 bartenders. "
-        "Cooks: 1 cook always stays through kitchen close; cut others 1h early on slow nights, keep all on Fri/Sat."
+        "RESTAURANT HOURS: Open 11:00am daily. "
+        "Close: 9:00pm Sun–Wed; 10:00pm Thu–Sat. "
+        "\n\nSTAFF ARRIVAL TIMES (hard rules — do not deviate):\n"
+        "- Bussers: arrive 8:00am every day.\n"
+        "- Cooks: arrive 8:30am Mon–Thu; arrive 8:00am Fri, Sat, Sun.\n"
+        "- Servers: arrive 10:00am every day (1 hour before 11am open for side work).\n"
+        "- Bartenders: NO morning shifts — evening only. "
+        "Bartenders start no earlier than 3:00pm. "
+        "Bartenders stay 1 hour after close: until 10:00pm Sun–Wed; until 11:00pm Thu–Sat.\n"
+        "\nSHIFT END / CLOSER RULES:\n"
+        "- Always keep 2 servers as closers (until restaurant close time).\n"
+        "- Cut all other servers 1–1.5h before close when volume allows "
+        "(earlier cut on slow Mon/Tue projections, later cut on high-volume Thu–Sat).\n"
+        "- Fri/Sat: 3 server closers + 2 bartender closers.\n"
+        "- Cooks: 1 cook always stays through close; cut others 45min–1h early on slow nights.\n"
+        "- Bussers cut 30min before close."
     )
     conn.execute("""
         UPDATE restaurants SET monthly_revenue_target=?, labor_target_pct=?, hours_notes=?
