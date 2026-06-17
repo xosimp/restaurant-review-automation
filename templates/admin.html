@@ -64,7 +64,10 @@ input:focus,select:focus{border-color:var(--ember)}
     <div class="hdr-logo">Cavnar <em>AI</em></div>
     <span class="hdr-badge">Admin</span>
   </div>
-  <a href="/logout" class="logout-btn">Sign out</a>
+  <div style="display:flex;align-items:center;gap:12px">
+    <button onclick="openStatusModal()" style="padding:6px 13px;font-size:12px;font-weight:600;font-family:'DM Sans',sans-serif;background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;color:rgba(255,255,255,.75);cursor:pointer">System Status</button>
+    <a href="/logout" class="logout-btn">Sign out</a>
+  </div>
 </header>
 <div class="container">
 
@@ -671,7 +674,91 @@ async function disconnectToast() {
 
 document.addEventListener('click', function(e){
   if(e.target === document.getElementById('toast-modal')) closeToastModal();
+  if(e.target === document.getElementById('status-modal')) closeStatusModal();
 });
+
+// ── Status management modal ────────────────────────────────────────────────────
+
+function openStatusModal() {
+  var m = document.getElementById('status-modal');
+  m.style.display = 'flex';
+  loadStatusServices();
+}
+
+function closeStatusModal() {
+  document.getElementById('status-modal').style.display = 'none';
+}
+
+function loadStatusServices() {
+  fetch('/admin/status/services')
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      var map = {};
+      (data.statuses || []).forEach(function(s){ map[s.service_key] = s; });
+      var html = '';
+      (data.services || []).forEach(function(svc){
+        var cur = map[svc.key] || {};
+        var st = cur.status || 'operational';
+        var msg = cur.message || '';
+        html += '<div style="border-bottom:1px solid var(--paper3);padding:12px 0">';
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">';
+        html += '<div><div style="font-weight:600;font-size:14px">' + svc.name + '</div>';
+        html += '<div style="font-size:11px;color:var(--ink3)">' + (svc.description || '') + '</div></div>';
+        html += '<select onchange="_svcStatusChange(this,\'' + svc.key + '\')" style="padding:5px 8px;border:1px solid var(--paper3);border-radius:6px;font-family:inherit;font-size:12px">';
+        ['operational','degraded','outage','maintenance'].forEach(function(v){
+          html += '<option value="' + v + '"' + (st === v ? ' selected' : '') + '>' + v.charAt(0).toUpperCase() + v.slice(1) + '</option>';
+        });
+        html += '</select></div>';
+        html += '<input id="svc-msg-' + svc.key + '" type="text" placeholder="Optional status message…" value="' + (msg||'').replace(/"/g,'&quot;') + '" ';
+        html += 'style="width:100%;margin-top:6px;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:inherit;font-size:12px" />';
+        html += '<button onclick="_saveServiceStatus(\'' + svc.key + '\')" style="margin-top:6px;padding:5px 12px;font-size:11px;font-weight:600;background:var(--ink);color:#fff;border:none;border-radius:5px;cursor:pointer">Save</button>';
+        html += '</div>';
+      });
+      document.getElementById('status-services-list').innerHTML = html;
+    });
+}
+
+function _svcStatusChange(sel, key) {
+  /* no-op, saved on button click */
+}
+
+async function _saveServiceStatus(key) {
+  var sel = document.querySelector('#status-services-list select[onchange*="\'' + key + '\'"]');
+  var status = sel ? sel.value : 'operational';
+  var msgEl = document.getElementById('svc-msg-' + key);
+  var message = msgEl ? msgEl.value.trim() : '';
+  var res = await fetch('/admin/status/update', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({service_key: key, status: status, message: message})
+  });
+  var data = await res.json();
+  if(data.ok) toast('Status updated');
+  else toast('Error: ' + (data.error || 'unknown'));
+}
+
+async function postIncident() {
+  var title    = document.getElementById('inc-title').value.trim();
+  var body     = document.getElementById('inc-body').value.trim();
+  var severity = document.getElementById('inc-severity').value;
+  if(!title) { toast('Title is required'); return; }
+  var checkboxes = document.querySelectorAll('.inc-svc-check:checked');
+  var keys = Array.from(checkboxes).map(function(c){ return c.value; });
+  var res = await fetch('/admin/status/incident', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({title: title, body: body, severity: severity, affected_keys: keys, status: 'investigating'})
+  });
+  var data = await res.json();
+  if(data.ok) {
+    toast('Incident posted');
+    document.getElementById('inc-title').value = '';
+    document.getElementById('inc-body').value  = '';
+    document.querySelectorAll('.inc-svc-check').forEach(function(c){ c.checked = false; });
+  } else {
+    toast('Error: ' + (data.error || 'unknown'));
+  }
+}
 </script>
   <!-- Email Log -->
   <div style="max-width:860px;margin:0 auto">
@@ -788,6 +875,52 @@ document.addEventListener('click', function(e){
 
     <div style="margin-top:16px;padding-top:14px;border-top:1px solid #f0ece6;font-size:11px;color:var(--ink3);line-height:1.6">
       <strong>How to get credentials:</strong> Toast Admin → Integrations → API Access → create a new credential set with <em>Labor</em> and <em>Orders</em> permissions. Copy the Client ID, Secret, and Location GUID here.
+    </div>
+  </div>
+</div>
+
+<!-- System Status Modal -->
+<div id="status-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,.55);align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px">
+  <div style="background:#fff;border-radius:12px;width:100%;max-width:620px;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <button onclick="closeStatusModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;color:var(--ink3);cursor:pointer;line-height:1">✕</button>
+    <div style="padding:24px 24px 0">
+      <div style="font-size:16px;font-weight:700;color:var(--ink)">System Status</div>
+      <div style="font-size:12px;color:var(--ink3);margin-top:2px">Manage service status visible at <a href="/status" target="_blank" style="color:var(--ember)">status.cavnar.ai</a></div>
+    </div>
+
+    <!-- Service statuses -->
+    <div style="padding:20px 24px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:10px">Service Statuses</div>
+      <div id="status-services-list" style="color:var(--ink3);font-size:13px">Loading…</div>
+    </div>
+
+    <div style="height:1px;background:var(--paper3);margin:0 24px"></div>
+
+    <!-- Post incident -->
+    <div style="padding:20px 24px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:12px">Post Incident</div>
+      <input id="inc-title" type="text" placeholder="Incident title…" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:inherit;font-size:13px;margin-bottom:8px" />
+      <textarea id="inc-body" placeholder="Initial status update message…" rows="2" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:inherit;font-size:13px;resize:vertical;margin-bottom:8px"></textarea>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <select id="inc-severity" style="padding:6px 8px;border:1px solid var(--paper3);border-radius:6px;font-family:inherit;font-size:12px">
+          <option value="degraded">Degraded</option>
+          <option value="outage">Outage</option>
+          <option value="maintenance">Maintenance</option>
+        </select>
+        <div style="font-size:11px;color:var(--ink3)">Affected services:</div>
+        <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="inc-svc-check" value="dashboard"> Dashboard</label>
+        <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="inc-svc-check" value="ai_drafting"> AI Drafting</label>
+        <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="inc-svc-check" value="review_sync"> Review Sync</label>
+        <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="inc-svc-check" value="email"> Email</label>
+        <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="inc-svc-check" value="labor_analytics"> Labor</label>
+        <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="inc-svc-check" value="scheduler"> Scheduler</label>
+      </div>
+      <button onclick="postIncident()" class="btn-primary" style="padding:9px 18px;font-size:13px">Post incident</button>
+    </div>
+
+    <div style="padding:12px 24px;background:var(--paper2);border-radius:0 0 12px 12px;display:flex;justify-content:space-between;align-items:center">
+      <a href="/status" target="_blank" style="font-size:12px;color:var(--ember);text-decoration:none;font-weight:600">View public status page →</a>
+      <button onclick="closeStatusModal()" style="padding:8px 16px;font-size:13px;background:none;border:1px solid var(--paper3);border-radius:6px;font-family:inherit;cursor:pointer;font-weight:600">Close</button>
     </div>
   </div>
 </div>

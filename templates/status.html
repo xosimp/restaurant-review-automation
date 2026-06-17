@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cavnar AI — System Status</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --ink:    #0e0c0a;
+      --paper:  #f7f4ef;
+      --muted:  #6b6560;
+      --border: #e4e0d8;
+      --ember:  #c84b2f;
+      --navy:   #1e3a5f;
+      --green:  #2d7a4f;
+      --amber:  #b45309;
+      --red:    #c84b2f;
+      --blue:   #1e3a5f;
+      --radius: 10px;
+    }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--paper);
+      color: var(--ink);
+      min-height: 100vh;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    .site-header {
+      background: var(--ink);
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .site-header .logo-mark {
+      width: 32px;
+      height: 32px;
+      background: var(--ember);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: #fff;
+      font-size: 15px;
+      letter-spacing: -0.5px;
+      flex-shrink: 0;
+    }
+    .site-header .brand {
+      color: #fff;
+      font-weight: 600;
+      font-size: 16px;
+    }
+    .site-header .brand span {
+      color: var(--ember);
+    }
+    .site-header .header-sep {
+      color: rgba(255,255,255,0.3);
+      margin: 0 4px;
+    }
+    .site-header .header-sub {
+      color: rgba(255,255,255,0.55);
+      font-size: 14px;
+    }
+
+    /* ── Banner ─────────────────────────────────────────────────────────── */
+    .banner {
+      padding: 14px 32px;
+      font-weight: 600;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .banner.operational { background: #d1fae5; color: #065f46; }
+    .banner.degraded    { background: #fef3c7; color: #92400e; }
+    .banner.outage      { background: #fee2e2; color: #991b1b; }
+    .banner.maintenance { background: #dbeafe; color: #1e40af; }
+    .banner .dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .banner.operational .dot { background: #059669; }
+    .banner.degraded    .dot { background: #d97706; }
+    .banner.outage      .dot { background: #dc2626; }
+    .banner.maintenance .dot { background: #2563eb; }
+
+    /* ── Layout ─────────────────────────────────────────────────────────── */
+    .page-wrap {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+
+    /* ── Section headings ────────────────────────────────────────────────── */
+    .section-heading {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+
+    /* ── Service cards ───────────────────────────────────────────────────── */
+    .services-list {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 40px;
+    }
+    .service-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .service-row:last-child { border-bottom: none; }
+    .service-info .service-name {
+      font-weight: 600;
+      font-size: 15px;
+    }
+    .service-info .service-desc {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .status-pill {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 20px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .pill-operational { background: #d1fae5; color: #065f46; }
+    .pill-degraded    { background: #fef3c7; color: #92400e; }
+    .pill-outage      { background: #fee2e2; color: #991b1b; }
+    .pill-maintenance { background: #dbeafe; color: #1e40af; }
+
+    /* ── Incidents ───────────────────────────────────────────────────────── */
+    .incident-card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .incident-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .incident-title {
+      font-weight: 600;
+      font-size: 15px;
+    }
+    .incident-meta {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 3px;
+    }
+    .incident-severity {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      flex-shrink: 0;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .sev-degraded    { background: #fef3c7; color: #92400e; }
+    .sev-outage      { background: #fee2e2; color: #991b1b; }
+    .sev-maintenance { background: #dbeafe; color: #1e40af; }
+    .incident-updates { padding: 0; }
+    .update-row {
+      display: flex;
+      gap: 16px;
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      font-size: 14px;
+    }
+    .update-row:last-child { border-bottom: none; }
+    .update-time {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      padding-top: 1px;
+      min-width: 100px;
+    }
+    .update-status {
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: capitalize;
+      min-width: 90px;
+      color: var(--muted);
+    }
+    .no-incidents {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px 20px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+      margin-bottom: 40px;
+    }
+
+    /* ── Footer ─────────────────────────────────────────────────────────── */
+    .status-footer {
+      margin-top: 48px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .status-footer a {
+      color: var(--ember);
+      text-decoration: none;
+    }
+    #last-updated { font-style: italic; }
+
+    /* ── Responsive ──────────────────────────────────────────────────────── */
+    @media (max-width: 560px) {
+      .site-header { padding: 14px 16px; }
+      .banner { padding: 12px 16px; }
+      .page-wrap { padding: 24px 16px 60px; }
+      .incident-header { flex-direction: column; gap: 6px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="site-header">
+  <div class="logo-mark">C</div>
+  <span class="brand">Cavnar<span>AI</span></span>
+  <span class="header-sep">/</span>
+  <span class="header-sub">System Status</span>
+</header>
+
+<!-- Overall banner -->
+{% set banner_msgs = {
+  'operational': 'All systems are operational',
+  'degraded':    'Some systems are experiencing issues',
+  'outage':      'Service disruption in progress',
+  'maintenance': 'Scheduled maintenance in progress'
+} %}
+<div class="banner {{ banner }}" id="overall-banner">
+  <div class="dot"></div>
+  <span id="banner-text">{{ banner_msgs.get(banner, 'Status unknown') }}</span>
+</div>
+
+<!-- Main -->
+<div class="page-wrap">
+
+  <!-- Services -->
+  <p class="section-heading">Services</p>
+  <div class="services-list" id="services-list">
+    {% for svc in statuses %}
+    <div class="service-row" id="svc-{{ svc.service_key }}">
+      <div class="service-info">
+        <div class="service-name">{{ svc.name }}</div>
+        {% if svc.description %}
+        <div class="service-desc">{{ svc.description }}</div>
+        {% endif %}
+        {% if svc.message %}
+        <div class="service-desc" style="color:var(--amber); margin-top:4px;">{{ svc.message }}</div>
+        {% endif %}
+      </div>
+      <span class="status-pill pill-{{ svc.status }}">
+        {% if svc.status == 'operational' %}Operational
+        {% elif svc.status == 'degraded' %}Degraded
+        {% elif svc.status == 'outage' %}Outage
+        {% elif svc.status == 'maintenance' %}Maintenance
+        {% else %}{{ svc.status }}{% endif %}
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Incidents -->
+  <p class="section-heading">Incident History</p>
+
+  {% if incidents %}
+    {% for inc in incidents %}
+    <div class="incident-card">
+      <div class="incident-header">
+        <div>
+          <div class="incident-title">{{ inc.title }}</div>
+          <div class="incident-meta">
+            {% if inc.status == 'resolved' %}
+              Resolved
+              {% if inc.resolved_at %}&nbsp;·&nbsp;{{ inc.resolved_at[:10] }}{% endif %}
+            {% else %}
+              {{ inc.status | capitalize }}
+            {% endif %}
+            &nbsp;·&nbsp;{{ inc.created_at[:10] }}
+          </div>
+        </div>
+        <span class="incident-severity sev-{{ inc.severity }}">{{ inc.severity }}</span>
+      </div>
+      {% if inc.updates %}
+      <div class="incident-updates">
+        {% for u in inc.updates %}
+        <div class="update-row">
+          <span class="update-time">{{ u.created_at[5:16] | replace('T',' ') }} UTC</span>
+          <span class="update-status">{{ u.status | capitalize }}</span>
+          <span>{{ u.message }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="no-incidents">No incidents in the past 30 days.</div>
+  {% endif %}
+
+  <div class="status-footer">
+    <p id="last-updated">Last checked: {{ statuses[0].updated_at[:16] | replace('T',' ') if statuses else '—' }} UTC</p>
+    <p style="margin-top:6px;">Questions? Email <a href="mailto:will@cavnar.ai">will@cavnar.ai</a></p>
+  </div>
+</div>
+
+<script>
+(function () {
+  var BANNER_MSGS = {
+    operational: "All systems are operational",
+    degraded:    "Some systems are experiencing issues",
+    outage:      "Service disruption in progress",
+    maintenance: "Scheduled maintenance in progress"
+  };
+
+  var PILL_LABELS = {
+    operational: "Operational",
+    degraded:    "Degraded",
+    outage:      "Outage",
+    maintenance: "Maintenance"
+  };
+
+  function refresh() {
+    fetch("/api/status")
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        /* Update banner */
+        var banner = document.getElementById("overall-banner");
+        var bannerText = document.getElementById("banner-text");
+        if (banner && bannerText) {
+          banner.className = "banner " + data.overall;
+          bannerText.textContent = BANNER_MSGS[data.overall] || data.overall;
+        }
+
+        /* Update each service row pill */
+        var svcs = data.services || [];
+        for (var i = 0; i < svcs.length; i++) {
+          var s = svcs[i];
+          var row = document.getElementById("svc-" + s.service_key);
+          if (!row) continue;
+          var pill = row.querySelector(".status-pill");
+          if (pill) {
+            pill.className = "status-pill pill-" + s.status;
+            pill.textContent = PILL_LABELS[s.status] || s.status;
+          }
+        }
+
+        /* Update last-updated time */
+        var el = document.getElementById("last-updated");
+        if (el) {
+          var now = new Date();
+          var hh = ("0" + now.getUTCHours()).slice(-2);
+          var mm = ("0" + now.getUTCMinutes()).slice(-2);
+          el.textContent = "Last checked: " + now.toISOString().slice(0, 10) + " " + hh + ":" + mm + " UTC";
+        }
+      })
+      .catch(function () { /* silently ignore network errors */ });
+  }
+
+  /* Auto-refresh every 60 seconds */
+  setInterval(refresh, 60000);
+})();
+</script>
+
+</body>
+</html>

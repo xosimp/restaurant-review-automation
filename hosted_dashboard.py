@@ -335,12 +335,14 @@ from social_routes import social_bp
 from auth_routes import auth_bp
 from client_api import client_bp
 from toast_routes import toast_bp
+from status_routes import status_bp
 app.register_blueprint(admin_bp)
 app.register_blueprint(webhook_bp)
 app.register_blueprint(social_bp)
 app.register_blueprint(auth_bp)
 app.register_blueprint(client_bp)
 app.register_blueprint(toast_bp)
+app.register_blueprint(status_bp)
 _secret_key = os.getenv("SECRET_KEY", "")
 if not _secret_key:
     _secret_key = os.urandom(32).hex()

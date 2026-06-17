@@ -12,6 +12,7 @@ Jobs:
   8:00am weekly — send weekly digest to clients on their chosen day
 """
 import os, threading, time, logging
+from status_manager import record_scheduler_heartbeat
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo as _ZI_sch
 def _chi_now():
@@ -861,6 +862,11 @@ def scheduler_loop():
                 # Monday 11am — inactive client check
                 log.info("Running inactive client check...")
                 check_inactive_clients()
+
+            try:
+                record_scheduler_heartbeat()
+            except Exception:
+                pass
 
         except Exception as e:
             log.error(f"Scheduler loop error: {e}")

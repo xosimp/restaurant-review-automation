@@ -127,6 +127,39 @@ CREATE TABLE IF NOT EXISTS weekly_reports (
     sent_at         TEXT
 );
 
+CREATE TABLE IF NOT EXISTS service_status (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    service_key TEXT NOT NULL UNIQUE,
+    name        TEXT NOT NULL,
+    description TEXT,
+    status      TEXT NOT NULL DEFAULT 'operational'
+                CHECK(status IN ('operational','degraded','outage','maintenance')),
+    message     TEXT,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS status_incidents (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    title         TEXT NOT NULL,
+    body          TEXT,
+    affected_keys TEXT,   -- JSON array of service_key strings
+    severity      TEXT NOT NULL DEFAULT 'degraded'
+                  CHECK(severity IN ('degraded','outage','maintenance')),
+    status        TEXT NOT NULL DEFAULT 'investigating'
+                  CHECK(status IN ('investigating','monitoring','resolved')),
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at   TEXT,
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS status_incident_updates (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    incident_id INTEGER NOT NULL REFERENCES status_incidents(id),
+    message     TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_reviews_restaurant   ON reviews(restaurant_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_status       ON reviews(response_status);
 CREATE INDEX IF NOT EXISTS idx_reviews_fetched      ON reviews(fetched_at);
@@ -377,6 +410,33 @@ def init_db(db_path: str = DB_PATH):
             sent_at       TEXT NOT NULL DEFAULT (datetime('now')),
             method        TEXT NOT NULL DEFAULT 'email',
             status        TEXT NOT NULL DEFAULT 'sent'
+        )""",
+        """CREATE TABLE IF NOT EXISTS service_status (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            service_key TEXT NOT NULL UNIQUE,
+            name        TEXT NOT NULL,
+            description TEXT,
+            status      TEXT NOT NULL DEFAULT 'operational',
+            message     TEXT,
+            updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        """CREATE TABLE IF NOT EXISTS status_incidents (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            title         TEXT NOT NULL,
+            body          TEXT,
+            affected_keys TEXT,
+            severity      TEXT NOT NULL DEFAULT 'degraded',
+            status        TEXT NOT NULL DEFAULT 'investigating',
+            created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+            resolved_at   TEXT,
+            updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        """CREATE TABLE IF NOT EXISTS status_incident_updates (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            incident_id INTEGER NOT NULL,
+            message     TEXT NOT NULL,
+            status      TEXT NOT NULL,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
     ]
     for m in migrations:
