@@ -9,15 +9,11 @@ from status_manager import (
 status_bp = Blueprint("status", __name__)
 
 
-@status_bp.before_app_first_request
-def _seed():
-    seed_default_services()
-
-
 # ── Public status page ────────────────────────────────────────────────────────
 
 @status_bp.route("/status")
 def status_page():
+    seed_default_services()
     statuses  = get_all_statuses()
     incidents = get_recent_incidents(limit=30)
     for inc in incidents:
