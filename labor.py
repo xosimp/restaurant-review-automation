@@ -159,11 +159,11 @@ def analyse_shifts(shifts: list[dict],
     overtime_flags = []
 
     for s in shifts:
-        day    = s["date"]
-        dow    = s["day"]
-        emp    = s["employee"]
-        sched  = float(s["scheduled_hours"])
-        actual = float(s["actual_hours"])
+        day    = s.get("date") or ""
+        dow    = s.get("day") or ""
+        emp    = s.get("employee") or "Unknown"
+        sched  = float(s.get("scheduled_hours") or 0)
+        actual = float(s.get("actual_hours") or 0)
         sales  = float(s.get("sales_that_day") or s.get("sales") or 0)
 
         by_day[day]["scheduled"] += sched
@@ -317,8 +317,8 @@ def analyse_shifts(shifts: list[dict],
         "employee_hours": {k: dict(v) for k, v in by_employee.items()},
         "labor_target": LABOR_TARGET,
         "date_range": {
-            "start": min(by_day.keys()) if by_day else None,
-            "end":   max(by_day.keys()) if by_day else None,
+            "start": min((k for k in by_day.keys() if k), default=None),
+            "end":   max((k for k in by_day.keys() if k), default=None),
             "days":  len(by_day),
         },
     }
