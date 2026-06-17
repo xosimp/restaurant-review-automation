@@ -874,8 +874,8 @@ def _do_seed_ryan():
                 billing_status="trial",
         ))
         ryan_pw = os.getenv("RYAN_TEST_PASSWORD", "charthouse123")
-        create_user(ryan_rid, "ryan", "cavnarwill@gmail.com", ryan_pw, is_admin=False)
-        print(f"\n  Test client created: ryan / {ryan_pw} (Gia Mia, St. Charles IL)\n")
+        create_user(ryan_rid, "Brian", "cavnarwill@gmail.com", ryan_pw, is_admin=False)
+        print(f"\n  Test client created: Brian / {ryan_pw} (Gia Mia, St. Charles IL)\n")
 
         # Seed labor history FIRST (no API calls, instant) — always replace on fresh deploy
         try:
@@ -1048,7 +1048,10 @@ def _seed_ryan_background():
                 _t_ryan.sleep(1)
         conn = get_conn()
         ryan_exists = conn.execute(
-                "SELECT id FROM users WHERE username=?", ("ryan",)
+            """SELECT u.id FROM users u
+               JOIN restaurants r ON u.restaurant_id=r.id
+               WHERE r.name=? AND u.is_admin=0""",
+            ("Gia Mia",)
         ).fetchone()
         conn.close()
         if not ryan_exists:
@@ -1087,8 +1090,8 @@ def _ensure_gia_mia_vibe():
                 row["id"],
             ))
             conn.execute(
-                "UPDATE users SET email=? WHERE restaurant_id=? AND username=?",
-                ("cavnarwill@gmail.com", row["id"], "ryan")
+                "UPDATE users SET email=?, username=? WHERE restaurant_id=? AND is_admin=0",
+                ("cavnarwill@gmail.com", "Brian", row["id"])
             )
             conn.commit()
             print(f"  Gia Mia profile updated (email, owner, vibe, known_for) on restaurant id={row['id']}")
