@@ -16,6 +16,115 @@ from typing import Optional
 TOAST_BASE    = os.getenv("TOAST_API_BASE", "https://ws-api.toasttab.com")
 TOAST_SANDBOX = "https://ws-sandbox.toasttab.com"
 
+_DEMO_ID = "demo"  # any credential field equal to this triggers demo mode
+
+
+# ── Demo mode ─────────────────────────────────────────────────────────────────
+
+def _is_demo(restaurant_id: int) -> bool:
+    """True when any credential field is set to the literal string 'demo'."""
+    try:
+        from models import get_restaurant
+        r = get_restaurant(restaurant_id)
+        return bool(r and (
+            r.toast_client_id == _DEMO_ID or
+            r.toast_client_secret == _DEMO_ID or
+            r.toast_restaurant_guid == _DEMO_ID
+        ))
+    except Exception:
+        return False
+
+
+def _demo_shifts_csv() -> str:
+    """
+    Generate a realistic 8-week CSV of shift + sales data for a busy
+    Italian casual-dining restaurant (Gia Mia style). Used in demo mode
+    so the full labor.py analysis pipeline can be exercised without real creds.
+    """
+    import random
+    from datetime import date as _date, timedelta as _td
+
+    random.seed(42)  # reproducible so the numbers don't change on re-sync
+
+    staff = [
+        ("Maria S.", "Server"),
+        ("Jake T.", "Server"),
+        ("Priya K.", "Server"),
+        ("Tom R.", "Bartender"),
+        ("Sofia D.", "Bartender"),
+        ("Carlos M.", "Cook"),
+        ("Amy L.", "Cook"),
+        ("Luis G.", "Cook"),
+        ("James H.", "Host"),
+    ]
+
+    # Typical daily sales by day of week (Italian casual, dinner-focused)
+    _base_sales = {
+        0: 4800,   # Monday
+        1: 5200,   # Tuesday
+        2: 5600,   # Wednesday
+        3: 6200,   # Thursday
+        4: 8800,   # Friday
+        5: 9600,   # Saturday
+        6: 6800,   # Sunday
+    }
+
+    # Typical shift windows per role
+    _shifts = {
+        "Server":    [("11:00", "17:00", 6), ("17:00", "23:00", 6)],
+        "Bartender": [("16:00", "24:00", 8)],
+        "Cook":      [("10:00", "18:00", 8), ("16:00", "24:00", 8)],
+        "Host":      [("17:00", "22:00", 5)],
+    }
+
+    fieldnames = ["date","day","employee","role","shift_start","shift_end",
+                  "scheduled_hours","actual_hours","sales","notes"]
+
+    rows = []
+    today = _date.today()
+    start = today - _td(days=56)  # 8 weeks back
+
+    _dow = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+
+    for i in range(56):
+        d     = start + _td(days=i)
+        dow   = d.weekday()
+        sales = _base_sales[dow] + random.randint(-400, 600)
+        date_str = d.strftime("%Y-%m-%d")
+        day_name = _dow[dow]
+
+        for emp, role in staff:
+            windows = _shifts.get(role, [])
+            # Servers: both shifts on Fri/Sat, one shift other days
+            if role == "Server":
+                chosen = windows if dow in (4, 5) else [windows[0]]
+            # Cooks: both shifts Thu–Sat
+            elif role == "Cook" and emp in ("Carlos M.", "Amy L."):
+                chosen = windows if dow in (3, 4, 5) else [windows[0]]
+            else:
+                chosen = [windows[0]] if windows else []
+
+            for (s_start, s_end, sched_h) in chosen:
+                actual_h = round(sched_h + random.uniform(-0.4, 0.5), 1)
+                rows.append({
+                    "date":            date_str,
+                    "day":             day_name,
+                    "employee":        emp,
+                    "role":            role,
+                    "shift_start":     s_start,
+                    "shift_end":       s_end,
+                    "scheduled_hours": sched_h,
+                    "actual_hours":    actual_h,
+                    "sales":           sales,
+                    "notes":           "Toast POS (demo)",
+                })
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+    return buf.getvalue()
+
 
 # ── Authentication ─────────────────────────────────────────────────────────────
 
@@ -40,6 +149,9 @@ def get_toast_token(restaurant_id: int) -> str:
     Refreshes automatically if expired (tokens last 24h).
     Raises RuntimeError if Toast is not connected.
     """
+    if _is_demo(restaurant_id):
+        return "demo-token"
+
     from models import get_restaurant, update_restaurant
 
     r = get_restaurant(restaurant_id)
@@ -256,6 +368,9 @@ def build_shifts_csv(restaurant_id: int, days: int = 60) -> str:
     Fetch the last `days` days of Toast data and return a CSV string
     in the same format that labor.py's load_shifts() expects.
     """
+    if _is_demo(restaurant_id):
+        return _demo_shifts_csv()
+
     end   = date.today()
     start = end - timedelta(days=days)
 
@@ -342,7 +457,11 @@ def test_credentials(client_id: str, client_secret: str, restaurant_guid: str) -
     """
     Validate credentials by fetching a token and hitting a lightweight endpoint.
     Returns {"ok": True} or {"ok": False, "error": "..."}.
+    Pass "demo" for all three fields to enter demo mode without hitting the API.
     """
+    if client_id == _DEMO_ID or client_secret == _DEMO_ID or restaurant_guid == _DEMO_ID:
+        return {"ok": True, "demo": True}
+
     base = TOAST_SANDBOX if os.getenv("TOAST_SANDBOX", "").lower() in ("1", "true") else TOAST_BASE
     try:
         data  = _get_raw_token(client_id, client_secret, base)
