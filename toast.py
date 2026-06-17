@@ -11,6 +11,7 @@ Toast API base: https://ws-api.toasttab.com (production)
 """
 import os, csv, io, json, requests
 from datetime import datetime, timezone, timedelta, date
+from typing import Optional
 
 TOAST_BASE    = os.getenv("TOAST_API_BASE", "https://ws-api.toasttab.com")
 TOAST_SANDBOX = "https://ws-sandbox.toasttab.com"
@@ -81,8 +82,9 @@ def _headers(token: str, restaurant_guid: str) -> dict:
 
 def fetch_time_entries(restaurant_id: int, start_date: date, end_date: date) -> list:
     """
-    Pull clock-in/clock-out time entries from Toast Labor API.
-    Returns a list of raw Toast timeEntry dicts.
+    Pull clock-in/clock-out time entries from Toast Labor API with pagination.
+    Toast returns up to 100 entries per page; we loop until no nextPageToken.
+    Returns a flat list of all raw Toast timeEntry dicts.
     """
     from models import get_restaurant
 
@@ -90,21 +92,39 @@ def fetch_time_entries(restaurant_id: int, start_date: date, end_date: date) -> 
     token = get_toast_token(restaurant_id)
     base  = TOAST_SANDBOX if os.getenv("TOAST_SANDBOX", "").lower() in ("1", "true") else TOAST_BASE
 
-    # Toast uses ISO-8601 datetime strings for the range
-    start_iso = datetime.combine(start_date, datetime.min.time()).isoformat() + ".000+0000"
-    end_iso   = datetime.combine(end_date,   datetime.max.time()).isoformat()[:19] + ".000+0000"
+    # Toast expects RFC 3339 with +00:00 offset
+    start_iso = datetime.combine(start_date, datetime.min.time()).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
+    end_iso   = datetime.combine(end_date, datetime.max.time().replace(microsecond=0)).strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
 
-    resp = requests.get(
-        f"{base}/labor/v1/timeEntries",
-        headers=_headers(token, r.toast_restaurant_guid),
-        params={
-            "startDate": start_iso,
-            "endDate":   end_iso,
-        },
-        timeout=30,
-    )
-    resp.raise_for_status()
-    return resp.json() if isinstance(resp.json(), list) else []
+    all_entries = []
+    page_token  = None
+    page_limit  = 20  # safety cap — 20 pages × 100 = 2,000 entries, well above 60 days
+
+    for _ in range(page_limit):
+        params = {"startDate": start_iso, "endDate": end_iso, "pageSize": 100}
+        if page_token:
+            params["pageToken"] = page_token
+
+        resp = requests.get(
+            f"{base}/labor/v1/timeEntries",
+            headers=_headers(token, r.toast_restaurant_guid),
+            params=params,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+        # Response may be a plain list or a paged object {timeEntries: [...], nextPageToken: ...}
+        if isinstance(body, list):
+            all_entries.extend(body)
+            break
+        else:
+            all_entries.extend(body.get("timeEntries", []))
+            page_token = body.get("nextPageToken")
+            if not page_token:
+                break
+
+    return all_entries
 
 
 def fetch_business_days(restaurant_id: int, start_date: date, end_date: date) -> dict:
@@ -147,7 +167,7 @@ def fetch_business_days(restaurant_id: int, start_date: date, end_date: date) ->
 
 _DOW = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
 
-def _parse_toast_time(ts: str) -> datetime | None:
+def _parse_toast_time(ts: str) -> Optional[datetime]:
     """Parse a Toast ISO timestamp to datetime, ignoring timezone for hour extraction."""
     if not ts:
         return None
