@@ -29,6 +29,7 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .calc-tip:hover .tip-icon{color:rgba(255,255,255,.95)}
 .calc-tip .tip-text{display:none;position:absolute;top:calc(100% + 7px);right:0;left:auto;bottom:auto;background:#1a1714;color:rgba(250,248,245,.9);font-size:10px;font-weight:400;line-height:1.5;padding:8px 11px;border-radius:7px;width:240px;white-space:normal;border:1px solid rgba(255,255,255,.12);z-index:99;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.5)}
 .calc-tip:hover .tip-text{display:block}
+.calc-tip-up .tip-text{top:auto;bottom:calc(100% + 7px)}
 .calc-tip-light .tip-icon{color:rgba(0,0,0,.38)}
 .calc-tip-light:hover .tip-icon{color:var(--ink2)}
 .calc-tip-light .tip-text{background:#fff;color:var(--ink2);border-color:var(--paper3);box-shadow:0 4px 12px rgba(0,0,0,.12)}
@@ -430,6 +431,7 @@ function clientUpload(dataType, input) {
 </div>
 <script>
 var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing or 0)}};
+var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and savings_breakdown.sales_lift_yr else 125000}};
 </script>
 
 <!-- REVIEWS -->
@@ -567,7 +569,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
       <span style="color:#0d3320;font-weight:600;background:rgba(255,255,255,.7);padding:0 3px;border-radius:3px;font-size:10px">▲ 70% excellent</span>
       <span>100%</span>
     </div>
-    <div class="review-rate-count" style="margin-top:6px;font-size:11px;color:var(--ink);background:rgba(255,255,255,.6);border-radius:4px;padding:3px 6px;display:inline-block">{{rstats.get("responded", rstats.posted)}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> on average. This 3.1% sales lift can mean an additional <strong style="color:var(--ink)">$125k/yr</strong> for your restaurant. <span class="calc-tip calc-tip-light" style="display:inline-flex;vertical-align:middle;margin-top:0"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Sources: Harvard Business School study on restaurant review responses (35% return rate lift); Cornell Center for Hospitality Research — 3.1% revenue increase per unit response rate improvement at casual dining.</span></span></div>
+    <div class="review-rate-count" style="margin-top:6px;font-size:11px;color:var(--ink);background:rgba(255,255,255,.6);border-radius:4px;padding:3px 6px;display:inline-block">{{rstats.get("responded", rstats.posted)}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> on average. This 3.1% sales lift can mean an additional <strong style="color:var(--ink)">{% if savings_breakdown and savings_breakdown.sales_lift_yr > 0 %}${{(savings_breakdown.sales_lift_yr // 1000)|int}}k/yr{% else %}$125k/yr{% endif %}</strong> for your restaurant. <span class="calc-tip calc-tip-light calc-tip-up" style="display:inline-flex;vertical-align:middle;margin-top:0"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Sources: Harvard Business School study on restaurant review responses (35% return rate lift); Cornell Center for Hospitality Research — 3.1% revenue increase per unit response rate improvement at casual dining.</span></span></div>
   </div>
   {% if platform_breakdown and platform_breakdown|length > 1 %}
   {% set best_rating = platform_breakdown|map(attribute='avg_rating')|max %}
@@ -2488,7 +2490,7 @@ function updateReviewStats(){
     }
     if(labelEl){ labelEl.textContent=label; labelEl.style.background=color; }
     if(pctEl)  { pctEl.textContent=rrate+'%'; pctEl.style.color=color; }
-    if(countEl){ countEl.innerHTML=(d.responded||d.posted)+' of '+d.total+' reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> on average. This 3.1% sales lift can mean an additional <strong style="color:var(--ink)">$125k/yr</strong> for your restaurant. <span class="calc-tip calc-tip-light" style="display:inline-flex;vertical-align:middle;margin-top:0"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Sources: Harvard Business School study on restaurant review responses (35% return rate lift); Cornell Center for Hospitality Research — 3.1% revenue increase per unit response rate improvement at casual dining.</span></span>'; }
+    if(countEl){ var _liftStr = gSalesLiftYr >= 1000 ? ('$'+Math.round(gSalesLiftYr/1000)+'k/yr') : '$125k/yr'; countEl.innerHTML=(d.responded||d.posted)+' of '+d.total+' reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> on average. This 3.1% sales lift can mean an additional <strong style="color:var(--ink)">'+_liftStr+'</strong> for your restaurant. <span class="calc-tip calc-tip-light calc-tip-up" style="display:inline-flex;vertical-align:middle;margin-top:0"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Sources: Harvard Business School study on restaurant review responses (35% return rate lift); Cornell Center for Hospitality Research — 3.1% revenue increase per unit response rate improvement at casual dining.</span></span>'; }
     // Shift card background red→neutral→green as response rate improves
     var rateCard = document.getElementById('rate-card');
     maybeShowCongrats(rrate);

@@ -671,6 +671,8 @@ def index(current_user):
     _labor_vs_industry_annual  = _labor_vs_industry_monthly * 12
     # Primary labor value: vs-industry benchmark when under target; scheduling savings when over
     _labor_value = _labor_vs_industry_monthly if _labor_vs_industry_monthly > 0 else _labor_monthly
+    # Revenue lift from responding to reviews — 3.1% of annual sales (Cornell HBS research)
+    _sales_lift_yr = int(_monthly_sales_est * 12 * 0.031) if _monthly_sales_est > 10000 else 0
     # Inventory value: monthly recoverable waste
     _inv_value = int(inv.get("recoverable_monthly", 0))
     # Marketing value: agency equivalent already computed
@@ -697,6 +699,7 @@ def index(current_user):
         "labor_overtime":   labor_overtime_cost       if _mod_l else 0,
         "labor_vs_industry_monthly": _labor_vs_industry_monthly if _mod_l else 0,
         "labor_vs_industry_annual":  _labor_vs_industry_annual  if _mod_l else 0,
+        "sales_lift_yr":             _sales_lift_yr,
     }
 
     import secrets as _sec
