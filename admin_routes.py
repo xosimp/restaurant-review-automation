@@ -1384,5 +1384,11 @@ def seed_labor_history(current_user):
         inserted += 1
         d += timedelta(days=1)
     conn.commit()
+    # Also set revenue target and actual labor target for this restaurant
+    conn.execute("""
+        UPDATE restaurants SET monthly_revenue_target=?, labor_target_pct=?
+        WHERE id=?
+    """, (365000.0, 22.46, restaurant_id))
+    conn.commit()
     conn.close()
-    return jsonify(ok=True, inserted=inserted, restaurant_id=restaurant_id)
+    return jsonify(ok=True, inserted=inserted, restaurant_id=restaurant_id, labor_target_set=22.46, monthly_revenue_target_set=365000)
