@@ -632,6 +632,7 @@ SCHEDULING RULES:
         "projected_revenue": projected_revenue,
         "hours_budget": hours_budget,
         "labor_budget_dollars": labor_budget_dollars,
+        "labor_target": labor_target,
     }
 
 

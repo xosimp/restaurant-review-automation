@@ -817,6 +817,7 @@ def generate_schedule_json(current_user):
             hours_budget=result.get("hours_budget", 0),
             labor_budget_dollars=result.get("labor_budget_dollars", 0),
             hours_scheduled=hours_scheduled,
+            labor_target=result.get("labor_target", 30),
         )
     except Exception as e:
         import traceback; traceback.print_exc()
