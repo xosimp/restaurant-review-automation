@@ -604,10 +604,11 @@ SCHEDULING RULES:
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-        max_tokens=3000,
+        max_tokens=5000,
         messages=[{"role": "user", "content": prompt}],
     )
     raw = msg.content[0].text.strip()
+    print(f"[schedule] raw output length={len(raw)} stop_reason={msg.stop_reason}")
 
     # Split on the summary delimiter
     if "---SUMMARY---" in raw:
