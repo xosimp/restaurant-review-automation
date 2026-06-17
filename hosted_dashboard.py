@@ -645,8 +645,8 @@ def index(current_user):
                 _months_active = 1
         else:
             _months_active = 1
-        # Agency equivalent: $1,500/mo social media manager baseline
-        _mkt_agency_value = _months_active * 1500 if int(restaurant.module_marketing or 0) else 0
+        # Agency equivalent: $1,500/mo social media manager baseline — only count when content has been generated
+        _mkt_agency_value = _months_active * 1500 if (int(restaurant.module_marketing or 0) and _mkt_gen > 0) else 0
         mkt_stats = {
             "generated":     _mkt_gen,
             "published":     _mkt_pub,
@@ -669,8 +669,9 @@ def index(current_user):
     _monthly_sales_est = (labor.get("total_sales", 0) / _period_days * 30) if _period_days else 0
     _labor_vs_industry_monthly = max(0, int((0.32 - labor.get("overall_labor_pct", 32) / 100) * _monthly_sales_est))
     _labor_vs_industry_annual  = _labor_vs_industry_monthly * 12
-    # Primary labor value: vs-industry benchmark when under target; scheduling savings when over
-    _labor_value = _labor_vs_industry_monthly if _labor_vs_industry_monthly > 0 else _labor_monthly
+    # Banner value = scheduling savings (only claimed when platform identified over-target spend)
+    # The vs-industry figure belongs on the Labor tab as context, not in "Total Value Delivered"
+    _labor_value = _labor_monthly
     # Revenue lift from responding to reviews — 3.1% of annual sales (Cornell HBS research)
     _sales_lift_yr = int(_monthly_sales_est * 12 * 0.031) if _monthly_sales_est > 10000 else 0
     # Inventory value: monthly recoverable waste
