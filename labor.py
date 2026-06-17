@@ -279,7 +279,7 @@ def analyse_shifts(shifts: list[dict],
             day_name = d["shifts"][0]["day"] if d.get("shifts") else None
         if not day_name:
             continue
-        labor_cost = d["actual"] * HOURLY_RATE
+        labor_cost = d["labor_cost"]  # already accumulated per-role in the main loop
         sales = d["sales"]
         if day_name not in dow_daily:
             dow_daily[day_name] = {"labor": 0, "sales": 0, "count": 0}
@@ -291,8 +291,7 @@ def analyse_shifts(shifts: list[dict],
         avg_pct = (d["labor"] / d["sales"] * 100) if d["sales"] else 0
         dow_summary[day_name] = round(avg_pct, 1)
 
-    total_labor  = sum(s["actual"] * HOURLY_RATE for s in
-                       [{"actual": float(x["actual_hours"])} for x in shifts])
+    total_labor  = sum(d["labor_cost"] for d in by_day.values())
     total_sales  = sum(float(s.get("sales_that_day") or s.get("sales") or 0) for s in
                        {s["date"]: s for s in shifts}.values())
     overall_pct  = round(total_labor / total_sales * 100, 1) if total_sales else 0
@@ -303,10 +302,11 @@ def analyse_shifts(shifts: list[dict],
     by_role = defaultdict(lambda: {"hours": 0, "labor_cost": 0, "headcount": set()})
     for s in shifts:
         role = s.get("role", "Unknown")
-        actual = float(s["actual_hours"])
+        actual = float(s.get("actual_hours") or 0)
+        rate   = _shift_rate(s, role_rates, hourly_rate)
         by_role[role]["hours"] += actual
-        by_role[role]["labor_cost"] += actual * HOURLY_RATE
-        by_role[role]["headcount"].add(s["employee"])
+        by_role[role]["labor_cost"] += actual * rate
+        by_role[role]["headcount"].add(s.get("employee", "Unknown"))
     role_summary = {
         role: {
             "hours": round(d["hours"], 1),
