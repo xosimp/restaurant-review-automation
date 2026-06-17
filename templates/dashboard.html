@@ -1492,25 +1492,26 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   </div><!-- /aiv-body -->
   </div>
 
-  <div style="background:linear-gradient(135deg,#0d1b2a,#1a2d40);border-radius:var(--r);padding:20px 24px;margin-bottom:20px;border:1px solid #1e3a52">
-    <div style="display:flex;align-items:center;justify-content:space-between">
-      <div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#4a9eca;margin-bottom:6px">Cavnar AI · Competitor Intelligence</div>
-        <div style="font-family:'Fraunces',serif;font-size:20px;color:#e8f4fd">What your neighbors are doing</div>
+  <div style="border:1px solid #1e3a52;border-radius:var(--r);overflow:hidden;margin-bottom:20px">
+    <div style="background:linear-gradient(135deg,#0d1b2a,#1a2d40);padding:20px 24px">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#4a9eca;margin-bottom:6px">Cavnar AI · Competitor Intelligence</div>
+          <div style="font-family:'Fraunces',serif;font-size:20px;color:#e8f4fd">What your neighbors are doing</div>
+        </div>
       </div>
     </div>
-  </div>
-
   {% if not competitor_data %}
-  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);margin-bottom:16px">
-    <div class="empty-state" style="padding:52px 24px">
-      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5"/><circle cx="17" cy="15" r="4" opacity=".4"/><path d="M14 9h6M17 6v6" opacity=".4"/></svg>
-      <div class="empty-state-title">No competitor data yet</div>
-      <div class="empty-state-sub">See how your ratings, review volume, and reputation stack up against nearby restaurants. Takes about 30 seconds.</div>
-      <button onclick="refreshCompetitorIntel(this)" class="btn-teal" style="padding:8px 20px">Fetch competitor data</button>
+    <div style="background:white">
+      <div class="empty-state" style="padding:52px 24px">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5"/><circle cx="17" cy="15" r="4" opacity=".4"/><path d="M14 9h6M17 6v6" opacity=".4"/></svg>
+        <div class="empty-state-title">No competitor data yet</div>
+        <div class="empty-state-sub">See how your ratings, review volume, and reputation stack up against nearby restaurants. Takes about 30 seconds.</div>
+        <button onclick="refreshCompetitorIntel(this)" class="btn-teal" style="padding:8px 20px">Fetch competitor data</button>
+      </div>
     </div>
-  </div>
   {% endif %}
+  </div>
 
   {% if competitor_data %}
     {% set recs = competitor_data.insight | extract_recs %}
