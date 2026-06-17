@@ -714,6 +714,9 @@ def _build_schedule_result(restaurant_id):
     monday = today + _td(days=days_ahead)
     next_week_dates = [(monday + _td(days=i)).strftime("%Y-%m-%d") for i in range(7)]
 
+    # Revenue override from restaurant target (takes priority over YoY sum)
+    monthly_rev_target = float(getattr(restaurant, 'monthly_revenue_target', 0) or 0)
+
     # YoY context — same day last year
     yoy_ctx = get_yoy_schedule_context(restaurant_id, next_week_dates)
 
@@ -775,6 +778,7 @@ def _build_schedule_result(restaurant_id):
         labor_target=target,
         yoy_context=yoy_ctx,
         upcoming_events=upcoming_events if upcoming_events else None,
+        monthly_revenue_target=monthly_rev_target,
     )
     result["restaurant_name"] = restaurant.name if restaurant else "Restaurant"
     return result

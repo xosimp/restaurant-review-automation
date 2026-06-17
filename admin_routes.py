@@ -1342,3 +1342,47 @@ def send_referral(current_user):
         return jsonify(ok=True)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
+
+
+@admin_bp.route("/api/admin/seed-labor-history", methods=["POST"])
+@admin_required
+def seed_labor_history(current_user):
+    """One-time: seed June 2025 labor_daily_history for Gia Mia (id=2)."""
+    from datetime import date, timedelta
+    from models import init_db
+    init_db()  # ensure table exists
+
+    restaurant_id = int(request.json.get("restaurant_id", 2))
+    DAY_TEMPLATES = {
+        0: {"sales": 8200,  "hours": 71},
+        1: {"sales": 8800,  "hours": 76},
+        2: {"sales": 10500, "hours": 91},
+        3: {"sales": 12200, "hours": 105},
+        4: {"sales": 16400, "hours": 142},
+        5: {"sales": 18800, "hours": 163},
+        6: {"sales": 13200, "hours": 114},
+    }
+    HOLIDAY_OVERRIDES = {
+        "2025-06-15": {"sales": 22400, "hours": 194},  # Father's Day 2025
+    }
+    DAYS_OF_WEEK = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+    conn = get_conn()
+    inserted = 0
+    d = date(2025, 6, 2)
+    while d <= date(2025, 6, 29):
+        ds = d.strftime("%Y-%m-%d")
+        tmpl = HOLIDAY_OVERRIDES.get(ds, DAY_TEMPLATES[d.weekday()])
+        sales = float(tmpl["sales"])
+        hours = float(tmpl["hours"])
+        labor_cost = round(hours * 26, 2)
+        labor_pct  = round(labor_cost / sales * 100, 2)
+        conn.execute("""
+            INSERT OR REPLACE INTO labor_daily_history
+              (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales, total_hours, saved_at)
+            VALUES (?,?,?,?,?,?,?,datetime('now'))
+        """, (restaurant_id, ds, DAYS_OF_WEEK[d.weekday()], labor_pct, labor_cost, sales, hours))
+        inserted += 1
+        d += timedelta(days=1)
+    conn.commit()
+    conn.close()
+    return jsonify(ok=True, inserted=inserted, restaurant_id=restaurant_id)

@@ -460,7 +460,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  staff_notes: list = None,
                                  labor_target: float = 30.0,
                                  yoy_context: list = None,
-                                 upcoming_events: list = None) -> dict:
+                                 upcoming_events: list = None,
+                                 monthly_revenue_target: float = 0.0) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -516,9 +517,11 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             event_lines.append(f"  {ev['name']} ({ev['date_str']}) — {day_label}: staff UP vs typical, expect 20-40% higher covers")
         events_block = "\n\nUpcoming events this week (adjust staffing accordingly):\n" + "\n".join(event_lines)
 
-    # Compute PAR hours budget from YoY projected revenue (or fall back to recent)
+    # Compute PAR hours budget — monthly_revenue_target takes priority, then YoY sum, then recent
     projected_revenue = 0.0
-    if yoy_context:
+    if monthly_revenue_target and monthly_revenue_target > 0:
+        projected_revenue = round(monthly_revenue_target / 4.33, 0)  # monthly → weekly
+    elif yoy_context:
         yoy_sales = [r["yoy_sales"] for r in yoy_context if r.get("yoy_sales")]
         if yoy_sales:
             projected_revenue = sum(yoy_sales)
@@ -562,7 +565,8 @@ SCHEDULING RULES:
 - Servers: 4-6h shifts; bartenders/cooks: 5-8h shifts
 - 6-10 shifts per day
 - Notes column: one brief phrase per shift explaining any change (e.g. "YoY match - high Father's Day volume" or "reduced - YoY shows slow Monday")
-- Match shift times to the operation type visible in the staff data (lunch/dinner vs breakfast/brunch)"""
+- Match shift times to the operation type visible in the staff data (lunch/dinner vs breakfast/brunch)
+- IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time."""
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
