@@ -578,10 +578,27 @@ SCHEDULING RULES:
         csv_part = raw
         summary_part = ""
 
-    # Clean CSV
+    # Clean CSV — find the header row first, then keep only data rows after it
     import re as _re_sched
-    csv_lines = [l for l in csv_part.split("\n")
+    EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
+    all_lines = [l for l in csv_part.split("\n")
                  if l.strip() and not l.startswith("#") and not l.startswith("```")]
+    # Find header (case-insensitive match on known columns)
+    header_idx = None
+    for idx, line in enumerate(all_lines):
+        low = line.lower().replace(" ", "")
+        if "date" in low and "employee" in low and "shift" in low:
+            header_idx = idx
+            # Normalize header to our canonical form
+            all_lines[idx] = EXPECTED_HEADER
+            break
+    if header_idx is not None:
+        csv_lines = [all_lines[header_idx]] + [
+            l for l in all_lines[header_idx + 1:]
+            if "," in l and not l.lower().startswith("date,")
+        ]
+    else:
+        csv_lines = all_lines
     csv_clean = "\n".join(csv_lines)
 
     # Parse summary bullets

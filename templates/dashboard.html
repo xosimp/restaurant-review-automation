@@ -985,8 +985,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           <div id="sched-week-label" style="font-size:14px;font-weight:700;color:var(--paper)">Week of —</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button onclick="downloadScheduleFromPreview()" style="background:#2d6a4f;color:white;border:none;border-radius:6px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">Download CSV</button>
-          <button onclick="document.getElementById('schedule-preview-panel').style.display='none'" style="background:rgba(255,255,255,.08);color:var(--paper);border:none;border-radius:6px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Close</button>
+          <button onclick="downloadScheduleFromPreview()" class="btn-primary" style="background:#2d6a4f;font-size:12px;padding:7px 16px" onmouseover="this.style.background='#235c42';this.style.boxShadow='0 4px 14px rgba(45,106,79,.38)';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='#2d6a4f';this.style.boxShadow='none';this.style.transform=''" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Download CSV</button>
+          <button onclick="document.getElementById('schedule-preview-panel').style.display='none'" style="background:rgba(255,255,255,.08);color:var(--paper);border:none;border-radius:var(--r);padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s,box-shadow .15s,transform .15s" onmouseover="this.style.background='rgba(255,255,255,.16)';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='rgba(255,255,255,.08)';this.style.transform=''" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Close</button>
         </div>
       </div>
 
@@ -3397,7 +3397,11 @@ function generateSchedule(btn) {
       // Week label
       var weekEl = document.getElementById('sched-week-label');
       if (weekEl && data.week_dates && data.week_dates.length) {
-        weekEl.textContent = 'Week of ' + data.week_dates[0] + ' – ' + data.week_dates[data.week_dates.length - 1];
+        function fmtSchedDate(iso) {
+          var p = iso.split('-');
+          return (parseInt(p[1],10)) + '/' + (parseInt(p[2],10)) + '/' + p[0].slice(2);
+        }
+        weekEl.textContent = 'Week of ' + fmtSchedDate(data.week_dates[0]) + ' – ' + fmtSchedDate(data.week_dates[data.week_dates.length - 1]);
       }
 
       // Summary bullets
