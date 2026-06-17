@@ -663,6 +663,11 @@ def index(current_user):
     # Labor value: weekly potential savings × 4.33 (monthly) + overtime premium recovered
     _labor_monthly = int(round(labor.get("potential_savings", 0) * 4.33))
     _labor_value   = _labor_monthly + labor_overtime_cost
+    # When on/under target, compute what they're saving vs. 32% industry average
+    _period_days = labor.get("date_range", {}).get("days", 14) or 14
+    _monthly_sales_est = (labor.get("total_sales", 0) / _period_days * 30) if _period_days else 0
+    _labor_vs_industry_monthly = max(0, int((0.32 - labor.get("overall_labor_pct", 32) / 100) * _monthly_sales_est))
+    _labor_vs_industry_annual  = _labor_vs_industry_monthly * 12
     # Inventory value: monthly recoverable waste
     _inv_value = int(inv.get("recoverable_monthly", 0))
     # Marketing value: agency equivalent already computed
@@ -687,6 +692,8 @@ def index(current_user):
         "labor_annual":     int(_labor_monthly * 12) if _mod_l else 0,
         "inv_annual":       int(_inv_value * 12)     if _mod_i else 0,
         "labor_overtime":   labor_overtime_cost       if _mod_l else 0,
+        "labor_vs_industry_monthly": _labor_vs_industry_monthly if _mod_l else 0,
+        "labor_vs_industry_annual":  _labor_vs_industry_annual  if _mod_l else 0,
     }
 
     import secrets as _sec

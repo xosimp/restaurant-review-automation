@@ -798,7 +798,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="4" fill="#22c55e"/></svg>
           Live from Toast POS
         </span>
-        {% if restaurant.toast_last_synced %}<span style="color:var(--ink3)">· Synced {{ restaurant.toast_last_synced[:10] }}</span>{% endif %}
+        {% if restaurant.toast_last_synced %}{% set _tsd = restaurant.toast_last_synced[:10].split('-') %}<span style="color:var(--ink3)">· Synced {{ _tsd[1]|int }}/{{ _tsd[2]|int }}/{{ _tsd[0][2:] }}</span>{% endif %}
       </div>
       <div style="font-size:11px;color:var(--ink3)">Data updates nightly automatically</div>
     {% else %}
@@ -877,16 +877,30 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   {% if savings_breakdown and savings_breakdown.labor > 0 %}
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
     <div style="background:linear-gradient(135deg,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:12px 16px;text-align:center">
-      <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6fcf97;margin-bottom:4px">Monthly savings potential</div>
-      <div class="labor-num" style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_monthly|format_num}}</div>
-      <div style="font-size:10px;color:#6fcf97;margin-top:2px">if schedule optimized</div>
-      <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Weekly overspend × 4.33 weeks, based on your actual sales and labor % vs target.</span></span>
+      {% if savings_breakdown.labor_monthly > 0 %}
+        <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6fcf97;margin-bottom:4px">Monthly savings potential</div>
+        <div class="labor-num" style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_monthly|format_num}}</div>
+        <div style="font-size:10px;color:#6fcf97;margin-top:2px">if schedule optimized</div>
+        <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Weekly overspend × 4.33 weeks, based on your actual sales and labor % vs target.</span></span>
+      {% else %}
+        <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6fcf97;margin-bottom:4px">Saving vs. industry avg</div>
+        <div class="labor-num" style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_vs_industry_monthly|format_num}}</div>
+        <div style="font-size:10px;color:#6fcf97;margin-top:2px">per month vs. 32% avg</div>
+        <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Your labor % is below the 32% full-service restaurant industry average. This is the monthly dollar difference.</span></span>
+      {% endif %}
     </div>
     <div style="background:linear-gradient(135deg,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:12px 16px;text-align:center">
-      <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6fcf97;margin-bottom:4px">Annual savings potential</div>
-      <div class="labor-num" style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_annual|format_num}}</div>
-      <div style="font-size:10px;color:#6fcf97;margin-top:2px">extrapolated yearly</div>
-      <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Monthly savings potential × 12 months.</span></span>
+      {% if savings_breakdown.labor_annual > 0 %}
+        <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6fcf97;margin-bottom:4px">Annual savings potential</div>
+        <div class="labor-num" style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_annual|format_num}}</div>
+        <div style="font-size:10px;color:#6fcf97;margin-top:2px">extrapolated yearly</div>
+        <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Monthly savings potential × 12 months.</span></span>
+      {% else %}
+        <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#6fcf97;margin-bottom:4px">Annual advantage</div>
+        <div class="labor-num" style="font-size:22px;font-weight:800;color:white">${{savings_breakdown.labor_vs_industry_annual|format_num}}</div>
+        <div style="font-size:10px;color:#6fcf97;margin-top:2px">vs. 32% industry avg/yr</div>
+        <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Monthly industry-average savings × 12 months. You're staying below the 32% full-service benchmark.</span></span>
+      {% endif %}
     </div>
     {% if savings_breakdown.labor_overtime > 0 %}
     <div style="background:linear-gradient(135deg,#2b0d0d,#3d1414);border:1px solid #5c2020;border-radius:8px;padding:12px 16px;text-align:center">
@@ -971,14 +985,19 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   <!-- Two col: overstaffed table + bar chart -->
   <div class="two-col">
     <div>
-      <div class="slabel">Overstaffed days — where the money is going</div>
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px">
+        <div class="slabel" style="margin-bottom:0">Overstaffed days — where the money is going</div>
+        {% if labor.overstaffed_days|length > 5 %}
+        <button onclick="toggleRows('overstaffed-tbody','overstaffed-toggle',{{labor.overstaffed_days|length}})" id="overstaffed-toggle" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.overstaffed_days|length}} ↓</button>
+        {% endif %}
+      </div>
       <div class="card"><table class="tbl">
         <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor cost</th><th>Labor %</th><th>Over target</th></tr></thead>
-        <tbody>
+        <tbody id="overstaffed-tbody">
         {% for d in labor.overstaffed_days %}
         {% set diff = (d.labor_pct - (labor_target|default(30.0)))|round(1) %}
         {% set is_top_cost = loop.first %}
-        <tr style="{% if is_top_cost %}background:linear-gradient(to right,#f5d5d5,#fdf0f0,white);border-left:3px solid #c0392b;{% else %}border-left:3px solid transparent;{% endif %}">
+        <tr class="{% if loop.index > 5 %}collapsible-row overstaffed-extra{% endif %}" style="{% if is_top_cost %}background:linear-gradient(to right,#f5d5d5,#fdf0f0,white);border-left:3px solid #c0392b;{% else %}border-left:3px solid transparent;{% endif %}{% if loop.index > 5 %}display:none;{% endif %}">
           <td style="color:var(--ink3);font-size:11px">{{d.date}}</td>
           <td style="font-weight:{% if is_top_cost %}700{% else %}500{% endif %}">{{d.day}}{% if is_top_cost %} <span style="font-size:9px;font-weight:700;background:#fde8e8;color:#c0392b;padding:1px 5px;border-radius:8px;margin-left:4px;vertical-align:middle">most expensive</span>{% endif %}</td>
           <td>${{d.sales|int|format_num}}</td>
@@ -1033,15 +1052,20 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     </div>
   </div>
   <!-- Understaffed days — full width -->
-  <div class="slabel" style="margin-top:16px">Understaffed days — possible missed revenue ⚠</div>
+  <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:16px;margin-bottom:4px">
+    <div class="slabel" style="margin-bottom:0">Understaffed days — possible missed revenue ⚠</div>
+    {% if labor.understaffed_days|length > 5 %}
+    <button onclick="toggleRows('understaffed-tbody','understaffed-toggle',{{labor.understaffed_days|length}})" id="understaffed-toggle" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.understaffed_days|length}} ↓</button>
+    {% endif %}
+  </div>
   <div style="position:relative;overflow:hidden;border-radius:var(--r);border:1px solid var(--paper3);background:white">
     <div style="position:absolute;inset:0;background:linear-gradient(to right,rgba(200,75,47,0.07) 0%,rgba(239,159,39,0.05) 40%,rgba(239,159,39,0.0) 100%);pointer-events:none;z-index:0"></div>
     <div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(to bottom,#c84b2f,#ef9f27);z-index:1"></div>
     <table class="tbl" style="position:relative;z-index:1">
       <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor %</th><th>Why it matters</th></tr></thead>
-      <tbody>
+      <tbody id="understaffed-tbody">
       {% for d in labor.understaffed_days %}
-      <tr>
+      <tr{% if loop.index > 5 %} style="display:none"{% endif %}>
         <td style="color:var(--ink3);font-size:11px">{{d.date}}</td>
         <td style="font-weight:600">{{d.day}}</td>
         <td>${{d.sales|int|format_num}}</td>
@@ -1055,7 +1079,7 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
     </table>
     {% if labor.understaffed_days %}
     <div style="padding:10px 16px;font-size:11px;color:#7a4f00;background:rgba(239,159,39,0.06);border-top:1px solid rgba(239,159,39,0.15);position:relative;z-index:1">
-      💡 Consider scheduling 1–2 additional staff on {% for d in labor.understaffed_days %}{{d.day}}{% if not loop.last %}, {% endif %}{% endfor %} — the sales volume justifies it and better coverage drives higher check averages and return visits.
+      💡 Consider adding 1–2 staff on your highest-revenue days: {% for d in labor.understaffed_days[:5] %}<strong>{{d.date}} ({{d.day}})</strong>{% if not loop.last %}, {% endif %}{% endfor %}{% if labor.understaffed_days|length > 5 %} and {{labor.understaffed_days|length - 5}} more{% endif %} — volume on these days justifies the coverage and drives higher check averages.
     </div>
     {% endif %}
   </div>
@@ -2003,6 +2027,20 @@ var _igConnected = {% if restaurant.ig_token %}true{% else %}false{% endif %};
 var _fbConnected = {% if restaurant.fb_page_token and restaurant.fb_page_id %}true{% else %}false{% endif %};
 
 var _toastTimer=null;
+function toggleRows(tbodyId, btnId, total) {
+  var tbody = document.getElementById(tbodyId);
+  var btn   = document.getElementById(btnId);
+  if (!tbody || !btn) return;
+  var hidden = tbody.querySelectorAll('tr[style*="display:none"]');
+  if (hidden.length > 0) {
+    hidden.forEach(function(r){ r.style.display = ''; });
+    btn.textContent = 'Show less ↑';
+  } else {
+    var rows = tbody.querySelectorAll('tr');
+    rows.forEach(function(r, i){ if (i >= 5) r.style.display = 'none'; });
+    btn.textContent = 'Show all ' + total + ' ↓';
+  }
+}
 function toast(msg,type){var t=document.getElementById('toast');t.textContent=msg;t.className='toast';if(type)t.classList.add('toast-'+type);void t.offsetWidth;t.classList.add('show');if(_toastTimer)clearTimeout(_toastTimer);_toastTimer=setTimeout(function(){t.classList.remove('show');_toastTimer=null;},3600);}
 function disconnectInstagram(btn){
   if(btn){btn.textContent='Disconnecting…';btn.style.opacity='0.6';btn.disabled=true;}
