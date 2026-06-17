@@ -282,6 +282,71 @@ button:not(.tab):not(.logout-btn):not([disabled]):active{transform:scale(.97)}
 }
 </style>
 <script>
+function submitFoodCostCount() {
+  var rows = document.querySelectorAll('#fc-rows tr');
+  var items = [];
+  for (var i = 0; i < rows.length; i++) {
+    var inputs = rows[i].querySelectorAll('input');
+    if (inputs.length < 4) continue;
+    var name = inputs[0].value.trim();
+    var unit = inputs[1].value.trim();
+    var price = parseFloat(inputs[2].value) || 0;
+    var usage = parseFloat(inputs[3].value) || 0;
+    if (name) {
+      items.push({name: name, unit: unit, price: price, usage: usage});
+    }
+  }
+  if (items.length === 0) return;
+  var msg = document.getElementById('fc-submit-msg');
+  if (msg) { msg.style.display = 'inline'; msg.textContent = 'Saving…'; msg.style.color = 'var(--ink3)'; }
+  fetch('/api/food-cost-quickcount', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
+    body: JSON.stringify({items: items})
+  })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (!data.ok) {
+        if (msg) { msg.textContent = 'Error — try again'; msg.style.color = '#c84b2f'; }
+        return;
+      }
+      if (msg) { msg.style.display = 'inline'; msg.textContent = 'Saved ' + data.submitted_at; msg.style.color = '#2d6a4f'; }
+      var driftEl = document.getElementById('fc-drift-live');
+      if (!driftEl) return;
+      if (!data.drift || data.drift.length === 0) {
+        driftEl.style.display = 'block';
+        driftEl.innerHTML = '<div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:8px 14px;font-size:12px;color:#2d6a4f">&#10003; No significant price changes vs last week — your costs are holding steady.</div>';
+        return;
+      }
+      var html = '<div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:12px 14px;font-size:12px">';
+      html += '<div style="font-weight:700;color:#7a4f00;margin-bottom:8px">&#9888; ' + data.drift.length + ' price change' + (data.drift.length > 1 ? 's' : '') + ' detected';
+      if (data.total_weekly_impact > 0) { html += ' — +$' + data.total_weekly_impact.toFixed(2) + '/wk added cost'; }
+      html += '</div>';
+      html += '<table style="width:100%;border-collapse:collapse;font-size:12px">';
+      html += '<tr style="color:#7a4f00;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px"><td style="padding:3px 6px">Item</td><td style="padding:3px 6px">Was</td><td style="padding:3px 6px">Now</td><td style="padding:3px 6px">Change</td><td style="padding:3px 6px">Weekly $</td></tr>';
+      for (var j = 0; j < data.drift.length; j++) {
+        var d = data.drift[j];
+        var clr = d.direction === 'up' ? '#c0392b' : '#2d6a4f';
+        var arrow = d.direction === 'up' ? '&#8593;' : '&#8595;';
+        html += '<tr style="border-top:1px solid #e0c870">';
+        html += '<td style="padding:4px 6px;font-weight:600;color:#0e0c0a">' + d.name + '</td>';
+        html += '<td style="padding:4px 6px;color:#7a736a">$' + d.prev_price.toFixed(2) + '</td>';
+        html += '<td style="padding:4px 6px;color:#0e0c0a;font-weight:600">$' + d.curr_price.toFixed(2) + '</td>';
+        html += '<td style="padding:4px 6px;color:' + clr + ';font-weight:700">' + arrow + ' ' + Math.abs(d.pct_change) + '%</td>';
+        html += '<td style="padding:4px 6px;color:' + clr + ';font-weight:600">' + (d.direction === 'up' ? '+' : '-') + '$' + Math.abs(d.weekly_impact).toFixed(2) + '</td>';
+        html += '</tr>';
+      }
+      html += '</table></div>';
+      driftEl.style.display = 'block';
+      driftEl.innerHTML = html;
+      var savedEl = document.getElementById('fc-drift-saved');
+      if (savedEl) savedEl.style.display = 'none';
+    })
+    .catch(function() {
+      if (msg) { msg.textContent = 'Network error'; msg.style.color = '#c84b2f'; }
+    });
+}
+
 function clientUpload(dataType, input) {
   var resultEl = document.getElementById(dataType + '-inline-result');
   if (!input || !input.files || !input.files[0]) return;
@@ -387,7 +452,7 @@ function clientUpload(dataType, input) {
 <div class="tabs">
     {% if mod_reviews %}<button class="tab {{'active' if mod_reviews}}" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews <span class="badge" id="reviews-badge" style="{% if rstats.awaiting_approval > 0 %}background:#c0392b;color:white{% else %}display:none{% endif %}">{{rstats.awaiting_approval if rstats.awaiting_approval > 0 else ''}}</span></button>{% endif %}
     {% if mod_labor %}<button class="tab {{'active' if not mod_reviews and mod_labor}}" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
-    {% if mod_inventory %}<button class="tab {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="tab-inventory" onclick="switchTab('inventory',this)">Inventory</button>{% endif %}
+    {% if mod_inventory %}<button class="tab {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="tab-inventory" onclick="switchTab('inventory',this)">Food Cost</button>{% endif %}
     {% if mod_marketing %}<button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
     {% if restaurant.google_place_id and mod_reviews and mod_labor and mod_inventory and mod_marketing %}<button class="tab" id="tab-competitor" onclick="switchTab('competitor',this)">Intel</button>{% endif %}
     <button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" onclick="switchTab('account',this)" style="margin-left:auto">Account</button>
@@ -886,6 +951,31 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
+  <!-- Upcoming event scheduling forecast -->
+  {% if labor_upcoming %}
+  <div style="background:linear-gradient(135deg,#1a1410,#1e1814);border:1px solid #3d2e1e;border-radius:8px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:flex-start;gap:14px">
+    <div style="font-size:20px;line-height:1;margin-top:1px">📅</div>
+    <div style="flex:1">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember);margin-bottom:6px">Scheduling Forecast</div>
+      {% for event in labor_upcoming %}
+      <div style="font-size:13px;color:var(--paper);font-weight:600;margin-bottom:2px">
+        {{event.name}}
+        <span style="font-size:11px;font-weight:400;color:var(--ink3)">— {{event.date_str}}
+          {% if event.days_away == 0 %}(today)
+          {% elif event.days_away == 1 %}(tomorrow)
+          {% else %}({{event.days_away}} days away){% endif %}
+        </span>
+      </div>
+      <div style="font-size:11px;color:#c0b8b0;line-height:1.5;margin-bottom:{% if not loop.last %}10px{% else %}0{% endif %}">
+        {% if event.days_away <= 3 %}Expect elevated covers this weekend — confirm you have full kitchen and floor coverage.
+        {% elif event.days_away <= 7 %}Check this week's schedule now. Add 1–2 servers on the holiday itself if you're typically at capacity.
+        {% else %}Flag for next schedule build. Historically your highest-volume Sundays follow this holiday pattern.{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Labor savings summary — show whenever live labor data exists, regardless of banner value -->
   {% if labor and labor.is_live and (savings_breakdown.labor_vs_industry_monthly > 0 or savings_breakdown.labor_monthly > 0 or savings_breakdown.labor_overtime > 0 or labor.overstaffed_days|length > 0) %}
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
@@ -1136,33 +1226,105 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div>
 </div>
 
-<!-- INVENTORY -->
+<!-- FOOD COST -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="panel-inventory">
-  {% if not inv.is_live %}
-  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:8px;padding:14px 16px;margin-bottom:16px">
-    <div style="font-size:12px;color:#8a6a00;font-weight:600;margin-bottom:8px">⚠ Showing sample data — upload your inventory CSV to see your real numbers</div>
-    <div style="font-size:11px;color:#8a6a00;margin-bottom:10px;line-height:1.6">
-      <strong>How to export:</strong>&nbsp;
-      <span>Toast: Inventory → Items → Export CSV</span> &nbsp;·&nbsp;
-      <span>Square: Items → Inventory → Export</span> &nbsp;·&nbsp;
-      <span>Other: Any CSV with item name, quantity, and unit cost works</span>
+
+  <!-- ── Key Ingredient Price Monitor (Big 8 Quick Count) ── -->
+  <div class="slabel" style="margin-bottom:8px">Key Ingredient Price Monitor</div>
+  <div class="card" style="padding:16px 18px;margin-bottom:14px">
+    <div style="font-size:12px;color:var(--ink3);margin-bottom:12px;line-height:1.5">
+      Track your 8 highest-cost ingredients weekly. Submit every time you get an invoice — we'll flag price drift and weekly cost impact automatically.
     </div>
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <label style="display:inline-flex;align-items:center;gap:8px;background:#2d6a4f;color:white;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">
-        📂 Upload inventory CSV
-        <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
-      </label>
-      <span id="inventory-inline-result" style="font-size:12px;color:#2d6a4f;display:none"></span>
+
+    <!-- Price drift results (shown after submission or from saved data) -->
+    {% if food_cost_data and food_cost_data.current and food_cost_data.previous and food_cost_data.previous.items %}
+    <div id="fc-drift-saved" style="margin-bottom:14px">
+      {% set curr_map = {} %}
+      {% for it in food_cost_data.current.items %}{% if it.name %}{% set _ = curr_map.update({it.name|lower: it}) %}{% endif %}{% endfor %}
+      {% set drift_found = namespace(count=0) %}
+      {% for it in food_cost_data.previous.items %}
+        {% set curr_it = curr_map.get(it.name|lower) %}
+        {% if curr_it and it.price and curr_it.price %}
+          {% set pct = ((curr_it.price|float - it.price|float) / it.price|float * 100)|round(1) %}
+          {% if pct|abs >= 3 %}{% set drift_found.count = drift_found.count + 1 %}{% endif %}
+        {% endif %}
+      {% endfor %}
+      {% if drift_found.count > 0 %}
+      <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:10px 14px;font-size:12px;color:#7a4f00;font-weight:600">
+        ⚠ {{drift_found.count}} ingredient price change{{'' if drift_found.count == 1 else 's'}} vs last week — submit new prices below to refresh.
+      </div>
+      {% else %}
+      <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:8px 14px;font-size:12px;color:#2d6a4f">
+        ✓ Prices stable vs last week ({{food_cost_data.previous.submitted_at}}) — update below if you have a new invoice.
+      </div>
+      {% endif %}
     </div>
+    {% endif %}
+
+    <div id="fc-drift-live" style="display:none;margin-bottom:14px"></div>
+
+    <!-- Quick count form table -->
+    <table style="width:100%;border-collapse:collapse;font-size:12px" id="fc-table">
+      <thead>
+        <tr style="border-bottom:1px solid var(--paper3)">
+          <th style="text-align:left;padding:5px 6px;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Ingredient</th>
+          <th style="text-align:left;padding:5px 6px;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;width:60px">Unit</th>
+          <th style="text-align:left;padding:5px 6px;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;width:90px">Price/unit $</th>
+          <th style="text-align:left;padding:5px 6px;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;width:80px">Wk usage</th>
+        </tr>
+      </thead>
+      <tbody id="fc-rows">
+        {% set _fc_items = food_cost_data.current.items if food_cost_data and food_cost_data.current else [
+          {"name":"Chicken Breast","unit":"lb","price":"","usage":""},
+          {"name":"Beef/Steak","unit":"lb","price":"","usage":""},
+          {"name":"Salmon / Fish","unit":"lb","price":"","usage":""},
+          {"name":"Shrimp","unit":"lb","price":"","usage":""},
+          {"name":"Heavy Cream","unit":"qt","price":"","usage":""},
+          {"name":"Butter","unit":"lb","price":"","usage":""},
+          {"name":"Produce (misc)","unit":"case","price":"","usage":""},
+          {"name":"Custom item","unit":"","price":"","usage":""}
+        ] %}
+        {% for _fci in _fc_items %}
+        <tr style="border-bottom:1px solid var(--paper3)">
+          <td style="padding:5px 4px"><input type="text" value="{{_fci.name}}" style="width:100%;border:none;background:transparent;font-size:12px;color:var(--ink);font-family:inherit;outline:none" placeholder="Item name"></td>
+          <td style="padding:5px 4px"><input type="text" value="{{_fci.unit}}" style="width:100%;border:none;background:transparent;font-size:12px;color:var(--ink);font-family:inherit;outline:none" placeholder="lb"></td>
+          <td style="padding:5px 4px"><input type="number" value="{{_fci.price}}" step="0.01" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:var(--ink);font-family:inherit;outline:none" placeholder="0.00"></td>
+          <td style="padding:5px 4px"><input type="number" value="{{_fci.usage}}" step="0.1" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:var(--ink);font-family:inherit;outline:none" placeholder="0"></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
+      <button onclick="submitFoodCostCount()" style="background:#2d6a4f;color:white;border:none;border-radius:6px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">Submit this week's prices</button>
+      <span id="fc-submit-msg" style="font-size:12px;color:#2d6a4f;display:none"></span>
+    </div>
+    {% if food_cost_data and food_cost_data.current %}
+    <div style="font-size:11px;color:var(--ink3);margin-top:8px">Last submitted: {{food_cost_data.current.submitted_at}}{% if food_cost_data.previous and food_cost_data.previous.submitted_at %} · Previous: {{food_cost_data.previous.submitted_at}}{% endif %}</div>
+    {% endif %}
   </div>
-  {% else %}
-  <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#2d6a4f;display:flex;align-items:center;gap:8px">
-    <span>✓</span><span><strong>Showing your real data</strong> — upload a new CSV anytime to update.</span>
-    <label style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;background:#2d6a4f;color:white;padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">
+
+  <!-- ── Waste Analysis (CSV-based — only shown when live data uploaded) ── -->
+  {% if inv.is_live %}
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Waste Analysis — from uploaded data</div>
+    <label style="display:inline-flex;align-items:center;gap:6px;background:#2d6a4f;color:white;padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">
       Update CSV <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
     </label>
   </div>
+  {% else %}
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Waste Analysis</div>
+    <label style="display:inline-flex;align-items:center;gap:8px;background:var(--paper3);color:var(--ink);padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">
+      Upload detailed CSV (optional)
+      <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
+    </label>
+  </div>
+  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#8a6a00">
+    <strong>Sample data below.</strong> Upload a CSV with item, current_stock, par_level, unit_cost, waste_last_week to see your real numbers.
+  </div>
   {% endif %}
+  <span id="inventory-inline-result" style="font-size:12px;color:#2d6a4f;display:none"></span>
+
   <div style="background:{{inv.banner_gradient}};border-radius:10px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>
       <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#f4a4a4;margin-bottom:4px">Projected annual food waste cost</div>
@@ -1696,7 +1858,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;justify-items:end">
           {% if mod_reviews %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px;white-space:nowrap">&#10003; Reviews</span>{% else %}<span></span>{% endif %}
           {% if mod_labor %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px;white-space:nowrap">&#10003; Labor</span>{% else %}<span></span>{% endif %}
-          {% if mod_inventory %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px;white-space:nowrap">&#10003; Inventory</span>{% else %}<span></span>{% endif %}
+          {% if mod_inventory %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px;white-space:nowrap">&#10003; Food Cost</span>{% else %}<span></span>{% endif %}
           {% if mod_marketing %}<span style="font-size:11px;font-weight:600;color:#4ade80;background:rgba(74,222,128,.12);padding:2px 10px;border-radius:10px;white-space:nowrap">&#10003; Marketing</span>{% else %}<span></span>{% endif %}
         </div>
       </div>

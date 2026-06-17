@@ -936,17 +936,59 @@ def client_upload_data(current_user):
     save_client_data(restaurant_id, data_type, csv_content, source="upload")
 
     # Trigger immediate re-analysis so dashboard reflects new data right away
+    _ot_flags = []
     try:
         if data_type == "shifts":
             from labor import analyse_shifts_for_restaurant
-            analyse_shifts_for_restaurant(restaurant_id)
+            _shift_analysis = analyse_shifts_for_restaurant(restaurant_id)
+            _ot_flags = [f for f in _shift_analysis.get("overtime_risk", []) if f.get("status") == "overtime"]
         elif data_type == "inventory":
-            from models import get_restaurant
-            r = get_restaurant(restaurant_id)
-            if r:
-                pass  # inventory analysis runs on next dashboard load
-    except Exception as e:
+            pass  # inventory analysis runs on next dashboard load
+    except Exception:
         pass  # non-fatal — data is saved, analysis will run on next load
+
+    # Overtime alert — email owner immediately when upload reveals an overtime employee
+    if _ot_flags:
+        try:
+            import os as _os_ot, resend as _resend_ot
+            from models import get_restaurant as _gr_ot
+            _r_ot = _gr_ot(restaurant_id)
+            _key_ot = _os_ot.getenv("RESEND_API_KEY", "")
+            _from_ot = _os_ot.getenv("FROM_EMAIL", "will@cavnar.ai")
+            if _key_ot and _r_ot and _r_ot.owner_email:
+                _resend_ot.api_key = _key_ot
+                _ot_rows = "".join(
+                    "<tr><td style='padding:6px 10px;border-bottom:1px solid #e0dbd0'><strong>" +
+                    f["employee"] + "</strong></td><td style='padding:6px 10px;border-bottom:1px solid #e0dbd0'>" +
+                    str(f["hours"]) + "h — week of " + f["week"] + "</td></tr>"
+                    for f in _ot_flags
+                )
+                _resend_ot.Emails.send({
+                    "from": "Cavnar AI Labor Alerts <" + _from_ot + ">",
+                    "to": [_r_ot.owner_email],
+                    "subject": "⚠ Overtime detected — " + _r_ot.name,
+                    "html": (
+                        "<div style='font-family:sans-serif;max-width:520px;margin:0 auto'>"
+                        "<div style='border-top:3px solid #e07040;padding-top:20px;margin-bottom:16px'>"
+                        "<h3 style='color:#0e0c0a;margin:0'>Overtime Alert</h3>"
+                        "<p style='font-size:13px;color:#7a736a;margin:4px 0 0'>Cavnar AI Labor Monitor</p>"
+                        "</div>"
+                        "<p style='font-size:15px;line-height:1.6;color:#0e0c0a'>Your latest shift upload shows "
+                        + str(len(_ot_flags)) + " employee(s) in overtime this week:</p>"
+                        "<table style='width:100%;border-collapse:collapse;font-size:14px;margin-bottom:16px'>"
+                        "<thead><tr style='background:#f7f4ef'>"
+                        "<th style='padding:6px 10px;text-align:left;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#7a736a'>Employee</th>"
+                        "<th style='padding:6px 10px;text-align:left;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#7a736a'>Hours</th>"
+                        "</tr></thead><tbody>" + _ot_rows + "</tbody></table>"
+                        "<p style='font-size:13px;color:#7a736a'>Hours over 40 are billed at 1.5× — "
+                        "consider adjusting next week's schedule to avoid repeat overtime.</p>"
+                        "<hr style='border:none;border-top:1px solid #e0dbd0;margin:16px 0'/>"
+                        "<p style='font-size:11px;color:#7a736a'>Cavnar AI — dashboard.cavnar.ai</p>"
+                        "</div>"
+                    )
+                })
+        except Exception:
+            pass
 
     # Log it and notify Will on first-ever upload
     try:
@@ -985,6 +1027,85 @@ def client_upload_data(current_user):
         pass
 
     return jsonify(ok=True, rows=len(rows), message=f"{len(rows)} rows loaded successfully")
+
+
+# ── Food cost quick count ─────────────────────────────────────────────────────
+
+@client_bp.route("/api/food-cost-quickcount", methods=["POST"])
+@login_required
+def food_cost_quickcount(current_user):
+    """Save Big-8 ingredient prices, compute week-over-week drift, return alerts."""
+    import json as _json_fc
+    from datetime import datetime as _dt_fc
+    from models import get_client_data as _gcd, get_conn as _gcc
+
+    data = request.get_json() or {}
+    items = data.get("items", [])
+    if not items or not isinstance(items, list):
+        return jsonify(ok=False, error="No items provided"), 400
+
+    rid = current_user["restaurant_id"]
+    now_str = _dt_fc.now().strftime("%Y-%m-%d")
+
+    # Load existing saved data
+    existing_raw = _gcd(rid)
+    existing_fc = {}
+    if existing_raw and existing_raw.get("food_cost_json"):
+        try:
+            existing_fc = _json_fc.loads(existing_raw["food_cost_json"])
+        except Exception:
+            existing_fc = {}
+
+    prev = existing_fc.get("current")  # rotate current → previous
+    new_current = {"submitted_at": now_str, "items": items}
+
+    # Compute price drift vs previous submission
+    drift = []
+    if prev and prev.get("items"):
+        prev_map = {i["name"].lower(): i for i in prev["items"] if i.get("name")}
+        for item in items:
+            name = (item.get("name") or "").strip()
+            if not name:
+                continue
+            prev_item = prev_map.get(name.lower())
+            if not prev_item:
+                continue
+            try:
+                curr_price = float(item.get("price") or 0)
+                prev_price = float(prev_item.get("price") or 0)
+                if prev_price > 0 and curr_price > 0:
+                    pct = round((curr_price - prev_price) / prev_price * 100, 1)
+                    if abs(pct) >= 3:  # only flag meaningful changes
+                        weekly_usage = float(item.get("usage") or 0)
+                        weekly_impact = round((curr_price - prev_price) * weekly_usage, 2)
+                        drift.append({
+                            "name": name,
+                            "prev_price": prev_price,
+                            "curr_price": curr_price,
+                            "pct_change": pct,
+                            "weekly_impact": weekly_impact,
+                            "direction": "up" if pct > 0 else "down"
+                        })
+            except Exception:
+                pass
+    drift.sort(key=lambda x: abs(x["weekly_impact"]), reverse=True)
+
+    # Save new data
+    save_payload = _json_fc.dumps({"current": new_current, "previous": prev or {}})
+    conn = _gcc()
+    existing_row = conn.execute("SELECT id FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
+    if existing_row:
+        conn.execute("UPDATE client_data SET food_cost_json=?, updated_at=datetime('now') WHERE restaurant_id=?",
+                     (save_payload, rid))
+    else:
+        conn.execute("INSERT INTO client_data (restaurant_id, food_cost_json) VALUES (?, ?)",
+                     (rid, save_payload))
+    conn.commit()
+    conn.close()
+
+    total_impact = sum(d["weekly_impact"] for d in drift if d["direction"] == "up")
+    return jsonify(ok=True, drift=drift, total_weekly_impact=round(total_impact, 2),
+                   submitted_at=now_str, prev_submitted_at=prev.get("submitted_at") if prev else None)
 
 
 # ── Review request ────────────────────────────────────────────────────────────

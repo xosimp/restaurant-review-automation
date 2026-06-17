@@ -705,6 +705,42 @@ def index(current_user):
 
     import secrets as _sec
     csrf_token = request.cookies.get('csrf_token') or _sec.token_hex(16)
+    # Labor: upcoming events within 21 days for scheduling forecast banner
+    _labor_upcoming = []
+    try:
+        from marketing import get_upcoming_holidays as _guh_labor
+        from datetime import timedelta as _td_labor
+        _now_labor = datetime.now()
+        _hol_str = _guh_labor(_now_labor)
+        if _hol_str:
+            import re as _re_labor
+            for _chunk in _hol_str.split(", "):
+                _m = _re_labor.search(r'\((\w+ \d+)\)$', _chunk)
+                if _m:
+                    try:
+                        _hdate = datetime.strptime(_m.group(1) + " " + str(_now_labor.year), "%b %d %Y")
+                        if _hdate < _now_labor:
+                            _hdate = _hdate.replace(year=_now_labor.year + 1)
+                        _days = (_hdate - _now_labor).days
+                        if 0 <= _days <= 21:
+                            _name = _chunk[:_chunk.rfind("(")].strip()
+                            _labor_upcoming.append({"name": _name, "days_away": _days, "date_str": _m.group(1)})
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    # Food cost: load saved quick-count data for price drift display
+    _food_cost_data = None
+    try:
+        from models import get_client_data as _gcd_fc
+        import json as _json_fc
+        _fc_raw = _gcd_fc(rid)
+        if _fc_raw and _fc_raw.get("food_cost_json"):
+            _food_cost_data = _json_fc.loads(_fc_raw["food_cost_json"])
+    except Exception:
+        pass
+
     return render_template('dashboard.html',
         show_welcome=show_welcome,
         csrf_token=csrf_token,
@@ -722,7 +758,9 @@ def index(current_user):
         mkt_stats=mkt_stats,
         savings_breakdown=savings_breakdown,
         competitor_data=competitor_data,
-        competitor_updated_at=restaurant.competitor_updated_at if restaurant else None)
+        competitor_updated_at=restaurant.competitor_updated_at if restaurant else None,
+        labor_upcoming=_labor_upcoming,
+        food_cost_data=_food_cost_data)
 
 @app.errorhandler(404)
 def page_not_found(e):

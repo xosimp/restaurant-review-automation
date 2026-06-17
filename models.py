@@ -326,6 +326,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "inventory_updated_at", "TEXT"),
         ("restaurants", "gbp_rating", "REAL"),
         ("restaurants", "gbp_review_count", "INTEGER"),
+        ("client_data", "food_cost_json", "TEXT"),
     ]
     for table, col, col_type in columns_to_add:
         try:
@@ -386,6 +387,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN last_activity TEXT",
         "ALTER TABLE client_data ADD COLUMN shifts_csv TEXT",
         "ALTER TABLE client_data ADD COLUMN inventory_csv TEXT",
+        "ALTER TABLE client_data ADD COLUMN food_cost_json TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_access_token TEXT",
         "ALTER TABLE users ADD COLUMN reset_token TEXT",
         "ALTER TABLE users ADD COLUMN reset_token_expires TEXT",
