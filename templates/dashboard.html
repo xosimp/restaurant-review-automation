@@ -944,8 +944,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div id="gap-amount" style="font-size:36px;font-weight:800;color:var(--ember2);line-height:1;letter-spacing:-1px">—</div>
       <div style="font-size:11px;color:var(--ink3);margin-top:4px">estimated monthly overspend</div>
 
-      <button onclick="downloadSchedule(this)" class="btn-primary" style="margin-top:12px;padding:9px 18px">
-        Download optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <button onclick="generateSchedule(this)" id="gen-sched-btn" class="btn-primary" style="margin-top:12px;padding:9px 18px">
+        Generate optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
 
     </div>
@@ -975,6 +975,45 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
   {% endif %}
+
+  <!-- Schedule preview panel — shown after generate is clicked -->
+  <div id="schedule-preview-panel" style="display:none;margin-bottom:14px">
+    <div style="background:var(--ink);border-radius:10px;overflow:hidden">
+      <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:4px">AI-Optimized Schedule</div>
+          <div id="sched-week-label" style="font-size:14px;font-weight:700;color:var(--paper)">Week of —</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button onclick="downloadScheduleFromPreview()" style="background:#2d6a4f;color:white;border:none;border-radius:6px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">Download CSV</button>
+          <button onclick="document.getElementById('schedule-preview-panel').style.display='none'" style="background:rgba(255,255,255,.08);color:var(--paper);border:none;border-radius:6px;padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Close</button>
+        </div>
+      </div>
+
+      <!-- AI summary bullets -->
+      <div id="sched-summary" style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);display:none">
+        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:8px">What changed &amp; why</div>
+        <div id="sched-summary-bullets" style="font-size:12px;color:#c0b8b0;line-height:1.8"></div>
+      </div>
+
+      <!-- Schedule table -->
+      <div style="overflow-x:auto;padding:0 0 4px">
+        <table id="sched-table" style="width:100%;border-collapse:collapse;font-size:11px;min-width:580px">
+          <thead>
+            <tr style="background:rgba(255,255,255,.04)">
+              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap">Day</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Employee</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Role</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap">Shift</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;white-space:nowrap">Hrs</th>
+              <th style="padding:8px 12px;text-align:left;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Notes</th>
+            </tr>
+          </thead>
+          <tbody id="sched-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
   <!-- Labor savings summary — show whenever live labor data exists, regardless of banner value -->
   {% if labor and labor.is_live and (savings_breakdown.labor_vs_industry_monthly > 0 or savings_breakdown.labor_monthly > 0 or savings_breakdown.labor_overtime > 0 or labor.overstaffed_days|length > 0) %}
@@ -3325,31 +3364,85 @@ function loadLaborInsight(){
     if(msgEl) msgEl.textContent='Unable to load gap data.';
   });
 }
-function downloadSchedule(btn){
-  btn.textContent='Generating… (30 sec)';
-  btn.disabled=true;
-  fetch('/api/download-schedule').then(function(r){
-    var ct=r.headers.get('content-type')||'';
-    if(ct.includes('json')){
-      return r.json().then(function(data){
-        btn.textContent=data.error||'Error — try again';
-        setTimeout(function(){btn.innerHTML='Download optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';btn.disabled=false;},4000);
-      });
-    }
-    return r.blob().then(function(blob){
-      // Show summary before downloading
-      var tooltip=document.getElementById('schedule-tooltip');
-      if(tooltip){ tooltip.style.display='flex'; }
-      var url=URL.createObjectURL(blob);
-      var a=document.createElement('a');
-      a.href=url; a.download='optimized_schedule.csv'; a.click();
-      btn.textContent='✓ Downloaded';
-      setTimeout(function(){btn.innerHTML='Download optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';btn.disabled=false;},3000);
+var _schedCsvCache = '';
+var _schedNameCache = 'optimized_schedule';
+var _dayColors = {'Monday':'#1a2e40','Tuesday':'#1a2e40','Wednesday':'#1a2840','Thursday':'#1a2e40','Friday':'#1e2e1a','Saturday':'#2a1e10','Sunday':'#2a1e10'};
+
+function generateSchedule(btn) {
+  btn.textContent = 'Generating… (~30 sec)';
+  btn.disabled = true;
+  var panel = document.getElementById('schedule-preview-panel');
+  if (panel) panel.style.display = 'none';
+
+  fetch('/api/generate-schedule')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      btn.innerHTML = 'Generate optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      btn.disabled = false;
+      if (!data.ok) { alert(data.error || 'Schedule generation failed — try again'); return; }
+
+      _schedCsvCache = data.schedule_csv || '';
+
+      // Week label
+      var weekEl = document.getElementById('sched-week-label');
+      if (weekEl && data.week_dates && data.week_dates.length) {
+        weekEl.textContent = 'Week of ' + data.week_dates[0] + ' – ' + data.week_dates[data.week_dates.length - 1];
+      }
+
+      // Summary bullets
+      var sumEl = document.getElementById('sched-summary');
+      var bullEl = document.getElementById('sched-summary-bullets');
+      if (data.summary && data.summary.length && bullEl) {
+        var bHtml = '';
+        for (var s = 0; s < data.summary.length; s++) {
+          bHtml += '<div style="padding:2px 0">&#x2022; ' + data.summary[s] + '</div>';
+        }
+        bullEl.innerHTML = bHtml;
+        if (sumEl) sumEl.style.display = 'block';
+      }
+
+      // Schedule table
+      var tbody = document.getElementById('sched-tbody');
+      if (tbody && data.preview_rows && data.preview_rows.length) {
+        var tHtml = '';
+        var lastDay = '';
+        for (var i = 0; i < data.preview_rows.length; i++) {
+          var row = data.preview_rows[i];
+          var day = row.day || '';
+          var isNewDay = day !== lastDay;
+          var bgStyle = isNewDay ? 'border-top:2px solid rgba(255,255,255,.1)' : 'border-top:1px solid rgba(255,255,255,.04)';
+          tHtml += '<tr style="' + bgStyle + '">';
+          tHtml += '<td style="padding:7px 12px;color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + day + '</td>';
+          tHtml += '<td style="padding:7px 12px;color:var(--paper);font-weight:600">' + (row.employee || '') + '</td>';
+          tHtml += '<td style="padding:7px 12px;color:var(--ink3)">' + (row.role || '') + '</td>';
+          tHtml += '<td style="padding:7px 12px;color:var(--paper);white-space:nowrap">' + (row.shift_start || '') + '–' + (row.shift_end || '') + '</td>';
+          tHtml += '<td style="padding:7px 12px;color:#6fcf97;font-weight:600">' + (row.scheduled_hours || '') + '</td>';
+          tHtml += '<td style="padding:7px 12px;color:var(--ink3);font-size:10px">' + (row.notes || '') + '</td>';
+          tHtml += '</tr>';
+          lastDay = day;
+        }
+        tbody.innerHTML = tHtml;
+      }
+
+      if (panel) panel.style.display = 'block';
+      panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+    })
+    .catch(function() {
+      btn.innerHTML = 'Generate optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      btn.disabled = false;
+      alert('Network error — try again');
     });
-  }).catch(function(){
-    btn.textContent='Error — try again';
-    setTimeout(function(){btn.innerHTML='Download optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';btn.disabled=false;},4000);
-  });
+}
+
+function downloadScheduleFromPreview() {
+  if (!_schedCsvCache) return;
+  var blob = new Blob([_schedCsvCache], {type: 'text/csv'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = _schedNameCache + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
 }
 function loadInvInsight(){
   invLoaded=true;

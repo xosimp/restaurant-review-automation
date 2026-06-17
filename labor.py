@@ -458,10 +458,13 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  hourly_rate: float = DEFAULT_HOURLY_RATE,
                                  owner_name: str = None,
                                  staff_notes: list = None,
-                                 labor_target: float = 30.0) -> str:
-    """Use Claude to generate an optimized weekly schedule as CSV."""
-    # Get unique roles and employees with their typical hours
-    emp_hours = analysis.get("employee_hours", {})
+                                 labor_target: float = 30.0,
+                                 yoy_context: list = None,
+                                 upcoming_events: list = None) -> dict:
+    """
+    Use Claude to generate an optimized weekly schedule.
+    Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
+    """
     employees = list({s["employee"]: s["role"] for s in shifts}.items())
     overstaffed = analysis.get("overstaffed_days", [])[:5]
     understaffed = analysis.get("understaffed_days", [])[:3]
@@ -474,51 +477,112 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     week_dates = [(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
     week_days  = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
 
-    # Build staff constraints string
+    # Build staff constraints block
     constraints = ""
     if staff_notes:
         constraints = "\nStaff scheduling constraints (MUST be respected):\n"
         for note in staff_notes:
             constraints += f"- {note['employee_name']}: {note['notes']}\n"
 
-    prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate a realistic, optimized schedule for next week.
+    # Build year-over-year context block (the key intelligence)
+    yoy_block = ""
+    if yoy_context:
+        yoy_lines = []
+        for row in yoy_context:
+            dow_name = row.get("next_week_dow", "")
+            nw_date  = row.get("next_week_date", "")
+            if row.get("yoy_sales"):
+                line = (f"  {dow_name} {nw_date}: last year same day → "
+                        f"${row['yoy_sales']:,.0f} sales, "
+                        f"{row['yoy_labor_pct']}% labor, "
+                        f"{row['yoy_hours']}h total hours")
+                # Flag if this day is a holiday match
+                if row.get("is_holiday"):
+                    line += f" ← USE THIS (matched to {row['holiday_name']} last year)"
+                yoy_lines.append(line)
+            else:
+                yoy_lines.append(f"  {dow_name} {nw_date}: no historical data for this day last year")
+        if yoy_lines:
+            yoy_block = ("\n\nYear-over-year same-day data (PRIMARY scheduling basis — "
+                         "prefer this over recent averages; it controls for holidays and seasonality):\n"
+                         + "\n".join(yoy_lines))
 
-Current labor data:
-- Overall labor ratio: {analysis["overall_labor_pct"]}% (target: {labor_target}%)
-- Monthly labor overspend: ${analysis.get("potential_savings",0):,.0f} estimated recoverable
-- Overstaffed patterns: {[d["day"] + " avg " + str(d["labor_pct"]) + "%" for d in overstaffed]}
-- Understaffed patterns: {[d["day"] for d in understaffed]}
-- Labor % by day: {dow}
+    # Build upcoming events block
+    events_block = ""
+    if upcoming_events:
+        event_lines = []
+        for ev in upcoming_events:
+            day_label = f"{ev['days_away']} days away" if ev['days_away'] > 0 else "THIS WEEK"
+            event_lines.append(f"  {ev['name']} ({ev['date_str']}) — {day_label}: staff UP vs typical, expect 20-40% higher covers")
+        events_block = "\n\nUpcoming events this week (adjust staffing accordingly):\n" + "\n".join(event_lines)
+
+    prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.
+
+CONTEXT:
+- Current overall labor: {analysis["overall_labor_pct"]}% (target: {labor_target}%)
 - Blended hourly rate: ${hourly_rate}/hr
-- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}
-{constraints}
+- Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
+- Recent understaffed days: {[d["day"] for d in understaffed]}
+- Recent labor % by day of week: {dow}
+- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{constraints}
 
-Schedule dates for next week:
+Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
 
-Generate a CSV with these EXACT columns (no other text, no markdown, just CSV):
+OUTPUT FORMAT — two sections separated by exactly "---SUMMARY---":
+
+Section 1: CSV schedule
 date,day,employee,role,shift_start,shift_end,scheduled_hours,notes
 
-Requirements:
-- Use the exact dates listed above
-- Use real employee names from the staff list
-- Reduce coverage on historically overstaffed days by 10-15%
-- Maintain full coverage on high-volume days (Fri/Sat typically)
-- No employee over 40 hours for the week (overtime threshold)
-- Target labor ratio for each day: {labor_target}%
-- Servers: typically 4-6h shifts, bartenders/cooks: 5-7h shifts
-- Notes: one brief phrase explaining any change from normal (e.g. "reduced - slow Monday pattern" or "full coverage - high volume Friday")
-- Include 6-10 shifts per day
-- Infer appropriate shift hours from the existing staff data provided. If the restaurant appears to be breakfast/brunch (early shifts, short hours), use start times between 06:00-10:00 and end times between 12:00-16:00. For lunch/dinner operations use 10:00-14:00 starts and 15:00-23:00 ends. Match the pattern in the actual shift data above.
+Section 2: After "---SUMMARY---", write exactly 3 bullet points (start each with "- ") explaining the key scheduling decisions you made. Be specific: name the days, the changes, and why (reference the YoY data or event if relevant). No markdown headers, no asterisks.
 
-Output ONLY the CSV rows including header. No explanation."""
+SCHEDULING RULES:
+- Use exact dates listed above and real employee names from the staff list
+- Base each day's staffing on the YoY same-day data when available — that is your primary projection
+- For holiday weeks, match staffing to last year's holiday labor hours, not recent averages
+- No employee over 40h for the week
+- Target labor ratio per day: {labor_target}%
+- Servers: 4-6h shifts; bartenders/cooks: 5-8h shifts
+- 6-10 shifts per day
+- Notes column: one brief phrase per shift explaining any change (e.g. "YoY match - high Father's Day volume" or "reduced - YoY shows slow Monday")
+- Match shift times to the operation type visible in the staff data (lunch/dinner vs breakfast/brunch)"""
 
     msg = client.messages.create(
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-        max_tokens=2500,
+        max_tokens=3000,
         messages=[{"role": "user", "content": prompt}],
     )
-    return msg.content[0].text.strip()
+    raw = msg.content[0].text.strip()
+
+    # Split on the summary delimiter
+    if "---SUMMARY---" in raw:
+        csv_part, summary_part = raw.split("---SUMMARY---", 1)
+    else:
+        csv_part = raw
+        summary_part = ""
+
+    # Clean CSV
+    import re as _re_sched
+    csv_lines = [l for l in csv_part.split("\n")
+                 if l.strip() and not l.startswith("#") and not l.startswith("```")]
+    csv_clean = "\n".join(csv_lines)
+
+    # Parse summary bullets
+    summary_bullets = []
+    for line in summary_part.strip().split("\n"):
+        line = line.strip()
+        if line.startswith("- "):
+            line = line[2:].strip()
+        line = _re_sched.sub(r'\*+', '', line).strip()
+        if line:
+            summary_bullets.append(line)
+
+    return {
+        "schedule_csv": csv_clean,
+        "summary": summary_bullets[:3],
+        "week_dates": week_dates,
+        "week_days": week_days,
+    }
 
 
 def calculate_monthly_gap(analysis: dict) -> dict:

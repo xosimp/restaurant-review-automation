@@ -690,36 +690,132 @@ def labor_gap_api(current_user):
         return jsonify(ok=False, error=str(e), over_target=False, monthly_gap=0,
                       current_pct=0, target_pct=30)
 
+def _build_schedule_result(restaurant_id):
+    """Shared logic for both schedule endpoints."""
+    from labor import (analyse_shifts_for_restaurant, load_shifts_for_restaurant,
+                       generate_optimized_schedule, get_hourly_rate)
+    from models import get_restaurant, get_staff_notes, get_yoy_schedule_context
+    from datetime import datetime as _dt, timedelta as _td
+    from zoneinfo import ZoneInfo as _ZI
+
+    restaurant = get_restaurant(restaurant_id)
+    shifts = load_shifts_for_restaurant(restaurant_id)
+    if not shifts:
+        raise ValueError("No shift data available — upload shifts CSV first")
+    analysis = analyse_shifts_for_restaurant(restaurant_id)
+    rate     = get_hourly_rate(restaurant_id)
+    target   = float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0
+    owner    = restaurant.owner_name if restaurant else None
+    staff_notes = get_staff_notes(restaurant_id) or None
+
+    # Compute next week dates
+    today = _dt.now(_ZI('America/Chicago')).replace(tzinfo=None)
+    days_ahead = (7 - today.weekday()) % 7 or 7
+    monday = today + _td(days=days_ahead)
+    next_week_dates = [(monday + _td(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+
+    # YoY context — same day last year
+    yoy_ctx = get_yoy_schedule_context(restaurant_id, next_week_dates)
+
+    # Flag holiday matches in YoY context
+    try:
+        from marketing import get_upcoming_holidays as _guh_sched
+        import re as _re_h
+        _hol_str = _guh_sched(today)
+        if _hol_str:
+            _hol_this_week = {}
+            for chunk in _hol_str.split(", "):
+                m = _re_h.search(r'\((\w+ \d+)\)$', chunk)
+                if m:
+                    try:
+                        hdate = _dt.strptime(m.group(1) + " " + str(today.year), "%b %d %Y")
+                        for nd in next_week_dates:
+                            if hdate.strftime("%Y-%m-%d") == nd:
+                                _hol_this_week[nd] = chunk[:chunk.rfind("(")].strip()
+                    except Exception:
+                        pass
+            for row in yoy_ctx:
+                nd = row.get("next_week_date", "")
+                if nd in _hol_this_week:
+                    row["is_holiday"] = True
+                    row["holiday_name"] = _hol_this_week[nd]
+    except Exception:
+        pass
+
+    # Upcoming events for the schedule banner
+    upcoming_events = []
+    try:
+        from marketing import get_upcoming_holidays as _guh2
+        import re as _re_ev
+        _ev_str = _guh2(today)
+        if _ev_str:
+            for chunk in _ev_str.split(", "):
+                m = _re_ev.search(r'\((\w+ \d+)\)$', chunk)
+                if m:
+                    try:
+                        edate = _dt.strptime(m.group(1) + " " + str(today.year), "%b %d %Y")
+                        days_away = (edate - today).days
+                        if 0 <= days_away <= 21:
+                            upcoming_events.append({
+                                "name": chunk[:chunk.rfind("(")].strip(),
+                                "date_str": m.group(1),
+                                "days_away": days_away
+                            })
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    result = generate_optimized_schedule(
+        analysis, shifts,
+        restaurant_name=restaurant.name if restaurant else "Restaurant",
+        hourly_rate=rate,
+        owner_name=owner,
+        staff_notes=staff_notes,
+        labor_target=target,
+        yoy_context=yoy_ctx,
+        upcoming_events=upcoming_events if upcoming_events else None,
+    )
+    result["restaurant_name"] = restaurant.name if restaurant else "Restaurant"
+    return result
+
+
+@client_bp.route("/api/generate-schedule", methods=["GET"])
+@login_required
+def generate_schedule_json(current_user):
+    """Return schedule as JSON with preview rows + summary for dashboard display."""
+    import csv as _csv_mod, io as _io_sched
+    try:
+        result = _build_schedule_result(current_user["restaurant_id"])
+        # Parse CSV into rows for the preview table
+        preview_rows = []
+        try:
+            reader = _csv_mod.DictReader(_io_sched.StringIO(result["schedule_csv"]))
+            for row in reader:
+                preview_rows.append(dict(row))
+        except Exception:
+            pass
+        return jsonify(
+            ok=True,
+            schedule_csv=result["schedule_csv"],
+            summary=result.get("summary", []),
+            preview_rows=preview_rows,
+            week_dates=result.get("week_dates", []),
+            week_days=result.get("week_days", []),
+        )
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify(ok=False, error=str(e)), 500
+
+
 @client_bp.route("/api/download-schedule")
 @login_required
 def download_schedule(current_user):
     import io
     try:
-        from labor import (analyse_shifts_for_restaurant, load_shifts_for_restaurant,
-                           generate_optimized_schedule, get_hourly_rate)
-        from models import get_restaurant
-        restaurant = get_restaurant(current_user["restaurant_id"])
-        shifts   = load_shifts_for_restaurant(current_user["restaurant_id"])
-        if not shifts:
-            return jsonify(ok=False, error="No shift data available — upload shifts CSV first"), 400
-        analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
-        rate     = get_hourly_rate(current_user["restaurant_id"])
-        owner    = restaurant.owner_name if restaurant and restaurant.owner_name else None
-        target   = restaurant.labor_target_pct if restaurant else 30.0
-        from models import get_staff_notes
-        staff_notes = get_staff_notes(current_user["restaurant_id"])
-        csv_text = generate_optimized_schedule(
-            analysis, shifts,
-            restaurant_name=restaurant.name if restaurant else "Restaurant",
-            hourly_rate=rate,
-            owner_name=owner,
-            staff_notes=staff_notes if staff_notes else None,
-            labor_target=target
-        )
-        # Clean up any markdown Claude might add
-        lines = [l for l in csv_text.split("\n") if l.strip() and not l.startswith("#") and not l.startswith("```")]
-        csv_clean = "\n".join(lines)
-        name = (restaurant.name if restaurant else "Restaurant").replace(" ","_")
+        result = _build_schedule_result(current_user["restaurant_id"])
+        csv_clean = result["schedule_csv"]
+        name = result.get("restaurant_name", "Restaurant").replace(" ", "_")
         return send_file(
             io.BytesIO(csv_clean.encode()),
             mimetype="text/csv",
@@ -939,9 +1035,16 @@ def client_upload_data(current_user):
     _ot_flags = []
     try:
         if data_type == "shifts":
-            from labor import analyse_shifts_for_restaurant
+            from labor import analyse_shifts_for_restaurant, get_hourly_rate as _ghr
             _shift_analysis = analyse_shifts_for_restaurant(restaurant_id)
             _ot_flags = [f for f in _shift_analysis.get("overtime_risk", []) if f.get("status") == "overtime"]
+            # Persist per-day breakdown for YoY schedule generation
+            try:
+                from models import save_labor_daily_history as _sldh
+                _rate = _ghr(restaurant_id)
+                _sldh(restaurant_id, _shift_analysis.get("by_day", {}), _rate)
+            except Exception as _dh_e:
+                print(f"[daily history] {_dh_e}")
         elif data_type == "inventory":
             pass  # inventory analysis runs on next dashboard load
     except Exception:

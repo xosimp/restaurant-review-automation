@@ -104,6 +104,20 @@ CREATE TABLE IF NOT EXISTS labor_history (
 );
 CREATE INDEX IF NOT EXISTS idx_labor_history_restaurant ON labor_history(restaurant_id);
 
+CREATE TABLE IF NOT EXISTS labor_daily_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+    date            TEXT NOT NULL,
+    day_of_week     TEXT,
+    labor_pct       REAL,
+    labor_cost      REAL,
+    sales           REAL,
+    total_hours     REAL,
+    saved_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(restaurant_id, date) ON CONFLICT REPLACE
+);
+CREATE INDEX IF NOT EXISTS idx_labor_daily_restaurant ON labor_daily_history(restaurant_id, date);
+
 CREATE TABLE IF NOT EXISTS activity_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     restaurant_id   INTEGER NOT NULL,
@@ -327,6 +341,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "gbp_rating", "REAL"),
         ("restaurants", "gbp_review_count", "INTEGER"),
         ("client_data", "food_cost_json", "TEXT"),
+        ("labor_daily_history", "total_hours", "REAL"),
     ]
     for table, col, col_type in columns_to_add:
         try:
@@ -388,6 +403,19 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE client_data ADD COLUMN shifts_csv TEXT",
         "ALTER TABLE client_data ADD COLUMN inventory_csv TEXT",
         "ALTER TABLE client_data ADD COLUMN food_cost_json TEXT",
+        """CREATE TABLE IF NOT EXISTS labor_daily_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            day_of_week TEXT,
+            labor_pct REAL,
+            labor_cost REAL,
+            sales REAL,
+            total_hours REAL,
+            saved_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, date) ON CONFLICT REPLACE
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_labor_daily_restaurant ON labor_daily_history(restaurant_id, date)",
         "ALTER TABLE restaurants ADD COLUMN gmb_access_token TEXT",
         "ALTER TABLE users ADD COLUMN reset_token TEXT",
         "ALTER TABLE users ADD COLUMN reset_token_expires TEXT",
@@ -1013,6 +1041,89 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
     """, (restaurant_id, limit)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def save_labor_daily_history(restaurant_id: int, by_day: dict, hourly_rate: float,
+                              db_path: str = DB_PATH):
+    """Persist per-day labor breakdown from a shifts analysis. Called on every CSV upload."""
+    from datetime import datetime as _dt
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS labor_daily_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        day_of_week TEXT,
+        labor_pct REAL,
+        labor_cost REAL,
+        sales REAL,
+        total_hours REAL,
+        saved_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(restaurant_id, date) ON CONFLICT REPLACE
+    )""")
+    for date_str, day_data in by_day.items():
+        sales = day_data.get("sales", 0)
+        actual_hours = day_data.get("actual", 0)
+        labor_cost = round(actual_hours * hourly_rate, 2)
+        labor_pct = round(labor_cost / sales * 100, 1) if sales else 0
+        try:
+            dow = _dt.strptime(date_str, "%Y-%m-%d").strftime("%A")
+        except Exception:
+            dow = None
+        conn.execute("""
+            INSERT INTO labor_daily_history
+                (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales, total_hours)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(restaurant_id, date) DO UPDATE SET
+                day_of_week=excluded.day_of_week,
+                labor_pct=excluded.labor_pct,
+                labor_cost=excluded.labor_cost,
+                sales=excluded.sales,
+                total_hours=excluded.total_hours,
+                saved_at=datetime('now')
+        """, (restaurant_id, date_str, dow, labor_pct, labor_cost, sales, actual_hours))
+    conn.commit()
+    conn.close()
+
+
+def get_yoy_schedule_context(restaurant_id: int, next_week_dates: list,
+                              db_path: str = DB_PATH) -> list:
+    """
+    For each date in next_week_dates, find the same calendar day last year
+    (52 weeks back = same weekday). Returns a list of dicts with YoY data.
+    """
+    from datetime import datetime as _dt, timedelta as _td
+    conn = get_conn(db_path)
+    rows_out = []
+    for date_str in next_week_dates:
+        try:
+            dt = _dt.strptime(date_str, "%Y-%m-%d")
+            yoy_dt = dt - _td(weeks=52)
+            # Search ±3 days window around the 52-week-ago date for any data
+            candidates = []
+            for offset in range(-3, 4):
+                candidate_date = (yoy_dt + _td(days=offset)).strftime("%Y-%m-%d")
+                row = conn.execute(
+                    "SELECT * FROM labor_daily_history WHERE restaurant_id=? AND date=?",
+                    (restaurant_id, candidate_date)
+                ).fetchone()
+                if row:
+                    candidates.append(dict(row))
+            # Prefer exact 52-week match, fall back to closest with data
+            exact = next((c for c in candidates if c["date"] == yoy_dt.strftime("%Y-%m-%d")), None)
+            best = exact or (candidates[0] if candidates else None)
+            rows_out.append({
+                "next_week_date": date_str,
+                "next_week_dow": dt.strftime("%A"),
+                "yoy_date": best["date"] if best else None,
+                "yoy_sales": best["sales"] if best else None,
+                "yoy_labor_pct": best["labor_pct"] if best else None,
+                "yoy_labor_cost": best["labor_cost"] if best else None,
+                "yoy_hours": best["total_hours"] if best else None,
+            })
+        except Exception:
+            rows_out.append({"next_week_date": date_str, "yoy_date": None})
+    conn.close()
+    return rows_out
 
 
 def log_activity(restaurant_id: int, tab: str,
