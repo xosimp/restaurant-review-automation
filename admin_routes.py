@@ -1633,10 +1633,8 @@ def seed_labor_history(current_user):
 2026-06-14,Sunday,Lena S.,Host,4:00pm,10:30pm,6.5,6.5,12250,"""
 
     # Save as client shifts_csv
-    from models import get_client_data, upsert_client_data
-    existing = get_client_data(restaurant_id) or {}
-    existing["shifts_csv"] = gia_mia_csv
-    upsert_client_data(restaurant_id, existing)
+    from models import save_client_data
+    save_client_data(restaurant_id, "shifts", gia_mia_csv, source="seed")
 
     conn.close()
     return jsonify(ok=True, inserted=inserted, restaurant_id=restaurant_id, labor_target_set=23.0, monthly_revenue_target_set=365000, shifts_seeded=True)
