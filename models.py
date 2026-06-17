@@ -838,7 +838,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
+        "hourly_rate","labor_target_pct","monthly_revenue_target","hours_notes","role_rates_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","login_notify",

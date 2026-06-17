@@ -171,6 +171,16 @@ textarea{resize:vertical;min-height:60px}
           <input type="number" id="labor_target_pct" value="{{ restaurant.labor_target_pct or 30.0 }}" min="15" max="50" step="0.5">
           <div class="hint">Default is 30%. Adjust if this restaurant has a different target (e.g. fine dining may run 35%, fast casual may target 25%).</div>
         </div>
+        <div class="form-group">
+          <label>Monthly revenue target ($)</label>
+          <input type="number" id="monthly_revenue_target" value="{{ restaurant.monthly_revenue_target or 0 }}" min="0" step="1000" placeholder="e.g. 365000">
+          <div class="hint">Used to compute PAR hours budget for AI schedule generation. Divide by 4.33 to get weekly projection.</div>
+        </div>
+        <div class="form-group full">
+          <label>Restaurant hours &amp; shift rules (for AI schedule generation)</label>
+          <textarea id="hours_notes" rows="5" placeholder="e.g. Open 11am–9pm Sun–Wed, 11am–10pm Thu–Sat. Cooks arrive 8:30am. Bartenders evening only, stay 1h after close...">{{ restaurant.hours_notes or '' }}</textarea>
+          <div class="hint">Exact open/close times, role-specific arrival rules, and closer policies. The AI follows these exactly when generating schedules.</div>
+        </div>
       </div>
       <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--paper3)">
         <div style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Staff scheduling constraints</div>
@@ -676,8 +686,10 @@ async function saveSettings() {
     custom_competitors: document.getElementById('custom_competitors').value,
     menu_notes:      document.getElementById('menu_notes').value,
     menu_url:        document.getElementById('menu_url').value,
-    hourly_rate:        parseFloat(document.getElementById('hourly_rate').value),
-    labor_target_pct:   parseFloat(document.getElementById('labor_target_pct').value) || 30.0,
+    hourly_rate:             parseFloat(document.getElementById('hourly_rate').value),
+    labor_target_pct:        parseFloat(document.getElementById('labor_target_pct').value) || 30.0,
+    monthly_revenue_target:  parseFloat(document.getElementById('monthly_revenue_target').value) || 0,
+    hours_notes:             document.getElementById('hours_notes').value,
     billing_status:  document.getElementById('billing_status').value,
     internal_notes:  document.getElementById('internal_notes').value,
     module_reviews:  document.getElementById('setting-mod-reviews').checked ? 1 : 0,
