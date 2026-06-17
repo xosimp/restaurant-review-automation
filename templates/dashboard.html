@@ -2031,14 +2031,16 @@ function toggleRows(tbodyId, btnId, total) {
   var tbody = document.getElementById(tbodyId);
   var btn   = document.getElementById(btnId);
   if (!tbody || !btn) return;
-  var hidden = tbody.querySelectorAll('tr[style*="display:none"]');
-  if (hidden.length > 0) {
-    hidden.forEach(function(r){ r.style.display = ''; });
+  var expanded = btn.getAttribute('data-expanded') === '1';
+  var rows = tbody.querySelectorAll('tr');
+  if (!expanded) {
+    rows.forEach(function(r){ r.style.display = ''; });
     btn.textContent = 'Show less ↑';
+    btn.setAttribute('data-expanded', '1');
   } else {
-    var rows = tbody.querySelectorAll('tr');
     rows.forEach(function(r, i){ if (i >= 5) r.style.display = 'none'; });
     btn.textContent = 'Show all ' + total + ' ↓';
+    btn.setAttribute('data-expanded', '0');
   }
 }
 function toast(msg,type){var t=document.getElementById('toast');t.textContent=msg;t.className='toast';if(type)t.classList.add('toast-'+type);void t.offsetWidth;t.classList.add('show');if(_toastTimer)clearTimeout(_toastTimer);_toastTimer=setTimeout(function(){t.classList.remove('show');_toastTimer=null;},3600);}
