@@ -461,7 +461,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  labor_target: float = 30.0,
                                  yoy_context: list = None,
                                  upcoming_events: list = None,
-                                 monthly_revenue_target: float = 0.0) -> dict:
+                                 monthly_revenue_target: float = 0.0,
+                                 hours_notes: str = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -530,6 +531,14 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     hours_budget = round((projected_revenue * (labor_target / 100)) / hourly_rate, 1) if hourly_rate else 0
     labor_budget_dollars = round(projected_revenue * (labor_target / 100), 0)
 
+    # Build hours/operations block
+    hours_block = ""
+    if hours_notes:
+        hours_block = f"\n\nRESTAURANT HOURS & SHIFT RULES (follow exactly — these override any patterns in the historical data):\n{hours_notes}"
+    else:
+        hours_block = ("\n\nShift timing: base start/end times on the patterns visible in the historical shift data. "
+                       "Ensure prep staff (cooks) start before open and closers stay until service ends.")
+
     par_block = (f"\n\nPAR HOURS TARGET (non-negotiable):\n"
                  f"  Projected revenue this week: ${projected_revenue:,.0f}\n"
                  f"  Labor target: {labor_target}% = ${labor_budget_dollars:,.0f} labor budget\n"
@@ -544,7 +553,7 @@ CONTEXT:
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
 - Recent labor % by day of week: {dow}
-- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{par_block}{constraints}
+- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{hours_block}{par_block}{constraints}
 
 Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}

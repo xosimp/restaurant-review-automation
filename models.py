@@ -216,6 +216,7 @@ class Restaurant:
     inventory_notes: Optional[str]       = None
     food_cost_target: float              = 30.0
     monthly_revenue_target: float        = 0.0
+    hours_notes: Optional[str]           = None
     inventory_updated_at: Optional[str]  = None
     temp_password: Optional[str]         = None
     ig_token: Optional[str]              = None
@@ -339,6 +340,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "inventory_notes", "TEXT"),
         ("restaurants", "food_cost_target", "REAL"),
         ("restaurants", "monthly_revenue_target", "REAL"),
+        ("restaurants", "hours_notes", "TEXT"),
         ("restaurants", "inventory_updated_at", "TEXT"),
         ("restaurants", "gbp_rating", "REAL"),
         ("restaurants", "gbp_review_count", "INTEGER"),
@@ -563,6 +565,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         inventory_notes=row["inventory_notes"] if "inventory_notes" in row.keys() else None,
         food_cost_target=row["food_cost_target"] if "food_cost_target" in row.keys() else 30.0,
         monthly_revenue_target=float(row["monthly_revenue_target"]) if "monthly_revenue_target" in row.keys() and row["monthly_revenue_target"] else 0.0,
+        hours_notes=row["hours_notes"] if "hours_notes" in row.keys() else None,
         inventory_updated_at=row["inventory_updated_at"] if "inventory_updated_at" in row.keys() else None,
         temp_password=row["temp_password"] if "temp_password" in row.keys() else None,
         ig_token=row["ig_token"] if "ig_token" in row.keys() else None,

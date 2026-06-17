@@ -426,6 +426,7 @@ def save_client_settings(restaurant_id, current_user):
             "location_name":         data.get("location_name","").strip() or None,
             "inventory_frequency":   data.get("inventory_frequency","weekly"),
             "inventory_notes":       sanitize(data.get("inventory_notes","")),
+            "hours_notes":           sanitize(data.get("hours_notes",""), max_len=1000),
             "food_cost_target":      float(data.get("food_cost_target", 30) or 30),
             "digest_day":      data.get("digest_day","monday"),
             "digest_enabled":  int(data.get("digest_enabled",1)),
@@ -1384,11 +1385,24 @@ def seed_labor_history(current_user):
         inserted += 1
         d += timedelta(days=1)
     conn.commit()
-    # Also set revenue target and actual labor target for this restaurant
+    # Also set revenue target, labor target, and hours/operations notes
+    gia_mia_hours = (
+        "Open 11:00am daily. "
+        "Cooks arrive 8:30am (2.5h before open for prep). "
+        "Servers arrive 10:00am (1h before open for side work and opening duties). "
+        "Hosts and bussers arrive 10:30am. "
+        "Kitchen close: Mon-Thu 9:30pm, Fri-Sat 11:30pm, Sun 9:00pm. "
+        "Last guest: Mon-Thu 10:00pm, Fri-Sat midnight, Sun 9:30pm. "
+        "Closer policy: always keep 2 servers + 1 bartender until close; "
+        "cut remaining servers earlier when projected sales are lower (slow Mon/Tue = cut non-closers by 8:30pm), "
+        "keep full floor on high-volume nights (Fri/Sat = cut non-closers by 9:30pm only). "
+        "Fri/Sat closers: 3 servers + 2 bartenders. "
+        "Cooks: 1 cook always stays through kitchen close; cut others 1h early on slow nights, keep all on Fri/Sat."
+    )
     conn.execute("""
-        UPDATE restaurants SET monthly_revenue_target=?, labor_target_pct=?
+        UPDATE restaurants SET monthly_revenue_target=?, labor_target_pct=?, hours_notes=?
         WHERE id=?
-    """, (365000.0, 23.0, restaurant_id))
+    """, (365000.0, 23.0, gia_mia_hours, restaurant_id))
     conn.commit()
 
     # Seed realistic Gia Mia shift CSV — 2 weeks reflecting actual metrics

@@ -779,6 +779,7 @@ def _build_schedule_result(restaurant_id):
         yoy_context=yoy_ctx,
         upcoming_events=upcoming_events if upcoming_events else None,
         monthly_revenue_target=monthly_rev_target,
+        hours_notes=getattr(restaurant, 'hours_notes', None),
     )
     result["restaurant_name"] = restaurant.name if restaurant else "Restaurant"
     return result
