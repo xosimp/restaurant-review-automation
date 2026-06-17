@@ -899,10 +899,10 @@ def og_image():
     return "", 404
 
 
-def _do_seed_ryan():
+def _do_seed_gia_mia():
     try:
         from models import create_restaurant, Restaurant
-        ryan_rid = create_restaurant(Restaurant(
+        gia_mia_rid = create_restaurant(Restaurant(
                 name="Gia Mia",
                 owner_email="cavnarwill@gmail.com",
                 owner_name="Brian",
@@ -916,30 +916,30 @@ def _do_seed_ryan():
                 module_inventory=1, module_marketing=1,
                 billing_status="trial",
         ))
-        ryan_pw = os.getenv("RYAN_TEST_PASSWORD", "charthouse123")
-        create_user(ryan_rid, "Brian", "cavnarwill@gmail.com", ryan_pw, is_admin=False)
-        print(f"\n  Test client created: Brian / {ryan_pw} (Gia Mia, St. Charles IL)\n")
+        gia_mia_pw = os.getenv("RYAN_TEST_PASSWORD", "charthouse123")
+        create_user(gia_mia_rid, "Brian", "cavnarwill@gmail.com", gia_mia_pw, is_admin=False)
+        print(f"\n  Test client created: Brian / {gia_mia_pw} (Gia Mia, St. Charles IL)\n")
 
         # Seed labor history FIRST (no API calls, instant) — always replace on fresh deploy
         try:
-            from models import save_labor_snapshot as _sls_r2, get_conn as _gc_lh
-            # Clear existing labor history for Ryan and reseed fresh
-            _clh = _gc_lh()
-            _clh.execute("DELETE FROM labor_history WHERE restaurant_id=?", (ryan_rid,))
-            _clh.commit(); _clh.close()
+            from models import save_labor_snapshot as _gm_sls, get_conn as _gc_gm_lh
+            # Clear existing labor history for Gia Mia and reseed fresh
+            _gm_clh = _gc_gm_lh()
+            _gm_clh.execute("DELETE FROM labor_history WHERE restaurant_id=?", (gia_mia_rid,))
+            _gm_clh.commit(); _gm_clh.close()
             if True:
-                _now_r2 = datetime.now()
-                _lh_r2 = [(-49,34.2,42800,125200),(-42,33.1,44100,133200),(-35,31.8,45600,143400),
+                _now_gm = datetime.now()
+                _lh_gm = [(-49,34.2,42800,125200),(-42,33.1,44100,133200),(-35,31.8,45600,143400),
                            (-28,32.5,43200,132900),(-21,31.2,46800,150000),(-14,30.8,47200,153200),
                            (-7,30.9,45900,148500),(0,30.9,45900,148500)]
-                for _off_r2,_pct_r2,_lab_r2,_sal_r2 in _lh_r2:
-                    _sls_r2(ryan_rid,
-                        (_now_r2+timedelta(days=_off_r2)).strftime("%Y-%m-%d"),
-                        (_now_r2+timedelta(days=_off_r2+13)).strftime("%Y-%m-%d"),
-                        _pct_r2, _lab_r2, _sal_r2)
-                print("  Ryan labor history seeded.\n")
-        except Exception as _lh_e2:
-            print(f"  Ryan labor history seed error: {_lh_e2}")
+                for _off_gm,_pct_gm,_lab_gm,_sal_gm in _lh_gm:
+                    _gm_sls(gia_mia_rid,
+                        (_now_gm+timedelta(days=_off_gm)).strftime("%Y-%m-%d"),
+                        (_now_gm+timedelta(days=_off_gm+13)).strftime("%Y-%m-%d"),
+                        _pct_gm, _lab_gm, _sal_gm)
+                print("  Gia Mia labor history seeded.\n")
+        except Exception as _lh_gm_e:
+            print(f"  Gia Mia labor history seed error: {_lh_gm_e}")
 
         # Draft responses — hardcoded on Railway (fast), real API locally (quality)
         try:
@@ -966,7 +966,7 @@ def _do_seed_ryan():
                 _conn_d = get_conn()
                 _pending_d = _conn_d.execute(
                     "SELECT id, sentiment FROM reviews WHERE restaurant_id=? AND (draft_response IS NULL OR draft_response='')",
-                    (ryan_rid,)
+                    (gia_mia_rid,)
                 ).fetchall()
                 for _rev_d in _pending_d:
                     _sk = _rev_d["sentiment"] if _rev_d["sentiment"] in _drafts_map else "neutral"
@@ -978,19 +978,19 @@ def _do_seed_ryan():
                         (_dt, _rev_d["id"])
                     )
                 _conn_d.commit(); _conn_d.close()
-                print("  Ryan's reviews drafted (hardcoded — Railway).\n")
+                print("  Gia Mia reviews drafted (hardcoded — Railway).\n")
             else:
                 from drafter import draft_pending
-                draft_pending(ryan_rid, limit=50)
-                print("  Ryan's reviews seeded and drafted (API — local).\n")
+                draft_pending(gia_mia_rid, limit=50)
+                print("  Gia Mia reviews seeded and drafted (API — local).\n")
         except Exception as _de:
             print(f"  Draft error: {_de}")
 
         # Seed 6 weeks of inventory history so the trend chart is always populated for testing
         try:
-                import json as _json_ryan_inv
-                from datetime import timedelta as _td_ryan
-                _ryan_inv_weeks = [
+                import json as _json_gm_inv
+                from datetime import timedelta as _td_gm
+                _gm_inv_weeks = [
                         (241.80, ["Romaine Lettuce", "Bread Rolls", "Roma Tomatoes", "Baby Spinach"]),
                         (218.50, ["Bread Rolls", "Roma Tomatoes", "Sourdough Loaf"]),
                         (309.20, ["Romaine Lettuce", "Bread Rolls", "Salmon Fillet", "Baby Spinach"]),
@@ -998,12 +998,12 @@ def _do_seed_ryan():
                         (253.10, ["Bread Rolls", "Baby Spinach", "Romaine Lettuce"]),
                         (267.45, ["Romaine Lettuce", "Bread Rolls", "Roma Tomatoes", "Baby Spinach"]),
                 ]
-                from zoneinfo import ZoneInfo as _ZI_ryan_inv
-                from datetime import datetime as _dt_ryan_inv
+                from zoneinfo import ZoneInfo as _ZI_gm_inv
+                from datetime import datetime as _dt_gm_inv
                 # Use today as week_end anchor — matches how analyse_inventory saves snapshots
-                _today_ryan = _dt_ryan_inv.now(_ZI_ryan_inv('America/Chicago')).date()
-                _conn_ryan_inv = get_conn()
-                _conn_ryan_inv.execute("""CREATE TABLE IF NOT EXISTS inventory_history (
+                _today_gm = _dt_gm_inv.now(_ZI_gm_inv('America/Chicago')).date()
+                _conn_gm_inv = get_conn()
+                _conn_gm_inv.execute("""CREATE TABLE IF NOT EXISTS inventory_history (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         restaurant_id INTEGER NOT NULL,
                         waste_json TEXT,
@@ -1011,38 +1011,38 @@ def _do_seed_ryan():
                         saved_at TEXT DEFAULT (datetime('now'))
                 )""")
                 try:
-                        _conn_ryan_inv.execute("ALTER TABLE inventory_history ADD COLUMN week_end TEXT")
+                        _conn_gm_inv.execute("ALTER TABLE inventory_history ADD COLUMN week_end TEXT")
                 except Exception:
                         pass
-                _conn_ryan_inv.commit()
-                for _wi, (_waste, _items) in enumerate(_ryan_inv_weeks):
+                _conn_gm_inv.commit()
+                for _wi, (_waste, _items) in enumerate(_gm_inv_weeks):
                         # Go back 5,4,3,2,1,0 weeks from today — same cadence as real weekly uploads
-                        _week_end = (_today_ryan - _td_ryan(weeks=(5 - _wi))).isoformat()
-                        _snap = _json_ryan_inv.dumps({"total_waste_cost": _waste, "top_items": _items})
-                        _ex = _conn_ryan_inv.execute(
+                        _week_end = (_today_gm - _td_gm(weeks=(5 - _wi))).isoformat()
+                        _snap = _json_gm_inv.dumps({"total_waste_cost": _waste, "top_items": _items})
+                        _ex = _conn_gm_inv.execute(
                                 "SELECT id FROM inventory_history WHERE restaurant_id=? AND week_end=?",
-                                (ryan_rid, _week_end)
+                                (gia_mia_rid, _week_end)
                         ).fetchone()
                         if _ex:
-                                _conn_ryan_inv.execute(
+                                _conn_gm_inv.execute(
                                         "UPDATE inventory_history SET waste_json=? WHERE id=?",
                                         (_snap, _ex["id"])
                                 )
                         else:
-                                _conn_ryan_inv.execute(
+                                _conn_gm_inv.execute(
                                         "INSERT INTO inventory_history (restaurant_id, waste_json, week_end) VALUES (?,?,?)",
-                                        (ryan_rid, _snap, _week_end)
+                                        (gia_mia_rid, _snap, _week_end)
                                 )
-                _conn_ryan_inv.commit()
-                _conn_ryan_inv.close()
-                print("  Ryan's inventory trend history seeded (6 weeks).\n")
-        except Exception as _ryan_inv_e:
-                print(f"  Ryan inventory seed error: {_ryan_inv_e}")
+                _conn_gm_inv.commit()
+                _conn_gm_inv.close()
+                print("  Gia Mia inventory trend history seeded (6 weeks).\n")
+        except Exception as _gm_inv_e:
+                print(f"  Gia Mia inventory seed error: {_gm_inv_e}")
 
-        # Seed rich inventory CSV for Ryan so the order list shows all row types
+        # Seed rich inventory CSV for Gia Mia so the order list shows all row types
         try:
-                from models import save_client_data as _scd_ryan
-                _ryan_inv_csv = """item,category,unit,par_level,current_stock,unit_cost,avg_daily_usage,last_order_qty,waste_last_week
+                from models import save_client_data as _scd_gm
+                _gm_inv_csv = """item,category,unit,par_level,current_stock,unit_cost,avg_daily_usage,last_order_qty,waste_last_week
 Chilean Sea Bass,Protein,lb,12,2,28.50,2.2,12,0.5
 Prime Rib,Protein,lb,20,3,18.75,3.8,20,1.2
 Lobster Tail,Protein,lb,8,1,42.00,1.4,8,0.3
@@ -1068,18 +1068,18 @@ Beef Stock,Pantry,qt,10,14,4.80,1.4,10,0.3
 White Wine Chardonnay,Beverage,bottle,16,20,8.50,2.0,16,0.0
 House Cabernet,Beverage,bottle,20,24,9.20,2.8,20,0.0
 Sparkling Water,Beverage,case,6,9,22.00,0.8,6,0.0"""
-                _scd_ryan(ryan_rid, "inventory", _ryan_inv_csv, source="upload")
-                print("  Ryan's rich inventory CSV seeded.\n")
-        except Exception as _ryan_csv_e:
-                print(f"  Ryan inventory CSV seed error: {_ryan_csv_e}")
+                _scd_gm(gia_mia_rid, "inventory", _gm_inv_csv, source="upload")
+                print("  Gia Mia rich inventory CSV seeded.\n")
+        except Exception as _gm_csv_e:
+                print(f"  Gia Mia inventory CSV seed error: {_gm_csv_e}")
 
 
-    except Exception as _do_seed_e:
-        print(f"  Ryan full seed error: {_do_seed_e}")
+    except Exception as _do_seed_gm_e:
+        print(f"  Gia Mia full seed error: {_do_seed_gm_e}")
 
-def _seed_ryan_background():
+def _seed_gia_mia_background():
     try:
-        import time as _t_ryan
+        import time as _t_gm
         # Wait for DB to be ready — poll instead of blind sleep
         for _attempt in range(10):
             try:
@@ -1088,30 +1088,30 @@ def _seed_ryan_background():
                 _test.close()
                 break
             except Exception:
-                _t_ryan.sleep(1)
+                _t_gm.sleep(1)
         conn = get_conn()
-        ryan_exists = conn.execute(
+        gia_mia_exists = conn.execute(
             """SELECT u.id FROM users u
                JOIN restaurants r ON u.restaurant_id=r.id
                WHERE r.name=? AND u.is_admin=0""",
             ("Gia Mia",)
         ).fetchone()
         conn.close()
-        if not ryan_exists:
-            _do_seed_ryan()
+        if not gia_mia_exists:
+            _do_seed_gia_mia()
         else:
             _ensure_gia_mia_vibe()
         # Always refresh reviews on every deploy so real content stays current
         conn2 = get_conn()
-        _ryan_row = conn2.execute(
+        _gia_mia_row = conn2.execute(
             "SELECT id FROM restaurants WHERE name=?", ("Gia Mia",)
         ).fetchone()
         conn2.close()
-        if _ryan_row:
-            _refresh_gia_mia_reviews(_ryan_row["id"])
-    except Exception as _bg_e:
-        print(f"  Ryan seed background error: {_bg_e}")
-    # Seed Gia Mia demo data after Ryan seed completes (avoids concurrent DB writes)
+        if _gia_mia_row:
+            _refresh_gia_mia_reviews(_gia_mia_row["id"])
+    except Exception as _bg_gm_e:
+        print(f"  Gia Mia seed background error: {_bg_gm_e}")
+    # Seed Gia Mia demo data after seed completes (avoids concurrent DB writes)
     try:
         from models import _auto_seed_demo_clients as _asdc
         _asdc()
@@ -1149,7 +1149,7 @@ def _ensure_gia_mia_vibe():
         print(f"  Gia Mia vibe ensure error: {_vibe_e}")
 
 
-def _refresh_gia_mia_reviews(ryan_rid):
+def _refresh_gia_mia_reviews(gia_mia_rid):
     """Always re-seed the 32 real Gia Mia reviews on every deploy so content stays current."""
     try:
         import json as _json_r
@@ -1157,7 +1157,7 @@ def _refresh_gia_mia_reviews(ryan_rid):
         from datetime import datetime as _dt_r, timedelta as _td_r2
         conn = get_conn()
         # Wipe seeded reviews — draft_response is a column on reviews, so this covers everything
-        conn.execute("DELETE FROM reviews WHERE restaurant_id=? AND external_id LIKE 'rr_%'", (ryan_rid,))
+        conn.execute("DELETE FROM reviews WHERE restaurant_id=? AND external_id LIKE 'rr_%'", (gia_mia_rid,))
         conn.commit()
 
         # Rating distribution: 21×5★, 7×4★, 2×3★, 2×1★ → avg 4.41 (matches real 4.5 Google rating)
@@ -1215,7 +1215,7 @@ def _refresh_gia_mia_reviews(ryan_rid):
                 (restaurant_id, platform, external_id, author, rating, text, sentiment,
                     categories, urgency, fetched_at, review_date, response_status, processed, review_name)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """, (ryan_rid, platform, ext_id, name, rating, text, sentiment,
+            """, (gia_mia_rid, platform, ext_id, name, rating, text, sentiment,
                         _json_r.dumps(cats), urgency, _rev_dt, _rev_dt, "pending", 1, name))
         conn.commit()
         conn.close()
@@ -1224,9 +1224,9 @@ def _refresh_gia_mia_reviews(ryan_rid):
         print(f"  Gia Mia review refresh error: {_rr_e}")
 
 
-import threading as _t_seed
-_seed_thread = _t_seed.Thread(target=_seed_ryan_background, daemon=True)
-_seed_thread.start()
+import threading as _t_gm_seed
+_gia_mia_seed_thread = _t_gm_seed.Thread(target=_seed_gia_mia_background, daemon=True)
+_gia_mia_seed_thread.start()
 
 if __name__ == "__main__":
     print(f"\n  Hosted dashboard → http://localhost:{PORT}")
