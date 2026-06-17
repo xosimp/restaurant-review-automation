@@ -19,17 +19,25 @@ def _seed():
 @status_bp.route("/status")
 def status_page():
     statuses  = get_all_statuses()
-    incidents = get_recent_incidents(limit=10)
+    incidents = get_recent_incidents(limit=30)
     for inc in incidents:
         try:
             inc["affected_keys"] = json.loads(inc["affected_keys"] or "[]")
         except Exception:
             inc["affected_keys"] = []
         inc["updates"] = get_incident_updates(inc["id"])
+
+    # Group incidents by date (YYYY-MM-DD of created_at)
+    from collections import OrderedDict
+    grouped = OrderedDict()
+    for inc in incidents:
+        day = inc["created_at"][:10]
+        grouped.setdefault(day, []).append(inc)
+
     banner = overall_status(statuses)
     return render_template("status.html",
                            statuses=statuses,
-                           incidents=incidents,
+                           grouped_incidents=grouped,
                            banner=banner)
 
 

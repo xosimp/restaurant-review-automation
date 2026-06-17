@@ -148,65 +148,47 @@
     .pill-outage      { background: #fee2e2; color: #991b1b; }
     .pill-maintenance { background: #dbeafe; color: #1e40af; }
 
-    /* ── Incidents ───────────────────────────────────────────────────────── */
-    .incident-card {
-      background: #fff;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      margin-bottom: 16px;
-      overflow: hidden;
-    }
-    .incident-header {
-      padding: 16px 20px;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 12px;
-    }
-    .incident-title {
-      font-weight: 600;
+    /* ── Past Incidents ─────────────────────────────────────────────────── */
+    .day-group { margin-bottom: 32px; }
+    .day-label {
       font-size: 15px;
-    }
-    .incident-meta {
-      font-size: 12px;
-      color: var(--muted);
-      margin-top: 3px;
-    }
-    .incident-severity {
-      font-size: 11px;
       font-weight: 700;
-      padding: 3px 8px;
-      border-radius: 4px;
-      flex-shrink: 0;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-    .sev-degraded    { background: #fef3c7; color: #92400e; }
-    .sev-outage      { background: #fee2e2; color: #991b1b; }
-    .sev-maintenance { background: #dbeafe; color: #1e40af; }
-    .incident-updates { padding: 0; }
-    .update-row {
-      display: flex;
-      gap: 16px;
-      padding: 12px 20px;
+      color: var(--ink);
+      margin-bottom: 12px;
+      padding-bottom: 8px;
       border-bottom: 1px solid var(--border);
+    }
+    .inc-block { margin-bottom: 20px; }
+    .inc-title-line {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .inc-title-open   { color: var(--ember); }
+    .inc-title-closed { color: var(--ink); }
+    .update-entry {
+      display: flex;
+      gap: 0;
       font-size: 14px;
+      line-height: 1.55;
+      margin-bottom: 6px;
+      color: var(--ink);
     }
-    .update-row:last-child { border-bottom: none; }
-    .update-time {
-      color: var(--muted);
-      font-size: 12px;
-      white-space: nowrap;
-      padding-top: 1px;
-      min-width: 100px;
+    .update-verb {
+      font-weight: 700;
+      min-width: 110px;
+      flex-shrink: 0;
     }
-    .update-status {
-      font-weight: 600;
-      font-size: 12px;
-      text-transform: capitalize;
-      min-width: 90px;
+    .update-verb.v-investigating { color: var(--ember); }
+    .update-verb.v-monitoring    { color: var(--amber); }
+    .update-verb.v-resolved      { color: var(--green); }
+    .update-verb.v-update        { color: var(--navy); }
+    .update-body { flex: 1; }
+    .update-ts {
+      display: block;
+      font-size: 11px;
       color: var(--muted);
+      margin-top: 1px;
     }
     .no-incidents {
       background: #fff;
@@ -291,38 +273,42 @@
     {% endfor %}
   </div>
 
-  <!-- Incidents -->
-  <p class="section-heading">Incident History</p>
+  <!-- Past Incidents -->
+  <p class="section-heading">Past Incidents</p>
 
-  {% if incidents %}
-    {% for inc in incidents %}
-    <div class="incident-card">
-      <div class="incident-header">
-        <div>
-          <div class="incident-title">{{ inc.title }}</div>
-          <div class="incident-meta">
-            {% if inc.status == 'resolved' %}
-              Resolved
-              {% if inc.resolved_at %}&nbsp;·&nbsp;{{ inc.resolved_at[:10] }}{% endif %}
-            {% else %}
-              {{ inc.status | capitalize }}
-            {% endif %}
-            &nbsp;·&nbsp;{{ inc.created_at[:10] }}
+  {% if grouped_incidents %}
+    {% for day, day_incidents in grouped_incidents.items() %}
+    {% set parts = day.split('-') %}
+    {% set month_names = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] %}
+    <div class="day-group">
+      <div class="day-label">{{ month_names[parts[1]|int] }} {{ parts[2]|int }}, {{ parts[0] }}</div>
+
+      {% for inc in day_incidents %}
+      <div class="inc-block">
+        <div class="inc-title-line {% if inc.status != 'resolved' %}inc-title-open{% else %}inc-title-closed{% endif %}">
+          {{ inc.title }}
+        </div>
+        {% if inc.updates %}
+          {% for u in inc.updates %}
+          <div class="update-entry">
+            <span class="update-verb v-{{ u.status }}">{{ u.status | capitalize }}</span>
+            <span class="update-body">
+              {{ u.message }}
+              <span class="update-ts">{{ u.created_at[5:16] | replace('T',' ') }} UTC</span>
+            </span>
           </div>
-        </div>
-        <span class="incident-severity sev-{{ inc.severity }}">{{ inc.severity }}</span>
+          {% endfor %}
+        {% else %}
+          <div class="update-entry">
+            <span class="update-verb v-{{ inc.status }}">{{ inc.status | capitalize }}</span>
+            <span class="update-body">
+              {{ inc.body or 'No additional details.' }}
+              <span class="update-ts">{{ inc.created_at[5:16] | replace('T',' ') }} UTC</span>
+            </span>
+          </div>
+        {% endif %}
       </div>
-      {% if inc.updates %}
-      <div class="incident-updates">
-        {% for u in inc.updates %}
-        <div class="update-row">
-          <span class="update-time">{{ u.created_at[5:16] | replace('T',' ') }} UTC</span>
-          <span class="update-status">{{ u.status | capitalize }}</span>
-          <span>{{ u.message }}</span>
-        </div>
-        {% endfor %}
-      </div>
-      {% endif %}
+      {% endfor %}
     </div>
     {% endfor %}
   {% else %}
