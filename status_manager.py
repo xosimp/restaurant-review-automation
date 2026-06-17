@@ -132,16 +132,12 @@ def record_scheduler_heartbeat():
 
 def run_health_checks():
     """Automatically check all services and update their status. Called hourly by scheduler."""
-    try:
-        _check_dashboard()
-        _check_ai_drafting()
-        _check_review_sync()
-        _check_email()
-        _check_labor_analytics()
-        # scheduler marks itself via record_scheduler_heartbeat() separately
-        log.info("Status health checks complete")
-    except Exception as e:
-        log.error(f"run_health_checks error: {e}")
+    for fn in (_check_dashboard, _check_ai_drafting, _check_review_sync, _check_email, _check_labor_analytics):
+        try:
+            fn()
+        except Exception as e:
+            log.error(f"Health check {fn.__name__} error: {e}")
+    log.info("Status health checks complete")
 
 
 def _check_dashboard():
@@ -154,26 +150,17 @@ def _check_ai_drafting():
     if not api_key:
         update_service_status("ai_drafting", "outage", "API key not configured")
         return
-    # Check if any draft was written in the last 48 hours
-    conn = _conn()
-    cutoff = (datetime.utcnow() - timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
-    row = conn.execute(
-        "SELECT COUNT(*) as cnt FROM reviews WHERE response_draft IS NOT NULL AND fetched_at >= ?",
-        (cutoff,)
-    ).fetchone()
-    conn.close()
-    if row and row["cnt"] > 0:
-        update_service_status("ai_drafting", "operational", None)
-    else:
-        # Key is set but no recent drafts — could be normal if no new reviews, keep operational
-        update_service_status("ai_drafting", "operational", None)
+    # Key present = operational (drafts only happen when new reviews arrive)
+    update_service_status("ai_drafting", "operational", None)
 
 
 def _check_review_sync():
     conn = _conn()
-    # Restaurants with GBP connected
+    # Restaurants with GBP connected (join users to get is_active)
     active_with_gmb = conn.execute(
-        "SELECT COUNT(*) as cnt FROM restaurants WHERE is_active=1 AND gmb_access_token IS NOT NULL"
+        "SELECT COUNT(*) as cnt FROM restaurants r "
+        "JOIN users u ON u.restaurant_id=r.id "
+        "WHERE u.is_active=1 AND r.gmb_access_token IS NOT NULL"
     ).fetchone()["cnt"]
 
     if active_with_gmb == 0:
@@ -183,8 +170,10 @@ def _check_review_sync():
 
     cutoff = (datetime.utcnow() - timedelta(hours=25)).strftime("%Y-%m-%d %H:%M:%S")
     stale = conn.execute(
-        "SELECT COUNT(*) as cnt FROM restaurants WHERE is_active=1 AND gmb_access_token IS NOT NULL "
-        "AND (last_fetched_at IS NULL OR last_fetched_at < ?)",
+        "SELECT COUNT(*) as cnt FROM restaurants r "
+        "JOIN users u ON u.restaurant_id=r.id "
+        "WHERE u.is_active=1 AND r.gmb_access_token IS NOT NULL "
+        "AND (r.last_fetched_at IS NULL OR r.last_fetched_at < ?)",
         (cutoff,)
     ).fetchone()["cnt"]
     conn.close()
@@ -204,35 +193,38 @@ def _check_email():
         return
     # Optionally ping Resend's API to verify the key is valid
     try:
-        import urllib.request
+        import urllib.request, urllib.error
         req = urllib.request.Request(
             "https://api.resend.com/domains",
             headers={"Authorization": "Bearer " + resend_key},
         )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            if resp.status == 200:
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
                 update_service_status("email", "operational", None)
+        except urllib.error.HTTPError as e:
+            # 403 = key is valid, just no domain permission — still operational
+            if e.code in (200, 403):
+                update_service_status("email", "operational", None)
+            elif e.code == 401:
+                update_service_status("email", "outage", "Email API key invalid")
             else:
-                update_service_status("email", "degraded", f"Resend API returned {resp.status}")
-    except Exception as e:
+                update_service_status("email", "degraded", f"Resend API returned {e.code}")
+    except Exception:
         update_service_status("email", "degraded", "Email API unreachable")
 
 
 def _check_labor_analytics():
     conn = _conn()
-    # Check for Toast sync errors on connected restaurants
     rows = conn.execute(
-        "SELECT restaurant_name, toast_sync_error FROM restaurants "
-        "WHERE is_active=1 AND toast_restaurant_guid IS NOT NULL"
+        "SELECT r.name, r.toast_sync_error FROM restaurants r "
+        "JOIN users u ON u.restaurant_id=r.id "
+        "WHERE u.is_active=1 AND r.toast_restaurant_guid IS NOT NULL"
     ).fetchall()
     conn.close()
 
     errored = [r for r in rows if r["toast_sync_error"]]
-    if not rows:
-        # No POS-connected restaurants yet — still operational
-        update_service_status("labor_analytics", "operational", None)
-    elif errored:
-        names = ", ".join(r["restaurant_name"] for r in errored[:2])
+    if errored:
+        names = ", ".join(r["name"] for r in errored[:2])
         update_service_status("labor_analytics", "degraded", f"POS sync error: {names}")
     else:
         update_service_status("labor_analytics", "operational", None)
