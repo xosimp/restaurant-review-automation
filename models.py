@@ -491,7 +491,9 @@ def init_db(db_path: str = DB_PATH):
     # Ensure any columns managed by ensure_columns() are present before seeding
     ensure_columns()
     print(f"Database initialised at {db_path}")
-    _auto_seed_demo_clients()
+    import threading as _threading
+    _t = _threading.Thread(target=_auto_seed_demo_clients, daemon=True)
+    _t.start()
 
 
 def _auto_seed_demo_clients():
