@@ -19,7 +19,7 @@ def fetch_menu_notes_from_places(google_place_id: str) -> str:
             "place_id": google_place_id,
             "fields": "name,types,price_level,editorial_summary,menu_url,website,serves_breakfast,serves_brunch,serves_lunch,serves_dinner,serves_beer,serves_wine,serves_cocktails,serves_vegetarian_food",
             "key": PLACES_API_KEY,
-        })
+        }, timeout=8)
         data = r.json()
         if data.get("status") != "OK":
             return ""
@@ -216,7 +216,7 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
             "place_id": google_place_id,
             "fields": "geometry,name,vicinity,types,price_level",
             "key": PLACES_API_KEY,
-        })
+        }, timeout=8)
         data = r.json()
         if data.get("status") != "OK":
             return []
@@ -257,7 +257,7 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
         if meal_keyword:
             params["keyword"] = meal_keyword
 
-        r2 = requests.get(nearby_url, params=params)
+        r2 = requests.get(nearby_url, params=params, timeout=8)
         r2_data = r2.json()
         if r2_data.get("status") not in ("OK", "ZERO_RESULTS"):
             print(f"[Competitor] Nearby search error: {r2_data.get('status')} {r2_data.get('error_message','')}")
@@ -266,7 +266,7 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
         # If keyword search returns too few, fall back to broader search
         if len(places) < 3:
             params.pop("keyword", None)
-            r2 = requests.get(nearby_url, params=params)
+            r2 = requests.get(nearby_url, params=params, timeout=8)
             r2_data = r2.json()
             if r2_data.get("status") not in ("OK", "ZERO_RESULTS"):
                 print(f"[Competitor] Fallback search error: {r2_data.get('status')} {r2_data.get('error_message','')}")
@@ -338,7 +338,7 @@ def get_competitor_reviews(place_id: str, max_reviews: int = 5) -> list:
             "place_id": place_id,
             "fields": "name,rating,reviews",
             "key": PLACES_API_KEY,
-        })
+        }, timeout=8)
         data = r.json()
         if data.get("status") != "OK":
             return []
@@ -478,7 +478,7 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
                             "place_id": pid,
                             "fields": "name,rating,user_ratings_total,types,vicinity",
                             "key": PLACES_API_KEY,
-                        })
+                        }, timeout=8)
                         d = r.json().get("result", {})
                         if d.get("name"):
                             competitors.append({
@@ -496,9 +496,12 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         if not competitors:
             return {"ok": False, "error": "No nearby competitors found"}
 
-        # Enrich with reviews
-        for c in competitors:
-            c["reviews"] = get_competitor_reviews(c["place_id"])
+        # Enrich with reviews in parallel — 5 sequential calls → 1 parallel batch
+        from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+        with ThreadPoolExecutor(max_workers=5) as _pool:
+            _futs = {_pool.submit(get_competitor_reviews, c["place_id"]): i for i, c in enumerate(competitors)}
+            for _fut in _as_completed(_futs):
+                competitors[_futs[_fut]]["reviews"] = _fut.result()
 
         insight = generate_competitor_insight(
             restaurant.name, competitors,

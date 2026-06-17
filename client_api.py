@@ -1214,16 +1214,16 @@ def _ai_visibility_inner(current_user):
         ]
 
     import requests as _pplx_req
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     _pplx_key = os.getenv("PERPLEXITY_API_KEY", "")
-    query_results = []
     appeared_count = 0
 
     def _norm(s):
-        return re.sub(r"[^a-z0-9 ]", "", (s or "").lower().replace("'", "").replace("’", ""))
+        return re.sub(r"[^a-z0-9 ]", "", (s or "").lower().replace("’", "").replace("’", ""))
 
     norm_name = _norm(name)
 
-    for q in queries:
+    def _run_query(q):
         try:
             resp = _pplx_req.post(
                 "https://api.perplexity.ai/chat/completions",
@@ -1236,15 +1236,25 @@ def _ai_visibility_inner(current_user):
                     ],
                     "max_tokens": 300,
                 },
-                timeout=15
+                timeout=10
             )
             answer = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") if resp.status_code == 200 else ""
             appeared = bool(norm_name) and bool(answer) and norm_name in _norm(answer)
-            if appeared:
-                appeared_count += 1
-            query_results.append({"query": q, "answer": answer[:400], "appeared": appeared})
+            return {"query": q, "answer": answer[:400], "appeared": appeared}
         except Exception:
-            query_results.append({"query": q, "answer": "Could not fetch answer.", "appeared": False})
+            return {"query": q, "answer": "Could not fetch answer.", "appeared": False}
+
+    # Run all queries in parallel — caps total time at ~10s instead of 30s+
+    query_results = [None] * len(queries)
+    with ThreadPoolExecutor(max_workers=3) as _pool:
+        _futures = {_pool.submit(_run_query, q): i for i, q in enumerate(queries)}
+        for _fut in as_completed(_futures):
+            i = _futures[_fut]
+            try:
+                query_results[i] = _fut.result()
+            except Exception:
+                query_results[i] = {"query": queries[i], "answer": "Could not fetch answer.", "appeared": False}
+    appeared_count = sum(1 for r in query_results if r and r.get("appeared"))
 
     # GBP completeness score — 10 items x 10 pts = 100
     # Items 1-6: checkable from our own DB (no GMB OAuth needed)
