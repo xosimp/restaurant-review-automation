@@ -6,7 +6,7 @@
   <title>Cavnar AI — System Status</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -54,12 +54,14 @@
       flex-shrink: 0;
     }
     .site-header .brand {
+      font-family: 'DM Serif Display', serif;
       color: #fff;
-      font-weight: 600;
-      font-size: 16px;
+      font-size: 18px;
+      font-weight: 400;
     }
-    .site-header .brand span {
-      color: var(--ember);
+    .site-header .brand em {
+      color: #e8956a;
+      font-style: italic;
     }
     .site-header .header-sep {
       color: rgba(255,255,255,0.3);
@@ -227,10 +229,11 @@
 
 <!-- Header -->
 <header class="site-header">
-  <div class="logo-mark">C</div>
-  <span class="brand">Cavnar<span>AI</span></span>
-  <span class="header-sep">/</span>
-  <span class="header-sub">System Status</span>
+  <div style="display:flex;align-items:center;gap:12px">
+    <span class="brand">Cavnar <em>AI</em></span>
+    <span class="header-sep">/</span>
+    <span class="header-sub">System Status</span>
+  </div>
 </header>
 
 <!-- Overall banner -->
@@ -316,7 +319,7 @@
   {% endif %}
 
   <div class="status-footer">
-    <p id="last-updated">Last checked: {{ statuses[0].updated_at[:16] | replace('T',' ') if statuses else '—' }} UTC</p>
+    <p id="last-updated">Last checked: {{ last_checked }}</p>
     <p style="margin-top:6px;">Questions? Email <a href="mailto:will@cavnar.ai">will@cavnar.ai</a></p>
   </div>
 </div>
@@ -362,13 +365,19 @@
           }
         }
 
-        /* Update last-updated time */
+        /* Update last-updated time in CT */
         var el = document.getElementById("last-updated");
         if (el) {
           var now = new Date();
-          var hh = ("0" + now.getUTCHours()).slice(-2);
-          var mm = ("0" + now.getUTCMinutes()).slice(-2);
-          el.textContent = "Last checked: " + now.toISOString().slice(0, 10) + " " + hh + ":" + mm + " UTC";
+          var ct = new Date(now.toLocaleString("en-US", {timeZone: "America/Chicago"}));
+          var mo = ct.getMonth() + 1;
+          var dy = ct.getDate();
+          var yr = String(ct.getFullYear()).slice(2);
+          var hr = ct.getHours();
+          var mn = ("0" + ct.getMinutes()).slice(-2);
+          var ampm = hr >= 12 ? "PM" : "AM";
+          hr = hr % 12 || 12;
+          el.textContent = "Last checked: " + mo + "/" + dy + "/" + yr + " " + hr + ":" + mn + " " + ampm + " CT";
         }
       })
       .catch(function () { /* silently ignore network errors */ });

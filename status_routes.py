@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone, timedelta
 from flask import Blueprint, jsonify, render_template, request, session, abort
 from status_manager import (
     get_all_statuses, update_service_status, get_open_incidents,
@@ -31,10 +32,22 @@ def status_page():
         grouped.setdefault(day, []).append(inc)
 
     banner = overall_status(statuses)
+    # Convert current time to CT (UTC-5 standard / UTC-6 daylight — approximate with fixed offset)
+    try:
+        from zoneinfo import ZoneInfo
+        ct_now = datetime.now(ZoneInfo("America/Chicago"))
+    except Exception:
+        ct_now = datetime.now(timezone(timedelta(hours=-5)))
+    last_checked = "{}/{}/{} {}:{:02d} {}".format(
+        ct_now.month, ct_now.day, str(ct_now.year)[2:],
+        ct_now.strftime("%-I"), ct_now.minute,
+        ct_now.strftime("%p") + " CT"
+    )
     return render_template("status.html",
                            statuses=statuses,
                            grouped_incidents=grouped,
-                           banner=banner)
+                           banner=banner,
+                           last_checked=last_checked)
 
 
 # ── Public JSON API (used by status page auto-refresh) ────────────────────────
