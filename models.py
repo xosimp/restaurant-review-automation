@@ -560,10 +560,14 @@ def _seed_gia_mia(db_path: str = DB_PATH):
         "- Cooks: 1 cook always stays through close; cut others 45min–1h early on slow nights.\n"
         "- Bussers cut 30min before close."
     )
-    conn.execute("""
-        UPDATE restaurants SET monthly_revenue_target=?, labor_target_pct=?, hours_notes=?, role_rates_json=NULL
-        WHERE id=2
-    """, (365000.0, 23.0, gia_mia_hours))
+    # Use update_restaurant so the correct DB connection path is always used
+    update_restaurant(2, {
+        "monthly_revenue_target": 365000.0,
+        "labor_target_pct": 23.0,
+        "hours_notes": gia_mia_hours,
+        "role_rates_json": None,
+    })
+    print("[auto-seed] Restaurant settings updated: labor_target=23%, monthly_revenue=$365k")
 
     gia_mia_csv = """date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes
 2026-06-01,Monday,Sofia R.,Server,4:30pm,9:30pm,5.0,5.0,8000,
@@ -789,21 +793,11 @@ def _seed_gia_mia(db_path: str = DB_PATH):
 2026-06-14,Sunday,James H.,Host,11:00am,5:30pm,6.5,6.5,12250,
 2026-06-14,Sunday,Lena S.,Host,4:00pm,10:30pm,6.5,6.5,12250,"""
 
-    # Upsert into client_data with source='seed'
-    existing = conn.execute("SELECT id FROM client_data WHERE restaurant_id=2").fetchone()
-    if existing:
-        conn.execute("""
-            UPDATE client_data SET shifts_csv=?, shifts_source='seed', updated_at=datetime('now')
-            WHERE restaurant_id=2
-        """, (gia_mia_csv,))
-    else:
-        conn.execute("""
-            INSERT INTO client_data (restaurant_id, shifts_csv, shifts_source)
-            VALUES (2, ?, 'seed')
-        """, (gia_mia_csv,))
-
     conn.commit()
     conn.close()
+
+    # Use save_client_data so the correct DB path is always used
+    save_client_data(2, "shifts", gia_mia_csv, source="seed")
     print("[auto-seed] Gia Mia data seeded successfully")
 
 
