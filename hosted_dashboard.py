@@ -1092,13 +1092,8 @@ def _refresh_gia_mia_reviews(ryan_rid):
         from zoneinfo import ZoneInfo as _ZI_r
         from datetime import datetime as _dt_r, timedelta as _td_r2
         conn = get_conn()
-        # Wipe seeded reviews and their stale AI drafts so responses get regenerated fresh
+        # Wipe seeded reviews — draft_response is a column on reviews, so this covers everything
         conn.execute("DELETE FROM reviews WHERE restaurant_id=? AND external_id LIKE 'rr_%'", (ryan_rid,))
-        conn.execute(
-            "DELETE FROM review_responses WHERE review_id IN "
-            "(SELECT id FROM reviews WHERE restaurant_id=? AND external_id LIKE 'rr_%')",
-            (ryan_rid,)
-        )
         conn.commit()
 
         sample_reviews = [
