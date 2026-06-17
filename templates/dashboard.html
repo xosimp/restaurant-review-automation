@@ -1007,8 +1007,14 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         </div>
       </div>
 
-      <!-- Schedule table -->
-      <div style="overflow-x:auto;padding:0 0 4px">
+      <!-- Schedule table toggle bar -->
+      <div id="sched-toggle-bar" style="display:none;padding:10px 20px;border-bottom:1px solid rgba(255,255,255,.08);cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between" onclick="toggleSchedTable()">
+        <span id="sched-toggle-label" style="font-size:12px;font-weight:600;color:var(--paper)">▼ View full schedule</span>
+        <span id="sched-shift-count" style="font-size:11px;color:var(--ink3)"></span>
+      </div>
+
+      <!-- Schedule table (collapsed by default) -->
+      <div id="sched-table-wrap" style="display:none;overflow-x:auto;padding:0 0 4px">
         <table id="sched-table" style="width:100%;border-collapse:collapse;font-size:11px;min-width:580px">
           <thead>
             <tr style="background:rgba(255,255,255,.04)">
@@ -3437,6 +3443,16 @@ function generateSchedule(btn) {
           lastDay = day;
         }
         tbody.innerHTML = tHtml;
+        // Show toggle bar with shift count, table collapsed by default
+        var toggleBar = document.getElementById('sched-toggle-bar');
+        var shiftCount = document.getElementById('sched-shift-count');
+        if (toggleBar) toggleBar.style.display = 'flex';
+        if (shiftCount) shiftCount.textContent = data.preview_rows.length + ' shifts';
+        _schedTableOpen = false;
+        var wrap = document.getElementById('sched-table-wrap');
+        var label = document.getElementById('sched-toggle-label');
+        if (wrap) wrap.style.display = 'none';
+        if (label) label.textContent = '▼ View full schedule';
       }
 
       // PAR hours banner
@@ -3476,6 +3492,16 @@ function generateSchedule(btn) {
       btn.disabled = false;
       alert('Network error — try again');
     });
+}
+
+var _schedTableOpen = false;
+function toggleSchedTable() {
+  var wrap = document.getElementById('sched-table-wrap');
+  var label = document.getElementById('sched-toggle-label');
+  if (!wrap) return;
+  _schedTableOpen = !_schedTableOpen;
+  wrap.style.display = _schedTableOpen ? 'block' : 'none';
+  label.textContent = _schedTableOpen ? '▲ Hide schedule' : '▼ View full schedule';
 }
 
 function downloadScheduleFromPreview() {
