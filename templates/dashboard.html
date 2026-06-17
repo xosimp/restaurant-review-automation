@@ -1008,8 +1008,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </div>
 
       <!-- Schedule table toggle bar -->
-      <div id="sched-toggle-bar" style="display:none;padding:10px 20px;border-bottom:1px solid rgba(255,255,255,.08);cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between" onclick="toggleSchedTable()">
-        <span id="sched-toggle-label" style="font-size:12px;font-weight:600;color:var(--paper)">▼ View full schedule</span>
+      <div id="sched-toggle-bar" style="display:none;padding:12px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(111,207,151,.04);cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between" onclick="toggleSchedTable()">
+        <button style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:700;color:#6fcf97;padding:0;letter-spacing:.02em" id="sched-toggle-label">▼ View full schedule</button>
         <span id="sched-shift-count" style="font-size:11px;color:var(--ink3)"></span>
       </div>
 
@@ -3475,11 +3475,14 @@ function generateSchedule(btn) {
           parBadge.textContent = '✓ On PAR';
           parBadge.style.background = 'rgba(111,207,151,.2)';
           parBadge.style.color = '#6fcf97';
-        } else {
-          var overUnder = diff > 0 ? '+' + absDiff + 'h over' : absDiff + 'h under';
-          parBadge.textContent = overUnder + ' PAR';
+        } else if (diff > 0) {
+          parBadge.textContent = '+' + absDiff + 'h over PAR';
           parBadge.style.background = 'rgba(235,87,87,.18)';
           parBadge.style.color = '#eb5757';
+        } else {
+          parBadge.textContent = absDiff + 'h under PAR';
+          parBadge.style.background = 'rgba(242,153,74,.18)';
+          parBadge.style.color = '#f2994a';
         }
         parBanner.style.display = 'block';
       }

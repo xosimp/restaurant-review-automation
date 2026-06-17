@@ -595,9 +595,9 @@ SCHEDULING RULES:
 - Base each day's staffing on the YoY same-day data when available — that is your primary projection
 - For holiday weeks, match staffing to last year's holiday labor hours, not recent averages
 - No employee over 40h for the week
-- Total weekly hours MUST be within ±5h of the PAR target ({hours_budget}h)
+- Total weekly hours MUST be within ±5h of the PAR target ({hours_budget}h). Count your hours as you build each day and verify the running total before finalizing. DO NOT submit a schedule that is more than 5h away from {hours_budget}h total.
 - Servers: 4-6h shifts; bartenders/cooks: 5-8h shifts
-- 6-10 shifts per day
+- 8-14 shifts per day (scale with revenue — high-volume days need more shifts)
 - Notes column: one brief phrase per shift explaining any change (e.g. "YoY match - high Father's Day volume" or "reduced - YoY shows slow Monday")
 - Match shift times to the operation type visible in the staff data (lunch/dinner vs breakfast/brunch)
 - IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time."""
