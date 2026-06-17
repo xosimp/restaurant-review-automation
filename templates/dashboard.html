@@ -886,8 +886,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
-  <!-- Labor savings summary -->
-  {% if savings_breakdown and savings_breakdown.labor > 0 %}
+  <!-- Labor savings summary — show whenever live labor data exists, regardless of banner value -->
+  {% if labor and labor.is_live and (savings_breakdown.labor_vs_industry_monthly > 0 or savings_breakdown.labor_monthly > 0 or savings_breakdown.labor_overtime > 0 or labor.overstaffed_days|length > 0) %}
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
     <div style="background:linear-gradient(135deg,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:12px 16px;text-align:center">
       {% if savings_breakdown.labor_monthly > 0 %}
