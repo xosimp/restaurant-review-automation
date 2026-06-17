@@ -484,10 +484,17 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
   </div>
 
   <div class="stat-row">
-    <!-- 1. How am I doing overall? -->
-    <div class="stat {{'ok' if rstats.avg_rating >= 4.5 else ('warn' if rstats.avg_rating >= 3.5 else 'hi')}}" id="stat-rating">
-      <div class="stat-n" id="stat-rating-n">{{rstats.avg_rating}}</div>
-      <div class="stat-l">Avg rating</div>
+    <!-- 1. How am I doing overall? GBP official rating if connected, else dashboard avg -->
+    <div class="stat {{'ok' if (restaurant.gbp_rating or rstats.avg_rating) >= 4.5 else ('warn' if (restaurant.gbp_rating or rstats.avg_rating) >= 3.5 else 'hi')}}" id="stat-rating">
+      {% if restaurant.gbp_rating %}
+        <div class="stat-n" id="stat-rating-n">{{restaurant.gbp_rating}}</div>
+        <div class="stat-l" style="margin-bottom:2px">Google rating</div>
+        <div style="font-size:10px;color:var(--ink3);line-height:1.3">Dashboard avg: <strong style="color:var(--ink2)">{{rstats.avg_rating}}★</strong></div>
+      {% else %}
+        <div class="stat-n" id="stat-rating-n">{{rstats.avg_rating}}</div>
+        <div class="stat-l">Avg rating</div>
+        <div style="font-size:9px;color:var(--ink3);line-height:1.3;margin-top:2px">Connect GBP for live score</div>
+      {% endif %}
     </div>
     <!-- 2. What's the sentiment? -->
     <div class="stat {{'ok' if rstats.positive_pct >= 70 else ('warn' if rstats.positive_pct >= 50 else 'hi')}}" id="stat-positive">

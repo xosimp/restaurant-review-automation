@@ -190,6 +190,18 @@ input:focus,select:focus{border-color:var(--ember)}
               {% else %}<span style="font-size:10px;color:#9ca3af">No contract</span>{% endif %}
             {% endif %}
 
+            <!-- POS system badge -->
+            {% if user.pos_system and not user.is_admin %}
+            <span title="{% if user.toast_restaurant_guid %}Connected{% else %}POS set, not synced{% endif %}" style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:#fff3e0;color:#e65100;cursor:default">
+              {{user.pos_system}}{% if user.toast_restaurant_guid %} ✓{% endif %}
+            </span>
+            {% endif %}
+
+            <!-- GBP connected badge -->
+            {% if user.gmb_connected and not user.is_admin %}
+            <span title="Google Business Profile connected" style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:#e8f4fd;color:#1565c0;cursor:default">GBP ✓</span>
+            {% endif %}
+
             <!-- Pending reviews -->
             {% if user.pending_reviews > 0 %}
             <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px;background:{% if user.pending_reviews > 5 %}#fef2f2{% else %}#fef9ec{% endif %};color:{% if user.pending_reviews > 5 %}#c84b2f{% else %}#b7791f{% endif %}">

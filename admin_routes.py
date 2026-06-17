@@ -63,6 +63,9 @@ def admin(current_user):
         u["module_labor"]     = r.module_labor if r else 0
         u["module_inventory"] = r.module_inventory if r else 0
         u["module_marketing"] = r.module_marketing if r else 0
+        u["pos_system"]            = r.pos_system if r else None
+        u["toast_restaurant_guid"] = r.toast_restaurant_guid if r else None
+        u["gmb_connected"]         = bool(r and r.gmb_refresh_token)
 
         # Unreviewed reviews count
         try:
@@ -695,6 +698,12 @@ def fetch_reviews_now(restaurant_id, current_user):
                     if loc_id:
                         gmb_reviews = fetch_reviews_via_gmb(token, loc_id, restaurant_id)
                         reviews += gmb_reviews
+                        # Also capture official GBP overall rating
+                        try:
+                            from gmb import fetch_location_rating
+                            fetch_location_rating(restaurant_id, token, loc_id)
+                        except Exception:
+                            pass
                     else:
                         errors.append("Google: location not found — API access may still be pending")
                 else:

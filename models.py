@@ -249,6 +249,8 @@ class Restaurant:
     custom_competitors: Optional[str] = None
     login_notify:     int            = 0
     last_activity: Optional[str]    = None
+    gbp_rating: Optional[float]     = None
+    gbp_review_count: Optional[int] = None
     id: Optional[int]               = None
     created_at: str = field(default_factory=lambda: __import__('datetime').datetime.now(__import__('zoneinfo').ZoneInfo('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'))
 
@@ -322,6 +324,8 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "inventory_notes", "TEXT"),
         ("restaurants", "food_cost_target", "REAL"),
         ("restaurants", "inventory_updated_at", "TEXT"),
+        ("restaurants", "gbp_rating", "REAL"),
+        ("restaurants", "gbp_review_count", "INTEGER"),
     ]
     for table, col, col_type in columns_to_add:
         try:
@@ -402,6 +406,8 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN toast_token_expires TEXT",
         "ALTER TABLE restaurants ADD COLUMN toast_last_synced TEXT",
         "ALTER TABLE restaurants ADD COLUMN toast_sync_error TEXT",
+        "ALTER TABLE restaurants ADD COLUMN gbp_rating REAL",
+        "ALTER TABLE restaurants ADD COLUMN gbp_review_count INTEGER",
         """CREATE TABLE IF NOT EXISTS review_requests (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
@@ -485,7 +491,8 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","login_notify",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
-        "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error"
+        "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error",
+        "gbp_rating","gbp_review_count"
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -565,6 +572,8 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         toast_last_synced=row["toast_last_synced"] if "toast_last_synced" in row.keys() else None,
         toast_sync_error=row["toast_sync_error"] if "toast_sync_error" in row.keys() else None,
         last_activity=row["last_activity"] if "last_activity" in row.keys() else None,
+        gbp_rating=row["gbp_rating"] if "gbp_rating" in row.keys() else None,
+        gbp_review_count=row["gbp_review_count"] if "gbp_review_count" in row.keys() else None,
         owner_name=row["owner_name"] if "owner_name" in row.keys() else None,
         owner_phone=row["owner_phone"] if "owner_phone" in row.keys() else None,
         digest_day=row["digest_day"] if "digest_day" in row.keys() else "monday",

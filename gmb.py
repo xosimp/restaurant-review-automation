@@ -205,6 +205,37 @@ def post_reply(restaurant_id: int, review_name: str, reply_text: str) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+def fetch_location_rating(restaurant_id: int, access_token: str, location_id: str) -> dict:
+    """
+    Fetch the official GBP overall rating + review count from the location's metadata.
+    Stores result to restaurants.gbp_rating and gbp_review_count.
+    location_id format: "locations/456"
+    """
+    try:
+        resp = requests.get(
+            f"https://mybusinessbusinessinformation.googleapis.com/v1/{location_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={"readMask": "rating,userRatingCount"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        rating = data.get("rating")
+        count  = data.get("userRatingCount")
+        if rating is not None:
+            from models import update_restaurant
+            update_fields = {"gbp_rating": float(rating)}
+            if count is not None:
+                update_fields["gbp_review_count"] = int(count)
+            update_restaurant(restaurant_id, update_fields)
+            print(f"[GMB] GBP rating for restaurant {restaurant_id}: {rating} ({count} reviews)")
+            return {"ok": True, "rating": float(rating), "count": count}
+        return {"ok": False, "error": "No rating in response"}
+    except Exception as e:
+        print(f"[GMB] fetch_location_rating error for restaurant {restaurant_id}: {e}")
+        return {"ok": False, "error": str(e)}
+
+
 def is_connected(restaurant_id: int) -> bool:
     """Check if a restaurant has GMB connected."""
     from models import get_restaurant
