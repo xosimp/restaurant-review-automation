@@ -367,6 +367,10 @@ function clientUpload(dataType, input) {
       {% endif %}
       <span class="hdr-user">{{ current_user.username }}</span>
     </div>
+    <a href="https://status.cavnar.ai" target="_blank" id="status-indicator" style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink3);text-decoration:none;padding:4px 8px;border-radius:4px;transition:color .15s" title="System Status">
+      <span id="status-dot" style="width:7px;height:7px;border-radius:50%;background:#22c55e;flex-shrink:0"></span>
+      <span id="status-label" style="display:none" class="status-label-text">All systems operational</span>
+    </a>
     <a href="/logout" class="logout-btn">Sign out</a>
   </div>
 </header>
@@ -1670,6 +1674,9 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <a href="mailto:will@cavnar.ai" class="btn-link-ember">&#9993; Email Will</a>
           <a href="https://calendly.com/will-cavnar/30min" target="_blank" class="btn-link-navy">&#128197; Book a call</a>
+          <a href="https://status.cavnar.ai" target="_blank" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#9a9188;text-decoration:none;padding:8px 0">
+            <span id="acct-status-dot" style="width:7px;height:7px;border-radius:50%;background:#22c55e;flex-shrink:0"></span> System Status
+          </a>
           <span style="font-size:12px;color:#9a9188;display:inline-flex;align-items:center;padding:8px 0">Same-day response</span>
         </div>
       </div>
@@ -4221,6 +4228,29 @@ function revokeOtherSessions(btn){
 (function(){
   var panel=document.getElementById('panel-account');
   if(panel&&panel.classList.contains('active')){loadSessions();}
+})();
+
+// ── Live status indicator ─────────────────────────────────────────────────────
+(function(){
+  var DOT_COLORS = {operational:'#22c55e', degraded:'#f59e0b', outage:'#ef4444', maintenance:'#3b82f6'};
+
+  function updateStatusDots(overall) {
+    var color = DOT_COLORS[overall] || '#22c55e';
+    var hdrDot  = document.getElementById('status-dot');
+    var acctDot = document.getElementById('acct-status-dot');
+    if (hdrDot)  hdrDot.style.background  = color;
+    if (acctDot) acctDot.style.background = color;
+  }
+
+  function checkStatus() {
+    fetch('/api/status')
+      .then(function(r){ return r.json(); })
+      .then(function(d){ updateStatusDots(d.overall); })
+      .catch(function(){});
+  }
+
+  checkStatus();
+  setInterval(checkStatus, 120000);
 })();
 
 </script>
