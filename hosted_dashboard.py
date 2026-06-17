@@ -861,11 +861,12 @@ def _do_seed_ryan():
         from models import create_restaurant, Restaurant
         ryan_rid = create_restaurant(Restaurant(
                 name="Gia Mia",
-                owner_email="ryancavnar@gmail.com",
+                owner_email="will@cavnar.ai",
+                owner_name="Brian",
                 google_place_id="ChIJpS0UwhwDD4gRVqMFnJkDLvQ",
                 neighborhood="St. Charles, Illinois — downtown First Street Plaza",
-                vibe="contemporary Italian pizza bar with wood-fired Neapolitan pizzas and a lively bar scene",
-                known_for="wood-fired Neapolitan pizza, fresh pasta, small plates, craft cocktails, half-price wine Wednesdays, patio dining",
+                vibe="Contemporary Italian pizza bar with wood-fired Neapolitan pizzas and a lively bar scene",
+                known_for="Wood-fired Neapolitan pizza, fresh pasta, small plates, craft cocktails, half-price wine Wednesdays, patio dining",
                 yelp_business_id="gia-mia-st-charles-st-charles",
                 menu_url="https://www.giamiapizzabar.com/menus",
                 module_reviews=1, module_labor=1,
@@ -873,7 +874,7 @@ def _do_seed_ryan():
                 billing_status="trial",
         ))
         ryan_pw = os.getenv("RYAN_TEST_PASSWORD", "charthouse123")
-        create_user(ryan_rid, "ryan", "ryancavnar@gmail.com", ryan_pw, is_admin=False)
+        create_user(ryan_rid, "ryan", "will@cavnar.ai", ryan_pw, is_admin=False)
         print(f"\n  Test client created: ryan / {ryan_pw} (Gia Mia, St. Charles IL)\n")
 
         # Seed labor history FIRST (no API calls, instant) — always replace on fresh deploy
@@ -1070,16 +1071,29 @@ def _seed_ryan_background():
 def _ensure_gia_mia_vibe():
     try:
         conn = get_conn()
+        # Find by either old or new email
         row = conn.execute(
-            "SELECT id, vibe FROM restaurants WHERE owner_email=?", ("ryancavnar@gmail.com",)
+            "SELECT id FROM restaurants WHERE owner_email IN (?,?)",
+            ("ryancavnar@gmail.com", "will@cavnar.ai")
         ).fetchone()
-        if row and not (row["vibe"] or "").strip():
+        if row:
+            conn.execute("""
+                UPDATE restaurants SET
+                    owner_email=?, owner_name=?,
+                    vibe=?, known_for=?
+                WHERE id=?
+            """, (
+                "will@cavnar.ai", "Brian",
+                "Contemporary Italian pizza bar with wood-fired Neapolitan pizzas and a lively bar scene",
+                "Wood-fired Neapolitan pizza, fresh pasta, small plates, craft cocktails, half-price wine Wednesdays, patio dining",
+                row["id"],
+            ))
             conn.execute(
-                "UPDATE restaurants SET vibe=? WHERE id=?",
-                ("contemporary Italian pizza bar with wood-fired Neapolitan pizzas and a lively bar scene", row["id"]),
+                "UPDATE users SET email=? WHERE restaurant_id=? AND username=?",
+                ("will@cavnar.ai", row["id"], "ryan")
             )
             conn.commit()
-            print(f"  Gia Mia vibe backfilled on restaurant id={row['id']}")
+            print(f"  Gia Mia profile updated (email, owner, vibe, known_for) on restaurant id={row['id']}")
         conn.close()
     except Exception as _vibe_e:
         print(f"  Gia Mia vibe ensure error: {_vibe_e}")
