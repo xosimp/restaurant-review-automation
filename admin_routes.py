@@ -482,6 +482,10 @@ def save_client_settings(restaurant_id, current_user):
             "alert_no_response":  int(bool(data.get("alert_no_response"))),
             "urgent_via_email":   int(bool(data.get("urgent_via_email"))),
             "urgent_via_sms":     int(bool(data.get("urgent_via_sms"))),
+            "alert_5star":             int(bool(data.get("alert_5star"))),
+            "alert_rating_threshold":  int(bool(data.get("alert_rating_threshold"))),
+            "alert_rating_floor":      float(data.get("alert_rating_floor") or 4.0),
+            "alert_labor_over":        int(bool(data.get("alert_labor_over"))),
         })
         return jsonify(ok=True)
     except Exception as e:

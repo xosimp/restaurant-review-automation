@@ -481,16 +481,18 @@ textarea{resize:vertical;min-height:60px}
     <div class="section-hdr"><div class="section-title">Alert settings</div></div>
     <div class="section-body">
       <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:14px">
-        Configure which events trigger an SMS to the contacts above. Save settings to apply.
+        Configure which events trigger alerts via the delivery channels selected above. Save settings to apply.
       </p>
       <div style="display:flex;flex-direction:column;gap:10px">
         {% for toggle_id, label, description, default_on in [
-          ("alert_1star",          "1★ review received",                "Fires the moment a 1-star review is fetched. Default ON.",           restaurant.alert_1star),
-          ("alert_2star",          "2★ review received",                "Fires on any 2-star review. Good for busy restaurants.",            restaurant.alert_2star),
           ("alert_health",         "Health or safety mention",           "Any review mentioning food poisoning, rodents, foreign objects, etc. Always recommended ON.", restaurant.alert_health),
-          ("alert_neg_spike",      "3+ negative reviews in 7 days",     "Fires once per 24h if a spike in negatives is detected.",            restaurant.alert_neg_spike),
-          ("alert_negative_trend", "Rating declining 3+ weeks",          "Fires when the weekly average rating drops for 3 consecutive weeks.", restaurant.alert_negative_trend),
-          ("alert_no_response",    "Negative review unresponded 48h",    "Daily check — fires if any negative review has no response after 2 days.", restaurant.alert_no_response),
+          ("alert_1star",          "1★ review received",                "Fires the moment a 1-star review is fetched.",                       restaurant.alert_1star),
+          ("alert_2star",          "2★ review received",                "Fires on any 2-star review. Good for high-volume restaurants.",       restaurant.alert_2star),
+          ("alert_5star",          "5★ review received",                "Celebrate wins — notify when a 5-star review comes in.",              restaurant.alert_5star),
+          ("alert_neg_spike",      "3+ negative reviews in 7 days",     "Fires once per 24h if a spike in negatives is detected.",             restaurant.alert_neg_spike),
+          ("alert_negative_trend", "Rating declining 3 weeks in a row", "Daily check — fires when weekly avg rating drops 3 consecutive weeks.", restaurant.alert_negative_trend),
+          ("alert_no_response",    "Negative review unresponded 48h",   "Daily check — fires if any negative review has no response after 2 days.", restaurant.alert_no_response),
+          ("alert_labor_over",     "Labor % over target",               "Fires when the most recent labor period exceeds this client's labor % target.", restaurant.alert_labor_over),
         ] %}
         <label style="display:flex;align-items:flex-start;gap:12px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
           <input type="checkbox" id="setting-{{toggle_id}}"
@@ -502,9 +504,27 @@ textarea{resize:vertical;min-height:60px}
           </div>
         </label>
         {% endfor %}
+
+        <!-- Rating threshold — special case with floor input -->
+        <div style="display:flex;align-items:flex-start;gap:12px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px">
+          <input type="checkbox" id="setting-alert_rating_threshold"
+            {% if restaurant.alert_rating_threshold %}checked{% endif %}
+            style="width:14px;height:14px;accent-color:#c84b2f;margin-top:2px;flex-shrink:0">
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:500;color:var(--ink)">Google rating drops below threshold</div>
+            <div style="font-size:11px;color:var(--ink3);margin-top:2px">Daily check — fires when the live GBP rating falls below the floor you set.</div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+              <label style="font-size:12px;color:var(--ink2);font-weight:400;letter-spacing:0;text-transform:none">Alert floor:</label>
+              <input type="number" id="setting-alert_rating_floor" min="1" max="5" step="0.1"
+                value="{{ restaurant.alert_rating_floor or 4.0 }}"
+                style="width:64px;padding:4px 8px;border:1px solid var(--paper3);border-radius:4px;font-size:13px;background:white">
+              <span style="font-size:12px;color:var(--ink3)">★ (e.g. 4.0)</span>
+            </div>
+          </div>
+        </div>
       </div>
       <div style="font-size:11px;color:var(--ink3);margin-top:12px;line-height:1.6">
-        Changes take effect immediately after saving. All alerts require at least one contact above.
+        Changes take effect immediately after saving. All alerts require at least one contact or email on file.
       </div>
     </div>
   </div>
@@ -867,6 +887,10 @@ async function saveSettings() {
     alert_no_response:     document.getElementById('setting-alert_no_response').checked ? 1 : 0,
     urgent_via_email:      document.getElementById('setting-urgent_via_email').checked ? 1 : 0,
     urgent_via_sms:        document.getElementById('setting-urgent_via_sms').checked ? 1 : 0,
+    alert_5star:           document.getElementById('setting-alert_5star').checked ? 1 : 0,
+    alert_rating_threshold: document.getElementById('setting-alert_rating_threshold').checked ? 1 : 0,
+    alert_rating_floor:    parseFloat(document.getElementById('setting-alert_rating_floor').value) || 4.0,
+    alert_labor_over:      document.getElementById('setting-alert_labor_over').checked ? 1 : 0,
   };
   const res = await fetch(window.location.pathname, {
     method: 'POST',

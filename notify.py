@@ -207,7 +207,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
 
     conn = get_conn(db_path)
     row = conn.execute("""
-        SELECT alert_1star, alert_2star, alert_health,
+        SELECT alert_1star, alert_2star, alert_health, alert_5star,
                alert_neg_spike, alert_negative_trend, alert_no_response,
                urgent_via_sms, urgent_via_email, owner_email
         FROM restaurants WHERE id=?
@@ -279,6 +279,26 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                 cta_label="Respond now",
             )
             blast(sms, f"🔴 1★ review — {restaurant_name}", html, "1star", review.id)
+
+        # 5★ alert
+        elif rating == 5 and row["alert_5star"]:
+            who  = f"{author}" if author else "A guest"
+            sms  = (
+                f"⭐ 5★ Review — {restaurant_name}\n"
+                f"{who} on {platform}: \"{preview}{ellipsis}\"\n"
+                f"dashboard.cavnar.ai"
+            )
+            html = _alert_email_html(
+                restaurant_name,
+                f"⭐ 5★ review on {platform}",
+                [
+                    f'<strong>{author}</strong> left a 5-star review on {platform}:' if author else f"A 5-star review was posted on {platform}:",
+                    f'<em>"{preview}{ellipsis}"</em>',
+                    "Consider thanking them — a response to a great review builds loyalty.",
+                ],
+                cta_label="View & respond",
+            )
+            blast(sms, f"⭐ 5★ review — {restaurant_name}", html, "5star", review.id)
 
         # 2★ alert
         elif rating == 2 and row["alert_2star"]:
@@ -381,3 +401,135 @@ def check_no_response_alerts(db_path: str = DB_PATH):
             _send_alert_email(owner_email, f"⏰ Unresponded reviews — {name}", html)
 
         _log_alert(rid, "no_response")
+
+
+def check_daily_alerts(db_path: str = DB_PATH):
+    """
+    Daily check for negative trend, rating threshold, and labor over target.
+    Called once per day by the scheduler alongside check_no_response_alerts.
+    """
+    conn = get_conn(db_path)
+    restaurants = conn.execute("""
+        SELECT id, name, owner_email,
+               urgent_via_sms, urgent_via_email,
+               alert_negative_trend,
+               alert_rating_threshold, alert_rating_floor, gbp_rating,
+               alert_labor_over, labor_target_pct
+        FROM restaurants
+        WHERE (urgent_via_sms = 1 OR urgent_via_email = 1)
+    """).fetchall()
+    conn.close()
+
+    for r in restaurants:
+        rid         = r["id"]
+        name        = r["name"]
+        via_sms     = bool(r["urgent_via_sms"])
+        via_email   = bool(r["urgent_via_email"])
+        owner_email = r["owner_email"] or ""
+
+        contacts = get_alert_contacts(rid, db_path) if via_sms else []
+
+        def _fire(sms_text, subject, html, alert_type):
+            if via_sms and contacts:
+                for c in contacts:
+                    send_sms(c["phone"], sms_text)
+            if via_email and owner_email:
+                _send_alert_email(owner_email, subject, html)
+            _log_alert(rid, alert_type)
+
+        def _already_alerted(alert_type):
+            c2 = get_conn(db_path)
+            row = c2.execute("""
+                SELECT id FROM alert_log
+                WHERE restaurant_id=? AND alert_type=?
+                AND fired_at >= datetime('now', '-24 hours')
+            """, (rid, alert_type)).fetchone()
+            c2.close()
+            return row is not None
+
+        # ── Negative trend ────────────────────────────────────
+        if r["alert_negative_trend"] and not _already_alerted("negative_trend"):
+            c2 = get_conn(db_path)
+            weeks = c2.execute("""
+                SELECT strftime('%Y-%W', review_date) as week,
+                       AVG(rating) as avg_rating
+                FROM reviews
+                WHERE restaurant_id=?
+                  AND review_date >= date('now', '-28 days')
+                  AND rating IS NOT NULL
+                GROUP BY week
+                ORDER BY week ASC
+            """, (rid,)).fetchall()
+            c2.close()
+            if len(weeks) >= 3:
+                avgs = [w["avg_rating"] for w in weeks[-3:]]
+                if avgs[0] > avgs[1] > avgs[2]:
+                    sms  = (
+                        f"📉 {name}: Average rating has declined 3 weeks in a row "
+                        f"({avgs[0]:.1f} → {avgs[1]:.1f} → {avgs[2]:.1f}★).\n"
+                        f"dashboard.cavnar.ai"
+                    )
+                    html = _alert_email_html(
+                        name,
+                        "📉 Rating declining for 3 consecutive weeks",
+                        [
+                            f"Weekly average ratings have dropped 3 weeks in a row: "
+                            f"<strong>{avgs[0]:.1f} → {avgs[1]:.1f} → {avgs[2]:.1f}★</strong>",
+                            "This trend warrants a closer look at what guests are saying.",
+                        ],
+                    )
+                    _fire(sms, f"📉 Rating trend down — {name}", html, "negative_trend")
+
+        # ── Rating drops below threshold ───────────────────────
+        if r["alert_rating_threshold"] and not _already_alerted("rating_threshold"):
+            gbp_rating = r["gbp_rating"]
+            floor      = r["alert_rating_floor"] or 4.0
+            if gbp_rating is not None and gbp_rating < floor:
+                sms  = (
+                    f"⚠️ {name}: Google rating dropped to {gbp_rating:.1f}★ "
+                    f"(below your {floor:.1f}★ threshold).\n"
+                    f"dashboard.cavnar.ai"
+                )
+                html = _alert_email_html(
+                    name,
+                    f"⚠️ Google rating dropped below {floor:.1f}★",
+                    [
+                        f"Current Google rating: <strong>{gbp_rating:.1f}★</strong> — "
+                        f"below your alert threshold of {floor:.1f}★.",
+                        "Responding to recent negative reviews can help recover your score.",
+                    ],
+                    cta_label="Review & respond",
+                )
+                _fire(sms, f"⚠️ Rating below threshold — {name}", html, "rating_threshold")
+
+        # ── Labor over target ──────────────────────────────────
+        if r["alert_labor_over"] and not _already_alerted("labor_over"):
+            c2 = get_conn(db_path)
+            recent = c2.execute("""
+                SELECT labor_pct, period_start, period_end
+                FROM labor_history
+                WHERE restaurant_id=?
+                ORDER BY saved_at DESC LIMIT 1
+            """, (rid,)).fetchone()
+            c2.close()
+            if recent and recent["labor_pct"] is not None:
+                actual = recent["labor_pct"]
+                target = r["labor_target_pct"] or 30.0
+                if actual > target:
+                    over_by = round(actual - target, 1)
+                    sms  = (
+                        f"💸 {name}: Labor at {actual:.1f}% — "
+                        f"{over_by}pts over your {target:.0f}% target.\n"
+                        f"dashboard.cavnar.ai"
+                    )
+                    html = _alert_email_html(
+                        name,
+                        f"💸 Labor over target — {actual:.1f}% vs {target:.0f}% goal",
+                        [
+                            f"Most recent labor period: <strong>{actual:.1f}%</strong> — "
+                            f"<strong>{over_by} points over</strong> your {target:.0f}% target.",
+                            f"Period: {recent['period_start']} – {recent['period_end']}",
+                        ],
+                        cta_label="View labor dashboard",
+                    )
+                    _fire(sms, f"💸 Labor over target — {name}", html, "labor_over")

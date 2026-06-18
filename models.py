@@ -271,6 +271,10 @@ class Restaurant:
     alert_neg_spike:      int       = 1
     alert_negative_trend: int       = 1
     alert_no_response:    int       = 0
+    alert_5star:          int       = 0
+    alert_rating_threshold: int     = 0
+    alert_rating_floor:   float     = 4.0
+    alert_labor_over:     int       = 0
     urgent_via_email:     int       = 1
     urgent_via_sms:       int       = 0
     last_activity: Optional[str]    = None
@@ -512,6 +516,10 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN alert_no_response INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN urgent_via_email INTEGER DEFAULT 1",
         "ALTER TABLE restaurants ADD COLUMN urgent_via_sms INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN alert_5star INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN alert_rating_threshold INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN alert_rating_floor REAL DEFAULT 4.0",
+        "ALTER TABLE restaurants ADD COLUMN alert_labor_over INTEGER DEFAULT 0",
     ]
     for m in migrations:
         try:
@@ -877,6 +885,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error",
         "gbp_rating","gbp_review_count",
         "alert_1star","alert_2star","alert_health","alert_neg_spike","alert_negative_trend","alert_no_response",
+        "alert_5star","alert_rating_threshold","alert_rating_floor","alert_labor_over",
         "urgent_via_email","urgent_via_sms",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
@@ -953,6 +962,10 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         alert_neg_spike=row["alert_neg_spike"] if "alert_neg_spike" in row.keys() else 1,
         alert_negative_trend=row["alert_negative_trend"] if "alert_negative_trend" in row.keys() else 1,
         alert_no_response=row["alert_no_response"] if "alert_no_response" in row.keys() else 0,
+        alert_5star=row["alert_5star"] if "alert_5star" in row.keys() else 0,
+        alert_rating_threshold=row["alert_rating_threshold"] if "alert_rating_threshold" in row.keys() else 0,
+        alert_rating_floor=row["alert_rating_floor"] if "alert_rating_floor" in row.keys() else 4.0,
+        alert_labor_over=row["alert_labor_over"] if "alert_labor_over" in row.keys() else 0,
         urgent_via_email=row["urgent_via_email"] if "urgent_via_email" in row.keys() else 1,
         urgent_via_sms=row["urgent_via_sms"] if "urgent_via_sms" in row.keys() else 0,
         gmb_access_token=row["gmb_access_token"] if "gmb_access_token" in row.keys() else None,

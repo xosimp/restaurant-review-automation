@@ -839,13 +839,14 @@ def scheduler_loop():
                 log.info("Running stale inventory check...")
                 check_stale_inventory()
 
-            # 10am daily — check for negative reviews with no response for 48h
+            # 10am daily — no-response + trend/threshold/labor alerts
             if now.hour == 10 and _last_fetch_date != f"noresponse-{today}":
                 try:
-                    from notify import check_no_response_alerts
+                    from notify import check_no_response_alerts, check_daily_alerts
                     check_no_response_alerts()
+                    check_daily_alerts()
                 except Exception as _nre:
-                    log.error(f"No-response alert check failed: {_nre}")
+                    log.error(f"Daily alert check failed: {_nre}")
 
             # 1st of the month at 9am — send monthly summary to all active clients
             if now.day == 1 and now.hour == 9 and _last_monthly_date != today:
