@@ -576,13 +576,17 @@ CONTEXT:
 Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
 
-OUTPUT FORMAT — output the CSV immediately, no preamble or reasoning text before it:
+OUTPUT — your entire response must follow this structure with no text before the CSV:
 
 date,day,employee,role,shift_start,shift_end,scheduled_hours,notes
-(all schedule rows here)
-
+2026-MM-DD,Day,Employee Name,Role,start,end,hours,note
+(continue for every shift)
 ---SUMMARY---
-(exactly 3 bullet points starting with "- " explaining key decisions: days staffed, total hours vs PAR target, and why)
+- bullet 1
+- bullet 2
+- bullet 3
+
+DO NOT write any explanation, reasoning, or preamble before the CSV header line. Start your response with "date,day,employee..." immediately.
 
 SCHEDULING RULES:
 - Use exact dates listed above and real employee names from the staff list
@@ -599,10 +603,7 @@ SCHEDULING RULES:
     msg = client.messages.create(
         model=os.getenv("SCHEDULE_MODEL", "claude-sonnet-4-6"),
         max_tokens=8000,
-        messages=[
-            {"role": "user", "content": prompt},
-            {"role": "assistant", "content": "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"},
-        ],
+        messages=[{"role": "user", "content": prompt}],
     )
     # The assistant prefill forces output to begin with data rows directly.
     # raw = "<data rows>\n---SUMMARY---\n<bullets>"
