@@ -613,9 +613,6 @@ SCHEDULING RULES:
     # Clean CSV — find the header row first, then keep only data rows after it
     import re as _re_sched
 
-    # Date pattern: YYYY-MM-DD at the start of a data row
-    _date_re = _re_sched.compile(r'^\d{4}-\d{2}-\d{2},')
-
     def _clean_csv(raw_csv):
         EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
         all_lines = [l for l in raw_csv.split("\n")
@@ -630,10 +627,10 @@ SCHEDULING RULES:
         if header_idx is not None:
             lines = [all_lines[header_idx]] + [
                 l for l in all_lines[header_idx + 1:]
-                if _date_re.match(l.strip())
+                if l.count(",") >= 5 and not ("employee" in l.lower() and "shift" in l.lower())
             ]
         else:
-            lines = [EXPECTED_HEADER] + [l for l in all_lines if _date_re.match(l.strip())]
+            lines = [EXPECTED_HEADER] + [l for l in all_lines if l.count(",") >= 5]
         return "\n".join(lines)
 
     def _count_csv_hours(csv_text):
