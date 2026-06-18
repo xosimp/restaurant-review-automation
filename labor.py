@@ -596,7 +596,7 @@ SCHEDULING RULES:
 - IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time."""
 
     msg = client.messages.create(
-        model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+        model=os.getenv("SCHEDULE_MODEL", "claude-sonnet-4-6"),
         max_tokens=5000,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -662,7 +662,7 @@ SCHEDULING RULES:
             f"You MUST {'cut' if hour_diff > 0 else 'add'} approximately {correction:.0f}h spread across the week. "
             f"Recount every shift before submitting. The schedule will be rejected if it is more than 5h from {hours_budget}h total.")
         msg2 = client.messages.create(
-            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+            model=os.getenv("SCHEDULE_MODEL", "claude-sonnet-4-6"),
             max_tokens=5000,
             messages=[{"role": "user", "content": retry_prompt}],
         )
