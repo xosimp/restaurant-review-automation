@@ -622,15 +622,18 @@ SCHEDULING RULES:
             low = line.lower().replace(" ", "")
             if "date" in low and "employee" in low and "shift" in low:
                 header_idx = idx
-                all_lines[idx] = EXPECTED_HEADER
                 break
         if header_idx is not None:
+            # Keep the ORIGINAL header (preserves Sonnet's actual column order),
+            # then filter out any duplicate header rows and non-data lines
             lines = [all_lines[header_idx]] + [
                 l for l in all_lines[header_idx + 1:]
-                if "," in l and not l.lower().startswith("date,")
+                if "," in l and not (
+                    "employee" in l.lower() and "shift" in l.lower()
+                )
             ]
         else:
-            lines = all_lines
+            lines = [EXPECTED_HEADER] + [l for l in all_lines if "," in l]
         return "\n".join(lines)
 
     def _count_csv_hours(csv_text):

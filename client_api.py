@@ -798,18 +798,35 @@ def _run_schedule_job(job_id, restaurant_id):
         staff_constraints = {n["employee_name"]: n["notes"] for n in _raw_notes if n.get("employee_name")}
         preview_rows = []
         hours_scheduled = 0.0
+        # Column name aliases: normalize whatever Sonnet outputs to the expected JS keys
+        _col_map = {
+            "shift start": "shift_start", "shift_start": "shift_start",
+            "shift end": "shift_end", "shift_end": "shift_end",
+            "scheduled hours": "scheduled_hours", "scheduled_hours": "scheduled_hours",
+            "hours": "scheduled_hours",
+            "date": "date", "day": "day", "employee": "employee",
+            "role": "role", "notes": "notes", "note": "notes",
+        }
         try:
             reader = _csv_mod.DictReader(_io_sched.StringIO(result["schedule_csv"]))
+            if not preview_rows:
+                print(f"[schedule] fieldnames={reader.fieldnames}")
             for row in reader:
-                clean = {k: v for k, v in row.items() if k is not None}
+                clean = {}
+                for k, v in row.items():
+                    if k is None:
+                        continue
+                    mapped = _col_map.get(k.strip().lower(), k.strip().lower())
+                    clean[mapped] = v
                 if not preview_rows:
                     print(f"[schedule] first row keys={list(clean.keys())} vals={list(clean.values())[:4]}")
                 preview_rows.append(clean)
                 try:
-                    hours_scheduled += float(row.get("scheduled_hours") or 0)
+                    hours_scheduled += float(clean.get("scheduled_hours") or 0)
                 except (ValueError, TypeError):
                     pass
-        except Exception:
+        except Exception as _csv_ex:
+            print(f"[schedule] csv parse error: {_csv_ex}")
             pass
         _schedule_jobs[job_id] = {
             "status": "done",
