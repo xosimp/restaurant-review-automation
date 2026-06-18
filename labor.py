@@ -603,14 +603,16 @@ SCHEDULING RULES:
     raw = msg.content[0].text.strip()
     print(f"[schedule] raw output length={len(raw)} stop_reason={msg.stop_reason}")
 
-    # Split on the summary delimiter
+    # Split on the LAST ---SUMMARY--- so early spurious markers in Sonnet's
+    # reasoning don't cut off the actual CSV section
     if "---SUMMARY---" in raw:
-        csv_part, summary_part = raw.split("---SUMMARY---", 1)
+        csv_part, summary_part = raw.rsplit("---SUMMARY---", 1)
     else:
         csv_part = raw
         summary_part = ""
 
-    # Clean CSV — find the header row first, then keep only data rows after it
+    # Clean CSV — find the header row, then keep only data rows after it.
+    # Reasoning text always appears before the header, so _clean_csv ignores it.
     import re as _re_sched
 
     def _clean_csv(raw_csv):
@@ -627,10 +629,10 @@ SCHEDULING RULES:
         if header_idx is not None:
             lines = [all_lines[header_idx]] + [
                 l for l in all_lines[header_idx + 1:]
-                if l.count(",") >= 5 and not ("employee" in l.lower() and "shift" in l.lower())
+                if "," in l and not l.lower().startswith("date,")
             ]
         else:
-            lines = [EXPECTED_HEADER] + [l for l in all_lines if l.count(",") >= 5]
+            lines = all_lines
         return "\n".join(lines)
 
     def _count_csv_hours(csv_text):
