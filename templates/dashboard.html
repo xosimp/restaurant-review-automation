@@ -3396,8 +3396,21 @@ function _schedReset(btnEl) {
 }
 
 function _schedHandleResult(data) {
-  _schedReset(_schedBtn);
-  if (!data.ok) { alert((data.error || 'Schedule generation failed') + (data.traceback ? '\n\n' + data.traceback.slice(0, 600) : '') + '\n\nTry again'); return; }
+  if (!data.ok) {
+    _schedReset(_schedBtn);
+    alert((data.error || 'Schedule generation failed') + (data.traceback ? '\n\n' + data.traceback.slice(0, 600) : '') + '\n\nTry again');
+    return;
+  }
+  if (_schedBtn) {
+    _schedBtn.innerHTML = 'Schedule ready ✓';
+    _schedBtn.style.background = 'var(--green)';
+    _schedBtn.style.color = '#fff';
+    setTimeout(function() {
+      _schedBtn.style.background = '';
+      _schedBtn.style.color = '';
+      _schedReset(_schedBtn);
+    }, 3000);
+  }
 
   _schedCsvCache = data.schedule_csv || '';
 
