@@ -480,6 +480,8 @@ def save_client_settings(restaurant_id, current_user):
             "alert_neg_spike":    int(bool(data.get("alert_neg_spike"))),
             "alert_negative_trend": int(bool(data.get("alert_negative_trend"))),
             "alert_no_response":  int(bool(data.get("alert_no_response"))),
+            "urgent_via_email":   int(bool(data.get("urgent_via_email"))),
+            "urgent_via_sms":     int(bool(data.get("urgent_via_sms"))),
         })
         return jsonify(ok=True)
     except Exception as e:

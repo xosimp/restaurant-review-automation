@@ -247,7 +247,7 @@ def run_daily_fetch():
             """, (rid,)).fetchall()
             conn.close()
 
-            if urgent:
+            if urgent and getattr(restaurant, "urgent_via_email", 1):
                 owner_email = get_owner_email(rid)
                 if owner_email:
                     send_urgent_alert(restaurant.name, owner_email,

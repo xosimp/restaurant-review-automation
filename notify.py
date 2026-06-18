@@ -161,12 +161,15 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
     conn = get_conn(db_path)
     row = conn.execute("""
         SELECT alert_1star, alert_2star, alert_health,
-               alert_neg_spike, alert_negative_trend, alert_no_response
+               alert_neg_spike, alert_negative_trend, alert_no_response,
+               urgent_via_sms
         FROM restaurants WHERE id=?
     """, (restaurant_id,)).fetchone()
     conn.close()
 
     if not row:
+        return
+    if not row["urgent_via_sms"]:
         return
 
     contacts = get_alert_contacts(restaurant_id, db_path)
@@ -242,6 +245,7 @@ def check_no_response_alerts(db_path: str = DB_PATH):
           AND r.response_status = 'pending'
           AND r.fetched_at <= datetime('now', '-48 hours')
           AND rest.alert_no_response = 1
+          AND rest.urgent_via_sms = 1
         GROUP BY r.restaurant_id
     """).fetchall()
     conn.close()

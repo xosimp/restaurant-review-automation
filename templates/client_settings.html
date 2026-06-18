@@ -446,6 +446,36 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
+  <!-- Alert delivery channel -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Alert delivery</div></div>
+    <div class="section-body">
+      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:14px">
+        Choose how urgent alerts are delivered for this client. Both can be on at once.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <label style="display:flex;align-items:flex-start;gap:12px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
+          <input type="checkbox" id="setting-urgent_via_email"
+            {% if restaurant.urgent_via_email %}checked{% endif %}
+            style="width:14px;height:14px;accent-color:#c84b2f;margin-top:2px;flex-shrink:0">
+          <div>
+            <div style="font-size:13px;font-weight:500;color:var(--ink)">Email alerts</div>
+            <div style="font-size:11px;color:var(--ink3);margin-top:2px">Urgent review alerts sent to the owner email address on file.</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:12px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
+          <input type="checkbox" id="setting-urgent_via_sms"
+            {% if restaurant.urgent_via_sms %}checked{% endif %}
+            style="width:14px;height:14px;accent-color:#c84b2f;margin-top:2px;flex-shrink:0">
+          <div>
+            <div style="font-size:13px;font-weight:500;color:var(--ink)">SMS alerts</div>
+            <div style="font-size:11px;color:var(--ink3);margin-top:2px">Sends text messages to the contacts configured above. Requires at least one alert contact.</div>
+          </div>
+        </label>
+      </div>
+    </div>
+  </div>
+
   <!-- SMS Alert Toggles -->
   <div class="section-card">
     <div class="section-hdr"><div class="section-title">Alert settings</div></div>
@@ -835,6 +865,8 @@ async function saveSettings() {
     alert_neg_spike:       document.getElementById('setting-alert_neg_spike').checked ? 1 : 0,
     alert_negative_trend:  document.getElementById('setting-alert_negative_trend').checked ? 1 : 0,
     alert_no_response:     document.getElementById('setting-alert_no_response').checked ? 1 : 0,
+    urgent_via_email:      document.getElementById('setting-urgent_via_email').checked ? 1 : 0,
+    urgent_via_sms:        document.getElementById('setting-urgent_via_sms').checked ? 1 : 0,
   };
   const res = await fetch(window.location.pathname, {
     method: 'POST',
