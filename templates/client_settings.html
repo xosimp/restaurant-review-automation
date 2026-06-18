@@ -108,6 +108,40 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
+  <!-- Module access -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Module access</div></div>
+    <div class="section-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        {% for mod_id, label, price in [
+          ("reviews","Review Intelligence","$300/mo"),
+          ("labor","Labor Optimizer","$300/mo"),
+          ("inventory","Inventory Control","$300/mo"),
+          ("marketing","Marketing Autopilot","$300/mo")
+        ] %}
+        <label style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
+          <input type="checkbox" id="setting-mod-{{mod_id}}"
+            {% if mod_id == "reviews" and restaurant.module_reviews %}checked
+            {% elif mod_id == "labor" and restaurant.module_labor %}checked
+            {% elif mod_id == "inventory" and restaurant.module_inventory %}checked
+            {% elif mod_id == "marketing" and restaurant.module_marketing %}checked
+            {% endif %}
+            style="width:14px;height:14px;accent-color:#c84b2f">
+          <div>
+            <div style="font-size:13px;font-weight:500;color:var(--ink)">{{label}}</div>
+            <div style="font-size:11px;color:var(--ink3)">{{price}}</div>
+          </div>
+        </label>
+        {% endfor %}
+      </div>
+      <div style="font-size:11px;color:var(--ink3);line-height:1.6">
+        <strong>Pricing:</strong> $500 setup per module · $300/mo per module<br>
+        2 modules = $1,000 + $600/mo &nbsp;·&nbsp; 3 modules = $1,500 + $900/mo &nbsp;·&nbsp; 4 modules = $2,000 + $1,200/mo<br>
+        Checked modules appear as tabs in the client dashboard. Save to apply.
+      </div>
+    </div>
+  </div>
+
   <!-- Platform IDs -->
   <div class="section-card">
     <div class="section-hdr"><div class="section-title">Review platforms</div></div>
@@ -330,40 +364,6 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
-  <!-- Module access -->
-  <div class="section-card">
-    <div class="section-hdr"><div class="section-title">Module access</div></div>
-    <div class="section-body">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-        {% for mod_id, label, price in [
-          ("reviews","Review Intelligence","$300/mo"),
-          ("labor","Labor Optimizer","$300/mo"),
-          ("inventory","Inventory Control","$300/mo"),
-          ("marketing","Marketing Autopilot","$300/mo")
-        ] %}
-        <label style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
-          <input type="checkbox" id="setting-mod-{{mod_id}}"
-            {% if mod_id == "reviews" and restaurant.module_reviews %}checked
-            {% elif mod_id == "labor" and restaurant.module_labor %}checked
-            {% elif mod_id == "inventory" and restaurant.module_inventory %}checked
-            {% elif mod_id == "marketing" and restaurant.module_marketing %}checked
-            {% endif %}
-            style="width:14px;height:14px;accent-color:#c84b2f">
-          <div>
-            <div style="font-size:13px;font-weight:500;color:var(--ink)">{{label}}</div>
-            <div style="font-size:11px;color:var(--ink3)">{{price}}</div>
-          </div>
-        </label>
-        {% endfor %}
-      </div>
-      <div style="font-size:11px;color:var(--ink3);line-height:1.6">
-        <strong>Pricing:</strong> $500 setup per module · $300/mo per module<br>
-        2 modules = $1,000 + $600/mo &nbsp;·&nbsp; 3 modules = $1,500 + $900/mo &nbsp;·&nbsp; 4 modules = $2,000 + $1,200/mo<br>
-        Checked modules appear as tabs in the client dashboard. Save to apply.
-      </div>
-    </div>
-  </div>
-
   <!-- Billing status -->
   <div class="section-card">
     <div class="section-hdr"><div class="section-title">Billing & status</div></div>
@@ -385,31 +385,15 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
-  <!-- Password reset -->
+  <!-- Alerts -->
   <div class="section-card">
-    <div class="section-hdr"><div class="section-title">Reset client password</div></div>
+    <div class="section-hdr"><div class="section-title">Alerts</div></div>
     <div class="section-body">
-      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
-        <div class="form-group" style="flex:1;min-width:200px">
-          <label>New temporary password</label>
-          <input type="text" id="new-password" placeholder="Leave blank to auto-generate">
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;padding-bottom:2px">
-          <input type="checkbox" id="send-reset-email" checked style="width:14px;height:14px;accent-color:#c84b2f">
-          <label style="font-size:12px;color:var(--ink2);letter-spacing:0;text-transform:none;font-weight:400">Email new password to owner</label>
-        </div>
-        <button class="btn-save" style="padding:9px 16px;white-space:nowrap" onclick="resetPassword()">Reset password</button>
-      </div>
-      <div style="font-size:12px;margin-top:8px;display:none" id="reset-status"></div>
-    </div>
-  </div>
 
-  <!-- SMS Alert Contacts -->
-  <div class="section-card">
-    <div class="section-hdr"><div class="section-title">SMS alert contacts</div></div>
-    <div class="section-body">
-      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:14px">
-        Up to 3 contacts receive SMS alerts when critical events occur. All contacts get the same alerts based on the toggles below.
+      <!-- SMS contacts -->
+      <div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">SMS contacts</div>
+      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:10px">
+        Up to 3 contacts receive SMS alerts. All contacts get the same alerts based on the toggles below.
       </p>
       <div id="alert-contacts-list">
         {% for c in alert_contacts %}
@@ -425,10 +409,10 @@ textarea{resize:vertical;min-height:60px}
         </div>
         {% endfor %}
         {% if not alert_contacts %}
-        <div style="font-size:12px;color:var(--ink3);margin-bottom:12px">No contacts added yet.</div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">No contacts added yet.</div>
         {% endif %}
       </div>
-      <div class="form-grid" style="margin-top:10px">
+      <div class="form-grid" style="margin-top:8px">
         <div class="form-group">
           <label>Name / title</label>
           <input type="text" id="alert-contact-name" placeholder="e.g. Brian (Regional Mgr)">
@@ -443,24 +427,19 @@ textarea{resize:vertical;min-height:60px}
         <button class="btn-save" style="padding:9px 16px;background:#2d5a3d" onclick="testAlertSMS()">Send test SMS</button>
       </div>
       <div style="font-size:12px;margin-top:8px;display:none" id="alert-contact-status"></div>
-    </div>
-  </div>
 
-  <!-- Alert delivery channel -->
-  <div class="section-card">
-    <div class="section-hdr"><div class="section-title">Alert delivery</div></div>
-    <div class="section-body">
-      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:14px">
-        Choose how urgent alerts are delivered for this client. Both can be on at once.
-      </p>
-      <div style="display:flex;flex-direction:column;gap:10px">
+      <hr style="border:none;border-top:1px solid var(--paper3);margin:20px 0">
+
+      <!-- Delivery channels -->
+      <div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Delivery</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
         <label style="display:flex;align-items:flex-start;gap:12px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
           <input type="checkbox" id="setting-urgent_via_email"
             {% if restaurant.urgent_via_email %}checked{% endif %}
             style="width:14px;height:14px;accent-color:#c84b2f;margin-top:2px;flex-shrink:0">
           <div>
             <div style="font-size:13px;font-weight:500;color:var(--ink)">Email alerts</div>
-            <div style="font-size:11px;color:var(--ink3);margin-top:2px">Urgent review alerts sent to the owner email address on file.</div>
+            <div style="font-size:11px;color:var(--ink3);margin-top:2px">Sent to the owner email address on file.</div>
           </div>
         </label>
         <label style="display:flex;align-items:flex-start;gap:12px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
@@ -469,21 +448,16 @@ textarea{resize:vertical;min-height:60px}
             style="width:14px;height:14px;accent-color:#c84b2f;margin-top:2px;flex-shrink:0">
           <div>
             <div style="font-size:13px;font-weight:500;color:var(--ink)">SMS alerts</div>
-            <div style="font-size:11px;color:var(--ink3);margin-top:2px">Sends text messages to the contacts configured above. Requires at least one alert contact.</div>
+            <div style="font-size:11px;color:var(--ink3);margin-top:2px">Text messages to the contacts above. Requires at least one contact.</div>
           </div>
         </label>
       </div>
-    </div>
-  </div>
 
-  <!-- SMS Alert Toggles -->
-  <div class="section-card">
-    <div class="section-hdr"><div class="section-title">Alert settings</div></div>
-    <div class="section-body">
-      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:14px">
-        Configure which events trigger alerts via the delivery channels selected above. Save settings to apply.
-      </p>
-      <div style="display:flex;flex-direction:column;gap:10px">
+      <hr style="border:none;border-top:1px solid var(--paper3);margin:20px 0">
+
+      <!-- Alert triggers -->
+      <div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Alert triggers</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
         {% for toggle_id, label, description, default_on in [
           ("alert_health",         "Health or safety mention",           "Any review mentioning food poisoning, rodents, foreign objects, etc. Always recommended ON.", restaurant.alert_health),
           ("alert_1star",          "1★ review received",                "Fires the moment a 1-star review is fetched.",                       restaurant.alert_1star),
@@ -504,7 +478,6 @@ textarea{resize:vertical;min-height:60px}
           </div>
         </label>
         {% endfor %}
-
         <!-- Rating threshold — special case with floor input -->
         <div style="display:flex;align-items:flex-start;gap:12px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px">
           <input type="checkbox" id="setting-alert_rating_threshold"
@@ -524,8 +497,9 @@ textarea{resize:vertical;min-height:60px}
         </div>
       </div>
       <div style="font-size:11px;color:var(--ink3);margin-top:12px;line-height:1.6">
-        Changes take effect immediately after saving. All alerts require at least one contact or email on file.
+        Changes take effect immediately after saving.
       </div>
+
     </div>
   </div>
 
