@@ -650,6 +650,7 @@ SCHEDULING RULES:
     csv_clean = _clean_csv(csv_part)
     actual_hours = _count_csv_hours(csv_clean)
     print(f"[schedule] hours_budget={hours_budget} actual={actual_hours} diff={round(actual_hours - hours_budget, 1):+.1f}")
+    print(f"[schedule] csv_clean first 3 lines: {csv_clean.split(chr(10))[:3]}")
 
     # Parse summary bullets
     summary_bullets = []

@@ -801,7 +801,10 @@ def _run_schedule_job(job_id, restaurant_id):
         try:
             reader = _csv_mod.DictReader(_io_sched.StringIO(result["schedule_csv"]))
             for row in reader:
-                preview_rows.append({k: v for k, v in row.items() if k is not None})
+                clean = {k: v for k, v in row.items() if k is not None}
+                if not preview_rows:
+                    print(f"[schedule] first row keys={list(clean.keys())} vals={list(clean.values())[:4]}")
+                preview_rows.append(clean)
                 try:
                     hours_scheduled += float(row.get("scheduled_hours") or 0)
                 except (ValueError, TypeError):
