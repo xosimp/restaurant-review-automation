@@ -3504,38 +3504,62 @@ function _schedHandleResult(data) {
 
 function generateSchedule(btn) {
   _schedBtn = btn;
-  btn.innerHTML = 'Generating… <span style="display:inline-block;width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;vertical-align:middle;animation:spin .7s linear infinite"></span>';
   btn.disabled = true;
   var panel = document.getElementById('schedule-preview-panel');
   if (panel) panel.style.display = 'none';
+
+  var _schedStart = Date.now();
+  var _spinner = '<span style="display:inline-block;width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;vertical-align:middle;animation:spin .7s linear infinite"></span>';
+  btn.innerHTML = 'Generating… ' + _spinner;
+
+  // Update elapsed time every 5s so owner knows it's working
+  var _elapsedTimer = setInterval(function() {
+    var secs = Math.round((Date.now() - _schedStart) / 1000);
+    btn.innerHTML = 'Generating… ' + secs + 's ' + _spinner;
+  }, 5000);
 
   fetch('/api/generate-schedule')
     .then(function(r) { return r.json(); })
     .then(function(startData) {
       if (!startData.ok || !startData.job_id) {
+        clearInterval(_elapsedTimer);
         _schedReset(btn);
         alert(startData.error || 'Failed to start schedule generation');
         return;
       }
       var jobId = startData.job_id;
+      // Hard timeout at 3 min — show a helpful message instead of infinite spin
+      var _hardTimeout = setTimeout(function() {
+        clearInterval(_elapsedTimer);
+        clearInterval(_schedPollInterval);
+        _schedPollInterval = null;
+        _schedReset(btn);
+        alert('Schedule generation is taking longer than usual. Railway may be cold-starting. Please try again in 30 seconds.');
+      }, 180000);
+
       _schedPollInterval = setInterval(function() {
         fetch('/api/schedule-status/' + jobId)
           .then(function(r) { return r.json(); })
           .then(function(pollData) {
             if (pollData.status === 'pending') return;
+            clearTimeout(_hardTimeout);
+            clearInterval(_elapsedTimer);
             clearInterval(_schedPollInterval);
             _schedPollInterval = null;
             _schedHandleResult(pollData);
           })
           .catch(function() {
+            clearTimeout(_hardTimeout);
+            clearInterval(_elapsedTimer);
             clearInterval(_schedPollInterval);
             _schedPollInterval = null;
             _schedReset(btn);
-            alert('Network error — try again');
+            alert('Network error polling schedule — try again');
           });
       }, 2000);
     })
     .catch(function() {
+      clearInterval(_elapsedTimer);
       _schedReset(btn);
       alert('Network error — try again');
     });

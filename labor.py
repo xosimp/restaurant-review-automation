@@ -649,33 +649,7 @@ SCHEDULING RULES:
 
     csv_clean = _clean_csv(csv_part)
     actual_hours = _count_csv_hours(csv_clean)
-    hour_diff = round(actual_hours - hours_budget, 1)
-    print(f"[schedule] hours_budget={hours_budget} actual={actual_hours} diff={hour_diff:+.1f}")
-
-    # Retry once if more than 40h off target — Haiku sometimes ignores the constraint
-    if hours_budget > 0 and abs(hour_diff) > 40:
-        direction = "over" if hour_diff > 0 else "under"
-        correction = abs(hour_diff)
-        retry_prompt = (prompt +
-            f"\n\nCRITICAL CORRECTION: Your previous schedule totalled {actual_hours}h — "
-            f"{correction:.0f}h {direction} the {hours_budget}h PAR target. "
-            f"You MUST {'cut' if hour_diff > 0 else 'add'} approximately {correction:.0f}h spread across the week. "
-            f"Recount every shift before submitting. The schedule will be rejected if it is more than 5h from {hours_budget}h total.")
-        msg2 = client.messages.create(
-            model=os.getenv("SCHEDULE_MODEL", "claude-sonnet-4-6"),
-            max_tokens=5000,
-            messages=[{"role": "user", "content": retry_prompt}],
-        )
-        raw2 = msg2.content[0].text.strip()
-        print(f"[schedule] retry length={len(raw2)} stop_reason={msg2.stop_reason}")
-        if "---SUMMARY---" in raw2:
-            csv_part, summary_part = raw2.split("---SUMMARY---", 1)
-        else:
-            csv_part = raw2
-            summary_part = summary_part  # keep original summary if retry has none
-        csv_clean = _clean_csv(csv_part)
-        actual_hours = _count_csv_hours(csv_clean)
-        print(f"[schedule] retry hours={actual_hours} diff={round(actual_hours - hours_budget, 1):+.1f}")
+    print(f"[schedule] hours_budget={hours_budget} actual={actual_hours} diff={round(actual_hours - hours_budget, 1):+.1f}")
 
     # Parse summary bullets
     summary_bullets = []
