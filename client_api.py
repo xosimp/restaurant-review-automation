@@ -843,17 +843,20 @@ def generate_schedule_json(current_user):
 
 
 @client_bp.route("/api/schedule-status/<job_id>", methods=["GET"])
-@login_required
-def schedule_status(current_user, job_id):
-    """Poll for schedule generation result."""
+def schedule_status(job_id):
+    """Poll for schedule generation result. No login_required — job_id is an unguessable UUID."""
     job = _schedule_jobs.get(job_id)
     if not job:
-        return jsonify(ok=False, error="Job not found"), 404
+        return jsonify({"ok": False, "status": "error", "error": "Job not found"}), 404
     if job["status"] == "pending":
-        return jsonify(ok=True, status="pending")
-    # Clean up after delivering result
-    _schedule_jobs.pop(job_id, None)
-    return jsonify(status=job["status"], **job["result"])
+        return jsonify({"ok": True, "status": "pending"})
+    try:
+        result = dict(job["result"])
+        result["status"] = job["status"]
+        _schedule_jobs.pop(job_id, None)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"ok": False, "status": "error", "error": str(e)}), 500
 
 
 @client_bp.route("/api/download-schedule")
