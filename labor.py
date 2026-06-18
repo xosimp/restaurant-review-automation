@@ -576,12 +576,13 @@ CONTEXT:
 Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
 
-OUTPUT FORMAT — two sections separated by exactly "---SUMMARY---":
+OUTPUT FORMAT — output the CSV immediately, no preamble or reasoning text before it:
 
-Section 1: CSV schedule
 date,day,employee,role,shift_start,shift_end,scheduled_hours,notes
+(all schedule rows here)
 
-Section 2: After "---SUMMARY---", write exactly 3 bullet points (start each with "- ") explaining the key scheduling decisions you made. Be specific: name the days, total hours scheduled vs PAR target, and why (reference the YoY data or event if relevant). No markdown headers, no asterisks.
+---SUMMARY---
+(exactly 3 bullet points starting with "- " explaining key decisions: days staffed, total hours vs PAR target, and why)
 
 SCHEDULING RULES:
 - Use exact dates listed above and real employee names from the staff list
@@ -597,53 +598,38 @@ SCHEDULING RULES:
 
     msg = client.messages.create(
         model=os.getenv("SCHEDULE_MODEL", "claude-sonnet-4-6"),
-        max_tokens=5000,
-        messages=[{"role": "user", "content": prompt}],
+        max_tokens=8000,
+        messages=[
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"},
+        ],
     )
+    # The assistant prefill forces output to begin with data rows directly.
+    # raw = "<data rows>\n---SUMMARY---\n<bullets>"
     raw = msg.content[0].text.strip()
     print(f"[schedule] raw length={len(raw)} stop_reason={msg.stop_reason}")
     import re as _re_sched
 
     EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
-    raw_lines = raw.split("\n")
 
-    # Locate the CSV header line anywhere in the output — don't rely on ---SUMMARY--- placement
-    _header_pos = None
-    for _i, _l in enumerate(raw_lines):
+    if "---SUMMARY---" in raw:
+        _csv_raw, summary_part = raw.split("---SUMMARY---", 1)
+    else:
+        _csv_raw = raw
+        summary_part = ""
+
+    # Build cleaned CSV: header + data rows that have commas and aren't a repeat header
+    _data_rows = []
+    for _l in _csv_raw.split("\n"):
+        _l = _l.strip().strip('"')
+        if not _l or "," not in _l:
+            continue
         _low = _l.lower().replace(" ", "")
         if "date" in _low and "employee" in _low and "shift" in _low:
-            _header_pos = _i
-            break
-
-    # Find the ---SUMMARY--- line that comes AFTER the header (the real summary marker)
-    _summary_pos = None
-    if _header_pos is not None:
-        for _i in range(_header_pos + 1, len(raw_lines)):
-            if "---SUMMARY---" in raw_lines[_i]:
-                _summary_pos = _i
-                break
-
-    if _header_pos is not None:
-        _end = _summary_pos if _summary_pos is not None else len(raw_lines)
-        _data_rows = []
-        for _l in raw_lines[_header_pos + 1 : _end]:
-            _l = _l.strip().strip('"')
-            if _l and "," in _l and not _l.lower().startswith("date"):
-                _data_rows.append(_l)
-        csv_clean = EXPECTED_HEADER + "\n" + "\n".join(_data_rows)
-        # Summary: lines after the summary marker (or before if marker precedes header)
-        if _summary_pos is not None:
-            summary_part = "\n".join(raw_lines[_summary_pos + 1:])
-        elif "---SUMMARY---" in raw:
-            summary_part = raw.split("---SUMMARY---", 1)[1]
-        else:
-            summary_part = ""
-    else:
-        # No header found — nothing useful
-        csv_clean = EXPECTED_HEADER
-        summary_part = raw.split("---SUMMARY---", 1)[1] if "---SUMMARY---" in raw else ""
-
-    print(f"[schedule] data_rows={len(csv_clean.split(chr(10))) - 1} first3={csv_clean.split(chr(10))[:3]}")
+            continue  # skip any accidental header repetition
+        _data_rows.append(_l)
+    csv_clean = EXPECTED_HEADER + "\n" + "\n".join(_data_rows)
+    print(f"[schedule] data_rows={len(_data_rows)} first={_data_rows[0] if _data_rows else None}")
 
     def _count_csv_hours(csv_text):
         import io
