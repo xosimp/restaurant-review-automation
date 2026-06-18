@@ -613,6 +613,9 @@ SCHEDULING RULES:
     # Clean CSV — find the header row first, then keep only data rows after it
     import re as _re_sched
 
+    # Date pattern: YYYY-MM-DD at the start of a data row
+    _date_re = _re_sched.compile(r'^\d{4}-\d{2}-\d{2},')
+
     def _clean_csv(raw_csv):
         EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
         all_lines = [l for l in raw_csv.split("\n")
@@ -622,18 +625,15 @@ SCHEDULING RULES:
             low = line.lower().replace(" ", "")
             if "date" in low and "employee" in low and "shift" in low:
                 header_idx = idx
+                all_lines[idx] = EXPECTED_HEADER
                 break
         if header_idx is not None:
-            # Keep the ORIGINAL header (preserves Sonnet's actual column order),
-            # then filter out any duplicate header rows and non-data lines
             lines = [all_lines[header_idx]] + [
                 l for l in all_lines[header_idx + 1:]
-                if "," in l and not (
-                    "employee" in l.lower() and "shift" in l.lower()
-                )
+                if _date_re.match(l.strip())
             ]
         else:
-            lines = [EXPECTED_HEADER] + [l for l in all_lines if "," in l]
+            lines = [EXPECTED_HEADER] + [l for l in all_lines if _date_re.match(l.strip())]
         return "\n".join(lines)
 
     def _count_csv_hours(csv_text):
