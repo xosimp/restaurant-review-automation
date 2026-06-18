@@ -365,7 +365,7 @@ def generate_content(content_type: str, topic: str,
     ) + location_context + recent_context + seasonal_context + never_clause + menu_clause + perf_context
 
     msg = client.messages.create(
-        model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+        model=os.getenv("MARKETING_MODEL", "claude-sonnet-4-6"),
         max_tokens=500,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -443,7 +443,7 @@ Rules:
 - NEVER invent geographic or setting details — only reference location specifics (waterfront, patio, views) if they are explicitly mentioned in the restaurant profile above"""
 
     msg = client.messages.create(
-        model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+        model=os.getenv("MARKETING_MODEL", "claude-sonnet-4-6"),
         max_tokens=600,
         messages=[{"role": "user", "content": prompt}],
     )

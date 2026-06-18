@@ -138,7 +138,7 @@ Review ({rating}/5 stars, {sentiment}):
 Write ONLY the response. No preamble, no labels, no quotation marks around the response. Sound like a real person — not a PR firm, not a template."""
 
     message = client.messages.create(
-        model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+        model=os.getenv("DRAFTER_MODEL", "claude-sonnet-4-6"),
         max_tokens=300,
         messages=[{"role": "user", "content": prompt}],
     )
