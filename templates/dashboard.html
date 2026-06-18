@@ -3405,11 +3405,7 @@ function _schedHandleResult(data) {
     _schedBtn.innerHTML = 'Schedule ready ✓';
     _schedBtn.style.background = 'var(--green)';
     _schedBtn.style.color = '#fff';
-    setTimeout(function() {
-      _schedBtn.style.background = '';
-      _schedBtn.style.color = '';
-      _schedReset(_schedBtn);
-    }, 3000);
+    _schedBtn.disabled = false;
   }
 
   _schedCsvCache = data.schedule_csv || '';
@@ -3521,6 +3517,8 @@ function generateSchedule(btn) {
   var panel = document.getElementById('schedule-preview-panel');
   if (panel) panel.style.display = 'none';
 
+  btn.style.background = '';
+  btn.style.color = '';
   var _schedStart = Date.now();
   var _spinner = '<span style="display:inline-block;width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;vertical-align:middle;animation:spin .7s linear infinite"></span>';
   btn.innerHTML = 'Generating… ' + _spinner;

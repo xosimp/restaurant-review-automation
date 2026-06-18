@@ -557,12 +557,15 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         hours_block = ("\n\nShift timing: base start/end times on the patterns visible in the historical shift data. "
                        "Ensure prep staff (cooks) start before open and closers stay until service ends.")
 
-    # Compute per-day hour targets scaled from YoY totals to hit PAR
+    # Inflate prompt target ~5% to compensate for consistent AI undercounting (~35h short)
+    _ai_target = round(hours_budget * 1.05 + 10, 1)
+
+    # Compute per-day hour targets scaled from YoY totals, using inflated target
     _daily_targets = ""
     if yoy_context:
         _yoy_total = sum(float(r.get("yoy_hours") or 0) for r in yoy_context)
         if _yoy_total > 0:
-            _scale = hours_budget / _yoy_total
+            _scale = _ai_target / _yoy_total
             _day_lines = []
             for _r in yoy_context:
                 _yh = float(_r.get("yoy_hours") or 0)
@@ -573,8 +576,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
 
     par_block = (f"\n\nPAR HOURS TARGET — CRITICAL, your schedule is verified against actual column totals:\n"
                  f"  Projected revenue: ${projected_revenue:,.0f} | Labor target: {labor_target}% = ${labor_budget_dollars:,.0f}\n"
-                 f"  Blended rate: ${hourly_rate}/hr → schedule EXACTLY {hours_budget}h total (±5h max)\n"
-                 f"  As you build each day, track your running total. DO NOT finish if you are more than 5h from {hours_budget}h.\n"
+                 f"  Blended rate: ${hourly_rate}/hr → schedule EXACTLY {_ai_target}h total (±5h max)\n"
+                 f"  As you build each day, track your running total. DO NOT finish if you are more than 5h from {_ai_target}h.\n"
                  f"  The scheduled_hours column will be summed and checked — your narrative total doesn't count.{_daily_targets}")
 
     prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.
@@ -607,7 +610,7 @@ SCHEDULING RULES:
 - Base each day's staffing on the YoY same-day data when available — that is your primary projection
 - For holiday weeks, match staffing to last year's holiday labor hours, not recent averages
 - No employee over 40h for the week
-- Total weekly hours MUST be within ±5h of {hours_budget}h PAR. Use the per-day targets above. If you finish a day and are running short, add a shift. The scheduled_hours column is machine-summed — your own count in the summary does not override it.
+- Total weekly hours MUST be within ±5h of {_ai_target}h. Use the per-day targets above. If you finish a day and are running short, add a shift or extend an existing shift. The scheduled_hours column is machine-summed — your own count in the summary does not override it.
 - Servers: 4-6h shifts; bartenders/cooks: 5-8h shifts
 - 8-14 shifts per day (scale with revenue — high-volume days need more shifts)
 - Notes column: one brief phrase per shift explaining any change (e.g. "YoY match - high Father's Day volume" or "reduced - YoY shows slow Monday")
