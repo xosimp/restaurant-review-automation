@@ -1063,8 +1063,7 @@ def client_upload_data(current_user):
             # Persist per-day breakdown for YoY schedule generation
             try:
                 from models import save_labor_daily_history as _sldh
-                _rate = _ghr(restaurant_id)
-                _sldh(restaurant_id, _shift_analysis.get("by_day", {}), _rate)
+                _sldh(restaurant_id, _shift_analysis.get("by_day", {}))
             except Exception as _dh_e:
                 print(f"[daily history] {_dh_e}")
         elif data_type == "inventory":

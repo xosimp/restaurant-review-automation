@@ -1399,7 +1399,7 @@ def compute_blended_rate(shifts: list, role_rates: dict, fallback: float = 26.0)
     return round(total_cost / total_hours, 2)
 
 
-def save_labor_daily_history(restaurant_id: int, by_day: dict, hourly_rate: float,
+def save_labor_daily_history(restaurant_id: int, by_day: dict,
                               db_path: str = DB_PATH):
     """Persist per-day labor breakdown from a shifts analysis. Called on every CSV upload."""
     from datetime import datetime as _dt
@@ -1419,8 +1419,11 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict, hourly_rate: floa
     for date_str, day_data in by_day.items():
         sales = day_data.get("sales", 0)
         actual_hours = day_data.get("actual", 0)
-        labor_cost = round(actual_hours * hourly_rate, 2)
-        labor_pct = round(labor_cost / sales * 100, 1) if sales else 0
+        # Use pre-computed per-role labor cost/pct from analyse_shifts (already correct)
+        labor_cost = day_data.get("labor_cost", 0)
+        labor_pct = day_data.get("labor_pct") if day_data.get("labor_pct") is not None else (
+            round(labor_cost / sales * 100, 1) if sales else 0
+        )
         try:
             dow = _dt.strptime(date_str, "%Y-%m-%d").strftime("%A")
         except Exception:

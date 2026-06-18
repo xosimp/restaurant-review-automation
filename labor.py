@@ -168,12 +168,10 @@ def analyse_shifts(shifts: list[dict],
     OVERSTAFF_THRESHOLD = labor_target
     by_day = defaultdict(lambda: {"scheduled": 0, "actual": 0, "sales": 0, "shifts": [], "labor_cost": 0})
     by_employee = defaultdict(lambda: {"scheduled": 0, "actual": 0, "shifts": 0})
-    by_dayofweek = defaultdict(lambda: {"labor_cost": 0, "sales": 0, "count": 0})
     overtime_flags = []
 
     for s in shifts:
         day    = s.get("date") or ""
-        dow    = s.get("day") or ""
         emp    = s.get("employee") or "Unknown"
         sched  = float(s.get("scheduled_hours") or 0)
         actual = float(s.get("actual_hours") or 0)
@@ -189,11 +187,6 @@ def analyse_shifts(shifts: list[dict],
         by_employee[emp]["scheduled"] += sched
         by_employee[emp]["actual"]    += actual
         by_employee[emp]["shifts"]    += 1
-
-        labor_cost = actual * rate
-        by_dayofweek[dow]["labor_cost"] += labor_cost
-        by_dayofweek[dow]["sales"]      += sales
-        by_dayofweek[dow]["count"]      += 1
 
     # Find overstaffed days
     overstaffed = []
@@ -296,7 +289,7 @@ def analyse_shifts(shifts: list[dict],
                        {s["date"]: s for s in shifts}.values())
     overall_pct  = round(total_labor / total_sales * 100, 1) if total_sales else 0
     target_labor_cost = total_sales * (LABOR_TARGET / 100)
-    potential_savings = round(max(0, total_labor - target_labor_cost) * 2, 2)  # x2 to project monthly
+    potential_savings = round(max(0, total_labor - target_labor_cost), 2)
 
     # Role-level breakdown
     by_role = defaultdict(lambda: {"hours": 0, "labor_cost": 0, "headcount": set()})
@@ -431,7 +424,7 @@ Today's date: {today_labor}{upload_context}{holiday_context}
 
 Data:
 - Overall labor cost: ${analysis['total_labor_cost']:,.0f} on ${analysis['total_sales']:,.0f} in sales ({analysis['overall_labor_pct']}% labor ratio)
-- Industry target: 28-32% labor ratio
+- This restaurant's labor target: {analysis.get('labor_target', 30)}% (industry full-service range: 28–32%)
 - Overstaffed days: {json.dumps(analysis['overstaffed_days'][:3])}
 - Understaffed days (IMPORTANT — these are NOT good days despite low labor %): {json.dumps(analysis['understaffed_days'][:2])} — these days had strong sales but lean staffing, meaning the restaurant likely left revenue on the table through slower service, longer waits, or missed covers. Flag these explicitly as missed revenue opportunities and recommend adding 1-2 staff on these days going forward.
 - Overtime risk: {json.dumps(analysis['overtime_risk'])}{role_context}{trend_context}
@@ -619,26 +612,70 @@ SCHEDULING RULES:
 
     # Clean CSV — find the header row first, then keep only data rows after it
     import re as _re_sched
-    EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
-    all_lines = [l for l in csv_part.split("\n")
-                 if l.strip() and not l.startswith("#") and not l.startswith("```")]
-    # Find header (case-insensitive match on known columns)
-    header_idx = None
-    for idx, line in enumerate(all_lines):
-        low = line.lower().replace(" ", "")
-        if "date" in low and "employee" in low and "shift" in low:
-            header_idx = idx
-            # Normalize header to our canonical form
-            all_lines[idx] = EXPECTED_HEADER
-            break
-    if header_idx is not None:
-        csv_lines = [all_lines[header_idx]] + [
-            l for l in all_lines[header_idx + 1:]
-            if "," in l and not l.lower().startswith("date,")
-        ]
-    else:
-        csv_lines = all_lines
-    csv_clean = "\n".join(csv_lines)
+
+    def _clean_csv(raw_csv):
+        EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
+        all_lines = [l for l in raw_csv.split("\n")
+                     if l.strip() and not l.startswith("#") and not l.startswith("```")]
+        header_idx = None
+        for idx, line in enumerate(all_lines):
+            low = line.lower().replace(" ", "")
+            if "date" in low and "employee" in low and "shift" in low:
+                header_idx = idx
+                all_lines[idx] = EXPECTED_HEADER
+                break
+        if header_idx is not None:
+            lines = [all_lines[header_idx]] + [
+                l for l in all_lines[header_idx + 1:]
+                if "," in l and not l.lower().startswith("date,")
+            ]
+        else:
+            lines = all_lines
+        return "\n".join(lines)
+
+    def _count_csv_hours(csv_text):
+        """Sum scheduled_hours column from generated CSV."""
+        import io
+        total = 0.0
+        try:
+            for row in csv.DictReader(io.StringIO(csv_text)):
+                try:
+                    total += float(row.get("scheduled_hours") or 0)
+                except (ValueError, TypeError):
+                    pass
+        except Exception:
+            pass
+        return round(total, 1)
+
+    csv_clean = _clean_csv(csv_part)
+    actual_hours = _count_csv_hours(csv_clean)
+    hour_diff = round(actual_hours - hours_budget, 1)
+    print(f"[schedule] hours_budget={hours_budget} actual={actual_hours} diff={hour_diff:+.1f}")
+
+    # Retry once if more than 40h off target — Haiku sometimes ignores the constraint
+    if hours_budget > 0 and abs(hour_diff) > 40:
+        direction = "over" if hour_diff > 0 else "under"
+        correction = abs(hour_diff)
+        retry_prompt = (prompt +
+            f"\n\nCRITICAL CORRECTION: Your previous schedule totalled {actual_hours}h — "
+            f"{correction:.0f}h {direction} the {hours_budget}h PAR target. "
+            f"You MUST {'cut' if hour_diff > 0 else 'add'} approximately {correction:.0f}h spread across the week. "
+            f"Recount every shift before submitting. The schedule will be rejected if it is more than 5h from {hours_budget}h total.")
+        msg2 = client.messages.create(
+            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+            max_tokens=5000,
+            messages=[{"role": "user", "content": retry_prompt}],
+        )
+        raw2 = msg2.content[0].text.strip()
+        print(f"[schedule] retry length={len(raw2)} stop_reason={msg2.stop_reason}")
+        if "---SUMMARY---" in raw2:
+            csv_part, summary_part = raw2.split("---SUMMARY---", 1)
+        else:
+            csv_part = raw2
+            summary_part = summary_part  # keep original summary if retry has none
+        csv_clean = _clean_csv(csv_part)
+        actual_hours = _count_csv_hours(csv_clean)
+        print(f"[schedule] retry hours={actual_hours} diff={round(actual_hours - hours_budget, 1):+.1f}")
 
     # Parse summary bullets
     summary_bullets = []

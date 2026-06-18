@@ -901,7 +901,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </div>
       <div style="background:#1e1a14;border-radius:8px;padding:12px 14px;margin-bottom:16px">
         <div style="font-size:11px;color:var(--ember2);font-weight:600;margin-bottom:6px">Estimated impact</div>
-        <div style="font-size:13px;color:#6fcf97;font-weight:700">~${{(labor.potential_savings / 2)|int|format_num}}/mo saved</div>
+        <div style="font-size:13px;color:#6fcf97;font-weight:700">~${{(labor.potential_savings * 4.33)|int|format_num}}/mo saved</div>
         <div style="font-size:11px;color:#8a8078;margin-top:2px">if schedule adjustments are applied</div>
       </div>
       <button onclick="document.getElementById('schedule-tooltip').style.display='none'" class="btn-primary" style="width:100%;padding:10px;font-size:13px">Got it — open the CSV ✓</button>
@@ -1010,7 +1010,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
       <!-- Schedule table toggle bar -->
       <div id="sched-toggle-bar" style="display:none;padding:12px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(111,207,151,.04);cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between" onclick="toggleSchedTable()">
-        <button style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:700;color:#6fcf97;padding:0;letter-spacing:.02em;display:flex;align-items:center;gap:5px" id="sched-toggle-label">View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:rgba(111,207,151,.15);border:1px solid rgba(111,207,151,.3);transition:transform .25s;flex-shrink:0"><svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="#6fcf97" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
+        <button style="background:none;border:none;cursor:pointer;font-size:12px;font-weight:700;color:#6fcf97;padding:0;letter-spacing:.02em;display:flex;align-items:center;gap:6px" id="sched-toggle-label">View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
         <span id="sched-shift-count" style="font-size:11px;color:var(--ink3)"></span>
       </div>
 
@@ -3459,7 +3459,7 @@ function generateSchedule(btn) {
         var wrap = document.getElementById('sched-table-wrap');
         var label = document.getElementById('sched-toggle-label');
         if (wrap) wrap.style.display = 'none';
-        if (label) label.textContent = '▼ View full schedule';
+        if (label) label.innerHTML = 'View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
       }
 
       // PAR hours banner
@@ -3518,9 +3518,8 @@ function toggleSchedTable() {
   if (!wrap) return;
   _schedTableOpen = !_schedTableOpen;
   wrap.style.display = _schedTableOpen ? 'block' : 'none';
-  label.childNodes[0].textContent = _schedTableOpen ? 'Hide schedule' : 'View full schedule';
-  var arrowEl = document.getElementById('sched-toggle-arrow');
-  if (arrowEl) arrowEl.style.transform = _schedTableOpen ? 'rotate(180deg)' : '';
+  var _arrowHtml = '<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0;transform:' + (_schedTableOpen ? 'rotate(180deg)' : '') + '"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
+  if (label) label.innerHTML = (_schedTableOpen ? 'Hide schedule' : 'View full schedule') + _arrowHtml;
 }
 
 function downloadScheduleFromPreview() {
