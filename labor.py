@@ -601,42 +601,51 @@ SCHEDULING RULES:
         messages=[{"role": "user", "content": prompt}],
     )
     raw = msg.content[0].text.strip()
-    print(f"[schedule] raw output length={len(raw)} stop_reason={msg.stop_reason}")
-
-    # Split on the LAST ---SUMMARY--- so early spurious markers in Sonnet's
-    # reasoning don't cut off the actual CSV section
-    if "---SUMMARY---" in raw:
-        csv_part, summary_part = raw.rsplit("---SUMMARY---", 1)
-    else:
-        csv_part = raw
-        summary_part = ""
-
-    # Clean CSV — find the header row, then keep only data rows after it.
-    # Reasoning text always appears before the header, so _clean_csv ignores it.
+    print(f"[schedule] raw length={len(raw)} stop_reason={msg.stop_reason}")
     import re as _re_sched
 
-    def _clean_csv(raw_csv):
-        EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
-        all_lines = [l for l in raw_csv.split("\n")
-                     if l.strip() and not l.startswith("#") and not l.startswith("```")]
-        header_idx = None
-        for idx, line in enumerate(all_lines):
-            low = line.lower().replace(" ", "")
-            if "date" in low and "employee" in low and "shift" in low:
-                header_idx = idx
-                all_lines[idx] = EXPECTED_HEADER
+    EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
+    raw_lines = raw.split("\n")
+
+    # Locate the CSV header line anywhere in the output — don't rely on ---SUMMARY--- placement
+    _header_pos = None
+    for _i, _l in enumerate(raw_lines):
+        _low = _l.lower().replace(" ", "")
+        if "date" in _low and "employee" in _low and "shift" in _low:
+            _header_pos = _i
+            break
+
+    # Find the ---SUMMARY--- line that comes AFTER the header (the real summary marker)
+    _summary_pos = None
+    if _header_pos is not None:
+        for _i in range(_header_pos + 1, len(raw_lines)):
+            if "---SUMMARY---" in raw_lines[_i]:
+                _summary_pos = _i
                 break
-        if header_idx is not None:
-            lines = [all_lines[header_idx]] + [
-                l for l in all_lines[header_idx + 1:]
-                if "," in l and not l.lower().startswith("date,")
-            ]
+
+    if _header_pos is not None:
+        _end = _summary_pos if _summary_pos is not None else len(raw_lines)
+        _data_rows = []
+        for _l in raw_lines[_header_pos + 1 : _end]:
+            _l = _l.strip().strip('"')
+            if _l and "," in _l and not _l.lower().startswith("date"):
+                _data_rows.append(_l)
+        csv_clean = EXPECTED_HEADER + "\n" + "\n".join(_data_rows)
+        # Summary: lines after the summary marker (or before if marker precedes header)
+        if _summary_pos is not None:
+            summary_part = "\n".join(raw_lines[_summary_pos + 1:])
+        elif "---SUMMARY---" in raw:
+            summary_part = raw.split("---SUMMARY---", 1)[1]
         else:
-            lines = all_lines
-        return "\n".join(lines)
+            summary_part = ""
+    else:
+        # No header found — nothing useful
+        csv_clean = EXPECTED_HEADER
+        summary_part = raw.split("---SUMMARY---", 1)[1] if "---SUMMARY---" in raw else ""
+
+    print(f"[schedule] data_rows={len(csv_clean.split(chr(10))) - 1} first3={csv_clean.split(chr(10))[:3]}")
 
     def _count_csv_hours(csv_text):
-        """Sum scheduled_hours column from generated CSV."""
         import io
         total = 0.0
         try:
@@ -649,10 +658,8 @@ SCHEDULING RULES:
             pass
         return round(total, 1)
 
-    csv_clean = _clean_csv(csv_part)
     actual_hours = _count_csv_hours(csv_clean)
     print(f"[schedule] hours_budget={hours_budget} actual={actual_hours} diff={round(actual_hours - hours_budget, 1):+.1f}")
-    print(f"[schedule] csv_clean first 3 lines: {csv_clean.split(chr(10))[:3]}")
 
     # Parse summary bullets
     summary_bullets = []
