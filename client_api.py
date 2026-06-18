@@ -787,17 +787,15 @@ def _build_schedule_result(restaurant_id):
     return result
 
 
-@client_bp.route("/api/generate-schedule", methods=["GET"])
-@login_required
-def generate_schedule_json(current_user):
-    """Return schedule as JSON with preview rows + summary for dashboard display."""
+_schedule_jobs = {}  # job_id -> {"status": "pending"|"done"|"error", "result": ...}
+
+def _run_schedule_job(job_id, restaurant_id):
     import csv as _csv_mod, io as _io_sched
     try:
-        result = _build_schedule_result(current_user["restaurant_id"])
+        result = _build_schedule_result(restaurant_id)
         from models import get_staff_notes as _gsn_sched
-        _raw_notes = _gsn_sched(current_user["restaurant_id"]) or []
+        _raw_notes = _gsn_sched(restaurant_id) or []
         staff_constraints = {n["employee_name"]: n["notes"] for n in _raw_notes}
-        # Parse CSV into rows for the preview table + count total scheduled hours
         preview_rows = []
         hours_scheduled = 0.0
         try:
@@ -810,24 +808,52 @@ def generate_schedule_json(current_user):
                     pass
         except Exception:
             pass
-        hours_scheduled = round(hours_scheduled, 1)
-        return jsonify(
-            ok=True,
-            schedule_csv=result["schedule_csv"],
-            summary=result.get("summary", []),
-            preview_rows=preview_rows,
-            week_dates=result.get("week_dates", []),
-            week_days=result.get("week_days", []),
-            projected_revenue=result.get("projected_revenue", 0),
-            hours_budget=result.get("hours_budget", 0),
-            labor_budget_dollars=result.get("labor_budget_dollars", 0),
-            hours_scheduled=hours_scheduled,
-            labor_target=result.get("labor_target", 30),
-            staff_constraints=staff_constraints,
-        )
+        _schedule_jobs[job_id] = {
+            "status": "done",
+            "result": dict(
+                ok=True,
+                schedule_csv=result["schedule_csv"],
+                summary=result.get("summary", []),
+                preview_rows=preview_rows,
+                week_dates=result.get("week_dates", []),
+                week_days=result.get("week_days", []),
+                projected_revenue=result.get("projected_revenue", 0),
+                hours_budget=result.get("hours_budget", 0),
+                labor_budget_dollars=result.get("labor_budget_dollars", 0),
+                hours_scheduled=round(hours_scheduled, 1),
+                labor_target=result.get("labor_target", 30),
+                staff_constraints=staff_constraints,
+            )
+        }
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify(ok=False, error=str(e)), 500
+        _schedule_jobs[job_id] = {"status": "error", "result": {"ok": False, "error": str(e)}}
+
+
+@client_bp.route("/api/generate-schedule", methods=["GET"])
+@login_required
+def generate_schedule_json(current_user):
+    """Start async schedule generation. Returns job_id for polling."""
+    import threading, uuid
+    job_id = str(uuid.uuid4())
+    _schedule_jobs[job_id] = {"status": "pending", "result": None}
+    t = threading.Thread(target=_run_schedule_job, args=(job_id, current_user["restaurant_id"]), daemon=True)
+    t.start()
+    return jsonify(ok=True, job_id=job_id)
+
+
+@client_bp.route("/api/schedule-status/<job_id>", methods=["GET"])
+@login_required
+def schedule_status(current_user, job_id):
+    """Poll for schedule generation result."""
+    job = _schedule_jobs.get(job_id)
+    if not job:
+        return jsonify(ok=False, error="Job not found"), 404
+    if job["status"] == "pending":
+        return jsonify(ok=True, status="pending")
+    # Clean up after delivering result
+    _schedule_jobs.pop(job_id, None)
+    return jsonify(status=job["status"], **job["result"])
 
 
 @client_bp.route("/api/download-schedule")

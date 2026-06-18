@@ -3386,7 +3386,124 @@ var _schedCsvCache = '';
 var _schedNameCache = 'optimized_schedule';
 var _dayColors = {'Monday':'#1a2e40','Tuesday':'#1a2e40','Wednesday':'#1a2840','Thursday':'#1a2e40','Friday':'#1e2e1a','Saturday':'#2a1e10','Sunday':'#2a1e10'};
 
+var _schedBtn = null;
+var _schedPollInterval = null;
+
+function _schedReset(btnEl) {
+  if (btnEl) btnEl.innerHTML = 'Generate optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  if (btnEl) btnEl.disabled = false;
+  if (_schedPollInterval) { clearInterval(_schedPollInterval); _schedPollInterval = null; }
+}
+
+function _schedHandleResult(data) {
+  _schedReset(_schedBtn);
+  if (!data.ok) { alert(data.error || 'Schedule generation failed — try again'); return; }
+
+  _schedCsvCache = data.schedule_csv || '';
+
+  var panel = document.getElementById('schedule-preview-panel');
+
+  // Week label
+  var weekEl = document.getElementById('sched-week-label');
+  if (weekEl && data.week_dates && data.week_dates.length) {
+    function fmtSchedDate(iso) {
+      var p = iso.split('-');
+      return (parseInt(p[1],10)) + '/' + (parseInt(p[2],10)) + '/' + p[0].slice(2);
+    }
+    weekEl.textContent = 'Week of ' + fmtSchedDate(data.week_dates[0]) + ' – ' + fmtSchedDate(data.week_dates[data.week_dates.length - 1]);
+  }
+
+  // Summary bullets
+  var sumEl = document.getElementById('sched-summary');
+  var bullEl = document.getElementById('sched-summary-bullets');
+  if (data.summary && data.summary.length && bullEl) {
+    var bHtml = '';
+    for (var s = 0; s < data.summary.length; s++) {
+      bHtml += '<div style="padding:2px 0">&#x2022; ' + data.summary[s] + '</div>';
+    }
+    bullEl.innerHTML = bHtml;
+    if (sumEl) sumEl.style.display = 'block';
+  }
+
+  // Schedule table
+  var tbody = document.getElementById('sched-tbody');
+  var _constraints = data.staff_constraints || {};
+  if (tbody && data.preview_rows && data.preview_rows.length) {
+    var tHtml = '';
+    var lastDay = '';
+    for (var i = 0; i < data.preview_rows.length; i++) {
+      var row = data.preview_rows[i];
+      var day = row.day || '';
+      var isNewDay = day !== lastDay;
+      var bgStyle = isNewDay ? 'border-top:2px solid rgba(255,255,255,.1)' : 'border-top:1px solid rgba(255,255,255,.04)';
+      var empName = row.employee || '';
+      var constraintNote = _constraints[empName] || '';
+      var constraintBadge = constraintNote
+        ? ' <span title="' + constraintNote.replace(/"/g, '&quot;') + '" style="font-size:9px;background:rgba(242,153,74,.18);color:#f2994a;padding:1px 5px;border-radius:8px;font-weight:700;vertical-align:middle;cursor:help;letter-spacing:.02em">constraint</span>'
+        : '';
+      tHtml += '<tr style="' + bgStyle + (constraintNote ? ';background:rgba(242,153,74,.04)' : '') + '">';
+      tHtml += '<td style="padding:7px 12px;color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + day + '</td>';
+      tHtml += '<td style="padding:7px 12px;color:var(--paper);font-weight:600">' + empName + constraintBadge + '</td>';
+      tHtml += '<td style="padding:7px 12px;color:var(--ink3)">' + (row.role || '') + '</td>';
+      tHtml += '<td style="padding:7px 12px;color:var(--paper);white-space:nowrap">' + (row.shift_start || '') + '–' + (row.shift_end || '') + '</td>';
+      tHtml += '<td style="padding:7px 12px;color:#6fcf97;font-weight:600">' + (row.scheduled_hours || '') + '</td>';
+      tHtml += '<td style="padding:7px 12px;color:var(--ink3);font-size:10px">' + (row.notes || '') + '</td>';
+      tHtml += '</tr>';
+      lastDay = day;
+    }
+    tbody.innerHTML = tHtml;
+    var toggleBar = document.getElementById('sched-toggle-bar');
+    var shiftCount = document.getElementById('sched-shift-count');
+    if (toggleBar) toggleBar.style.display = 'flex';
+    if (shiftCount) shiftCount.textContent = data.preview_rows.length + ' shifts';
+    _schedTableOpen = false;
+    var wrap = document.getElementById('sched-table-wrap');
+    var label = document.getElementById('sched-toggle-label');
+    if (wrap) wrap.style.display = 'none';
+    if (label) label.innerHTML = 'View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
+  }
+
+  // PAR hours banner
+  var parBanner = document.getElementById('sched-par-banner');
+  var parText   = document.getElementById('sched-par-text');
+  var parBadge  = document.getElementById('sched-par-badge');
+  if (parBanner && data.hours_budget && data.hours_scheduled) {
+    var budget    = data.hours_budget;
+    var scheduled = data.hours_scheduled;
+    var diff      = Math.round((scheduled - budget) * 10) / 10;
+    var absDiff   = Math.abs(diff);
+    var proj      = data.projected_revenue ? '$' + Math.round(data.projected_revenue).toLocaleString() : '—';
+    var budgetDol = data.labor_budget_dollars ? '$' + Math.round(data.labor_budget_dollars).toLocaleString() : '—';
+    parText.innerHTML = 'Projected revenue: <strong>' + proj + '</strong> &nbsp;&#xB7;&nbsp; '
+      + 'Labor budget (' + (data.labor_target || 30) + '%): <strong>' + budgetDol + '</strong><br>'
+      + 'PAR target: <strong>' + budget + 'h</strong> &nbsp;&#xB7;&nbsp; '
+      + 'This schedule: <strong>' + scheduled + 'h</strong>';
+    if (diff > 0) {
+      parBadge.textContent = '+' + absDiff + 'h over PAR';
+      parBadge.style.background = 'rgba(235,87,87,.18)';
+      parBadge.style.color = '#eb5757';
+    } else if (absDiff <= 20) {
+      parBadge.textContent = absDiff === 0 ? '✓ On PAR' : absDiff + 'h under PAR';
+      parBadge.style.background = 'rgba(111,207,151,.2)';
+      parBadge.style.color = '#6fcf97';
+    } else if (absDiff <= 40) {
+      parBadge.textContent = absDiff + 'h under PAR';
+      parBadge.style.background = 'rgba(242,153,74,.18)';
+      parBadge.style.color = '#f2994a';
+    } else {
+      parBadge.textContent = absDiff + 'h under PAR';
+      parBadge.style.background = 'rgba(235,87,87,.18)';
+      parBadge.style.color = '#eb5757';
+    }
+    parBanner.style.display = 'block';
+  }
+
+  if (panel) panel.style.display = 'block';
+  if (panel) panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
 function generateSchedule(btn) {
+  _schedBtn = btn;
   btn.innerHTML = 'Generating… <span style="display:inline-block;width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;vertical-align:middle;animation:spin .7s linear infinite"></span>';
   btn.disabled = true;
   var panel = document.getElementById('schedule-preview-panel');
@@ -3394,119 +3511,32 @@ function generateSchedule(btn) {
 
   fetch('/api/generate-schedule')
     .then(function(r) { return r.json(); })
-    .then(function(data) {
-      btn.innerHTML = 'Generate optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-      btn.disabled = false;
-      if (!data.ok) { alert(data.error || 'Schedule generation failed — try again'); return; }
-
-      _schedCsvCache = data.schedule_csv || '';
-
-      // Week label
-      var weekEl = document.getElementById('sched-week-label');
-      if (weekEl && data.week_dates && data.week_dates.length) {
-        function fmtSchedDate(iso) {
-          var p = iso.split('-');
-          return (parseInt(p[1],10)) + '/' + (parseInt(p[2],10)) + '/' + p[0].slice(2);
-        }
-        weekEl.textContent = 'Week of ' + fmtSchedDate(data.week_dates[0]) + ' – ' + fmtSchedDate(data.week_dates[data.week_dates.length - 1]);
+    .then(function(startData) {
+      if (!startData.ok || !startData.job_id) {
+        _schedReset(btn);
+        alert(startData.error || 'Failed to start schedule generation');
+        return;
       }
-
-      // Summary bullets
-      var sumEl = document.getElementById('sched-summary');
-      var bullEl = document.getElementById('sched-summary-bullets');
-      if (data.summary && data.summary.length && bullEl) {
-        var bHtml = '';
-        for (var s = 0; s < data.summary.length; s++) {
-          bHtml += '<div style="padding:2px 0">&#x2022; ' + data.summary[s] + '</div>';
-        }
-        bullEl.innerHTML = bHtml;
-        if (sumEl) sumEl.style.display = 'block';
-      }
-
-      // Schedule table
-      var tbody = document.getElementById('sched-tbody');
-      var _constraints = data.staff_constraints || {};
-      if (tbody && data.preview_rows && data.preview_rows.length) {
-        var tHtml = '';
-        var lastDay = '';
-        for (var i = 0; i < data.preview_rows.length; i++) {
-          var row = data.preview_rows[i];
-          var day = row.day || '';
-          var isNewDay = day !== lastDay;
-          var bgStyle = isNewDay ? 'border-top:2px solid rgba(255,255,255,.1)' : 'border-top:1px solid rgba(255,255,255,.04)';
-          var empName = row.employee || '';
-          var constraintNote = _constraints[empName] || '';
-          var constraintBadge = constraintNote
-            ? ' <span title="' + constraintNote.replace(/"/g, '&quot;') + '" style="font-size:9px;background:rgba(242,153,74,.18);color:#f2994a;padding:1px 5px;border-radius:8px;font-weight:700;vertical-align:middle;cursor:help;letter-spacing:.02em">constraint</span>'
-            : '';
-          tHtml += '<tr style="' + bgStyle + (constraintNote ? ';background:rgba(242,153,74,.04)' : '') + '">';
-          tHtml += '<td style="padding:7px 12px;color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + day + '</td>';
-          tHtml += '<td style="padding:7px 12px;color:var(--paper);font-weight:600">' + empName + constraintBadge + '</td>';
-          tHtml += '<td style="padding:7px 12px;color:var(--ink3)">' + (row.role || '') + '</td>';
-          tHtml += '<td style="padding:7px 12px;color:var(--paper);white-space:nowrap">' + (row.shift_start || '') + '–' + (row.shift_end || '') + '</td>';
-          tHtml += '<td style="padding:7px 12px;color:#6fcf97;font-weight:600">' + (row.scheduled_hours || '') + '</td>';
-          tHtml += '<td style="padding:7px 12px;color:var(--ink3);font-size:10px">' + (row.notes || '') + '</td>';
-          tHtml += '</tr>';
-          lastDay = day;
-        }
-        tbody.innerHTML = tHtml;
-        // Show toggle bar with shift count, table collapsed by default
-        var toggleBar = document.getElementById('sched-toggle-bar');
-        var shiftCount = document.getElementById('sched-shift-count');
-        if (toggleBar) toggleBar.style.display = 'flex';
-        if (shiftCount) shiftCount.textContent = data.preview_rows.length + ' shifts';
-        _schedTableOpen = false;
-        var wrap = document.getElementById('sched-table-wrap');
-        var label = document.getElementById('sched-toggle-label');
-        if (wrap) wrap.style.display = 'none';
-        if (label) label.innerHTML = 'View full schedule<span id="sched-toggle-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(111,207,151,.12);border:1px solid rgba(111,207,151,.25);color:#6fcf97;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
-      }
-
-      // PAR hours banner
-      var parBanner = document.getElementById('sched-par-banner');
-      var parText   = document.getElementById('sched-par-text');
-      var parBadge  = document.getElementById('sched-par-badge');
-      if (parBanner && data.hours_budget && data.hours_scheduled) {
-        var budget    = data.hours_budget;
-        var scheduled = data.hours_scheduled;
-        var diff      = Math.round((scheduled - budget) * 10) / 10;
-        var absDiff   = Math.abs(diff);
-        var proj      = data.projected_revenue ? '$' + Math.round(data.projected_revenue).toLocaleString() : '—';
-        var budgetDol = data.labor_budget_dollars ? '$' + Math.round(data.labor_budget_dollars).toLocaleString() : '—';
-        parText.innerHTML = 'Projected revenue: <strong>' + proj + '</strong> &nbsp;&#xB7;&nbsp; '
-          + 'Labor budget (' + (data.labor_target || 30) + '%): <strong>' + budgetDol + '</strong><br>'
-          + 'PAR target: <strong>' + budget + 'h</strong> &nbsp;&#xB7;&nbsp; '
-          + 'This schedule: <strong>' + scheduled + 'h</strong>';
-        if (diff > 0) {
-          // Over PAR = overspending on labor — red
-          parBadge.textContent = '+' + absDiff + 'h over PAR';
-          parBadge.style.background = 'rgba(235,87,87,.18)';
-          parBadge.style.color = '#eb5757';
-        } else if (absDiff <= 20) {
-          // 0–20h under = healthy buffer — green
-          parBadge.textContent = absDiff === 0 ? '✓ On PAR' : absDiff + 'h under PAR';
-          parBadge.style.background = 'rgba(111,207,151,.2)';
-          parBadge.style.color = '#6fcf97';
-        } else if (absDiff <= 40) {
-          // 20–40h under = running lean, watch coverage — amber
-          parBadge.textContent = absDiff + 'h under PAR';
-          parBadge.style.background = 'rgba(242,153,74,.18)';
-          parBadge.style.color = '#f2994a';
-        } else {
-          // >40h under = understaffed, service risk — red
-          parBadge.textContent = absDiff + 'h under PAR';
-          parBadge.style.background = 'rgba(235,87,87,.18)';
-          parBadge.style.color = '#eb5757';
-        }
-        parBanner.style.display = 'block';
-      }
-
-      if (panel) panel.style.display = 'block';
-      panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+      var jobId = startData.job_id;
+      _schedPollInterval = setInterval(function() {
+        fetch('/api/schedule-status/' + jobId)
+          .then(function(r) { return r.json(); })
+          .then(function(pollData) {
+            if (pollData.status === 'pending') return;
+            clearInterval(_schedPollInterval);
+            _schedPollInterval = null;
+            _schedHandleResult(pollData);
+          })
+          .catch(function() {
+            clearInterval(_schedPollInterval);
+            _schedPollInterval = null;
+            _schedReset(btn);
+            alert('Network error — try again');
+          });
+      }, 2000);
     })
     .catch(function() {
-      btn.innerHTML = 'Generate optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-      btn.disabled = false;
+      _schedReset(btn);
       alert('Network error — try again');
     });
 }
