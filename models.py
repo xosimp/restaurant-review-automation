@@ -265,6 +265,12 @@ class Restaurant:
     skip_holidays:    Optional[str]  = None
     custom_competitors: Optional[str] = None
     login_notify:     int            = 0
+    alert_1star:          int       = 1
+    alert_2star:          int       = 0
+    alert_health:         int       = 1
+    alert_neg_spike:      int       = 1
+    alert_negative_trend: int       = 1
+    alert_no_response:    int       = 0
     last_activity: Optional[str]    = None
     gbp_rating: Optional[float]     = None
     gbp_review_count: Optional[int] = None
@@ -480,6 +486,28 @@ def init_db(db_path: str = DB_PATH):
             status      TEXT NOT NULL,
             created_at  TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
+        """CREATE TABLE IF NOT EXISTS alert_contacts (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
+            name          TEXT,
+            phone         TEXT NOT NULL,
+            created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_alert_contacts_restaurant ON alert_contacts(restaurant_id)",
+        """CREATE TABLE IF NOT EXISTS alert_log (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            alert_type    TEXT NOT NULL,
+            review_id     INTEGER,
+            fired_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_alert_log_restaurant ON alert_log(restaurant_id, fired_at)",
+        "ALTER TABLE restaurants ADD COLUMN alert_1star INTEGER DEFAULT 1",
+        "ALTER TABLE restaurants ADD COLUMN alert_2star INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN alert_health INTEGER DEFAULT 1",
+        "ALTER TABLE restaurants ADD COLUMN alert_neg_spike INTEGER DEFAULT 1",
+        "ALTER TABLE restaurants ADD COLUMN alert_negative_trend INTEGER DEFAULT 1",
+        "ALTER TABLE restaurants ADD COLUMN alert_no_response INTEGER DEFAULT 0",
     ]
     for m in migrations:
         try:
@@ -843,7 +871,8 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","login_notify",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
         "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error",
-        "gbp_rating","gbp_review_count"
+        "gbp_rating","gbp_review_count",
+        "alert_1star","alert_2star","alert_health","alert_neg_spike","alert_negative_trend","alert_no_response",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -913,6 +942,12 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         skip_holidays=row["skip_holidays"] if "skip_holidays" in row.keys() else None,
         custom_competitors=row["custom_competitors"] if "custom_competitors" in row.keys() else None,
         login_notify=row["login_notify"] if "login_notify" in row.keys() else 0,
+        alert_1star=row["alert_1star"] if "alert_1star" in row.keys() else 1,
+        alert_2star=row["alert_2star"] if "alert_2star" in row.keys() else 0,
+        alert_health=row["alert_health"] if "alert_health" in row.keys() else 1,
+        alert_neg_spike=row["alert_neg_spike"] if "alert_neg_spike" in row.keys() else 1,
+        alert_negative_trend=row["alert_negative_trend"] if "alert_negative_trend" in row.keys() else 1,
+        alert_no_response=row["alert_no_response"] if "alert_no_response" in row.keys() else 0,
         gmb_access_token=row["gmb_access_token"] if "gmb_access_token" in row.keys() else None,
         gmb_refresh_token=row["gmb_refresh_token"] if "gmb_refresh_token" in row.keys() else None,
         gmb_account_id=row["gmb_account_id"] if "gmb_account_id" in row.keys() else None,
@@ -938,10 +973,11 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
 
 # ── Review CRUD ───────────────────────────────────────────────────────────────
 
-def save_reviews(reviews: list[Review], db_path: str = DB_PATH) -> int:
-    """Upsert reviews; skip duplicates. Returns count of newly inserted rows."""
+def save_reviews(reviews: list[Review], db_path: str = DB_PATH) -> tuple[int, list]:
+    """Upsert reviews; skip duplicates. Returns (new_count, new_review_objects)."""
     conn = get_conn(db_path)
     new_count = 0
+    new_reviews = []
     for r in reviews:
         try:
             conn.execute("""
@@ -952,11 +988,12 @@ def save_reviews(reviews: list[Review], db_path: str = DB_PATH) -> int:
             """, (r.restaurant_id, r.platform, r.external_id, r.author,
                   r.rating, r.text, r.review_date, r.fetched_at))
             new_count += 1
+            new_reviews.append(r)
         except sqlite3.IntegrityError:
             pass  # UNIQUE(platform, external_id) — already stored
     conn.commit()
     conn.close()
-    return new_count
+    return new_count, new_reviews
 
 
 def get_pending_analysis(restaurant_id: int, limit: int = 50,

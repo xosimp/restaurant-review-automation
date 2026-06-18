@@ -203,11 +203,18 @@ def run_daily_fetch():
             if not reviews:
                 continue
 
-            new_count = save_reviews(reviews)
+            new_count, new_reviews = save_reviews(reviews)
             if new_count == 0:
                 continue
 
             log.info(f"{new_count} new reviews for {restaurant.name}")
+
+            # Fire SMS alerts for newly saved reviews
+            try:
+                from notify import fire_review_alerts
+                fire_review_alerts(rid, restaurant.name, new_reviews)
+            except Exception as _ae:
+                log.error(f"Alert fire error [{restaurant.name}]: {_ae}")
 
             # Analyse
             for r in get_pending_analysis(rid, limit=50):
@@ -835,6 +842,14 @@ def scheduler_loop():
                 # Monday 10am — check for stale inventory data
                 log.info("Running stale inventory check...")
                 check_stale_inventory()
+
+            # 10am daily — check for negative reviews with no response for 48h
+            if now.hour == 10 and _last_fetch_date != f"noresponse-{today}":
+                try:
+                    from notify import check_no_response_alerts
+                    check_no_response_alerts()
+                except Exception as _nre:
+                    log.error(f"No-response alert check failed: {_nre}")
 
             # 1st of the month at 9am — send monthly summary to all active clients
             if now.day == 1 and now.hour == 9 and _last_monthly_date != today:

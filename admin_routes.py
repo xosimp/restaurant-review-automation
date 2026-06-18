@@ -343,6 +343,42 @@ def delete_staff_note_route(note_id, current_user):
     delete_staff_note(note_id)
     return jsonify(ok=True)
 
+@admin_bp.route("/admin/alert-contacts/<int:restaurant_id>", methods=["GET"])
+@admin_required
+def get_alert_contacts_route(restaurant_id, current_user):
+    from notify import get_alert_contacts
+    return jsonify(ok=True, contacts=get_alert_contacts(restaurant_id))
+
+
+@admin_bp.route("/admin/alert-contacts/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def add_alert_contact_route(restaurant_id, current_user):
+    from notify import add_alert_contact
+    data = request.get_json() or {}
+    name  = (data.get("name") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    if not phone:
+        return jsonify(ok=False, error="Phone number required")
+    contact_id = add_alert_contact(restaurant_id, name, phone)
+    return jsonify(ok=True, id=contact_id, name=name, phone=phone)
+
+
+@admin_bp.route("/admin/alert-contacts/delete/<int:contact_id>", methods=["POST"])
+@admin_required
+def delete_alert_contact_route(contact_id, current_user):
+    from notify import delete_alert_contact
+    delete_alert_contact(contact_id)
+    return jsonify(ok=True)
+
+
+@admin_bp.route("/admin/alert-contacts/test/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def test_alert_sms_route(restaurant_id, current_user):
+    from notify import send_test_sms
+    result = send_test_sms(restaurant_id)
+    return jsonify(**result)
+
+
 @admin_bp.route("/admin/upload-data/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def upload_data(restaurant_id, current_user):
@@ -383,11 +419,14 @@ def client_settings_page(restaurant_id, current_user):
     client_data = get_client_data(restaurant_id) or {}
     from models import get_staff_notes
     staff_notes = get_staff_notes(restaurant_id)
+    from notify import get_alert_contacts
+    alert_contacts = get_alert_contacts(restaurant_id)
     return render_template('client_settings.html',
         current_user=current_user,
         restaurant=restaurant,
         client_data=client_data,
-        staff_notes=staff_notes)
+        staff_notes=staff_notes,
+        alert_contacts=alert_contacts)
 
 @admin_bp.route("/admin/client-settings/<int:restaurant_id>", methods=["POST"])
 @admin_required
@@ -435,6 +474,12 @@ def save_client_settings(restaurant_id, current_user):
             "reviews_live":    int(bool(data.get("reviews_live"))),
             "billing_status":  data.get("billing_status","trial"),
             "internal_notes":  sanitize(data.get("internal_notes","")),
+            "alert_1star":        int(bool(data.get("alert_1star"))),
+            "alert_2star":        int(bool(data.get("alert_2star"))),
+            "alert_health":       int(bool(data.get("alert_health"))),
+            "alert_neg_spike":    int(bool(data.get("alert_neg_spike"))),
+            "alert_negative_trend": int(bool(data.get("alert_negative_trend"))),
+            "alert_no_response":  int(bool(data.get("alert_no_response"))),
         })
         return jsonify(ok=True)
     except Exception as e:
@@ -634,7 +679,7 @@ def seed_reviews(restaurant_id, current_user):
             review_date=review_date,
         ))
 
-    new_count = save_reviews(reviews)
+    new_count, _ = save_reviews(reviews)
 
     # Analyse and draft all of them
     pending = get_pending_analysis(restaurant_id, limit=50)
@@ -729,7 +774,15 @@ def fetch_reviews_now(restaurant_id, current_user):
     if not reviews and not errors:
         return jsonify(ok=False, error="No platform IDs configured, reviews_live is off, and GMB not connected")
 
-    new_count = save_reviews(reviews) if reviews else 0
+    new_count, new_reviews = save_reviews(reviews) if reviews else (0, [])
+
+    # Fire alerts for newly saved reviews
+    if new_reviews:
+        try:
+            from notify import fire_review_alerts
+            fire_review_alerts(restaurant_id, restaurant.name, new_reviews)
+        except Exception as _ae:
+            print(f"[alert] fire error: {_ae}")
 
     # Run analysis + drafting in background so route returns immediately
     import threading

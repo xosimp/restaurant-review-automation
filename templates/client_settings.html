@@ -404,6 +404,81 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
+  <!-- SMS Alert Contacts -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">SMS alert contacts</div></div>
+    <div class="section-body">
+      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:14px">
+        Up to 3 contacts receive SMS alerts when critical events occur. All contacts get the same alerts based on the toggles below.
+      </p>
+      <div id="alert-contacts-list">
+        {% for c in alert_contacts %}
+        <div class="status-row" style="margin-bottom:6px" id="alert-contact-{{c.id}}">
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:13px">{{ c.name or 'Unnamed' }}</div>
+            <div style="font-size:12px;color:var(--ink3);margin-top:1px">{{ c.phone }}</div>
+          </div>
+          <button onclick="deleteAlertContact({{c.id}})"
+            style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid #f5c6c2;background:white;color:#c0392b;cursor:pointer;font-family:'DM Sans',sans-serif">
+            Remove
+          </button>
+        </div>
+        {% endfor %}
+        {% if not alert_contacts %}
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:12px">No contacts added yet.</div>
+        {% endif %}
+      </div>
+      <div class="form-grid" style="margin-top:10px">
+        <div class="form-group">
+          <label>Name / title</label>
+          <input type="text" id="alert-contact-name" placeholder="e.g. Brian (Regional Mgr)">
+        </div>
+        <div class="form-group">
+          <label>Phone number</label>
+          <input type="text" id="alert-contact-phone" placeholder="(312) 555-0100">
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn-save" style="padding:9px 16px" onclick="addAlertContact()">Add contact</button>
+        <button class="btn-save" style="padding:9px 16px;background:#2d5a3d" onclick="testAlertSMS()">Send test SMS</button>
+      </div>
+      <div style="font-size:12px;margin-top:8px;display:none" id="alert-contact-status"></div>
+    </div>
+  </div>
+
+  <!-- SMS Alert Toggles -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Alert settings</div></div>
+    <div class="section-body">
+      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:14px">
+        Configure which events trigger an SMS to the contacts above. Save settings to apply.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        {% for toggle_id, label, description, default_on in [
+          ("alert_1star",          "1★ review received",                "Fires the moment a 1-star review is fetched. Default ON.",           restaurant.alert_1star),
+          ("alert_2star",          "2★ review received",                "Fires on any 2-star review. Good for busy restaurants.",            restaurant.alert_2star),
+          ("alert_health",         "Health or safety mention",           "Any review mentioning food poisoning, rodents, foreign objects, etc. Always recommended ON.", restaurant.alert_health),
+          ("alert_neg_spike",      "3+ negative reviews in 7 days",     "Fires once per 24h if a spike in negatives is detected.",            restaurant.alert_neg_spike),
+          ("alert_negative_trend", "Rating declining 3+ weeks",          "Fires when the weekly average rating drops for 3 consecutive weeks.", restaurant.alert_negative_trend),
+          ("alert_no_response",    "Negative review unresponded 48h",    "Daily check — fires if any negative review has no response after 2 days.", restaurant.alert_no_response),
+        ] %}
+        <label style="display:flex;align-items:flex-start;gap:12px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
+          <input type="checkbox" id="setting-{{toggle_id}}"
+            {% if default_on %}checked{% endif %}
+            style="width:14px;height:14px;accent-color:#c84b2f;margin-top:2px;flex-shrink:0">
+          <div>
+            <div style="font-size:13px;font-weight:500;color:var(--ink)">{{ label }}</div>
+            <div style="font-size:11px;color:var(--ink3);margin-top:2px">{{ description }}</div>
+          </div>
+        </label>
+        {% endfor %}
+      </div>
+      <div style="font-size:11px;color:var(--ink3);margin-top:12px;line-height:1.6">
+        Changes take effect immediately after saving. All alerts require at least one contact above.
+      </div>
+    </div>
+  </div>
+
   <!-- Test email triggers -->
   <div class="section-card">
     <div class="section-hdr"><div class="section-title">Test email triggers</div></div>
@@ -656,6 +731,64 @@ async function refreshIgToken() {
   status.style.color = data.ok ? 'var(--green)' : 'var(--ember)';
   status.textContent = data.ok ? '✓ Tokens refreshed — new expiry: ' + data.expires : 'Error: ' + (data.error || 'failed');
 }
+async function addAlertContact() {
+  var name  = document.getElementById('alert-contact-name').value.trim();
+  var phone = document.getElementById('alert-contact-phone').value.trim();
+  var status = document.getElementById('alert-contact-status');
+  if (!phone) { status.style.display='block'; status.style.color='var(--ember)'; status.textContent='Phone number required'; return; }
+  var existing = document.querySelectorAll('#alert-contacts-list .status-row');
+  if (existing.length >= 3) { status.style.display='block'; status.style.color='var(--ember)'; status.textContent='Max 3 contacts per restaurant'; return; }
+  var res = await fetch('/admin/alert-contacts/{{ restaurant.id }}', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name: name, phone: phone})
+  });
+  var data = await res.json();
+  if (data.ok) {
+    var list = document.getElementById('alert-contacts-list');
+    var empty = list.querySelector('div:not(.status-row)');
+    if (empty) empty.remove();
+    var row = document.createElement('div');
+    row.className = 'status-row';
+    row.style.marginBottom = '6px';
+    row.id = 'alert-contact-' + data.id;
+    row.innerHTML = '<div style="flex:1"><div style="font-weight:600;font-size:13px">' + (data.name || 'Unnamed') + '</div><div style="font-size:12px;color:var(--ink3);margin-top:1px">' + data.phone + '</div></div><button onclick="deleteAlertContact(' + data.id + ')" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid #f5c6c2;background:white;color:#c0392b;cursor:pointer;font-family:\'DM Sans\',sans-serif">Remove</button>';
+    list.appendChild(row);
+    document.getElementById('alert-contact-name').value = '';
+    document.getElementById('alert-contact-phone').value = '';
+    status.style.display='block'; status.style.color='var(--green)'; status.textContent='✓ Contact added';
+    setTimeout(function(){ status.style.display='none'; }, 2500);
+  } else {
+    status.style.display='block'; status.style.color='var(--ember)'; status.textContent = data.error || 'Failed to add contact';
+  }
+}
+
+async function deleteAlertContact(contactId) {
+  var res = await fetch('/admin/alert-contacts/delete/' + contactId, {method:'POST'});
+  var data = await res.json();
+  if (data.ok) {
+    var el = document.getElementById('alert-contact-' + contactId);
+    if (el) el.remove();
+    var list = document.getElementById('alert-contacts-list');
+    if (!list.querySelector('.status-row')) {
+      list.innerHTML = '<div style="font-size:12px;color:var(--ink3);margin-bottom:12px">No contacts added yet.</div>';
+    }
+  }
+}
+
+async function testAlertSMS() {
+  var status = document.getElementById('alert-contact-status');
+  status.style.display='block'; status.style.color='var(--ink3)'; status.textContent='Sending test SMS…';
+  var res = await fetch('/admin/alert-contacts/test/{{ restaurant.id }}', {method:'POST'});
+  var data = await res.json();
+  if (data.ok) {
+    status.style.color='var(--green)';
+    status.textContent='✓ Test SMS sent to ' + data.sent + ' contact' + (data.sent !== 1 ? 's' : '');
+  } else {
+    status.style.color='var(--ember)';
+    status.textContent = data.error || ('Failed — ' + (data.errors || []).join(', '));
+  }
+}
+
 async function saveSettings() {
   const btn = document.querySelector('.btn-save');
   const status = document.getElementById('save-status');
@@ -696,6 +829,12 @@ async function saveSettings() {
     module_labor:    document.getElementById('setting-mod-labor').checked ? 1 : 0,
     module_inventory:document.getElementById('setting-mod-inventory').checked ? 1 : 0,
     module_marketing:document.getElementById('setting-mod-marketing').checked ? 1 : 0,
+    alert_1star:           document.getElementById('setting-alert_1star').checked ? 1 : 0,
+    alert_2star:           document.getElementById('setting-alert_2star').checked ? 1 : 0,
+    alert_health:          document.getElementById('setting-alert_health').checked ? 1 : 0,
+    alert_neg_spike:       document.getElementById('setting-alert_neg_spike').checked ? 1 : 0,
+    alert_negative_trend:  document.getElementById('setting-alert_negative_trend').checked ? 1 : 0,
+    alert_no_response:     document.getElementById('setting-alert_no_response').checked ? 1 : 0,
   };
   const res = await fetch(window.location.pathname, {
     method: 'POST',

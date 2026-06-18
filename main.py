@@ -50,7 +50,7 @@ def run_demo():
 
     print("Step 1 — Ingesting sample reviews...")
     reviews = ingest_csv("sample_reviews.csv", rid)
-    new = save_reviews(reviews)
+    new, _ = save_reviews(reviews)
     print(f"  {new} reviews loaded ({len(reviews) - new} already in DB)\n")
 
     print("Step 2 — Analysing with Claude...")
@@ -75,7 +75,7 @@ def run_daily(restaurant_id: int):
         reviews += fetch_google(GOOGLE_PLACE_ID, restaurant_id)
     if YELP_BUSINESS_ID:
         reviews += fetch_yelp(YELP_BUSINESS_ID, restaurant_id)
-    new = save_reviews(reviews)
+    new, _ = save_reviews(reviews)
     print(f"  {new} new reviews saved")
     analyse_pending(restaurant_id)
     draft_pending(restaurant_id)
