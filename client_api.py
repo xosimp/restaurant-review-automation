@@ -799,17 +799,26 @@ def _run_schedule_job(job_id, restaurant_id):
         preview_rows = []
         hours_scheduled = 0.0
         try:
-            reader = _csv_mod.DictReader(_io_sched.StringIO(result["schedule_csv"]))
-            print(f"[schedule] fieldnames={reader.fieldnames}")
-            for row in reader:
-                clean = {k: v for k, v in row.items() if k is not None}
-                if not preview_rows:
-                    print(f"[schedule] first row={clean}")
-                preview_rows.append(clean)
+            _COLS = ["date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes"]
+            _csv_lines = result["schedule_csv"].split("\n")
+            print(f"[schedule] csv lines={len(_csv_lines)} first3={_csv_lines[:3]}")
+            for _line in _csv_lines[1:]:  # skip header
+                _line = _line.strip()
+                if not _line:
+                    continue
+                _parts = _line.split(",", 7)  # max 7 splits — notes gets remainder
+                if len(_parts) < 6:
+                    continue
+                _row = {_COLS[i]: _parts[i].strip() for i in range(min(len(_parts), 8))}
+                # Only keep rows that look like actual schedule entries
+                if not _row.get("date", "").startswith("20") or not _row.get("employee", "").strip():
+                    continue
+                preview_rows.append(_row)
                 try:
-                    hours_scheduled += float(clean.get("scheduled_hours") or 0)
+                    hours_scheduled += float(_row.get("scheduled_hours") or 0)
                 except (ValueError, TypeError):
                     pass
+            print(f"[schedule] parsed {len(preview_rows)} rows, first={preview_rows[0] if preview_rows else None}")
         except Exception as _csv_ex:
             print(f"[schedule] csv parse error: {_csv_ex}")
             pass
