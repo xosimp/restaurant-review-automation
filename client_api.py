@@ -790,7 +790,7 @@ def _build_schedule_result(restaurant_id):
 _schedule_jobs = {}  # job_id -> {"status": "pending"|"done"|"error", "result": ...}
 
 def _run_schedule_job(job_id, restaurant_id):
-    import csv as _csv_mod, io as _io_sched
+    import csv as _csv_mod, io as _io_sched, traceback as _tb
     try:
         result = _build_schedule_result(restaurant_id)
         from models import get_staff_notes as _gsn_sched
@@ -826,8 +826,9 @@ def _run_schedule_job(job_id, restaurant_id):
             )
         }
     except Exception as e:
-        import traceback; traceback.print_exc()
-        _schedule_jobs[job_id] = {"status": "error", "result": {"ok": False, "error": str(e)}}
+        tb = _tb.format_exc()
+        print(f"[schedule job] FAILED:\n{tb}")
+        _schedule_jobs[job_id] = {"status": "error", "result": {"ok": False, "error": str(e), "traceback": tb}}
 
 
 @client_bp.route("/api/generate-schedule", methods=["GET"])
