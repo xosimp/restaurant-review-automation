@@ -795,13 +795,13 @@ def _run_schedule_job(job_id, restaurant_id):
         result = _build_schedule_result(restaurant_id)
         from models import get_staff_notes as _gsn_sched
         _raw_notes = _gsn_sched(restaurant_id) or []
-        staff_constraints = {n["employee_name"]: n["notes"] for n in _raw_notes}
+        staff_constraints = {n["employee_name"]: n["notes"] for n in _raw_notes if n.get("employee_name")}
         preview_rows = []
         hours_scheduled = 0.0
         try:
             reader = _csv_mod.DictReader(_io_sched.StringIO(result["schedule_csv"]))
             for row in reader:
-                preview_rows.append(dict(row))
+                preview_rows.append({k: v for k, v in row.items() if k is not None})
                 try:
                     hours_scheduled += float(row.get("scheduled_hours") or 0)
                 except (ValueError, TypeError):
