@@ -809,9 +809,10 @@ def _run_schedule_job(job_id, restaurant_id):
                 _parts = _line.split(",", 7)  # max 7 splits — notes gets remainder
                 if len(_parts) < 6:
                     continue
-                _row = {_COLS[i]: _parts[i].strip() for i in range(min(len(_parts), 8))}
-                # Only keep rows that look like actual schedule entries
-                if not _row.get("date", "").startswith("20") or not _row.get("employee", "").strip():
+                # Strip outer quotes Sonnet sometimes adds around field values
+                _row = {_COLS[i]: _parts[i].strip().strip('"').strip() for i in range(min(len(_parts), 8))}
+                # Keep rows that have a non-empty employee name — skips header repeats and prose
+                if not _row.get("employee", "").strip() or _row.get("employee", "").lower() == "employee":
                     continue
                 preview_rows.append(_row)
                 try:
