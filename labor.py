@@ -543,7 +543,7 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     # Build role rates block
     role_rates_block = ""
     if role_rates:
-        rate_lines = [f"  {role}: ${rate:.2f}/hr" for role, rate in sorted(role_rates.items()) if role != "_default"]
+        rate_lines = [f"  {role}: ${rate:.2f}/hr" for role, rate in sorted(role_rates.items(), key=lambda x: x[0] or "") if role and role != "_default"]
         if rate_lines:
             role_rates_block = (f"\n\nPer-role hourly rates (use for cost-aware scheduling decisions):\n"
                                 + "\n".join(rate_lines)
