@@ -2334,35 +2334,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </div>
 
       <!-- Change password modal -->
-      <div id="pw-modal" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center">
-        <div style="background:white;border-radius:14px;padding:28px;max-width:380px;width:90%;position:relative">
-          <button onclick="closePwModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
-          <div style="font-size:16px;font-weight:700;color:var(--ink);margin-bottom:16px">Change password</div>
-          <div style="display:flex;flex-direction:column;gap:10px">
-            <input class="form-input" type="password" id="pw-current" placeholder="Current password" style="font-size:13px">
-            <input class="form-input" type="password" id="pw-new" placeholder="New password (min 8 chars)" style="font-size:13px">
-            <input class="form-input" type="password" id="pw-confirm" placeholder="Confirm new password" style="font-size:13px">
-            <button class="btn-primary" onclick="changePassword()" style="font-size:13px;padding:9px 16px;width:100%">Update password</button>
-            <div id="pw-status" style="font-size:12px;text-align:center;display:none"></div>
-          </div>
-        </div>
-      </div>
     </div>
 
-  <!-- Email update modal -->
-  <div id="email-modal" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center">
-    <div style="background:white;border-radius:14px;padding:28px;max-width:380px;width:90%;position:relative">
-      <button onclick="closeEmailModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
-      <div style="font-size:16px;font-weight:700;color:var(--ink);margin-bottom:4px">Update email</div>
-      <div style="font-size:12px;color:var(--ink3);margin-bottom:16px">Enter your current password to confirm the change.</div>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <input class="form-input" type="email" id="email-new" placeholder="New email address" style="font-size:13px">
-        <input class="form-input" type="password" id="email-pw" placeholder="Current password" style="font-size:13px">
-        <button class="btn-primary" onclick="updateEmail()" style="font-size:13px;padding:9px 16px;width:100%">Update email</button>
-        <div id="email-status" style="font-size:12px;text-align:center;display:none"></div>
-      </div>
-    </div>
-  </div>
 
     <!-- Right: Billing -->
     <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px" id="billing-card">
@@ -5600,5 +5573,33 @@ document.addEventListener('click', function(e) {
   <div id="tmpl-list"></div>
 </div>
 
+<!-- Change password modal — body level so position:fixed always covers viewport -->
+<div id="pw-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center">
+  <div style="background:white;border-radius:14px;padding:28px;max-width:380px;width:90%;position:relative">
+    <button onclick="closePwModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
+    <div style="font-size:16px;font-weight:700;color:var(--ink);margin-bottom:16px">Change password</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <input class="form-input" type="password" id="pw-current" placeholder="Current password" style="font-size:13px">
+      <input class="form-input" type="password" id="pw-new" placeholder="New password (min 8 chars)" style="font-size:13px">
+      <input class="form-input" type="password" id="pw-confirm" placeholder="Confirm new password" style="font-size:13px">
+      <button class="btn-primary" onclick="changePassword()" style="font-size:13px;padding:9px 16px;width:100%">Update password</button>
+      <div id="pw-status" style="font-size:12px;text-align:center;display:none"></div>
+    </div>
+  </div>
+</div>
+<!-- Update email modal — body level -->
+<div id="email-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center">
+  <div style="background:white;border-radius:14px;padding:28px;max-width:380px;width:90%;position:relative">
+    <button onclick="closeEmailModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
+    <div style="font-size:16px;font-weight:700;color:var(--ink);margin-bottom:4px">Update email</div>
+    <div style="font-size:12px;color:var(--ink3);margin-bottom:16px">Enter your current password to confirm the change.</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <input class="form-input" type="email" id="email-new" placeholder="New email address" style="font-size:13px">
+      <input class="form-input" type="password" id="email-pw" placeholder="Current password" style="font-size:13px">
+      <button class="btn-primary" onclick="updateEmail()" style="font-size:13px;padding:9px 16px;width:100%">Update email</button>
+      <div id="email-status" style="font-size:12px;text-align:center;display:none"></div>
+    </div>
+  </div>
+</div>
 </body>
 </html>
