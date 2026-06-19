@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Cavnar AI — Admin</title>
+<script>if(localStorage.getItem('cavnar_admin_theme')==='dark')document.documentElement.setAttribute('data-theme','dark');</script>
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="shortcut icon" href="/favicon.ico">
@@ -12,6 +13,23 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--green:#2d6a4f;--green-bg:#eaf4ee;--r:8px}
+[data-theme="dark"]{--ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#7a736a;--paper:#1a1714;--paper2:#231f1b;--paper3:#302a24;--ember:#e06444;--green:#4ead7a;--green-bg:#0c2318}
+html[data-theme="dark"],html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
+[data-theme="dark"] .hdr{background:#0f0d0b!important}
+[data-theme="dark"] .card{background:var(--paper2)!important;border-color:var(--paper3)!important}
+[data-theme="dark"] input,[data-theme="dark"] select,[data-theme="dark"] textarea{background:var(--paper)!important;color:var(--ink)!important;border-color:var(--paper3)!important}
+[data-theme="dark"] input[type=number]::-webkit-inner-spin-button,[data-theme="dark"] input[type=number]::-webkit-outer-spin-button{filter:invert(1) brightness(0.8)}
+[data-theme="dark"] label{color:var(--ink3)!important}
+[data-theme="dark"] .section-title{color:var(--ink3)!important}
+[data-theme="dark"] .tbl th{background:var(--paper3)!important;color:var(--ink2)!important}
+[data-theme="dark"] .tbl td{border-color:var(--paper3)!important;color:var(--ink2)!important}
+[data-theme="dark"] .tbl tr:hover td{background:var(--paper)!important}
+[data-theme="dark"] .action-item{color:var(--ink2)!important}
+[data-theme="dark"] .action-item:hover{background:var(--paper3)!important}
+[data-theme="dark"] [style*="background:white"]{background:var(--paper2)!important}
+[data-theme="dark"] [style*="color:#0e0c0a"],[data-theme="dark"] [style*="color:#3a3530"]{color:var(--ink)!important}
+[data-theme="dark"] [style*="color:#7a736a"]{color:var(--ink3)!important}
+[data-theme="dark"] [style*="border-color:#e0dbd0"],[data-theme="dark"] [style*="border:1px solid #e0dbd0"]{border-color:var(--paper3)!important}
 body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);font-size:14px}
 .hdr{background:var(--ink);height:54px;display:flex;align-items:center;padding:0 28px;justify-content:space-between}
 .hdr-logo{font-family:'DM Serif Display',serif;font-size:16px;color:var(--paper)}
@@ -66,6 +84,7 @@ input:focus,select:focus{border-color:var(--ember)}
   </div>
   <div style="display:flex;align-items:center;gap:12px">
     <button onclick="openStatusModal()" style="padding:6px 13px;font-size:12px;font-weight:600;font-family:'DM Sans',sans-serif;background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;color:rgba(255,255,255,.75);cursor:pointer">System Status</button>
+    <button id="admin-dark-btn" onclick="toggleAdminDark()" title="Toggle dark mode" style="background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:5px 10px;cursor:pointer;font-size:14px;line-height:1;color:rgba(255,255,255,.75)">🌙</button>
     <a href="/logout" class="logout-btn">Sign out</a>
   </div>
 </header>
@@ -1171,6 +1190,21 @@ function saveBrand(rid) {
 
 // Init
 adminLoadChangelog();
+
+// ── Admin dark mode ───────────────────────────────────────────────────────
+(function(){
+  var isDark = localStorage.getItem('cavnar_admin_theme') === 'dark';
+  var btn = document.getElementById('admin-dark-btn');
+  if (btn) btn.textContent = isDark ? '☀️' : '🌙';
+})();
+function toggleAdminDark() {
+  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  var next = isDark ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('cavnar_admin_theme', next);
+  var btn = document.getElementById('admin-dark-btn');
+  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+}
 </script>
 </body>
 </html>

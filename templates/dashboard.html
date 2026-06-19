@@ -23,8 +23,8 @@
   --amber:#d4a030;--amber-bg:#251d08;--blue:#6aabff;--blue-bg:#0a1828;
   --surface:#201d19;--hdr-bg:#0f0d0b
 }
-[data-theme="dark"] html{background:#1a1714!important;background-image:none!important}
-[data-theme="dark"] body{color:var(--ink)}
+html[data-theme="dark"]{background:#1a1714!important;background-image:none!important}
+html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 /* Header & tabs must explicitly override the var(--ink) background (--ink is light in dark mode) */
 [data-theme="dark"] .hdr{background:var(--hdr-bg)!important}
 [data-theme="dark"] .tabs{background:#141210!important;border-top-color:#1a1410!important}
@@ -2229,6 +2229,22 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </div>
       {% endif %}
 
+      <!-- Display -->
+      <div style="border-top:1px solid var(--paper3);padding-top:12px;margin-bottom:12px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Display</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Dark mode</div>
+            <div style="font-size:11px;color:var(--ink3)">Easier on the eyes at night. Saved to this browser.</div>
+          </div>
+          <label style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0;cursor:pointer">
+            <input type="checkbox" id="dark-mode-toggle-input" onchange="toggleDarkMode()" style="opacity:0;width:0;height:0;position:absolute">
+            <span id="dark-mode-track" style="position:absolute;inset:0;border-radius:24px;background:#d0cbc4;transition:background .2s"></span>
+            <span id="dark-mode-thumb" style="position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:white;box-shadow:0 1px 4px rgba(0,0,0,.25);transition:transform .2s"></span>
+          </label>
+        </div>
+      </div>
+
       <!-- Security -->
       <div style="border-top:1px solid var(--paper3);padding-top:12px;margin-bottom:12px">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Security</div>
@@ -3046,6 +3062,16 @@ function clearFilters(){
   if (localStorage.getItem('cavnar_theme') === 'dark') {
     document.documentElement.setAttribute('data-theme','dark');
   }
+  // Sync the in-dashboard toggle once DOM is ready
+  document.addEventListener('DOMContentLoaded', function() {
+    var isDark = localStorage.getItem('cavnar_theme') === 'dark';
+    var tog = document.getElementById('dark-mode-toggle-input');
+    var track = document.getElementById('dark-mode-track');
+    var thumb = document.getElementById('dark-mode-thumb');
+    if (tog) tog.checked = isDark;
+    if (track) track.style.background = isDark ? '#c84b2f' : '#d0cbc4';
+    if (thumb) thumb.style.transform = isDark ? 'translateX(20px)' : 'none';
+  });
 })();
 
 // ── Changelog ────────────────────────────────────────────────────────────────
@@ -3106,12 +3132,14 @@ document.addEventListener('click', function(e) {
 });
 
 function toggleDarkMode() {
-  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-  var next = isDark ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', next);
-  localStorage.setItem('cavnar_theme', next);
   var tog = document.getElementById('dark-mode-toggle-input');
-  if (tog) tog.checked = (next === 'dark');
+  var isDark = tog ? tog.checked : (document.documentElement.getAttribute('data-theme') === 'dark');
+  document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+  localStorage.setItem('cavnar_theme', isDark ? 'dark' : 'light');
+  var track = document.getElementById('dark-mode-track');
+  var thumb = document.getElementById('dark-mode-thumb');
+  if (track) track.style.background = isDark ? '#c84b2f' : '#d0cbc4';
+  if (thumb) thumb.style.transform = isDark ? 'translateX(20px)' : 'none';
 }
 
 function deleteReview(id, btn) {
