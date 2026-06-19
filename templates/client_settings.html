@@ -9,9 +9,20 @@
 <link rel="shortcut icon" href="/favicon.ico">
 <meta name="theme-color" content="#0e0c0a">
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script>if(localStorage.getItem('cavnar_theme')==='dark')document.documentElement.setAttribute('data-theme','dark');</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--green:#2d5a3d;--green-bg:#eaf2ed;--r:8px}
+[data-theme="dark"]{--ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#7a736a;--paper:#1a1714;--paper2:#231f1b;--paper3:#302a24;--ember:#e06444;--green:#4ead7a;--green-bg:#0c2318}
+[data-theme="dark"] html,[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
+[data-theme="dark"] .hdr{background:#0f0d0b!important}
+[data-theme="dark"] .section-card{background:var(--paper2)!important;border-color:var(--paper3)!important}
+[data-theme="dark"] .section-hdr{background:#141210!important}
+[data-theme="dark"] input,[data-theme="dark"] select,[data-theme="dark"] textarea{background:var(--paper)!important;color:var(--ink)!important;border-color:var(--paper3)!important}
+[data-theme="dark"] label{color:var(--ink2)!important}
+[data-theme="dark"] .hint{color:var(--ink3)!important}
+[data-theme="dark"] .tbl th{background:var(--paper3)!important;color:var(--ink2)!important}
+[data-theme="dark"] .tbl td{border-color:var(--paper3)!important;color:var(--ink2)!important}
 body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);font-size:14px}
 .hdr{background:var(--ink);height:54px;display:flex;align-items:center;padding:0 28px;justify-content:space-between}
 .hdr-logo{font-family:'DM Serif Display',serif;font-size:16px;color:var(--paper)}
@@ -69,6 +80,24 @@ textarea{resize:vertical;min-height:60px}
   <div class="page-sub">Configure all settings for this client's dashboard.</div>
 
   <!-- Basic info -->
+  <!-- Display preferences -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Display preferences</div></div>
+    <div class="section-body">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--ink)">Dark mode</div>
+          <div style="font-size:12px;color:var(--ink3);margin-top:2px">Easier on the eyes at night. Saved to this browser.</div>
+        </div>
+        <label style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0;cursor:pointer">
+          <input type="checkbox" id="dark-mode-toggle-input" onchange="toggleDarkMode()" style="opacity:0;width:0;height:0;position:absolute">
+          <span id="dark-mode-track" style="position:absolute;inset:0;border-radius:24px;background:#d0cbc4;transition:background .2s"></span>
+          <span id="dark-mode-thumb" style="position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:white;box-shadow:0 1px 4px rgba(0,0,0,.25);transition:transform .2s"></span>
+        </label>
+      </div>
+    </div>
+  </div>
+
   <div class="section-card">
     <div class="section-hdr"><div class="section-title">Basic information</div></div>
     <div class="section-body">
@@ -1069,6 +1098,30 @@ function deleteTemplate(id, btn) {
 }
 
 loadTemplates();
+
+// ── Dark mode (settings page) ─────────────────────────────────────────────
+(function(){
+  var isDark = localStorage.getItem('cavnar_theme') === 'dark';
+  if (isDark) document.documentElement.setAttribute('data-theme','dark');
+  var tog = document.getElementById('dark-mode-toggle-input');
+  var track = document.getElementById('dark-mode-track');
+  var thumb = document.getElementById('dark-mode-thumb');
+  if (tog) tog.checked = isDark;
+  if (track) track.style.background = isDark ? '#c84b2f' : '#d0cbc4';
+  if (thumb) thumb.style.transform = isDark ? 'translateX(20px)' : 'none';
+})();
+
+function toggleDarkMode() {
+  var tog = document.getElementById('dark-mode-toggle-input');
+  var isDark = tog ? tog.checked : false;
+  var next = isDark ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('cavnar_theme', next);
+  var track = document.getElementById('dark-mode-track');
+  var thumb = document.getElementById('dark-mode-thumb');
+  if (track) track.style.background = isDark ? '#c84b2f' : '#d0cbc4';
+  if (thumb) thumb.style.transform = isDark ? 'translateX(20px)' : 'none';
+}
 </script>
 </body>
 </html>
