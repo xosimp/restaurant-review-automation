@@ -223,7 +223,9 @@ input:focus,select:focus{border-color:var(--ember)}
               <button class="action-item" onclick="resendPayment({{user.restaurant_id}},'{{user.email}}','{{user.billing_status}}');closeMenu({{user.id}})">Resend payment link</button>
               <button class="action-item" onclick="resendContract({{user.restaurant_id}});closeMenu({{user.id}})">Resend contract</button>
               <button class="action-item" onclick="fetchReviewsNow({{user.restaurant_id}});closeMenu({{user.id}})">Fetch reviews now</button>
-              <button class="action-item" onclick="openTAImport({{user.restaurant_id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Import TripAdvisor CSV</button>
+              <button class="action-item" onclick="openReviewImport({{user.restaurant_id}},'{{user.restaurant_name}}','tripadvisor');closeMenu({{user.id}})">Import TripAdvisor CSV</button>
+              <button class="action-item" onclick="openReviewImport({{user.restaurant_id}},'{{user.restaurant_name}}','doordash');closeMenu({{user.id}})">Import DoorDash CSV</button>
+              <button class="action-item" onclick="openReviewImport({{user.restaurant_id}},'{{user.restaurant_name}}','ubereats');closeMenu({{user.id}})">Import Uber Eats CSV</button>
               <button class="action-item" onclick="redraftAll({{user.restaurant_id}});closeMenu({{user.id}})">Re-draft all with AI</button>
               <button class="action-item" onclick="seedReviews({{user.restaurant_id}});closeMenu({{user.id}})">Seed sample reviews</button>
               <button class="action-item" onclick="openToastModal({{user.restaurant_id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">🍞 Toast POS</button>
@@ -989,14 +991,14 @@ async function postIncident() {
   </div>
 </footer>
 
-<!-- TripAdvisor import modal -->
+<!-- Review import modal (TripAdvisor / DoorDash / Uber Eats) -->
 <div id="ta-modal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(14,12,10,.6);align-items:center;justify-content:center">
   <div style="background:white;border-radius:14px;padding:28px;max-width:440px;width:90%;position:relative">
     <button onclick="document.getElementById('ta-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:#7a736a">✕</button>
-    <div style="font-size:16px;font-weight:700;margin-bottom:4px">Import TripAdvisor reviews</div>
+    <div id="ta-modal-title" style="font-size:16px;font-weight:700;margin-bottom:4px"></div>
     <div id="ta-modal-name" style="font-size:13px;color:#7a736a;margin-bottom:16px"></div>
     <p style="font-size:13px;color:#3a3530;line-height:1.6;margin-bottom:14px">
-      Upload a CSV of TripAdvisor reviews for this client. Required columns: <strong>rating</strong> and <strong>text</strong>. Optional: author, date, title.
+      Upload a CSV of reviews for this client. Required columns: <strong>rating</strong> and <strong>text</strong>. Optional: author, date, title.
     </p>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
       <label style="display:inline-flex;align-items:center;gap:6px;background:#c84b2f;color:white;padding:9px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">
@@ -1005,21 +1007,25 @@ async function postIncident() {
       </label>
       <a href="/static/tripadvisor_template.csv" download style="font-size:12px;color:#c84b2f;text-decoration:none">↓ Template</a>
     </div>
-    <button onclick="submitTAImport()" style="background:#c84b2f;color:white;border:none;padding:10px 22px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">Upload & import</button>
+    <button onclick="submitReviewImport()" style="background:#c84b2f;color:white;border:none;padding:10px 22px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">Upload & import</button>
     <div id="ta-modal-status" style="font-size:12px;margin-top:12px;display:none"></div>
   </div>
 </div>
 
 <script>
 var _taRid = null;
-function openTAImport(rid, name) {
-  _taRid = rid;
+var _taPlatform = null;
+var _platformLabels = {tripadvisor:'TripAdvisor', doordash:'DoorDash', ubereats:'Uber Eats'};
+function openReviewImport(rid, name, platform) {
+  _taRid = rid; _taPlatform = platform;
+  var label = _platformLabels[platform] || platform;
+  document.getElementById('ta-modal-title').textContent = 'Import ' + label + ' reviews';
   document.getElementById('ta-modal-name').textContent = name;
   document.getElementById('ta-modal-status').style.display = 'none';
   document.getElementById('ta-modal-file').value = '';
   document.getElementById('ta-modal').style.display = 'flex';
 }
-function submitTAImport() {
+function submitReviewImport() {
   var file = document.getElementById('ta-modal-file').files[0];
   var status = document.getElementById('ta-modal-status');
   if (!file) { status.style.display='block';status.style.color='#c0392b';status.textContent='Select a CSV file first'; return; }
@@ -1027,6 +1033,7 @@ function submitTAImport() {
   var form = new FormData();
   form.append('file', file);
   form.append('restaurant_id', _taRid);
+  form.append('platform', _taPlatform);
   fetch('/api/import-tripadvisor', {method:'POST', body:form})
     .then(function(r){ return r.json(); })
     .then(function(d){

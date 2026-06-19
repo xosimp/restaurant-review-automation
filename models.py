@@ -402,6 +402,8 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "al_unres_sms",    "INTEGER DEFAULT 0"),
         # Review invite SMS
         ("review_requests", "customer_phone", "TEXT"),
+        # Soft-delete
+        ("reviews", "deleted_at", "TEXT"),
         # Response performance tracking
         ("reviews", "draft_edited",     "INTEGER DEFAULT 0"),
         ("reviews", "regenerate_count", "INTEGER DEFAULT 0"),
@@ -1782,7 +1784,7 @@ def get_review_stats(restaurant_id):
             SUM(review_date >= date('now','start of month'))                            AS received_this_month,
             SUM(review_date >= date('now','-30 days'))                                  AS last_30d,
             AVG(CASE WHEN review_date >= date('now','-30 days') THEN rating END)        AS avg_rating_30d
-        FROM reviews WHERE processed=1 AND restaurant_id=?
+        FROM reviews WHERE processed=1 AND restaurant_id=? AND deleted_at IS NULL
     """, (restaurant_id,)).fetchone()
 
     # Average response time in hours (review_date → approved_at) — industry standard definition.
@@ -1795,6 +1797,7 @@ def get_review_stats(restaurant_id):
         FROM reviews
         WHERE restaurant_id=? AND response_status IN ('posted','approved')
           AND approved_at IS NOT NULL AND review_date IS NOT NULL
+          AND deleted_at IS NULL
     """, (restaurant_id,)).fetchone()
 
     conn.close()
@@ -1851,7 +1854,7 @@ def get_sentiment_trend(restaurant_id, weeks=8):
             COUNT(*)                               AS total,
             ROUND(AVG(rating),1)                   AS avg_rating
         FROM reviews
-        WHERE restaurant_id=? AND processed=1
+        WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
           AND fetched_at >= datetime('now', ? || ' days')
         GROUP BY week_key
         ORDER BY week_key ASC
@@ -1887,7 +1890,7 @@ def get_platform_breakdown(restaurant_id):
                SUM(sentiment='positive')  AS positive,
                SUM(sentiment='negative')  AS negative
         FROM reviews
-        WHERE restaurant_id=? AND processed=1
+        WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
         GROUP BY platform
         ORDER BY total DESC
     """, (restaurant_id,)).fetchall()
@@ -1911,7 +1914,7 @@ def get_top_issues(restaurant_id, days=90, limit=6):
     conn = get_conn()
     rows = conn.execute("""
         SELECT categories FROM reviews
-        WHERE restaurant_id=? AND processed=1
+        WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
         AND categories IS NOT NULL AND categories != '[]'
         AND fetched_at >= datetime('now', '-' || ? || ' days')
     """, (restaurant_id, str(days))).fetchall()
@@ -1951,13 +1954,13 @@ def get_topic_heatmap(restaurant_id: int, days: int = 90) -> list:
     conn = get_conn()
     rows = conn.execute("""
         SELECT categories, sentiment FROM reviews
-        WHERE restaurant_id=? AND processed=1
+        WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
           AND categories IS NOT NULL AND categories != '[]'
           AND fetched_at >= datetime('now', '-' || ? || ' days')
     """, (restaurant_id, str(days))).fetchall()
     prev_rows = conn.execute("""
         SELECT categories FROM reviews
-        WHERE restaurant_id=? AND processed=1
+        WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
           AND categories IS NOT NULL AND categories != '[]'
           AND fetched_at >= datetime('now', '-' || ? || ' days')
           AND fetched_at < datetime('now', '-' || ? || ' days')
@@ -2030,7 +2033,7 @@ def get_topic_heatmap(restaurant_id: int, days: int = 90) -> list:
 
 def get_reviews_data(restaurant_id, filter_by="all", search=""):
     conn = get_conn()
-    where  = ["processed=1", "restaurant_id=?"]
+    where  = ["processed=1", "restaurant_id=?", "deleted_at IS NULL"]
     params = [restaurant_id]
     if filter_by == "urgent":
         where.append("urgency='high'")

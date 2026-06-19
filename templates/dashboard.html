@@ -12,7 +12,18 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Plus+Jakarta+Sans:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--ember2:#e8956a;--green:#2d6a4f;--green-bg:#eaf4ee;--red:#c0392b;--red-bg:#fdf0ef;--amber:#b7791f;--amber-bg:#fef9ec;--blue:#1a56cc;--blue-bg:#e8f0fe;--r:8px}
+:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--ember2:#e8956a;--green:#2d6a4f;--green-bg:#eaf4ee;--red:#c0392b;--red-bg:#fdf0ef;--amber:#b7791f;--amber-bg:#fef9ec;--blue:#1a56cc;--blue-bg:#e8f0fe;--r:8px;--surface:#ffffff;--hdr-bg:var(--ink)}
+[data-theme="dark"]{--ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#7a736a;--paper:#1c1814;--paper2:#242018;--paper3:#332e28;--ember:#e0603e;--green:#4a9e72;--green-bg:#0d2b1a;--red:#e05555;--red-bg:#2a1010;--amber:#d4a030;--amber-bg:#2a2008;--blue:#5b9cf6;--blue-bg:#0e1e3a;--surface:#252018;--hdr-bg:#141210}
+[data-theme="dark"] html,[data-theme="dark"] body{color:var(--ink)}
+[data-theme="dark"] html{background:#1c1814;background-image:none}
+[data-theme="dark"] .card{background:var(--surface);border-color:var(--paper3);color:var(--ink)}
+[data-theme="dark"] .stat{background:var(--surface);border-color:var(--paper3)}
+[data-theme="dark"] .hdr{background:var(--hdr-bg)}
+[data-theme="dark"] .panel{background:var(--paper)}
+[data-theme="dark"] .draft-box{background:var(--paper2)}
+[data-theme="dark"] textarea,[data-theme="dark"] input[type="text"],[data-theme="dark"] input[type="email"],[data-theme="dark"] input[type="tel"],[data-theme="dark"] .search-input{background:var(--paper2);color:var(--ink);border-color:var(--paper3)}
+[data-theme="dark"] .toolbar{background:var(--paper2);border-color:var(--paper3)}
+[data-theme="dark"] select{background:var(--paper2);color:var(--ink);border-color:var(--paper3)}
 body{font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink);font-size:14px;line-height:1.6}
 html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d4 100%);background-attachment:fixed;min-height:100%}
 .hdr{background:var(--ink);height:56px;display:flex;align-items:center;padding:0 28px;justify-content:space-between;position:sticky;top:0;z-index:100}
@@ -471,6 +482,7 @@ function clientUpload(dataType, input) {
         </div>
       </div>
     </div>
+    <button id="dark-toggle" onclick="toggleDarkMode()" title="Toggle dark mode" style="background:none;border:none;cursor:pointer;padding:4px 6px;color:var(--ink3);font-size:15px;line-height:1;display:flex;align-items:center">🌙</button>
     <a href="/logout" class="logout-btn">Sign out</a>
   </div>
 </header>
@@ -813,6 +825,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         </div>
       </div>
       <span class="schip {{'sp' if r.sentiment=='positive' else ('sn' if r.sentiment=='negative' else 'su')}}">{{r.sentiment or 'neutral'}}</span>
+      <button onclick="deleteReview({{r.id}},this)" title="Remove review" style="background:none;border:none;color:var(--ink3);font-size:15px;cursor:pointer;padding:2px 6px;line-height:1;opacity:.5;transition:opacity .15s" onmouseover="this.style.opacity='1';this.style.color='#c0392b'" onmouseout="this.style.opacity='.5';this.style.color='var(--ink3)'">✕</button>
     </div>
     <div class="card-body">
       <div class="rtext">{{r.text|e}}</div>
@@ -2948,6 +2961,36 @@ function clearFilters(){
   if(allPill)allPill.classList.add('active');
   filterReviews();
 }
+(function(){
+  var saved = localStorage.getItem('cavnar_theme');
+  if (saved === 'dark') {
+    document.documentElement.setAttribute('data-theme','dark');
+    var btn = document.getElementById('dark-toggle');
+    if (btn) btn.textContent = '☀️';
+  }
+})();
+
+function toggleDarkMode() {
+  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  var next = isDark ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('cavnar_theme', next);
+  var btn = document.getElementById('dark-toggle');
+  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+}
+
+function deleteReview(id, btn) {
+  if (!confirm('Remove this review from your dashboard? This cannot be undone.')) return;
+  fetch('/api/reviews/' + id + '/delete', {method:'POST'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok) {
+        var card = document.getElementById('rc-' + id);
+        if (card) { card.style.transition='opacity .3s'; card.style.opacity='0'; setTimeout(function(){ card.remove(); filterReviews(); }, 300); }
+      } else { toast('Could not remove review','error'); }
+    });
+}
+
 var _filterTimer = null;
 function debouncedFilter(){
   clearTimeout(_filterTimer);

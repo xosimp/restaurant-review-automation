@@ -90,6 +90,17 @@ def approve(rid, current_user):
         print(f"[GMB] approve auto-post error: {e}")
     return jsonify(ok=True, auto_posted=False)
 
+@client_bp.route("/api/reviews/<int:rid>/delete", methods=["POST"])
+@login_required
+def delete_review(rid, current_user):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE reviews SET deleted_at=datetime('now') WHERE id=? AND restaurant_id=?",
+        (rid, current_user["restaurant_id"])
+    )
+    conn.commit(); conn.close()
+    return jsonify(ok=True)
+
 @client_bp.route("/skip/<int:rid>", methods=["POST"])
 @login_required
 def skip(rid, current_user):
@@ -271,6 +282,13 @@ def import_tripadvisor(current_user):
         ))
     if not reviews:
         return jsonify(ok=False, error="No valid reviews found — check column names (rating, text required)"), 400
+
+    # Correct platform label from form override
+    plat_override = (request.form.get("platform") or "").strip().lower()
+    allowed_platforms = ("tripadvisor", "doordash", "ubereats")
+    if plat_override in allowed_platforms:
+        for rv in reviews:
+            rv.platform = plat_override
 
     new_count, new_objs = save_reviews(reviews)
     # Trigger AI processing in background
