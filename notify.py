@@ -213,6 +213,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
         SELECT alert_1star, alert_2star, alert_health, alert_5star,
                alert_neg_spike, alert_negative_trend, alert_no_response,
                urgent_via_sms, urgent_via_email, owner_email,
+               alert_max_per_day,
                al_health_email, al_health_sms,
                al_1star_email,  al_1star_sms,
                al_2star_email,  al_2star_sms,
@@ -244,7 +245,29 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
         except Exception:
             return default
 
+    # Load DND / daily cap settings
+    _dnd_row = conn.execute(
+        "SELECT alert_quiet_start, alert_quiet_end, alert_max_per_day FROM restaurants WHERE id=?",
+        (restaurant_id,)
+    ).fetchone() if False else None  # loaded lazily below
+
+    def _check_dnd():
+        try:
+            from models import is_in_quiet_hours, count_alerts_today
+            if is_in_quiet_hours(restaurant_id, db_path):
+                print(f"[notify] rid={restaurant_id} suppressed — quiet hours active")
+                return True
+            cap = row["alert_max_per_day"] if "alert_max_per_day" in row.keys() else 0
+            if cap and cap > 0 and count_alerts_today(restaurant_id, db_path) >= cap:
+                print(f"[notify] rid={restaurant_id} suppressed — daily cap {cap} reached")
+                return True
+        except Exception as _de:
+            print(f"[notify] DND check error: {_de}")
+        return False
+
     def blast(sms_text: str, subject: str, html: str, alert_type: str, review_id: int = None):
+        if _check_dnd():
+            return
         # Per-type channel flags (fall back to 1 so old data keeps working)
         type_map = {
             "health":    ("al_health_sms",  "al_health_email"),

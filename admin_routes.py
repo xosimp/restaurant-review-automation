@@ -11,7 +11,8 @@ from functools import wraps
 # Import everything needed from the main app
 from models import (get_conn, get_restaurant, update_restaurant,
                     create_restaurant, Restaurant, get_reviews_data,
-                    get_review_stats, get_email_log, log_email, get_all_restaurants)
+                    get_review_stats, get_email_log, log_email, get_all_restaurants,
+                    get_changelog, save_changelog_entry, delete_changelog_entry)
 from auth import (create_session, get_session_user, delete_session,
                   verify_password, list_users, create_user, update_password,
                   admin_required, login_required)
@@ -1760,3 +1761,43 @@ def seed_labor_history(current_user):
 
     conn.close()
     return jsonify(ok=True, inserted=inserted, restaurant_id=restaurant_id, labor_target_set=23.0, monthly_revenue_target_set=365000, shifts_seeded=True)
+
+
+# ── Changelog admin ──────────────────────────────────────────────────────────
+
+@admin_bp.route("/admin/api/changelog", methods=["GET"])
+@admin_required
+def admin_get_changelog(current_user):
+    return jsonify(ok=True, entries=get_changelog())
+
+@admin_bp.route("/admin/api/changelog", methods=["POST"])
+@admin_required
+def admin_create_changelog(current_user):
+    data = request.get_json(force=True) or {}
+    title = (data.get("title") or "").strip()
+    body  = (data.get("body") or "").strip()
+    tag   = (data.get("tag") or "feature").strip()
+    if not title:
+        return jsonify(ok=False, error="title required"), 400
+    entry_id = save_changelog_entry(title, body, tag)
+    return jsonify(ok=True, id=entry_id)
+
+@admin_bp.route("/admin/api/changelog/<int:entry_id>", methods=["DELETE"])
+@admin_required
+def admin_delete_changelog(entry_id, current_user):
+    delete_changelog_entry(entry_id)
+    return jsonify(ok=True)
+
+
+# ── White-label branding admin ───────────────────────────────────────────────
+
+@admin_bp.route("/admin/api/brand/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def admin_set_brand(restaurant_id, current_user):
+    data = request.get_json(force=True) or {}
+    allowed = {"brand_name", "brand_color", "brand_logo_url"}
+    updates = {k: v for k, v in data.items() if k in allowed}
+    if not updates:
+        return jsonify(ok=False, error="No valid fields"), 400
+    update_restaurant(restaurant_id, updates)
+    return jsonify(ok=True)

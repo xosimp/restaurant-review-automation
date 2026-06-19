@@ -223,6 +223,7 @@ input:focus,select:focus{border-color:var(--ember)}
               <button class="action-item" onclick="resendPayment({{user.restaurant_id}},'{{user.email}}','{{user.billing_status}}');closeMenu({{user.id}})">Resend payment link</button>
               <button class="action-item" onclick="resendContract({{user.restaurant_id}});closeMenu({{user.id}})">Resend contract</button>
               <button class="action-item" onclick="fetchReviewsNow({{user.restaurant_id}});closeMenu({{user.id}})">Fetch reviews now</button>
+              <button class="action-item" onclick="openBrandModal({{user.restaurant_id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Set white-label branding</button>
               <button class="action-item" onclick="openReviewImport({{user.restaurant_id}},'{{user.restaurant_name}}','tripadvisor');closeMenu({{user.id}})">Import TripAdvisor CSV</button>
               <button class="action-item" onclick="openReviewImport({{user.restaurant_id}},'{{user.restaurant_name}}','doordash');closeMenu({{user.id}})">Import DoorDash CSV</button>
               <button class="action-item" onclick="openReviewImport({{user.restaurant_id}},'{{user.restaurant_name}}','ubereats');closeMenu({{user.id}})">Import Uber Eats CSV</button>
@@ -811,6 +812,38 @@ async function postIncident() {
   }
 }
 </script>
+  <!-- Changelog manager -->
+  <div style="max-width:860px;margin:0 auto 32px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 8px">
+      <div class="section-title" style="margin-bottom:0">In-app changelog</div>
+      <span style="font-size:11px;color:var(--ink3)">Visible to all clients via ✦ in their dashboard header</span>
+    </div>
+    <div class="card" style="padding:20px;margin-bottom:16px">
+      <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;flex-wrap:wrap">
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">TITLE</label>
+          <input id="cl-title" type="text" placeholder="e.g. Dark mode is here" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit">
+        </div>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">BODY (optional)</label>
+          <input id="cl-body" type="text" placeholder="Short description…" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit">
+        </div>
+        <div style="display:flex;gap:8px;align-items:end">
+          <div>
+            <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">TAG</label>
+            <select id="cl-tag" style="padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit">
+              <option value="feature">feature</option>
+              <option value="improvement">improvement</option>
+              <option value="fix">fix</option>
+            </select>
+          </div>
+          <button onclick="adminCreateChangelog()" style="background:#c84b2f;color:white;border:none;padding:9px 18px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">+ Post</button>
+        </div>
+      </div>
+    </div>
+    <div id="cl-list" style="display:flex;flex-direction:column;gap:8px"></div>
+  </div>
+
   <!-- Email Log -->
   <div style="max-width:860px;margin:0 auto">
   <div style="display:flex;align-items:center;justify-content:space-between;margin:12px 0 8px">
@@ -1046,6 +1079,98 @@ function submitReviewImport() {
       }
     }).catch(function(){ status.style.color='#c0392b';status.textContent='Upload failed'; });
 }
+
+// ── Changelog ────────────────────────────────────────────────────────────────
+function adminLoadChangelog() {
+  fetch('/admin/api/changelog').then(function(r){ return r.json(); }).then(function(d) {
+    var el = document.getElementById('cl-list');
+    if (!el) return;
+    if (!d.entries || !d.entries.length) {
+      el.innerHTML = '<div style="font-size:12px;color:var(--ink3);padding:8px 0">No entries yet.</div>';
+      return;
+    }
+    var tagColors = {feature:'#1a56cc',fix:'#2d6a4f',improvement:'#b7791f'};
+    var tagBg = {feature:'#e8f0fe',fix:'#eaf4ee',improvement:'#fef9ec'};
+    var html = '';
+    d.entries.forEach(function(e) {
+      var tag = e.tag || 'feature';
+      html += '<div style="background:white;border:1px solid #e0dbd0;border-radius:8px;padding:12px 16px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px">';
+      html += '<div>';
+      html += '<span style="font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;background:'+(tagBg[tag]||'#e8f0fe')+';color:'+(tagColors[tag]||'#1a56cc')+';padding:2px 7px;border-radius:4px;margin-right:8px">'+e.tag+'</span>';
+      html += '<span style="font-size:12px;color:#7a736a">'+((e.published_at||'').slice(0,10))+'</span>';
+      html += '<div style="font-size:13px;font-weight:600;color:#0e0c0a;margin-top:5px">'+escHtml(e.title)+'</div>';
+      if (e.body) html += '<div style="font-size:12px;color:#3a3530;margin-top:2px">'+escHtml(e.body)+'</div>';
+      html += '</div>';
+      html += '<button onclick="adminDeleteChangelog('+e.id+',this)" style="background:none;border:none;cursor:pointer;color:#c0392b;font-size:15px;flex-shrink:0;padding:0 2px" title="Delete">✕</button>';
+      html += '</div>';
+    });
+    el.innerHTML = html;
+  });
+}
+function escHtml(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function adminCreateChangelog() {
+  var title = (document.getElementById('cl-title').value||'').trim();
+  var body  = (document.getElementById('cl-body').value||'').trim();
+  var tag   = document.getElementById('cl-tag').value;
+  if (!title) { alert('Title required'); return; }
+  fetch('/admin/api/changelog', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({title:title, body:body, tag:tag})
+  }).then(function(r){ return r.json(); }).then(function(d) {
+    if (d.ok) {
+      document.getElementById('cl-title').value = '';
+      document.getElementById('cl-body').value  = '';
+      adminLoadChangelog();
+    } else { alert('Error: ' + (d.error||'unknown')); }
+  });
+}
+function adminDeleteChangelog(id, btn) {
+  if (!confirm('Delete this changelog entry?')) return;
+  fetch('/admin/api/changelog/'+id, {method:'DELETE'})
+    .then(function(r){ return r.json(); })
+    .then(function(d){ if (d.ok) adminLoadChangelog(); });
+}
+
+// ── White-label brand ────────────────────────────────────────────────────────
+function openBrandModal(rid, name) {
+  var html = '<div style="position:fixed;inset:0;z-index:10001;background:rgba(14,12,10,.6);display:flex;align-items:center;justify-content:center" id="brand-overlay">';
+  html += '<div style="background:white;border-radius:14px;padding:28px;max-width:400px;width:90%;position:relative">';
+  html += '<button onclick="document.getElementById(\'brand-overlay\').remove()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:#7a736a">✕</button>';
+  html += '<div style="font-size:15px;font-weight:700;margin-bottom:4px">White-label branding</div>';
+  html += '<div style="font-size:12px;color:#7a736a;margin-bottom:18px">'+escHtml(name)+'</div>';
+  html += '<div style="display:flex;flex-direction:column;gap:12px">';
+  html += '<div><label style="font-size:11px;font-weight:600;color:#7a736a;display:block;margin-bottom:4px">BRAND NAME</label><input id="brand-name-inp" type="text" placeholder="Cavnar AI" style="width:100%;padding:8px 10px;border:1px solid #e0dbd0;border-radius:6px;font-size:13px;font-family:inherit"></div>';
+  html += '<div><label style="font-size:11px;font-weight:600;color:#7a736a;display:block;margin-bottom:4px">BRAND COLOR (hex)</label><input id="brand-color-inp" type="text" placeholder="#c84b2f" style="width:100%;padding:8px 10px;border:1px solid #e0dbd0;border-radius:6px;font-size:13px;font-family:inherit"></div>';
+  html += '<div><label style="font-size:11px;font-weight:600;color:#7a736a;display:block;margin-bottom:4px">LOGO URL (optional)</label><input id="brand-logo-inp" type="text" placeholder="https://…/logo.png" style="width:100%;padding:8px 10px;border:1px solid #e0dbd0;border-radius:6px;font-size:13px;font-family:inherit"></div>';
+  html += '</div>';
+  html += '<button onclick="saveBrand('+rid+')" style="margin-top:18px;background:#c84b2f;color:white;border:none;padding:10px 22px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Save branding</button>';
+  html += '<div id="brand-status" style="font-size:12px;margin-top:10px;display:none"></div>';
+  html += '</div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+function saveBrand(rid) {
+  var payload = {
+    brand_name:     document.getElementById('brand-name-inp').value.trim(),
+    brand_color:    document.getElementById('brand-color-inp').value.trim(),
+    brand_logo_url: document.getElementById('brand-logo-inp').value.trim()
+  };
+  var st = document.getElementById('brand-status');
+  st.style.display='block'; st.style.color='#7a736a'; st.textContent='Saving…';
+  fetch('/admin/api/brand/'+rid, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  }).then(function(r){ return r.json(); }).then(function(d) {
+    if (d.ok) { st.style.color='#2d6a4f'; st.textContent='✓ Saved'; }
+    else { st.style.color='#c0392b'; st.textContent='Error: '+(d.error||'unknown'); }
+  });
+}
+
+// Init
+adminLoadChangelog();
 </script>
 </body>
 </html>

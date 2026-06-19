@@ -548,6 +548,37 @@ textarea{resize:vertical;min-height:60px}
         Changes take effect immediately after saving.
       </div>
 
+      <!-- DND / frequency throttle -->
+      <div style="border-top:1px solid var(--paper3);margin-top:20px;padding-top:18px">
+        <div style="font-size:12px;font-weight:600;color:var(--ink2);margin-bottom:12px">Do-not-disturb &amp; frequency</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;align-items:end">
+          <div>
+            <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">QUIET START</label>
+            <input id="setting-alert_quiet_start" type="time" value="{{ restaurant.alert_quiet_start or '' }}"
+              style="width:100%;padding:6px 8px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;background:white">
+            <div style="font-size:10px;color:var(--ink3);margin-top:3px">No alerts sent after this time</div>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">QUIET END</label>
+            <input id="setting-alert_quiet_end" type="time" value="{{ restaurant.alert_quiet_end or '' }}"
+              style="width:100%;padding:6px 8px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;background:white">
+            <div style="font-size:10px;color:var(--ink3);margin-top:3px">Alerts resume at this time</div>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">MAX ALERTS / DAY</label>
+            <select id="setting-alert_max_per_day"
+              style="width:100%;padding:6px 8px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;background:white">
+              <option value="0" {{ 'selected' if not restaurant.alert_max_per_day or restaurant.alert_max_per_day==0 }}>Unlimited</option>
+              {% for n in [1,2,3,5,10] %}
+              <option value="{{ n }}" {{ 'selected' if restaurant.alert_max_per_day == n }}>{{ n }} per day</option>
+              {% endfor %}
+            </select>
+            <div style="font-size:10px;color:var(--ink3);margin-top:3px">Cap total daily alert sends</div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--ink3);margin-top:10px">Times use Chicago timezone. Leave blank to disable quiet hours.</div>
+      </div>
+
     </div>
   </div>
 
@@ -921,6 +952,9 @@ async function saveSettings() {
     al_spike_sms:          document.getElementById('setting-al_spike_sms').checked ? 1 : 0,
     al_unres_email:        document.getElementById('setting-al_unres_email').checked ? 1 : 0,
     al_unres_sms:          document.getElementById('setting-al_unres_sms').checked ? 1 : 0,
+    alert_quiet_start:     document.getElementById('setting-alert_quiet_start').value || null,
+    alert_quiet_end:       document.getElementById('setting-alert_quiet_end').value || null,
+    alert_max_per_day:     parseInt(document.getElementById('setting-alert_max_per_day').value) || 0,
     alert_5star:           document.getElementById('setting-alert_5star').checked ? 1 : 0,
     alert_rating_threshold: document.getElementById('setting-alert_rating_threshold').checked ? 1 : 0,
     alert_rating_floor:    parseFloat(document.getElementById('setting-alert_rating_floor').value) || 4.0,

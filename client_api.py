@@ -183,6 +183,25 @@ def topic_heatmap_api(current_user):
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
+@client_bp.route("/api/changelog")
+@login_required
+def changelog_api(current_user):
+    from models import get_changelog, get_restaurant, update_restaurant
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    entries = get_changelog()
+    # Mark as seen — stamp now
+    update_restaurant(current_user["restaurant_id"], {"changelog_seen_at": __import__("datetime").datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")})
+    return jsonify(ok=True, entries=entries)
+
+@client_bp.route("/api/changelog/unread-count")
+@login_required
+def changelog_unread_count(current_user):
+    from models import get_changelog, get_restaurant
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    since = restaurant.changelog_seen_at if restaurant else None
+    unread = get_changelog(since=since) if since else get_changelog()
+    return jsonify(ok=True, count=len(unread))
+
 @client_bp.route("/api/templates", methods=["GET"])
 @login_required
 def list_templates(current_user):

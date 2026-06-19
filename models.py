@@ -185,6 +185,15 @@ CREATE TABLE IF NOT EXISTS response_templates (
 );
 CREATE INDEX IF NOT EXISTS idx_templates_restaurant ON response_templates(restaurant_id);
 
+CREATE TABLE IF NOT EXISTS changelog_entries (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    title        TEXT NOT NULL,
+    body         TEXT,
+    tag          TEXT DEFAULT 'feature',  -- feature, fix, improvement
+    published_at TEXT NOT NULL DEFAULT (datetime('now')),
+    is_published INTEGER DEFAULT 1
+);
+
 CREATE INDEX IF NOT EXISTS idx_reviews_restaurant   ON reviews(restaurant_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_status       ON reviews(response_status);
 CREATE INDEX IF NOT EXISTS idx_reviews_fetched      ON reviews(fetched_at);
@@ -301,6 +310,13 @@ class Restaurant:
     al_spike_sms:         int       = 0
     al_unres_email:       int       = 1
     al_unres_sms:         int       = 0
+    changelog_seen_at: Optional[str] = None
+    alert_quiet_start: Optional[str] = None
+    alert_quiet_end:   Optional[str] = None
+    alert_max_per_day: int           = 0
+    brand_name:        Optional[str] = None
+    brand_color:       Optional[str] = None
+    brand_logo_url:    Optional[str] = None
     last_activity: Optional[str]    = None
     gbp_rating: Optional[float]     = None
     gbp_review_count: Optional[int] = None
@@ -404,6 +420,16 @@ def ensure_columns(db_path: str = DB_PATH):
         ("review_requests", "customer_phone", "TEXT"),
         # Soft-delete
         ("reviews", "deleted_at", "TEXT"),
+        # Changelog seen state
+        ("restaurants", "changelog_seen_at", "TEXT"),
+        # Alert DND / throttle
+        ("restaurants", "alert_quiet_start", "TEXT"),
+        ("restaurants", "alert_quiet_end",   "TEXT"),
+        ("restaurants", "alert_max_per_day", "INTEGER DEFAULT 0"),
+        # White-label branding
+        ("restaurants", "brand_name",      "TEXT"),
+        ("restaurants", "brand_color",     "TEXT"),
+        ("restaurants", "brand_logo_url",  "TEXT"),
         # Response performance tracking
         ("reviews", "draft_edited",     "INTEGER DEFAULT 0"),
         ("reviews", "regenerate_count", "INTEGER DEFAULT 0"),
@@ -938,6 +964,9 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "al_health_email","al_health_sms","al_1star_email","al_1star_sms",
         "al_2star_email","al_2star_sms","al_5star_email","al_5star_sms",
         "al_spike_email","al_spike_sms","al_unres_email","al_unres_sms",
+        "changelog_seen_at",
+        "alert_quiet_start","alert_quiet_end","alert_max_per_day",
+        "brand_name","brand_color","brand_logo_url",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -1051,6 +1080,13 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         digest_day=row["digest_day"] if "digest_day" in row.keys() else "monday",
         digest_enabled=row["digest_enabled"] if "digest_enabled" in row.keys() else 1,
         last_fetched_at=row["last_fetched_at"] if "last_fetched_at" in row.keys() else None,
+        changelog_seen_at=row["changelog_seen_at"] if "changelog_seen_at" in row.keys() else None,
+        alert_quiet_start=row["alert_quiet_start"] if "alert_quiet_start" in row.keys() else None,
+        alert_quiet_end=row["alert_quiet_end"]     if "alert_quiet_end"   in row.keys() else None,
+        alert_max_per_day=row["alert_max_per_day"] if "alert_max_per_day" in row.keys() else 0,
+        brand_name=row["brand_name"]         if "brand_name"     in row.keys() else None,
+        brand_color=row["brand_color"]       if "brand_color"    in row.keys() else None,
+        brand_logo_url=row["brand_logo_url"] if "brand_logo_url" in row.keys() else None,
     )
 
 
@@ -2078,6 +2114,72 @@ def get_response_performance(restaurant_id: int, days: int = 90, db_path: str = 
             counts[r["response_action"]] = r["cnt"]
     total = sum(counts.values())
     return {"total": total, "days": days, **counts}
+
+
+def get_changelog(since: str = None, db_path: str = DB_PATH) -> list:
+    """Return published changelog entries, newest first. since= ISO datetime to only get unread."""
+    conn = get_conn(db_path)
+    if since:
+        rows = conn.execute(
+            "SELECT * FROM changelog_entries WHERE is_published=1 AND published_at > ? ORDER BY published_at DESC",
+            (since,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM changelog_entries WHERE is_published=1 ORDER BY published_at DESC LIMIT 30"
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def save_changelog_entry(title: str, body: str, tag: str = "feature", db_path: str = DB_PATH) -> int:
+    conn = get_conn(db_path)
+    cur = conn.execute(
+        "INSERT INTO changelog_entries (title, body, tag) VALUES (?,?,?)",
+        (title.strip(), (body or "").strip(), tag)
+    )
+    row_id = cur.lastrowid
+    conn.commit(); conn.close()
+    return row_id
+
+def delete_changelog_entry(entry_id: int, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("DELETE FROM changelog_entries WHERE id=?", (entry_id,))
+    conn.commit(); conn.close()
+
+def is_in_quiet_hours(restaurant_id: int, db_path: str = DB_PATH) -> bool:
+    """Return True if the current Chicago time falls within the restaurant's quiet window."""
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT alert_quiet_start, alert_quiet_end FROM restaurants WHERE id=?",
+        (restaurant_id,)
+    ).fetchone()
+    conn.close()
+    if not row or not row["alert_quiet_start"] or not row["alert_quiet_end"]:
+        return False
+    try:
+        from zoneinfo import ZoneInfo
+        from datetime import datetime as _dt
+        now = _dt.now(ZoneInfo("America/Chicago"))
+        now_t = now.hour * 60 + now.minute
+        def _hm(s):
+            h, m = s.split(":"); return int(h)*60+int(m)
+        start = _hm(row["alert_quiet_start"])
+        end   = _hm(row["alert_quiet_end"])
+        if start <= end:
+            return start <= now_t < end
+        else:  # crosses midnight
+            return now_t >= start or now_t < end
+    except Exception:
+        return False
+
+def count_alerts_today(restaurant_id: int, db_path: str = DB_PATH) -> int:
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT COUNT(*) as c FROM alert_log WHERE restaurant_id=? AND fired_at >= date('now')",
+        (restaurant_id,)
+    ).fetchone()
+    conn.close()
+    return row["c"] if row else 0
 
 
 def get_response_templates(restaurant_id: int, db_path: str = DB_PATH) -> list:

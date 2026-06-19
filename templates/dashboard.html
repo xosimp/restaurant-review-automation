@@ -3,13 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{ restaurant.name }} — Cavnar AI</title>
+<title>{{ restaurant.name }} — {{ restaurant.brand_name or 'Cavnar AI' }}</title>
 <meta name="csrf-token" content="{{csrf_token}}">
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="shortcut icon" href="/favicon.ico">
 <meta name="theme-color" content="#0e0c0a">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Plus+Jakarta+Sans:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=swap" rel="stylesheet">
+{% if restaurant.brand_color %}<style>:root{--ember:{{ restaurant.brand_color | e }};--ember2:{{ restaurant.brand_color | e }}cc}</style>{% endif %}
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--ember2:#e8956a;--green:#2d6a4f;--green-bg:#eaf4ee;--red:#c0392b;--red-bg:#fdf0ef;--amber:#b7791f;--amber-bg:#fef9ec;--blue:#1a56cc;--blue-bg:#e8f0fe;--r:8px;--surface:#ffffff;--hdr-bg:var(--ink)}
@@ -435,7 +436,7 @@ function clientUpload(dataType, input) {
 {% endif %}
 <header class="hdr">
   <div class="hdr-left">
-    <div class="hdr-logo">Cavnar <em>AI</em></div>
+    <div class="hdr-logo">{% if restaurant.brand_name %}{{ restaurant.brand_name | e }}{% else %}Cavnar <em>AI</em>{% endif %}</div>
     {% if group_locations and group_locations|length > 1 %}
     <div style="position:relative" id="loc-switcher-wrap">
       <button id="loc-switcher-btn" onclick="toggleLocSwitcher()" style="display:flex;align-items:center;gap:5px;background:none;border:none;cursor:pointer;padding:0;font-family:'DM Sans',sans-serif">
@@ -479,6 +480,22 @@ function clientUpload(dataType, input) {
         <div style="padding:10px 14px;border-bottom:1px solid var(--paper3);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">Recent alerts</div>
         <div id="notif-list" style="max-height:280px;overflow-y:auto;padding:4px 0">
           <div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Loading…</div>
+        </div>
+      </div>
+    </div>
+    <!-- Changelog / What's New -->
+    <div style="position:relative" id="changelog-wrap">
+      <button id="changelog-btn" onclick="openChangelog()" title="What's new" style="background:none;border:none;cursor:pointer;padding:4px 6px;display:flex;align-items:center;gap:4px;color:var(--ink3);font-size:12px;font-weight:600;position:relative">
+        ✦
+        <span id="changelog-badge" style="display:none;position:absolute;top:2px;right:0;width:7px;height:7px;border-radius:50%;background:#c84b2f;border:1.5px solid white"></span>
+      </button>
+      <div id="changelog-panel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:320px;background:white;border:1px solid var(--paper3);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.15);z-index:1001;overflow:hidden">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">What's new</div>
+          <button onclick="document.getElementById('changelog-panel').style.display='none'" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:15px;line-height:1;padding:0">✕</button>
+        </div>
+        <div id="changelog-list" style="max-height:340px;overflow-y:auto;padding:8px 0">
+          <div style="padding:14px 16px;font-size:12px;color:var(--ink3)">Loading…</div>
         </div>
       </div>
     </div>
@@ -2969,6 +2986,63 @@ function clearFilters(){
     if (btn) btn.textContent = '☀️';
   }
 })();
+
+// ── Changelog ────────────────────────────────────────────────────────────────
+var _changelogLoaded = false;
+function openChangelog() {
+  var panel = document.getElementById('changelog-panel');
+  var isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : 'block';
+  if (!isOpen && !_changelogLoaded) { _loadChangelog(); }
+}
+function _loadChangelog() {
+  fetch('/api/changelog').then(function(r){ return r.json(); }).then(function(d) {
+    _changelogLoaded = true;
+    document.getElementById('changelog-badge').style.display = 'none';
+    var list = document.getElementById('changelog-list');
+    if (!d.ok || !d.entries || !d.entries.length) {
+      list.innerHTML = '<div style="padding:14px 16px;font-size:12px;color:var(--ink3)">No updates yet.</div>';
+      return;
+    }
+    var tagColors = {feature:'#1a56cc',fix:'#2d6a4f',improvement:'#b7791f'};
+    var tagBg = {feature:'#e8f0fe',fix:'#eaf4ee',improvement:'#fef9ec'};
+    var html = '';
+    for (var i=0; i<d.entries.length; i++) {
+      var e = d.entries[i];
+      var tag = e.tag || 'feature';
+      var date = (e.published_at||'').slice(0,10);
+      html += '<div style="padding:12px 16px;border-bottom:1px solid var(--paper3)">';
+      html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">';
+      html += '<span style="font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;background:'+(tagBg[tag]||'#e8f0fe')+';color:'+(tagColors[tag]||'#1a56cc')+';padding:2px 7px;border-radius:4px">'+tag+'</span>';
+      html += '<span style="font-size:11px;color:var(--ink3)">'+date+'</span>';
+      html += '</div>';
+      html += '<div style="font-size:13px;font-weight:600;color:var(--ink);margin-bottom:3px">'+_escHtml(e.title)+'</div>';
+      if (e.body) html += '<div style="font-size:12px;color:var(--ink2);line-height:1.5">'+_escHtml(e.body)+'</div>';
+      html += '</div>';
+    }
+    list.innerHTML = html;
+  }).catch(function(){
+    document.getElementById('changelog-list').innerHTML = '<div style="padding:14px 16px;font-size:12px;color:var(--ink3)">Could not load updates.</div>';
+  });
+}
+function _escHtml(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+// Check for unread on load
+(function(){
+  fetch('/api/changelog/unread-count').then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok && d.count > 0) {
+      document.getElementById('changelog-badge').style.display = 'block';
+    }
+  }).catch(function(){});
+})();
+// Close changelog panel on outside click
+document.addEventListener('click', function(e) {
+  var wrap = document.getElementById('changelog-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    document.getElementById('changelog-panel').style.display = 'none';
+  }
+});
 
 function toggleDarkMode() {
   var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
