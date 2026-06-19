@@ -846,12 +846,14 @@ try:
     from models import init_db as _init_db, ensure_columns as _ec, init_email_log as _iel, init_onboarding_emails as _ioe
     from models import init_staff_notes as _isn
     from auth import init_auth as _init_auth
+    from webhooks import init_webhooks as _iwh
     _init_db()
     _init_auth()
     _isn()
     _ec()
     _iel()
     _ioe()
+    _iwh()
     print("DB init OK")
 except Exception as _e:
     print(f"DB init error: {_e}")

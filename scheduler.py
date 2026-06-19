@@ -209,12 +209,26 @@ def run_daily_fetch():
 
             log.info(f"{new_count} new reviews for {restaurant.name}")
 
-            # Fire SMS alerts for newly saved reviews
+            # Fire SMS/email alerts for newly saved reviews
             try:
                 from notify import fire_review_alerts
                 fire_review_alerts(rid, restaurant.name, new_reviews)
             except Exception as _ae:
                 log.error(f"Alert fire error [{restaurant.name}]: {_ae}")
+
+            # Fire outbound webhooks for each new review
+            try:
+                from webhooks import fire_webhook as _fw
+                for _nr in new_reviews:
+                    _fw(rid, "review.received", {
+                        "platform": _nr.platform,
+                        "rating":   _nr.rating,
+                        "author":   _nr.author,
+                        "body":     (_nr.text or "")[:500],
+                        "sentiment": getattr(_nr, "sentiment", None),
+                    })
+            except Exception:
+                pass
 
             # Analyse
             for r in get_pending_analysis(rid, limit=50):

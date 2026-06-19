@@ -232,6 +232,11 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
         if via_email and owner_email:
             _send_alert_email(owner_email, subject, html)
         _log_alert(restaurant_id, alert_type, review_id)
+        try:
+            from webhooks import fire_webhook as _fw
+            _fw(restaurant_id, "alert.fired", {"alert_type": alert_type, "review_id": review_id})
+        except Exception:
+            pass
 
     for review in new_reviews:
         rating   = review.rating or 0

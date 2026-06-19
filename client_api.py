@@ -22,6 +22,11 @@ def approve(rid, current_user):
         log_event(current_user["restaurant_id"], "review_approved", {"review_id": rid})
     except Exception:
         pass
+    try:
+        from webhooks import fire_webhook as _fw
+        _fw(current_user["restaurant_id"], "response.approved", {"review_id": rid})
+    except Exception:
+        pass
     # Auto-post to Google in background thread — don't block the response
     try:
         from gmb import is_connected
@@ -1704,6 +1709,56 @@ def _ai_visibility_inner(current_user):
         checklist=checklist,
         gbp_connected=gbp_connected,
     )
+
+
+@client_bp.route("/api/webhook", methods=["GET"])
+@login_required
+def webhook_get(current_user):
+    from webhooks import get_webhook
+    import json
+    wh = get_webhook(current_user["restaurant_id"])
+    if not wh:
+        return jsonify(ok=True, webhook=None)
+    return jsonify(ok=True, webhook={
+        "url":         wh["url"],
+        "secret":      wh["secret"],
+        "events":      json.loads(wh.get("events") or "[]"),
+        "last_fired":  wh.get("last_fired_at"),
+        "last_status": wh.get("last_status"),
+    })
+
+@client_bp.route("/api/webhook", methods=["POST"])
+@login_required
+def webhook_save(current_user):
+    from webhooks import save_webhook
+    import json
+    data   = request.get_json()
+    url    = (data.get("url") or "").strip()
+    events = data.get("events") or ["review.received", "alert.fired", "response.approved"]
+    if not url.startswith("http"):
+        return jsonify(ok=False, error="Invalid URL")
+    secret = save_webhook(current_user["restaurant_id"], url, events)
+    return jsonify(ok=True, secret=secret)
+
+@client_bp.route("/api/webhook", methods=["DELETE"])
+@login_required
+def webhook_delete(current_user):
+    from webhooks import delete_webhook
+    delete_webhook(current_user["restaurant_id"])
+    return jsonify(ok=True)
+
+@client_bp.route("/api/webhook/test", methods=["POST"])
+@login_required
+def webhook_test(current_user):
+    from webhooks import get_webhook, _deliver
+    wh = get_webhook(current_user["restaurant_id"])
+    if not wh:
+        return jsonify(ok=False, error="No webhook configured")
+    _deliver(wh, "test", {
+        "message": "This is a test webhook from Cavnar AI",
+        "restaurant_id": current_user["restaurant_id"],
+    })
+    return jsonify(ok=True)
 
 
 @client_bp.route("/api/switch-location", methods=["POST"])
