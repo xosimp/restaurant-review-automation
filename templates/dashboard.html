@@ -794,7 +794,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <button class="fpill {{'active' if rfilter=='positive'}}" onclick="setRF('positive',this)">Positive</button>
     </div>
     <span class="count-lbl">{{reviews|length}} review{{'s' if reviews|length!=1}}</span>
-    <button class="btn btn-skip" style="margin-left:auto" onclick="exportReviews()">Export CSV<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button class="btn-primary" style="margin-left:auto;padding:6px 14px;font-size:12px" onclick="exportReviews()">Export CSV<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
   {% if reviews %}
   {% set colors=['#c84b2f','#2d6a4f','#b7791f','#1a56cc','#6b4fa0','#1e7a8c'] %}
@@ -2949,6 +2949,16 @@ function debouncedFilter(){
   _filterTimer = setTimeout(filterReviews, 250);
 }
 
+function _highlightText(el, q){
+  if(!el) return;
+  if(!el.dataset.orig) el.dataset.orig = el.innerHTML;
+  if(!q){ el.innerHTML = el.dataset.orig; return; }
+  var escaped = q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  var re = new RegExp('(' + escaped + ')', 'gi');
+  el.innerHTML = el.dataset.orig.replace(re,
+    '<strong style="color:#0e0c0a;font-size:1.05em">$1</strong>');
+}
+
 function filterReviews(){
   var q=(document.getElementById('rsearch').value||'').toLowerCase().trim();
   var topicF=window._topicFilter||'';
@@ -2960,8 +2970,8 @@ function filterReviews(){
     var posted=card.classList.contains('posted');
     var schip=card.querySelector('.schip');
     var sentiment=schip?schip.textContent.trim().toLowerCase():'';
-    // Build searchable string: review text + author + rating + platform + categories
-    var reviewText=(card.querySelector('.rtext')||{}).textContent||'';
+    var rtextEl=card.querySelector('.rtext');
+    var reviewText=(rtextEl||{}).textContent||'';
     var author=card.dataset.author||'';
     var rating=card.dataset.rating||'';
     var platform=card.dataset.platform||'';
@@ -2979,7 +2989,12 @@ function filterReviews(){
     var matchSearch=!q||searchable.indexOf(q)!==-1;
     var visible=matchFilter&&matchTopic&&matchSearch;
     card.style.display=visible?'':'none';
-    if(visible)shown++;
+    if(visible){
+      shown++;
+      _highlightText(rtextEl, q);
+    } else {
+      _highlightText(rtextEl, '');
+    }
   });
   staggerCards();
   var countEl=document.querySelector('.count-lbl');
