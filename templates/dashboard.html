@@ -425,7 +425,24 @@ function clientUpload(dataType, input) {
 <header class="hdr">
   <div class="hdr-left">
     <div class="hdr-logo">Cavnar <em>AI</em></div>
+    {% if group_locations and group_locations|length > 1 %}
+    <div style="position:relative" id="loc-switcher-wrap">
+      <button id="loc-switcher-btn" onclick="toggleLocSwitcher()" style="display:flex;align-items:center;gap:5px;background:none;border:none;cursor:pointer;padding:0;font-family:'DM Sans',sans-serif">
+        <span class="hdr-restaurant" id="loc-current-name" style="cursor:pointer">{{ restaurant.location_name or restaurant.name }}</span>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ink3);margin-top:1px"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <div id="loc-switcher-panel" style="display:none;position:absolute;left:0;top:calc(100% + 8px);min-width:180px;background:white;border:1px solid var(--paper3);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;overflow:hidden">
+        {% for loc in group_locations %}
+        <button onclick="switchLocation({{ loc.id }}, '{{ loc.name | e }}')"
+          style="display:block;width:100%;text-align:left;padding:9px 14px;border:none;background:{% if loc.active %}var(--paper2){% else %}white{% endif %};cursor:pointer;font-size:13px;font-family:'DM Sans',sans-serif;color:{% if loc.active %}var(--ember){% else %}var(--ink){% endif %};font-weight:{% if loc.active %}600{% else %}400{% endif %}">
+          {{ loc.name }}{% if loc.active %} ✓{% endif %}
+        </button>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
     <div class="hdr-restaurant">{{ restaurant.name }}</div>
+    {% endif %}
   </div>
   <div class="hdr-right">
     <div style="display:flex;align-items:center;gap:8px">
@@ -4686,6 +4703,32 @@ function revokeOtherSessions(btn){
   checkStatus();
   setInterval(checkStatus, 120000);
 })();
+
+// ── Location switcher (multi-location owners) ─────────────────────────────
+window.toggleLocSwitcher = function() {
+  var panel = document.getElementById('loc-switcher-panel');
+  if (!panel) return;
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+};
+
+window.switchLocation = function(rid, name) {
+  fetch('/api/switch-location', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}'},
+    body: JSON.stringify({restaurant_id: rid})
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.ok) { window.location.reload(); }
+    else { toast('Could not switch location', 'error'); }
+  });
+};
+
+document.addEventListener('click', function(e) {
+  var wrap = document.getElementById('loc-switcher-wrap');
+  if (wrap && !wrap.contains(e.target)) {
+    var panel = document.getElementById('loc-switcher-panel');
+    if (panel) panel.style.display = 'none';
+  }
+});
 
 // ── In-app notifications ───────────────────────────────────────────────────
 (function(){

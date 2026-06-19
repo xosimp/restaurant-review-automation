@@ -1706,6 +1706,47 @@ def _ai_visibility_inner(current_user):
     )
 
 
+@client_bp.route("/api/switch-location", methods=["POST"])
+@login_required
+def switch_location(current_user):
+    if current_user.get("role") != "owner":
+        return jsonify(ok=False, error="Not an owner account"), 403
+    data = request.get_json()
+    target_id = int(data.get("restaurant_id", 0))
+    if not target_id:
+        return jsonify(ok=False, error="Missing restaurant_id"), 400
+    # Validate target is in same group as base restaurant
+    from models import get_restaurant, get_location_group
+    base = get_restaurant(current_user["base_restaurant_id"])
+    if not base or not base.location_group:
+        return jsonify(ok=False, error="No location group configured"), 400
+    group = get_location_group(base.location_group)
+    valid_ids = [r["id"] for r in group]
+    if target_id not in valid_ids:
+        return jsonify(ok=False, error="Location not in your group"), 403
+    from auth import switch_active_restaurant
+    token = request.cookies.get("session_token")
+    switch_active_restaurant(token, target_id)
+    target = get_restaurant(target_id)
+    return jsonify(ok=True, restaurant_name=target.name, restaurant_id=target_id)
+
+
+@client_bp.route("/api/group-locations")
+@login_required
+def group_locations(current_user):
+    if current_user.get("role") != "owner":
+        return jsonify(ok=False, locations=[])
+    from models import get_restaurant, get_location_group
+    base = get_restaurant(current_user["base_restaurant_id"])
+    if not base or not base.location_group:
+        return jsonify(ok=True, locations=[])
+    group = get_location_group(base.location_group)
+    active_id = current_user["restaurant_id"]
+    locs = [{"id": r["id"], "name": r.get("location_name") or r["name"],
+              "active": r["id"] == active_id} for r in group]
+    return jsonify(ok=True, locations=locs, group_name=base.location_group)
+
+
 @client_bp.route("/api/notifications")
 @login_required
 def get_notifications(current_user):

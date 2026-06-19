@@ -227,6 +227,12 @@ input:focus,select:focus{border-color:var(--ember)}
               <button class="action-item" onclick="seedReviews({{user.restaurant_id}});closeMenu({{user.id}})">Seed sample reviews</button>
               <button class="action-item" onclick="openToastModal({{user.restaurant_id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">🍞 Toast POS</button>
               <div class="action-divider"></div>
+              {% if user.role == 'owner' %}
+              <button class="action-item" onclick="setUserRole({{user.id}},'client');closeMenu({{user.id}})">Set as GM (single location)</button>
+              {% else %}
+              <button class="action-item" onclick="setUserRole({{user.id}},'owner');closeMenu({{user.id}})">Set as owner (multi-location)</button>
+              {% endif %}
+              <div class="action-divider"></div>
               <button class="action-item action-item-danger" onclick="deactivateClient({{user.id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">Deactivate</button>
               {% else %}
               <div class="action-divider"></div>
@@ -254,6 +260,7 @@ input:focus,select:focus{border-color:var(--ember)}
           {% if user.last_active_tab %}<span><strong style="color:var(--ink2)">Last tab:</strong> {{user.last_active_tab}}</span>{% endif %}
           <span><strong style="color:var(--ink2)">Reviews fetched:</strong> {{user.last_fetched_at or 'Never'}}</span>
           <span><strong style="color:var(--ink2)">Account:</strong> {% if user.is_active %}<span style="color:#2d6a4f">Active</span>{% else %}<span style="color:#9ca3af">Inactive</span>{% endif %}</span>
+          <span><strong style="color:var(--ink2)">Role:</strong> <span style="{% if user.role == 'owner' %}color:#7c3aed;font-weight:600{% else %}color:var(--ink3){% endif %}">{{ user.role or 'client' }}</span></span>
           {% if not user.is_admin %}
           <button onclick="toggleUsage({{user.restaurant_id}}, this)" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;padding:0;font-weight:500;margin-left:auto">Show usage ▾</button>
           {% endif %}
@@ -533,6 +540,17 @@ async function reactivateClient(id, name) {
     if (data.ok) { location.reload(); }
     else { btn.textContent = 'Error'; console.error(data); }
   } catch(e) { btn.textContent = 'Error'; console.error(e); }
+}
+
+async function setUserRole(userId, role) {
+  const res = await fetch('/admin/api/set-user-role', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({user_id: userId, role: role})
+  });
+  const data = await res.json();
+  if (data.ok) { location.reload(); }
+  else { alert('Error: ' + (data.error || 'unknown')); }
 }
 
 async function addStaffNote() {

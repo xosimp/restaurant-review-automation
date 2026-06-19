@@ -310,6 +310,19 @@ def reactivate_client(user_id, current_user):
             print(f"Reactivation email failed: {e}")
     return jsonify(ok=True)
 
+@admin_bp.route("/admin/api/set-user-role", methods=["POST"])
+@admin_required
+def set_user_role_route(current_user):
+    data = request.get_json()
+    user_id = int(data.get("user_id", 0))
+    role = data.get("role", "client")
+    if role not in ("client", "owner"):
+        return jsonify(ok=False, error="Invalid role")
+    from auth import set_user_role
+    set_user_role(user_id, role)
+    return jsonify(ok=True)
+
+
 @admin_bp.route("/admin/client-data/<int:restaurant_id>")
 @admin_required
 def client_data_page(restaurant_id, current_user):

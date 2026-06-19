@@ -45,6 +45,8 @@ def init_auth(db_path: str = DB_PATH):
         "ALTER TABLE sessions ADD COLUMN last_active TEXT NOT NULL DEFAULT (datetime('now'))",
         "ALTER TABLE sessions ADD COLUMN ip_address TEXT",
         "ALTER TABLE sessions ADD COLUMN user_agent TEXT",
+        "ALTER TABLE sessions ADD COLUMN active_restaurant_id INTEGER",
+        "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'client'",
     ]:
         try:
             import sqlite3 as _sql
@@ -220,7 +222,31 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
     conn.execute("UPDATE sessions SET last_active=datetime('now') WHERE token=?", (token,))
     conn.commit()
     conn.close()
-    return dict(row)
+    user = dict(row)
+    # For owners, active_restaurant_id in session overrides their base restaurant_id
+    if user.get("role") == "owner" and user.get("active_restaurant_id"):
+        user["base_restaurant_id"] = user["restaurant_id"]
+        user["restaurant_id"] = user["active_restaurant_id"]
+    else:
+        user["base_restaurant_id"] = user["restaurant_id"]
+    return user
+
+def switch_active_restaurant(token: str, restaurant_id: int, db_path: str = DB_PATH):
+    """Set the active restaurant for an owner's session."""
+    conn = get_conn(db_path)
+    conn.execute(
+        "UPDATE sessions SET active_restaurant_id=? WHERE token=?",
+        (restaurant_id, token)
+    )
+    conn.commit()
+    conn.close()
+
+def set_user_role(user_id: int, role: str, db_path: str = DB_PATH):
+    """Set role on a user: 'client' or 'owner'."""
+    conn = get_conn(db_path)
+    conn.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+    conn.commit()
+    conn.close()
 
 def delete_session(token: str, db_path: str = DB_PATH):
     conn = get_conn(db_path)

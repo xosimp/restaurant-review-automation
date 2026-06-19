@@ -741,10 +741,26 @@ def index(current_user):
     except Exception:
         pass
 
+    # Multi-location: load group locations for owner switcher
+    _group_locations = []
+    if current_user.get("role") == "owner":
+        try:
+            from models import get_restaurant as _gr_grp, get_location_group as _glg
+            _base = _gr_grp(current_user["base_restaurant_id"])
+            if _base and _base.location_group:
+                _grp = _glg(_base.location_group)
+                _active_id = current_user["restaurant_id"]
+                _group_locations = [{"id": r["id"],
+                                     "name": r.get("location_name") or r["name"],
+                                     "active": r["id"] == _active_id} for r in _grp]
+        except Exception:
+            pass
+
     return render_template('dashboard.html',
         show_welcome=show_welcome,
         csrf_token=csrf_token,
         current_user=current_user, restaurant=restaurant,
+        group_locations=_group_locations,
         rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch, top_issues=top_issues, platform_breakdown=platform_breakdown, sentiment_trend=sentiment_trend,
         labor=labor, inv=inv, ctypes=CONTENT_TYPES,
         mod_reviews=int(restaurant.module_reviews or 0),
