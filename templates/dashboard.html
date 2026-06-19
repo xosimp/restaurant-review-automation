@@ -105,8 +105,12 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] .hdr-logo em{color:var(--ember2)!important}
 /* Consultant card name text (uses var(--paper) designed for dark header, not dark card) */
 [data-theme="dark"] .acct-hero-card .acct-name{color:#f0ebe0!important}
+/* Reviews sub-tab underline — hide in dark mode */
+[data-theme="dark"] #rv-tab-container{border-bottom-color:transparent!important}
+/* Benchmark rate card dark override */
+[data-theme="dark"] #rate-card{background:linear-gradient(to right,#2a1010,var(--surface))!important}
 /* Platform breakdown cards */
-.plat-card{background:var(--paper);border:1px solid var(--paper3);border-radius:8px;padding:12px 14px;cursor:pointer;transition:box-shadow .15s}
+.plat-card{background:var(--paper);border:1px solid var(--paper3);border-radius:8px;padding:12px 14px;cursor:pointer;transition:box-shadow .15s,border-color .15s}
 .plat-worst{background:linear-gradient(to bottom,#f5d5d5,var(--paper));border-color:#f5c6c6}
 .plat-best{background:linear-gradient(to bottom,#d5ede0,var(--paper));border-color:#b7dfca}
 [data-theme="dark"] .plat-card{background:var(--surface)!important;border-color:var(--paper3)!important}
@@ -698,7 +702,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div>
 
   <!-- Reviews sub-tab nav -->
-  <div style="display:flex;gap:0;border-bottom:2px solid var(--paper3);margin-bottom:16px">
+  <div id="rv-tab-container" style="display:flex;gap:0;border-bottom:2px solid var(--paper3);margin-bottom:16px">
     <button id="rv-tab-inbox"     onclick="switchReviewsTab('inbox')"     style="background:none;border:none;border-bottom:2px solid var(--ember);margin-bottom:-2px;padding:7px 16px;font-size:13px;font-weight:600;color:var(--ink);cursor:pointer;font-family:'DM Sans',sans-serif">Inbox</button>
     <button id="rv-tab-analytics" onclick="switchReviewsTab('analytics')" style="background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-2px;padding:7px 16px;font-size:13px;font-weight:600;color:var(--ink3);cursor:pointer;font-family:'DM Sans',sans-serif">Analytics</button>
   </div>
@@ -843,7 +847,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       {% set rating_col = '#2d6a4f' if p.avg_rating >= 4.5 else ('#ef9f27' if p.avg_rating >= 3.5 else '#c0392b') %}
       {% set is_worst = p.avg_rating == worst_rating and best_rating != worst_rating %}
       {% set is_best = p.avg_rating == best_rating and best_rating != worst_rating %}
-      <div onclick="filterByPlatform('{{p.platform}}')" class="plat-card {% if is_worst %}plat-worst{% elif is_best %}plat-best{% endif %}" onmouseover="this.style.boxShadow='0 4px 16px rgba(14,12,10,.25)'" onmouseout="this.style.boxShadow='none'">
+      <div onclick="filterByPlatform('{{p.platform}}')" class="plat-card {% if is_worst %}plat-worst{% elif is_best %}plat-best{% endif %}" onmouseover="var dk=document.documentElement.getAttribute('data-theme')==='dark';this.style.boxShadow=dk?'0 0 0 1px var(--paper3),0 8px 24px rgba(0,0,0,.6)':'0 6px 20px rgba(14,12,10,.18)';this.style.transform='translateY(-2px)'" onmouseout="this.style.boxShadow='';this.style.transform=''">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
           <div style="display:flex;align-items:center;gap:6px">
             <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:{{plat_col}}">{{p.platform|title}}</span>
@@ -2685,8 +2689,8 @@ function loadTopicHeatmap(days) {
         var negW = item.pct_negative;
         var neuW = 100 - posW - negW;
         var clickAttr = empty ? '' : 'onclick="filterByTopic(\'' + item.category + '\')"';
-        var hoverIn  = empty ? '' : 'onmouseover="this.style.boxShadow=\'0 4px 14px rgba(14,12,10,.1)\'"';
-        var hoverOut = 'onmouseout="this.style.boxShadow=\'\'"';
+        var hoverIn  = empty ? '' : 'onmouseover="var dk=document.documentElement.getAttribute(\'data-theme\')===\'dark\';this.style.boxShadow=dk?\'0 0 0 1px var(--paper3),0 8px 24px rgba(0,0,0,.6)\':\' 0 6px 20px rgba(14,12,10,.18)\';this.style.transform=\'translateY(-2px)\'"';
+        var hoverOut = 'onmouseout="this.style.boxShadow=\'\';this.style.transform=\'\'"';
         html += '<div ' + clickAttr + ' ' + hoverIn + ' ' + hoverOut + ' style="background:' + bg + ';border:1px solid ' + border + ';border-radius:10px;padding:12px 13px;cursor:' + (empty ? 'default' : 'pointer') + ';transition:box-shadow .15s">';
         html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
         html += '<div style="font-size:11px;font-weight:600;color:var(--ink2);line-height:1.3">' + item.label + '</div>';
