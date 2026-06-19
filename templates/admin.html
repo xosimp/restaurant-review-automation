@@ -31,8 +31,22 @@ html[data-theme="dark"],html[data-theme="dark"] body{background:#1a1714!importan
 [data-theme="dark"] .action-item{background:var(--paper2)!important;color:var(--ink2)!important;border-color:var(--paper3)!important}
 [data-theme="dark"] .action-item:hover{background:var(--paper3)!important}
 [data-theme="dark"] .group-filter-btn{background:var(--paper2)!important;color:var(--ink2)!important;border-color:var(--paper3)!important}
-/* Stat cards use background:var(--ink) which becomes cream in dark mode */
-[data-theme="dark"] #admin-mrr-grid > div{background:#1a1410!important;border:1px solid var(--paper3)}
+/* Stat cards — background:var(--ink) becomes cream in dark mode; count color:var(--paper) becomes near-black */
+[data-theme="dark"] #admin-mrr-grid > div{background:#1a1410!important;border:1px solid var(--paper3)!important}
+[data-theme="dark"] #admin-mrr-grid [style*="color:var(--paper)"]{color:#f0ebe0!important}
+/* Status / health badge colors — override hardcoded light pastels */
+[data-theme="dark"] [style*="background:#eaf4ee"]{background:#0c2318!important}
+[data-theme="dark"] [style*="background:#fef9ec"]{background:#251d08!important}
+[data-theme="dark"] [style*="background:#fef2f2"]{background:#2a1010!important}
+[data-theme="dark"] [style*="background:#f3f4f6"]{background:#252320!important}
+[data-theme="dark"] [style*="background:#e8f4fd"]{background:#0a1828!important}
+[data-theme="dark"] [style*="background:#fff3e0"]{background:#251a08!important}
+[data-theme="dark"] [style*="color:#2d6a4f"]{color:#4ead7a!important}
+[data-theme="dark"] [style*="color:#b7791f"]{color:#d4a030!important}
+[data-theme="dark"] [style*="color:#c84b2f"],[data-theme="dark"] [style*="color:#c0392b"]{color:#e07055!important}
+[data-theme="dark"] [style*="color:#1565c0"]{color:#6aabff!important}
+[data-theme="dark"] [style*="color:#e65100"]{color:#e89060!important}
+[data-theme="dark"] [style*="color:#6b7280"],[data-theme="dark"] [style*="color:#9ca3af"]{color:#7a736a!important}
 [data-theme="dark"] [style*="background:white"]{background:var(--paper2)!important}
 [data-theme="dark"] [style*="color:#0e0c0a"],[data-theme="dark"] [style*="color:#3a3530"]{color:var(--ink)!important}
 [data-theme="dark"] [style*="color:#7a736a"]{color:var(--ink3)!important}
@@ -845,7 +859,7 @@ async function postIncident() {
       <span style="font-size:11px;color:var(--ink3)">Visible to all clients via ✦ in their dashboard header</span>
     </div>
     <div class="card" style="padding:20px;margin-bottom:16px">
-      <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;flex-wrap:wrap">
+      <div style="display:grid;grid-template-columns:1fr 1fr 140px auto;gap:10px;align-items:end">
         <div>
           <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">TITLE</label>
           <input id="cl-title" type="text" placeholder="e.g. Dark mode is here" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit">
@@ -854,16 +868,17 @@ async function postIncident() {
           <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">BODY (optional)</label>
           <input id="cl-body" type="text" placeholder="Short description…" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit">
         </div>
-        <div style="display:flex;gap:8px;align-items:end">
-          <div>
-            <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">TAG</label>
-            <select id="cl-tag" style="padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit">
-              <option value="feature">feature</option>
-              <option value="improvement">improvement</option>
-              <option value="fix">fix</option>
-            </select>
-          </div>
-          <button onclick="adminCreateChangelog()" style="background:#c84b2f;color:white;border:none;padding:9px 18px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">+ Post</button>
+        <div>
+          <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">TAG</label>
+          <select id="cl-tag" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit">
+            <option value="feature">feature</option>
+            <option value="improvement">improvement</option>
+            <option value="fix">fix</option>
+          </select>
+        </div>
+        <div style="padding-bottom:1px">
+          <label style="font-size:11px;font-weight:600;color:transparent;display:block;margin-bottom:4px">.</label>
+          <button onclick="adminCreateChangelog()" style="background:#c84b2f;color:white;border:none;padding:9px 18px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;width:100%">+ Post</button>
         </div>
       </div>
     </div>
