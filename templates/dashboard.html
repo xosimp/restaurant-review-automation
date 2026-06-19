@@ -97,6 +97,9 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] .logout-btn:hover{color:var(--ink)!important;border-color:var(--ink2)!important}
 /* Consultant hero card */
 [data-theme="dark"] .acct-hero-card{background:#0f0d0b!important}
+/* Header logo */
+[data-theme="dark"] .hdr-logo{color:#f0ebe0!important}
+[data-theme="dark"] .hdr-logo em{color:var(--ember2)!important}
 /* Benchmark card gradients */
 [data-theme="dark"] [style*="background:linear-gradient(to right,#f5d5d5"]{background:linear-gradient(to right,#2a1010,var(--surface))!important}
 [data-theme="dark"] [style*="background:linear-gradient(to right,#d5ede0"]{background:linear-gradient(to right,#0c2318,var(--surface))!important}
@@ -2875,8 +2878,9 @@ function filterByTopic(category){
   var banner=document.createElement('div');
   banner.id='topic-filter-banner';
   var label=category.replace(/_/g,' ');
-  banner.style.cssText='background:#fff3e0;border:1px solid #ef9f27;border-radius:8px;padding:8px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#7a4f00';
-  banner.innerHTML='<span>📂 Showing reviews tagged <strong>'+label+'</strong></span><button onclick="clearTopicFilter()" style="background:none;border:none;cursor:pointer;font-size:12px;color:#7a4f00;font-weight:700;padding:0 4px">✕ Clear</button>';
+  var isDark=document.documentElement.getAttribute('data-theme')==='dark';
+  banner.style.cssText='background:'+(isDark?'#1a1200':'#fff3e0')+';border:1px solid '+(isDark?'#8a6000':'#ef9f27')+';border-radius:8px;padding:8px 14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;font-size:12px;color:'+(isDark?'#d4a030':'#7a4f00');
+  banner.innerHTML='<span>📂 Showing reviews tagged <strong>'+label+'</strong></span><button onclick="clearTopicFilter()" style="background:none;border:none;cursor:pointer;font-size:12px;color:'+(isDark?'#d4a030':'#7a4f00')+';font-weight:700;padding:0 4px">✕ Clear</button>';
   var toolbar=document.querySelector('.toolbar');
   if(toolbar) toolbar.parentNode.insertBefore(banner, toolbar);
   filterReviews();
