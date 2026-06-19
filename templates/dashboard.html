@@ -566,6 +566,15 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
+  <!-- Reviews sub-tab nav -->
+  <div style="display:flex;gap:0;border-bottom:2px solid var(--paper3);margin-bottom:16px">
+    <button id="rv-tab-inbox"     onclick="switchReviewsTab('inbox')"     style="background:none;border:none;border-bottom:2px solid var(--ember);margin-bottom:-2px;padding:7px 16px;font-size:13px;font-weight:600;color:var(--ink);cursor:pointer;font-family:'DM Sans',sans-serif">Inbox</button>
+    <button id="rv-tab-analytics" onclick="switchReviewsTab('analytics')" style="background:none;border:none;border-bottom:2px solid transparent;margin-bottom:-2px;padding:7px 16px;font-size:13px;font-weight:600;color:var(--ink3);cursor:pointer;font-family:'DM Sans',sans-serif">Analytics</button>
+  </div>
+
+  <!-- ══ INBOX HEADER ══ -->
+  <div id="rv-inbox-header">
+
   <!-- Review request card -->
   <div id="rr-card" class="card" style="padding:14px 18px;margin-bottom:14px;border-left:3px solid #4a9eca;background:linear-gradient(to right,#e8f4fd,white)">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
@@ -643,7 +652,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Review Intelligence</div>
     <div class="insight-text insight-loading" id="review-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:88%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:72%">&nbsp;</div><div class="skeleton" style="height:13px;width:60%">&nbsp;</div></div>
   </div>
+  </div><!-- /rv-inbox-header -->
 
+  <!-- ══ ANALYTICS ══ -->
+  <div id="rv-panel-analytics" style="display:none">
   {% set rrate = rstats.response_rate %}
   {% set rrate_label = 'Excellent' if rrate >= 70 else ('Strong' if rrate >= 40 else ('On Track' if rrate >= 15 else 'Below Average')) %}
   {% set rrate_color = '#2d6a4f' if rrate >= 70 else ('#6fcf97' if rrate >= 40 else ('#ef9f27' if rrate >= 15 else '#c0392b')) %}
@@ -749,7 +761,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div id="trend-avg-rating" style="font-size:11px;color:var(--ink3)"></div>
     </div>
   </div>
+  </div><!-- /rv-panel-analytics -->
 
+  <!-- ══ INBOX REVIEWS ══ -->
+  <div id="rv-inbox-reviews">
   <div class="toolbar">
     <div class="search-wrap">
       <svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -853,6 +868,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <button onclick="clearFilters()" class="btn-secondary" style="font-size:11px;padding:6px 14px">Clear filters</button>
   </div>
   {% endif %}
+  </div><!-- /rv-inbox-reviews -->
 </div>
 
 <!-- 2FA setup modal — lives at body level so position:fixed covers full viewport -->
@@ -2528,6 +2544,25 @@ function loadTopicHeatmap(days) {
       grid.innerHTML = '<div style="color:var(--ink3);font-size:12px;padding:8px;grid-column:1/-1">Could not load</div>';
     });
 }
+
+window.switchReviewsTab = function(tab) {
+  var isInbox = tab === 'inbox';
+  document.getElementById('rv-inbox-header').style.display  = isInbox ? '' : 'none';
+  document.getElementById('rv-inbox-reviews').style.display = isInbox ? '' : 'none';
+  document.getElementById('rv-panel-analytics').style.display = isInbox ? 'none' : '';
+  var ti = document.getElementById('rv-tab-inbox');
+  var ta = document.getElementById('rv-tab-analytics');
+  ti.style.borderBottomColor = isInbox ? 'var(--ember)' : 'transparent';
+  ti.style.color = isInbox ? 'var(--ink)' : 'var(--ink3)';
+  ti.style.fontWeight = isInbox ? '600' : '500';
+  ta.style.borderBottomColor = isInbox ? 'transparent' : 'var(--ember)';
+  ta.style.color = isInbox ? 'var(--ink3)' : 'var(--ink)';
+  ta.style.fontWeight = isInbox ? '500' : '600';
+  if (!isInbox) {
+    loadTopicHeatmap();
+    loadSentimentTrend();
+  }
+};
 
 function loadSentimentTrend(){
   if(sentimentTrendLoaded)return;
