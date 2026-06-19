@@ -406,6 +406,11 @@ def check_no_response_alerts(db_path: str = DB_PATH):
             _send_alert_email(owner_email, f"⏰ Unresponded reviews — {name}", html)
 
         _log_alert(rid, "no_response")
+        try:
+            from webhooks import fire_webhook as _fw
+            _fw(rid, "alert.fired", {"alert_type": "no_response"}, db_path)
+        except Exception:
+            pass
 
 
 def check_daily_alerts(db_path: str = DB_PATH):
@@ -441,6 +446,11 @@ def check_daily_alerts(db_path: str = DB_PATH):
             if via_email and owner_email:
                 _send_alert_email(owner_email, subject, html)
             _log_alert(rid, alert_type)
+            try:
+                from webhooks import fire_webhook as _fw
+                _fw(rid, "alert.fired", {"alert_type": alert_type}, db_path)
+            except Exception:
+                pass
 
         def _already_alerted(alert_type):
             c2 = get_conn(db_path)
