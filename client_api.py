@@ -1709,7 +1709,7 @@ def _ai_visibility_inner(current_user):
 @client_bp.route("/api/notifications")
 @login_required
 def get_notifications(current_user):
-    rid = current_user.restaurant_id
+    rid = current_user["restaurant_id"]
     LABELS = {
         "alert_1star":          "1★ review received",
         "alert_2star":          "2★ review received",
