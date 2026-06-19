@@ -530,6 +530,14 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
         conn.commit()
         conn.close()
         print(f"[Competitor] Analysis complete for {restaurant.name}")
+        try:
+            from webhooks import fire_webhook as _fw_intel
+            _fw_intel(restaurant_id, "intel.updated", {
+                "competitors_analyzed": len(competitors),
+                "generated_at": result["generated_at"],
+            })
+        except Exception:
+            pass
         return {"ok": True, **result}
     except Exception as e:
         print(f"[Competitor] run_competitor_analysis error: {e}")

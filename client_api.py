@@ -1125,6 +1125,14 @@ def client_upload_data(current_user):
                 _sldh(restaurant_id, _shift_analysis.get("by_day", {}))
             except Exception as _dh_e:
                 print(f"[daily history] {_dh_e}")
+            try:
+                from webhooks import fire_webhook as _fw_labor
+                _fw_labor(restaurant_id, "labor.updated", {
+                    "labor_pct": _shift_analysis.get("labor_pct"),
+                    "total_hours": _shift_analysis.get("total_hours"),
+                })
+            except Exception:
+                pass
         elif data_type == "inventory":
             import threading as _t_inv
             _rid_inv = restaurant_id
@@ -1135,6 +1143,17 @@ def client_upload_data(current_user):
                     _items, _ = _lif(_rid_inv)
                     _analysis = _ai(_items)
                     _trends = _cit(_rid_inv, _items)
+                    _fw_inv(_rid_inv, "inventory.updated", {
+                        "waste_rate_pct": _analysis.get("waste_rate_pct"),
+                        "benchmark": _analysis.get("benchmark_label"),
+                        "total_waste_cost": _analysis.get("total_waste_cost_week"),
+                    })
+                    if (_analysis.get("waste_rate_pct") or 0) > 8:
+                        _fw_inv(_rid_inv, "inventory.cost_alert", {
+                            "waste_rate_pct": _analysis.get("waste_rate_pct"),
+                            "benchmark": _analysis.get("benchmark_label"),
+                            "monthly_projection": _analysis.get("monthly_waste_projection"),
+                        })
                     for _pa in _trends["price_alerts"]:
                         _fw_inv(_rid_inv, "food_cost.price_increase", _pa)
                     for _ta in _trends["trend_alerts"]:

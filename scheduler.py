@@ -230,6 +230,8 @@ def run_daily_fetch():
                     _fw(rid, "review.received", _payload)
                     if (_nr.rating or 5) <= 2:
                         _fw(rid, "review.negative", _payload)
+                    if (_nr.rating or 0) >= 4:
+                        _fw(rid, "review.positive", _payload)
             except Exception:
                 pass
 
@@ -320,6 +322,10 @@ def run_weekly_digests():
                 try:
                     from models import log_email as _le
                     _le(restaurant.id, "digest", owner_email, f"Weekly digest — {restaurant.name}")
+                except Exception: pass
+                try:
+                    from webhooks import fire_webhook as _fw_rep
+                    _fw_rep(restaurant.id, "report.weekly", {"restaurant": restaurant.name, "email": owner_email})
                 except Exception: pass
             except Exception as e:
                 log.error(f"Digest failed for {restaurant.name}: {e}")

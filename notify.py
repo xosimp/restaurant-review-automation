@@ -449,6 +449,8 @@ def check_daily_alerts(db_path: str = DB_PATH):
             try:
                 from webhooks import fire_webhook as _fw
                 _fw(rid, "alert.fired", {"alert_type": alert_type}, db_path)
+                if alert_type == "labor_over":
+                    _fw(rid, "labor.over_target", {"alert_type": alert_type}, db_path)
             except Exception:
                 pass
 

@@ -2247,28 +2247,37 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <input type="url" id="webhook-url" placeholder="https://hooks.zapier.com/..." style="flex:1;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:'DM Sans',sans-serif">
     </div>
 
-    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">
-      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
-        <input type="checkbox" id="whe-review" checked style="accent-color:var(--ember)"> New review
-      </label>
-      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
-        <input type="checkbox" id="whe-negative" style="accent-color:var(--ember)"> Negative review (1–2★)
-      </label>
-      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
-        <input type="checkbox" id="whe-alert" checked style="accent-color:var(--ember)"> Alert fired
-      </label>
-      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
-        <input type="checkbox" id="whe-approved" checked style="accent-color:var(--ember)"> Response approved
-      </label>
-      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
-        <input type="checkbox" id="whe-posted" style="accent-color:var(--ember)"> Response posted live
-      </label>
-      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
-        <input type="checkbox" id="whe-fc-spike" style="accent-color:var(--ember)"> Food cost price spike (1 wk)
-      </label>
-      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
-        <input type="checkbox" id="whe-fc-trend" style="accent-color:var(--ember)"> Food cost price trend (3+ wks)
-      </label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 24px;margin-bottom:14px">
+      <div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--ink3);text-transform:uppercase;margin-bottom:6px">Reviews</div>
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-review" checked style="accent-color:var(--ember)"> New review</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-negative" style="accent-color:var(--ember)"> Negative (1–2★)</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-positive" style="accent-color:var(--ember)"> Positive (4–5★)</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-alert" checked style="accent-color:var(--ember)"> Alert fired</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-approved" checked style="accent-color:var(--ember)"> Response approved</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-posted" style="accent-color:var(--ember)"> Response posted live</label>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--ink3);text-transform:uppercase;margin-bottom:6px">Labor</div>
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-labor-over" style="accent-color:var(--ember)"> Over target</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-labor-updated" style="accent-color:var(--ember)"> Data updated</label>
+        </div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--ink3);text-transform:uppercase;margin-bottom:6px;margin-top:12px">Food Cost</div>
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-inv-updated" style="accent-color:var(--ember)"> Data updated</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-inv-cost" style="accent-color:var(--ember)"> Cost alert (&gt;8% waste)</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-fc-spike" style="accent-color:var(--ember)"> Price spike (1 wk)</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-fc-trend" style="accent-color:var(--ember)"> Price trend (3+ wks)</label>
+        </div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--ink3);text-transform:uppercase;margin-bottom:6px;margin-top:12px">Intel &amp; Reports</div>
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-intel" style="accent-color:var(--ember)"> Competitor report ready</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none"><input type="checkbox" id="whe-report" style="accent-color:var(--ember)"> Weekly digest sent</label>
+        </div>
+      </div>
     </div>
 
     <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -4800,13 +4809,20 @@ function revokeOtherSessions(btn){
       document.getElementById('wh-delete-btn').style.display = 'inline-block';
       // event checkboxes
       var evts = wh.events || [];
-      document.getElementById('whe-review').checked    = evts.indexOf('review.received') > -1;
-      document.getElementById('whe-negative').checked  = evts.indexOf('review.negative') > -1;
-      document.getElementById('whe-alert').checked     = evts.indexOf('alert.fired') > -1;
-      document.getElementById('whe-approved').checked  = evts.indexOf('response.approved') > -1;
-      document.getElementById('whe-posted').checked    = evts.indexOf('response.posted') > -1;
-      document.getElementById('whe-fc-spike').checked  = evts.indexOf('food_cost.price_increase') > -1;
-      document.getElementById('whe-fc-trend').checked  = evts.indexOf('food_cost.price_trend') > -1;
+      document.getElementById('whe-review').checked        = evts.indexOf('review.received') > -1;
+      document.getElementById('whe-negative').checked      = evts.indexOf('review.negative') > -1;
+      document.getElementById('whe-positive').checked      = evts.indexOf('review.positive') > -1;
+      document.getElementById('whe-alert').checked         = evts.indexOf('alert.fired') > -1;
+      document.getElementById('whe-approved').checked      = evts.indexOf('response.approved') > -1;
+      document.getElementById('whe-posted').checked        = evts.indexOf('response.posted') > -1;
+      document.getElementById('whe-labor-over').checked    = evts.indexOf('labor.over_target') > -1;
+      document.getElementById('whe-labor-updated').checked = evts.indexOf('labor.updated') > -1;
+      document.getElementById('whe-inv-updated').checked   = evts.indexOf('inventory.updated') > -1;
+      document.getElementById('whe-inv-cost').checked      = evts.indexOf('inventory.cost_alert') > -1;
+      document.getElementById('whe-fc-spike').checked      = evts.indexOf('food_cost.price_increase') > -1;
+      document.getElementById('whe-fc-trend').checked      = evts.indexOf('food_cost.price_trend') > -1;
+      document.getElementById('whe-intel').checked         = evts.indexOf('intel.updated') > -1;
+      document.getElementById('whe-report').checked        = evts.indexOf('report.weekly') > -1;
       // last delivery
       var lastEl = document.getElementById('webhook-last-status');
       if (wh.last_fired) {
@@ -4822,13 +4838,20 @@ function revokeOtherSessions(btn){
     var url = (document.getElementById('webhook-url').value || '').trim();
     if (!url) { showWhStatus('Enter a webhook URL.', '#c0392b'); return; }
     var events = [];
-    if (document.getElementById('whe-review').checked)    events.push('review.received');
-    if (document.getElementById('whe-negative').checked)  events.push('review.negative');
-    if (document.getElementById('whe-alert').checked)     events.push('alert.fired');
-    if (document.getElementById('whe-approved').checked)  events.push('response.approved');
-    if (document.getElementById('whe-posted').checked)    events.push('response.posted');
-    if (document.getElementById('whe-fc-spike').checked)  events.push('food_cost.price_increase');
-    if (document.getElementById('whe-fc-trend').checked)  events.push('food_cost.price_trend');
+    if (document.getElementById('whe-review').checked)        events.push('review.received');
+    if (document.getElementById('whe-negative').checked)      events.push('review.negative');
+    if (document.getElementById('whe-positive').checked)      events.push('review.positive');
+    if (document.getElementById('whe-alert').checked)         events.push('alert.fired');
+    if (document.getElementById('whe-approved').checked)      events.push('response.approved');
+    if (document.getElementById('whe-posted').checked)        events.push('response.posted');
+    if (document.getElementById('whe-labor-over').checked)    events.push('labor.over_target');
+    if (document.getElementById('whe-labor-updated').checked) events.push('labor.updated');
+    if (document.getElementById('whe-inv-updated').checked)   events.push('inventory.updated');
+    if (document.getElementById('whe-inv-cost').checked)      events.push('inventory.cost_alert');
+    if (document.getElementById('whe-fc-spike').checked)      events.push('food_cost.price_increase');
+    if (document.getElementById('whe-fc-trend').checked)      events.push('food_cost.price_trend');
+    if (document.getElementById('whe-intel').checked)         events.push('intel.updated');
+    if (document.getElementById('whe-report').checked)        events.push('report.weekly');
     var btn = document.getElementById('wh-save-btn');
     btn.textContent = 'Saving…';
     btn.disabled = true;
