@@ -190,23 +190,7 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
-  <!-- TripAdvisor import -->
-  <div class="section-card">
-    <div class="section-hdr"><div class="section-title">TripAdvisor import</div></div>
-    <div class="section-body">
-      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
-        Upload a CSV of your TripAdvisor reviews. Required columns: <strong>rating</strong> (1–5) and <strong>text</strong>. Optional: <strong>author</strong>, <strong>date</strong>, <strong>title</strong>. Column names are flexible — download the template below if unsure.
-      </p>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-        <label class="btn-save" style="padding:9px 16px;cursor:pointer;display:inline-flex;align-items:center;gap:6px">
-          📂 Choose CSV file
-          <input type="file" id="ta-csv-input" accept=".csv" style="display:none" onchange="importTripAdvisor(this)">
-        </label>
-        <a href="/static/tripadvisor_template.csv" download style="font-size:12px;color:var(--ember);text-decoration:none">↓ Download template</a>
-      </div>
-      <div id="ta-import-status" style="font-size:12px;margin-top:10px;display:none"></div>
-    </div>
-  </div>
+
 
   <!-- Response template library -->
   <div class="section-card">

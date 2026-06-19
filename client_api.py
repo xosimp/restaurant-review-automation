@@ -214,7 +214,12 @@ def use_template(tid, current_user):
 def import_tripadvisor(current_user):
     import io, csv as _csv
     from models import Review, save_reviews
-    rid  = current_user["restaurant_id"]
+    # Admin can pass restaurant_id explicitly; clients always use their own
+    admin_rid = request.form.get("restaurant_id")
+    if admin_rid and current_user.get("is_admin"):
+        rid = int(admin_rid)
+    else:
+        rid = current_user["restaurant_id"]
     f    = request.files.get("file")
     if not f:
         return jsonify(ok=False, error="No file uploaded"), 400
