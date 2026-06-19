@@ -102,7 +102,8 @@ def _deliver(webhook, event_type, data, db_path=DB_PATH):
             status = resp.status_code
             if resp.ok:
                 break
-        except Exception:
+        except Exception as e:
+            print(f"[webhook] delivery error ({webhook.get('url')}): {e}")
             status = 0
     try:
         conn = get_conn(db_path)
@@ -127,5 +128,5 @@ def fire_webhook(restaurant_id, event_type, data, db_path=DB_PATH):
             return
         t = threading.Thread(target=_deliver, args=(webhook, event_type, data, db_path), daemon=True)
         t.start()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[webhook] fire_webhook error ({event_type}, rid={restaurant_id}): {e}")

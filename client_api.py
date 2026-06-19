@@ -74,7 +74,8 @@ def approve(rid, current_user):
 @login_required
 def skip(rid, current_user):
     conn = get_conn()
-    conn.execute("UPDATE reviews SET response_status='skipped' WHERE id=?", (rid,))
+    conn.execute("UPDATE reviews SET response_status='skipped' WHERE id=? AND restaurant_id=?",
+                 (rid, current_user["restaurant_id"]))
     conn.commit(); conn.close()
     return jsonify(ok=True)
 
@@ -636,9 +637,9 @@ Write ONLY the response, no preamble. Sound like a real person, not a PR firm.""
         )
         new_draft = msg.content[0].text.strip()
         update_draft(review_id, new_draft)
-        # Reset status to drafted
         conn = get_conn()
-        conn.execute("UPDATE reviews SET response_status='drafted' WHERE id=?", (review_id,))
+        conn.execute("UPDATE reviews SET response_status='drafted' WHERE id=? AND restaurant_id=?",
+                     (review_id, current_user["restaurant_id"]))
         conn.commit(); conn.close()
         return jsonify(ok=True, draft=new_draft)
     except Exception as e:
@@ -661,7 +662,8 @@ def save_draft(review_id, current_user):
         return jsonify(ok=False, error="Review not found")
     update_draft(review_id, draft)
     conn = get_conn()
-    conn.execute("UPDATE reviews SET response_status='drafted' WHERE id=?", (review_id,))
+    conn.execute("UPDATE reviews SET response_status='drafted' WHERE id=? AND restaurant_id=?",
+                 (review_id, current_user["restaurant_id"]))
     conn.commit(); conn.close()
     return jsonify(ok=True)
 

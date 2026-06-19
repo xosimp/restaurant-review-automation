@@ -216,18 +216,22 @@ def create_client(current_user):
             password=data["password"],
         )
         # Set module access directly from checkboxes
+        def _flag(key, default=0):
+            try: return int(data.get(key, default))
+            except (TypeError, ValueError): return default
+
         from models import update_restaurant
         update_restaurant(rid, {
-            "module_reviews":  int(data.get("module_reviews", 1)),
-            "module_labor":    int(data.get("module_labor", 0)),
-            "module_inventory":int(data.get("module_inventory", 0)),
-            "module_marketing":int(data.get("module_marketing", 0)),
+            "module_reviews":  _flag("module_reviews", 1),
+            "module_labor":    _flag("module_labor"),
+            "module_inventory":_flag("module_inventory"),
+            "module_marketing":_flag("module_marketing"),
             "temp_password":   data.get("password",""),
         })
 
         # Auto-fetch menu notes from Google Places if place ID provided
         google_place_id = data.get("google_place_id") or None
-        if google_place_id and int(data.get("module_marketing", 0)):
+        if google_place_id and _flag("module_marketing"):
             try:
                 from competitor import fetch_menu_notes_from_places
                 auto_menu = fetch_menu_notes_from_places(google_place_id)
@@ -236,13 +240,12 @@ def create_client(current_user):
                     print(f"[create_client] Auto-fetched menu notes for {data['restaurant_name']}")
             except Exception as me:
                 print(f"[create_client] Menu auto-fetch failed: {me}")
-        mods = (int(data.get("module_reviews",0)) + int(data.get("module_labor",0)) +
-                int(data.get("module_inventory",0)) + int(data.get("module_marketing",0)))
         module_names = []
-        if int(data.get("module_reviews",0)): module_names.append("Review Intelligence")
-        if int(data.get("module_labor",0)):   module_names.append("Labor Optimizer")
-        if int(data.get("module_inventory",0)): module_names.append("Inventory Control")
-        if int(data.get("module_marketing",0)): module_names.append("Marketing Autopilot")
+        if _flag("module_reviews"): module_names.append("Review Intelligence")
+        if _flag("module_labor"):   module_names.append("Labor Optimizer")
+        if _flag("module_inventory"): module_names.append("Inventory Control")
+        if _flag("module_marketing"): module_names.append("Marketing Autopilot")
+        mods = len(module_names)
         modules_list = ", ".join(module_names)
 
         # Step 1: Send contract via DocuSign

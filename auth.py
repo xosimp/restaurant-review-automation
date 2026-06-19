@@ -207,10 +207,9 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
     last_active = row["last_active"] or ""
     if last_active:
         try:
-            from datetime import datetime, timedelta, timezone
-            la = datetime.fromisoformat(last_active.replace("Z",""))
-            # Compare both in UTC to avoid timezone mismatch
-            now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+            from datetime import datetime, timedelta
+            la = datetime.fromisoformat(last_active[:19])  # always naive UTC, drops any tz suffix
+            now_utc = datetime.utcnow()
             if now_utc - la > timedelta(hours=INACTIVITY_HOURS):
                 # Session expired due to inactivity — delete it
                 conn.execute("DELETE FROM sessions WHERE token=?", (token,))

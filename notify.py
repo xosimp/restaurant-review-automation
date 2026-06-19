@@ -4,6 +4,7 @@ Both channels use the same 6 alert toggles; delivery is controlled
 by urgent_via_sms and urgent_via_email per restaurant.
 """
 import os
+import html as _html
 import requests
 from models import get_conn, DB_PATH
 
@@ -78,6 +79,7 @@ def _send_alert_email(owner_email: str, subject: str, html: str) -> bool:
 
 
 def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta_label: str = "View on dashboard") -> str:
+    def _safe(s): return _html.escape(str(s)) if s else ""
     body_html = "".join(f'<p style="font-size:14px;color:#3a3530;line-height:1.6;margin:0 0 10px">{l}</p>' for l in body_lines)
     return f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
@@ -85,9 +87,9 @@ def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta
     <h2 style="font-family:Georgia,serif;font-size:20px;font-weight:400;margin:0 0 4px">
       Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
     </h2>
-    <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Alert &mdash; {restaurant_name}</p>
+    <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Alert &mdash; {_safe(restaurant_name)}</p>
   </div>
-  <h3 style="font-size:16px;font-weight:600;margin:0 0 12px;color:#1a1714">{headline}</h3>
+  <h3 style="font-size:16px;font-weight:600;margin:0 0 12px;color:#1a1714">{_safe(headline)}</h3>
   {body_html}
   <div style="margin-top:20px">
     <a href="https://dashboard.cavnar.ai"
@@ -224,6 +226,8 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
 
     contacts    = get_alert_contacts(restaurant_id, db_path) if via_sms else []
     owner_email = row["owner_email"] or ""
+    if via_email and not owner_email:
+        print(f"[notify] rid={restaurant_id} has email alerts on but no owner_email — email suppressed")
 
     def blast(sms_text: str, subject: str, html: str, alert_type: str, review_id: int = None):
         if via_sms and contacts:
@@ -241,9 +245,9 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
     for review in new_reviews:
         rating   = review.rating or 0
         text     = review.text or ""
-        author   = (review.author or "").split()[0]
-        platform = (review.platform or "Google").title()
-        preview  = text[:120].strip()
+        author   = _html.escape((review.author or "").split()[0])
+        platform = _html.escape((review.platform or "Google").title())
+        preview  = _html.escape(text[:120].strip())
         ellipsis = "…" if len(text) > 120 else ""
 
         # Health alert — highest priority
@@ -436,6 +440,8 @@ def check_daily_alerts(db_path: str = DB_PATH):
         via_sms     = bool(r["urgent_via_sms"])
         via_email   = bool(r["urgent_via_email"])
         owner_email = r["owner_email"] or ""
+        if via_email and not owner_email:
+            print(f"[notify] rid={rid} has email alerts on but no owner_email — email suppressed")
 
         contacts = get_alert_contacts(rid, db_path) if via_sms else []
 

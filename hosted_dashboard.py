@@ -869,6 +869,8 @@ try:
     _conn_boot.close()
     if not _existing_admin:
         _admin_pw = os.getenv("ADMIN_PASSWORD", "changeme123")
+        if _admin_pw == "changeme123":
+            print("SECURITY WARNING: ADMIN_PASSWORD is not set — using insecure default. Set ADMIN_PASSWORD in Railway env vars immediately.")
         _conn_boot2 = _gc_boot()
         _r_boot = _conn_boot2.execute("SELECT id FROM restaurants LIMIT 1").fetchone()
         _conn_boot2.close()

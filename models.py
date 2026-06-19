@@ -1482,7 +1482,7 @@ def save_labor_daily_history(restaurant_id: int, by_day: dict,
         # Use pre-computed per-role labor cost/pct from analyse_shifts (already correct)
         labor_cost = day_data.get("labor_cost", 0)
         labor_pct = day_data.get("labor_pct") if day_data.get("labor_pct") is not None else (
-            round(labor_cost / sales * 100, 1) if sales else 0
+            round(labor_cost / sales * 100, 1) if sales else None
         )
         try:
             dow = _dt.strptime(date_str, "%Y-%m-%d").strftime("%A")
