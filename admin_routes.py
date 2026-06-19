@@ -487,6 +487,8 @@ def save_client_settings(restaurant_id, current_user):
             "alert_rating_floor":      float(data.get("alert_rating_floor") or 4.0),
             "alert_labor_over":        int(bool(data.get("alert_labor_over"))),
         })
+        from models import log_event
+        log_event(restaurant_id, "admin_settings_update", {"by": current_user.username})
         return jsonify(ok=True)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
@@ -1021,9 +1023,24 @@ def favicon_png():
 @admin_required
 def client_usage(restaurant_id, current_user):
     """Return 30-day activity summary for a restaurant."""
-    from models import get_activity_summary
+    from models import get_activity_summary, get_conn as _gc
     summary = get_activity_summary(restaurant_id, days=30)
-    return jsonify(ok=True, **summary)
+    # last settings change timestamp
+    last_settings = None
+    try:
+        conn = _gc()
+        row = conn.execute(
+            """SELECT created_at FROM activity_log
+               WHERE restaurant_id=? AND event_type='admin_settings_update'
+               ORDER BY created_at DESC LIMIT 1""",
+            (restaurant_id,)
+        ).fetchone()
+        conn.close()
+        if row:
+            last_settings = row["created_at"]
+    except Exception:
+        pass
+    return jsonify(ok=True, last_settings_update=last_settings, **summary)
 
 
 @admin_bp.route("/api/mark-posted/<int:review_id>", methods=["POST"])

@@ -321,7 +321,9 @@ function toggleUsage(rid, btn){
         }
         if(events.login) html += '<span style="margin-right:12px">🔑 Logins: <strong>'+events.login+'</strong></span>';
         if(events.review_approved) html += '<span style="margin-right:12px">✓ Approvals: <strong>'+events.review_approved+'</strong></span>';
-        if(events.csv_upload) html += '<span>📤 CSV uploads: <strong>'+events.csv_upload+'</strong></span>';
+        if(events.csv_upload) html += '<span style="margin-right:12px">📤 CSV uploads: <strong>'+events.csv_upload+'</strong></span>';
+        if(events.admin_settings_update) html += '<span>⚙️ Settings saved: <strong>'+events.admin_settings_update+'</strong></span>';
+        if(d.last_settings_update) html += '<div style="margin-top:4px;font-size:11px;color:var(--ink3)">Last settings change: '+d.last_settings_update+'</div>';
         if(!html) html = 'No activity logged yet.';
         dataDiv.innerHTML = html;
       }).catch(function(){ dataDiv.textContent = 'Error loading usage.'; });

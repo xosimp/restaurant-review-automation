@@ -1706,6 +1706,38 @@ def _ai_visibility_inner(current_user):
     )
 
 
+@client_bp.route("/api/notifications")
+@login_required
+def get_notifications(current_user):
+    rid = current_user.restaurant_id
+    LABELS = {
+        "alert_1star":          "1★ review received",
+        "alert_2star":          "2★ review received",
+        "alert_5star":          "5★ review received",
+        "alert_health":         "Health/safety mention",
+        "alert_neg_spike":      "Negative review spike",
+        "alert_negative_trend": "Rating declining trend",
+        "alert_no_response":    "Unresponded review (48h)",
+        "alert_rating_threshold": "Rating below threshold",
+        "alert_labor_over":     "Labor % over target",
+    }
+    try:
+        conn = get_conn()
+        rows = conn.execute(
+            """SELECT alert_type, fired_at FROM alert_log
+               WHERE restaurant_id=?
+               ORDER BY fired_at DESC LIMIT 20""",
+            (rid,)
+        ).fetchall()
+        conn.close()
+        items = [{"type": r["alert_type"],
+                  "label": LABELS.get(r["alert_type"], r["alert_type"]),
+                  "fired_at": r["fired_at"]} for r in rows]
+        return jsonify(ok=True, notifications=items)
+    except Exception as e:
+        return jsonify(ok=False, notifications=[])
+
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 # ── Ryan seed (module-level — runs under Gunicorn AND direct python) ─────────
