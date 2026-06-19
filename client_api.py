@@ -8,7 +8,7 @@ from datetime import datetime
 
 from models import (get_conn, get_restaurant, update_restaurant, approve_response,
                     get_review_stats, get_reviews_data, get_sentiment_trend,
-                    get_top_issues, get_platform_breakdown)
+                    get_top_issues, get_platform_breakdown, get_topic_heatmap)
 from auth import login_required
 
 client_bp = Blueprint('client', __name__)
@@ -139,6 +139,18 @@ def review_stats_api(current_user):
         return jsonify(**stats)
     except Exception as e:
         return jsonify(error=str(e)), 500
+
+@client_bp.route("/api/topic-heatmap")
+@login_required
+def topic_heatmap_api(current_user):
+    try:
+        days = int(request.args.get("days", 90))
+        if days not in (30, 60, 90, 180):
+            days = 90
+        data = get_topic_heatmap(current_user["restaurant_id"], days=days)
+        return jsonify(ok=True, data=data)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
 
 @client_bp.route("/api/sentiment-trend")
 @login_required

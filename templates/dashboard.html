@@ -705,28 +705,28 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div>
   {% endif %}
 
-  {% if top_issues %}
-  <div class="card" style="padding:14px 16px;margin-bottom:14px">
-    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Top mentioned topics — last 90 days</div>
-    <div style="display:flex;flex-wrap:wrap;gap:8px">
-    {% set max_count = top_issues[0].count %}
-    {% for issue in top_issues %}
-      {% set pct = (issue.count / max_count * 100)|int %}
-      {% set col = '#c0392b' if issue.count >= 4 else ('#ef9f27' if issue.count >= 2 else '#6b7280') %}
-      {% set is_top = loop.first %}
-      <div onclick="filterByTopic('{{issue.category}}')" title="Click to filter reviews by {{issue.label}}" style="cursor:pointer;transition:box-shadow .15s;display:flex;align-items:center;gap:8px;background:{% if is_top %}linear-gradient(135deg,#f5d5d5,var(--paper)){% else %}var(--paper){% endif %};border:1px solid {% if is_top %}#f5c6c6{% else %}var(--paper3){% endif %};border-radius:8px;padding:{% if is_top %}10px 14px{% else %}6px 12px{% endif %};min-width:{% if is_top %}180px{% else %}130px{% endif %};flex:{% if is_top %}2{% else %}1{% endif %}" onmouseover="this.style.boxShadow='0 4px 12px rgba(14,12,10,.12)'" onmouseout="this.style.boxShadow=''">
-        <div style="flex:1">
-          <div style="font-size:{% if is_top %}14px{% else %}12px{% endif %};font-weight:{% if is_top %}700{% else %}600{% endif %};color:{% if is_top %}{{col}}{% else %}var(--ink){% endif %}">{{issue.label}}</div>
-          <div style="height:{% if is_top %}6px{% else %}4px{% endif %};background:var(--paper3);border-radius:2px;margin-top:4px;overflow:hidden">
-            <div style="height:100%;width:{{pct}}%;background:{{col}};border-radius:2px"></div>
-          </div>
-        </div>
-        <span style="font-size:{% if is_top %}18px{% else %}13px{% endif %};font-weight:700;color:{{col}};min-width:24px;text-align:right">{{issue.count}}</span>
+  <div class="card" style="padding:16px 18px;margin-bottom:14px" id="topic-heatmap-card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div style="width:3px;height:14px;background:var(--ember);border-radius:2px"></div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Topic sentiment</div>
       </div>
-    {% endfor %}
+      <div style="display:flex;gap:4px;background:var(--paper1);border:1px solid var(--paper3);border-radius:6px;padding:3px">
+        <button class="hm-days-btn" data-days="30"  onclick="loadTopicHeatmap(30)"  style="border:none;background:transparent;color:var(--ink3);font-size:11px;padding:3px 8px;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:500">30d</button>
+        <button class="hm-days-btn" data-days="90"  onclick="loadTopicHeatmap(90)"  style="border:none;background:var(--ember);color:white;font-size:11px;padding:3px 8px;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:500">90d</button>
+        <button class="hm-days-btn" data-days="180" onclick="loadTopicHeatmap(180)" style="border:none;background:transparent;color:var(--ink3);font-size:11px;padding:3px 8px;border-radius:4px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:500">6mo</button>
+      </div>
+    </div>
+    <div id="heatmap-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+      <div style="color:var(--ink3);font-size:12px;padding:8px;grid-column:1/-1">Loading…</div>
+    </div>
+    <div style="display:flex;gap:14px;margin-top:12px;padding-top:10px;border-top:1px solid var(--paper3)">
+      <span style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--ink3)"><span style="display:inline-block;width:10px;height:4px;background:#2d6a4f;border-radius:2px"></span>Positive</span>
+      <span style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--ink3)"><span style="display:inline-block;width:10px;height:4px;background:#9ca3af;border-radius:2px"></span>Neutral</span>
+      <span style="display:flex;align-items:center;gap:5px;font-size:10px;color:var(--ink3)"><span style="display:inline-block;width:10px;height:4px;background:#dc2626;border-radius:2px"></span>Negative</span>
+      <span style="margin-left:auto;font-size:10px;color:var(--ink3)">Click any topic to filter reviews</span>
     </div>
   </div>
-  {% endif %}
 
   <div class="card" style="padding:14px 16px;margin-bottom:14px;background:linear-gradient(to bottom,#fafaf8,white)">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
@@ -2461,6 +2461,74 @@ function gmbDisconnect(){
   }).catch(function(){ toast('Network error — try again','error'); });
 }
 
+var _hmDays = 90;
+var _hmLoaded = false;
+
+function loadTopicHeatmap(days) {
+  if (days) _hmDays = days;
+  var btns = document.getElementsByClassName('hm-days-btn');
+  for (var i = 0; i < btns.length; i++) {
+    var active = parseInt(btns[i].getAttribute('data-days')) === _hmDays;
+    btns[i].style.background = active ? 'var(--ember)' : 'transparent';
+    btns[i].style.color      = active ? 'white' : 'var(--ink3)';
+  }
+  var grid = document.getElementById('heatmap-grid');
+  if (!grid) return;
+  grid.innerHTML = '<div style="color:var(--ink3);font-size:12px;padding:8px;grid-column:1/-1">Loading…</div>';
+  fetch('/api/topic-heatmap?days=' + _hmDays)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.ok || !d.data) { grid.innerHTML = '<div style="color:var(--ink3);font-size:12px;padding:8px;grid-column:1/-1">No data yet</div>'; return; }
+      var html = '';
+      for (var i = 0; i < d.data.length; i++) {
+        var item = d.data[i];
+        var empty = item.count === 0;
+        var bg, border, numColor;
+        if (empty) {
+          bg = 'var(--paper1)'; border = 'var(--paper3)'; numColor = 'var(--ink3)';
+        } else if (item.pct_negative >= 50) {
+          bg = '#fef2f2'; border = '#fca5a5'; numColor = '#b91c1c';
+        } else if (item.pct_negative >= 30) {
+          bg = '#fffbeb'; border = '#fcd34d'; numColor = '#92400e';
+        } else {
+          bg = '#f0fdf4'; border = '#86efac'; numColor = '#15803d';
+        }
+        var trendSym = item.trend === 'up' ? ' ↑' : (item.trend === 'down' ? ' ↓' : '');
+        var trendCol = item.trend === 'up' ? '#dc2626' : (item.trend === 'down' ? '#2d6a4f' : 'var(--ink3)');
+        var posW = item.pct_positive;
+        var negW = item.pct_negative;
+        var neuW = 100 - posW - negW;
+        var clickAttr = empty ? '' : 'onclick="filterByTopic(\'' + item.category + '\')"';
+        var hoverIn  = empty ? '' : 'onmouseover="this.style.boxShadow=\'0 4px 14px rgba(14,12,10,.1)\'"';
+        var hoverOut = 'onmouseout="this.style.boxShadow=\'\'"';
+        html += '<div ' + clickAttr + ' ' + hoverIn + ' ' + hoverOut + ' style="background:' + bg + ';border:1px solid ' + border + ';border-radius:10px;padding:12px 13px;cursor:' + (empty ? 'default' : 'pointer') + ';transition:box-shadow .15s">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
+        html += '<div style="font-size:11px;font-weight:600;color:var(--ink2);line-height:1.3">' + item.label + '</div>';
+        html += '<span style="font-size:10px;font-weight:700;color:' + trendCol + '">' + trendSym + '</span>';
+        html += '</div>';
+        html += '<div style="font-size:24px;font-weight:700;color:' + numColor + ';line-height:1;margin-bottom:8px">' + (empty ? '—' : item.count) + '</div>';
+        if (!empty) {
+          html += '<div style="height:4px;border-radius:2px;overflow:hidden;display:flex;background:#e5e7eb">';
+          html += '<div style="width:' + posW + '%;background:#2d6a4f;height:100%"></div>';
+          html += '<div style="width:' + neuW + '%;background:#9ca3af;height:100%"></div>';
+          html += '<div style="width:' + negW + '%;background:#dc2626;height:100%"></div>';
+          html += '</div>';
+          html += '<div style="display:flex;justify-content:space-between;margin-top:3px">';
+          html += '<span style="font-size:9px;color:#2d6a4f;font-weight:600">' + posW + '%</span>';
+          html += '<span style="font-size:9px;color:#dc2626;font-weight:600">' + negW + '%</span>';
+          html += '</div>';
+        } else {
+          html += '<div style="font-size:10px;color:var(--ink3);margin-top:4px">No data</div>';
+        }
+        html += '</div>';
+      }
+      grid.innerHTML = html;
+      _hmLoaded = true;
+    }).catch(function() {
+      grid.innerHTML = '<div style="color:var(--ink3);font-size:12px;padding:8px;grid-column:1/-1">Could not load</div>';
+    });
+}
+
 function loadSentimentTrend(){
   if(sentimentTrendLoaded)return;
   sentimentTrendLoaded=true;
@@ -2557,7 +2625,7 @@ function filterByTopic(category){
     document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
     reviewsPanel.classList.add('active');
     if(reviewsTab) reviewsTab.classList.add('active');
-    if(!reviewInsightLoaded){ loadReviewInsight(); loadSentimentTrend(); }
+    if(!reviewInsightLoaded){ loadReviewInsight(); loadSentimentTrend(); loadTopicHeatmap(); }
   }
   // Clear search, reset filter pills to All
   var searchEl = document.getElementById('rsearch');
@@ -2596,7 +2664,7 @@ function filterByPlatform(platform){
     document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
     reviewsPanel.classList.add('active');
     if(reviewsTab) reviewsTab.classList.add('active');
-    if(!reviewInsightLoaded){ loadReviewInsight(); loadSentimentTrend(); }
+    if(!reviewInsightLoaded){ loadReviewInsight(); loadSentimentTrend(); loadTopicHeatmap(); }
   }
   // Filter cards by platform
   var cards = document.querySelectorAll('[id^="rc-"]');
@@ -2648,7 +2716,7 @@ function switchTab(n,btn){
     var _lnums=document.querySelectorAll('#panel-labor .labor-num');
     for(var _li=0;_li<_lnums.length;_li++){(function(el){if(el.dataset.animated)return;el.dataset.animated='1';var raw=el.textContent.replace(/[$,]/g,'').trim();var num=parseInt(raw,10);if(!isNaN(num)&&num>0)countUpMoney(el,num,900);}(_lnums[_li]));}
   }
-  if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();}
+  if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();loadTopicHeatmap();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'){
     var _iwEl=document.getElementById('inv-annual-waste');
@@ -2692,7 +2760,7 @@ document.addEventListener('DOMContentLoaded', function(){
   var btn = hash ? document.getElementById('tab-'+hash) : null;
   if(btn){ switchTab(hash, btn); }
   else if(document.getElementById('panel-reviews') && document.getElementById('panel-reviews').classList.contains('active')){
-    loadReviewInsight(); loadSentimentTrend();
+    loadReviewInsight(); loadSentimentTrend(); loadTopicHeatmap();
     // Animate default reviews panel
     var rPanel = document.getElementById('panel-reviews');
     if (rPanel) { rPanel.style.animation = 'panelIn .22s ease forwards'; }

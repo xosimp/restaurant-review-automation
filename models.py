@@ -1887,6 +1887,89 @@ def get_top_issues(restaurant_id, days=90, limit=6):
         })
     return results
 
+def get_topic_heatmap(restaurant_id: int, days: int = 90) -> list:
+    """Return all 8 categories with sentiment breakdown and period-over-period trend."""
+    from collections import defaultdict
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT categories, sentiment FROM reviews
+        WHERE restaurant_id=? AND processed=1
+          AND categories IS NOT NULL AND categories != '[]'
+          AND fetched_at >= datetime('now', '-' || ? || ' days')
+    """, (restaurant_id, str(days))).fetchall()
+    prev_rows = conn.execute("""
+        SELECT categories FROM reviews
+        WHERE restaurant_id=? AND processed=1
+          AND categories IS NOT NULL AND categories != '[]'
+          AND fetched_at >= datetime('now', '-' || ? || ' days')
+          AND fetched_at < datetime('now', '-' || ? || ' days')
+    """, (restaurant_id, str(days * 2), str(days))).fetchall()
+    conn.close()
+
+    totals = defaultdict(int)
+    pos    = defaultdict(int)
+    neg    = defaultdict(int)
+    neu    = defaultdict(int)
+    for row in rows:
+        try:
+            for c in json.loads(row["categories"] or "[]"):
+                if c:
+                    totals[c] += 1
+                    s = row["sentiment"] or "neutral"
+                    if s == "positive":   pos[c] += 1
+                    elif s == "negative": neg[c] += 1
+                    else:                 neu[c] += 1
+        except Exception:
+            pass
+
+    prev = defaultdict(int)
+    for row in prev_rows:
+        try:
+            for c in json.loads(row["categories"] or "[]"):
+                if c: prev[c] += 1
+        except Exception:
+            pass
+
+    _LABELS = {
+        "food_quality":    "Food Quality",
+        "service":         "Service",
+        "wait_time":       "Wait Time",
+        "value":           "Value",
+        "ambiance":        "Ambiance",
+        "cleanliness":     "Cleanliness",
+        "reservation":     "Reservations",
+        "takeout_delivery":"Takeout & Delivery",
+    }
+    _ORDER = list(_LABELS.keys())
+
+    results = []
+    for cat in _ORDER:
+        total = totals[cat]
+        p, n, u = pos[cat], neg[cat], neu[cat]
+        pv = prev[cat]
+        if total == 0:
+            trend = "flat"
+        elif pv == 0 or total > pv * 1.15:
+            trend = "up"
+        elif total < pv * 0.85:
+            trend = "down"
+        else:
+            trend = "flat"
+        results.append({
+            "category":    cat,
+            "label":       _LABELS[cat],
+            "count":       total,
+            "positive":    p,
+            "negative":    n,
+            "neutral":     u,
+            "pct_positive": round(p / total * 100) if total else 0,
+            "pct_negative": round(n / total * 100) if total else 0,
+            "trend":       trend,
+        })
+    results.sort(key=lambda x: x["count"], reverse=True)
+    return results
+
+
 def get_reviews_data(restaurant_id, filter_by="all", search=""):
     conn = get_conn()
     where  = ["processed=1", "restaurant_id=?"]
