@@ -768,7 +768,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div class="toolbar">
     <div class="search-wrap">
       <svg class="search-ico" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-      <input class="search-input" id="rsearch" placeholder="Search by name, keyword, rating, platform…" value="{{rsearch}}" oninput="filterReviews()" onkeydown="if(event.key==='Escape'){this.value='';filterReviews();}">
+      <input class="search-input" id="rsearch" placeholder="Search by name, keyword, rating, platform…" value="{{rsearch}}" oninput="debouncedFilter()" onkeydown="if(event.key==='Escape'){this.value='';filterReviews();}">
     </div>
     <div class="filter-pills">
       <button class="fpill {{'active' if rfilter=='all'}}" onclick="setRF('all',this)">All</button>
@@ -2879,6 +2879,12 @@ function clearFilters(){
   if(allPill)allPill.classList.add('active');
   filterReviews();
 }
+var _filterTimer = null;
+function debouncedFilter(){
+  clearTimeout(_filterTimer);
+  _filterTimer = setTimeout(filterReviews, 250);
+}
+
 function filterReviews(){
   var q=(document.getElementById('rsearch').value||'').toLowerCase().trim();
   var topicF=window._topicFilter||'';
