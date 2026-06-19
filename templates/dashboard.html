@@ -102,6 +102,13 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] .hdr-logo em{color:var(--ember2)!important}
 /* Consultant card name text (uses var(--paper) designed for dark header, not dark card) */
 [data-theme="dark"] .acct-hero-card .acct-name{color:#f0ebe0!important}
+/* Platform breakdown cards */
+.plat-card{background:var(--paper);border:1px solid var(--paper3);border-radius:8px;padding:12px 14px;cursor:pointer;transition:box-shadow .15s}
+.plat-worst{background:linear-gradient(to bottom,#f5d5d5,var(--paper));border-color:#f5c6c6}
+.plat-best{background:linear-gradient(to bottom,#d5ede0,var(--paper));border-color:#b7dfca}
+[data-theme="dark"] .plat-card{background:var(--surface)!important;border-color:var(--paper3)!important}
+[data-theme="dark"] .plat-worst{background:linear-gradient(to bottom,#2a1010,var(--surface))!important;border-color:#5a2828!important}
+[data-theme="dark"] .plat-best{background:linear-gradient(to bottom,#0c2318,var(--surface))!important;border-color:#1e4a30!important}
 /* Benchmark card gradients */
 [data-theme="dark"] [style*="background:linear-gradient(to right,#f5d5d5"]{background:linear-gradient(to right,#2a1010,var(--surface))!important}
 [data-theme="dark"] [style*="background:linear-gradient(to right,#d5ede0"]{background:linear-gradient(to right,#0c2318,var(--surface))!important}
@@ -833,7 +840,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       {% set rating_col = '#2d6a4f' if p.avg_rating >= 4.5 else ('#ef9f27' if p.avg_rating >= 3.5 else '#c0392b') %}
       {% set is_worst = p.avg_rating == worst_rating and best_rating != worst_rating %}
       {% set is_best = p.avg_rating == best_rating and best_rating != worst_rating %}
-      <div onclick="filterByPlatform('{{p.platform}}')" style="cursor:pointer;transition:box-shadow .15s;background:var(--paper);border:1px solid {% if is_worst %}#f5c6c6{% elif is_best %}#b7dfca{% else %}var(--paper3){% endif %};border-radius:8px;padding:12px 14px;{% if is_worst %}background:linear-gradient(to bottom,#f5d5d5,var(--paper));{% elif is_best %}background:linear-gradient(to bottom,#d5ede0,var(--paper));{% endif %}" onmouseover="this.style.boxShadow='0 4px 16px rgba(14,12,10,.15)'" onmouseout="this.style.boxShadow=''">
+      <div onclick="filterByPlatform('{{p.platform}}')" class="plat-card {% if is_worst %}plat-worst{% elif is_best %}plat-best{% endif %}" onmouseover="this.style.boxShadow='0 4px 16px rgba(14,12,10,.25)'" onmouseout="this.style.boxShadow='none'">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
           <div style="display:flex;align-items:center;gap:6px">
             <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:{{plat_col}}">{{p.platform|title}}</span>
@@ -2659,14 +2666,15 @@ function loadTopicHeatmap(days) {
         var item = d.data[i];
         var empty = item.count === 0;
         var bg, border, numColor;
+        var _dark = document.documentElement.getAttribute('data-theme') === 'dark';
         if (empty) {
-          bg = 'var(--paper1)'; border = 'var(--paper3)'; numColor = 'var(--ink3)';
+          bg = _dark ? 'var(--surface)' : 'var(--paper2)'; border = 'var(--paper3)'; numColor = 'var(--ink3)';
         } else if (item.pct_negative >= 50) {
-          bg = '#fef2f2'; border = '#fca5a5'; numColor = '#b91c1c';
+          bg = _dark ? '#2a1010' : '#fef2f2'; border = _dark ? '#5a2828' : '#fca5a5'; numColor = _dark ? '#e07055' : '#b91c1c';
         } else if (item.pct_negative >= 30) {
-          bg = '#fffbeb'; border = '#fcd34d'; numColor = '#92400e';
+          bg = _dark ? '#251d08' : '#fffbeb'; border = _dark ? '#5a4200' : '#fcd34d'; numColor = _dark ? '#d4a030' : '#92400e';
         } else {
-          bg = '#f0fdf4'; border = '#86efac'; numColor = '#15803d';
+          bg = _dark ? '#0c2318' : '#f0fdf4'; border = _dark ? '#1e4a30' : '#86efac'; numColor = _dark ? '#4ead7a' : '#15803d';
         }
         var trendSym = item.trend === 'up' ? ' ↑' : (item.trend === 'down' ? ' ↓' : '');
         var trendCol = item.trend === 'up' ? '#dc2626' : (item.trend === 'down' ? '#2d6a4f' : 'var(--ink3)');
@@ -2683,7 +2691,7 @@ function loadTopicHeatmap(days) {
         html += '</div>';
         html += '<div style="font-size:24px;font-weight:700;color:' + numColor + ';line-height:1;margin-bottom:8px">' + (empty ? '—' : item.count) + '</div>';
         if (!empty) {
-          html += '<div style="height:4px;border-radius:2px;overflow:hidden;display:flex;background:#e5e7eb">';
+          html += '<div style="height:4px;border-radius:2px;overflow:hidden;display:flex;background:' + (_dark ? 'var(--paper3)' : '#e5e7eb') + '">';
           html += '<div style="width:' + posW + '%;background:#2d6a4f;height:100%"></div>';
           html += '<div style="width:' + neuW + '%;background:#9ca3af;height:100%"></div>';
           html += '<div style="width:' + negW + '%;background:#dc2626;height:100%"></div>';
