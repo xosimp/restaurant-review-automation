@@ -57,6 +57,11 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 .hdr-logo em{color:#e8956a;font-style:italic}
 .hdr-badge{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;background:var(--ember);color:white;border-radius:4px;margin-left:10px}
 .logout-btn{font-size:11px;color:var(--ink3);text-decoration:none;padding:5px 10px;border:1px solid #2a2520;border-radius:4px}
+.footer-link{font-size:11px;color:#4a4540;text-decoration:none;transition:color .15s}
+.footer-link:hover{color:#e06444}
+[data-theme="dark"] footer{background:#0a0908!important}
+[data-theme="dark"] .footer-link{color:#5a5550}
+[data-theme="dark"] .footer-link:hover{color:#e06444}
 .container{max-width:900px;margin:0 auto;padding:32px 24px}
 .section-title{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:10px}
 .card{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:20px;margin-bottom:20px}
@@ -104,9 +109,12 @@ input:focus,select:focus{border-color:var(--ember)}
     <span class="hdr-badge">Admin</span>
   </div>
   <div style="display:flex;align-items:center;gap:12px">
-    <button onclick="openStatusModal()" style="padding:6px 13px;font-size:12px;font-weight:600;font-family:'DM Sans',sans-serif;background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;color:rgba(255,255,255,.75);cursor:pointer">System Status</button>
-    <button id="admin-dark-btn" onclick="toggleAdminDark()" title="Toggle dark mode" style="background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:5px 10px;cursor:pointer;font-size:14px;line-height:1;color:rgba(255,255,255,.75)">🌙</button>
-    <a href="/logout" class="logout-btn">Sign out</a>
+    <button onclick="openStatusModal()" style="padding:0 13px;height:30px;font-size:12px;font-weight:600;font-family:'DM Sans',sans-serif;background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;color:rgba(255,255,255,.75);cursor:pointer;display:inline-flex;align-items:center">System Status</button>
+    <button id="admin-dark-btn" onclick="toggleAdminDark()" title="Toggle dark mode" style="background:none;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:0 10px;height:30px;cursor:pointer;color:rgba(255,255,255,.75);display:inline-flex;align-items:center;justify-content:center">
+      <svg id="dark-icon-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg id="dark-icon-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    </button>
+    <a href="/logout" class="logout-btn" style="height:30px;display:inline-flex;align-items:center;padding:0 10px">Sign out</a>
   </div>
 </header>
 <div class="container">
@@ -1057,11 +1065,11 @@ async function postIncident() {
   </div>
 </div>
 
-<footer style="background:var(--ink);padding:14px 28px;display:flex;align-items:center;justify-content:space-between">
+<footer style="background:#0e0c0a;padding:14px 28px;display:flex;align-items:center;justify-content:space-between">
   <span style="font-size:11px;color:#4a4540">© 2026 Cavnar AI LLC</span>
   <div style="display:flex;gap:16px;align-items:center">
-    <a href="https://cavnar.ai/privacy" target="_blank" style="font-size:11px;color:#4a4540;text-decoration:none">Privacy Policy</a>
-    <a href="https://cavnar.ai" target="_blank" style="font-size:11px;color:#4a4540;text-decoration:none">cavnar.ai</a>
+    <a href="https://cavnar.ai/privacy" target="_blank" class="footer-link">Privacy Policy</a>
+    <a href="https://cavnar.ai" target="_blank" class="footer-link">cavnar.ai</a>
   </div>
 </footer>
 
@@ -1214,18 +1222,21 @@ function saveBrand(rid) {
 adminLoadChangelog();
 
 // ── Admin dark mode ───────────────────────────────────────────────────────
+function _syncDarkIcon(isDark) {
+  var moon = document.getElementById('dark-icon-moon');
+  var sun  = document.getElementById('dark-icon-sun');
+  if (moon) moon.style.display = isDark ? 'none' : 'block';
+  if (sun)  sun.style.display  = isDark ? 'block' : 'none';
+}
 (function(){
-  var isDark = localStorage.getItem('cavnar_admin_theme') === 'dark';
-  var btn = document.getElementById('admin-dark-btn');
-  if (btn) btn.textContent = isDark ? '☀️' : '🌙';
+  _syncDarkIcon(localStorage.getItem('cavnar_admin_theme') === 'dark');
 })();
 function toggleAdminDark() {
   var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
   var next = isDark ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', next);
   localStorage.setItem('cavnar_admin_theme', next);
-  var btn = document.getElementById('admin-dark-btn');
-  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+  _syncDarkIcon(next === 'dark');
 }
 </script>
 </body>
