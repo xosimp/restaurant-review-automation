@@ -4838,6 +4838,7 @@ function revokeOtherSessions(btn){
         btn.textContent = 'Send test';
         btn.disabled = false;
         showWhStatus(d.ok ? 'Test sent — check your endpoint.' : (d.error || 'Error'), d.ok ? '#2d6a4f' : '#c0392b');
+        if (d.ok) loadWebhook();
       }).catch(function(){ btn.textContent = 'Send test'; btn.disabled = false; });
   };
 
