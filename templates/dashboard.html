@@ -80,7 +80,14 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 /* Labor panel */
 [data-theme="dark"] #labor-gap-banner{background:#0f0d0b!important}
 [data-theme="dark"] #labor-gap-banner [style*="color:var(--paper)"]{color:var(--ink)!important}
-[data-theme="dark"] #panel-labor .card{background:#252118!important}
+[data-theme="dark"] #panel-labor .card:not(#labor-bench-card):not(#role-cost-card){background:#252118!important}
+[data-theme="dark"] #labor-bench-card[style*="#f5d5d5"]{background:linear-gradient(to right,#2a1010,#252118)!important}
+[data-theme="dark"] #labor-bench-card[style*="#fdf5e0"]{background:linear-gradient(to right,#251d08,#252118)!important}
+[data-theme="dark"] #labor-bench-card[style*="#fff8e6"]{background:linear-gradient(to right,#251d08,#252118)!important}
+[data-theme="dark"] #labor-bench-card[style*="#d5ede0"]{background:linear-gradient(to right,#0c2318,#252118)!important}
+[data-theme="dark"] #labor-bench-card[style*="#e8f4ee"]{background:linear-gradient(to right,#0c2318,#252118)!important}
+[data-theme="dark"] #role-cost-card{background:linear-gradient(to right,#0a1f12,#252118)!important;border-left-color:#2d6a4f!important}
+[data-theme="dark"] #role-cost-card .role-bar-track{background:rgba(255,255,255,.1)!important}
 [data-theme="dark"] #panel-labor .labor-forecast-card [style*="color:var(--paper)"]{color:var(--ink)!important}
 [data-theme="dark"] #panel-labor tr[style*="rgba(192,57,43,0.08),white"]{background:linear-gradient(to right,rgba(192,57,43,0.28),#252118)!important}
 [data-theme="dark"] #panel-labor tr[style*="rgba(45,106,79,0.06),white"]{background:linear-gradient(to right,rgba(45,106,79,0.18),#252118)!important}
@@ -91,7 +98,7 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 /* Tables */
 [data-theme="dark"] .tbl th{background:var(--paper3)!important;color:var(--ink2)!important}
 [data-theme="dark"] .tbl td{border-color:var(--paper3)!important;color:var(--ink2)!important}
-[data-theme="dark"] .tbl tr:hover td{background:var(--paper2)!important}
+[data-theme="dark"] .tbl tr:hover td{background:#3a3228!important}
 /* Popovers — all built with inline background:white */
 [data-theme="dark"] #notif-panel,
 [data-theme="dark"] #changelog-panel,
@@ -1336,7 +1343,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
   <!-- Role cost breakdown -->
   {% if labor.role_summary %}
-  <div class="card" style="padding:14px 16px;margin-bottom:14px;border-left:3px solid #2d6a4f;background:linear-gradient(to right,#e8f4ee,white)">
+  <div class="card" id="role-cost-card" style="padding:14px 16px;margin-bottom:14px;border-left:3px solid #2d6a4f;background:linear-gradient(to right,#e8f4ee,white)">
     <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink);margin-bottom:12px">Labor cost by role</div>
     <div style="display:flex;flex-direction:column;gap:8px">
     {% set max_role_pct = labor.role_max_pct|default(30.0) %}
@@ -1345,7 +1352,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     {% set role_color = '#c0392b' if data.labor_pct > (labor_target|default(30.0)) else ('#ef9f27' if data.labor_pct > (labor_target|default(30.0) - 5) else '#2d6a4f') %}
     <div style="display:flex;align-items:center;gap:10px">
       <div style="width:90px;font-size:11px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{role}}</div>
-      <div style="flex:1;position:relative;height:8px;background:var(--paper3);border-radius:4px;overflow:hidden">
+      <div class="role-bar-track" style="flex:1;position:relative;height:8px;background:var(--paper3);border-radius:4px;overflow:hidden">
         <div style="position:absolute;left:0;top:0;height:100%;width:{{bar_w}}%;background:{{role_color}};border-radius:4px;transition:width .4s"></div>
       </div>
       <div style="display:flex;gap:8px;font-size:11px;min-width:160px">
