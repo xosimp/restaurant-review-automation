@@ -360,6 +360,9 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "gbp_review_count", "INTEGER"),
         ("client_data", "food_cost_json", "TEXT"),
         ("labor_daily_history", "total_hours", "REAL"),
+        ("users", "role", "TEXT DEFAULT 'client'"),
+        ("users", "google_id", "TEXT"),
+        ("sessions", "active_restaurant_id", "INTEGER"),
     ]
     for table, col, col_type in columns_to_add:
         try:
