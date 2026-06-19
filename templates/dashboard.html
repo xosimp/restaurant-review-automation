@@ -62,6 +62,9 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] input[type="email"],
 [data-theme="dark"] input[type="tel"],
 [data-theme="dark"] input[type="search"],
+[data-theme="dark"] input[type="url"],
+[data-theme="dark"] input[type="number"],
+[data-theme="dark"] textarea,
 [data-theme="dark"] select{background:var(--paper2)!important;color:var(--ink)!important;border-color:var(--paper3)!important}
 /* Tables */
 [data-theme="dark"] .tbl th{background:var(--paper3)!important;color:var(--ink2)!important}
@@ -92,6 +95,8 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] [style*="background:white"]:not(.hdr):not(button):not(.btn){background:var(--paper2)!important;border-color:var(--paper3)!important}
 /* Sign out hover */
 [data-theme="dark"] .logout-btn:hover{color:var(--ink)!important;border-color:var(--ink2)!important}
+/* Consultant hero card */
+[data-theme="dark"] .acct-hero-card{background:#0f0d0b!important}
 /* Benchmark card gradients */
 [data-theme="dark"] [style*="background:linear-gradient(to right,#f5d5d5"]{background:linear-gradient(to right,#2a1010,var(--surface))!important}
 [data-theme="dark"] [style*="background:linear-gradient(to right,#d5ede0"]{background:linear-gradient(to right,#0c2318,var(--surface))!important}
@@ -2072,7 +2077,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account">
 
   <!-- SECTION 1: Consultant hero card -->
-  <div style="background:var(--ink);border-radius:var(--r);padding:24px 28px;margin-bottom:16px">
+  <div class="acct-hero-card" style="background:var(--ink);border-radius:var(--r);padding:24px 28px;margin-bottom:16px">
     <div style="display:flex;align-items:flex-start;gap:20px" class="acct-hero">
       <div style="width:72px;height:72px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 3px #c84b2f55,0 0 20px 6px #c84b2f22;overflow:hidden;background:#1a1410">
         <img src="/static/will.png" style="width:100%;height:110%;object-fit:cover;object-position:center 20%">
