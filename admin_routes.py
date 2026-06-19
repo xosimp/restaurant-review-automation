@@ -1068,9 +1068,21 @@ def client_usage(restaurant_id, current_user):
 @login_required
 def mark_posted(review_id, current_user):
     conn = get_conn()
+    row = conn.execute("SELECT platform, author, rating FROM reviews WHERE id=? AND restaurant_id=?",
+                       (review_id, current_user["restaurant_id"])).fetchone()
     conn.execute("UPDATE reviews SET response_status='posted' WHERE id=? AND restaurant_id=?",
                  (review_id, current_user["restaurant_id"]))
     conn.commit(); conn.close()
+    try:
+        from webhooks import fire_webhook as _fw
+        _fw(current_user["restaurant_id"], "response.posted", {
+            "review_id": review_id,
+            "platform": row["platform"] if row else None,
+            "author": row["author"] if row else None,
+            "rating": row["rating"] if row else None,
+        })
+    except Exception:
+        pass
     return jsonify(ok=True)
 
 @admin_bp.route("/api/export-reviews")

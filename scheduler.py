@@ -220,13 +220,16 @@ def run_daily_fetch():
             try:
                 from webhooks import fire_webhook as _fw
                 for _nr in new_reviews:
-                    _fw(rid, "review.received", {
+                    _payload = {
                         "platform": _nr.platform,
                         "rating":   _nr.rating,
                         "author":   _nr.author,
                         "body":     (_nr.text or "")[:500],
                         "sentiment": getattr(_nr, "sentiment", None),
-                    })
+                    }
+                    _fw(rid, "review.received", _payload)
+                    if (_nr.rating or 5) <= 2:
+                        _fw(rid, "review.negative", _payload)
             except Exception:
                 pass
 

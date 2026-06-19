@@ -2252,10 +2252,16 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <input type="checkbox" id="whe-review" checked style="accent-color:var(--ember)"> New review
       </label>
       <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
+        <input type="checkbox" id="whe-negative" style="accent-color:var(--ember)"> Negative review (1–2★)
+      </label>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
         <input type="checkbox" id="whe-alert" checked style="accent-color:var(--ember)"> Alert fired
       </label>
       <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
         <input type="checkbox" id="whe-approved" checked style="accent-color:var(--ember)"> Response approved
+      </label>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
+        <input type="checkbox" id="whe-posted" style="accent-color:var(--ember)"> Response posted live
       </label>
     </div>
 
@@ -4788,9 +4794,11 @@ function revokeOtherSessions(btn){
       document.getElementById('wh-delete-btn').style.display = 'inline-block';
       // event checkboxes
       var evts = wh.events || [];
-      document.getElementById('whe-review').checked   = evts.indexOf('review.received') > -1;
-      document.getElementById('whe-alert').checked    = evts.indexOf('alert.fired') > -1;
-      document.getElementById('whe-approved').checked = evts.indexOf('response.approved') > -1;
+      document.getElementById('whe-review').checked    = evts.indexOf('review.received') > -1;
+      document.getElementById('whe-negative').checked  = evts.indexOf('review.negative') > -1;
+      document.getElementById('whe-alert').checked     = evts.indexOf('alert.fired') > -1;
+      document.getElementById('whe-approved').checked  = evts.indexOf('response.approved') > -1;
+      document.getElementById('whe-posted').checked    = evts.indexOf('response.posted') > -1;
       // last delivery
       var lastEl = document.getElementById('webhook-last-status');
       if (wh.last_fired) {
@@ -4806,9 +4814,11 @@ function revokeOtherSessions(btn){
     var url = (document.getElementById('webhook-url').value || '').trim();
     if (!url) { showWhStatus('Enter a webhook URL.', '#c0392b'); return; }
     var events = [];
-    if (document.getElementById('whe-review').checked)   events.push('review.received');
-    if (document.getElementById('whe-alert').checked)    events.push('alert.fired');
-    if (document.getElementById('whe-approved').checked) events.push('response.approved');
+    if (document.getElementById('whe-review').checked)    events.push('review.received');
+    if (document.getElementById('whe-negative').checked)  events.push('review.negative');
+    if (document.getElementById('whe-alert').checked)     events.push('alert.fired');
+    if (document.getElementById('whe-approved').checked)  events.push('response.approved');
+    if (document.getElementById('whe-posted').checked)    events.push('response.posted');
     var btn = document.getElementById('wh-save-btn');
     btn.textContent = 'Saving…';
     btn.disabled = true;

@@ -51,6 +51,15 @@ def approve(rid, current_user):
                             from models import mark_posted
                             mark_posted(_rid_capture)
                             print(f"[GMB] Auto-posted review {_rid_capture} ✓")
+                            try:
+                                from webhooks import fire_webhook as _fw2
+                                _fw2(_rest_id_capture, "response.posted", {
+                                    "review_id": _rid_capture,
+                                    "platform": "google",
+                                    "author": _review_name,
+                                })
+                            except Exception:
+                                pass
                         else:
                             print(f"[GMB] Auto-post failed for review {_rid_capture}: {result['error']}")
                     except Exception as _ge:
