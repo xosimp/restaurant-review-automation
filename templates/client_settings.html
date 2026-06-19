@@ -431,26 +431,50 @@ textarea{resize:vertical;min-height:60px}
       <hr style="border:none;border-top:1px solid var(--paper3);margin:20px 0">
 
       <!-- Delivery channels -->
-      <div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Delivery</div>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        <label style="display:flex;align-items:flex-start;gap:12px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
+      <div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">Delivery channels</div>
+      <p style="font-size:12px;color:var(--ink3);margin-bottom:12px;line-height:1.5">Master switches — turn a channel off to suppress it for all alert types below.</p>
+      <div style="display:flex;gap:10px;margin-bottom:16px">
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none;flex:1">
           <input type="checkbox" id="setting-urgent_via_email"
             {% if restaurant.urgent_via_email %}checked{% endif %}
-            style="width:14px;height:14px;accent-color:#c84b2f;margin-top:2px;flex-shrink:0">
+            style="width:14px;height:14px;accent-color:#c84b2f;flex-shrink:0">
           <div>
-            <div style="font-size:13px;font-weight:500;color:var(--ink)">Email alerts</div>
-            <div style="font-size:11px;color:var(--ink3);margin-top:2px">Sent to the owner email address on file.</div>
+            <div style="font-size:13px;font-weight:500;color:var(--ink)">Email</div>
+            <div style="font-size:11px;color:var(--ink3)">Owner email on file</div>
           </div>
         </label>
-        <label style="display:flex;align-items:flex-start;gap:12px;padding:10px 12px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none;flex:1">
           <input type="checkbox" id="setting-urgent_via_sms"
             {% if restaurant.urgent_via_sms %}checked{% endif %}
-            style="width:14px;height:14px;accent-color:#c84b2f;margin-top:2px;flex-shrink:0">
+            style="width:14px;height:14px;accent-color:#c84b2f;flex-shrink:0">
           <div>
-            <div style="font-size:13px;font-weight:500;color:var(--ink)">SMS alerts</div>
-            <div style="font-size:11px;color:var(--ink3);margin-top:2px">Text messages to the contacts above. Requires at least one contact.</div>
+            <div style="font-size:13px;font-weight:500;color:var(--ink)">SMS</div>
+            <div style="font-size:11px;color:var(--ink3)">Contacts above</div>
           </div>
         </label>
+      </div>
+
+      <!-- Per-alert-type matrix -->
+      <div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:8px">Alert channel matrix</div>
+      <div style="border:1px solid var(--paper3);border-radius:8px;overflow:hidden">
+        <div style="display:grid;grid-template-columns:1fr 64px 64px;background:var(--paper3);padding:7px 14px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)">
+          <div>Alert type</div><div style="text-align:center">Email</div><div style="text-align:center">SMS</div>
+        </div>
+        {% set matrix = [
+          ('Health / safety mention', 'al_health_email', 'al_health_sms',  restaurant.al_health_email, restaurant.al_health_sms),
+          ('1★ review',              'al_1star_email',  'al_1star_sms',   restaurant.al_1star_email,  restaurant.al_1star_sms),
+          ('2★ review',              'al_2star_email',  'al_2star_sms',   restaurant.al_2star_email,  restaurant.al_2star_sms),
+          ('5★ review',              'al_5star_email',  'al_5star_sms',   restaurant.al_5star_email,  restaurant.al_5star_sms),
+          ('Negative spike (3+ / 7d)','al_spike_email', 'al_spike_sms',   restaurant.al_spike_email,  restaurant.al_spike_sms),
+          ('Unresponded 48h',         'al_unres_email',  'al_unres_sms',   restaurant.al_unres_email,  restaurant.al_unres_sms),
+        ] %}
+        {% for label, email_key, sms_key, email_val, sms_val in matrix %}
+        <div style="display:grid;grid-template-columns:1fr 64px 64px;padding:9px 14px;border-top:1px solid var(--paper3);{% if loop.index is odd %}background:var(--paper2);{% endif %}align-items:center">
+          <div style="font-size:13px;color:var(--ink)">{{ label }}</div>
+          <div style="text-align:center"><input type="checkbox" id="setting-{{ email_key }}" {% if email_val %}checked{% endif %} style="width:15px;height:15px;accent-color:#c84b2f"></div>
+          <div style="text-align:center"><input type="checkbox" id="setting-{{ sms_key }}"   {% if sms_val %}checked{% endif %}   style="width:15px;height:15px;accent-color:#c84b2f"></div>
+        </div>
+        {% endfor %}
       </div>
 
       <hr style="border:none;border-top:1px solid var(--paper3);margin:20px 0">
@@ -861,6 +885,18 @@ async function saveSettings() {
     alert_no_response:     document.getElementById('setting-alert_no_response').checked ? 1 : 0,
     urgent_via_email:      document.getElementById('setting-urgent_via_email').checked ? 1 : 0,
     urgent_via_sms:        document.getElementById('setting-urgent_via_sms').checked ? 1 : 0,
+    al_health_email:       document.getElementById('setting-al_health_email').checked ? 1 : 0,
+    al_health_sms:         document.getElementById('setting-al_health_sms').checked ? 1 : 0,
+    al_1star_email:        document.getElementById('setting-al_1star_email').checked ? 1 : 0,
+    al_1star_sms:          document.getElementById('setting-al_1star_sms').checked ? 1 : 0,
+    al_2star_email:        document.getElementById('setting-al_2star_email').checked ? 1 : 0,
+    al_2star_sms:          document.getElementById('setting-al_2star_sms').checked ? 1 : 0,
+    al_5star_email:        document.getElementById('setting-al_5star_email').checked ? 1 : 0,
+    al_5star_sms:          document.getElementById('setting-al_5star_sms').checked ? 1 : 0,
+    al_spike_email:        document.getElementById('setting-al_spike_email').checked ? 1 : 0,
+    al_spike_sms:          document.getElementById('setting-al_spike_sms').checked ? 1 : 0,
+    al_unres_email:        document.getElementById('setting-al_unres_email').checked ? 1 : 0,
+    al_unres_sms:          document.getElementById('setting-al_unres_sms').checked ? 1 : 0,
     alert_5star:           document.getElementById('setting-alert_5star').checked ? 1 : 0,
     alert_rating_threshold: document.getElementById('setting-alert_rating_threshold').checked ? 1 : 0,
     alert_rating_floor:    parseFloat(document.getElementById('setting-alert_rating_floor').value) || 4.0,

@@ -212,7 +212,13 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
     row = conn.execute("""
         SELECT alert_1star, alert_2star, alert_health, alert_5star,
                alert_neg_spike, alert_negative_trend, alert_no_response,
-               urgent_via_sms, urgent_via_email, owner_email
+               urgent_via_sms, urgent_via_email, owner_email,
+               al_health_email, al_health_sms,
+               al_1star_email,  al_1star_sms,
+               al_2star_email,  al_2star_sms,
+               al_5star_email,  al_5star_sms,
+               al_spike_email,  al_spike_sms,
+               al_unres_email,  al_unres_sms
         FROM restaurants WHERE id=?
     """, (restaurant_id,)).fetchone()
     conn.close()
@@ -220,17 +226,37 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
     if not row:
         return
 
-    via_sms   = bool(row["urgent_via_sms"])
-    via_email = bool(row["urgent_via_email"])
-    if not via_sms and not via_email:
+    # Global SMS/email on switches (must be on for any SMS/email to fire)
+    global_sms   = bool(row["urgent_via_sms"])
+    global_email = bool(row["urgent_via_email"])
+    if not global_sms and not global_email:
         return
 
-    contacts    = get_alert_contacts(restaurant_id, db_path) if via_sms else []
+    contacts    = get_alert_contacts(restaurant_id, db_path) if global_sms else []
     owner_email = row["owner_email"] or ""
-    if via_email and not owner_email:
+    if global_email and not owner_email:
         print(f"[notify] rid={restaurant_id} has email alerts on but no owner_email — email suppressed")
 
+    def _col(name, default=1):
+        try:
+            v = row[name]
+            return 1 if v is None else int(v)
+        except Exception:
+            return default
+
     def blast(sms_text: str, subject: str, html: str, alert_type: str, review_id: int = None):
+        # Per-type channel flags (fall back to 1 so old data keeps working)
+        type_map = {
+            "health":    ("al_health_sms",  "al_health_email"),
+            "1star":     ("al_1star_sms",   "al_1star_email"),
+            "2star":     ("al_2star_sms",   "al_2star_email"),
+            "5star":     ("al_5star_sms",   "al_5star_email"),
+            "neg_spike": ("al_spike_sms",   "al_spike_email"),
+            "unresponded":("al_unres_sms",  "al_unres_email"),
+        }
+        sms_col, email_col = type_map.get(alert_type, ("al_health_sms", "al_health_email"))
+        via_sms   = global_sms   and bool(_col(sms_col,   0))
+        via_email = global_email and bool(_col(email_col, 1))
         if via_sms and contacts:
             for c in contacts:
                 send_sms(c["phone"], sms_text)
@@ -356,6 +382,7 @@ def check_no_response_alerts(db_path: str = DB_PATH):
     rows = conn.execute("""
         SELECT r.restaurant_id, rest.name, rest.owner_email,
                rest.urgent_via_sms, rest.urgent_via_email,
+               rest.al_unres_sms, rest.al_unres_email,
                COUNT(*) as overdue_count
         FROM reviews r
         JOIN restaurants rest ON rest.id = r.restaurant_id
@@ -372,8 +399,10 @@ def check_no_response_alerts(db_path: str = DB_PATH):
         rid         = row["restaurant_id"]
         name        = row["name"]
         n           = row["overdue_count"]
-        via_sms     = bool(row["urgent_via_sms"])
-        via_email   = bool(row["urgent_via_email"])
+        _unres_sms   = row["al_unres_sms"] if "al_unres_sms" in row.keys() else 1
+        _unres_email = row["al_unres_email"] if "al_unres_email" in row.keys() else 1
+        via_sms     = bool(row["urgent_via_sms"]) and bool(_unres_sms)
+        via_email   = bool(row["urgent_via_email"]) and bool(_unres_email)
         owner_email = row["owner_email"] or ""
 
         # 24h dedup

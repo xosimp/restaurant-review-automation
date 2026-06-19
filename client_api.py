@@ -1348,8 +1348,11 @@ def send_review_request(current_user):
         data          = request.get_json() or {}
         customer_name  = (data.get("name") or "").strip()
         customer_email = (data.get("email") or "").strip().lower()
-        if not customer_email or "@" not in customer_email:
-            return jsonify(ok=False, error="Valid email required"), 400
+        customer_phone = (data.get("phone") or "").strip()
+        if not customer_email and not customer_phone:
+            return jsonify(ok=False, error="Email or phone required"), 400
+        if customer_email and "@" not in customer_email:
+            return jsonify(ok=False, error="Valid email address required"), 400
 
         rid        = current_user["restaurant_id"]
         restaurant = get_restaurant(rid)
@@ -1363,7 +1366,30 @@ def send_review_request(current_user):
         first_name  = customer_name.split()[0] if customer_name else "there"
         rest_name   = restaurant.name or "us"
 
-        # Send via Resend
+        # Send via SMS if phone provided
+        if customer_phone:
+            from notify import send_sms as _send_sms
+            sms_text = (
+                f"Hi {first_name}, thanks for dining at {rest_name}! "
+                f"We'd love your feedback — leave us a Google review: {review_url}"
+            )
+            sent_sms = _send_sms(customer_phone, sms_text)
+            if not sent_sms and not customer_email:
+                return jsonify(ok=False, error="SMS delivery failed — check Twilio config"), 500
+
+        # Send via Resend if email provided
+        if not customer_email:
+            # SMS-only path — skip email block
+            from models import get_conn as _gc
+            conn = _gc()
+            conn.execute(
+                "INSERT INTO review_requests (restaurant_id, customer_name, customer_email, customer_phone, method) VALUES (?,?,?,?,?)",
+                (rid, customer_name, "", customer_phone, "sms")
+            )
+            conn.commit()
+            conn.close()
+            return jsonify(ok=True)
+
         import resend as _resend
         _resend.api_key = os.getenv("RESEND_API_KEY", "")
         if not _resend.api_key:
@@ -1406,9 +1432,10 @@ def send_review_request(current_user):
         # Log the request
         from models import get_conn as _gc
         conn = _gc()
+        method = "both" if customer_phone else "email"
         conn.execute(
-            "INSERT INTO review_requests (restaurant_id, customer_name, customer_email) VALUES (?,?,?)",
-            (rid, customer_name, customer_email)
+            "INSERT INTO review_requests (restaurant_id, customer_name, customer_email, customer_phone, method) VALUES (?,?,?,?,?)",
+            (rid, customer_name, customer_email, customer_phone or None, method)
         )
         conn.commit()
         conn.close()

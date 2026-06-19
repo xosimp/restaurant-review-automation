@@ -277,6 +277,19 @@ class Restaurant:
     alert_labor_over:     int       = 0
     urgent_via_email:     int       = 1
     urgent_via_sms:       int       = 0
+    # Per-alert-type channel matrix
+    al_health_email:      int       = 1
+    al_health_sms:        int       = 0
+    al_1star_email:       int       = 1
+    al_1star_sms:         int       = 0
+    al_2star_email:       int       = 1
+    al_2star_sms:         int       = 0
+    al_5star_email:       int       = 0
+    al_5star_sms:         int       = 0
+    al_spike_email:       int       = 1
+    al_spike_sms:         int       = 0
+    al_unres_email:       int       = 1
+    al_unres_sms:         int       = 0
     last_activity: Optional[str]    = None
     gbp_rating: Optional[float]     = None
     gbp_review_count: Optional[int] = None
@@ -363,6 +376,21 @@ def ensure_columns(db_path: str = DB_PATH):
         ("users", "role", "TEXT DEFAULT 'client'"),
         ("users", "google_id", "TEXT"),
         ("sessions", "active_restaurant_id", "INTEGER"),
+        # Alert channel matrix
+        ("restaurants", "al_health_email", "INTEGER DEFAULT 1"),
+        ("restaurants", "al_health_sms",   "INTEGER DEFAULT 0"),
+        ("restaurants", "al_1star_email",  "INTEGER DEFAULT 1"),
+        ("restaurants", "al_1star_sms",    "INTEGER DEFAULT 0"),
+        ("restaurants", "al_2star_email",  "INTEGER DEFAULT 1"),
+        ("restaurants", "al_2star_sms",    "INTEGER DEFAULT 0"),
+        ("restaurants", "al_5star_email",  "INTEGER DEFAULT 0"),
+        ("restaurants", "al_5star_sms",    "INTEGER DEFAULT 0"),
+        ("restaurants", "al_spike_email",  "INTEGER DEFAULT 1"),
+        ("restaurants", "al_spike_sms",    "INTEGER DEFAULT 0"),
+        ("restaurants", "al_unres_email",  "INTEGER DEFAULT 1"),
+        ("restaurants", "al_unres_sms",    "INTEGER DEFAULT 0"),
+        # Review invite SMS
+        ("review_requests", "customer_phone", "TEXT"),
     ]
     for table, col, col_type in columns_to_add:
         try:
@@ -890,6 +918,9 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "alert_1star","alert_2star","alert_health","alert_neg_spike","alert_negative_trend","alert_no_response",
         "alert_5star","alert_rating_threshold","alert_rating_floor","alert_labor_over",
         "urgent_via_email","urgent_via_sms",
+        "al_health_email","al_health_sms","al_1star_email","al_1star_sms",
+        "al_2star_email","al_2star_sms","al_5star_email","al_5star_sms",
+        "al_spike_email","al_spike_sms","al_unres_email","al_unres_sms",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -971,6 +1002,18 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         alert_labor_over=row["alert_labor_over"] if "alert_labor_over" in row.keys() else 0,
         urgent_via_email=row["urgent_via_email"] if "urgent_via_email" in row.keys() else 1,
         urgent_via_sms=row["urgent_via_sms"] if "urgent_via_sms" in row.keys() else 0,
+        al_health_email=row["al_health_email"] if "al_health_email" in row.keys() else 1,
+        al_health_sms=row["al_health_sms"]   if "al_health_sms"   in row.keys() else 0,
+        al_1star_email=row["al_1star_email"] if "al_1star_email" in row.keys() else 1,
+        al_1star_sms=row["al_1star_sms"]     if "al_1star_sms"   in row.keys() else 0,
+        al_2star_email=row["al_2star_email"] if "al_2star_email" in row.keys() else 1,
+        al_2star_sms=row["al_2star_sms"]     if "al_2star_sms"   in row.keys() else 0,
+        al_5star_email=row["al_5star_email"] if "al_5star_email" in row.keys() else 0,
+        al_5star_sms=row["al_5star_sms"]     if "al_5star_sms"   in row.keys() else 0,
+        al_spike_email=row["al_spike_email"] if "al_spike_email" in row.keys() else 1,
+        al_spike_sms=row["al_spike_sms"]     if "al_spike_sms"   in row.keys() else 0,
+        al_unres_email=row["al_unres_email"] if "al_unres_email" in row.keys() else 1,
+        al_unres_sms=row["al_unres_sms"]     if "al_unres_sms"   in row.keys() else 0,
         gmb_access_token=row["gmb_access_token"] if "gmb_access_token" in row.keys() else None,
         gmb_refresh_token=row["gmb_refresh_token"] if "gmb_refresh_token" in row.keys() else None,
         gmb_account_id=row["gmb_account_id"] if "gmb_account_id" in row.keys() else None,
