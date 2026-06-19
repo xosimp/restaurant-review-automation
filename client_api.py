@@ -16,6 +16,26 @@ client_bp = Blueprint('client', __name__)
 @client_bp.route("/approve/<int:rid>", methods=["POST"])
 @login_required
 def approve(rid, current_user):
+    # Determine response action before approving
+    try:
+        _ac = get_conn()
+        _row = _ac.execute(
+            "SELECT regenerate_count, draft_edited FROM reviews WHERE id=? AND restaurant_id=?",
+            (rid, current_user["restaurant_id"])
+        ).fetchone()
+        _ac.close()
+        if _row:
+            if (_row["regenerate_count"] or 0) > 0:
+                _action = "regenerated"
+            elif (_row["draft_edited"] or 0) == 1:
+                _action = "edited"
+            else:
+                _action = "approved_as_is"
+            _ac2 = get_conn()
+            _ac2.execute("UPDATE reviews SET response_action=? WHERE id=?", (_action, rid))
+            _ac2.commit(); _ac2.close()
+    except Exception as _ae:
+        print(f"[approve] response_action error: {_ae}")
     approve_response(rid)
     try:
         from models import log_event
@@ -148,6 +168,19 @@ def topic_heatmap_api(current_user):
         if days not in (30, 60, 90, 180):
             days = 90
         data = get_topic_heatmap(current_user["restaurant_id"], days=days)
+        return jsonify(ok=True, data=data)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
+@client_bp.route("/api/response-performance")
+@login_required
+def response_performance_api(current_user):
+    try:
+        from models import get_response_performance
+        days = int(request.args.get("days", 90))
+        if days not in (30, 60, 90, 180):
+            days = 90
+        data = get_response_performance(current_user["restaurant_id"], days=days)
         return jsonify(ok=True, data=data)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
@@ -650,8 +683,10 @@ Write ONLY the response, no preamble. Sound like a real person, not a PR firm.""
         new_draft = msg.content[0].text.strip()
         update_draft(review_id, new_draft)
         conn = get_conn()
-        conn.execute("UPDATE reviews SET response_status='drafted' WHERE id=? AND restaurant_id=?",
-                     (review_id, current_user["restaurant_id"]))
+        conn.execute(
+            "UPDATE reviews SET response_status='drafted', regenerate_count=COALESCE(regenerate_count,0)+1 WHERE id=? AND restaurant_id=?",
+            (review_id, current_user["restaurant_id"])
+        )
         conn.commit(); conn.close()
         return jsonify(ok=True, draft=new_draft)
     except Exception as e:
@@ -674,8 +709,10 @@ def save_draft(review_id, current_user):
         return jsonify(ok=False, error="Review not found")
     update_draft(review_id, draft)
     conn = get_conn()
-    conn.execute("UPDATE reviews SET response_status='drafted' WHERE id=? AND restaurant_id=?",
-                 (review_id, current_user["restaurant_id"]))
+    conn.execute(
+        "UPDATE reviews SET response_status='drafted', draft_edited=1 WHERE id=? AND restaurant_id=?",
+        (review_id, current_user["restaurant_id"])
+    )
     conn.commit(); conn.close()
     return jsonify(ok=True)
 

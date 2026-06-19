@@ -657,6 +657,21 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
   <!-- ══ ANALYTICS ══ -->
   <div id="rv-panel-analytics" style="display:none">
+  <!-- Response performance card -->
+  <div class="card" id="perf-card" style="padding:14px 16px;margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink)">Response performance</div>
+      <div style="display:flex;gap:4px" id="perf-days-btns">
+        <button onclick="loadResponsePerf(30)"  class="hm-days-btn" data-days="30"  style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--paper3);background:var(--paper2);color:var(--ink3);cursor:pointer;font-family:'DM Sans',sans-serif">30d</button>
+        <button onclick="loadResponsePerf(90)"  class="hm-days-btn" data-days="90"  style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--ember);background:var(--ember);color:white;cursor:pointer;font-family:'DM Sans',sans-serif">90d</button>
+        <button onclick="loadResponsePerf(180)" class="hm-days-btn" data-days="180" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--paper3);background:var(--paper2);color:var(--ink3);cursor:pointer;font-family:'DM Sans',sans-serif">6mo</button>
+      </div>
+    </div>
+    <div id="perf-body">
+      <div class="skeleton" style="height:48px;border-radius:6px"></div>
+    </div>
+  </div>
+
   {% set rrate = rstats.response_rate %}
   {% set rrate_label = 'Excellent' if rrate >= 70 else ('Strong' if rrate >= 40 else ('On Track' if rrate >= 15 else 'Below Average')) %}
   {% set rrate_color = '#2d6a4f' if rrate >= 70 else ('#6fcf97' if rrate >= 40 else ('#ef9f27' if rrate >= 15 else '#c0392b')) %}
@@ -2546,6 +2561,53 @@ function loadTopicHeatmap(days) {
     });
 }
 
+var _perfLoaded = false;
+function loadResponsePerf(days){
+  days = days || 90;
+  _perfLoaded = true;
+  document.querySelectorAll('#perf-days-btns .hm-days-btn').forEach(function(b){
+    var active = String(b.getAttribute('data-days')) === String(days);
+    b.style.background = active ? 'var(--ember)' : 'var(--paper2)';
+    b.style.color      = active ? 'white'        : 'var(--ink3)';
+    b.style.borderColor= active ? 'var(--ember)'  : 'var(--paper3)';
+  });
+  var body = document.getElementById('perf-body');
+  if(body) body.innerHTML = '<div class="skeleton" style="height:48px;border-radius:6px"></div>';
+  fetch('/api/response-performance?days=' + days)
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d.ok || !body) return;
+      var data = d.data;
+      var total = data.total || 0;
+      if(total === 0){
+        body.innerHTML = '<div style="font-size:12px;color:var(--ink3);font-style:italic;text-align:center;padding:12px 0">No approved responses yet in this window.</div>';
+        return;
+      }
+      var items = [
+        {key:'approved_as_is', label:'Approved as-is', color:'#2d6a4f', icon:'✓'},
+        {key:'edited',         label:'Edited before approving', color:'#4a9eca', icon:'✎'},
+        {key:'regenerated',    label:'Regenerated', color:'#ef9f27', icon:'↺'},
+      ];
+      var html = '<div style="display:flex;flex-direction:column;gap:6px">';
+      items.forEach(function(item){
+        var n   = data[item.key] || 0;
+        var pct = total > 0 ? Math.round(n / total * 100) : 0;
+        html += '<div style="display:flex;align-items:center;gap:10px">';
+        html += '<div style="width:90px;font-size:11px;color:var(--ink3);text-align:right;flex-shrink:0">' + item.label + '</div>';
+        html += '<div style="flex:1;height:18px;background:var(--paper3);border-radius:4px;overflow:hidden">';
+        html += '<div style="height:100%;width:' + pct + '%;background:' + item.color + ';border-radius:4px;transition:width .4s;min-width:' + (n>0?'4px':'0') + '"></div>';
+        html += '</div>';
+        html += '<div style="width:52px;font-size:11px;font-weight:600;color:var(--ink);flex-shrink:0">' + n + ' <span style="color:var(--ink3);font-weight:400">(' + pct + '%)</span></div>';
+        html += '</div>';
+      });
+      html += '<div style="font-size:10px;color:var(--ink3);margin-top:4px">' + total + ' approved response' + (total===1?'':'s') + ' in last ' + days + ' days</div>';
+      html += '</div>';
+      body.innerHTML = html;
+    }).catch(function(){
+      if(body) body.innerHTML = '<div style="font-size:12px;color:var(--ink3)">Unavailable.</div>';
+    });
+}
+
 window.switchReviewsTab = function(tab) {
   var isInbox = tab === 'inbox';
   document.getElementById('rv-inbox-header').style.display  = isInbox ? '' : 'none';
@@ -2562,6 +2624,7 @@ window.switchReviewsTab = function(tab) {
   if (!isInbox) {
     loadTopicHeatmap();
     loadSentimentTrend();
+    if (!_perfLoaded) loadResponsePerf();
   }
 };
 

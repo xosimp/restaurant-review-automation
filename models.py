@@ -391,6 +391,10 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "al_unres_sms",    "INTEGER DEFAULT 0"),
         # Review invite SMS
         ("review_requests", "customer_phone", "TEXT"),
+        # Response performance tracking
+        ("reviews", "draft_edited",     "INTEGER DEFAULT 0"),
+        ("reviews", "regenerate_count", "INTEGER DEFAULT 0"),
+        ("reviews", "response_action",  "TEXT"),
     ]
     for table, col, col_type in columns_to_add:
         try:
@@ -2040,6 +2044,26 @@ def get_reviews_data(restaurant_id, filter_by="all", search=""):
         d["categories"] = json.loads(d["categories"] or "[]")
         result.append(d)
     return result
+
+
+def get_response_performance(restaurant_id: int, days: int = 90, db_path: str = DB_PATH) -> dict:
+    """Return approved-as-is / edited / regenerated counts for the given window."""
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT response_action, COUNT(*) as cnt
+        FROM reviews
+        WHERE restaurant_id=?
+          AND response_action IS NOT NULL
+          AND approved_at >= datetime('now', '-' || ? || ' days')
+        GROUP BY response_action
+    """, (restaurant_id, str(days))).fetchall()
+    conn.close()
+    counts = {"approved_as_is": 0, "edited": 0, "regenerated": 0}
+    for r in rows:
+        if r["response_action"] in counts:
+            counts[r["response_action"]] = r["cnt"]
+    total = sum(counts.values())
+    return {"total": total, "days": days, **counts}
 
 
 # ── Onboarding email tracking ─────────────────────────────────────────────────
