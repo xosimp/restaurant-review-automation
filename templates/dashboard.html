@@ -17,7 +17,7 @@
 /* ── DARK MODE ──────────────────────────────────────────────────────────────── */
 [data-theme="dark"]{
   --ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#7a736a;
-  --paper:#1a1714;--paper2:#231f1b;--paper3:#302a24;
+  --paper:#1a1714;--paper2:#231f1b;--paper3:#4a4038;
   --ember:#e06444;--ember2:#e8956a;
   --green:#4ead7a;--green-bg:#0c2318;--red:#e05555;--red-bg:#2a1010;
   --amber:#d4a030;--amber-bg:#251d08;--blue:#6aabff;--blue-bg:#0a1828;
@@ -100,6 +100,8 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 /* Header logo */
 [data-theme="dark"] .hdr-logo{color:#f0ebe0!important}
 [data-theme="dark"] .hdr-logo em{color:var(--ember2)!important}
+/* Consultant card name text (uses var(--paper) designed for dark header, not dark card) */
+[data-theme="dark"] .acct-hero-card .acct-name{color:#f0ebe0!important}
 /* Benchmark card gradients */
 [data-theme="dark"] [style*="background:linear-gradient(to right,#f5d5d5"]{background:linear-gradient(to right,#2a1010,var(--surface))!important}
 [data-theme="dark"] [style*="background:linear-gradient(to right,#d5ede0"]{background:linear-gradient(to right,#0c2318,var(--surface))!important}
@@ -306,6 +308,9 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .btn-link-navy{display:inline-flex;align-items:center;gap:6px;background:#1e3a52;color:#a8cfe0;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600;transition:background .15s,box-shadow .15s,transform .15s}
 .btn-link-navy:hover{background:#162e42;box-shadow:0 4px 14px rgba(30,58,82,.32);transform:translateY(-1px)}
 .btn-link-navy:active{transform:scale(.97)}
+.btn-link-status{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.12);color:#c4bfb8;padding:8px 14px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:600;transition:background .15s,transform .15s;border:1px solid rgba(255,255,255,.1)}
+.btn-link-status:hover{background:rgba(255,255,255,.2);transform:translateY(-1px)}
+[data-theme="dark"] .btn-link-status{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.08);color:var(--ink3)}
 /* Universal lift for ALL remaining solid inline buttons not covered by a class */
 button:not(.tab):not(.logout-btn):not(.btn):not(.btn-primary):not(.btn-secondary):not(.btn-approve):not(.btn-skip):not(.btn-blue):not(.btn-purple):not(.btn-teal):not([style*="background:none"]):not([style*="background: none"]){transition:background .15s,box-shadow .15s,transform .15s}
 button:not(.tab):not(.logout-btn):not([disabled]):hover{transform:translateY(-1px)}
@@ -2086,12 +2091,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <img src="/static/will.png" style="width:100%;height:110%;object-fit:cover;object-position:center 20%">
       </div>
       <div style="flex:1">
-        <div style="font-family:'Fraunces',serif;font-size:20px;color:var(--paper);margin-bottom:3px">Will Cavnar</div>
+        <div class="acct-name" style="font-family:'Fraunces',serif;font-size:20px;color:var(--paper);margin-bottom:3px">Will Cavnar</div>
         <div style="font-size:12px;color:#7a736a;margin-bottom:14px">Founder, Cavnar AI &middot; Your dedicated restaurant intelligence consultant</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <a href="mailto:will@cavnar.ai" class="btn-link-ember">&#9993; Email Will</a>
           <a href="https://calendly.com/will-cavnar/30min" target="_blank" class="btn-link-navy">&#128197; Book a call</a>
-          <a href="https://status.cavnar.ai" target="_blank" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#9a9188;text-decoration:none;padding:8px 0">
+          <a href="https://status.cavnar.ai" target="_blank" class="btn-link-status">
             <span id="acct-status-dot" style="width:7px;height:7px;border-radius:50%;background:#22c55e;flex-shrink:0"></span> System Status
           </a>
         </div>
@@ -2376,7 +2381,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <!-- Referral -->
     <div style="padding-right:24px">
       <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:3px">Know another restaurant owner?</div>
-      <div style="font-size:12px;color:var(--ink3);margin-bottom:10px;line-height:1.5">Send them an intro &mdash; get <strong style="color:var(--ink)">one free month ($300)</strong> if they sign up.</div>
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:10px;line-height:1.5">Send them an intro &mdash; get <strong style="color:var(--ember)">one free month ($300)</strong> if they sign up.</div>
       <div style="display:flex;flex-direction:column;gap:7px">
         <div style="display:flex;gap:6px">
           <input type="text" id="referral-name" placeholder="Restaurant name" style="flex:1;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none">
