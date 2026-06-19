@@ -77,6 +77,17 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] .calc-tip-light .tip-text{background:#1a1714!important;color:rgba(240,235,224,.9)!important;border-color:rgba(255,255,255,.12)!important;box-shadow:0 4px 16px rgba(0,0,0,.5)!important}
 [data-theme="dark"] .calc-tip-light .tip-icon{color:rgba(240,235,224,.55)!important}
 [data-theme="dark"] .calc-tip-light:hover .tip-icon{color:rgba(240,235,224,.95)!important}
+/* Labor panel */
+[data-theme="dark"] #labor-gap-banner{background:#0f0d0b!important}
+[data-theme="dark"] #labor-gap-banner [style*="color:var(--paper)"]{color:var(--ink)!important}
+[data-theme="dark"] #panel-labor .card{background:#252118!important}
+[data-theme="dark"] #panel-labor .labor-forecast-card [style*="color:var(--paper)"]{color:var(--ink)!important}
+[data-theme="dark"] #panel-labor tr[style*="rgba(192,57,43,0.08),white"]{background:linear-gradient(to right,rgba(192,57,43,0.28),#252118)!important}
+[data-theme="dark"] #panel-labor tr[style*="rgba(45,106,79,0.06),white"]{background:linear-gradient(to right,rgba(45,106,79,0.18),#252118)!important}
+[data-theme="dark"] #panel-labor tr[style*="#f5d5d5"]{background:linear-gradient(to right,#2a1010,#252118)!important}
+[data-theme="dark"] .understaffed-wrap{background:var(--surface)!important}
+[data-theme="dark"] .understaffed-tip{background:rgba(239,159,39,0.14)!important;color:var(--amber)!important;border-top-color:rgba(239,159,39,0.3)!important}
+[data-theme="dark"] #panel-labor [style*="color:#7a4f00"]{color:var(--amber)!important}
 /* Tables */
 [data-theme="dark"] .tbl th{background:var(--paper3)!important;color:var(--ink2)!important}
 [data-theme="dark"] .tbl td{border-color:var(--paper3)!important;color:var(--ink2)!important}
@@ -1168,7 +1179,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
   <!-- Upcoming event scheduling forecast -->
   {% if labor_upcoming %}
-  <div style="background:linear-gradient(135deg,#1a1410,#1e1814);border:1px solid #3d2e1e;border-radius:8px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:flex-start;gap:14px">
+  <div class="labor-forecast-card" style="background:linear-gradient(135deg,#1a1410,#1e1814);border:1px solid #3d2e1e;border-radius:8px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:flex-start;gap:14px">
     <div style="font-size:20px;line-height:1;margin-top:1px">📅</div>
     <div style="flex:1">
       <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember);margin-bottom:6px">Scheduling Forecast</div>
@@ -1432,7 +1443,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <button onclick="toggleRows('understaffed-tbody','understaffed-toggle',{{labor.understaffed_days|length}})" id="understaffed-toggle" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.understaffed_days|length}} ↓</button>
     {% endif %}
   </div>
-  <div style="position:relative;overflow:hidden;border-radius:var(--r);border:1px solid var(--paper3);background:white">
+  <div class="understaffed-wrap" style="position:relative;overflow:hidden;border-radius:var(--r);border:1px solid var(--paper3);background:white">
     <div style="position:absolute;inset:0;background:linear-gradient(to right,rgba(200,75,47,0.07) 0%,rgba(239,159,39,0.05) 40%,rgba(239,159,39,0.0) 100%);pointer-events:none;z-index:0"></div>
     <div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(to bottom,#c84b2f,#ef9f27);z-index:1"></div>
     <table class="tbl" style="position:relative;z-index:1">
@@ -1452,7 +1463,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </tbody>
     </table>
     {% if labor.understaffed_days %}
-    <div style="padding:10px 16px;font-size:11px;color:#7a4f00;background:rgba(239,159,39,0.06);border-top:1px solid rgba(239,159,39,0.15);position:relative;z-index:1">
+    <div class="understaffed-tip" style="padding:10px 16px;font-size:11px;color:#7a4f00;background:rgba(239,159,39,0.06);border-top:1px solid rgba(239,159,39,0.15);position:relative;z-index:1">
       💡 Consider adding 1–2 staff on your highest-revenue days: {% for d in labor.understaffed_days[:5] %}<strong>{{d.date}} ({{d.day}})</strong>{% if not loop.last %}, {% endif %}{% endfor %}{% if labor.understaffed_days|length > 5 %} and {{labor.understaffed_days|length - 5}} more{% endif %} — volume on these days justifies the coverage and drives higher check averages.
     </div>
     {% endif %}
