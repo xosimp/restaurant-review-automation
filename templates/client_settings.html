@@ -190,6 +190,46 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
+  <!-- TripAdvisor import -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">TripAdvisor import</div></div>
+    <div class="section-body">
+      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:12px">
+        Upload a CSV of your TripAdvisor reviews. Required columns: <strong>rating</strong> (1–5) and <strong>text</strong>. Optional: <strong>author</strong>, <strong>date</strong>, <strong>title</strong>. Column names are flexible — download the template below if unsure.
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <label class="btn-save" style="padding:9px 16px;cursor:pointer;display:inline-flex;align-items:center;gap:6px">
+          📂 Choose CSV file
+          <input type="file" id="ta-csv-input" accept=".csv" style="display:none" onchange="importTripAdvisor(this)">
+        </label>
+        <a href="/static/tripadvisor_template.csv" download style="font-size:12px;color:var(--ember);text-decoration:none">↓ Download template</a>
+      </div>
+      <div id="ta-import-status" style="font-size:12px;margin-top:10px;display:none"></div>
+    </div>
+  </div>
+
+  <!-- Response template library -->
+  <div class="section-card">
+    <div class="section-hdr"><div class="section-title">Response templates</div></div>
+    <div class="section-body">
+      <p style="font-size:13px;color:var(--ink2);line-height:1.5;margin-bottom:14px">Save canned responses to insert into any review reply with one click.</p>
+      <div id="tmpl-mgmt-list" style="margin-bottom:14px"></div>
+      <div style="border:1px solid var(--paper3);border-radius:8px;padding:14px;background:var(--paper2)">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Add template</div>
+        <div class="form-group" style="margin-bottom:8px">
+          <label>Title</label>
+          <input type="text" id="new-tmpl-title" placeholder="e.g. Positive 5-star response" maxlength="120">
+        </div>
+        <div class="form-group" style="margin-bottom:10px">
+          <label>Response text</label>
+          <textarea id="new-tmpl-body" style="width:100%;min-height:90px;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'DM Sans',sans-serif;font-size:13px;resize:vertical;outline:none" placeholder="Thank you so much for dining with us…"></textarea>
+        </div>
+        <button class="btn-save" onclick="createTemplate()">Save template</button>
+        <span id="new-tmpl-status" style="font-size:12px;margin-left:10px;display:none"></span>
+      </div>
+    </div>
+  </div>
+
   <!-- Labor settings -->
   <div class="section-card">
     <div class="section-hdr"><div class="section-title">Labor settings</div></div>
@@ -919,6 +959,98 @@ async function saveSettings() {
   }
   btn.textContent = 'Save all settings'; btn.disabled = false;
 }
+
+// ── TripAdvisor import ──────────────────────────────────────────────────────
+function importTripAdvisor(input) {
+  var file = input.files[0];
+  if (!file) return;
+  var status = document.getElementById('ta-import-status');
+  status.style.display = 'block';
+  status.style.color   = 'var(--ink3)';
+  status.textContent   = 'Uploading…';
+  var form = new FormData();
+  form.append('file', file);
+  fetch('/api/import-tripadvisor', {method: 'POST', body: form})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.ok) {
+        status.style.color = '#2d6a4f';
+        status.textContent = '✓ Imported ' + d.imported + ' reviews (' + d.new + ' new). AI is processing them now.';
+      } else {
+        status.style.color = '#c0392b';
+        status.textContent = 'Error: ' + (d.error || 'Import failed');
+      }
+      input.value = '';
+    })
+    .catch(function(){
+      status.style.color = '#c0392b';
+      status.textContent = 'Upload failed — check your connection';
+      input.value = '';
+    });
+}
+
+// ── Response template library ───────────────────────────────────────────────
+function loadTemplates() {
+  fetch('/api/templates').then(function(r){ return r.json(); }).then(function(d){
+    var list = document.getElementById('tmpl-mgmt-list');
+    if (!list) return;
+    var tmpls = d.templates || [];
+    if (!tmpls.length) {
+      list.innerHTML = '<div style="font-size:12px;color:var(--ink3);margin-bottom:4px">No templates yet.</div>';
+      return;
+    }
+    var html = '';
+    tmpls.forEach(function(t){
+      html += '<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--paper3);border-radius:6px;background:white;margin-bottom:6px">'
+            + '<div style="flex:1">'
+            + '<div style="font-size:13px;font-weight:600;color:var(--ink)">' + _esc(t.title) + '</div>'
+            + '<div style="font-size:11px;color:var(--ink3);margin-top:3px;line-height:1.5">' + _esc(t.body.slice(0,120)) + (t.body.length>120?'…':'') + '</div>'
+            + '<div style="font-size:10px;color:var(--ink3);margin-top:4px">Used ' + (t.use_count||0) + ' time' + (t.use_count===1?'':'s') + '</div>'
+            + '</div>'
+            + '<button onclick="deleteTemplate(' + t.id + ',this)" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid #f5c6c2;background:white;color:#c0392b;cursor:pointer;font-family:\'DM Sans\',sans-serif;flex-shrink:0">Remove</button>'
+            + '</div>';
+    });
+    list.innerHTML = html;
+  });
+}
+
+function _esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function createTemplate() {
+  var title  = (document.getElementById('new-tmpl-title').value || '').trim();
+  var body   = (document.getElementById('new-tmpl-body').value || '').trim();
+  var status = document.getElementById('new-tmpl-status');
+  if (!title || !body) { status.style.display='inline';status.style.color='#c0392b';status.textContent='Title and text required'; return; }
+  status.style.display='inline';status.style.color='var(--ink3)';status.textContent='Saving…';
+  fetch('/api/templates', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({title: title, body: body})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) {
+      document.getElementById('new-tmpl-title').value = '';
+      document.getElementById('new-tmpl-body').value  = '';
+      status.style.color = '#2d6a4f';
+      status.textContent = '✓ Saved';
+      loadTemplates();
+      setTimeout(function(){ status.style.display='none'; }, 2000);
+    } else {
+      status.style.color = '#c0392b';
+      status.textContent = d.error || 'Failed';
+    }
+  });
+}
+
+function deleteTemplate(id, btn) {
+  if (!confirm('Remove this template?')) return;
+  fetch('/api/templates/' + id, {method: 'DELETE'}).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) { loadTemplates(); }
+  });
+}
+
+loadTemplates();
 </script>
 </body>
 </html>

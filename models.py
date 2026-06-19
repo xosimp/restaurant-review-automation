@@ -174,6 +174,17 @@ CREATE TABLE IF NOT EXISTS status_incident_updates (
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS response_templates (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
+    title         TEXT NOT NULL,
+    body          TEXT NOT NULL,
+    category      TEXT DEFAULT 'general',  -- general, positive, negative, neutral
+    use_count     INTEGER DEFAULT 0,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_templates_restaurant ON response_templates(restaurant_id);
+
 CREATE INDEX IF NOT EXISTS idx_reviews_restaurant   ON reviews(restaurant_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_status       ON reviews(response_status);
 CREATE INDEX IF NOT EXISTS idx_reviews_fetched      ON reviews(fetched_at);
@@ -2064,6 +2075,36 @@ def get_response_performance(restaurant_id: int, days: int = 90, db_path: str = 
             counts[r["response_action"]] = r["cnt"]
     total = sum(counts.values())
     return {"total": total, "days": days, **counts}
+
+
+def get_response_templates(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    conn = get_conn(db_path)
+    rows = conn.execute(
+        "SELECT id, title, body, category, use_count, created_at FROM response_templates WHERE restaurant_id=? ORDER BY use_count DESC, created_at DESC",
+        (restaurant_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def create_response_template(restaurant_id: int, title: str, body: str, category: str = "general", db_path: str = DB_PATH) -> int:
+    conn = get_conn(db_path)
+    cur = conn.execute(
+        "INSERT INTO response_templates (restaurant_id, title, body, category) VALUES (?,?,?,?)",
+        (restaurant_id, title.strip(), body.strip(), category)
+    )
+    row_id = cur.lastrowid
+    conn.commit(); conn.close()
+    return row_id
+
+def delete_response_template(template_id: int, restaurant_id: int, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("DELETE FROM response_templates WHERE id=? AND restaurant_id=?", (template_id, restaurant_id))
+    conn.commit(); conn.close()
+
+def increment_template_use(template_id: int, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("UPDATE response_templates SET use_count=use_count+1 WHERE id=?", (template_id,))
+    conn.commit(); conn.close()
 
 
 # ── Onboarding email tracking ─────────────────────────────────────────────────

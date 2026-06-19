@@ -849,10 +849,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <!-- Response editor (hidden by default) -->
         <div class="response-editor" id="editor-{{r.id}}" style="display:none;margin-top:10px">
           <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your own response…">{{r.draft_response|e}}</textarea>
-          <div style="display:flex;gap:6px;margin-top:6px">
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center">
             <button class="btn btn-approve" onclick="saveDraft({{r.id}})">Save & approve</button>
             <button class="btn btn-skip" onclick="regenDraft({{r.id}})">↻ Regenerate AI draft</button>
+            <button class="btn btn-skip" data-tmpl-btn="1" onclick="toggleTmplPicker({{r.id}},this)">📋 Templates ▾</button>
             <button class="btn btn-skip" onclick="closeEditor({{r.id}})">Cancel</button>
+            <span onclick="saveAsTemplate({{r.id}})" style="font-size:11px;color:var(--ink3);cursor:pointer;text-decoration:underline;margin-left:2px">Save as template</span>
           </div>
         </div>
       </div>
@@ -863,12 +865,15 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div class="draft-actions" style="margin-top:8px">
           <button class="btn btn-approve" onclick="regenDraft({{r.id}})">Generate AI response</button>
           <button class="btn btn-skip" onclick="openEditor({{r.id}})">Write my own</button>
+          <button class="btn btn-skip" data-tmpl-btn="1" onclick="toggleTmplPicker({{r.id}},this)">📋 Templates ▾</button>
         </div>
         <div class="response-editor" id="editor-{{r.id}}" style="display:none;margin-top:10px">
           <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your response here…"></textarea>
-          <div style="display:flex;gap:6px;margin-top:6px">
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center">
             <button class="btn btn-approve" onclick="saveDraft({{r.id}})">Save & approve</button>
+            <button class="btn btn-skip" data-tmpl-btn="1" onclick="toggleTmplPicker({{r.id}},this)">📋 Templates ▾</button>
             <button class="btn btn-skip" onclick="closeEditor({{r.id}})">Cancel</button>
+            <span onclick="saveAsTemplate({{r.id}})" style="font-size:11px;color:var(--ink3);cursor:pointer;text-decoration:underline;margin-left:2px">Save as template</span>
           </div>
         </div>
       </div>
@@ -5254,6 +5259,95 @@ document.addEventListener('click', function(e) {
   setTimeout(loadNotifications, 1500);
 })();
 
+// ── Response Template Library ──────────────────────────────────────────────
+var _tmplCache = null;
+var _tmplTargetId = null;
+
+function toggleTmplPicker(reviewId, anchorEl) {
+  var picker = document.getElementById('tmpl-picker');
+  if (picker.style.display !== 'none' && _tmplTargetId === reviewId) {
+    picker.style.display = 'none';
+    return;
+  }
+  _tmplTargetId = reviewId;
+  // Position under anchor button
+  var rect = anchorEl.getBoundingClientRect();
+  picker.style.top  = (rect.bottom + window.scrollY + 4) + 'px';
+  picker.style.left = Math.max(8, rect.left + window.scrollX) + 'px';
+  picker.style.display = 'block';
+  if (_tmplCache) { _renderTmplPicker(); return; }
+  document.getElementById('tmpl-list').innerHTML = '<div style="font-size:12px;color:var(--ink3);padding:8px">Loading…</div>';
+  fetch('/api/templates').then(function(r){ return r.json(); }).then(function(d){
+    _tmplCache = d.templates || [];
+    _renderTmplPicker();
+  });
+}
+
+function _renderTmplPicker() {
+  var list = document.getElementById('tmpl-list');
+  if (!_tmplCache || !_tmplCache.length) {
+    list.innerHTML = '<div style="font-size:12px;color:var(--ink3);padding:8px 0">No templates saved yet.<br>Edit a draft and click "Save as template."</div>';
+    return;
+  }
+  var html = '';
+  _tmplCache.forEach(function(t) {
+    html += '<div onclick="insertTemplate(' + t.id + ',\'' + t.body.replace(/'/g,"\\'").replace(/\n/g,'\\n') + '\')" '
+          + 'style="padding:8px 10px;border-bottom:1px solid var(--paper3);cursor:pointer;border-radius:4px" '
+          + 'onmouseover="this.style.background=\'var(--paper2)\'" onmouseout="this.style.background=\'\'">'
+          + '<div style="font-size:12px;font-weight:600;color:var(--ink)">' + _escH(t.title) + '</div>'
+          + '<div style="font-size:11px;color:var(--ink3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px">' + _escH(t.body.slice(0,80)) + (t.body.length>80?'…':'') + '</div>'
+          + '</div>';
+  });
+  list.innerHTML = html;
+}
+
+function _escH(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function insertTemplate(tid, body) {
+  var ta = document.getElementById('editor-text-' + _tmplTargetId);
+  if (ta) {
+    ta.value = body.replace(/\\n/g, '\n');
+    ta.focus();
+  }
+  document.getElementById('tmpl-picker').style.display = 'none';
+  fetch('/api/templates/' + tid + '/use', {method:'POST'});
+}
+
+function saveAsTemplate(reviewId) {
+  var ta = document.getElementById('editor-text-' + reviewId);
+  if (!ta || !ta.value.trim()) { toast('Nothing to save — write a response first','warning'); return; }
+  var title = prompt('Template name (e.g. "Positive 5-star standard"):');
+  if (!title || !title.trim()) return;
+  fetch('/api/templates', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({title: title.trim(), body: ta.value.trim()})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) {
+      _tmplCache = null; // invalidate cache
+      toast('Template saved ✓','success');
+    } else {
+      toast('Error: ' + (d.error||'Failed'),'error');
+    }
+  });
+}
+
+document.addEventListener('click', function(e) {
+  var picker = document.getElementById('tmpl-picker');
+  if (picker && !picker.contains(e.target) && !e.target.closest('[data-tmpl-btn]')) {
+    picker.style.display = 'none';
+  }
+});
+
 </script>
+
+<!-- Template picker popover -->
+<div id="tmpl-picker" style="display:none;position:absolute;z-index:9000;background:white;border:1px solid var(--paper3);border-radius:8px;box-shadow:0 6px 24px rgba(14,12,10,.15);width:300px;padding:10px;max-height:320px;overflow-y:auto">
+  <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">Your templates</div>
+  <div id="tmpl-list"></div>
+</div>
+
 </body>
 </html>

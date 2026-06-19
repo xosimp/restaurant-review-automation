@@ -172,6 +172,112 @@ def topic_heatmap_api(current_user):
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
+@client_bp.route("/api/templates", methods=["GET"])
+@login_required
+def list_templates(current_user):
+    from models import get_response_templates
+    return jsonify(ok=True, templates=get_response_templates(current_user["restaurant_id"]))
+
+@client_bp.route("/api/templates", methods=["POST"])
+@login_required
+def create_template(current_user):
+    from models import create_response_template
+    data  = request.get_json() or {}
+    title = (data.get("title") or "").strip()
+    body  = (data.get("body") or "").strip()
+    if not title or not body:
+        return jsonify(ok=False, error="Title and body required"), 400
+    if len(title) > 120:
+        return jsonify(ok=False, error="Title too long (120 chars max)"), 400
+    category = data.get("category", "general")
+    if category not in ("general", "positive", "negative", "neutral"):
+        category = "general"
+    tid = create_response_template(current_user["restaurant_id"], title, body, category)
+    return jsonify(ok=True, id=tid)
+
+@client_bp.route("/api/templates/<int:tid>", methods=["DELETE"])
+@login_required
+def delete_template(tid, current_user):
+    from models import delete_response_template
+    delete_response_template(tid, current_user["restaurant_id"])
+    return jsonify(ok=True)
+
+@client_bp.route("/api/templates/<int:tid>/use", methods=["POST"])
+@login_required
+def use_template(tid, current_user):
+    from models import increment_template_use
+    increment_template_use(tid)
+    return jsonify(ok=True)
+
+@client_bp.route("/api/import-tripadvisor", methods=["POST"])
+@login_required
+def import_tripadvisor(current_user):
+    import io, csv as _csv
+    from models import Review, save_reviews
+    rid  = current_user["restaurant_id"]
+    f    = request.files.get("file")
+    if not f:
+        return jsonify(ok=False, error="No file uploaded"), 400
+    try:
+        content = f.read().decode("utf-8-sig")  # handle BOM
+    except Exception:
+        return jsonify(ok=False, error="Could not read file — make sure it's a UTF-8 CSV"), 400
+    if not content.strip():
+        return jsonify(ok=False, error="File is empty"), 400
+    try:
+        rows = list(_csv.DictReader(io.StringIO(content)))
+    except Exception as e:
+        return jsonify(ok=False, error=f"Could not parse CSV: {e}"), 400
+    if not rows:
+        return jsonify(ok=False, error="No data rows found"), 400
+
+    # Normalise column names (lowercase, strip spaces)
+    def _get(row, *keys):
+        for k in keys:
+            for rk in row:
+                if rk.strip().lower() == k:
+                    return (row[rk] or "").strip()
+        return ""
+
+    reviews = []
+    for i, row in enumerate(rows):
+        text   = _get(row, "text", "review", "body", "comment", "review text")
+        rating_raw = _get(row, "rating", "stars", "score", "bubble")
+        author = _get(row, "author", "reviewer", "name", "user", "username")
+        date   = _get(row, "date", "review date", "published", "visited")
+        title  = _get(row, "title", "review title", "headline")
+        if not text or not rating_raw:
+            continue
+        try:
+            rating = int(float(rating_raw))
+        except Exception:
+            continue
+        if rating < 1 or rating > 5:
+            continue
+        full_text = (title + " — " + text) if title else text
+        reviews.append(Review(
+            restaurant_id=rid,
+            platform="tripadvisor",
+            external_id=f"ta_import_{i}_{hash(text[:40])}",
+            author=author or "TripAdvisor Guest",
+            rating=rating,
+            text=full_text,
+            review_date=date or None,
+        ))
+    if not reviews:
+        return jsonify(ok=False, error="No valid reviews found — check column names (rating, text required)"), 400
+
+    new_count, new_objs = save_reviews(reviews)
+    # Trigger AI processing in background
+    if new_objs:
+        try:
+            import threading as _t
+            from analyser import process_new_reviews as _proc
+            _t.Thread(target=_proc, args=(new_objs,), daemon=True).start()
+        except Exception:
+            pass
+    return jsonify(ok=True, imported=len(reviews), new=new_count)
+
 @client_bp.route("/api/response-performance")
 @login_required
 def response_performance_api(current_user):
