@@ -47,6 +47,7 @@ def init_auth(db_path: str = DB_PATH):
         "ALTER TABLE sessions ADD COLUMN user_agent TEXT",
         "ALTER TABLE sessions ADD COLUMN active_restaurant_id INTEGER",
         "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'client'",
+        "ALTER TABLE users ADD COLUMN google_id TEXT",
     ]:
         try:
             import sqlite3 as _sql

@@ -122,15 +122,16 @@ def login():
     if request.method == "POST":
         ip = _get_client_ip()
 
+        _google_sso_post = bool(os.getenv("GOOGLE_SSO_CLIENT_ID"))
         if _is_rate_limited(ip):
-            return render_template('login.html',
+            return render_template('login.html', google_sso_enabled=_google_sso_post,
                 error="Too many failed attempts. Please wait 5 minutes and try again.")
         username = request.form.get("username","").strip()
         password = request.form.get("password","")
         user = verify_password(username, password)
         if not user:
             _record_failed_attempt(ip)
-            return render_template('login.html', error="Invalid username or password")
+            return render_template('login.html', error="Invalid username or password", google_sso_enabled=_google_sso_post)
         _clear_attempts(ip)
         next_url = request.args.get("next", "/admin" if user["is_admin"] else "/")
 
@@ -199,7 +200,8 @@ def login():
         return resp
     import secrets as _sec2
     csrf2 = _sec2.token_hex(16)
-    resp2 = make_response(render_template('login.html', error=None))
+    _google_sso = bool(os.getenv("GOOGLE_SSO_CLIENT_ID"))
+    resp2 = make_response(render_template('login.html', error=None, google_sso_enabled=_google_sso))
     resp2.set_cookie("csrf_token", csrf2, httponly=True, samesite="Lax")
     return resp2
 
@@ -612,6 +614,103 @@ def gmb_callback():
             "window.close();"
             "</script><p>Connection error. Close this window.</p></body></html>"
         )
+
+
+@auth_bp.route("/auth/google-sso")
+def google_sso_start():
+    """Kick off Google Sign-In OAuth flow for dashboard login."""
+    import secrets, urllib.parse
+    state = secrets.token_hex(16)
+    base_url = os.getenv("BASE_URL", "https://dashboard.cavnar.ai")
+    params = urllib.parse.urlencode({
+        "client_id":     os.getenv("GOOGLE_SSO_CLIENT_ID", ""),
+        "redirect_uri":  base_url + "/auth/google-sso/callback",
+        "response_type": "code",
+        "scope":         "openid email profile",
+        "state":         state,
+        "access_type":   "online",
+        "prompt":        "select_account",
+    })
+    resp = make_response(redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params))
+    resp.set_cookie("g_sso_state", state, httponly=True, samesite="Lax", max_age=300)
+    return resp
+
+
+@auth_bp.route("/auth/google-sso/callback")
+def google_sso_callback():
+    """Handle Google's redirect after sign-in."""
+    import requests as _req, urllib.parse
+    from auth import create_session, get_conn as _gc
+
+    error = request.args.get("error")
+    if error:
+        return redirect("/login?error=google_denied")
+
+    # CSRF check
+    state_param  = request.args.get("state", "")
+    state_cookie = request.cookies.get("g_sso_state", "")
+    if not state_param or state_param != state_cookie:
+        return redirect("/login?error=state_mismatch")
+
+    code     = request.args.get("code", "")
+    base_url = os.getenv("BASE_URL", "https://dashboard.cavnar.ai")
+
+    # Exchange code for tokens
+    token_resp = _req.post("https://oauth2.googleapis.com/token", data={
+        "code":          code,
+        "client_id":     os.getenv("GOOGLE_SSO_CLIENT_ID", ""),
+        "client_secret": os.getenv("GOOGLE_SSO_CLIENT_SECRET", ""),
+        "redirect_uri":  base_url + "/auth/google-sso/callback",
+        "grant_type":    "authorization_code",
+    }, timeout=10)
+    if not token_resp.ok:
+        return redirect("/login?error=google_token_failed")
+
+    access_token = token_resp.json().get("access_token")
+    if not access_token:
+        return redirect("/login?error=no_access_token")
+
+    # Get user info
+    info_resp = _req.get("https://www.googleapis.com/oauth2/v2/userinfo",
+                          headers={"Authorization": "Bearer " + access_token}, timeout=10)
+    if not info_resp.ok:
+        return redirect("/login?error=userinfo_failed")
+
+    info     = info_resp.json()
+    email    = (info.get("email") or "").lower().strip()
+    google_id = info.get("id", "")
+
+    if not email:
+        return redirect("/login?error=no_email")
+
+    # Match against users table by email or google_id
+    conn = _gc()
+    row = conn.execute(
+        "SELECT * FROM users WHERE (LOWER(email)=? OR google_id=?) AND is_active=1 AND is_admin=0 LIMIT 1",
+        (email, google_id)
+    ).fetchone()
+    if row:
+        # Persist google_id if not already stored
+        if not row["google_id"]:
+            conn.execute("UPDATE users SET google_id=? WHERE id=?", (google_id, row["id"]))
+            conn.commit()
+    conn.close()
+
+    if not row:
+        return redirect("/login?error=no_account")
+
+    user = dict(row)
+    from auth import create_session, update_last_login
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    ua = request.headers.get("User-Agent", "")
+    token = create_session(user["id"], ip_address=ip, user_agent=ua)
+    update_last_login(user["id"])
+
+    resp = make_response(redirect("/"))
+    resp.set_cookie("session_token", token, httponly=True, samesite="Lax",
+                    secure=True, max_age=30*24*3600)
+    resp.delete_cookie("g_sso_state")
+    return resp
 
 
 @auth_bp.route("/auth/google/disconnect", methods=["POST"])
