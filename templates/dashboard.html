@@ -2289,24 +2289,48 @@ function closeEditor(id) {
 function regenDraft(id) {
   var txtEl = document.getElementById('draft-txt-'+id);
   var editorEl = document.getElementById('editor-text-'+id);
+  var boxEl = document.getElementById('draft-box-'+id);
   if (txtEl) txtEl.textContent = 'Generating new response…';
+  else if (boxEl) boxEl.innerHTML = '<div class="draft-lbl" style="color:var(--ink3)">Generating response…</div>';
   fetch('/api/regenerate-draft/'+id, {method:'POST'}).then(function(r){return r.json();}).then(function(data){
     if (data.ok) {
-      if (txtEl) txtEl.textContent = data.draft;
-      if (editorEl) editorEl.value = data.draft;
-      document.getElementById('draft-actions-'+id).innerHTML =
-        '<button class="btn btn-approve" onclick="approveR('+id+')">✓ Approve</button>' +
-        '<button class="btn btn-skip" onclick="skipR('+id+')">Skip</button>';
-      document.getElementById('draft-actions-'+id).style.display='flex';
-      document.getElementById('editor-'+id).style.display='none';
+      var actionsEl = document.getElementById('draft-actions-'+id);
+      if (actionsEl) {
+        if (txtEl) txtEl.textContent = data.draft;
+        if (editorEl) editorEl.value = data.draft;
+        actionsEl.innerHTML =
+          '<button class="btn btn-approve" onclick="approveR('+id+')">✓ Approve</button>' +
+          '<button class="btn btn-skip" onclick="skipR('+id+')">Skip</button>';
+        actionsEl.style.display='flex';
+        document.getElementById('editor-'+id).style.display='none';
+      } else if (boxEl) {
+        boxEl.style.background='';
+        boxEl.innerHTML =
+          '<div class="draft-lbl">Suggested response</div>' +
+          '<div class="draft-txt" id="draft-txt-'+id+'">'+data.draft+'</div>' +
+          '<div class="draft-actions" id="draft-actions-'+id+'">' +
+            '<button class="btn btn-approve" onclick="approveR('+id+')">✓ Approve</button>' +
+            '<button class="btn btn-skip" onclick="skipR('+id+')">Skip</button>' +
+          '</div>' +
+          '<div class="response-editor" id="editor-'+id+'" style="display:none;margin-top:10px">' +
+            '<textarea id="editor-text-'+id+'" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:\'Plus Jakarta Sans\',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none">'+data.draft+'</textarea>' +
+            '<div style="display:flex;gap:6px;margin-top:6px">' +
+              '<button class="btn btn-approve" onclick="saveDraft('+id+')">Save & approve</button>' +
+              '<button class="btn btn-skip" onclick="regenDraft('+id+')">↻ Regenerate AI draft</button>' +
+              '<button class="btn btn-skip" onclick="closeEditor('+id+')">Cancel</button>' +
+            '</div>' +
+          '</div>';
+      }
       toast('New draft generated','success');
     } else {
       if (txtEl) txtEl.textContent = 'Error generating — try again';
+      else if (boxEl) boxEl.innerHTML = '<div class="draft-lbl" style="color:var(--ink3)">Error generating — try again</div><div class="draft-actions" style="margin-top:8px"><button class="btn btn-approve" onclick="regenDraft('+id+')">Generate AI response</button></div>';
       toast('Error: ' + (data.error||'unknown'),'error');
     }
-  }).catch(function(err){ 
-    if(txtEl) txtEl.textContent = 'Error generating — try again';
-    toast(err.message||'Network error — try again','error'); 
+  }).catch(function(err){
+    if (txtEl) txtEl.textContent = 'Error generating — try again';
+    else if (boxEl) boxEl.innerHTML = '<div class="draft-lbl" style="color:var(--ink3)">Error — try again</div><div class="draft-actions" style="margin-top:8px"><button class="btn btn-approve" onclick="regenDraft('+id+')">Generate AI response</button></div>';
+    toast(err.message||'Network error — try again','error');
   });
 }
 function saveDraft(id) {
