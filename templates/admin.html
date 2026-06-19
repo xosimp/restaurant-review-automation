@@ -21,6 +21,7 @@ html[data-theme="dark"],html[data-theme="dark"] body{background:#1a1714!importan
 [data-theme="dark"] .card{background:var(--paper2)!important;border-color:var(--paper3)!important}
 [data-theme="dark"] input,[data-theme="dark"] select,[data-theme="dark"] textarea{background:var(--paper)!important;color:var(--ink)!important;border-color:var(--paper3)!important}
 [data-theme="dark"] input[type=number]::-webkit-inner-spin-button,[data-theme="dark"] input[type=number]::-webkit-outer-spin-button{filter:invert(1) brightness(0.8)}
+[data-theme="dark"] select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23c4bdb4'/%3E%3C/svg%3E")!important}
 [data-theme="dark"] label{color:var(--ink3)!important}
 [data-theme="dark"] .section-title{color:var(--ink3)!important}
 [data-theme="dark"] .tbl th{background:var(--paper3)!important;color:var(--ink2)!important}
@@ -1139,17 +1140,26 @@ function adminLoadChangelog() {
       el.innerHTML = '<div style="font-size:12px;color:var(--ink3);padding:8px 0">No entries yet.</div>';
       return;
     }
-    var tagColors = {feature:'#1a56cc',fix:'#2d6a4f',improvement:'#b7791f'};
-    var tagBg = {feature:'#e8f0fe',fix:'#eaf4ee',improvement:'#fef9ec'};
+    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    var tagColors = isDark
+      ? {feature:'#7aacff',fix:'#4ead7a',improvement:'#d4a030'}
+      : {feature:'#1a56cc',fix:'#2d6a4f',improvement:'#b7791f'};
+    var tagBg = isDark
+      ? {feature:'#0d1f3c',fix:'#0c2318',improvement:'#251d08'}
+      : {feature:'#e8f0fe',fix:'#eaf4ee',improvement:'#fef9ec'};
+    var cardBg = isDark ? 'var(--surface)' : 'white';
+    var cardBorder = isDark ? '1px solid var(--paper3)' : '1px solid #e0dbd0';
     var html = '';
     d.entries.forEach(function(e) {
       var tag = e.tag || 'feature';
-      html += '<div style="background:white;border:1px solid #e0dbd0;border-radius:8px;padding:12px 16px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px">';
+      var dt = e.published_at || '';
+      var fmtDate = dt ? (function(s){var p=s.slice(0,10).split('-');return (parseInt(p[1])+'/'+ parseInt(p[2])+'/'+ p[0].slice(2));})() : '';
+      html += '<div style="background:'+cardBg+';border:'+cardBorder+';border-radius:8px;padding:12px 16px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px">';
       html += '<div>';
-      html += '<span style="font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;background:'+(tagBg[tag]||'#e8f0fe')+';color:'+(tagColors[tag]||'#1a56cc')+';padding:2px 7px;border-radius:4px;margin-right:8px">'+e.tag+'</span>';
-      html += '<span style="font-size:12px;color:#7a736a">'+((e.published_at||'').slice(0,10))+'</span>';
-      html += '<div style="font-size:13px;font-weight:600;color:#0e0c0a;margin-top:5px">'+escHtml(e.title)+'</div>';
-      if (e.body) html += '<div style="font-size:12px;color:#3a3530;margin-top:2px">'+escHtml(e.body)+'</div>';
+      html += '<span style="font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;background:'+(tagBg[tag]||tagBg.feature)+';color:'+(tagColors[tag]||tagColors.feature)+';padding:2px 7px;border-radius:4px;margin-right:8px">'+e.tag+'</span>';
+      html += '<span style="font-size:12px;color:#7a736a">'+fmtDate+'</span>';
+      html += '<div style="font-size:13px;font-weight:600;color:'+(isDark?'var(--ink)':'#0e0c0a')+';margin-top:5px">'+escHtml(e.title)+'</div>';
+      if (e.body) html += '<div style="font-size:12px;color:'+(isDark?'var(--ink2)':'#3a3530')+';margin-top:2px">'+escHtml(e.body)+'</div>';
       html += '</div>';
       html += '<button onclick="adminDeleteChangelog('+e.id+',this)" style="background:none;border:none;cursor:pointer;color:#c0392b;font-size:15px;flex-shrink:0;padding:0 2px" title="Delete">✕</button>';
       html += '</div>';
