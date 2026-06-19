@@ -38,6 +38,7 @@ html[data-theme="dark"],html[data-theme="dark"] body{background:#1a1714!importan
 [data-theme="dark"] [style*="background:#eaf4ee"]{background:#0c2318!important}
 [data-theme="dark"] [style*="background:#fef9ec"]{background:#251d08!important}
 [data-theme="dark"] [style*="background:#fef2f2"]{background:#2a1010!important}
+[data-theme="dark"] [style*="background:#f0faf4"]{background:#071a0f!important;border-color:#1a4a30!important;color:#4ead7a!important}
 [data-theme="dark"] [style*="background:#f3f4f6"]{background:#252320!important}
 [data-theme="dark"] [style*="background:#e8f4fd"]{background:#0a1828!important}
 [data-theme="dark"] [style*="background:#fff3e0"]{background:#251a08!important}
@@ -870,15 +871,15 @@ async function postIncident() {
       <div style="display:grid;grid-template-columns:1fr 1fr 140px auto;gap:10px;align-items:end">
         <div>
           <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">TITLE</label>
-          <input id="cl-title" type="text" placeholder="e.g. Dark mode is here" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit">
+          <input id="cl-title" type="text" placeholder="e.g. Dark mode is here" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit;height:36px;box-sizing:border-box">
         </div>
         <div>
           <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">BODY (optional)</label>
-          <input id="cl-body" type="text" placeholder="Short description…" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit">
+          <input id="cl-body" type="text" placeholder="Short description…" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit;height:36px;box-sizing:border-box">
         </div>
         <div>
           <label style="font-size:11px;font-weight:600;color:var(--ink3);display:block;margin-bottom:4px">TAG</label>
-          <select id="cl-tag" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit">
+          <select id="cl-tag" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:inherit;height:36px;box-sizing:border-box;appearance:none;-webkit-appearance:none;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E\");background-repeat:no-repeat;background-position:right 10px center">
             <option value="feature">feature</option>
             <option value="improvement">improvement</option>
             <option value="fix">fix</option>
