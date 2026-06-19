@@ -70,6 +70,13 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] select{background:var(--paper2)!important;color:var(--ink)!important;border-color:var(--paper3)!important;caret-color:var(--ink)!important}
 /* Modal inner cards */
 [data-theme="dark"] #pw-modal>div,[data-theme="dark"] #email-modal>div{background:var(--surface)!important}
+/* 2FA modal outer + info box */
+[data-theme="dark"] #twofa-modal>div{background:var(--surface)!important}
+[data-theme="dark"] #twofa-modal [style*="background:#f7f4ef"]{background:var(--paper3)!important;color:var(--ink)!important}
+/* Tooltips — light variant needs dark bg in dark mode */
+[data-theme="dark"] .calc-tip-light .tip-text{background:#1a1714!important;color:rgba(240,235,224,.9)!important;border-color:rgba(255,255,255,.12)!important;box-shadow:0 4px 16px rgba(0,0,0,.5)!important}
+[data-theme="dark"] .calc-tip-light .tip-icon{color:rgba(240,235,224,.55)!important}
+[data-theme="dark"] .calc-tip-light:hover .tip-icon{color:rgba(240,235,224,.95)!important}
 /* Tables */
 [data-theme="dark"] .tbl th{background:var(--paper3)!important;color:var(--ink2)!important}
 [data-theme="dark"] .tbl td{border-color:var(--paper3)!important;color:var(--ink2)!important}
