@@ -543,14 +543,30 @@ async function reactivateClient(id, name) {
 }
 
 async function setUserRole(userId, role) {
-  const res = await fetch('/admin/api/set-user-role', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({user_id: userId, role: role})
-  });
-  const data = await res.json();
-  if (data.ok) { location.reload(); }
-  else { alert('Error: ' + (data.error || 'unknown')); }
+  const btn = event.target;
+  const orig = btn.textContent;
+  btn.textContent = 'Saving…';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/admin/api/set-user-role', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({user_id: userId, role: role})
+    });
+    const data = await res.json();
+    if (data.ok) {
+      btn.textContent = '✓ Saved';
+      setTimeout(function(){ location.reload(); }, 600);
+    } else {
+      btn.textContent = 'Error: ' + (data.error || 'unknown');
+      btn.disabled = false;
+      console.error('setUserRole error', data);
+    }
+  } catch(e) {
+    btn.textContent = 'Network error';
+    btn.disabled = false;
+    console.error('setUserRole exception', e);
+  }
 }
 
 async function addStaffNote() {
