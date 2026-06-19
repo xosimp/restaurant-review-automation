@@ -192,6 +192,16 @@ input:focus{
   text-align:center;
   margin-top:20px;
 }
+.ftr-link{
+  color:#7a736a;
+  text-decoration:none;
+  transition:color .15s,text-shadow .15s;
+  border-radius:3px;
+}
+.ftr-link:hover{
+  color:#c84b2f;
+  text-shadow:0 0 12px rgba(200,75,47,.25),0 1px 4px rgba(200,75,47,.15);
+}
 </style>
 </head>
 <body>
@@ -233,15 +243,15 @@ input:focus{
     {% endif %}
 
     <div class="footer-note" style="margin-top:12px">
-      <a href="/forgot-password" style="font-size:12px;color:#7a736a;text-decoration:none">Forgot your password?</a>
+      <a href="/forgot-password" class="ftr-link" style="font-size:12px">Forgot your password?</a>
     </div>
     <div class="footer-note">Need access? Contact <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none;font-weight:600">will@cavnar.ai</a></div>
     <div class="footer-note" style="margin-top:8px">
-      <a href="/privacy" style="font-size:11px;color:#7a736a;text-decoration:none">Privacy Policy</a>
+      <a href="/privacy" class="ftr-link">Privacy Policy</a>
       &nbsp;·&nbsp;
-      <a href="/terms" style="font-size:11px;color:#7a736a;text-decoration:none">Terms of Service</a>
+      <a href="/terms" class="ftr-link">Terms of Service</a>
       &nbsp;·&nbsp;
-      <a href="https://status.cavnar.ai" target="_blank" style="font-size:11px;color:#7a736a;text-decoration:none">System Status</a>
+      <a href="https://status.cavnar.ai" target="_blank" class="ftr-link">System Status</a>
     </div>
   </div>
 </div>
