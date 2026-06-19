@@ -313,13 +313,21 @@ def reactivate_client(user_id, current_user):
 @admin_bp.route("/admin/api/set-user-role", methods=["POST"])
 @admin_required
 def set_user_role_route(current_user):
-    data = request.get_json()
-    user_id = int(data.get("user_id", 0))
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        user_id = int(data.get("user_id") or 0)
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Invalid user_id")
     role = data.get("role", "client")
     if role not in ("client", "owner"):
         return jsonify(ok=False, error="Invalid role")
+    if not user_id:
+        return jsonify(ok=False, error="Missing user_id")
     from auth import set_user_role
-    set_user_role(user_id, role)
+    try:
+        set_user_role(user_id, role)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
     return jsonify(ok=True)
 
 

@@ -4794,7 +4794,9 @@ function revokeOtherSessions(btn){
       // last delivery
       var lastEl = document.getElementById('webhook-last-status');
       if (wh.last_fired) {
-        lastEl.textContent = wh.last_status + ' · ' + wh.last_fired.slice(0,16).replace('T',' ') + ' UTC';
+        var _d = new Date(wh.last_fired.replace(' ','T') + 'Z');
+        var _fmt = _d.toLocaleString('en-US', {timeZone:'America/Chicago', month:'numeric', day:'numeric', year:'2-digit', hour:'numeric', minute:'2-digit'});
+        lastEl.textContent = wh.last_status + ' · ' + _fmt + ' CT';
         lastEl.style.color = (wh.last_status >= 200 && wh.last_status < 300) ? '#2d6a4f' : '#c0392b';
       }
     }).catch(function(){});
