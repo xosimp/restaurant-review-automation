@@ -11,7 +11,7 @@ Jobs:
                 — send IMMEDIATE urgent alert to owner if critical review found
   8:00am weekly — send weekly digest to clients on their chosen day
 """
-import os, threading, time, logging
+import os, threading, time, logging, html as _html
 from status_manager import record_scheduler_heartbeat, run_health_checks
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo as _ZI_sch
@@ -61,7 +61,7 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
             padding:12px 14px;margin-top:8px">
   <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;
               color:#2d6a4f;margin-bottom:6px">AI Draft Response</div>
-  <div style="font-size:13px;color:#1a1714;line-height:1.7">{draft}</div>
+  <div style="font-size:13px;color:#1a1714;line-height:1.7">{_html.escape(draft)}</div>
   <div style="font-size:11px;color:#7a736a;margin-top:8px">
     Log in to approve, edit, or regenerate this response →
   </div>
@@ -73,9 +73,9 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
 <div style="background:#fff5f5;border-left:3px solid #c84b2f;border-radius:4px;
             padding:12px 14px;margin-bottom:10px">
   <div style="font-size:12px;font-weight:600;color:#c84b2f;margin-bottom:4px">
-    {stars} — {r.get("author","Guest")} via {r.get("platform","").title()}
+    {stars} — {_html.escape(r.get("author","Guest"))} via {_html.escape(r.get("platform","").title())}
   </div>
-  <div style="font-size:13px;color:#1a1714;line-height:1.6">{r.get("text","")}</div>
+  <div style="font-size:13px;color:#1a1714;line-height:1.6">{_html.escape(r.get("text",""))}</div>
   {draft_html}
 </div>"""
 

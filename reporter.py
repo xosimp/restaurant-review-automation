@@ -1,4 +1,4 @@
-import os, json, smtplib
+import os, json, smtplib, html as _html
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -58,12 +58,12 @@ def _review_card(r) -> str:
 <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin:8px 0">
   {urgency_banner}
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-    <strong style="font-size:14px">{r.author}</strong>
+    <strong style="font-size:14px">{_html.escape(r.author or "")}</strong>
     <span style="color:#f59e0b;font-size:16px">{_stars(r.rating)}</span>
   </div>
-  <p style="margin:0 0 6px;font-size:14px;color:#1f2937;line-height:1.5">{r.text}</p>
+  <p style="margin:0 0 6px;font-size:14px;color:#1f2937;line-height:1.5">{_html.escape(r.text or "")}</p>
   <div style="font-size:11px;color:{color};text-transform:uppercase;letter-spacing:.04em">
-    {r.sentiment} &nbsp;·&nbsp; {r.platform}</div>
+    {_html.escape(r.sentiment or "")} &nbsp;·&nbsp; {_html.escape(r.platform or "")}</div>
   {draft_section}
 </div>"""
 
@@ -436,8 +436,8 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
     if urgent:
         for r in urgent[:3]:
             stars = "★" * r.rating + "☆" * (5 - r.rating)
-            name = (r.author or "Guest")[:20]
-            snippet = (r.text or "")[:120]
+            name = _html.escape((r.author or "Guest")[:20])
+            snippet = _html.escape((r.text or "")[:120])
             urgent_rows += f"""
 <tr><td style="padding:0 0 8px">
   <div style="background:#fef2f2;border-radius:6px;padding:12px 14px;border-left:3px solid #dc2626">
@@ -454,8 +454,8 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
     pos_row = ""
     if top_pos:
         stars = "★" * top_pos.rating
-        name = (top_pos.author or "Guest")[:20]
-        snippet = (top_pos.text or "")[:120]
+        name = _html.escape((top_pos.author or "Guest")[:20])
+        snippet = _html.escape((top_pos.text or "")[:120])
         pos_row = f"""
 <tr><td style="padding:0 0 8px">
   <div style="background:#f0fdf4;border-radius:6px;padding:12px 14px;border-left:3px solid #16a34a">

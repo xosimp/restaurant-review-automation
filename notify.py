@@ -160,7 +160,8 @@ def delete_alert_contact(contact_id: int, db_path: str = DB_PATH):
 # ── Alert helpers ─────────────────────────────────────────────
 
 def _is_health_alert(text: str) -> bool:
-    t = text.lower()
+    import unicodedata
+    t = unicodedata.normalize("NFKC", text).lower().strip()
     return any(kw in t for kw in HEALTH_KEYWORDS)
 
 
