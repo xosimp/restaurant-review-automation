@@ -190,18 +190,133 @@ def analyse_inventory(items: list[dict]) -> dict:
     }
 
 
-def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name: str = None, restaurant_id: int = None) -> str:
+def compute_item_trends(restaurant_id: int, current_items: list, db_path: str = None) -> dict:
+    """
+    Compare current items against up to 8 weeks of stored history.
+    Returns big_8, price_alerts (>5% spike this week), trend_alerts (3+ weeks up), trend_context for Claude.
+    """
+    import json as _jt
+    from models import get_conn as _gc_t, DB_PATH as _DB
+    _db = db_path or _DB
+
+    # Big 8: items with highest unit_cost × avg_daily_usage (biggest weekly spend impact)
+    scored = sorted(
+        current_items,
+        key=lambda x: (x.get("unit_cost") or 0) * (x.get("avg_daily_usage") or 0),
+        reverse=True,
+    )
+    big_8_names = {i["item"] for i in scored[:8]}
+    current_prices = {i["item"]: (i.get("unit_cost") or 0) for i in current_items}
+
+    try:
+        conn = _gc_t(_db)
+        rows = conn.execute("""
+            SELECT week_end, items_json FROM inventory_history
+            WHERE restaurant_id=? AND items_json IS NOT NULL
+            ORDER BY week_end DESC LIMIT 8
+        """, (restaurant_id,)).fetchall()
+        conn.close()
+    except Exception:
+        rows = []
+
+    # Build per-item price history: {name: [price_oldest, ..., price_newest]}
+    history = {}
+    for row in reversed(rows):
+        try:
+            for hi in _jt.loads(row["items_json"] or "[]"):
+                name = hi.get("item")
+                price = hi.get("unit_cost") or 0
+                if name:
+                    history.setdefault(name, []).append(price)
+        except Exception:
+            pass
+
+    price_alerts, trend_alerts, trend_lines = [], [], []
+
+    for name, hist in history.items():
+        if name not in current_prices:
+            continue
+        curr = current_prices[name]
+
+        # Week-over-week spike: >5% increase vs last stored week
+        if hist:
+            prev = hist[-1]
+            if prev > 0 and curr > prev:
+                pct = round((curr - prev) / prev * 100, 1)
+                if pct >= 5:
+                    price_alerts.append({
+                        "item": name,
+                        "old_price": prev,
+                        "new_price": curr,
+                        "change_pct": pct,
+                        "is_big_8": name in big_8_names,
+                    })
+
+        # Consecutive upward trend: 3+ weeks including current
+        all_prices = hist + [curr]
+        if len(all_prices) >= 3:
+            consec = 0
+            for i in range(len(all_prices) - 1, 0, -1):
+                if all_prices[i] > all_prices[i - 1]:
+                    consec += 1
+                else:
+                    break
+            if consec >= 3:
+                base = all_prices[-consec - 1] if len(all_prices) > consec else all_prices[0]
+                total_pct = round((curr - base) / base * 100, 1) if base > 0 else 0
+                trend_alerts.append({
+                    "item": name,
+                    "weeks": consec,
+                    "start_price": base,
+                    "current_price": curr,
+                    "total_change_pct": total_pct,
+                    "is_big_8": name in big_8_names,
+                })
+                trend_lines.append(
+                    f"{name} up {total_pct}% over {consec} weeks (${base:.2f} → ${curr:.2f})"
+                )
+        elif len(all_prices) >= 2 and name in big_8_names:
+            base = all_prices[0]
+            if base > 0:
+                pct = round((curr - base) / base * 100, 1)
+                direction = "up" if curr > base else "down"
+                trend_lines.append(
+                    f"{name} (Big 8) {direction} {abs(pct)}% over {len(all_prices)} weeks"
+                )
+
+    trend_context = ""
+    if trend_lines:
+        trend_context = (
+            "\n\nMulti-week price trends:\n"
+            + "\n".join(f"- {l}" for l in trend_lines[:6])
+            + "\nIf any Big 8 item has been rising 3+ weeks, call it out and connect it to "
+            "food cost trajectory or menu pricing."
+        )
+
+    return {
+        "big_8": scored[:8],
+        "big_8_names": list(big_8_names),
+        "price_alerts": price_alerts,
+        "trend_alerts": trend_alerts,
+        "trend_context": trend_context,
+        "weeks_of_history": len(rows),
+    }
+
+
+def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name: str = None,
+                        restaurant_id: int = None, items: list = None) -> str:
     """Claude narrates inventory findings like a food cost consultant."""
     name_line = f"Owner name: {owner_name}" if owner_name else ""
     rest_line  = f"Restaurant: {restaurant_name}" if restaurant_name else ""
-    # Pull inventory history for week-over-week comparison
     wow_context = ""
     menu_context = ""
+    trend_context = ""
+    big_8_context = ""
     if restaurant_id:
         try:
             from models import get_conn as _gc_inv
             _conn_inv = _gc_inv()
-            # Get previous week's snapshot (exclude current week so we compare to last week)
+            # Get previous week's snapshot for WoW waste comparison
             prev = _conn_inv.execute("""
                 SELECT waste_json FROM inventory_history
                 WHERE restaurant_id=? AND week_end < date('now','-1 day')
@@ -217,15 +332,13 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
                     pct_change = round((diff / prev_total) * 100, 1)
                     direction = "UP" if diff > 0 else "DOWN"
                     wow_context = f"\n- vs last week: waste is {direction} ${abs(diff):,.2f} ({abs(pct_change)}%) — mention this trend"
-                # Check if same items repeating
                 prev_items = set(prev_waste.get("top_items", []))
                 curr_items = set(x["item"] for x in analysis["waste_items"][:4])
                 repeat = prev_items & curr_items
                 if repeat:
                     wow_context += f"\n- REPEAT waste offenders (2+ weeks): {', '.join(repeat)} — these need stronger action, not just reordering"
 
-            # Save current snapshot — one row per week per restaurant (upsert by week_end)
-            # Use the inventory data's own week_end date so chart labels match the header
+            # Save snapshot — upsert by week_end, now including full items_json
             import json as _json_inv2
             try:
                 _week_end_str = datetime.strptime(analysis.get("week_end", ""), "%m/%d/%y").strftime("%Y-%m-%d")
@@ -240,33 +353,52 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
                 restaurant_id INTEGER NOT NULL,
                 waste_json TEXT,
                 week_end    TEXT,
+                items_json  TEXT,
                 saved_at    TEXT DEFAULT (datetime('now'))
             )""")
-            # Add week_end column if missing (migration for existing rows)
-            try:
-                _conn_inv.execute("ALTER TABLE inventory_history ADD COLUMN week_end TEXT")
-                _conn_inv.commit()
-            except Exception:
-                pass
-            # Upsert: update existing row for this week, or insert new one
+            for _col_sql in [
+                "ALTER TABLE inventory_history ADD COLUMN week_end TEXT",
+                "ALTER TABLE inventory_history ADD COLUMN items_json TEXT",
+            ]:
+                try:
+                    _conn_inv.execute(_col_sql)
+                    _conn_inv.commit()
+                except Exception:
+                    pass
+            _items_json_str = _json_inv2.dumps(items) if items else None
             existing = _conn_inv.execute(
                 "SELECT id FROM inventory_history WHERE restaurant_id=? AND week_end=?",
                 (restaurant_id, _week_end_str)
             ).fetchone()
             if existing:
                 _conn_inv.execute(
-                    "UPDATE inventory_history SET waste_json=?, saved_at=datetime('now') WHERE id=?",
-                    (_json_inv2.dumps(snapshot), existing["id"])
+                    "UPDATE inventory_history SET waste_json=?, items_json=?, saved_at=datetime('now') WHERE id=?",
+                    (_json_inv2.dumps(snapshot), _items_json_str, existing["id"])
                 )
             else:
                 _conn_inv.execute(
-                    "INSERT INTO inventory_history (restaurant_id, waste_json, week_end) VALUES (?,?,?)",
-                    (restaurant_id, _json_inv2.dumps(snapshot), _week_end_str)
+                    "INSERT INTO inventory_history (restaurant_id, waste_json, week_end, items_json) VALUES (?,?,?,?)",
+                    (restaurant_id, _json_inv2.dumps(snapshot), _week_end_str, _items_json_str)
                 )
             _conn_inv.commit()
             _conn_inv.close()
         except Exception as ie:
             print(f"[inventory history] {ie}")
+
+        # Multi-week price trends via compute_item_trends
+        if items:
+            try:
+                _trends = compute_item_trends(restaurant_id, items)
+                trend_context = _trends["trend_context"]
+                if _trends["big_8"]:
+                    _b8_names = ", ".join(i["item"] for i in _trends["big_8"][:5])
+                    big_8_context = (
+                        f"\n\nBig 8 items (highest weekly spend impact): {_b8_names}"
+                        + (f" (+{len(_trends['big_8']) - 5} more)" if len(_trends["big_8"]) > 5 else "")
+                        + ". Prioritize recommendations for these items when relevant."
+                    )
+            except Exception as _te:
+                print(f"[inventory trends] {_te}")
 
         # Menu connection — if restaurant has menu_notes, suggest menu decisions for repeat waste
         try:
@@ -332,7 +464,7 @@ Key findings:
 - Projected monthly waste cost: ${analysis['monthly_waste_projection']:,.2f}
 - Recoverable with better ordering: ${analysis['recoverable_monthly']:,.2f}/month
 - Total current inventory value: ${analysis['total_stock_value']:,.2f}
-- Waste rate vs industry: {analysis['waste_rate_pct']}% (industry target is 4-5% — label: {analysis['benchmark_label']}){wow_context}{holiday_context}
+- Waste rate vs industry: {analysis['waste_rate_pct']}% (industry target is 4-5% — label: {analysis['benchmark_label']}){wow_context}{trend_context}{big_8_context}{holiday_context}
 
 Top waste offenders:
 {json.dumps([{"item": x["item"], "waste_units": x["waste_last_week"], "waste_cost": x["waste_cost"], "waste_pct": x["waste_pct"]} for x in analysis["waste_items"][:4]], indent=2)}

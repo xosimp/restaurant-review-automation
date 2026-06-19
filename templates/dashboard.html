@@ -2263,6 +2263,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
         <input type="checkbox" id="whe-posted" style="accent-color:var(--ember)"> Response posted live
       </label>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
+        <input type="checkbox" id="whe-fc-spike" style="accent-color:var(--ember)"> Food cost price spike (1 wk)
+      </label>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none">
+        <input type="checkbox" id="whe-fc-trend" style="accent-color:var(--ember)"> Food cost price trend (3+ wks)
+      </label>
     </div>
 
     <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -4799,6 +4805,8 @@ function revokeOtherSessions(btn){
       document.getElementById('whe-alert').checked     = evts.indexOf('alert.fired') > -1;
       document.getElementById('whe-approved').checked  = evts.indexOf('response.approved') > -1;
       document.getElementById('whe-posted').checked    = evts.indexOf('response.posted') > -1;
+      document.getElementById('whe-fc-spike').checked  = evts.indexOf('food_cost.price_increase') > -1;
+      document.getElementById('whe-fc-trend').checked  = evts.indexOf('food_cost.price_trend') > -1;
       // last delivery
       var lastEl = document.getElementById('webhook-last-status');
       if (wh.last_fired) {
@@ -4819,6 +4827,8 @@ function revokeOtherSessions(btn){
     if (document.getElementById('whe-alert').checked)     events.push('alert.fired');
     if (document.getElementById('whe-approved').checked)  events.push('response.approved');
     if (document.getElementById('whe-posted').checked)    events.push('response.posted');
+    if (document.getElementById('whe-fc-spike').checked)  events.push('food_cost.price_increase');
+    if (document.getElementById('whe-fc-trend').checked)  events.push('food_cost.price_trend');
     var btn = document.getElementById('wh-save-btn');
     btn.textContent = 'Saving…';
     btn.disabled = true;

@@ -506,7 +506,7 @@ def inv_insight_api(current_user):
         items, _is_live = load_inventory_for_restaurant(current_user["restaurant_id"])
         analysis = analyse_inventory(items)
         owner_name = restaurant.owner_name if restaurant else None
-        insight = get_claude_insights(analysis, owner_name=owner_name, restaurant_name=restaurant.name if restaurant else None, restaurant_id=current_user["restaurant_id"])
+        insight = get_claude_insights(analysis, owner_name=owner_name, restaurant_name=restaurant.name if restaurant else None, restaurant_id=current_user["restaurant_id"], items=items)
         return jsonify(insight=format_insight_html(insight))
     except Exception as _inv_e:
         import traceback
@@ -1126,7 +1126,22 @@ def client_upload_data(current_user):
             except Exception as _dh_e:
                 print(f"[daily history] {_dh_e}")
         elif data_type == "inventory":
-            pass  # inventory analysis runs on next dashboard load
+            import threading as _t_inv
+            _rid_inv = restaurant_id
+            def _inv_trend_bg():
+                try:
+                    from inventory import load_inventory_for_restaurant as _lif, analyse_inventory as _ai, compute_item_trends as _cit
+                    from webhooks import fire_webhook as _fw_inv
+                    _items, _ = _lif(_rid_inv)
+                    _analysis = _ai(_items)
+                    _trends = _cit(_rid_inv, _items)
+                    for _pa in _trends["price_alerts"]:
+                        _fw_inv(_rid_inv, "food_cost.price_increase", _pa)
+                    for _ta in _trends["trend_alerts"]:
+                        _fw_inv(_rid_inv, "food_cost.price_trend", _ta)
+                except Exception as _ie:
+                    print(f"[inv trend bg] {_ie}")
+            _t_inv.Thread(target=_inv_trend_bg, daemon=True).start()
     except Exception:
         pass  # non-fatal — data is saved, analysis will run on next load
 
