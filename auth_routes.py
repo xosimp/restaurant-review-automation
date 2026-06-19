@@ -683,17 +683,26 @@ def google_sso_callback():
     if not email:
         return redirect("/login?error=no_email")
 
-    # Match against users table by email or google_id
+    # Match against users table — try google_id column first, fall back to email only
     conn = _gc()
-    row = conn.execute(
-        "SELECT * FROM users WHERE (LOWER(email)=? OR google_id=?) AND is_active=1 AND is_admin=0 LIMIT 1",
-        (email, google_id)
-    ).fetchone()
+    try:
+        row = conn.execute(
+            "SELECT * FROM users WHERE (LOWER(email)=? OR google_id=?) AND is_active=1 LIMIT 1",
+            (email, google_id)
+        ).fetchone()
+    except Exception:
+        # google_id column may not exist yet — fall back to email match only
+        row = conn.execute(
+            "SELECT * FROM users WHERE LOWER(email)=? AND is_active=1 LIMIT 1",
+            (email,)
+        ).fetchone()
     if row:
-        # Persist google_id if not already stored
-        if not row["google_id"]:
-            conn.execute("UPDATE users SET google_id=? WHERE id=?", (google_id, row["id"]))
-            conn.commit()
+        try:
+            if not row["google_id"]:
+                conn.execute("UPDATE users SET google_id=? WHERE id=?", (google_id, row["id"]))
+                conn.commit()
+        except Exception:
+            pass
     conn.close()
 
     if not row:
