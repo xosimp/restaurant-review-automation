@@ -2652,6 +2652,7 @@ function loadReviewInsight(){
 }
 function filterByTopic(category){
   window._topicFilter = category;
+  switchReviewsTab('inbox');
   // Switch to reviews tab
   var reviewsPanel = document.getElementById('panel-reviews');
   var reviewsTab = document.getElementById('tab-reviews');
@@ -2691,6 +2692,7 @@ function clearTopicFilter(){
   filterReviews();
 }
 function filterByPlatform(platform){
+  switchReviewsTab('inbox');
   // Switch to reviews tab if not already there
   var reviewsPanel = document.getElementById('panel-reviews');
   var reviewsTab = document.getElementById('tab-reviews');
