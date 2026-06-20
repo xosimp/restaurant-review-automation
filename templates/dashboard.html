@@ -106,6 +106,7 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] .btn-link-ember:hover{background:#7a2818!important;box-shadow:0 4px 14px rgba(146,48,32,.4)!important}
 [data-theme="dark"] button[style*="background:#c84b2f"],
 [data-theme="dark"] label[style*="background:#c84b2f"]{background:#923020!important}
+[data-theme="dark"] #wh-save-btn{background:#923020!important}
 /* Popovers — all built with inline background:white */
 [data-theme="dark"] #notif-panel,
 [data-theme="dark"] #changelog-panel,
@@ -3096,7 +3097,7 @@ function clearFilters(){
     var track = document.getElementById('dark-mode-track');
     var thumb = document.getElementById('dark-mode-thumb');
     if (tog) tog.checked = isDark;
-    if (track) track.style.background = isDark ? '#c84b2f' : '#d0cbc4';
+    if (track) track.style.background = isDark ? '#923020' : '#d0cbc4';
     if (thumb) thumb.style.transform = isDark ? 'translateX(20px)' : 'none';
   });
 })();
@@ -3165,7 +3166,7 @@ function toggleDarkMode() {
   localStorage.setItem('cavnar_theme', isDark ? 'dark' : 'light');
   var track = document.getElementById('dark-mode-track');
   var thumb = document.getElementById('dark-mode-thumb');
-  if (track) track.style.background = isDark ? '#c84b2f' : '#d0cbc4';
+  if (track) track.style.background = isDark ? '#923020' : '#d0cbc4';
   if (thumb) thumb.style.transform = isDark ? 'translateX(20px)' : 'none';
 }
 
