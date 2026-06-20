@@ -999,7 +999,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   {% set colors=['#c84b2f','#2d6a4f','#b7791f','#1a56cc','#6b4fa0','#1e7a8c'] %}
   {% for r in reviews %}
   {% set col=colors[loop.index0%colors|length] %}
-  <div class="card {{'urgent' if r.urgency=='high'}} {{'posted' if r.response_status=='posted'}} {{'approved' if r.response_status=='approved'}}" id="rc-{{r.id}}" data-platform="{{r.platform}}" data-yelp-id="{{restaurant.yelp_business_id or ''}}" data-cats="{{(r.categories|join(' '))|lower if r.categories else ''}}" data-author="{{r.author|lower if r.author else ''}}" data-rating="{{r.rating}}">
+  <div class="card scroll-reveal {{'urgent' if r.urgency=='high'}} {{'posted' if r.response_status=='posted'}} {{'approved' if r.response_status=='approved'}}" id="rc-{{r.id}}" data-reveal-delay="{{[loop.index0 * 0.07, 0.42]|min}}s" data-platform="{{r.platform}}" data-yelp-id="{{restaurant.yelp_business_id or ''}}" data-cats="{{(r.categories|join(' '))|lower if r.categories else ''}}" data-author="{{r.author|lower if r.author else ''}}" data-rating="{{r.rating}}">
     {% if r.urgency=='high' %}<div class="ubanner">⚠ Needs immediate attention</div>{% endif %}
     <div class="card-hd">
       <div class="avatar" style="background:{{col}}">{{r.author[0].upper() if r.author else "?"}}</div>
