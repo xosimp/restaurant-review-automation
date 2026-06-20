@@ -2403,7 +2403,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           {% endif %}
         </div>
         <!-- Instagram / Facebook -->
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
           <div style="display:flex;align-items:center;gap:8px;min-width:0">
             {% if restaurant.ig_token %}
             <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
@@ -2424,6 +2424,58 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           {% else %}
           <button onclick="igConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           {% endif %}
+        </div>
+        <!-- Toast POS -->
+        <div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+            <div style="display:flex;align-items:center;gap:8px;min-width:0">
+              {% if restaurant.toast_restaurant_guid %}
+              <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
+              <div>
+                <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS</div>
+                <div style="font-size:11px;color:var(--ink3)">{% if restaurant.toast_last_synced %}Last synced {{ restaurant.toast_last_synced[:16].replace('T',' ') }} UTC{% else %}Connected — initial sync pending{% endif %}</div>
+              </div>
+              {% else %}
+              <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
+              <div>
+                <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS</div>
+                <div style="font-size:11px;color:var(--ink3)">Connect to power live labor data</div>
+              </div>
+              {% endif %}
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0">
+              {% if restaurant.toast_restaurant_guid %}
+              <button onclick="toastSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px">↻ Sync</button>
+              <button onclick="toastDisconnect(this)" class="btn btn-skip" style="font-size:11px;padding:4px 10px">Disconnect</button>
+              {% else %}
+              <button onclick="toggleToastForm()" class="btn btn-approve" id="toast-connect-btn" style="font-size:11px;padding:5px 12px">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+              {% endif %}
+            </div>
+          </div>
+          <!-- Inline credentials form (hidden until Connect clicked) -->
+          <div id="toast-form-wrap" style="display:none;margin-top:10px;background:var(--paper2);border:1px solid var(--paper3);border-radius:8px;padding:14px">
+            <div id="toast-form-banner" style="display:none;padding:8px 12px;border-radius:6px;font-size:11px;margin-bottom:10px;line-height:1.5"></div>
+            <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
+              <div>
+                <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:3px">Client ID</label>
+                <input id="toast-cid" type="text" placeholder="e.g. 8f3a2c1d-…" autocomplete="off" style="width:100%;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:12px;font-family:monospace;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+              </div>
+              <div>
+                <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:3px">Client Secret</label>
+                <input id="toast-csec" type="password" placeholder="••••••••••••••••" autocomplete="off" style="width:100%;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:12px;font-family:monospace;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+              </div>
+              <div>
+                <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:3px">Restaurant GUID</label>
+                <input id="toast-guid-client" type="text" placeholder="e.g. a1b2c3d4-…" autocomplete="off" style="width:100%;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:12px;font-family:monospace;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+                <div style="font-size:10px;color:var(--ink3);margin-top:3px">Toast Admin → Integrations → API Access → Location GUID</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <button onclick="toastSaveCredentials(this)" class="btn-primary" style="padding:7px 16px;font-size:12px">Test &amp; Connect</button>
+              <button onclick="toggleToastForm()" class="btn btn-skip" style="font-size:11px;padding:6px 10px">Cancel</button>
+            </div>
+            <div style="margin-top:10px;font-size:10px;color:var(--ink3);line-height:1.6"><strong>Where to find these:</strong> Toast Admin → Integrations → API Access → create a credential set with <em>Labor</em> and <em>Orders</em> permissions.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -2651,6 +2703,69 @@ function disconnectInstagram(btn){
   });
 }
 
+function toggleToastForm(){
+  var wrap = document.getElementById('toast-form-wrap');
+  var btn = document.getElementById('toast-connect-btn');
+  if (!wrap) return;
+  var open = wrap.style.display !== 'none';
+  wrap.style.display = open ? 'none' : 'block';
+  if (btn) btn.textContent = open ? 'Connect' : 'Cancel';
+}
+function _setToastFormBanner(msg, type){
+  var b = document.getElementById('toast-form-banner');
+  if (!b) return;
+  if (!msg) { b.style.display = 'none'; return; }
+  b.innerHTML = msg;
+  b.style.display = 'block';
+  if (type === 'ok'){ b.style.background='var(--green-bg)'; b.style.border='1px solid var(--green)'; b.style.color='var(--green)'; }
+  else if (type === 'warn'){ b.style.background='var(--amber-bg)'; b.style.border='1px solid var(--amber)'; b.style.color='var(--amber)'; }
+  else { b.style.background='var(--red-bg)'; b.style.border='1px solid var(--red)'; b.style.color='var(--red)'; }
+}
+function toastSaveCredentials(btn){
+  var cid = (document.getElementById('toast-cid')||{}).value||'';
+  var csec = (document.getElementById('toast-csec')||{}).value||'';
+  var guid = (document.getElementById('toast-guid-client')||{}).value||'';
+  if (!cid.trim()||!csec.trim()||!guid.trim()){ _setToastFormBanner('All three fields are required.','err'); return; }
+  btn.disabled = true;
+  btn.textContent = 'Testing…';
+  _setToastFormBanner('','');
+  fetch('/api/toast/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_id:cid.trim(),client_secret:csec.trim(),restaurant_guid:guid.trim()})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      btn.disabled = false;
+      if (d.ok){
+        _setToastFormBanner('✓ Connected! Starting initial sync…','ok');
+        fetch('/api/toast/sync',{method:'POST'});
+        setTimeout(function(){ window.location.reload(); }, 1200);
+      } else {
+        btn.textContent = 'Test & Connect';
+        _setToastFormBanner('✗ '+(d.error||'Unknown error'),'err');
+      }
+    })
+    .catch(function(){
+      btn.disabled = false;
+      btn.textContent = 'Test & Connect';
+      _setToastFormBanner('✗ Request failed — check your connection.','err');
+    });
+}
+function toastSyncNow(btn){
+  btn.disabled = true;
+  btn.textContent = 'Syncing…';
+  fetch('/api/toast/sync',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    btn.disabled = false;
+    btn.textContent = '↻ Sync';
+    if (d.ok) toast('Toast sync started — labor data updates in ~30s','success');
+    else toast(d.error||'Sync failed','error');
+  }).catch(function(){ btn.disabled=false; btn.textContent='↻ Sync'; toast('Request failed','error'); });
+}
+function toastDisconnect(btn){
+  if (!confirm('Disconnect Toast POS? Existing synced labor data will remain.')) return;
+  btn.disabled = true;
+  fetch('/api/toast/disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    if (d.ok){ toast('Toast disconnected','success'); setTimeout(function(){ window.location.reload(); },600); }
+    else { btn.disabled=false; toast(d.error||'Failed','error'); }
+  }).catch(function(){ btn.disabled=false; toast('Request failed','error'); });
+}
 function igConnect(){
   var popup = window.open('/instagram/connect','ig_connect','width=600,height=700,left=200,top=100');
   function igHandler(e){

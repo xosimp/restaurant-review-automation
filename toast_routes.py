@@ -1,16 +1,22 @@
 """
-toast_routes.py — Admin Flask routes for Toast POS integration
+toast_routes.py — Flask routes for Toast POS integration
 Blueprint: toast_bp
 Registered in hosted_dashboard.py alongside the other blueprints.
 
-Endpoints (all admin-only):
-  POST /admin/toast/save/<restaurant_id>       — save credentials + optional test
-  POST /admin/toast/sync/<restaurant_id>       — trigger immediate sync
-  GET  /admin/toast/status/<restaurant_id>     — connection status (JSON)
-  POST /admin/toast/disconnect/<restaurant_id> — wipe credentials
+Admin endpoints (admin_required, restaurant_id in URL):
+  POST /admin/toast/save/<restaurant_id>
+  POST /admin/toast/sync/<restaurant_id>
+  GET  /admin/toast/status/<restaurant_id>
+  POST /admin/toast/disconnect/<restaurant_id>
+
+Client endpoints (login_required, scoped to session restaurant):
+  GET  /api/toast/status
+  POST /api/toast/save
+  POST /api/toast/sync
+  POST /api/toast/disconnect
 """
 from flask import Blueprint, request, jsonify
-from auth import admin_required
+from auth import admin_required, login_required
 from models import update_restaurant, get_restaurant
 
 toast_bp = Blueprint("toast", __name__)
@@ -90,5 +96,79 @@ def disconnect_toast(restaurant_id, current_user):
         "toast_token_expires":   None,
         "toast_last_synced":     None,
         "toast_sync_error":      None,
+    })
+    return jsonify(ok=True, message="Toast disconnected")
+
+
+# ── Client-facing routes (scoped to session user's restaurant) ─────────────────
+
+@toast_bp.route("/api/toast/status", methods=["GET"])
+@login_required
+def client_toast_status(current_user):
+    from toast import get_connection_status
+    return jsonify(get_connection_status(current_user["restaurant_id"]))
+
+
+@toast_bp.route("/api/toast/save", methods=["POST"])
+@login_required
+def client_save_toast(current_user):
+    data          = request.get_json(force=True) or {}
+    client_id     = (data.get("client_id") or "").strip()
+    client_secret = (data.get("client_secret") or "").strip()
+    guid          = (data.get("restaurant_guid") or "").strip()
+
+    if not client_id or not client_secret or not guid:
+        return jsonify(ok=False, error="All three fields are required.")
+
+    from toast import test_credentials
+    result = test_credentials(client_id, client_secret, guid)
+    if not result["ok"]:
+        return jsonify(ok=False, error=result["error"])
+
+    update_restaurant(current_user["restaurant_id"], {
+        "toast_client_id":       client_id,
+        "toast_client_secret":   client_secret,
+        "toast_restaurant_guid": guid,
+        "toast_access_token":    None,
+        "toast_token_expires":   None,
+        "toast_sync_error":      None,
+        "pos_system":            "Toast",
+    })
+    return jsonify(ok=True, message="Toast credentials saved")
+
+
+@toast_bp.route("/api/toast/sync", methods=["POST"])
+@login_required
+def client_sync_toast(current_user):
+    from toast import is_connected
+    rid = current_user["restaurant_id"]
+    if not is_connected(rid):
+        return jsonify(ok=False, error="Toast is not connected yet.")
+
+    import threading
+    from toast import sync_to_db
+
+    def _run():
+        try:
+            sync_to_db(rid)
+        except Exception as e:
+            print(f"[toast_routes] client sync error for restaurant {rid}: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify(ok=True, message="Sync started — labor data refreshes in ~30 seconds")
+
+
+@toast_bp.route("/api/toast/disconnect", methods=["POST"])
+@login_required
+def client_disconnect_toast(current_user):
+    update_restaurant(current_user["restaurant_id"], {
+        "toast_client_id":       None,
+        "toast_client_secret":   None,
+        "toast_restaurant_guid": None,
+        "toast_access_token":    None,
+        "toast_token_expires":   None,
+        "toast_last_synced":     None,
+        "toast_sync_error":      None,
+        "pos_system":            None,
     })
     return jsonify(ok=True, message="Toast disconnected")
