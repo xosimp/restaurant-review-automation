@@ -16,7 +16,7 @@
 :root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--ember2:#e8956a;--green:#2d6a4f;--green-bg:#eaf4ee;--red:#c0392b;--red-bg:#fdf0ef;--amber:#b7791f;--amber-bg:#fef9ec;--blue:#1a56cc;--blue-bg:#e8f0fe;--r:8px;--surface:#ffffff;--hdr-bg:var(--ink)}
 /* ── DARK MODE ──────────────────────────────────────────────────────────────── */
 [data-theme="dark"]{
-  --ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#7a736a;
+  --ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#9e9790;
   --paper:#1a1714;--paper2:#231f1b;--paper3:#4a4038;
   --ember:#e06444;--ember2:#e8956a;
   --green:#4ead7a;--green-bg:#0c2318;--red:#e05555;--red-bg:#2a1010;
@@ -112,7 +112,11 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] #panel-competitor [style*="background:#f9f8ff"]{background:#1a1428!important;border-color:#3a2d5a!important}
 [data-theme="dark"] #panel-competitor [style*="background:#f9fafb"]{background:var(--surface)!important;border-color:var(--paper3)!important}
 [data-theme="dark"] #panel-competitor [style*="color:#0d1b2a"]{color:var(--ink)!important}
-[data-theme="dark"] #panel-competitor [style*="color:#374151"]{color:var(--ink2)!important}
+[data-theme="dark"] #panel-competitor [style*="color:#374151"]{color:var(--ink)!important}
+[data-theme="dark"] #panel-competitor [style*="color:#6b7280"]{color:var(--ink2)!important}
+[data-theme="dark"] #panel-competitor .data-card [style*="color:#0d1b2a"]{color:var(--ink)!important}
+[data-theme="dark"] #comp-cards-static .scroll-reveal{background:var(--surface)!important}
+[data-theme="dark"] #panel-competitor [style*="background:#9ca3af"]{background:rgba(255,255,255,.22)!important}
 [data-theme="dark"] #panel-competitor [style*="background:#f3f4f6"]{background:var(--paper3)!important}
 /* Diff badges */
 [data-theme="dark"] #panel-competitor [style*="background:#dcfce7"]{background:#0c2318!important;color:#4ead7a!important}
@@ -4642,7 +4646,8 @@ function toggleExtraReviews(idx, btn){
   }
 }
 function refreshCompetitorIntel(btn){
-  btn.textContent='Fetching...';btn.disabled=true;btn.style.opacity='0.7';
+  var _rs='<span style="display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;vertical-align:middle;animation:spin .7s linear infinite"></span>';
+  btn.innerHTML='Fetching... '+_rs;btn.disabled=true;btn.style.opacity='0.7';
   fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';
     if(d.ok){toast('Competitor data updated','success');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},600);}
