@@ -1094,7 +1094,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
 <!-- 2FA setup modal — lives at body level so position:fixed covers full viewport -->
 <div id="twofa-modal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(14,12,10,0.72);align-items:center;justify-content:center">
-  <div style="background:white;border-radius:14px;padding:32px;max-width:420px;width:90%;position:relative">
+  <div style="background:var(--paper);border-radius:14px;padding:32px;max-width:420px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55),0 0 0 1px rgba(200,75,47,.18)">
     <button onclick="document.getElementById('twofa-modal').style.display='none'" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
     <!-- Step 1: Intro -->
     <div id="twofa-step1">
