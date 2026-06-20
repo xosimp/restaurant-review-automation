@@ -3155,20 +3155,20 @@ document.addEventListener('DOMContentLoaded', function(){
 
   // Scroll-triggered card entrances via IntersectionObserver
   if (window.IntersectionObserver) {
-    var _scrollObs = new IntersectionObserver(function(entries) {
+    window._scrollObs = new IntersectionObserver(function(entries) {
       for (var _ei = 0; _ei < entries.length; _ei++) {
         if (entries[_ei].isIntersecting) {
           var _revEl = entries[_ei].target;
           var _revDelay = _revEl.dataset.revealDelay || '0s';
           _revEl.style.animationDelay = _revDelay;
           _revEl.classList.add('revealed');
-          _scrollObs.unobserve(_revEl);
+          window._scrollObs.unobserve(_revEl);
         }
       }
     }, { threshold: 0.08 });
     var _revEls = document.querySelectorAll('.scroll-reveal');
     for (var _ri = 0; _ri < _revEls.length; _ri++) {
-      _scrollObs.observe(_revEls[_ri]);
+      window._scrollObs.observe(_revEls[_ri]);
     }
   } else {
     var _revFallback = document.querySelectorAll('.scroll-reveal');
@@ -5203,14 +5203,18 @@ function staggerCards() {
   var cards = document.querySelectorAll('[id^="rc-"]');
   var idx = 0;
   for (var sci = 0; sci < cards.length; sci++) {
-    if (cards[sci].style.display === 'none') continue;
-    (function(card, i) {
-      card.style.opacity = '0';
-      card.style.animation = 'none';
-      setTimeout(function() {
-        card.style.animation = 'cardIn .22s ease forwards';
-      }, i * 38);
-    })(cards[sci], Math.min(idx, 18));
+    var card = cards[sci];
+    if (card.style.display === 'none') continue;
+    card.classList.remove('revealed');
+    card.style.animation = 'none';
+    card.style.animationDelay = '';
+    card.style.opacity = '';
+    card.dataset.revealDelay = Math.min(idx * 0.07, 0.42) + 's';
+    if (window._scrollObs) {
+      window._scrollObs.observe(card);
+    } else {
+      card.classList.add('revealed');
+    }
     idx++;
   }
 }
