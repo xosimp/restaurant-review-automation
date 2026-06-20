@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pricing — Cavnar AI</title>
+<meta name="description" content="Simple, transparent pricing for AI-powered restaurant management. Start with one module at $300/mo or get the full system for $1,200/mo.">
+<link rel="canonical" href="https://cavnar.ai/pricing">
+<meta name="robots" content="index, follow">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://cavnar.ai/pricing">
+<meta property="og:title" content="Pricing — Cavnar AI">
+<meta property="og:description" content="Simple, transparent pricing for AI-powered restaurant management.">
+<meta property="og:image" content="https://dashboard.cavnar.ai/og-image-v2.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+PHJlY3Qgd2lkdGg9IjMyIiBoZWlnaHQ9IjMyIiByeD0iNiIgZmlsbD0iIzBlMGMwYSIvPjx0ZXh0IHg9IjE2IiB5PSIyMyIgZm9udC1mYW1pbHk9Ikdlb3JnaWEsc2VyaWYiIGZvbnQtc2l6ZT0iMjAiIGZvbnQtc3R5bGU9Iml0YWxpYyIgZmlsbD0iI2M4NGIyZiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+QUk8L3RleHQ+PC9zdmc+">
+<meta name="theme-color" content="#0e0c0a">
+<meta name="color-scheme" content="light only">
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-G6WDWNJ3SC"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-G6WDWNJ3SC');</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Syne:wght@400;500;600;700&display=swap">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{color-scheme:light only}
+:root{
+  --ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;
+  --paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;
+  --ember:#c84b2f;--ember2:#e8956a;--ember-bg:#fdf0eb;
+  --gold:#b89650;--green:#2d5a3d;--green-bg:#eaf2ed;
+}
+html{scroll-behavior:smooth}
+body{font-family:'Syne',sans-serif;background:var(--paper);color:var(--ink);font-size:15px;line-height:1.6;overflow-x:hidden}
+
+nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:20px 48px;background:rgba(247,244,239,.92);backdrop-filter:blur(12px);border-bottom:1px solid transparent;transition:border-color .3s}
+nav.scrolled{border-color:var(--paper3)}
+.nav-logo{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:500;color:var(--ink);letter-spacing:.02em;text-decoration:none}
+.nav-logo span{color:var(--ember);font-style:italic}
+.nav-links{display:flex;align-items:center;gap:32px}
+.nav-links a{font-size:13px;font-weight:500;color:var(--ink2);text-decoration:none;letter-spacing:.06em;text-transform:uppercase;transition:color .2s}
+.nav-links a:hover{color:var(--ember)}
+.nav-links a.active{color:var(--ember)}
+.nav-cta{background:var(--ink)!important;color:var(--paper)!important;padding:9px 20px;border-radius:4px}
+.nav-cta:hover{background:var(--ember)!important;color:white!important}
+
+.page-hero{padding:160px 80px 100px;text-align:center;background:var(--paper)}
+.section-eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--ember);margin-bottom:16px}
+.section-eyebrow::before{content:'';width:24px;height:1px;background:var(--ember)}
+.section-eyebrow::after{content:'';width:24px;height:1px;background:var(--ember)}
+.page-headline{font-family:'Cormorant Garamond',serif;font-size:clamp(44px,5vw,68px);font-weight:500;line-height:1.08;letter-spacing:-.01em;margin-bottom:20px}
+.page-headline em{font-style:italic;color:var(--ember)}
+.page-sub{font-size:16px;color:var(--ink2);max-width:520px;margin:0 auto;line-height:1.7}
+
+/* Module toggle */
+.toggle-wrap{display:flex;align-items:center;justify-content:center;gap:16px;margin:48px 0 0}
+.toggle-label{font-size:13px;font-weight:600;letter-spacing:.04em;color:var(--ink3)}
+.toggle-track{width:48px;height:26px;background:var(--paper3);border-radius:20px;cursor:pointer;position:relative;transition:background .2s}
+.toggle-track.on{background:var(--ember)}
+.toggle-knob{width:20px;height:20px;background:white;border-radius:50%;position:absolute;top:3px;left:3px;transition:transform .2s;box-shadow:0 1px 4px rgba(0,0,0,.15)}
+.toggle-track.on .toggle-knob{transform:translateX(22px)}
+.save-chip{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:3px 9px;background:var(--green-bg);color:var(--green);border-radius:20px;border:1px solid #b7dfca}
+
+/* Plans */
+.plans-section{padding:80px 80px 100px;background:var(--paper2)}
+.plans-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px;max-width:1100px;margin:0 auto}
+.plan-card{background:white;border:1px solid var(--paper3);border-radius:10px;padding:40px 32px;position:relative;overflow:hidden;transition:transform .25s,box-shadow .25s;display:flex;flex-direction:column}
+.plan-card:hover{transform:translateY(-5px);box-shadow:0 16px 48px rgba(14,12,10,.1)}
+.plan-card.featured{background:var(--ink);border-color:var(--ink)}
+.plan-badge{position:absolute;top:20px;right:20px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:3px 10px;background:var(--ember);color:white;border-radius:20px}
+.plan-name{font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:16px}
+.plan-card.featured .plan-name{color:rgba(247,244,239,.45)}
+.plan-price{font-family:'Cormorant Garamond',serif;font-size:54px;font-weight:500;line-height:1;color:var(--ink);letter-spacing:-.02em;margin-bottom:4px}
+.plan-card.featured .plan-price{color:var(--paper)}
+.plan-price sup{font-size:24px;vertical-align:super;letter-spacing:0}
+.plan-price .per{font-family:'Syne',sans-serif;font-size:14px;font-weight:400;color:var(--ink3);letter-spacing:0}
+.plan-card.featured .plan-price .per{color:rgba(247,244,239,.4)}
+.plan-setup{font-size:12px;color:var(--ink3);margin-bottom:28px;padding-bottom:28px;border-bottom:1px solid var(--paper3)}
+.plan-card.featured .plan-setup{color:rgba(247,244,239,.4);border-color:rgba(255,255,255,.08)}
+.plan-desc{font-size:13px;color:var(--ink2);line-height:1.65;margin-bottom:24px}
+.plan-card.featured .plan-desc{color:rgba(247,244,239,.6)}
+.plan-features{list-style:none;display:flex;flex-direction:column;gap:11px;flex:1}
+.plan-features li{font-size:13px;color:var(--ink2);display:flex;gap:10px;align-items:flex-start;line-height:1.5}
+.plan-card.featured .plan-features li{color:rgba(247,244,239,.7)}
+.plan-features li::before{content:'✓';color:var(--green);font-weight:700;flex-shrink:0;margin-top:1px}
+.plan-card.featured .plan-features li::before{color:var(--ember2)}
+.plan-features li.muted{opacity:.5}
+.plan-features li.muted::before{content:'—';color:var(--ink3)}
+.plan-cta{display:block;text-align:center;margin-top:32px;padding:13px 20px;border-radius:4px;font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;text-decoration:none;transition:all .2s;border:none;cursor:pointer;font-family:'Syne',sans-serif}
+.plan-card:not(.featured) .plan-cta{background:var(--paper2);color:var(--ink);border:1px solid var(--paper3)}
+.plan-card:not(.featured) .plan-cta:hover{background:var(--ink);color:white}
+.plan-card.featured .plan-cta{background:var(--ember);color:white}
+.plan-card.featured .plan-cta:hover{background:#a83d25}
+
+/* Module add-on grid */
+.modules-section{padding:100px 80px;background:var(--paper)}
+.modules-section .inner{max-width:1100px;margin:0 auto}
+.modules-headline{font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3vw,46px);font-weight:500;line-height:1.1;margin-bottom:12px}
+.modules-sub{font-size:15px;color:var(--ink2);line-height:1.7;max-width:520px;margin-bottom:60px}
+.modules-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:20px}
+.module-card{border:1px solid var(--paper3);border-radius:10px;padding:28px 28px 24px;background:white;position:relative;transition:transform .2s,box-shadow .2s}
+.module-card:hover{transform:translateY(-3px);box-shadow:0 8px 28px rgba(14,12,10,.07)}
+.module-card-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px}
+.module-icon-wrap{width:44px;height:44px;border-radius:8px;background:var(--ember-bg);display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.module-price-tag{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:500;color:var(--ink);line-height:1}
+.module-price-tag span{font-family:'Syne',sans-serif;font-size:11px;font-weight:600;color:var(--ink3)}
+.module-name{font-size:16px;font-weight:700;margin-bottom:8px}
+.module-desc{font-size:13px;color:var(--ink3);line-height:1.65;margin-bottom:18px}
+.module-bullets{list-style:none;display:flex;flex-direction:column;gap:7px}
+.module-bullets li{font-size:12px;color:var(--ink2);display:flex;gap:8px;align-items:flex-start;line-height:1.5}
+.module-bullets li::before{content:'↳';color:var(--ember);flex-shrink:0;font-size:11px;margin-top:2px}
+.module-tag{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;padding:3px 9px;border-radius:20px;margin-top:16px}
+.tag-live{background:var(--green-bg);color:var(--green);border:1px solid #b7dfca}
+.tag-soon{background:var(--ember-bg);color:var(--ember);border:1px solid #f5c6b2}
+
+/* Compare table */
+.compare-section{padding:100px 80px;background:var(--paper2)}
+.compare-section .inner{max-width:1000px;margin:0 auto}
+.compare-table{width:100%;border-collapse:collapse;margin-top:48px}
+.compare-table th{text-align:left;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);padding:14px 20px;border-bottom:2px solid var(--paper3)}
+.compare-table th:not(:first-child){text-align:center}
+.compare-table td{padding:13px 20px;border-bottom:1px solid var(--paper3);font-size:13px;color:var(--ink2)}
+.compare-table td:not(:first-child){text-align:center}
+.compare-table tr:last-child td{border-bottom:none}
+.compare-table tr:hover td{background:rgba(14,12,10,.02)}
+.check{color:var(--green);font-weight:700;font-size:15px}
+.dash{color:var(--paper3);font-size:18px}
+.compare-col-label{font-size:12px;font-weight:700;color:var(--ink);letter-spacing:.04em}
+.featured-col{background:rgba(200,75,47,.04)}
+
+/* FAQ */
+.faq-section{padding:100px 80px;background:var(--paper)}
+.faq-section .inner{max-width:720px;margin:0 auto}
+.faq-item{border-bottom:1px solid var(--paper3);padding:20px 0}
+.faq-q{font-size:15px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:16px;user-select:none}
+.faq-q::after{content:'+';font-size:20px;font-weight:400;color:var(--ember);flex-shrink:0;transition:transform .2s}
+.faq-item.open .faq-q::after{transform:rotate(45deg)}
+.faq-a{font-size:14px;color:var(--ink2);line-height:1.75;max-height:0;overflow:hidden;transition:max-height .35s ease,padding .25s}
+.faq-item.open .faq-a{max-height:300px;padding-top:12px}
+
+/* CTA band */
+.cta-section{background:var(--ink);color:var(--paper);text-align:center;padding:120px 80px}
+.cta-section .section-eyebrow{color:var(--ember2)}
+.cta-section .section-eyebrow::before,.cta-section .section-eyebrow::after{background:var(--ember2)}
+.cta-headline{font-family:'Cormorant Garamond',serif;font-size:clamp(36px,4vw,56px);font-weight:500;line-height:1.1;color:var(--paper);max-width:580px;margin:0 auto 16px}
+.cta-headline em{font-style:italic;color:var(--ember2)}
+.cta-sub{font-size:15px;color:rgba(247,244,239,.55);max-width:440px;margin:0 auto 48px;line-height:1.7}
+.cta-row{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+.btn-primary{background:var(--ember);color:white;padding:14px 28px;border-radius:4px;font-family:'Syne',sans-serif;font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;text-decoration:none;transition:all .2s;display:inline-block}
+.btn-primary:hover{background:#a83d25;transform:translateY(-1px)}
+.btn-outline{background:transparent;color:var(--paper);border:1px solid rgba(247,244,239,.25);padding:14px 28px;border-radius:4px;font-family:'Syne',sans-serif;font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;text-decoration:none;transition:all .2s}
+.btn-outline:hover{border-color:var(--paper)}
+
+footer{background:#080706;padding:40px 80px;display:flex;align-items:center;justify-content:space-between}
+.footer-logo{font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:500;color:rgba(247,244,239,.4)}
+.footer-logo span{color:var(--ember);font-style:italic}
+.footer-copy{font-size:12px;color:rgba(247,244,239,.25)}
+.footer-links{display:flex;gap:24px}
+.footer-links a{font-size:12px;color:rgba(247,244,239,.35);text-decoration:none;transition:color .2s}
+.footer-links a:hover{color:var(--ember2)}
+
+.reveal{opacity:0;transform:translateY(20px);transition:opacity .6s ease,transform .6s ease}
+.reveal.visible{opacity:1;transform:translateY(0)}
+
+@media(max-width:900px){
+  nav{padding:16px 24px}
+  .nav-links{display:none}
+  .page-hero{padding:120px 24px 60px}
+  .plans-section,.modules-section,.compare-section,.faq-section{padding:60px 24px}
+  .plans-grid{grid-template-columns:1fr}
+  .modules-grid{grid-template-columns:1fr}
+  .cta-section{padding:80px 24px}
+  .compare-table{font-size:12px}
+  .compare-table th,.compare-table td{padding:10px 12px}
+  footer{flex-direction:column;gap:16px;text-align:center;padding:32px 24px}
+  .footer-links{justify-content:center}
+}
+</style>
+</head>
+<body>
+
+<nav id="nav">
+  <a href="/" class="nav-logo">Cavnar <span>AI</span></a>
+  <div class="nav-links">
+    <a href="/#how">How it works</a>
+    <a href="/#services">Services</a>
+    <a href="/pricing" class="active">Pricing</a>
+    <a href="/#about">About</a>
+    <a href="/#contact" class="nav-cta">Book a free audit</a>
+  </div>
+</nav>
+
+<!-- Hero -->
+<div class="page-hero">
+  <div class="section-eyebrow reveal">Transparent pricing</div>
+  <h1 class="page-headline reveal">Pay for what you use.<br><em>Nothing else.</em></h1>
+  <p class="page-sub reveal">Start with one module. Add more when you're ready. No long-term contracts, no hidden fees — just AI systems that pay for themselves.</p>
+  <div class="toggle-wrap reveal">
+    <span class="toggle-label">Monthly</span>
+    <div class="toggle-track" id="billing-toggle" onclick="toggleBilling()">
+      <div class="toggle-knob"></div>
+    </div>
+    <span class="toggle-label">Annual &nbsp;</span>
+    <span class="save-chip" id="save-chip">Save 17%</span>
+  </div>
+</div>
+
+<!-- Plans -->
+<section class="plans-section">
+  <div class="plans-grid">
+
+    <!-- Starter -->
+    <div class="plan-card reveal">
+      <div class="plan-name">Starter</div>
+      <div class="plan-price"><sup>$</sup><span id="price-starter">300</span><span class="per">/mo</span></div>
+      <div class="plan-setup" id="setup-starter">+ $500 one-time setup · 1 module</div>
+      <p class="plan-desc">One AI module, fully set up and managed. Best for owners who want to start with their biggest pain point.</p>
+      <ul class="plan-features">
+        <li>Your choice of one module</li>
+        <li>Full setup & POS integration</li>
+        <li>Dedicated client dashboard</li>
+        <li>Monthly improvements & support</li>
+        <li>Personalized onboarding call</li>
+        <li class="muted">Weekly digest email</li>
+        <li class="muted">Competitor intelligence</li>
+        <li class="muted">Multi-location support</li>
+      </ul>
+      <a href="/#contact" class="plan-cta">Get started</a>
+    </div>
+
+    <!-- Growth (featured) -->
+    <div class="plan-card featured reveal">
+      <div class="plan-badge">Most popular</div>
+      <div class="plan-name">Growth</div>
+      <div class="plan-price"><sup>$</sup><span id="price-growth">750</span><span class="per">/mo</span></div>
+      <div class="plan-setup" id="setup-growth">+ $1,000 one-time setup · 3 modules</div>
+      <p class="plan-desc">The combination most clients run on — Reviews, Labor, and Marketing working together to cut costs and grow revenue.</p>
+      <ul class="plan-features">
+        <li>Three modules of your choice</li>
+        <li>Full setup & integrations</li>
+        <li>Dedicated client dashboard</li>
+        <li>Weekly AI digest email</li>
+        <li>Priority support — same-day responses</li>
+        <li>Competitor intelligence included</li>
+        <li class="muted">Multi-location support</li>
+      </ul>
+      <a href="/#contact" class="plan-cta">Get started</a>
+    </div>
+
+    <!-- Full System -->
+    <div class="plan-card reveal">
+      <div class="plan-name">Full System</div>
+      <div class="plan-price"><sup>$</sup><span id="price-full">1200</span><span class="per">/mo</span></div>
+      <div class="plan-setup" id="setup-full">+ $2,000 one-time setup · All 4 modules</div>
+      <p class="plan-desc">Every module running in parallel. For operators who want the full picture — reviews, labor, food cost, and marketing — all from one dashboard.</p>
+      <ul class="plan-features">
+        <li>All four AI modules</li>
+        <li>Full setup & all integrations</li>
+        <li>Dedicated client dashboard</li>
+        <li>Weekly AI digest email</li>
+        <li>Priority support — same-day responses</li>
+        <li>Competitor intelligence included</li>
+        <li>Multi-location available</li>
+      </ul>
+      <a href="/#contact" class="plan-cta">Talk to Will</a>
+    </div>
+
+  </div>
+</section>
+
+<!-- Module breakdown -->
+<section class="modules-section">
+  <div class="inner">
+    <div class="section-eyebrow reveal">What's included</div>
+    <h2 class="modules-headline reveal">Four modules.<br>One dashboard.</h2>
+    <p class="modules-sub reveal">Each module is purpose-built for independent restaurants and plugs into your existing POS and review platforms.</p>
+    <div class="modules-grid">
+
+      <div class="module-card reveal">
+        <div class="module-card-top">
+          <div class="module-icon-wrap">⭐</div>
+          <div class="module-price-tag">$300<span>/mo</span></div>
+        </div>
+        <div class="module-name">Review Intelligence</div>
+        <div class="module-desc">AI drafts personalized responses to every Google review — you approve and post in one click. Never leave a review unanswered again.</div>
+        <ul class="module-bullets">
+          <li>AI-drafted responses matched to your voice</li>
+          <li>One-click approve & post to Google</li>
+          <li>Sentiment tracking & review analytics</li>
+          <li>Competitor review monitoring</li>
+          <li>Weekly review summary digest</li>
+        </ul>
+        <span class="module-tag tag-live">● Live</span>
+      </div>
+
+      <div class="module-card reveal">
+        <div class="module-card-top">
+          <div class="module-icon-wrap">👥</div>
+          <div class="module-price-tag">$300<span>/mo</span></div>
+        </div>
+        <div class="module-name">Labor Optimizer</div>
+        <div class="module-desc">AI-generated schedules built around your actual sales patterns. Catch overstaffing and overtime before they hit the P&L.</div>
+        <ul class="module-bullets">
+          <li>AI schedule generation by role & shift</li>
+          <li>Overtime & overstaffing alerts</li>
+          <li>Labor cost vs. revenue benchmarking</li>
+          <li>Toast POS integration for real-time data</li>
+          <li>Weekly labor cost digest</li>
+        </ul>
+        <span class="module-tag tag-live">● Live</span>
+      </div>
+
+      <div class="module-card reveal">
+        <div class="module-card-top">
+          <div class="module-icon-wrap">📦</div>
+          <div class="module-price-tag">$300<span>/mo</span></div>
+        </div>
+        <div class="module-name">Inventory Control</div>
+        <div class="module-desc">Track ingredient costs, flag price creep from suppliers, and catch food cost drift before it kills your margins.</div>
+        <ul class="module-bullets">
+          <li>Ingredient cost tracking & history</li>
+          <li>Supplier price change alerts</li>
+          <li>Food cost % vs. target monitoring</li>
+          <li>AI-suggested order quantities</li>
+          <li>Weekly food cost digest</li>
+        </ul>
+        <span class="module-tag tag-soon">◐ Coming soon</span>
+      </div>
+
+      <div class="module-card reveal">
+        <div class="module-card-top">
+          <div class="module-icon-wrap">📣</div>
+          <div class="module-price-tag">$300<span>/mo</span></div>
+        </div>
+        <div class="module-name">Marketing Autopilot</div>
+        <div class="module-desc">AI-generated social posts, SMS campaigns, and email content — written in your voice, scheduled from your dashboard.</div>
+        <ul class="module-bullets">
+          <li>AI-written social captions & posts</li>
+          <li>SMS campaign builder with AI copy</li>
+          <li>Instagram content calendar</li>
+          <li>Promo & seasonal campaign templates</li>
+          <li>Post scheduling & engagement tracking</li>
+        </ul>
+        <span class="module-tag tag-live">● Live</span>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- Comparison table -->
+<section class="compare-section">
+  <div class="inner">
+    <div class="section-eyebrow reveal">Compare plans</div>
+    <h2 class="modules-headline reveal">Everything side by side.</h2>
+    <table class="compare-table reveal">
+      <thead>
+        <tr>
+          <th style="width:40%">Feature</th>
+          <th class="compare-col-label">Starter</th>
+          <th class="compare-col-label featured-col">Growth</th>
+          <th class="compare-col-label">Full System</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Modules included</td><td>1</td><td class="featured-col">3</td><td>All 4</td></tr>
+        <tr><td>Dedicated dashboard</td><td><span class="check">✓</span></td><td class="featured-col"><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>Setup & integrations</td><td><span class="check">✓</span></td><td class="featured-col"><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>Weekly AI digest email</td><td><span class="dash">—</span></td><td class="featured-col"><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>Competitor intelligence</td><td><span class="dash">—</span></td><td class="featured-col"><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>Same-day support</td><td><span class="dash">—</span></td><td class="featured-col"><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>Multi-location support</td><td><span class="dash">—</span></td><td class="featured-col"><span class="dash">—</span></td><td><span class="check">✓</span></td></tr>
+        <tr><td>Monthly cost (annual)</td><td>$250</td><td class="featured-col">$625</td><td>$1,000</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="faq-section">
+  <div class="inner">
+    <div class="section-eyebrow reveal">FAQ</div>
+    <h2 class="modules-headline reveal">Common questions.</h2>
+
+    <div class="faq-item reveal">
+      <div class="faq-q" onclick="toggleFaq(this)">Is there a contract or minimum commitment?</div>
+      <div class="faq-a">No long-term contracts. Month-to-month on the monthly plan — cancel anytime with 30 days notice. Annual plans are paid upfront and non-refundable after the first 14 days.</div>
+    </div>
+    <div class="faq-item reveal">
+      <div class="faq-q" onclick="toggleFaq(this)">What does "one-time setup" include?</div>
+      <div class="faq-a">Full configuration of your module(s), POS and platform integrations (Google Business Profile, Toast, Instagram), onboarding call, and your restaurant's AI voice profile — so every response and post sounds like you, not a chatbot.</div>
+    </div>
+    <div class="faq-item reveal">
+      <div class="faq-q" onclick="toggleFaq(this)">Do I need a specific POS system?</div>
+      <div class="faq-a">The Labor Optimizer works best with Toast POS for real-time data. Other modules work independently of your POS. I'll let you know exactly what's needed during your free audit.</div>
+    </div>
+    <div class="faq-item reveal">
+      <div class="faq-q" onclick="toggleFaq(this)">Can I add or remove modules later?</div>
+      <div class="faq-a">Yes. Start with one and add more anytime. Each additional module is $300/mo with a reduced setup fee if you're already a client. Removing a module takes effect at the next billing cycle.</div>
+    </div>
+    <div class="faq-item reveal">
+      <div class="faq-q" onclick="toggleFaq(this)">How long does setup take?</div>
+      <div class="faq-a">Most clients are fully live within 3–5 business days. I handle everything — you just need to connect your Google account and (optionally) Toast credentials. Onboarding call is typically 30 minutes.</div>
+    </div>
+    <div class="faq-item reveal">
+      <div class="faq-q" onclick="toggleFaq(this)">What if I want to start with a free audit first?</div>
+      <div class="faq-a">That's exactly how most clients start. The audit is a free 45-minute session where I review your current operations and give you a written report on your top 3 AI opportunities — no obligation to sign up.</div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <div class="section-eyebrow reveal">Get started</div>
+  <h2 class="cta-headline reveal">Start with the audit.<br><em>Zero risk.</em></h2>
+  <p class="cta-sub reveal">45 minutes. Written report. No sales pitch — just an honest look at where AI can move the needle for your restaurant.</p>
+  <div class="cta-row reveal">
+    <a href="/#contact" class="btn-primary">Book your free audit</a>
+    <a href="mailto:will@cavnar.ai" class="btn-outline">Email Will directly</a>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-logo">Cavnar <span>AI</span></div>
+  <div class="footer-links">
+    <a href="/">Home</a>
+    <a href="/pricing">Pricing</a>
+    <a href="/#contact">Contact</a>
+    <a href="https://dashboard.cavnar.ai">Client login</a>
+  </div>
+  <div class="footer-copy">© 2026 Cavnar AI · Chicago, IL</div>
+</footer>
+
+<script>
+var annualOn = false;
+var prices = { starter:[300,250], growth:[750,625], full:[1200,1000] };
+var setups = {
+  starter: ['+ $500 one-time setup · 1 module','+ $500 one-time setup · 1 module'],
+  growth:  ['+ $1,000 one-time setup · 3 modules','+ $1,000 one-time setup · 3 modules'],
+  full:    ['+ $2,000 one-time setup · All 4 modules','+ $2,000 one-time setup · All 4 modules']
+};
+
+function toggleBilling(){
+  annualOn = !annualOn;
+  var toggle = document.getElementById('billing-toggle');
+  var chip = document.getElementById('save-chip');
+  toggle.className = 'toggle-track' + (annualOn ? ' on' : '');
+  chip.style.opacity = annualOn ? '1' : '.4';
+  var keys = ['starter','growth','full'];
+  for(var i=0;i<keys.length;i++){
+    var k = keys[i];
+    var idx = annualOn ? 1 : 0;
+    document.getElementById('price-'+k).textContent = prices[k][idx];
+    document.getElementById('setup-'+k).textContent = setups[k][idx];
+  }
+}
+
+function toggleFaq(el){
+  var item = el.parentElement;
+  var wasOpen = item.classList.contains('open');
+  var all = document.querySelectorAll('.faq-item');
+  for(var i=0;i<all.length;i++) all[i].classList.remove('open');
+  if(!wasOpen) item.classList.add('open');
+}
+
+// Nav scroll
+var nav = document.getElementById('nav');
+window.addEventListener('scroll', function(){ nav.classList.toggle('scrolled', window.scrollY > 40); });
+
+// Reveal on scroll
+var revealEls = document.querySelectorAll('.reveal');
+var revealObs = new IntersectionObserver(function(entries){
+  for(var i=0;i<entries.length;i++){
+    if(entries[i].isIntersecting) entries[i].target.classList.add('visible');
+  }
+},{threshold:0.1});
+for(var i=0;i<revealEls.length;i++) revealObs.observe(revealEls[i]);
+</script>
+</body>
+</html>
