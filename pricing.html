@@ -195,6 +195,14 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
   <div class="section-eyebrow reveal">Transparent pricing</div>
   <h1 class="page-headline reveal">Pay for what you use.<br><em>Nothing else.</em></h1>
   <p class="page-sub reveal">Start with one module. Add more when you're ready. No long-term contracts, no hidden fees — just AI systems that pay for themselves.</p>
+  <div class="toggle-wrap reveal">
+    <span class="toggle-label">Monthly</span>
+    <div class="toggle-track on" id="billing-toggle" onclick="toggleBilling()">
+      <div class="toggle-knob"></div>
+    </div>
+    <span class="toggle-label">Annual</span>
+    <span class="save-chip">Save 2 months</span>
+  </div>
 </div>
 
 <!-- Plans -->
@@ -221,8 +229,8 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
     <div class="plan-card featured reveal">
       <div class="plan-badge">Most popular</div>
       <div class="plan-name">Starter Module</div>
-      <div class="plan-price"><sup>$</sup>500</div>
-      <div class="plan-setup">One-time setup · + $300/mo introductory rate</div>
+      <div class="plan-price"><sup>$</sup>500<span class="per" id="starter-mo"> · $250/mo</span></div>
+      <div class="plan-setup" id="starter-note">One-time setup · billed annually</div>
       <p class="plan-desc">One AI module, fully built and managed for your restaurant. Start with your biggest pain point — reviews, labor, food cost, or marketing.</p>
       <ul class="plan-features">
         <li>One AI module of your choice</li>
@@ -237,8 +245,8 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
     <!-- Full System -->
     <div class="plan-card reveal">
       <div class="plan-name">Full System</div>
-      <div class="plan-price"><sup>$</sup>2,000</div>
-      <div class="plan-setup">One-time setup · + $1,200/mo retainer</div>
+      <div class="plan-price"><sup>$</sup>2,000<span class="per" id="full-mo"> · $1,000/mo</span></div>
+      <div class="plan-setup" id="full-note">One-time setup · billed annually</div>
       <p class="plan-desc">All four modules running together. Reviews, labor, food cost, and marketing — unified in one dashboard with weekly AI digests.</p>
       <ul class="plan-features">
         <li>All four AI modules</li>
@@ -263,7 +271,7 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
 
       <div class="module-card reveal">
         <div class="module-card-top">
-          <div class="module-icon-wrap">⭐</div>
+          <div class="module-icon-wrap"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg></div>
           <div class="module-price-tag">$300<span>/mo</span></div>
         </div>
         <div class="module-name">Review Intelligence</div>
@@ -280,7 +288,7 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
 
       <div class="module-card reveal">
         <div class="module-card-top">
-          <div class="module-icon-wrap">👥</div>
+          <div class="module-icon-wrap"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
           <div class="module-price-tag">$300<span>/mo</span></div>
         </div>
         <div class="module-name">Labor Optimizer</div>
@@ -297,7 +305,7 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
 
       <div class="module-card reveal">
         <div class="module-card-top">
-          <div class="module-icon-wrap">📦</div>
+          <div class="module-icon-wrap"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>
           <div class="module-price-tag">$300<span>/mo</span></div>
         </div>
         <div class="module-name">Food Cost</div>
@@ -314,7 +322,7 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
 
       <div class="module-card reveal">
         <div class="module-card-top">
-          <div class="module-icon-wrap">📣</div>
+          <div class="module-icon-wrap"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
           <div class="module-price-tag">$300<span>/mo</span></div>
         </div>
         <div class="module-name">Marketing Autopilot</div>
@@ -416,6 +424,16 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
 </footer>
 
 <script>
+var annualOn = true;
+function toggleBilling(){
+  annualOn = !annualOn;
+  document.getElementById('billing-toggle').className = 'toggle-track' + (annualOn ? ' on' : '');
+  document.getElementById('starter-mo').textContent = annualOn ? ' · $250/mo' : ' · $300/mo';
+  document.getElementById('full-mo').textContent = annualOn ? ' · $1,000/mo' : ' · $1,200/mo';
+  document.getElementById('starter-note').textContent = annualOn ? 'One-time setup · billed annually' : 'One-time setup · month-to-month';
+  document.getElementById('full-note').textContent = annualOn ? 'One-time setup · billed annually' : 'One-time setup · month-to-month';
+}
+
 function toggleFaq(el){
   var item = el.parentElement;
   var wasOpen = item.classList.contains('open');
