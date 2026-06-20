@@ -80,6 +80,10 @@ input:focus,select:focus{border-color:var(--ember)}
 .btn-primary:active{transform:scale(.97)}
 [data-theme="dark"] .btn-primary{background:#923020}
 [data-theme="dark"] .btn-primary:hover{background:#a83828;box-shadow:0 4px 14px rgba(146,48,32,.45)}
+.btn-ember-sm{padding:9px 12px;background:#c84b2f;color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0}
+.btn-ember-sm:hover{background:#a83d25}
+[data-theme="dark"] .btn-ember-sm{background:#923020}
+[data-theme="dark"] .btn-ember-sm:hover{background:#a83828}
 .tbl{width:100%;border-collapse:collapse;font-size:13px}
 .tbl th{text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--ink3);padding:8px 12px;border-bottom:1px solid var(--paper3);background:var(--paper2)}
 .tbl td{padding:10px 12px;border-bottom:1px solid var(--paper3);overflow:visible}
@@ -155,8 +159,7 @@ input:focus,select:focus{border-color:var(--ember)}
         <label>Temporary password</label>
         <div style="display:flex;gap:6px;align-items:center">
           <input type="text" id="u-password" placeholder="Click Generate →" style="flex:1">
-          <button type="button" onclick="genPassword()"
-            style="padding:9px 12px;background:#c84b2f;color:white;border:none;border-radius:6px;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">
+          <button type="button" onclick="genPassword()" class="btn-ember-sm">
             Generate
           </button>
           <button type="button" onclick="copyPassword()" id="copy-pw-btn"
@@ -891,7 +894,7 @@ async function postIncident() {
         </div>
         <div style="padding-bottom:1px">
           <label style="font-size:11px;font-weight:600;color:transparent;display:block;margin-bottom:4px">.</label>
-          <button onclick="adminCreateChangelog()" style="background:#c84b2f;color:white;border:none;padding:9px 18px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;width:100%">+ Post</button>
+          <button onclick="adminCreateChangelog()" class="btn-ember-sm" style="padding:9px 18px;font-size:13px;width:100%">+ Post</button>
         </div>
       </div>
     </div>
