@@ -95,6 +95,10 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] .understaffed-wrap{background:var(--surface)!important}
 [data-theme="dark"] .understaffed-tip{background:rgba(239,159,39,0.14)!important;color:var(--amber)!important;border-top-color:rgba(239,159,39,0.3)!important}
 [data-theme="dark"] #panel-labor [style*="color:#7a4f00"]{color:var(--amber)!important}
+/* Number input spinners — color-scheme makes browser render arrows light-on-dark */
+[data-theme="dark"] input[type="number"]{color-scheme:dark}
+/* Reduce order pill — light green bg unreadable in dark mode */
+[data-theme="dark"] .pill[style*="background:#e8f4f0"]{background:#0c2318!important;color:#4ead7a!important}
 /* Tables */
 [data-theme="dark"] .tbl th{background:var(--paper3)!important;color:var(--ink2)!important}
 [data-theme="dark"] .tbl td{border-color:var(--paper3)!important;color:var(--ink2)!important}
