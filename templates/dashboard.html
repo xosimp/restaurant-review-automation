@@ -4768,7 +4768,7 @@ function renderAIVisibility(d) {
       chtml += ptsTag + lockTag;
       chtml += '</div>';
       if (!item.done && item.action && !item.needs_gmb) {
-        chtml += '<div style="font-size:11px;color:#7c3aed;margin-top:2px">' + item.action + '</div>';
+        chtml += '<div style="font-size:11px;color:var(--ember);margin-top:2px">' + item.action + '</div>';
       } else if (!item.done && item.needs_gmb) {
         chtml += '<div style="font-size:11px;color:#9ca3af;margin-top:2px">' + item.action + '</div>';
       }
@@ -4972,6 +4972,7 @@ function toggleGbpChecklist() {
     el.style.opacity = '0';
     el.setAttribute('data-open','1');
     setTimeout(function(){ el.style.maxHeight = el.scrollHeight + 'px'; el.style.opacity = '1'; }, 10);
+    setTimeout(function(){ var b=document.getElementById('aiv-body'); if(b && b.style.maxHeight && b.style.maxHeight!=='0px') b.style.maxHeight=b.scrollHeight+'px'; }, 320);
     if (txt) txt.innerHTML = 'tap to hide' + SVG_UP;
     setTimeout(function(){
       var items = document.getElementById('aiv-gbp-items');
