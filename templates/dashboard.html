@@ -2209,44 +2209,6 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
-  <!-- SECTION: Google Business Profile Listings Editor -->
-  {% if restaurant.gmb_refresh_token %}
-  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:20px;margin-bottom:14px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#1a56cc;margin-bottom:3px">Google Business Profile</div>
-        <div style="font-size:13px;font-weight:600;color:var(--ink)" id="gbp-title-display">Loading…</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <span id="gbp-save-status" style="font-size:11px;color:#2d6a4f;display:none">✓ Saved to Google</span>
-        <button onclick="saveGbpListing(this)" id="gbp-save-btn" class="btn-blue" style="padding:7px 16px">Save to Google<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-      </div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-      <div>
-        <label style="font-size:11px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Phone number</label>
-        <input id="gbp-phone" type="tel" placeholder="Loading…" style="width:100%;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;padding:8px 11px;border:1px solid var(--paper3);border-radius:6px;outline:none;color:var(--ink);box-sizing:border-box">
-      </div>
-      <div>
-        <label style="font-size:11px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Website URL</label>
-        <input id="gbp-website" type="url" placeholder="Loading…" style="width:100%;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;padding:8px 11px;border:1px solid var(--paper3);border-radius:6px;outline:none;color:var(--ink);box-sizing:border-box">
-      </div>
-    </div>
-    <div>
-      <label style="font-size:11px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px">Business description <span style="font-weight:400;text-transform:none;letter-spacing:0">(shows on Google)</span></label>
-      <textarea id="gbp-description" rows="3" placeholder="Loading…" style="width:100%;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;padding:8px 11px;border:1px solid var(--paper3);border-radius:6px;outline:none;color:var(--ink);resize:vertical;line-height:1.5;box-sizing:border-box;max-length:750"></textarea>
-      <div style="font-size:10px;color:var(--ink3);margin-top:3px">Google allows up to 750 characters. Changes go live on Google within a few minutes.</div>
-    </div>
-    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--paper3);display:flex;gap:16px;flex-wrap:wrap">
-      <div style="font-size:11px;color:var(--ink3)">Yelp &nbsp;<span style="color:var(--amber);font-weight:600">Manual</span> — <a href="https://biz.yelp.com" target="_blank" style="color:var(--ink3)">update on Yelp<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a></div>
-      <div style="font-size:11px;color:var(--ink3)">Apple Maps &nbsp;<span style="color:var(--amber);font-weight:600">Manual</span> — <a href="https://businessconnect.apple.com" target="_blank" style="color:var(--ink3)">update on Apple Business Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a></div>
-    </div>
-  </div>
-  {% else %}
-  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:20px;margin-bottom:14px;border-left:3px solid var(--amber)">
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--amber);margin-bottom:6px">Google Business Profile</div>
-    <div style="font-size:13px;color:var(--ink2)">Connect Google Business from the <strong>Reviews</strong> tab to manage your listing — phone, website, and description — directly from this dashboard.</div>
-  </div>
   {% endif %}
 
   <!-- SECTION 3: Account settings + Billing -->
@@ -2338,7 +2300,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <!-- Active sessions -->
         <div>
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-            <div style="font-size:12px;font-weight:600;color:var(--ink)">Active sessions</div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink);padding-bottom:5px;border-bottom:1px solid var(--ember)">Active sessions</div>
             <button onclick="revokeOtherSessions(this)" id="revoke-sessions-btn" class="btn-primary" style="font-size:11px;padding:5px 12px;transition:background .2s">Sign out all other devices</button>
           </div>
           <div id="sessions-list" style="font-size:11px;color:var(--ink3)">Loading&hellip;</div>
@@ -2397,7 +2359,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
             {% endif %}
           </div>
           {% if restaurant.gmb_refresh_token %}
-          <button onclick="gmbDisconnect()" class="btn btn-skip" style="font-size:11px;padding:4px 10px;flex-shrink:0">Disconnect</button>
+          <button onclick="gmbDisconnect()" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
           {% else %}
           <button onclick="gmbConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           {% endif %}
@@ -2420,7 +2382,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
             {% endif %}
           </div>
           {% if restaurant.ig_token %}
-          <button onclick="disconnectInstagram(this)" class="btn btn-skip" style="font-size:11px;padding:4px 10px;flex-shrink:0">Disconnect</button>
+          <button onclick="disconnectInstagram(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
           {% else %}
           <button onclick="igConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           {% endif %}
@@ -2445,7 +2407,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           <div style="display:flex;gap:6px;flex-shrink:0">
             {% if restaurant.toast_restaurant_guid %}
             <button onclick="toastSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
-            <button onclick="toastDisconnect(this)" class="btn btn-skip" style="font-size:11px;padding:4px 10px;flex-shrink:0">Disconnect</button>
+            <button onclick="toastDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
             {% else %}
             <button onclick="openToastClientModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
             {% endif %}
