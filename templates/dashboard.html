@@ -2426,55 +2426,29 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           {% endif %}
         </div>
         <!-- Toast POS -->
-        <div>
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-            <div style="display:flex;align-items:center;gap:8px;min-width:0">
-              {% if restaurant.toast_restaurant_guid %}
-              <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
-              <div>
-                <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS</div>
-                <div style="font-size:11px;color:var(--ink3)">{% if restaurant.toast_last_synced %}Last synced {{ restaurant.toast_last_synced[:16].replace('T',' ') }} UTC{% else %}Connected — initial sync pending{% endif %}</div>
-              </div>
-              {% else %}
-              <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
-              <div>
-                <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS</div>
-                <div style="font-size:11px;color:var(--ink3)">Connect to power live labor data</div>
-              </div>
-              {% endif %}
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            {% if restaurant.toast_restaurant_guid %}
+            <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
+            <div>
+              <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS</div>
+              <div style="font-size:11px;color:var(--ink3)">{% if restaurant.toast_last_synced %}Last synced {{ restaurant.toast_last_synced[:16].replace('T',' ') }} UTC{% else %}Connected — initial sync pending{% endif %}</div>
             </div>
-            <div style="display:flex;gap:6px;flex-shrink:0">
-              {% if restaurant.toast_restaurant_guid %}
-              <button onclick="toastSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px">↻ Sync</button>
-              <button onclick="toastDisconnect(this)" class="btn btn-skip" style="font-size:11px;padding:4px 10px">Disconnect</button>
-              {% else %}
-              <button onclick="toggleToastForm()" class="btn btn-approve" id="toast-connect-btn" style="font-size:11px;padding:5px 12px">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-              {% endif %}
+            {% else %}
+            <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
+            <div>
+              <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS</div>
+              <div style="font-size:11px;color:var(--ink3)">Connect to power live labor data</div>
             </div>
+            {% endif %}
           </div>
-          <!-- Inline credentials form (hidden until Connect clicked) -->
-          <div id="toast-form-wrap" style="display:none;margin-top:10px;background:var(--paper2);border:1px solid var(--paper3);border-radius:8px;padding:14px">
-            <div id="toast-form-banner" style="display:none;padding:8px 12px;border-radius:6px;font-size:11px;margin-bottom:10px;line-height:1.5"></div>
-            <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">
-              <div>
-                <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:3px">Client ID</label>
-                <input id="toast-cid" type="text" placeholder="e.g. 8f3a2c1d-…" autocomplete="off" style="width:100%;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:12px;font-family:monospace;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
-              </div>
-              <div>
-                <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:3px">Client Secret</label>
-                <input id="toast-csec" type="password" placeholder="••••••••••••••••" autocomplete="off" style="width:100%;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:12px;font-family:monospace;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
-              </div>
-              <div>
-                <label style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:3px">Restaurant GUID</label>
-                <input id="toast-guid-client" type="text" placeholder="e.g. a1b2c3d4-…" autocomplete="off" style="width:100%;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:12px;font-family:monospace;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
-                <div style="font-size:10px;color:var(--ink3);margin-top:3px">Toast Admin → Integrations → API Access → Location GUID</div>
-              </div>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center">
-              <button onclick="toastSaveCredentials(this)" class="btn-primary" style="padding:7px 16px;font-size:12px">Test &amp; Connect</button>
-              <button onclick="toggleToastForm()" class="btn btn-skip" style="font-size:11px;padding:6px 10px">Cancel</button>
-            </div>
-            <div style="margin-top:10px;font-size:10px;color:var(--ink3);line-height:1.6"><strong>Where to find these:</strong> Toast Admin → Integrations → API Access → create a credential set with <em>Labor</em> and <em>Orders</em> permissions.</div>
+          <div style="display:flex;gap:6px;flex-shrink:0">
+            {% if restaurant.toast_restaurant_guid %}
+            <button onclick="toastSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
+            <button onclick="toastDisconnect(this)" class="btn btn-skip" style="font-size:11px;padding:4px 10px;flex-shrink:0">Disconnect</button>
+            {% else %}
+            <button onclick="openToastClientModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            {% endif %}
           </div>
         </div>
       </div>
@@ -2703,13 +2677,18 @@ function disconnectInstagram(btn){
   });
 }
 
-function toggleToastForm(){
-  var wrap = document.getElementById('toast-form-wrap');
-  var btn = document.getElementById('toast-connect-btn');
-  if (!wrap) return;
-  var open = wrap.style.display !== 'none';
-  wrap.style.display = open ? 'none' : 'block';
-  if (btn) btn.textContent = open ? 'Connect' : 'Cancel';
+function openToastClientModal(){
+  document.getElementById('toast-cid').value='';
+  document.getElementById('toast-csec').value='';
+  document.getElementById('toast-guid-client').value='';
+  _setToastFormBanner('','');
+  var btn=document.getElementById('toast-modal-save-btn');
+  if(btn){btn.textContent='Test & Connect';btn.disabled=false;}
+  var m=document.getElementById('toast-client-modal');
+  m.style.display='flex';
+}
+function closeToastClientModal(){
+  document.getElementById('toast-client-modal').style.display='none';
 }
 function _setToastFormBanner(msg, type){
   var b = document.getElementById('toast-form-banner');
@@ -2727,7 +2706,7 @@ function toastSaveCredentials(btn){
   var guid = (document.getElementById('toast-guid-client')||{}).value||'';
   if (!cid.trim()||!csec.trim()||!guid.trim()){ _setToastFormBanner('All three fields are required.','err'); return; }
   btn.disabled = true;
-  btn.textContent = 'Testing…';
+  btn.textContent = 'Testing connection…';
   _setToastFormBanner('','');
   fetch('/api/toast/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_id:cid.trim(),client_secret:csec.trim(),restaurant_guid:guid.trim()})})
     .then(function(r){return r.json();})
@@ -5766,6 +5745,41 @@ document.addEventListener('click', function(e) {
 </div>
 
 <!-- Change password modal — body level so position:fixed always covers viewport -->
+<!-- Toast POS connect modal -->
+<div id="toast-client-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center" onclick="if(event.target===this)closeToastClientModal()">
+  <div style="background:var(--paper);border-radius:14px;padding:28px 32px;max-width:460px;width:90%;position:relative;box-shadow:0 12px 48px rgba(14,12,10,.28)">
+    <button onclick="closeToastClientModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3);line-height:1">&#x2715;</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <span style="font-size:22px">🍞</span>
+      <div style="font-size:16px;font-weight:700;color:var(--ink)">Connect Toast POS</div>
+    </div>
+    <div style="font-size:12px;color:var(--ink3);margin-bottom:20px">Powers live labor data in the Labor tab</div>
+    <div id="toast-form-banner" style="display:none;padding:9px 13px;border-radius:7px;font-size:12px;margin-bottom:14px;line-height:1.5"></div>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px">
+      <div>
+        <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Client ID</label>
+        <input id="toast-cid" type="text" placeholder="e.g. 8f3a2c1d-…" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Client Secret</label>
+        <input id="toast-csec" type="password" placeholder="••••••••••••••••" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Restaurant GUID</label>
+        <input id="toast-guid-client" type="text" placeholder="e.g. a1b2c3d4-…" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
+        <div style="font-size:10px;color:var(--ink3);margin-top:4px">Toast Admin → Integrations → API Access → Location GUID</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button id="toast-modal-save-btn" onclick="toastSaveCredentials(this)" class="btn-primary" style="padding:9px 18px;font-size:13px">Test &amp; Connect</button>
+      <button onclick="closeToastClientModal()" class="btn btn-skip" style="padding:9px 14px;font-size:12px">Cancel</button>
+    </div>
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--paper3);font-size:11px;color:var(--ink3);line-height:1.6">
+      <strong style="color:var(--ink2)">Where to find these:</strong> Toast Admin → Integrations → API Access → create a credential set with <em>Labor</em> and <em>Orders</em> permissions. Copy the Client ID, Secret, and Location GUID here.
+    </div>
+  </div>
+</div>
+
 <div id="pw-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center">
   <div style="background:white;border-radius:14px;padding:28px;max-width:380px;width:90%;position:relative">
     <button onclick="closePwModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3)">&#x2715;</button>
