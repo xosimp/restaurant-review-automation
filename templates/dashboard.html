@@ -4730,9 +4730,10 @@ function renderAIVisibility(d) {
     countUp(gbpEl, d.gbp_score, 1000, '', '%', 0);
     gbpEl.style.color = gbpColor;
     if (gbpBox) {
-      if (d.gbp_score >= 70) { gbpBox.style.background = '#f0fdf4'; gbpBox.style.borderColor = '#bbf7d0'; }
-      else if (d.gbp_score >= 40) { gbpBox.style.background = '#fffbeb'; gbpBox.style.borderColor = '#fde68a'; }
-      else { gbpBox.style.background = '#fef2f2'; gbpBox.style.borderColor = '#fecaca'; }
+      var _dm = document.documentElement.getAttribute('data-theme') === 'dark';
+      if (d.gbp_score >= 70) { gbpBox.style.background = _dm ? '#0c2318' : '#f0fdf4'; gbpBox.style.borderColor = _dm ? '#2d6a4f' : '#bbf7d0'; }
+      else if (d.gbp_score >= 40) { gbpBox.style.background = _dm ? '#251d08' : '#fffbeb'; gbpBox.style.borderColor = _dm ? '#d4a030' : '#fde68a'; }
+      else { gbpBox.style.background = _dm ? '#2a1010' : '#fef2f2'; gbpBox.style.borderColor = _dm ? '#c0392b' : '#fecaca'; }
     }
   }
   if (gbpLbl) {
@@ -4887,7 +4888,6 @@ function renderAIVisibility(d) {
     styleEl.textContent = '@keyframes aivSlideIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}' +
       '.aiv-card{animation:aivSlideIn .35s ease both}' +
       '.aiv-expand-btn{transition:color .15s;cursor:pointer}' +
-      '.aiv-expand-btn:hover{color:#7c3aed!important}' +
       '.aiv-bar-fill{transition:width 1.2s cubic-bezier(.4,0,.2,1)}';
     document.head.appendChild(styleEl);
   }
@@ -4921,7 +4921,7 @@ function renderAIVisibility(d) {
     } else {
       html += '<div></div>';
     }
-    html += '<span class="aiv-expand-btn" onclick="toggleAivWhy(' + k + ',this)" style="font-size:11px;color:var(--ink3);text-decoration:underline;text-underline-offset:2px;user-select:none;letter-spacing:.01em">Why this matters</span>';
+    html += '<span class="aiv-expand-btn" onclick="toggleAivWhy(' + k + ',this)" onmouseover="this.style.color=\'' + c.color + '\'" onmouseout="this.style.color=\'\'" style="font-size:11px;color:var(--ink3);text-decoration:underline;text-underline-offset:2px;user-select:none;letter-spacing:.01em">Why this matters</span>';
     html += '</div>';
     html += '</div>';
     html += '</div>';
