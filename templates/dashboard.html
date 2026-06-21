@@ -767,10 +767,11 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 </script>
 
 <!-- HOME -->
-<div class="panel active" id="panel-home">
+<div class="panel active" id="panel-home" style="max-width:100%;padding:0">
 {% set _sb = savings_breakdown or {} %}
 {% set _hr = namespace(val=0) %}
 {% set _now_h = now %}
+<div style="max-width:900px;margin:0 auto;padding:24px 28px">
 
 <!-- Hero -->
 <div style="text-align:center;padding:48px 0 36px">
@@ -948,8 +949,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
 </div>
 
-
-</div>
+</div><!-- /centering wrapper -->
+</div><!-- /panel-home -->
 
 <!-- REVIEWS -->
 <div class="panel" id="panel-reviews">
