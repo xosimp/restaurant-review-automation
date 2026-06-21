@@ -108,6 +108,14 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] #aiv-card{background:var(--surface)!important}
 [data-theme="dark"] #aiv-idle{background:#1a1428!important;border-color:#3a2d5a!important}
 [data-theme="dark"] #aiv-idle [style*="color:#374151"]{color:var(--ink)!important}
+[data-theme="dark"] #panel-home [style*="background:var(--paper)"]{background:var(--surface)!important}
+[data-theme="dark"] #panel-home [style*="background:rgba(200,75,47,.06)"]{background:rgba(200,75,47,.12)!important}
+[data-theme="dark"] #panel-home [style*="background:rgba(192,57,43,.06)"]{background:rgba(192,57,43,.12)!important}
+[data-theme="dark"] #panel-home [style*="background:rgba(212,160,48,.06)"]{background:rgba(212,160,48,.1)!important}
+[data-theme="dark"] #panel-home [style*="background:rgba(45,106,79,.07)"]{background:rgba(45,106,79,.14)!important}
+[data-theme="dark"] #panel-home [style*="background:rgba(184,150,80,.07)"]{background:rgba(184,150,80,.12)!important}
+[data-theme="dark"] #panel-home [style*="background:rgba(124,58,237,.07)"]{background:rgba(124,58,237,.14)!important}
+[data-theme="dark"] #panel-home [style*="background:rgba(26,84,204,.07)"]{background:rgba(26,84,204,.12)!important}
 [data-theme="dark"] #panel-competitor [style*="background:white"]{background:var(--surface)!important}
 [data-theme="dark"] #panel-competitor [style*="background:#f9f8ff"]{background:#1a1428!important;border-color:#3a2d5a!important}
 [data-theme="dark"] #panel-competitor [style*="background:#f9fafb"]{background:var(--surface)!important;border-color:var(--paper3)!important}
@@ -708,18 +716,19 @@ function clientUpload(dataType, input) {
 </div>
 {% endif %}
 <div class="tabs">
-    {% if mod_reviews %}<button class="tab {{'active' if mod_reviews}}" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews <span class="badge" id="reviews-badge" style="{% if rstats.awaiting_approval > 0 %}background:#c0392b;color:white{% else %}display:none{% endif %}">{{rstats.awaiting_approval if rstats.awaiting_approval > 0 else ''}}</span></button>{% endif %}
-    {% if mod_labor %}<button class="tab {{'active' if not mod_reviews and mod_labor}}" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
-    {% if mod_inventory %}<button class="tab {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="tab-inventory" onclick="switchTab('inventory',this)">Food Cost</button>{% endif %}
-    {% if mod_marketing %}<button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
+    <button class="tab active" id="tab-home" onclick="switchTab('home',this)">Home</button>
+    {% if mod_reviews %}<button class="tab" id="tab-reviews" onclick="switchTab('reviews',this)">Reviews <span class="badge" id="reviews-badge" style="{% if rstats.awaiting_approval > 0 %}background:#c0392b;color:white{% else %}display:none{% endif %}">{{rstats.awaiting_approval if rstats.awaiting_approval > 0 else ''}}</span></button>{% endif %}
+    {% if mod_labor %}<button class="tab" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
+    {% if mod_inventory %}<button class="tab" id="tab-inventory" onclick="switchTab('inventory',this)">Food Cost</button>{% endif %}
+    {% if mod_marketing %}<button class="tab" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
     {% if restaurant.google_place_id and mod_reviews and mod_labor and mod_inventory and mod_marketing %}<button class="tab" id="tab-competitor" onclick="switchTab('competitor',this)">Intel</button>{% endif %}
-    <button class="tab {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" onclick="switchTab('account',this)" style="margin-left:auto">Account</button>
+    <button class="tab" onclick="switchTab('account',this)" style="margin-left:auto">Account</button>
     <span id="tab-indicator"></span>
 </div>
 
 <!-- TOTAL SAVINGS WIDGET -->
 {% set _sb = savings_breakdown or {} %}
-<div id="global-savings-banner" style="display:{% if _sb.total and _sb.total > 0 %}flex{% else %}none{% endif %};background:linear-gradient(135deg,#0d2b1a 0%,#0a1f13 100%);border-bottom:1px solid #1a3d24;padding:12px 28px;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+<div id="global-savings-banner" style="display:none;background:linear-gradient(135deg,#0d2b1a 0%,#0a1f13 100%);border-bottom:1px solid #1a3d24;padding:12px 28px;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
   <div style="display:flex;align-items:center;gap:8px">
     <span style="font-size:16px">💰</span>
     <div>
@@ -757,8 +766,290 @@ var _staticSavings = {{(_sb.labor or 0) + (_sb.inventory or 0) + (_sb.marketing 
 var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and savings_breakdown.sales_lift_yr else 125000}};
 </script>
 
+<!-- HOME -->
+<div class="panel active" id="panel-home">
+{% set _sb = savings_breakdown or {} %}
+{% set _hr = namespace(val=0) %}
+{% set _now_h = now %}
+
+<!-- Hero -->
+<div style="background:var(--ink);border-radius:var(--r);overflow:hidden;margin-bottom:18px;position:relative">
+  <div style="position:absolute;top:-40px;right:-30px;font-family:'Bricolage Grotesque',sans-serif;font-size:220px;font-weight:800;line-height:1;color:rgba(255,255,255,.025);pointer-events:none;user-select:none;white-space:nowrap">AI</div>
+  <div style="position:absolute;bottom:0;left:0;right:0;height:2px;background:linear-gradient(to right,var(--ember),transparent)"></div>
+  <div style="padding:32px 36px 28px;position:relative;z-index:1;display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center">
+    <div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:10px">{% if now %}{{ now }}{% endif %}</div>
+      <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(22px,2.8vw,36px);font-weight:800;color:var(--paper);line-height:1.15;letter-spacing:-.02em;margin-bottom:8px">
+        {% set _hour = namespace(h=6) %}
+        <span style="color:var(--ember)">{% if current_user.username %}{{ current_user.username|title }}{% else %}Welcome back{% endif %}</span> — your restaurant<br>is running on AI.
+      </div>
+      <div style="font-size:13px;color:rgba(247,244,239,.45);line-height:1.6;max-width:480px">{{ restaurant.name }} · All systems active{% if rstats.awaiting_approval > 0 %} · <span style="color:var(--ember);font-weight:600">{{ rstats.awaiting_approval }} review{% if rstats.awaiting_approval != 1 %}s{% endif %} need your approval</span>{% endif %}</div>
+    </div>
+    <div style="text-align:right;flex-shrink:0">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:rgba(247,244,239,.3);margin-bottom:6px">Total value delivered</div>
+      <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(28px,3vw,44px);font-weight:800;color:white;letter-spacing:-.03em;line-height:1" id="home-total-value">${{(_sb.total or 0)|format_num}}</div>
+      <div style="font-size:11px;color:var(--ember);font-weight:600;margin-top:4px;letter-spacing:.04em">SINCE LAUNCH</div>
+    </div>
+  </div>
+</div>
+
+<!-- KPI row -->
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px">
+
+  <!-- Reviews responded -->
+  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;position:relative;overflow:hidden;cursor:pointer;transition:box-shadow .2s,transform .15s" onclick="switchTab('reviews',document.getElementById('tab-reviews'))" onmouseover="this.style.boxShadow='0 4px 16px rgba(14,12,10,.1)';this.style.transform='translateY(-2px)'" onmouseout="this.style.boxShadow='';this.style.transform=''">
+    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--ember);border-radius:var(--r) var(--r) 0 0"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Reviews</div>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+    </div>
+    <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:28px;font-weight:800;color:var(--ink);line-height:1;letter-spacing:-.02em">{{rstats.responded or 0}}<span style="font-size:14px;font-weight:500;color:var(--ink3)">/{{rstats.total or 0}}</span></div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:5px">responded · {{rstats.response_rate or 0}}% rate</div>
+  </div>
+
+  <!-- Labor cost -->
+  {% if mod_labor %}
+  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;position:relative;overflow:hidden;cursor:pointer;transition:box-shadow .2s,transform .15s" onclick="switchTab('labor',document.getElementById('tab-labor'))" onmouseover="this.style.boxShadow='0 4px 16px rgba(14,12,10,.1)';this.style.transform='translateY(-2px)'" onmouseout="this.style.boxShadow='';this.style.transform=''">
+    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:{% if labor.overall_labor_pct > (labor_target + 3) %}var(--red){% elif labor.overall_labor_pct > labor_target %}var(--amber){% else %}var(--green){% endif %};border-radius:var(--r) var(--r) 0 0"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Labor cost</div>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="{% if labor.overall_labor_pct > (labor_target + 3) %}var(--red){% elif labor.overall_labor_pct > labor_target %}var(--amber){% else %}var(--green){% endif %}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+    </div>
+    <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:28px;font-weight:800;color:var(--ink);line-height:1;letter-spacing:-.02em">{{labor.overall_labor_pct|round(1)}}%</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:5px">target {{labor_target}}% · {% if labor.overall_labor_pct <= labor_target %}<span style="color:var(--green);font-weight:600">on track</span>{% else %}<span style="color:var(--red);font-weight:600">over target</span>{% endif %}</div>
+  </div>
+  {% else %}
+  <div style="background:var(--paper);border:1px dashed var(--paper3);border-radius:var(--r);padding:18px 20px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;opacity:.5">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Labor</div>
+    <div style="font-size:11px;color:var(--ink3)">Not active</div>
+  </div>
+  {% endif %}
+
+  <!-- Food cost -->
+  {% if mod_inventory %}
+  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;position:relative;overflow:hidden;cursor:pointer;transition:box-shadow .2s,transform .15s" onclick="switchTab('inventory',document.getElementById('tab-inventory'))" onmouseover="this.style.boxShadow='0 4px 16px rgba(14,12,10,.1)';this.style.transform='translateY(-2px)'" onmouseout="this.style.boxShadow='';this.style.transform=''">
+    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--amber);border-radius:var(--r) var(--r) 0 0"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Food cost</div>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+    </div>
+    <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:28px;font-weight:800;color:var(--ink);line-height:1;letter-spacing:-.02em">${{(inv.recoverable_monthly or 0)|int|format_num}}<span style="font-size:13px;font-weight:500;color:var(--ink3)">/mo</span></div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:5px">recoverable waste · {{inv.item_count or 0}} items tracked</div>
+  </div>
+  {% else %}
+  <div style="background:var(--paper);border:1px dashed var(--paper3);border-radius:var(--r);padding:18px 20px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;opacity:.5">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Food Cost</div>
+    <div style="font-size:11px;color:var(--ink3)">Not active</div>
+  </div>
+  {% endif %}
+
+  <!-- Marketing -->
+  {% if mod_marketing %}
+  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;position:relative;overflow:hidden;cursor:pointer;transition:box-shadow .2s,transform .15s" onclick="switchTab('marketing',document.getElementById('tab-marketing'))" onmouseover="this.style.boxShadow='0 4px 16px rgba(14,12,10,.1)';this.style.transform='translateY(-2px)'" onmouseout="this.style.boxShadow='';this.style.transform=''">
+    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:#7c3aed;border-radius:var(--r) var(--r) 0 0"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Marketing</div>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+    </div>
+    <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:28px;font-weight:800;color:var(--ink);line-height:1;letter-spacing:-.02em">{{mkt_stats.this_month or 0}}</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:5px">pieces this month · {{mkt_stats.generated or 0}} total</div>
+  </div>
+  {% else %}
+  <div style="background:var(--paper);border:1px dashed var(--paper3);border-radius:var(--r);padding:18px 20px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;opacity:.5">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Marketing</div>
+    <div style="font-size:11px;color:var(--ink3)">Not active</div>
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- Needs attention + Recent reviews -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
+
+  <!-- Needs attention -->
+  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:20px 22px">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:14px;display:flex;align-items:center;gap:6px">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      Needs attention
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px" id="home-attention-list">
+      {% if rstats.awaiting_approval > 0 %}
+      <div onclick="switchTab('reviews',document.getElementById('tab-reviews'))" style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(200,75,47,.06);border:1px solid rgba(200,75,47,.18);border-radius:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='rgba(200,75,47,.1)'" onmouseout="this.style.background='rgba(200,75,47,.06)'">
+        <span style="font-size:15px;flex-shrink:0">⭐</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:var(--ink)">{{rstats.awaiting_approval}} review{{'' if rstats.awaiting_approval==1 else 's'}} awaiting approval</div>
+          <div style="font-size:11px;color:var(--ink3)">AI responses drafted and ready</div>
+        </div>
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M6.5 5.5l3 2.5-3 2.5" stroke="var(--ember)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      {% endif %}
+      {% if mod_labor and labor.overtime_risk %}
+      {% set _ot_count = labor.overtime_risk|selectattr('status','equalto','overtime')|list|length %}
+      {% if _ot_count > 0 %}
+      <div onclick="switchTab('labor',document.getElementById('tab-labor'))" style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(192,57,43,.06);border:1px solid rgba(192,57,43,.18);border-radius:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='rgba(192,57,43,.1)'" onmouseout="this.style.background='rgba(192,57,43,.06)'">
+        <span style="font-size:15px;flex-shrink:0">⚠️</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:var(--ink)">{{_ot_count}} staff member{{'' if _ot_count==1 else 's'}} in overtime</div>
+          <div style="font-size:11px;color:var(--ink3)">Review labor schedule</div>
+        </div>
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M6.5 5.5l3 2.5-3 2.5" stroke="var(--ember)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      {% endif %}
+      {% endif %}
+      {% if mod_reviews and rstats.total > 0 and rstats.response_rate < 50 %}
+      <div onclick="switchTab('reviews',document.getElementById('tab-reviews'))" style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(212,160,48,.06);border:1px solid rgba(212,160,48,.2);border-radius:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='rgba(212,160,48,.1)'" onmouseout="this.style.background='rgba(212,160,48,.06)'">
+        <span style="font-size:15px;flex-shrink:0">📊</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:var(--ink)">Response rate at {{rstats.response_rate}}%</div>
+          <div style="font-size:11px;color:var(--ink3)">Aim for 80%+ for best impact</div>
+        </div>
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M6.5 5.5l3 2.5-3 2.5" stroke="var(--ember)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      {% endif %}
+      {% if rstats.awaiting_approval == 0 and (not mod_labor or not labor.overtime_risk or labor.overtime_risk|selectattr('status','equalto','overtime')|list|length == 0) and (not mod_reviews or rstats.total == 0 or rstats.response_rate >= 50) %}
+      <div style="display:flex;align-items:center;gap:10px;padding:12px;color:var(--green);font-size:13px;font-weight:600">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.5" stroke-linecap="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        All clear — nothing needs attention right now
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Recent reviews -->
+  {% if mod_reviews %}
+  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:20px 22px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);display:flex;align-items:center;gap:6px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2.5" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Latest reviews
+      </div>
+      <button onclick="switchTab('reviews',document.getElementById('tab-reviews'))" style="font-size:11px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;font-family:'Plus Jakarta Sans',sans-serif;padding:0">View all →</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      {% set _colors = ['#c84b2f','#2d6a4f','#7c3aed','#b89650','#1a56cc'] %}
+      {% for r in reviews[:4] %}
+      {% set _col = _colors[loop.index0 % _colors|length] %}
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;{% if not loop.last %}border-bottom:1px solid var(--paper3);{% endif %}">
+        <div style="width:26px;height:26px;border-radius:50%;background:{{_col}};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:white;flex-shrink:0;margin-top:1px">{{r.author[0].upper() if r.author else '?'}}</div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+            <span style="font-size:12px;font-weight:600;color:var(--ink)">{{r.author|e if r.author else 'Anonymous'}}</span>
+            <span style="font-size:11px;color:var(--amber)">{% for i in range(r.rating) %}★{% endfor %}{% for i in range(5-r.rating) %}<span style="color:var(--paper3)">★</span>{% endfor %}</span>
+            {% if r.response_status == 'posted' %}<span style="font-size:9px;font-weight:700;background:#e8f5ee;color:var(--green);padding:1px 6px;border-radius:3px;letter-spacing:.04em">LIVE</span>{% elif r.response_status == 'approved' %}<span style="font-size:9px;font-weight:700;background:#e8f0fe;color:#1a56cc;padding:1px 6px;border-radius:3px;letter-spacing:.04em">APPROVED</span>{% else %}<span style="font-size:9px;font-weight:700;background:rgba(200,75,47,.1);color:var(--ember);padding:1px 6px;border-radius:3px;letter-spacing:.04em">PENDING</span>{% endif %}
+          </div>
+          <div style="font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">{{r.text[:80]|e if r.text else 'No text'}}{% if r.text and r.text|length > 80 %}…{% endif %}</div>
+        </div>
+      </div>
+      {% else %}
+      <div style="font-size:13px;color:var(--ink3);padding:8px 0">No reviews yet.</div>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div style="background:var(--paper);border:1px dashed var(--paper3);border-radius:var(--r);padding:20px 22px;display:flex;align-items:center;justify-content:center">
+    <div style="text-align:center;color:var(--ink3);font-size:13px">Reviews module not active</div>
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- ROI strip + AI insight -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
+
+  <!-- ROI -->
+  <div style="background:var(--ink);border-radius:var(--r);padding:22px 24px;position:relative;overflow:hidden">
+    <div style="position:absolute;bottom:-16px;right:-12px;font-family:'Bricolage Grotesque',sans-serif;font-size:100px;font-weight:800;color:rgba(255,255,255,.03);line-height:1;pointer-events:none">ROI</div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember);margin-bottom:14px">Your ROI</div>
+    <div style="display:flex;flex-direction:column;gap:10px;position:relative;z-index:1">
+      {% if _sb.reviews and _sb.reviews > 0 %}
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;color:rgba(247,244,239,.55)">Review management</span>
+        <span style="font-size:13px;font-weight:700;color:var(--paper)">${{_sb.reviews|format_num}}</span>
+      </div>
+      {% endif %}
+      {% if _sb.labor and _sb.labor > 0 %}
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;color:rgba(247,244,239,.55)">Labor savings</span>
+        <span style="font-size:13px;font-weight:700;color:var(--paper)">${{_sb.labor|format_num}}</span>
+      </div>
+      {% endif %}
+      {% if _sb.inventory and _sb.inventory > 0 %}
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;color:rgba(247,244,239,.55)">Food cost recovered</span>
+        <span style="font-size:13px;font-weight:700;color:var(--paper)">${{_sb.inventory|format_num}}</span>
+      </div>
+      {% endif %}
+      {% if _sb.marketing and _sb.marketing > 0 %}
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;color:rgba(247,244,239,.55)">Marketing value</span>
+        <span style="font-size:13px;font-weight:700;color:var(--paper)">${{_sb.marketing|format_num}}</span>
+      </div>
+      {% endif %}
+      <div style="border-top:1px solid rgba(255,255,255,.08);padding-top:10px;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;font-weight:700;color:rgba(247,244,239,.7);letter-spacing:.04em">TOTAL DELIVERED</span>
+        <span style="font-family:'Bricolage Grotesque',sans-serif;font-size:20px;font-weight:800;color:var(--ember)">${{(_sb.total or 0)|format_num}}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI insight -->
+  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:22px 24px">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-bottom:14px;display:flex;align-items:center;gap:6px">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+      AI insight
+    </div>
+    <div id="home-insight-text" style="font-size:13px;color:var(--ink2);line-height:1.75">
+      <div class="skeleton" style="height:13px;margin-bottom:8px;width:90%">&nbsp;</div>
+      <div class="skeleton" style="height:13px;margin-bottom:8px;width:75%">&nbsp;</div>
+      <div class="skeleton" style="height:13px;width:55%">&nbsp;</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Module quick-launch strip -->
+<div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:18px 22px">
+  <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:14px">Jump to module</div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap">
+    {% if mod_reviews %}
+    <button onclick="switchTab('reviews',document.getElementById('tab-reviews'))" style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:rgba(200,75,47,.07);border:1px solid rgba(200,75,47,.2);border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:all .15s" onmouseover="this.style.background='rgba(200,75,47,.14)'" onmouseout="this.style.background='rgba(200,75,47,.07)'">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+      <span style="font-size:12px;font-weight:600;color:var(--ink)">Reviews</span>
+      {% if rstats.awaiting_approval > 0 %}<span style="font-size:10px;font-weight:700;background:var(--ember);color:white;padding:1px 6px;border-radius:10px">{{rstats.awaiting_approval}}</span>{% endif %}
+    </button>
+    {% endif %}
+    {% if mod_labor %}
+    <button onclick="switchTab('labor',document.getElementById('tab-labor'))" style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:rgba(45,106,79,.07);border:1px solid rgba(45,106,79,.2);border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:all .15s" onmouseover="this.style.background='rgba(45,106,79,.14)'" onmouseout="this.style.background='rgba(45,106,79,.07)'">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+      <span style="font-size:12px;font-weight:600;color:var(--ink)">Labor</span>
+      <span style="font-size:10px;color:var(--ink3)">{{labor.overall_labor_pct|round(1)}}%</span>
+    </button>
+    {% endif %}
+    {% if mod_inventory %}
+    <button onclick="switchTab('inventory',document.getElementById('tab-inventory'))" style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:rgba(184,150,80,.07);border:1px solid rgba(184,150,80,.2);border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:all .15s" onmouseover="this.style.background='rgba(184,150,80,.14)'" onmouseout="this.style.background='rgba(184,150,80,.07)'">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+      <span style="font-size:12px;font-weight:600;color:var(--ink)">Food Cost</span>
+    </button>
+    {% endif %}
+    {% if mod_marketing %}
+    <button onclick="switchTab('marketing',document.getElementById('tab-marketing'))" style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:rgba(124,58,237,.07);border:1px solid rgba(124,58,237,.2);border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:all .15s" onmouseover="this.style.background='rgba(124,58,237,.14)'" onmouseout="this.style.background='rgba(124,58,237,.07)'">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      <span style="font-size:12px;font-weight:600;color:var(--ink)">Marketing</span>
+    </button>
+    {% endif %}
+    {% if restaurant.google_place_id and mod_reviews and mod_labor and mod_inventory and mod_marketing %}
+    <button onclick="switchTab('competitor',document.getElementById('tab-competitor'))" style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:rgba(26,84,204,.07);border:1px solid rgba(26,84,204,.2);border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:all .15s" onmouseover="this.style.background='rgba(26,84,204,.14)'" onmouseout="this.style.background='rgba(26,84,204,.07)'">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1a56cc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span style="font-size:12px;font-weight:600;color:var(--ink)">Intel</span>
+    </button>
+    {% endif %}
+  </div>
+</div>
+
+</div>
+
 <!-- REVIEWS -->
-<div class="panel {{'active' if mod_reviews}}" id="panel-reviews">
+<div class="panel" id="panel-reviews">
   <!-- New reviews notification banner -->
   <div id="new-reviews-banner" style="display:none;background:#1a1410;color:#f0ebe0;padding:10px 16px;border-radius:6px;margin-bottom:12px;font-size:13px;cursor:pointer;align-items:center;justify-content:space-between" onclick="window.location.reload()">
     <span id="new-reviews-text"></span>
@@ -3069,6 +3360,7 @@ function switchTab(n,btn){
     var _lnums=document.querySelectorAll('#panel-labor .labor-num');
     for(var _li=0;_li<_lnums.length;_li++){(function(el){if(el.dataset.animated)return;el.dataset.animated='1';var raw=el.textContent.replace(/[$,]/g,'').trim();var num=parseInt(raw,10);if(!isNaN(num)&&num>0)countUpMoney(el,num,900);}(_lnums[_li]));}
   }
+  if(n==='home'&&!homeInsightLoaded){loadHomeInsight();}
   if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();loadTopicHeatmap();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'){
@@ -3793,7 +4085,18 @@ function renderBars(){
   }
 }
 var _gbpReload=!!sessionStorage.getItem('_gbpReload');if(_gbpReload)sessionStorage.removeItem('_gbpReload');
-var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false;
+var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false,homeInsightLoaded=false;
+function loadHomeInsight(){
+  homeInsightLoaded=true;
+  var el=document.getElementById('home-insight-text');
+  if(!el)return;
+  fetch('/api/review-insight').then(function(r){return r.json();}).then(function(d){
+    var txt=d.insight||d.text||'';
+    if(txt){el.innerHTML='<span style="font-size:13px;color:var(--ink2);line-height:1.75">'+txt+'</span>';}
+    else{el.innerHTML='<span style="font-size:13px;color:var(--ink3)">Check back after more reviews come in.</span>';}
+  }).catch(function(){el.innerHTML='<span style="font-size:13px;color:var(--ink3)">Insight unavailable right now.</span>';});
+}
+document.addEventListener('DOMContentLoaded',function(){loadHomeInsight();});
 function postToInstagram(){
   var el=document.getElementById('mkoutput');
   var content=(el.innerText||el.textContent||'').trim();
