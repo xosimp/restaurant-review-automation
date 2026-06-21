@@ -773,25 +773,20 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 {% set _now_h = now %}
 
 <!-- Hero -->
-<div style="background:var(--ink);border-radius:var(--r);overflow:hidden;margin-bottom:18px;position:relative">
-  <div style="position:absolute;top:-40px;right:-30px;font-family:'Bricolage Grotesque',sans-serif;font-size:220px;font-weight:800;line-height:1;color:rgba(255,255,255,.025);pointer-events:none;user-select:none;white-space:nowrap">AI</div>
-  <div style="position:absolute;bottom:0;left:0;right:0;height:2px;background:linear-gradient(to right,var(--ember),transparent)"></div>
-  <div style="padding:32px 36px 28px;position:relative;z-index:1;display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center">
-    <div>
-      <div style="font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:10px">{% if now %}{{ now }}{% endif %}</div>
-      <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(22px,2.8vw,36px);font-weight:800;color:var(--paper);line-height:1.15;letter-spacing:-.02em;margin-bottom:8px">
-        {% set _hour = namespace(h=6) %}
-        <span style="color:var(--ember)">{% if current_user.username %}{{ current_user.username|title }}{% else %}Welcome back{% endif %}</span> — your restaurant<br>is running on AI.
-      </div>
-      <div style="font-size:13px;color:rgba(247,244,239,.45);line-height:1.6;max-width:480px">{{ restaurant.name }} · All systems active{% if rstats.awaiting_approval > 0 %} · <span style="color:var(--ember);font-weight:600">{{ rstats.awaiting_approval }} review{% if rstats.awaiting_approval != 1 %}s{% endif %} need your approval</span>{% endif %}</div>
-    </div>
-    <div style="text-align:right;flex-shrink:0">
-      <div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:rgba(247,244,239,.3);margin-bottom:6px">Total value delivered</div>
-      <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(28px,3vw,44px);font-weight:800;color:white;letter-spacing:-.03em;line-height:1" id="home-total-value">${{(_sb.total or 0)|format_num}}</div>
-      <div style="font-size:11px;color:var(--ember);font-weight:600;margin-top:4px;letter-spacing:.04em">SINCE LAUNCH</div>
-    </div>
+<div style="text-align:center;padding:48px 0 36px">
+  <div style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ember);margin-bottom:18px">{% if now %}{{ now }}{% endif %}</div>
+  <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,5vw,66px);font-weight:500;color:var(--ink);line-height:1.06;letter-spacing:-.01em;margin-bottom:16px">
+    <span style="color:var(--ember)">{% if current_user.username %}{{ current_user.username|title }}{% else %}Welcome back{% endif %}</span> — your restaurant<br>is running on AI.
   </div>
+  <div style="font-size:14px;color:var(--ink3);letter-spacing:.01em">{{ restaurant.name }}{% if rstats.awaiting_approval > 0 %} &nbsp;·&nbsp; <span style="color:var(--ember);font-weight:600">{{ rstats.awaiting_approval }} review{% if rstats.awaiting_approval != 1 %}s{% endif %} awaiting approval</span>{% endif %}</div>
+  {% if _sb.total and _sb.total > 0 %}
+  <div style="margin-top:20px;display:inline-flex;align-items:baseline;gap:8px">
+    <span style="font-family:'Cormorant Garamond',serif;font-size:clamp(28px,3.5vw,46px);font-weight:500;color:var(--ink);letter-spacing:-.02em">${{(_sb.total or 0)|format_num}}</span>
+    <span style="font-size:12px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;font-weight:500">delivered since launch</span>
+  </div>
+  {% endif %}
 </div>
+<div style="height:1px;background:linear-gradient(to right,transparent,var(--ember),transparent);margin-bottom:28px;opacity:.35"></div>
 
 <!-- KPI row -->
 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px">
@@ -953,98 +948,6 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
 </div>
 
-<!-- ROI strip + AI insight -->
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
-
-  <!-- ROI -->
-  <div style="background:var(--ink);border-radius:var(--r);padding:22px 24px;position:relative;overflow:hidden">
-    <div style="position:absolute;bottom:-16px;right:-12px;font-family:'Bricolage Grotesque',sans-serif;font-size:100px;font-weight:800;color:rgba(255,255,255,.03);line-height:1;pointer-events:none">ROI</div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ember);margin-bottom:14px">Your ROI</div>
-    <div style="display:flex;flex-direction:column;gap:10px;position:relative;z-index:1">
-      {% if _sb.reviews and _sb.reviews > 0 %}
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:12px;color:rgba(247,244,239,.55)">Review management</span>
-        <span style="font-size:13px;font-weight:700;color:var(--paper)">${{_sb.reviews|format_num}}</span>
-      </div>
-      {% endif %}
-      {% if _sb.labor and _sb.labor > 0 %}
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:12px;color:rgba(247,244,239,.55)">Labor savings</span>
-        <span style="font-size:13px;font-weight:700;color:var(--paper)">${{_sb.labor|format_num}}</span>
-      </div>
-      {% endif %}
-      {% if _sb.inventory and _sb.inventory > 0 %}
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:12px;color:rgba(247,244,239,.55)">Food cost recovered</span>
-        <span style="font-size:13px;font-weight:700;color:var(--paper)">${{_sb.inventory|format_num}}</span>
-      </div>
-      {% endif %}
-      {% if _sb.marketing and _sb.marketing > 0 %}
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:12px;color:rgba(247,244,239,.55)">Marketing value</span>
-        <span style="font-size:13px;font-weight:700;color:var(--paper)">${{_sb.marketing|format_num}}</span>
-      </div>
-      {% endif %}
-      <div style="border-top:1px solid rgba(255,255,255,.08);padding-top:10px;display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:12px;font-weight:700;color:rgba(247,244,239,.7);letter-spacing:.04em">TOTAL DELIVERED</span>
-        <span style="font-family:'Bricolage Grotesque',sans-serif;font-size:20px;font-weight:800;color:var(--ember)">${{(_sb.total or 0)|format_num}}</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- AI insight -->
-  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:22px 24px">
-    <div style="font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-bottom:14px;display:flex;align-items:center;gap:6px">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
-      AI insight
-    </div>
-    <div id="home-insight-text" style="font-size:13px;color:var(--ink2);line-height:1.75">
-      <div class="skeleton" style="height:13px;margin-bottom:8px;width:90%">&nbsp;</div>
-      <div class="skeleton" style="height:13px;margin-bottom:8px;width:75%">&nbsp;</div>
-      <div class="skeleton" style="height:13px;width:55%">&nbsp;</div>
-    </div>
-  </div>
-
-</div>
-
-<!-- Module quick-launch strip -->
-<div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:18px 22px">
-  <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:14px">Jump to module</div>
-  <div style="display:flex;gap:10px;flex-wrap:wrap">
-    {% if mod_reviews %}
-    <button onclick="switchTab('reviews',document.getElementById('tab-reviews'))" style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:rgba(200,75,47,.07);border:1px solid rgba(200,75,47,.2);border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:all .15s" onmouseover="this.style.background='rgba(200,75,47,.14)'" onmouseout="this.style.background='rgba(200,75,47,.07)'">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-      <span style="font-size:12px;font-weight:600;color:var(--ink)">Reviews</span>
-      {% if rstats.awaiting_approval > 0 %}<span style="font-size:10px;font-weight:700;background:var(--ember);color:white;padding:1px 6px;border-radius:10px">{{rstats.awaiting_approval}}</span>{% endif %}
-    </button>
-    {% endif %}
-    {% if mod_labor %}
-    <button onclick="switchTab('labor',document.getElementById('tab-labor'))" style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:rgba(45,106,79,.07);border:1px solid rgba(45,106,79,.2);border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:all .15s" onmouseover="this.style.background='rgba(45,106,79,.14)'" onmouseout="this.style.background='rgba(45,106,79,.07)'">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
-      <span style="font-size:12px;font-weight:600;color:var(--ink)">Labor</span>
-      <span style="font-size:10px;color:var(--ink3)">{{labor.overall_labor_pct|round(1)}}%</span>
-    </button>
-    {% endif %}
-    {% if mod_inventory %}
-    <button onclick="switchTab('inventory',document.getElementById('tab-inventory'))" style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:rgba(184,150,80,.07);border:1px solid rgba(184,150,80,.2);border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:all .15s" onmouseover="this.style.background='rgba(184,150,80,.14)'" onmouseout="this.style.background='rgba(184,150,80,.07)'">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-      <span style="font-size:12px;font-weight:600;color:var(--ink)">Food Cost</span>
-    </button>
-    {% endif %}
-    {% if mod_marketing %}
-    <button onclick="switchTab('marketing',document.getElementById('tab-marketing'))" style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:rgba(124,58,237,.07);border:1px solid rgba(124,58,237,.2);border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:all .15s" onmouseover="this.style.background='rgba(124,58,237,.14)'" onmouseout="this.style.background='rgba(124,58,237,.07)'">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-      <span style="font-size:12px;font-weight:600;color:var(--ink)">Marketing</span>
-    </button>
-    {% endif %}
-    {% if restaurant.google_place_id and mod_reviews and mod_labor and mod_inventory and mod_marketing %}
-    <button onclick="switchTab('competitor',document.getElementById('tab-competitor'))" style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:rgba(26,84,204,.07);border:1px solid rgba(26,84,204,.2);border-radius:8px;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:all .15s" onmouseover="this.style.background='rgba(26,84,204,.14)'" onmouseout="this.style.background='rgba(26,84,204,.07)'">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1a56cc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <span style="font-size:12px;font-weight:600;color:var(--ink)">Intel</span>
-    </button>
-    {% endif %}
-  </div>
-</div>
 
 </div>
 
