@@ -27,7 +27,7 @@ html[data-theme="dark"]{background:#1a1714!important;background-image:none!impor
 html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 /* Header & tabs must explicitly override the var(--ink) background (--ink is light in dark mode) */
 [data-theme="dark"] .hdr{background:var(--hdr-bg)!important}
-[data-theme="dark"] .tabs{background:#141210!important;border-top-color:#1a1410!important}
+[data-theme="dark"] .tabs{background:#000!important;border-top-color:#000!important}
 [data-theme="dark"] .tab{color:rgba(240,235,224,.38)!important}
 [data-theme="dark"] .tab:hover{color:var(--ink)!important}
 [data-theme="dark"] .tab.active{color:var(--ink)!important}
@@ -777,7 +777,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 <!-- Hero -->
 <div style="text-align:center;padding:48px 0 36px">
   <div style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ember);margin-bottom:18px">{% if now %}{{ now }}{% endif %}</div>
-  <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,5vw,66px);font-weight:500;color:var(--ink);line-height:1.06;letter-spacing:-.01em;margin-bottom:16px">
+  <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,5vw,66px);font-weight:500;color:var(--ink);line-height:1.06;letter-spacing:-.01em;margin-bottom:16px;text-shadow:0 2px 12px rgba(14,10,6,.18),0 1px 3px rgba(14,10,6,.12)">
     <span style="color:var(--ember)">{% if current_user.username %}{{ current_user.username|title }}{% else %}Welcome back{% endif %}</span> — your restaurant<br>is running on AI.
   </div>
   <div style="font-size:14px;color:var(--ink3);letter-spacing:.01em">{{ restaurant.name }}{% if rstats.awaiting_approval > 0 %} &nbsp;·&nbsp; <span style="color:var(--ember);font-weight:600">{{ rstats.awaiting_approval }} review{% if rstats.awaiting_approval != 1 %}s{% endif %} awaiting approval</span>{% endif %}</div>
