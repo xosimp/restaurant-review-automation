@@ -3452,6 +3452,7 @@ document.addEventListener('DOMContentLoaded', function(){
         if (entries[_ei].isIntersecting) {
           var _revEl = entries[_ei].target;
           var _revDelay = _revEl.dataset.revealDelay || '0s';
+          _revEl.style.animation = '';
           _revEl.style.animationDelay = _revDelay;
           _revEl.classList.add('revealed');
           window._scrollObs.unobserve(_revEl);
@@ -3804,12 +3805,7 @@ function updateReviewStats(){
     var globalRevChip  = document.getElementById('global-reviews-chip');
     var globalRevAmt   = document.getElementById('global-reviews-amt');
     if(globalBanner){
-      if(totalSavings > 0){
-        globalBanner.style.display = 'flex';
-        if(globalTotal) globalTotal.textContent = '$' + totalSavings.toLocaleString();
-        if(globalRevChip) globalRevChip.style.display = reviewSavingsGlobal > 0 ? 'block' : 'none';
-        if(globalRevAmt)  globalRevAmt.textContent  = '$' + reviewSavingsGlobal.toLocaleString();
-      }
+      globalBanner.style.display = 'none';
     }
 
     // ── Review savings bar ─────────────────────────────────
