@@ -108,7 +108,7 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] #aiv-card{background:var(--surface)!important}
 [data-theme="dark"] #aiv-idle{background:#1a1428!important;border-color:#3a2d5a!important}
 [data-theme="dark"] #aiv-idle [style*="color:#374151"]{color:var(--ink)!important}
-[data-theme="dark"] #panel-home{background:radial-gradient(ellipse 80% 60% at 50% 0%,rgba(200,75,47,.18) 0%,transparent 70%),linear-gradient(180deg,#0a0806 0%,#0e0c0a 100%)!important}
+[data-theme="dark"] #panel-home{background:radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.18) 40%,transparent 70%),linear-gradient(180deg,#0a0806 0%,#0e0c0a 100%)!important}
 [data-theme="dark"] #panel-home [style*="background:var(--paper)"]{background:var(--surface)!important}
 [data-theme="dark"] #panel-home [style*="background:rgba(200,75,47,.06)"]{background:rgba(200,75,47,.12)!important}
 [data-theme="dark"] #panel-home [style*="background:rgba(192,57,43,.06)"]{background:rgba(192,57,43,.12)!important}
@@ -768,7 +768,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 </script>
 
 <!-- HOME -->
-<div class="panel active" id="panel-home" style="max-width:100%;padding:0;background:radial-gradient(ellipse 80% 60% at 50% 0%,rgba(200,75,47,.13) 0%,transparent 70%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%);min-height:100%">
+<div class="panel active" id="panel-home" style="max-width:100%;padding:0;background:radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.32) 0%,rgba(200,75,47,.10) 45%,transparent 70%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%);min-height:100%">
 {% set _sb = savings_breakdown or {} %}
 {% set _hr = namespace(val=0) %}
 {% set _now_h = now %}
