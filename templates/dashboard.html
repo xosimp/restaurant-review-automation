@@ -777,14 +777,11 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
 <!-- Hero -->
 <div style="text-align:center;padding:48px 0 36px">
-  <div id="home-tw-date" style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ember);margin-bottom:18px;visibility:hidden"></div>
-  <div id="home-tw-headline" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,5vw,66px);font-weight:500;color:var(--ink);line-height:1.06;letter-spacing:-.01em;margin-bottom:16px;text-shadow:0 2px 12px rgba(14,10,6,.18),0 1px 3px rgba(14,10,6,.12);visibility:hidden;min-height:1.2em"></div>
-  <div id="home-tw-sub" style="font-size:14px;color:var(--ink3);letter-spacing:.01em;visibility:hidden"></div>
+  <div id="home-tw-date" data-tw="{% if now %}{{ now }}{% endif %}" style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ember);margin-bottom:18px;visibility:hidden"></div>
+  <div id="home-tw-headline" data-tw='<span style="color:var(--ember)">{% if current_user.username %}{{ current_user.username|title }}{% else %}Welcome back{% endif %}</span> — your restaurant<br>is running on AI.' style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,5vw,66px);font-weight:500;color:var(--ink);line-height:1.06;letter-spacing:-.01em;margin-bottom:16px;text-shadow:0 2px 12px rgba(14,10,6,.18),0 1px 3px rgba(14,10,6,.12);visibility:hidden;min-height:2.2em"></div>
+  <div id="home-tw-sub" data-tw="{{ restaurant.name }}{% if rstats.awaiting_approval > 0 %} &nbsp;·&nbsp; <span style='color:var(--ember);font-weight:600'>{{ rstats.awaiting_approval }} review{% if rstats.awaiting_approval != 1 %}s{% endif %} awaiting approval</span>{% endif %}" style="font-size:14px;color:var(--ink3);letter-spacing:.01em;visibility:hidden"></div>
   {% if _sb.total and _sb.total > 0 %}
-  <div id="home-tw-dollar" style="margin-top:20px;display:inline-flex;align-items:baseline;gap:8px;visibility:hidden">
-    <span style="font-family:'Cormorant Garamond',serif;font-size:clamp(28px,3.5vw,46px);font-weight:500;color:var(--ink);letter-spacing:-.02em">${{(_sb.total or 0)|format_num}}</span>
-    <span style="font-size:12px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;font-weight:500">delivered since launch</span>
-  </div>
+  <div id="home-tw-dollar" data-tw='<span style="font-family:&apos;Cormorant Garamond&apos;,serif;font-size:clamp(28px,3.5vw,46px);font-weight:500;color:var(--ink);letter-spacing:-.02em">${{(_sb.total or 0)|format_num}}</span><span style="font-size:12px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;font-weight:500;margin-left:8px">delivered since launch</span>' style="margin-top:20px;display:none;align-items:baseline;gap:8px;visibility:hidden"></div>
   {% endif %}
 </div>
 <script>
@@ -813,21 +810,28 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   function runHeroTypewriter() {
     if (_twFired) return;
     _twFired = true;
-    var elDate     = document.getElementById('home-tw-date');
-    var elHead     = document.getElementById('home-tw-headline');
-    var elSub      = document.getElementById('home-tw-sub');
-    var elDollar   = document.getElementById('home-tw-dollar');
-    var dateHtml   = '{% if now %}{{ now }}{% endif %}';
-    var headHtml   = '<span style="color:var(--ember)">{% if current_user.username %}{{ current_user.username|title }}{% else %}Welcome back{% endif %}</span> — your restaurant<br>is running on AI.';
-    var subHtml    = '{{ restaurant.name }}{% if rstats.awaiting_approval > 0 %} &nbsp;&middot;&nbsp; <span style="color:var(--ember);font-weight:600">{{ rstats.awaiting_approval }} review{% if rstats.awaiting_approval != 1 %}s{% endif %} awaiting approval</span>{% endif %}';
+    var elDate   = document.getElementById('home-tw-date');
+    var elHead   = document.getElementById('home-tw-headline');
+    var elSub    = document.getElementById('home-tw-sub');
+    var elDollar = document.getElementById('home-tw-dollar');
     if (!elDate) return;
-    _tw(elDate, dateHtml, 38, function() {
+    var dateHtml   = elDate.getAttribute('data-tw');
+    var headHtml   = elHead ? elHead.getAttribute('data-tw') : '';
+    var subHtml    = elSub ? elSub.getAttribute('data-tw') : '';
+    var dollarHtml = elDollar ? elDollar.getAttribute('data-tw') : '';
+    _tw(elDate, dateHtml, 55, function() {
       if (!elHead) return;
-      _tw(elHead, headHtml, 28, function() {
+      _tw(elHead, headHtml, 32, function() {
         if (!elSub) return;
-        _tw(elSub, subHtml, 22, function() {
-          if (elDollar) { elDollar.style.visibility = 'visible'; elDollar.style.opacity = '0'; elDollar.style.transition = 'opacity .5s'; setTimeout(function(){ elDollar.style.opacity = '1'; }, 30); }
-        });
+        setTimeout(function() {
+          _tw(elSub, subHtml, 72, function() {
+            if (!elDollar) return;
+            setTimeout(function() {
+              elDollar.style.display = 'inline-flex';
+              _tw(elDollar, dollarHtml, 55, null);
+            }, 120);
+          });
+        }, 80);
       });
     });
   }
