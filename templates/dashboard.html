@@ -777,18 +777,63 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
 <!-- Hero -->
 <div style="text-align:center;padding:48px 0 36px">
-  <div style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ember);margin-bottom:18px">{% if now %}{{ now }}{% endif %}</div>
-  <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,5vw,66px);font-weight:500;color:var(--ink);line-height:1.06;letter-spacing:-.01em;margin-bottom:16px;text-shadow:0 2px 12px rgba(14,10,6,.18),0 1px 3px rgba(14,10,6,.12)">
-    <span style="color:var(--ember)">{% if current_user.username %}{{ current_user.username|title }}{% else %}Welcome back{% endif %}</span> — your restaurant<br>is running on AI.
-  </div>
-  <div style="font-size:14px;color:var(--ink3);letter-spacing:.01em">{{ restaurant.name }}{% if rstats.awaiting_approval > 0 %} &nbsp;·&nbsp; <span style="color:var(--ember);font-weight:600">{{ rstats.awaiting_approval }} review{% if rstats.awaiting_approval != 1 %}s{% endif %} awaiting approval</span>{% endif %}</div>
+  <div id="home-tw-date" style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ember);margin-bottom:18px;visibility:hidden"></div>
+  <div id="home-tw-headline" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,5vw,66px);font-weight:500;color:var(--ink);line-height:1.06;letter-spacing:-.01em;margin-bottom:16px;text-shadow:0 2px 12px rgba(14,10,6,.18),0 1px 3px rgba(14,10,6,.12);visibility:hidden;min-height:1.2em"></div>
+  <div id="home-tw-sub" style="font-size:14px;color:var(--ink3);letter-spacing:.01em;visibility:hidden"></div>
   {% if _sb.total and _sb.total > 0 %}
-  <div style="margin-top:20px;display:inline-flex;align-items:baseline;gap:8px">
+  <div id="home-tw-dollar" style="margin-top:20px;display:inline-flex;align-items:baseline;gap:8px;visibility:hidden">
     <span style="font-family:'Cormorant Garamond',serif;font-size:clamp(28px,3.5vw,46px);font-weight:500;color:var(--ink);letter-spacing:-.02em">${{(_sb.total or 0)|format_num}}</span>
     <span style="font-size:12px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;font-weight:500">delivered since launch</span>
   </div>
   {% endif %}
 </div>
+<script>
+(function(){
+  var _twFired = false;
+  function _tw(el, html, speed, cb) {
+    var i = 0;
+    el.style.visibility = 'visible';
+    el.innerHTML = '';
+    function tick() {
+      if (i >= html.length) { if (cb) cb(); return; }
+      if (html[i] === '<') {
+        var end = html.indexOf('>', i);
+        if (end !== -1) { i = end + 1; el.innerHTML = html.substring(0, i); setTimeout(tick, 0); return; }
+      }
+      if (html[i] === '&') {
+        var end2 = html.indexOf(';', i);
+        if (end2 !== -1 && end2 - i < 8) { i = end2 + 1; el.innerHTML = html.substring(0, i); setTimeout(tick, speed); return; }
+      }
+      i++;
+      el.innerHTML = html.substring(0, i);
+      setTimeout(tick, speed);
+    }
+    tick();
+  }
+  function runHeroTypewriter() {
+    if (_twFired) return;
+    _twFired = true;
+    var elDate     = document.getElementById('home-tw-date');
+    var elHead     = document.getElementById('home-tw-headline');
+    var elSub      = document.getElementById('home-tw-sub');
+    var elDollar   = document.getElementById('home-tw-dollar');
+    var dateHtml   = '{% if now %}{{ now }}{% endif %}';
+    var headHtml   = '<span style="color:var(--ember)">{% if current_user.username %}{{ current_user.username|title }}{% else %}Welcome back{% endif %}</span> — your restaurant<br>is running on AI.';
+    var subHtml    = '{{ restaurant.name }}{% if rstats.awaiting_approval > 0 %} &nbsp;&middot;&nbsp; <span style="color:var(--ember);font-weight:600">{{ rstats.awaiting_approval }} review{% if rstats.awaiting_approval != 1 %}s{% endif %} awaiting approval</span>{% endif %}';
+    if (!elDate) return;
+    _tw(elDate, dateHtml, 38, function() {
+      if (!elHead) return;
+      _tw(elHead, headHtml, 28, function() {
+        if (!elSub) return;
+        _tw(elSub, subHtml, 22, function() {
+          if (elDollar) { elDollar.style.visibility = 'visible'; elDollar.style.opacity = '0'; elDollar.style.transition = 'opacity .5s'; setTimeout(function(){ elDollar.style.opacity = '1'; }, 30); }
+        });
+      });
+    });
+  }
+  document.addEventListener('DOMContentLoaded', runHeroTypewriter);
+})();
+</script>
 <div style="height:1px;background:linear-gradient(to right,transparent,var(--ember),transparent);margin-bottom:28px;opacity:.35"></div>
 
 <!-- KPI row -->
