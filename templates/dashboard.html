@@ -910,10 +910,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       els[i].textContent = label;
     }
   }
-  document.addEventListener('DOMContentLoaded', function(){
-    runCountUp();
-    runRelativeTimes();
-  });
+  function _init() { runCountUp(); runRelativeTimes(); }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _init);
+  } else {
+    _init();
+  }
 })();
 </script>
 <div style="height:1px;background:linear-gradient(to right,transparent,var(--ember),transparent);margin-bottom:40px;opacity:.35"></div>
