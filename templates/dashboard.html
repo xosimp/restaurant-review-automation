@@ -689,10 +689,7 @@ function clientUpload(dataType, input) {
       {% endif %}
       <span class="hdr-user">{{ restaurant.owner_name or current_user.username }}</span>
     </div>
-    <a href="https://status.cavnar.ai" target="_blank" id="status-indicator" style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--ink3);text-decoration:none;padding:4px 8px;border-radius:4px;transition:color .15s" title="System Status">
-      <span id="status-dot" style="width:7px;height:7px;border-radius:50%;background:#22c55e;flex-shrink:0"></span>
-      <span id="status-label" style="display:none" class="status-label-text">All systems operational</span>
-    </a>
+    <a href="https://status.cavnar.ai" target="_blank" id="status-indicator" style="display:none"></a>
     <!-- Notification bell -->
     <div style="position:relative" id="notif-wrap">
       <button id="notif-btn" onclick="toggleNotifPanel()" title="Alerts" style="background:none;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;position:relative;color:var(--ink3)">
@@ -711,7 +708,7 @@ function clientUpload(dataType, input) {
     </div>
     <!-- Changelog / What's New -->
     <div style="position:relative" id="changelog-wrap">
-      <button id="changelog-btn" onclick="openChangelog()" title="What's new" style="background:none;border:none;cursor:pointer;padding:4px 6px;display:flex;align-items:center;gap:4px;color:var(--ink3);font-size:12px;font-weight:600;position:relative">
+      <button id="changelog-btn" onclick="openChangelog()" title="What's new" style="background:none;border:none;cursor:pointer;padding:4px 6px;display:flex;align-items:center;gap:4px;color:var(--ink3);font-size:20px;font-weight:600;position:relative">
         ✦
         <span id="changelog-badge" style="display:none;position:absolute;top:2px;right:0;width:7px;height:7px;border-radius:50%;background:#c84b2f;border:1.5px solid white"></span>
       </button>
