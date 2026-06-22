@@ -342,16 +342,17 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 @keyframes statShimmer{0%{color:var(--ember)}80%{color:var(--ember)}100%{color:var(--ink)}}
 .stat-shimmer{animation:statShimmer 4.5s ease-out 1;animation-fill-mode:forwards}
 @keyframes nameUnderline{from{transform:scaleX(0)}to{transform:scaleX(1)}}
-@keyframes rayA{0%{transform:rotate(-20deg) scaleX(.75);opacity:0}12%{opacity:.30}42%{transform:rotate(-7deg) scaleX(1.35);opacity:.16}68%{transform:rotate(-16deg) scaleX(.85);opacity:.32}88%{opacity:.05}100%{transform:rotate(-20deg) scaleX(.75);opacity:0}}
-@keyframes rayB{0%{transform:rotate(-9deg) scaleX(1.1);opacity:.18}28%{transform:rotate(4deg) scaleX(.78);opacity:.06}54%{opacity:.28}78%{transform:rotate(-4deg) scaleX(1.2);opacity:.13}100%{transform:rotate(-9deg) scaleX(1.1);opacity:.18}}
-@keyframes rayC{0%{transform:rotate(1deg) scaleX(1);opacity:.07}18%{opacity:.34}44%{transform:rotate(14deg) scaleX(1.45);opacity:.18}72%{opacity:.04}88%{transform:rotate(6deg) scaleX(.85);opacity:.28}100%{transform:rotate(1deg) scaleX(1);opacity:.07}}
-@keyframes rayD{0%{transform:rotate(8deg) scaleX(.85);opacity:.14}33%{transform:rotate(-3deg) scaleX(1.28);opacity:.28}62%{opacity:.06}82%{transform:rotate(11deg) scaleX(.8);opacity:.22}100%{transform:rotate(8deg) scaleX(.85);opacity:.14}}
-@keyframes rayE{0%{transform:rotate(19deg) scaleX(.7);opacity:.04}24%{transform:rotate(9deg) scaleX(1.2);opacity:.26}56%{opacity:.09}80%{transform:rotate(15deg) scaleX(.95);opacity:.28}100%{transform:rotate(19deg) scaleX(.7);opacity:.04}}
+@keyframes rayA{0%{transform:rotate(-34deg) scaleX(.75);opacity:0}12%{opacity:.32}42%{transform:rotate(-22deg) scaleX(1.3);opacity:.15}68%{transform:rotate(-30deg) scaleX(.88);opacity:.34}88%{opacity:.04}100%{transform:rotate(-34deg) scaleX(.75);opacity:0}}
+@keyframes rayB{0%{transform:rotate(-18deg) scaleX(1.1);opacity:.16}28%{transform:rotate(-6deg) scaleX(.8);opacity:.06}54%{opacity:.26}78%{transform:rotate(-13deg) scaleX(1.18);opacity:.12}100%{transform:rotate(-18deg) scaleX(1.1);opacity:.16}}
+@keyframes rayC{0%{transform:rotate(-5deg) scaleX(1);opacity:.07}18%{opacity:.32}44%{transform:rotate(8deg) scaleX(1.42);opacity:.17}72%{opacity:.04}88%{transform:rotate(2deg) scaleX(.88);opacity:.26}100%{transform:rotate(-5deg) scaleX(1);opacity:.07}}
+@keyframes rayD{0%{transform:rotate(10deg) scaleX(.85);opacity:.13}33%{transform:rotate(2deg) scaleX(1.25);opacity:.27}62%{opacity:.05}82%{transform:rotate(13deg) scaleX(.82);opacity:.21}100%{transform:rotate(10deg) scaleX(.85);opacity:.13}}
+@keyframes rayE{0%{transform:rotate(26deg) scaleX(.7);opacity:.04}24%{transform:rotate(17deg) scaleX(1.18);opacity:.25}56%{opacity:.08}80%{transform:rotate(22deg) scaleX(.92);opacity:.27}100%{transform:rotate(26deg) scaleX(.7);opacity:.04}}
 @keyframes ptclL{0%{transform:translateY(0) translateX(0);opacity:0}8%{opacity:.75}90%{opacity:.5}100%{transform:translateY(-520px) translateX(-28px);opacity:0}}
 @keyframes ptclR{0%{transform:translateY(0) translateX(0);opacity:0}8%{opacity:.75}90%{opacity:.5}100%{transform:translateY(-520px) translateX(28px);opacity:0}}
 @keyframes ptclSL{0%{transform:translateY(0) translateX(0);opacity:0}10%{opacity:.55}90%{opacity:.35}100%{transform:translateY(-360px) translateX(-14px);opacity:0}}
 @keyframes ptclSR{0%{transform:translateY(0) translateX(0);opacity:0}10%{opacity:.55}90%{opacity:.35}100%{transform:translateY(-360px) translateX(14px);opacity:0}}
-.home-rays{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:0;overflow:hidden}
+.home-rays{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:0;overflow:hidden;opacity:.22}
+[data-theme="dark"] .home-rays{opacity:1}
 .home-ray{position:absolute;top:-8%;height:90%;transform-origin:top center;background:linear-gradient(180deg,rgba(240,150,80,.88) 0%,rgba(220,120,60,.52) 25%,rgba(200,90,45,.18) 55%,transparent 100%);filter:blur(20px)}
 .home-ptcl{position:absolute;border-radius:50%;background:rgba(250,185,115,.9);pointer-events:none;filter:blur(1px)}
 [data-theme="dark"] .home-ray{background:linear-gradient(180deg,rgba(220,110,60,.92) 0%,rgba(200,85,45,.58) 25%,rgba(180,70,35,.22) 55%,transparent 100%)}
