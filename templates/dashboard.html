@@ -840,85 +840,82 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 </script>
 <div style="height:1px;background:linear-gradient(to right,transparent,var(--ember),transparent);margin-bottom:40px;opacity:.35"></div>
 
-<!-- KPI row -->
-<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px">
+<!-- KPI stat bar — flex so it scales uniformly from 4 to 6 modules -->
+<div style="display:flex;align-items:stretch;margin-bottom:36px;border-top:1px solid rgba(247,244,239,.18);border-bottom:1px solid rgba(247,244,239,.18);padding:32px 0">
 
-  <!-- Reviews responded -->
-  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;position:relative;overflow:hidden;cursor:pointer;transition:box-shadow .2s,transform .15s" onclick="switchTab('reviews',document.getElementById('tab-reviews'))" onmouseover="this.style.boxShadow='0 4px 16px rgba(14,12,10,.1)';this.style.transform='translateY(-2px)'" onmouseout="this.style.boxShadow='';this.style.transform=''">
-    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--ember);border-radius:var(--r) var(--r) 0 0"></div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Reviews</div>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-    </div>
-    <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:28px;font-weight:800;color:var(--ink);line-height:1;letter-spacing:-.02em">{{rstats.responded or 0}}<span style="font-size:14px;font-weight:500;color:var(--ink3)">/{{rstats.total or 0}}</span></div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:5px;display:flex;align-items:center;justify-content:space-between">
-      <span>responded · {{rstats.response_rate or 0}}% rate</span>
-      {% if rstats.total > 0 %}<span style="font-size:10px;font-weight:700;color:{% if rstats.response_rate >= 70 %}var(--green){% elif rstats.response_rate >= 40 %}var(--amber){% else %}var(--red){% endif %}">{% if rstats.response_rate >= 70 %}▲ healthy{% elif rstats.response_rate >= 40 %}▶ needs work{% else %}▼ low{% endif %}</span>{% endif %}
-    </div>
+  <!-- Reviews -->
+  <div style="flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity .15s" onclick="switchTab('reviews',document.getElementById('tab-reviews'))" onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'">
+    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)">{{rstats.responded or 0}}<span style="font-size:.45em;font-weight:400;color:var(--ink3);letter-spacing:0">/{{rstats.total or 0}}</span></div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Reviews</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:4px">{{rstats.response_rate or 0}}% response rate</div>
   </div>
+
+  <div style="width:1px;background:rgba(247,244,239,.18);flex-shrink:0;margin:4px 0"></div>
 
   <!-- Labor cost -->
   {% if mod_labor %}
-  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;position:relative;overflow:hidden;cursor:pointer;transition:box-shadow .2s,transform .15s" onclick="switchTab('labor',document.getElementById('tab-labor'))" onmouseover="this.style.boxShadow='0 4px 16px rgba(14,12,10,.1)';this.style.transform='translateY(-2px)'" onmouseout="this.style.boxShadow='';this.style.transform=''">
-    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:{% if labor.overall_labor_pct > (labor_target + 3) %}var(--red){% elif labor.overall_labor_pct > labor_target %}var(--amber){% else %}var(--green){% endif %};border-radius:var(--r) var(--r) 0 0"></div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Labor cost</div>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="{% if labor.overall_labor_pct > (labor_target + 3) %}var(--red){% elif labor.overall_labor_pct > labor_target %}var(--amber){% else %}var(--green){% endif %}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
-    </div>
-    <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:28px;font-weight:800;color:var(--ink);line-height:1;letter-spacing:-.02em">{{labor.overall_labor_pct|round(1)}}%</div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:5px;display:flex;align-items:center;justify-content:space-between">
-      <span>target {{labor_target}}% · {% if labor.overall_labor_pct <= labor_target %}<span style="color:var(--green);font-weight:600">on track</span>{% else %}<span style="color:var(--red);font-weight:600">over target</span>{% endif %}</span>
-      {% if labor.trend_delta %}<span style="font-size:10px;font-weight:700;color:{% if labor.trend_delta < 0 %}var(--green){% else %}var(--red){% endif %}">{% if labor.trend_delta < 0 %}▼{% else %}▲{% endif %} {{labor.trend_delta|abs|round(1)}}% vs last wk</span>{% endif %}
-    </div>
+  <div style="flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity .15s" onclick="switchTab('labor',document.getElementById('tab-labor'))" onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'">
+    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)">{{labor.overall_labor_pct|round(1)}}<span style="font-size:.5em;font-weight:400;color:var(--ink3);letter-spacing:0">%</span></div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Labor Cost</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:4px">target {{labor_target}}% · {% if labor.overall_labor_pct <= labor_target %}<span style="color:var(--green);font-weight:600">on track</span>{% else %}<span style="color:var(--red);font-weight:600">over</span>{% endif %}</div>
   </div>
   {% else %}
-  <div style="background:var(--paper);border:1px dashed var(--paper3);border-radius:var(--r);padding:18px 20px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;opacity:.5">
-    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Labor</div>
-    <div style="font-size:11px;color:var(--ink3)">Not active</div>
+  <div style="flex:1;text-align:center;padding:0 12px;opacity:.35">
+    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Labor Cost</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:4px">not active</div>
   </div>
   {% endif %}
+
+  <div style="width:1px;background:rgba(247,244,239,.18);flex-shrink:0;margin:4px 0"></div>
 
   <!-- Food cost -->
   {% if mod_inventory %}
-  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;position:relative;overflow:hidden;cursor:pointer;transition:box-shadow .2s,transform .15s" onclick="switchTab('inventory',document.getElementById('tab-inventory'))" onmouseover="this.style.boxShadow='0 4px 16px rgba(14,12,10,.1)';this.style.transform='translateY(-2px)'" onmouseout="this.style.boxShadow='';this.style.transform=''">
-    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--amber);border-radius:var(--r) var(--r) 0 0"></div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Food cost</div>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-    </div>
-    <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:28px;font-weight:800;color:var(--ink);line-height:1;letter-spacing:-.02em">${{(inv.recoverable_monthly or 0)|int|format_num}}<span style="font-size:13px;font-weight:500;color:var(--ink3)">/mo</span></div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:5px;display:flex;align-items:center;justify-content:space-between">
-      <span>recoverable waste · {{inv.item_count or 0}} items</span>
-      {% if inv.recoverable_monthly and inv.recoverable_monthly > 0 %}<span style="font-size:10px;font-weight:700;color:var(--amber)">▲ opportunity</span>{% endif %}
-    </div>
+  <div style="flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity .15s" onclick="switchTab('inventory',document.getElementById('tab-inventory'))" onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'">
+    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span style="font-size:.6em;font-weight:400;vertical-align:baseline;color:var(--ink3)">$</span>{{(inv.recoverable_monthly or 0)|int|format_num}}</div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Food Cost</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:4px">recoverable waste / mo</div>
   </div>
   {% else %}
-  <div style="background:var(--paper);border:1px dashed var(--paper3);border-radius:var(--r);padding:18px 20px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;opacity:.5">
-    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Food Cost</div>
-    <div style="font-size:11px;color:var(--ink3)">Not active</div>
+  <div style="flex:1;text-align:center;padding:0 12px;opacity:.35">
+    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Food Cost</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:4px">not active</div>
   </div>
   {% endif %}
 
+  <div style="width:1px;background:rgba(247,244,239,.18);flex-shrink:0;margin:4px 0"></div>
+
   <!-- Marketing -->
   {% if mod_marketing %}
-  <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;position:relative;overflow:hidden;cursor:pointer;transition:box-shadow .2s,transform .15s" onclick="switchTab('marketing',document.getElementById('tab-marketing'))" onmouseover="this.style.boxShadow='0 4px 16px rgba(14,12,10,.1)';this.style.transform='translateY(-2px)'" onmouseout="this.style.boxShadow='';this.style.transform=''">
-    <div style="position:absolute;top:0;left:0;right:0;height:3px;background:#7c3aed;border-radius:var(--r) var(--r) 0 0"></div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Marketing</div>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-    </div>
-    <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:28px;font-weight:800;color:var(--ink);line-height:1;letter-spacing:-.02em">{{mkt_stats.this_month or 0}}</div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:5px;display:flex;align-items:center;justify-content:space-between">
-      <span>this month · {{mkt_stats.generated or 0}} total</span>
-      {% if mkt_stats.this_month and mkt_stats.this_month > 0 %}<span style="font-size:10px;font-weight:700;color:var(--green)">▲ active</span>{% endif %}
-    </div>
+  <div style="flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity .15s" onclick="switchTab('marketing',document.getElementById('tab-marketing'))" onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'">
+    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)">{{mkt_stats.this_month or 0}}</div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Marketing</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:4px">pieces this month</div>
   </div>
   {% else %}
-  <div style="background:var(--paper);border:1px dashed var(--paper3);border-radius:var(--r);padding:18px 20px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;opacity:.5">
-    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)">Marketing</div>
-    <div style="font-size:11px;color:var(--ink3)">Not active</div>
+  <div style="flex:1;text-align:center;padding:0 12px;opacity:.35">
+    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Marketing</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:4px">not active</div>
   </div>
   {% endif %}
+
+  <!-- Waitlist (coming soon) — always shown, scales uniformly with future modules -->
+  <div style="width:1px;background:rgba(247,244,239,.18);flex-shrink:0;margin:4px 0"></div>
+  <div style="flex:1;text-align:center;padding:0 12px;opacity:.28">
+    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Waitlist</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:4px;font-style:italic">coming soon</div>
+  </div>
+
+  <!-- Bar & Alcohol (coming soon) -->
+  <div style="width:1px;background:rgba(247,244,239,.18);flex-shrink:0;margin:4px 0"></div>
+  <div style="flex:1;text-align:center;padding:0 12px;opacity:.28">
+    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Bar & Alcohol</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:4px;font-style:italic">coming soon</div>
+  </div>
 
 </div>
 
