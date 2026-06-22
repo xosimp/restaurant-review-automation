@@ -513,7 +513,7 @@ def save_client_settings(restaurant_id, current_user):
             "alert_labor_over":        int(bool(data.get("alert_labor_over"))),
         })
         from models import log_event
-        log_event(restaurant_id, "admin_settings_update", {"by": current_user.username})
+        log_event(restaurant_id, "admin_settings_update", {"by": current_user.get("username", "admin")})
         return jsonify(ok=True)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
