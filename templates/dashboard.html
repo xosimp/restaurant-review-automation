@@ -28,7 +28,6 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 /* Header & tabs must explicitly override the var(--ink) background (--ink is light in dark mode) */
 [data-theme="dark"] .hdr{background:var(--hdr-bg)!important}
 [data-theme="dark"] .tabs{background:#000!important;border-top-color:#000!important}
-[data-theme="dark"] .tabs::after{content:'';position:absolute;bottom:-18px;left:0;right:0;height:18px;background:linear-gradient(to bottom,rgba(200,75,47,.22),transparent);pointer-events:none;z-index:10}
 [data-theme="dark"] .hdr{background:#000!important}
 [data-theme="dark"] .tab{color:rgba(240,235,224,.38)!important}
 [data-theme="dark"] .tab:hover{color:var(--ink)!important}
