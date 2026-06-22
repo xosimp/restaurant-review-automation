@@ -922,7 +922,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div style="display:flex;flex-direction:column;gap:8px" id="home-attention-list">
       {% if rstats.awaiting_approval > 0 %}
       <div onclick="switchTab('reviews',document.getElementById('tab-reviews'))" style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(200,75,47,.06);border:1px solid rgba(200,75,47,.18);border-radius:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='rgba(200,75,47,.1)'" onmouseout="this.style.background='rgba(200,75,47,.06)'">
-        <span style="font-size:15px;flex-shrink:0">⭐</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;color:var(--ink)">{{rstats.awaiting_approval}} review{{'' if rstats.awaiting_approval==1 else 's'}} awaiting approval</div>
           <div style="font-size:11px;color:var(--ink3)">AI responses drafted and ready</div>
@@ -934,7 +934,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       {% set _ot_count = labor.overtime_risk|selectattr('status','equalto','overtime')|list|length %}
       {% if _ot_count > 0 %}
       <div onclick="switchTab('labor',document.getElementById('tab-labor'))" style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(192,57,43,.06);border:1px solid rgba(192,57,43,.18);border-radius:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='rgba(192,57,43,.1)'" onmouseout="this.style.background='rgba(192,57,43,.06)'">
-        <span style="font-size:15px;flex-shrink:0">⚠️</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c0392b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;color:var(--ink)">{{_ot_count}} staff member{{'' if _ot_count==1 else 's'}} in overtime</div>
           <div style="font-size:11px;color:var(--ink3)">Review labor schedule</div>
@@ -945,7 +945,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       {% endif %}
       {% if mod_reviews and rstats.total > 0 and rstats.response_rate < 50 %}
       <div onclick="switchTab('reviews',document.getElementById('tab-reviews'))" style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:rgba(212,160,48,.06);border:1px solid rgba(212,160,48,.2);border-radius:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background='rgba(212,160,48,.1)'" onmouseout="this.style.background='rgba(212,160,48,.06)'">
-        <span style="font-size:15px;flex-shrink:0">📊</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;color:var(--ink)">Response rate at {{rstats.response_rate}}%</div>
           <div style="font-size:11px;color:var(--ink3)">Aim for 80%+ for best impact</div>
