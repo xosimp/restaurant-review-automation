@@ -835,20 +835,21 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     var elSub    = document.getElementById('home-tw-sub');
     var elDollar = document.getElementById('home-tw-dollar');
     if (!elDate) return;
+    var nameSpan = null;
+    function triggerUnderline() {
+      if (nameSpan) setTimeout(function() { nameSpan.className = 'name-underlined'; }, 200);
+    }
     _tw(elDate, 55, function() {
       if (!elHead) return;
       _tw(elHead, 32, function() {
-        var nameSpan = elHead ? elHead.querySelector('span') : null;
-        if (nameSpan) {
-          setTimeout(function() { nameSpan.className = 'name-underlined'; }, 120);
-        }
-        if (!elSub) return;
+        nameSpan = elHead.querySelector('span');
+        if (!elSub) { triggerUnderline(); return; }
         setTimeout(function() {
           _tw(elSub, 72, function() {
-            if (!elDollar) return;
+            if (!elDollar) { triggerUnderline(); return; }
             setTimeout(function() {
               elDollar.style.display = 'inline-flex';
-              _tw(elDollar, 55, null);
+              _tw(elDollar, 55, function() { triggerUnderline(); });
             }, 120);
           });
         }, 80);
