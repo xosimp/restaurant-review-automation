@@ -688,6 +688,7 @@ def _seed_gia_mia(db_path: str = DB_PATH):
         "labor_target_pct": 23.0,
         "hours_notes": gia_mia_hours,
         "role_rates_json": None,
+        "location_name": "St. Charles, IL",
     })
     print("[auto-seed] Restaurant settings updated: labor_target=23%, monthly_revenue=$365k")
 
