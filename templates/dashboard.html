@@ -790,22 +790,30 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 (function(){
   var _twFired = false;
   function _tw(el, html, speed, cb) {
+    if (!html) { el.style.visibility = 'visible'; if (cb) cb(); return; }
     var i = 0;
     el.style.visibility = 'visible';
     el.innerHTML = '';
     function tick() {
-      if (i >= html.length) { if (cb) cb(); return; }
-      if (html[i] === '<') {
-        var end = html.indexOf('>', i);
-        if (end !== -1) { i = end + 1; el.innerHTML = html.substring(0, i); setTimeout(tick, 0); return; }
+      try {
+        if (i >= html.length) { if (cb) setTimeout(cb, 0); return; }
+        if (html[i] === '<') {
+          var end = html.indexOf('>', i);
+          if (end !== -1) { i = end + 1; el.innerHTML = html.substring(0, i); setTimeout(tick, 0); return; }
+          // no closing > — treat as literal char and keep going
+        }
+        if (html[i] === '&') {
+          var end2 = html.indexOf(';', i);
+          if (end2 !== -1 && end2 - i < 8) { i = end2 + 1; el.innerHTML = html.substring(0, i); setTimeout(tick, speed); return; }
+        }
+        i++;
+        el.innerHTML = html.substring(0, i);
+        setTimeout(tick, speed);
+      } catch(e) {
+        el.innerHTML = html;
+        el.style.visibility = 'visible';
+        if (cb) cb();
       }
-      if (html[i] === '&') {
-        var end2 = html.indexOf(';', i);
-        if (end2 !== -1 && end2 - i < 8) { i = end2 + 1; el.innerHTML = html.substring(0, i); setTimeout(tick, speed); return; }
-      }
-      i++;
-      el.innerHTML = html.substring(0, i);
-      setTimeout(tick, speed);
     }
     tick();
   }
@@ -817,10 +825,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     var elSub    = document.getElementById('home-tw-sub');
     var elDollar = document.getElementById('home-tw-dollar');
     if (!elDate) return;
-    var dateHtml   = elDate.getAttribute('data-tw');
-    var headHtml   = elHead ? elHead.getAttribute('data-tw') : '';
-    var subHtml    = elSub ? elSub.getAttribute('data-tw') : '';
-    var dollarHtml = elDollar ? elDollar.getAttribute('data-tw') : '';
+    var dateHtml   = elDate.getAttribute('data-tw') || '';
+    var headHtml   = elHead ? (elHead.getAttribute('data-tw') || '') : '';
+    var subHtml    = elSub ? (elSub.getAttribute('data-tw') || '') : '';
+    var dollarHtml = elDollar ? (elDollar.getAttribute('data-tw') || '') : '';
     _tw(elDate, dateHtml, 55, function() {
       if (!elHead) return;
       _tw(elHead, headHtml, 32, function() {
@@ -837,7 +845,11 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       });
     });
   }
-  document.addEventListener('DOMContentLoaded', runHeroTypewriter);
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', runHeroTypewriter);
+  } else {
+    runHeroTypewriter();
+  }
 })();
 </script>
 <script>
