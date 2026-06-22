@@ -651,7 +651,7 @@ function clientUpload(dataType, input) {
     {% if group_locations and group_locations|length > 1 %}
     <div style="position:relative" id="loc-switcher-wrap">
       <button id="loc-switcher-btn" onclick="toggleLocSwitcher()" style="display:flex;align-items:center;gap:5px;background:none;border:none;cursor:pointer;padding:0;font-family:'DM Sans',sans-serif">
-        <span class="hdr-restaurant" id="loc-current-name" style="cursor:pointer">{{ restaurant.location_name or restaurant.name }}</span>
+        <span class="hdr-restaurant" id="loc-current-name" style="cursor:pointer">{{ restaurant.name }}{% if restaurant.location_name %} — {{ restaurant.location_name }}{% endif %}</span>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ink3);margin-top:1px"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       <div id="loc-switcher-panel" style="display:none;position:absolute;left:0;top:calc(100% + 8px);min-width:180px;background:white;border:1px solid var(--paper3);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;overflow:hidden">
@@ -664,7 +664,7 @@ function clientUpload(dataType, input) {
       </div>
     </div>
     {% else %}
-    <div class="hdr-restaurant">{{ restaurant.name }}</div>
+    <div class="hdr-restaurant">{{ restaurant.name }}{% if restaurant.location_name %} — {{ restaurant.location_name }}{% endif %}</div>
     {% endif %}
   </div>
   <div class="hdr-right">
@@ -688,7 +688,7 @@ function clientUpload(dataType, input) {
         <span id="notif-badge" style="display:none;position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:#c84b2f;border:1.5px solid white"></span>
       </button>
       <div id="notif-panel" style="display:none;position:absolute;right:0;top:calc(100% + 8px);width:280px;background:white;border:1px solid var(--paper3);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:999;overflow:hidden">
-        <div style="padding:10px 14px;border-bottom:1px solid var(--paper3);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">Recent alerts</div>
+        <div style="padding:10px 14px;border-bottom:1px solid var(--paper3);display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)">Recent alerts</span><button onclick="document.getElementById('notif-panel').style.display='none'" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:15px;line-height:1;padding:0">✕</button></div>
         <div id="notif-list" style="max-height:280px;overflow-y:auto;padding:4px 0">
           <div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Loading…</div>
         </div>
@@ -945,7 +945,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div style="flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity .15s" onclick="switchTab('labor',document.getElementById('tab-labor'))" onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'">
     <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span class="stat-shimmer" data-countup="{{labor.overall_labor_pct|round(1)}}" data-countup-decimals="1">0</span><span style="font-size:.5em;font-weight:400;color:var(--ink3);letter-spacing:0">%</span></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Labor Cost</div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:4px">target {{labor_target}}% · {% if labor.overall_labor_pct <= labor_target %}<span style="color:var(--green);font-weight:600">on track</span>{% else %}<span style="color:var(--red);font-weight:600">over</span>{% endif %}</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:4px">target {{labor_target}}%<br>{% if labor.overall_labor_pct <= labor_target %}<span style="color:var(--green);font-weight:600">on track</span>{% else %}<span style="color:var(--red);font-weight:600">over target</span>{% endif %}</div>
   </div>
   {% else %}
   <div style="flex:1;text-align:center;padding:0 12px;opacity:.35">
