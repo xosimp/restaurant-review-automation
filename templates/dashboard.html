@@ -886,7 +886,15 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
             el.classList.remove('stat-shimmer');
           }
         }
-        setTimeout(function(){ requestAnimationFrame(step); }, 1200);
+        // Use RAF-based delay instead of setTimeout — Safari throttles setTimeout
+        (function() {
+          var deadline = performance.now() + 1200;
+          function waitThenStart(ts) {
+            if (ts < deadline) { requestAnimationFrame(waitThenStart); return; }
+            requestAnimationFrame(step);
+          }
+          requestAnimationFrame(waitThenStart);
+        })();
       })(els[i]);
     }
   }
@@ -910,12 +918,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       els[i].textContent = label;
     }
   }
-  function _init() { runCountUp(); runRelativeTimes(); }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _init);
-  } else {
-    _init();
-  }
+  // Always use DOMContentLoaded — this script is above the stat elements in the DOM
+  // so querySelectorAll would find nothing if called immediately
+  document.addEventListener('DOMContentLoaded', function() {
+    runCountUp();
+    runRelativeTimes();
+  });
 })();
 </script>
 <div style="height:1px;background:linear-gradient(to right,transparent,var(--ember),transparent);margin-bottom:40px;opacity:.35"></div>
