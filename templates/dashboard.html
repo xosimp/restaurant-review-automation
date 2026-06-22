@@ -838,7 +838,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   document.addEventListener('DOMContentLoaded', runHeroTypewriter);
 })();
 </script>
-<div style="height:1px;background:linear-gradient(to right,transparent,var(--ember),transparent);margin-bottom:28px;opacity:.35"></div>
+<div style="height:1px;background:linear-gradient(to right,transparent,var(--ember),transparent);margin-bottom:40px;opacity:.35"></div>
 
 <!-- KPI row -->
 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px">
@@ -851,7 +851,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
     </div>
     <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:28px;font-weight:800;color:var(--ink);line-height:1;letter-spacing:-.02em">{{rstats.responded or 0}}<span style="font-size:14px;font-weight:500;color:var(--ink3)">/{{rstats.total or 0}}</span></div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:5px">responded · {{rstats.response_rate or 0}}% rate</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:5px;display:flex;align-items:center;justify-content:space-between">
+      <span>responded · {{rstats.response_rate or 0}}% rate</span>
+      {% if rstats.total > 0 %}<span style="font-size:10px;font-weight:700;color:{% if rstats.response_rate >= 70 %}var(--green){% elif rstats.response_rate >= 40 %}var(--amber){% else %}var(--red){% endif %}">{% if rstats.response_rate >= 70 %}▲ healthy{% elif rstats.response_rate >= 40 %}▶ needs work{% else %}▼ low{% endif %}</span>{% endif %}
+    </div>
   </div>
 
   <!-- Labor cost -->
@@ -863,7 +866,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="{% if labor.overall_labor_pct > (labor_target + 3) %}var(--red){% elif labor.overall_labor_pct > labor_target %}var(--amber){% else %}var(--green){% endif %}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
     </div>
     <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:28px;font-weight:800;color:var(--ink);line-height:1;letter-spacing:-.02em">{{labor.overall_labor_pct|round(1)}}%</div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:5px">target {{labor_target}}% · {% if labor.overall_labor_pct <= labor_target %}<span style="color:var(--green);font-weight:600">on track</span>{% else %}<span style="color:var(--red);font-weight:600">over target</span>{% endif %}</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:5px;display:flex;align-items:center;justify-content:space-between">
+      <span>target {{labor_target}}% · {% if labor.overall_labor_pct <= labor_target %}<span style="color:var(--green);font-weight:600">on track</span>{% else %}<span style="color:var(--red);font-weight:600">over target</span>{% endif %}</span>
+      {% if labor.trend_delta %}<span style="font-size:10px;font-weight:700;color:{% if labor.trend_delta < 0 %}var(--green){% else %}var(--red){% endif %}">{% if labor.trend_delta < 0 %}▼{% else %}▲{% endif %} {{labor.trend_delta|abs|round(1)}}% vs last wk</span>{% endif %}
+    </div>
   </div>
   {% else %}
   <div style="background:var(--paper);border:1px dashed var(--paper3);border-radius:var(--r);padding:18px 20px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;opacity:.5">
@@ -881,7 +887,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
     </div>
     <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:28px;font-weight:800;color:var(--ink);line-height:1;letter-spacing:-.02em">${{(inv.recoverable_monthly or 0)|int|format_num}}<span style="font-size:13px;font-weight:500;color:var(--ink3)">/mo</span></div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:5px">recoverable waste · {{inv.item_count or 0}} items tracked</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:5px;display:flex;align-items:center;justify-content:space-between">
+      <span>recoverable waste · {{inv.item_count or 0}} items</span>
+      {% if inv.recoverable_monthly and inv.recoverable_monthly > 0 %}<span style="font-size:10px;font-weight:700;color:var(--amber)">▲ opportunity</span>{% endif %}
+    </div>
   </div>
   {% else %}
   <div style="background:var(--paper);border:1px dashed var(--paper3);border-radius:var(--r);padding:18px 20px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;opacity:.5">
@@ -899,7 +908,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
     </div>
     <div style="font-family:'Bricolage Grotesque',sans-serif;font-size:28px;font-weight:800;color:var(--ink);line-height:1;letter-spacing:-.02em">{{mkt_stats.this_month or 0}}</div>
-    <div style="font-size:11px;color:var(--ink3);margin-top:5px">pieces this month · {{mkt_stats.generated or 0}} total</div>
+    <div style="font-size:11px;color:var(--ink3);margin-top:5px;display:flex;align-items:center;justify-content:space-between">
+      <span>this month · {{mkt_stats.generated or 0}} total</span>
+      {% if mkt_stats.this_month and mkt_stats.this_month > 0 %}<span style="font-size:10px;font-weight:700;color:var(--green)">▲ active</span>{% endif %}
+    </div>
   </div>
   {% else %}
   <div style="background:var(--paper);border:1px dashed var(--paper3);border-radius:var(--r);padding:18px 20px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;opacity:.5">
@@ -911,11 +923,11 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 </div>
 
 <!-- Needs attention + Recent reviews -->
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
+<div style="background:var(--paper2);border:1px solid var(--paper3);border-radius:var(--r);padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
 
   <!-- Needs attention -->
   <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:20px 22px">
-    <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);margin-bottom:14px;display:flex;align-items:center;gap:6px">
+    <div style="font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:500;color:var(--ink);margin-bottom:14px;display:flex;align-items:center;gap:8px">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       Needs attention
     </div>
@@ -925,7 +937,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;color:var(--ink)">{{rstats.awaiting_approval}} review{{'' if rstats.awaiting_approval==1 else 's'}} awaiting approval</div>
-          <div style="font-size:11px;color:var(--ink3)">AI responses drafted and ready</div>
+          <div style="font-size:11px;color:var(--ink3)">AI responses drafted — publish in one click</div>
         </div>
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M6.5 5.5l3 2.5-3 2.5" stroke="var(--ember)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </div>
@@ -937,7 +949,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c0392b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;color:var(--ink)">{{_ot_count}} staff member{{'' if _ot_count==1 else 's'}} in overtime</div>
-          <div style="font-size:11px;color:var(--ink3)">Review labor schedule</div>
+          <div style="font-size:11px;color:var(--ink3)">Est. ${{(_ot_count * 38)|int}}+ extra in OT wages this week</div>
         </div>
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M6.5 5.5l3 2.5-3 2.5" stroke="var(--ember)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </div>
@@ -948,7 +960,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--amber)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;color:var(--ink)">Response rate at {{rstats.response_rate}}%</div>
-          <div style="font-size:11px;color:var(--ink3)">Aim for 80%+ for best impact</div>
+          <div style="font-size:11px;color:var(--ink3)">Restaurants at 80%+ get 2× more new guests</div>
         </div>
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M6.5 5.5l3 2.5-3 2.5" stroke="var(--ember)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </div>
@@ -966,7 +978,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   {% if mod_reviews %}
   <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:20px 22px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);display:flex;align-items:center;gap:6px">
+      <div style="font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:500;color:var(--ink);display:flex;align-items:center;gap:8px">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2.5" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         Latest reviews
       </div>
@@ -998,7 +1010,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div>
   {% endif %}
 
-</div>
+</div><!-- /section grid -->
+</div><!-- /section bg wrapper -->
 
 </div><!-- /centering wrapper -->
 </div><!-- /panel-home -->
