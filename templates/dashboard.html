@@ -342,9 +342,14 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 @keyframes statShimmer{0%{color:var(--ember)}80%{color:var(--ember)}100%{color:var(--ink)}}
 .stat-shimmer{animation:statShimmer 4.5s ease-out 1;animation-fill-mode:forwards}
 @keyframes nameUnderline{from{transform:scaleX(0)}to{transform:scaleX(1)}}
-@keyframes raysDrift{0%{transform:rotate(-6deg)}50%{transform:rotate(6deg)}100%{transform:rotate(-6deg)}}
-.home-rays{position:absolute;top:-60px;left:50%;width:220%;margin-left:-110%;height:130%;pointer-events:none;z-index:0;transform-origin:50% 0;animation:raysDrift 14s ease-in-out infinite;background:repeating-conic-gradient(from 0deg at 50% 0%,transparent 0deg,rgba(210,100,50,.055) 1.2deg,transparent 2.8deg,transparent 7deg,rgba(190,80,35,.04) 8deg,transparent 9.5deg,transparent 16deg,rgba(210,110,55,.03) 17deg,transparent 18.5deg,transparent 26deg)}
-[data-theme="dark"] .home-rays{background:repeating-conic-gradient(from 0deg at 50% 0%,transparent 0deg,rgba(210,100,50,.07) 1.2deg,transparent 2.8deg,transparent 7deg,rgba(190,80,35,.055) 8deg,transparent 9.5deg,transparent 16deg,rgba(210,110,55,.045) 17deg,transparent 18.5deg,transparent 26deg)}
+@keyframes rayA{0%,100%{transform:rotate(-12deg);opacity:.22}50%{transform:rotate(-5deg);opacity:.10}}
+@keyframes rayB{0%,100%{transform:rotate(-6deg);opacity:.16}50%{transform:rotate(2deg);opacity:.07}}
+@keyframes rayC{0%,100%{transform:rotate(1deg);opacity:.24}50%{transform:rotate(8deg);opacity:.11}}
+@keyframes rayD{0%,100%{transform:rotate(7deg);opacity:.18}50%{transform:rotate(-1deg);opacity:.08}}
+@keyframes rayE{0%,100%{transform:rotate(13deg);opacity:.14}50%{transform:rotate(6deg);opacity:.06}}
+.home-rays{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:0;overflow:hidden}
+.home-ray{position:absolute;top:-8%;height:90%;transform-origin:top center;background:linear-gradient(180deg,rgba(240,150,80,.9) 0%,rgba(220,120,60,.55) 25%,rgba(200,90,45,.2) 55%,transparent 100%);filter:blur(18px)}
+[data-theme="dark"] .home-ray{background:linear-gradient(180deg,rgba(220,110,60,.95) 0%,rgba(200,85,45,.6) 25%,rgba(180,70,35,.22) 55%,transparent 100%)}
 .name-underlined{position:relative;display:inline-block}
 .name-underlined::after{content:'';position:absolute;bottom:-3px;left:0;right:0;height:1.5px;background:linear-gradient(90deg,var(--ember),rgba(200,75,47,.4));transform:scaleX(0);transform-origin:left;animation:nameUnderline .65s cubic-bezier(.25,.46,.45,.94) forwards}
 @keyframes btnShimmer{from{background-position:-100% 0}to{background-position:250% 0}}
@@ -778,7 +783,16 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
 <!-- HOME -->
 <div class="panel active" id="panel-home" style="max-width:100%;padding:0;background:radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.32) 0%,rgba(200,75,47,.10) 45%,transparent 70%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%);min-height:100%;position:relative;overflow:hidden">
-<div class="home-rays"></div>
+<div class="home-rays" aria-hidden="true">
+  <div class="home-ray" style="left:8%;width:55px;animation:rayA 11s ease-in-out infinite"></div>
+  <div class="home-ray" style="left:20%;width:38px;animation:rayB 14s ease-in-out infinite;animation-delay:-4s"></div>
+  <div class="home-ray" style="left:33%;width:70px;animation:rayC 9s ease-in-out infinite;animation-delay:-2s"></div>
+  <div class="home-ray" style="left:46%;width:48px;animation:rayA 13s ease-in-out infinite;animation-delay:-7s"></div>
+  <div class="home-ray" style="left:57%;width:80px;animation:rayC 10s ease-in-out infinite;animation-delay:-1s"></div>
+  <div class="home-ray" style="left:69%;width:42px;animation:rayD 12s ease-in-out infinite;animation-delay:-5s"></div>
+  <div class="home-ray" style="left:80%;width:60px;animation:rayE 15s ease-in-out infinite;animation-delay:-3s"></div>
+  <div class="home-ray" style="left:90%;width:35px;animation:rayB 11s ease-in-out infinite;animation-delay:-8s"></div>
+</div>
 {% set _sb = savings_breakdown or {} %}
 {% set _hr = namespace(val=0) %}
 {% set _now_h = now %}
