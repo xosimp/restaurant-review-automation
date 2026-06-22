@@ -966,14 +966,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   });
 })();
 </script>
-<div style="height:1px;background:linear-gradient(to right,transparent,var(--ember),transparent);margin-bottom:40px;opacity:.35"></div>
-
 <!-- KPI stat bar — flex so it scales uniformly from 4 to 6 modules -->
-<div style="display:flex;align-items:stretch;margin-bottom:36px;padding:32px 0">
+<div style="display:flex;align-items:stretch;margin-bottom:36px;padding:12px 0 32px">
 
   <!-- Reviews -->
   <div style="flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity .15s" onclick="switchTab('reviews',document.getElementById('tab-reviews'))" onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'">
-    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span class="stat-shimmer" data-countup="{{rstats.responded or 0}}" data-countup-int="1">0</span><span style="font-size:.45em;font-weight:400;color:var(--ink3);letter-spacing:0">/{{rstats.total or 0}}</span></div>
+    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span class="stat-shimmer" data-countup="{{rstats.responded or 0}}" data-countup-int="1">0</span><span style="font-size:.45em;font-weight:400;color:var(--ink3);letter-spacing:0;margin-left:4px">/{{rstats.total or 0}}</span></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Reviews</div>
     <div style="font-size:11px;color:var(--ink3);margin-top:4px">{{rstats.response_rate or 0}}% response rate</div>
   </div>
@@ -983,7 +981,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Labor cost -->
   {% if mod_labor %}
   <div style="flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity .15s" onclick="switchTab('labor',document.getElementById('tab-labor'))" onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'">
-    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span class="stat-shimmer" data-countup="{{labor.overall_labor_pct|round(1)}}" data-countup-decimals="1">0</span><span style="font-size:.5em;font-weight:400;color:var(--ink3);letter-spacing:0">%</span></div>
+    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span class="stat-shimmer" data-countup="{{labor.overall_labor_pct|round(1)}}" data-countup-decimals="1">0</span><span style="font-size:.5em;font-weight:400;color:var(--ink3);letter-spacing:0;margin-left:2px">%</span></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Labor Cost</div>
     <div style="font-size:11px;color:var(--ink3);margin-top:4px">target {{labor_target}}%<br>{% if labor.overall_labor_pct <= labor_target %}<span style="color:var(--green);font-weight:600">on track</span>{% else %}<span style="color:var(--red);font-weight:600">over target</span>{% endif %}</div>
   </div>
@@ -1000,7 +998,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Food cost -->
   {% if mod_inventory %}
   <div style="flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity .15s" onclick="switchTab('inventory',document.getElementById('tab-inventory'))" onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'">
-    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span style="font-size:.6em;font-weight:400;vertical-align:baseline;color:var(--ink3)">$</span><span class="stat-shimmer" data-countup="{{(inv.recoverable_monthly or 0)|int}}" data-countup-int="1">0</span></div>
+    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span style="font-size:.6em;font-weight:400;vertical-align:baseline;color:var(--ink3);margin-right:3px">$</span><span class="stat-shimmer" data-countup="{{(inv.recoverable_monthly or 0)|int}}" data-countup-int="1">0</span></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Food Cost</div>
     <div style="font-size:11px;color:var(--ink3);margin-top:4px">recoverable waste / mo</div>
   </div>
