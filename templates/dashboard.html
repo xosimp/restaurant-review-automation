@@ -342,6 +342,9 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 @keyframes statShimmer{0%{color:var(--ember)}80%{color:var(--ember)}100%{color:var(--ink)}}
 .stat-shimmer{animation:statShimmer 4.5s ease-out 1;animation-fill-mode:forwards}
 @keyframes nameUnderline{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes raysDrift{0%{transform:rotate(-6deg)}50%{transform:rotate(6deg)}100%{transform:rotate(-6deg)}}
+.home-rays{position:absolute;top:-60px;left:50%;width:220%;margin-left:-110%;height:130%;pointer-events:none;z-index:0;transform-origin:50% 0;animation:raysDrift 14s ease-in-out infinite;background:repeating-conic-gradient(from 0deg at 50% 0%,transparent 0deg,rgba(210,100,50,.055) 1.2deg,transparent 2.8deg,transparent 7deg,rgba(190,80,35,.04) 8deg,transparent 9.5deg,transparent 16deg,rgba(210,110,55,.03) 17deg,transparent 18.5deg,transparent 26deg)}
+[data-theme="dark"] .home-rays{background:repeating-conic-gradient(from 0deg at 50% 0%,transparent 0deg,rgba(210,100,50,.07) 1.2deg,transparent 2.8deg,transparent 7deg,rgba(190,80,35,.055) 8deg,transparent 9.5deg,transparent 16deg,rgba(210,110,55,.045) 17deg,transparent 18.5deg,transparent 26deg)}
 .name-underlined{position:relative;display:inline-block}
 .name-underlined::after{content:'';position:absolute;bottom:-3px;left:0;right:0;height:1.5px;background:linear-gradient(90deg,var(--ember),rgba(200,75,47,.4));transform:scaleX(0);transform-origin:left;animation:nameUnderline .65s cubic-bezier(.25,.46,.45,.94) forwards}
 @keyframes btnShimmer{from{background-position:-100% 0}to{background-position:250% 0}}
@@ -774,11 +777,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 </script>
 
 <!-- HOME -->
-<div class="panel active" id="panel-home" style="max-width:100%;padding:0;background:radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.32) 0%,rgba(200,75,47,.10) 45%,transparent 70%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%);min-height:100%">
+<div class="panel active" id="panel-home" style="max-width:100%;padding:0;background:radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.32) 0%,rgba(200,75,47,.10) 45%,transparent 70%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%);min-height:100%;position:relative;overflow:hidden">
+<div class="home-rays"></div>
 {% set _sb = savings_breakdown or {} %}
 {% set _hr = namespace(val=0) %}
 {% set _now_h = now %}
-<div style="max-width:900px;margin:0 auto;padding:24px 28px">
+<div style="max-width:900px;margin:0 auto;padding:24px 28px;position:relative;z-index:1">
 
 <!-- Hero — content pre-rendered; JS grabs innerHTML and re-types it -->
 <div style="text-align:center;padding:48px 0 36px">
