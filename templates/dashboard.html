@@ -857,7 +857,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         var target = parseFloat(el.getAttribute('data-countup')) || 0;
         var decimals = parseInt(el.getAttribute('data-countup-decimals') || '0', 10);
         var isInt = el.getAttribute('data-countup-int') === '1';
-        var duration = 900;
+        var duration = 2400;
         var start = performance.now();
         function step(now) {
           var p = Math.min((now - start) / duration, 1);
@@ -870,7 +870,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
             el.classList.remove('stat-shimmer');
           }
         }
-        setTimeout(function(){ requestAnimationFrame(step); }, 400);
+        setTimeout(function(){ requestAnimationFrame(step); }, 800);
       })(els[i]);
     }
   }
