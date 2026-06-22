@@ -888,7 +888,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         }
         // Use RAF-based delay instead of setTimeout — Safari throttles setTimeout
         (function() {
-          var deadline = performance.now() + 1200;
+          var deadline = performance.now() + 2200;
           function waitThenStart(ts) {
             if (ts < deadline) { requestAnimationFrame(waitThenStart); return; }
             requestAnimationFrame(step);
