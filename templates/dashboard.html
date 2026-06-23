@@ -2673,27 +2673,6 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         </tr>
         <tr><td style="color:var(--ink3);padding:4px 0;font-size:12px;white-space:nowrap">Username:</td><td style="font-weight:500;font-size:12px;padding-left:8px" colspan="2">{{current_user.username}}</td></tr>
       </table>
-      {% if mod_reviews %}
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div>
-          <div style="font-size:12px;font-weight:600;color:var(--ink)">Weekly digest</div>
-          <div style="font-size:11px;color:var(--ink3)">Review summary email</div>
-        </div>
-        <div style="display:flex;gap:5px;align-items:center">
-          <select id="digest-enabled-select" style="padding:4px 6px;border:1px solid var(--paper3);border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px">
-            <option value="1" {{"selected" if restaurant.digest_enabled}}>On</option>
-            <option value="0" {{"selected" if not restaurant.digest_enabled}}>Off</option>
-          </select>
-          <select id="digest-day-select" style="padding:4px 6px;border:1px solid var(--paper3);border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px">
-            {% for d in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
-            <option value="{{d}}" {{"selected" if restaurant.digest_day==d}}>{{d|title}}</option>
-            {% endfor %}
-          </select>
-          <button onclick="saveDigestDay()" class="btn-primary" style="padding:4px 10px">Save</button>
-          <span id="digest-save-status" style="font-size:11px;display:none"></span>
-        </div>
-      </div>
-      {% endif %}
 
       <!-- Display -->
       <div style="border-top:1px solid var(--paper3);padding-top:12px;margin-bottom:12px">
@@ -5018,6 +4997,12 @@ function openAlertsModal() {
     if (laborEl) laborEl.checked = !!s.alert_labor_over;
     document.getElementById('al-via-sms').checked   = !!s.urgent_via_sms;
     document.getElementById('al-via-email').checked = !!s.urgent_via_email;
+    document.getElementById('al-any-review').checked    = !!s.alert_any_review;
+    document.getElementById('al-resp-approved').checked = !!s.alert_resp_approved;
+    var digestEl = document.getElementById('al-digest-enabled');
+    var digestDayEl = document.getElementById('al-digest-day');
+    if (digestEl) digestEl.checked = !!s.digest_enabled;
+    if (digestDayEl) digestDayEl.value = s.digest_day || 'monday';
     updateSmsConsentVisibility();
   });
 }
@@ -5049,8 +5034,12 @@ function saveAlertSettings() {
   var c2phone = (document.getElementById('alert-c2-phone').value || '').trim();
   if (c2phone) contacts.push({name: c2name, phone: c2phone});
   var laborEl = document.getElementById('al-labor-over');
+  var digestEnabledEl = document.getElementById('al-digest-enabled');
+  var digestDayEl2 = document.getElementById('al-digest-day');
   var payload = {
     contacts: contacts,
+    alert_any_review:      document.getElementById('al-any-review').checked ? 1 : 0,
+    alert_resp_approved:   document.getElementById('al-resp-approved').checked ? 1 : 0,
     alert_1star:           document.getElementById('al-1star').checked ? 1 : 0,
     alert_2star:           document.getElementById('al-2star').checked ? 1 : 0,
     alert_health:          document.getElementById('al-health').checked ? 1 : 0,
@@ -5062,7 +5051,9 @@ function saveAlertSettings() {
     alert_rating_floor:    parseFloat(document.getElementById('al-rating-floor').value) || 4.0,
     alert_labor_over:      laborEl ? (laborEl.checked ? 1 : 0) : 0,
     urgent_via_sms:        smsOn ? 1 : 0,
-    urgent_via_email:      document.getElementById('al-via-email').checked ? 1 : 0
+    urgent_via_email:      document.getElementById('al-via-email').checked ? 1 : 0,
+    digest_enabled:        digestEnabledEl ? (digestEnabledEl.checked ? 1 : 0) : 1,
+    digest_day:            digestDayEl2 ? digestDayEl2.value : 'monday'
   };
   var msg = document.getElementById('alerts-save-msg');
   msg.style.display = 'inline';
@@ -6426,6 +6417,12 @@ document.addEventListener('click', function(e) {
     <div style="border-top:1px solid var(--paper3);padding-top:16px;margin-bottom:16px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Which alerts do you want?</div>
 
+      <div style="font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">All Reviews</div>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-any-review" style="accent-color:var(--ember)"> Any new review received</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-resp-approved" style="accent-color:var(--ember)"> Response approved &amp; posted to Google</label>
+      </div>
+
       <div style="font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Urgent</div>
       <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-1star" style="accent-color:var(--ember)"> 1&#9733; review received</label>
@@ -6453,6 +6450,23 @@ document.addEventListener('click', function(e) {
       </div>
       {% endif %}
     </div>
+
+    <!-- Weekly digest -->
+    {% if mod_reviews %}
+    <div style="border-top:1px solid var(--paper3);padding-top:16px;margin-bottom:16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Weekly Digest</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--ink)">
+          <input type="checkbox" id="al-digest-enabled" style="accent-color:var(--ember)"> Send weekly review summary email every
+        </label>
+        <select id="al-digest-day" style="padding:4px 8px;border:1px solid var(--paper3);border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;background:var(--paper);color:var(--ink)">
+          {% for d in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
+          <option value="{{d}}">{{d|title}}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    {% endif %}
 
     <!-- Delivery -->
     <div style="border-top:1px solid var(--paper3);padding-top:16px;margin-bottom:20px">

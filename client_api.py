@@ -1249,8 +1249,12 @@ def get_alert_settings(current_user):
         "alert_rating_threshold": r.alert_rating_threshold,
         "alert_rating_floor":    r.alert_rating_floor,
         "alert_labor_over":      r.alert_labor_over,
+        "alert_any_review":      getattr(r, "alert_any_review", 0),
+        "alert_resp_approved":   getattr(r, "alert_resp_approved", 0),
         "urgent_via_sms":        getattr(r, "urgent_via_sms", 0),
         "urgent_via_email":      getattr(r, "urgent_via_email", 0),
+        "digest_enabled":        getattr(r, "digest_enabled", 1),
+        "digest_day":            getattr(r, "digest_day", "monday"),
     }
     return jsonify(ok=True, contacts=contacts, settings=settings)
 
@@ -1287,6 +1291,10 @@ def save_alert_settings(current_user):
         "alert_labor_over":      int(bool(data.get("alert_labor_over"))),
         "urgent_via_sms":        int(bool(data.get("urgent_via_sms"))),
         "urgent_via_email":      int(bool(data.get("urgent_via_email"))),
+        "alert_any_review":      int(bool(data.get("alert_any_review"))),
+        "alert_resp_approved":   int(bool(data.get("alert_resp_approved"))),
+        "digest_enabled":        int(bool(data.get("digest_enabled"))),
+        "digest_day":            data.get("digest_day", "monday"),
     })
     return jsonify(ok=True)
 

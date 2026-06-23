@@ -295,6 +295,8 @@ class Restaurant:
     alert_rating_threshold: int     = 0
     alert_rating_floor:   float     = 4.0
     alert_labor_over:     int       = 0
+    alert_any_review:     int       = 0
+    alert_resp_approved:  int       = 0
     urgent_via_email:     int       = 1
     urgent_via_sms:       int       = 0
     # Per-alert-type channel matrix
@@ -594,6 +596,8 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN alert_rating_threshold INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN alert_rating_floor REAL DEFAULT 4.0",
         "ALTER TABLE restaurants ADD COLUMN alert_labor_over INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN alert_any_review INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN alert_resp_approved INTEGER DEFAULT 0",
     ]
     for m in migrations:
         try:
@@ -961,6 +965,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "gbp_rating","gbp_review_count",
         "alert_1star","alert_2star","alert_health","alert_neg_spike","alert_negative_trend","alert_no_response",
         "alert_5star","alert_rating_threshold","alert_rating_floor","alert_labor_over",
+        "alert_any_review","alert_resp_approved",
         "urgent_via_email","urgent_via_sms",
         "al_health_email","al_health_sms","al_1star_email","al_1star_sms",
         "al_2star_email","al_2star_sms","al_5star_email","al_5star_sms",
@@ -1047,6 +1052,8 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         alert_rating_threshold=row["alert_rating_threshold"] if "alert_rating_threshold" in row.keys() else 0,
         alert_rating_floor=row["alert_rating_floor"] if "alert_rating_floor" in row.keys() else 4.0,
         alert_labor_over=row["alert_labor_over"] if "alert_labor_over" in row.keys() else 0,
+        alert_any_review=row["alert_any_review"] if "alert_any_review" in row.keys() else 0,
+        alert_resp_approved=row["alert_resp_approved"] if "alert_resp_approved" in row.keys() else 0,
         urgent_via_email=row["urgent_via_email"] if "urgent_via_email" in row.keys() else 1,
         urgent_via_sms=row["urgent_via_sms"] if "urgent_via_sms" in row.keys() else 0,
         al_health_email=row["al_health_email"] if "al_health_email" in row.keys() else 1,
