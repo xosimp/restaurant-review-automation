@@ -4992,6 +4992,10 @@ function generateFromCal(type, topic) {
 function openAlertsModal() {
   var modal = document.getElementById('alerts-modal');
   modal.style.display = 'flex';
+  document.getElementById('al-sms-consent').checked = false;
+  var msg = document.getElementById('alerts-save-msg');
+  msg.style.display = 'none';
+  msg.textContent = '';
   fetch('/api/alert-settings').then(function(r){ return r.json(); }).then(function(d) {
     if (!d.ok) return;
     var c = d.contacts || [];
