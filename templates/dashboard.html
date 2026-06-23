@@ -196,7 +196,7 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 /* ROI banner */
 [data-theme="dark"] #global-savings-banner{background:linear-gradient(135deg,#0e180e,#111c11)!important}
 /* Review request card */
-[data-theme="dark"] .rr-card,[data-theme="dark"] #rv-inbox-header>div:first-child{background:var(--surface)!important;border-color:var(--paper3)!important}
+[data-theme="dark"] .rr-card{background:var(--surface)!important;border-color:var(--paper3)!important}
 /* Rate cards (analytics grid) */
 [data-theme="dark"] .rate-card,[data-theme="dark"] [class*="rate-"]{background:var(--surface)!important;border-color:var(--paper3)!important}
 /* GBP connect banner */
@@ -1486,8 +1486,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div style="font-family:'Fraunces',serif;font-size:22px;color:var(--ink);margin-bottom:4px">Request a review</div>
     <div style="font-size:12px;color:var(--ink3);margin-bottom:20px">Send a customer a direct link to leave a Google review — takes 60 seconds for them.</div>
     <div style="display:flex;flex-direction:column;gap:10px">
-      <input id="rr-name"  type="text"  placeholder="Customer name (optional)" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
-      <input id="rr-email" type="email" placeholder="Email address (optional)" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
+      <input id="rr-name"  type="text"  placeholder="Customer name" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
+      <input id="rr-email" type="email" placeholder="Email address" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
       <input id="rr-phone" type="tel"   placeholder="Phone number for SMS (optional)" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
     </div>
     <div style="font-size:11px;color:var(--ink3);margin:10px 0 4px">Sent this month: <strong id="rr-sent-mo">—</strong> &nbsp;·&nbsp; All time: <strong id="rr-sent-total">—</strong></div>
