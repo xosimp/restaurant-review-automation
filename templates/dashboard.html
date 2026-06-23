@@ -189,6 +189,7 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] .btn-primary:hover{background:#7a2818!important;box-shadow:0 4px 10px rgba(146,48,32,.22)!important}
 .rv-tab-active{background:var(--ember)!important;color:#fff!important}
 [data-theme="dark"] .rv-tab-active{background:#923020!important}
+#rv-tab-inbox:not(.rv-tab-active),#rv-tab-analytics:not(.rv-tab-active){background:transparent!important;color:var(--ink3)!important}
 [data-theme="dark"] .btn-link-ember{background:#923020!important}
 [data-theme="dark"] .btn-link-ember:hover{background:#7a2818!important;box-shadow:0 2px 8px rgba(146,48,32,.2)!important}
 [data-theme="dark"] button[style*="background:#c84b2f"],
@@ -662,7 +663,7 @@ function clientUpload(dataType, input) {
 </style>
 <script>
 document.documentElement.classList.add('pjs-loading');
-(document.fonts ? document.fonts.load('800 16px "Plus Jakarta Sans"') : Promise.resolve()).then(function(){
+(document.fonts ? document.fonts.load('700 16px "Bricolage Grotesque"') : Promise.resolve()).then(function(){
   document.documentElement.classList.remove('pjs-loading');
 });
 </script>
@@ -1201,23 +1202,23 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     {% set _rating = restaurant.gbp_rating or rstats.avg_rating %}
     {% set _rglow = 'stat-glow-green' if _rating >= 4.0 else ('stat-glow-amber' if _rating >= 3.0 else 'stat-glow-red') %}
     <div id="stat-rating" class="rv-stat-cell">
-      <div id="stat-rating-n" class="{{_rglow}}" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(36px,4vw,56px);font-weight:800;line-height:1;letter-spacing:-.04em">{{_rating}}</div>
+      <div id="stat-rating-n" class="{{_rglow}}" style="font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(36px,4vw,56px);font-weight:700;line-height:1;letter-spacing:-.03em">{{_rating}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">{% if restaurant.gbp_rating %}Google rating{% else %}Avg rating{% endif %}</div>
       {% if restaurant.gbp_rating %}<div style="font-size:10px;color:var(--ink3);margin-top:4px">Dashboard avg: {{rstats.avg_rating}}</div>{% endif %}
     </div>
     {% set _rrglow = 'stat-glow-green' if rstats.response_rate >= 70 else ('stat-glow-amber' if rstats.response_rate >= 40 else 'stat-glow-red') %}
     <div id="stat-rr" class="rv-stat-cell">
-      <div id="stat-rr-n" class="{{_rrglow}}" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(36px,4vw,56px);font-weight:800;line-height:1;letter-spacing:-.04em">{{rstats.response_rate}}<span id="stat-rr-pct" style="font-size:.5em;letter-spacing:0;margin-left:1px">%</span></div>
+      <div id="stat-rr-n" class="{{_rrglow}}" style="font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(36px,4vw,56px);font-weight:700;line-height:1;letter-spacing:-.03em">{{rstats.response_rate}}<span id="stat-rr-pct" style="font-size:.5em;letter-spacing:0;margin-left:1px">%</span></div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Response rate</div>
       <div id="stat-rr-detail" style="font-size:10px;color:var(--ink3);margin-top:4px">{{rstats.get('responded', rstats.posted)}} of {{rstats.total}} reviews</div>
     </div>
     <div id="stat-received-mo" class="rv-stat-cell">
-      <div id="stat-received-mo-n" class="rv-stat-n" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(36px,4vw,56px);font-weight:800;line-height:1;letter-spacing:-.04em;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{rstats.received_this_month}}</div>
+      <div id="stat-received-mo-n" class="rv-stat-n" style="font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(36px,4vw,56px);font-weight:700;line-height:1;letter-spacing:-.03em;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{rstats.received_this_month}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">New this month</div>
     </div>
     {% set _apglow = 'stat-glow-red' if rstats.awaiting_approval > 2 else ('stat-glow-amber' if rstats.awaiting_approval > 0 else '') %}
     <div id="stat-pending" class="rv-stat-cell">
-      <div id="stat-pending-n" class="{{_apglow}}" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(36px,4vw,56px);font-weight:800;line-height:1;letter-spacing:-.04em;{% if not _apglow %}color:var(--ink3){% endif %}">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:13px;color:#2d6a4f;margin-left:4px">↓</span></div>
+      <div id="stat-pending-n" class="{{_apglow}}" style="font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(36px,4vw,56px);font-weight:700;line-height:1;letter-spacing:-.03em;{% if not _apglow %}color:var(--ink3){% endif %}">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:13px;color:#2d6a4f;margin-left:4px">↓</span></div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">To approve</div>
     </div>
   </div>
@@ -1226,28 +1227,28 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div style="display:flex;justify-content:center;align-items:center;padding:28px 0 36px;flex-wrap:wrap">
     <div style="text-align:center;min-width:72px;padding:0 36px">
       {% set _pglow = 'stat-glow-green' if rstats.positive_pct >= 70 else ('stat-glow-amber' if rstats.positive_pct >= 50 else 'stat-glow-red') %}
-      <div id="stat-positive-n" class="{{_pglow}}" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.03em;line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{rstats.positive_pct}}%</div>
+      <div id="stat-positive-n" class="{{_pglow}}" style="font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.02em;line-height:1">{{rstats.positive_pct}}%</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Positive</div>
     </div>
     <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
     <div id="stat-urgent" style="text-align:center;min-width:72px;padding:0 36px">
-      <div id="stat-urgent-n" class="{{'stat-glow-red' if rstats.urgent > 0 else ''}}" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.03em;line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4);{% if not rstats.urgent %}color:var(--ink3);{% endif %}">{{rstats.urgent}}</div>
+      <div id="stat-urgent-n" class="{{'stat-glow-red' if rstats.urgent > 0 else ''}}" style="font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.02em;line-height:1;{% if not rstats.urgent %}color:var(--ink3);{% endif %}">{{rstats.urgent}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Urgent</div>
     </div>
     <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
     <div style="text-align:center;min-width:72px;padding:0 36px">
-      <div id="stat-this-month-n" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.03em;color:var(--ink);line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{rstats.this_month}}</div>
+      <div id="stat-this-month-n" style="font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.02em;color:var(--ink);line-height:1">{{rstats.this_month}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Responded/mo</div>
     </div>
     <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
     <div style="text-align:center;min-width:72px;padding:0 36px">
-      <div id="stat-resp-time-n" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.03em;color:var(--ink);line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
+      <div id="stat-resp-time-n" style="font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.02em;color:var(--ink);line-height:1">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Avg response time</div>
     </div>
     <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
     <div style="text-align:center;min-width:72px;padding:0 36px">
       {% set _srcglow = 'stat-glow-green' if (restaurant.reviews_live or restaurant.gmb_refresh_token) else '' %}
-      <div class="{{_srcglow}}" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.03em;line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4);{% if not _srcglow %}color:var(--ink3){% endif %}">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
+      <div class="{{_srcglow}}" style="font-family:'Bricolage Grotesque',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.02em;line-height:1;{% if not _srcglow %}color:var(--ink3){% endif %}">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Source</div>
     </div>
   </div>
