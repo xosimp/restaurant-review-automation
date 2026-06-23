@@ -1200,28 +1200,28 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div style="display:flex;justify-content:center;align-items:center;padding:12px 0 32px;flex-wrap:wrap">
     <div style="text-align:center;min-width:60px;padding:0 32px">
       {% set _pglow = 'stat-glow-green' if rstats.positive_pct >= 70 else ('stat-glow-amber' if rstats.positive_pct >= 50 else 'stat-glow-red') %}
-      <div id="stat-positive-n" class="{{_pglow}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(28px,3vw,42px);font-weight:500;letter-spacing:-.02em;line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{rstats.positive_pct}}%</div>
+      <div id="stat-positive-n" class="{{_pglow}}" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.03em;line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{rstats.positive_pct}}%</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Positive</div>
     </div>
-    <div style="width:1px;height:36px;background:var(--paper3);flex-shrink:0"></div>
+    <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
     <div id="stat-urgent" style="text-align:center;min-width:60px;padding:0 32px">
-      <div id="stat-urgent-n" class="{{'stat-glow-red' if rstats.urgent > 0 else ''}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(28px,3vw,42px);font-weight:500;letter-spacing:-.02em;line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4);{% if not rstats.urgent %}color:var(--ink3);{% endif %}">{{rstats.urgent}}</div>
+      <div id="stat-urgent-n" class="{{'stat-glow-red' if rstats.urgent > 0 else ''}}" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.03em;line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4);{% if not rstats.urgent %}color:var(--ink3);{% endif %}">{{rstats.urgent}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Urgent</div>
     </div>
-    <div style="width:1px;height:36px;background:var(--paper3);flex-shrink:0"></div>
+    <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
     <div style="text-align:center;min-width:60px;padding:0 32px">
-      <div id="stat-this-month-n" style="font-family:'Cormorant Garamond',serif;font-size:clamp(28px,3vw,42px);font-weight:500;letter-spacing:-.02em;color:var(--ink);line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{rstats.this_month}}</div>
+      <div id="stat-this-month-n" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.03em;color:var(--ink);line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{rstats.this_month}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Responded/mo</div>
     </div>
-    <div style="width:1px;height:36px;background:var(--paper3);flex-shrink:0"></div>
+    <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
     <div style="text-align:center;min-width:60px;padding:0 32px">
-      <div id="stat-resp-time-n" style="font-family:'Cormorant Garamond',serif;font-size:clamp(28px,3vw,42px);font-weight:500;letter-spacing:-.02em;color:var(--ink);line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
+      <div id="stat-resp-time-n" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.03em;color:var(--ink);line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Avg response time</div>
     </div>
-    <div style="width:1px;height:36px;background:var(--paper3);flex-shrink:0"></div>
+    <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
     <div style="text-align:center;min-width:60px;padding:0 32px">
       {% set _srcglow = 'stat-glow-green' if (restaurant.reviews_live or restaurant.gmb_refresh_token) else 'stat-glow-amber' %}
-      <div class="{{_srcglow}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(28px,3vw,42px);font-weight:500;letter-spacing:-.02em;line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
+      <div class="{{_srcglow}}" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(22px,2.4vw,34px);font-weight:700;letter-spacing:-.03em;line-height:1;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Source</div>
     </div>
   </div>
@@ -3361,6 +3361,33 @@ function loadSentimentTrend(){
     if(container)container.innerHTML='<div style="color:var(--ink3);font-size:12px;font-style:italic">Trend unavailable.</div>';
   });
 }
+function processInsightHtml(html){
+  var _svgs = {
+    '📊': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;margin-top:3px"><rect x="1" y="9" width="3" height="6" rx="1" fill="#6aabff"/><rect x="6.5" y="5" width="3" height="10" rx="1" fill="#6aabff"/><rect x="12" y="1" width="3" height="14" rx="1" fill="#6aabff"/></svg>',
+    '⚠️': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;margin-top:3px"><path d="M8 2L14 13H2L8 2Z" stroke="#e8a825" stroke-width="1.5" stroke-linejoin="round"/><rect x="7.3" y="6.5" width="1.4" height="3.5" rx=".7" fill="#e8a825"/><circle cx="8" cy="11.5" r=".8" fill="#e8a825"/></svg>',
+    '⚠': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;margin-top:3px"><path d="M8 2L14 13H2L8 2Z" stroke="#e8a825" stroke-width="1.5" stroke-linejoin="round"/><rect x="7.3" y="6.5" width="1.4" height="3.5" rx=".7" fill="#e8a825"/><circle cx="8" cy="11.5" r=".8" fill="#e8a825"/></svg>',
+    '✅': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;margin-top:3px"><circle cx="8" cy="8" r="6" stroke="#3ecf6e" stroke-width="1.5"/><path d="M5.5 8.5l2 2 3.5-3.5" stroke="#3ecf6e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    '🚨': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;margin-top:3px"><circle cx="8" cy="8" r="6" stroke="#f05555" stroke-width="1.5"/><rect x="7.3" y="4.5" width="1.4" height="4.5" rx=".7" fill="#f05555"/><circle cx="8" cy="11" r=".8" fill="#f05555"/></svg>',
+    '💡': '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;margin-top:3px"><circle cx="8" cy="7" r="4.5" stroke="#e8a825" stroke-width="1.5"/><path d="M6 11.5h4M6.5 13h3" stroke="#e8a825" stroke-width="1.5" stroke-linecap="round"/></svg>'
+  };
+  var _emojiRe = /^([\uD83C-􏰀-\uDFFF]{1,2}[️]?|[☀-➿][️]?)\s*/;
+  var lines = html.replace(/<br\s*\/?>/gi,'\n').split('\n');
+  var out = '';
+  for(var _i=0;_i<lines.length;_i++){
+    var ln = lines[_i].trim();
+    if(!ln) continue;
+    var icon = '';
+    for(var k in _svgs){
+      if(ln.indexOf(k)===0){ icon=_svgs[k]; ln=ln.slice(k.length).replace(/^[️\s]+/,''); break; }
+    }
+    if(icon){
+      out += '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:11px">'+icon+'<span>'+ln+'</span></div>';
+    } else {
+      out += '<div style="margin-bottom:11px">'+ln+'</div>';
+    }
+  }
+  return out || html;
+}
 function loadReviewInsight(){
   reviewInsightLoaded=true;
   var el=document.getElementById('review-insight');
@@ -3371,7 +3398,7 @@ function loadReviewInsight(){
     var fourHours=4*60*60*1000;
     if(cached&&cachedAt&&(Date.now()-cachedAt)<fourHours){
       el.classList.remove('insight-loading');
-      typewriterEffect(el,cached);
+      typewriterEffect(el,processInsightHtml(cached));
       return;
     }
   }catch(e){}
@@ -3379,7 +3406,7 @@ function loadReviewInsight(){
     var html=d.insight||'Analysis unavailable.';
     try{sessionStorage.setItem('review_insight',html);sessionStorage.setItem('review_insight_at',String(Date.now()));}catch(e){}
     el.classList.remove('insight-loading');
-    typewriterEffect(el,html);
+    typewriterEffect(el,processInsightHtml(html));
   }).catch(function(){
     el.classList.remove('insight-loading');
     el.textContent='Analysis unavailable — check back shortly.';
@@ -3922,8 +3949,8 @@ function updateReviewStats(){
     var rrNEl     = document.getElementById('stat-rr-n');
     var rrDetail  = document.getElementById('stat-rr-detail');
     if(rrNEl && d.response_rate !== undefined){
-      var rr = d.response_rate || 0;
-      rrNEl.firstChild.nodeValue = rr;
+      var rr = (d.response_rate === null || d.response_rate === undefined) ? 0 : d.response_rate;
+      rrNEl.innerHTML = rr + '<span style="font-size:.5em;letter-spacing:0;margin-left:1px">%</span>';
       statGlow(rrNEl, rr >= 70 ? 'stat-glow-green' : rr >= 40 ? 'stat-glow-amber' : 'stat-glow-red');
       if(rrDetail) rrDetail.textContent = (d.responded || d.posted || 0) + ' of ' + (d.total || 0) + ' reviews';
     }
@@ -3935,16 +3962,12 @@ function updateReviewStats(){
     // ── Avg response time ──────────────────────────────────
     var respTimeEl  = document.getElementById('stat-resp-time');
     var respTimeNEl = document.getElementById('stat-resp-time-n');
-    if(respTimeNEl){
+    if(respTimeNEl && d.avg_response_hours !== undefined){
       var hrs = d.avg_response_hours;
       if(hrs && hrs > 0 && hrs <= 720){
-        var tStr = hrs < 24 ? hrs + 'h' : hrs < 168 ? Math.floor(hrs/24) + 'd' : Math.floor(hrs/168) + 'w';
-        respTimeNEl.textContent = tStr;
-        respTimeNEl.style.fontSize = hrs >= 100 ? '14px' : '18px';
+        respTimeNEl.textContent = hrs < 24 ? hrs + 'h' : hrs < 168 ? Math.floor(hrs/24) + 'd' : Math.floor(hrs/168) + 'w';
       } else {
         respTimeNEl.textContent = '—';
-        respTimeNEl.style.fontSize = '18px';
-        if(respTimeEl) respTimeEl.title = 'Will show once live reviews are connected';
       }
     }
 
