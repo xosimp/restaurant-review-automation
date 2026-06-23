@@ -5020,13 +5020,10 @@ function closeAlertsModal() {
 
 function updateSmsConsentVisibility() {
   var smsOn = document.getElementById('al-via-sms').checked;
-  var c1phone = (document.getElementById('alert-c1-phone').value || '').trim();
-  var row = document.getElementById('al-sms-consent-row');
-  row.style.display = (smsOn && c1phone) ? 'block' : 'none';
+  document.getElementById('al-sms-consent-row').style.display = smsOn ? 'block' : 'none';
 }
 
 document.getElementById('al-via-sms').addEventListener('change', updateSmsConsentVisibility);
-document.getElementById('alert-c1-phone').addEventListener('input', updateSmsConsentVisibility);
 
 function saveAlertSettings() {
   var smsOn = document.getElementById('al-via-sms').checked;

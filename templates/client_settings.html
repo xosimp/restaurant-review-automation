@@ -439,69 +439,9 @@ textarea{resize:vertical;min-height:60px}
     <div class="section-hdr"><div class="section-title">Alerts</div></div>
     <div class="section-body">
 
-      <!-- SMS contacts -->
-      <div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">SMS contacts</div>
-      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:10px">
-        Up to 3 contacts receive SMS alerts. All contacts get the same alerts based on the toggles below.
+      <p style="font-size:13px;color:var(--ink2);line-height:1.6;margin-bottom:16px">
+        Alert contacts and delivery preferences are now managed by the client in their Account settings.
       </p>
-      <div id="alert-contacts-list">
-        {% for c in alert_contacts %}
-        <div class="status-row" style="margin-bottom:6px" id="alert-contact-{{c.id}}">
-          <div style="flex:1">
-            <div style="font-weight:600;font-size:13px">{{ c.name or 'Unnamed' }}</div>
-            <div style="font-size:12px;color:var(--ink3);margin-top:1px">{{ c.phone }}</div>
-          </div>
-          <button onclick="deleteAlertContact({{c.id}})"
-            style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid #f5c6c2;background:white;color:#c0392b;cursor:pointer;font-family:'DM Sans',sans-serif">
-            Remove
-          </button>
-        </div>
-        {% endfor %}
-        {% if not alert_contacts %}
-        <div style="font-size:12px;color:var(--ink3);margin-bottom:10px">No contacts added yet.</div>
-        {% endif %}
-      </div>
-      <div class="form-grid" style="margin-top:8px">
-        <div class="form-group">
-          <label>Name / title</label>
-          <input type="text" id="alert-contact-name" placeholder="e.g. Brian (Regional Mgr)">
-        </div>
-        <div class="form-group">
-          <label>Phone number</label>
-          <input type="text" id="alert-contact-phone" placeholder="(312) 555-0100">
-        </div>
-      </div>
-      <div style="display:flex;gap:10px;margin-top:8px;align-items:center;flex-wrap:wrap">
-        <button class="btn-save" style="padding:9px 16px" onclick="addAlertContact()">Add contact</button>
-        <button class="btn-save" style="padding:9px 16px;background:#2d5a3d" onclick="testAlertSMS()">Send test SMS</button>
-      </div>
-      <div style="font-size:12px;margin-top:8px;display:none" id="alert-contact-status"></div>
-
-      <hr style="border:none;border-top:1px solid var(--paper3);margin:20px 0">
-
-      <!-- Delivery channels -->
-      <div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">Delivery channels</div>
-      <p style="font-size:12px;color:var(--ink3);margin-bottom:12px;line-height:1.5">Master switches — turn a channel off to suppress it for all alert types below.</p>
-      <div style="display:flex;gap:10px;margin-bottom:16px">
-        <label style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none;flex:1">
-          <input type="checkbox" id="setting-urgent_via_email"
-            {% if restaurant.urgent_via_email %}checked{% endif %}
-            style="width:14px;height:14px;accent-color:#c84b2f;flex-shrink:0">
-          <div>
-            <div style="font-size:13px;font-weight:500;color:var(--ink)">Email</div>
-            <div style="font-size:11px;color:var(--ink3)">Owner email on file</div>
-          </div>
-        </label>
-        <label style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;cursor:pointer;font-weight:400;letter-spacing:0;text-transform:none;flex:1">
-          <input type="checkbox" id="setting-urgent_via_sms"
-            {% if restaurant.urgent_via_sms %}checked{% endif %}
-            style="width:14px;height:14px;accent-color:#c84b2f;flex-shrink:0">
-          <div>
-            <div style="font-size:13px;font-weight:500;color:var(--ink)">SMS</div>
-            <div style="font-size:11px;color:var(--ink3)">Contacts above</div>
-          </div>
-        </label>
-      </div>
 
       <!-- Per-alert-type matrix -->
       <div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:8px">Alert channel matrix</div>
