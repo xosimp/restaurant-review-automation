@@ -1175,23 +1175,23 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     {% set _rating = restaurant.gbp_rating or rstats.avg_rating %}
     {% set _rglow = 'stat-glow-green' if _rating >= 4.5 else ('stat-glow-amber' if _rating >= 3.5 else 'stat-glow-red') %}
     <div id="stat-rating" style="text-align:center;padding:28px 16px 28px;background:rgba(0,0,0,.18);border-radius:14px;border:1px solid rgba(247,244,239,.07)">
-      <div id="stat-rating-n" class="{{_rglow}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{_rating}}</div>
+      <div id="stat-rating-n" class="{{_rglow}}" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(36px,4vw,56px);font-weight:800;line-height:1;letter-spacing:-.04em;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{_rating}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">{% if restaurant.gbp_rating %}Google rating{% else %}Avg rating{% endif %}</div>
       {% if restaurant.gbp_rating %}<div style="font-size:10px;color:var(--ink3);margin-top:4px">Dashboard avg: {{rstats.avg_rating}}</div>{% endif %}
     </div>
     {% set _rrglow = 'stat-glow-green' if rstats.response_rate >= 70 else ('stat-glow-amber' if rstats.response_rate >= 40 else 'stat-glow-red') %}
     <div id="stat-rr" style="text-align:center;padding:28px 16px 28px;background:rgba(0,0,0,.18);border-radius:14px;border:1px solid rgba(247,244,239,.07)">
-      <div id="stat-rr-n" class="{{_rrglow}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{rstats.response_rate}}<span id="stat-rr-pct" style="font-size:.5em;letter-spacing:0;margin-left:1px">%</span></div>
+      <div id="stat-rr-n" class="{{_rrglow}}" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(36px,4vw,56px);font-weight:800;line-height:1;letter-spacing:-.04em;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{rstats.response_rate}}<span id="stat-rr-pct" style="font-size:.5em;letter-spacing:0;margin-left:1px">%</span></div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Response rate</div>
       <div id="stat-rr-detail" style="font-size:10px;color:var(--ink3);margin-top:4px">{{rstats.get('responded', rstats.posted)}} of {{rstats.total}} reviews</div>
     </div>
     <div id="stat-received-mo" style="text-align:center;padding:28px 16px 28px;background:rgba(0,0,0,.18);border-radius:14px;border:1px solid rgba(247,244,239,.07)">
-      <div id="stat-received-mo-n" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;color:var(--ink);text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{rstats.received_this_month}}</div>
+      <div id="stat-received-mo-n" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(36px,4vw,56px);font-weight:800;line-height:1;letter-spacing:-.04em;color:var(--ink);text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{rstats.received_this_month}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">New this month</div>
     </div>
     {% set _apglow = 'stat-glow-red' if rstats.awaiting_approval > 2 else ('stat-glow-amber' if rstats.awaiting_approval > 0 else '') %}
     <div id="stat-pending" style="text-align:center;padding:28px 16px 28px;background:rgba(0,0,0,.18);border-radius:14px;border:1px solid rgba(247,244,239,.07)">
-      <div id="stat-pending-n" class="{{_apglow}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4);{% if not _apglow %}color:var(--ink3){% endif %}">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:13px;color:#2d6a4f;margin-left:4px">↓</span></div>
+      <div id="stat-pending-n" class="{{_apglow}}" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:clamp(36px,4vw,56px);font-weight:800;line-height:1;letter-spacing:-.04em;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4);{% if not _apglow %}color:var(--ink3){% endif %}">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:13px;color:#2d6a4f;margin-left:4px">↓</span></div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">To approve</div>
     </div>
   </div>
@@ -3949,8 +3949,9 @@ function updateReviewStats(){
     var rrNEl     = document.getElementById('stat-rr-n');
     var rrDetail  = document.getElementById('stat-rr-detail');
     if(rrNEl && d.response_rate !== undefined){
-      var rr = (d.response_rate === null || d.response_rate === undefined) ? 0 : d.response_rate;
-      rrNEl.innerHTML = rr + '<span style="font-size:.5em;letter-spacing:0;margin-left:1px">%</span>';
+      var rr = parseFloat(d.response_rate || 0);
+      var rrStr = Number.isInteger(rr) ? rr.toFixed(1) : rr;
+      rrNEl.innerHTML = rrStr + '<span style="font-size:.5em;letter-spacing:0;margin-left:1px">%</span>';
       statGlow(rrNEl, rr >= 70 ? 'stat-glow-green' : rr >= 40 ? 'stat-glow-amber' : 'stat-glow-red');
       if(rrDetail) rrDetail.textContent = (d.responded || d.posted || 0) + ' of ' + (d.total || 0) + ' reviews';
     }
