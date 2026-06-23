@@ -1180,6 +1180,18 @@ def billing_info(current_user):
         print(f"Stripe billing info error: {e}")
         return jsonify(ok=False, reason="stripe_error", error=str(e))
 
+def _normalize_phone(raw):
+    import re
+    digits = re.sub(r'\D', '', raw or '')
+    if len(digits) == 10:
+        return '+1' + digits
+    if len(digits) == 11 and digits.startswith('1'):
+        return '+' + digits
+    if len(digits) > 7:
+        return '+' + digits
+    return None
+
+
 @client_bp.route("/api/alert-settings", methods=["GET"])
 @login_required
 def get_alert_settings(current_user):
@@ -1219,7 +1231,7 @@ def save_alert_settings(current_user):
     for ec in existing:
         delete_alert_contact(ec["id"])
     for nc in new_contacts:
-        phone = (nc.get("phone") or "").strip()
+        phone = _normalize_phone(nc.get("phone") or "")
         name  = (nc.get("name")  or "").strip()
         if phone:
             add_alert_contact(rid, name, phone)
