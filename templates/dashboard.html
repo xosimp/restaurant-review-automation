@@ -25,6 +25,10 @@
 }
 html[data-theme="dark"]{background:#1a1714!important;background-image:none!important}
 html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
+/* Universal: replace hardcoded white with cream in dark mode */
+[data-theme="dark"] [style*="color:white"]{color:var(--ink)!important}
+[data-theme="dark"] [style*="color: white"]{color:var(--ink)!important}
+[data-theme="dark"] .avatar{color:var(--ink)!important}
 /* Header & tabs must explicitly override the var(--ink) background (--ink is light in dark mode) */
 [data-theme="dark"] .hdr{background:var(--hdr-bg)!important}
 [data-theme="dark"] .tabs{background:#000!important;border-top-color:#000!important}
