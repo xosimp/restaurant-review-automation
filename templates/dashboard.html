@@ -1155,18 +1155,72 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- ══ INBOX HEADER ══ -->
   <div id="rv-inbox-header">
 
+  <!-- ═══ PRIMARY STATS: editorial floating numbers ═══ -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0">
+    {% set _rating = restaurant.gbp_rating or rstats.avg_rating %}
+    {% set _rcolor = '#4ead7a' if _rating >= 4.5 else ('#d4a030' if _rating >= 3.5 else '#e05555') %}
+    <div id="stat-rating" style="text-align:center;padding:28px 12px 32px">
+      <div id="stat-rating-n" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;color:{{_rcolor}}">{{_rating}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">{% if restaurant.gbp_rating %}Google rating{% else %}Avg rating{% endif %}</div>
+      {% if restaurant.gbp_rating %}<div style="font-size:10px;color:var(--ink3);margin-top:4px">Dashboard avg: {{rstats.avg_rating}}</div>{% endif %}
+    </div>
+    {% set _rrcolor = '#4ead7a' if rstats.response_rate >= 70 else ('#d4a030' if rstats.response_rate >= 40 else '#e05555') %}
+    <div style="text-align:center;padding:28px 12px 32px">
+      <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;color:{{_rrcolor}}">{{rstats.response_rate}}<span style="font-size:.5em;letter-spacing:0;margin-left:1px">%</span></div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Response rate</div>
+      <div style="font-size:10px;color:var(--ink3);margin-top:4px">{{rstats.get('responded', rstats.posted)}} of {{rstats.total}} reviews</div>
+    </div>
+    <div id="stat-received-mo" style="text-align:center;padding:28px 12px 32px">
+      <div id="stat-received-mo-n" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;color:var(--ink)">{{rstats.received_this_month}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">New this month</div>
+    </div>
+    {% set _apcolor = '#e05555' if rstats.awaiting_approval > 2 else ('#c84b2f' if rstats.awaiting_approval > 0 else 'var(--ink3)') %}
+    <div id="stat-pending" style="text-align:center;padding:28px 12px 32px">
+      <div id="stat-pending-n" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;color:{{_apcolor}}">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:13px;color:#2d6a4f;margin-left:4px">↓</span></div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">To approve</div>
+    </div>
+  </div>
+
+  <!-- SECONDARY STATS: compact row -->
+  <div style="display:flex;justify-content:center;gap:44px;padding:12px 0 28px;flex-wrap:wrap">
+    <div style="text-align:center">
+      {% set _pcolor = '#4ead7a' if rstats.positive_pct >= 70 else ('#d4a030' if rstats.positive_pct >= 50 else '#e05555') %}
+      <div id="stat-positive-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{_pcolor}}">{{rstats.positive_pct}}%</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Positive</div>
+    </div>
+    <div id="stat-urgent" style="text-align:center">
+      <div id="stat-urgent-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{'#e05555' if rstats.urgent > 0 else 'var(--ink3)'}}">{{rstats.urgent}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Urgent</div>
+    </div>
+    <div style="text-align:center">
+      <div id="stat-this-month-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:var(--ink)">{{rstats.this_month}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Responded/mo</div>
+    </div>
+    <div style="text-align:center">
+      <div id="stat-resp-time-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:var(--ink)">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Avg response time</div>
+    </div>
+    <div style="text-align:center">
+      <div style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{'#4ead7a' if (restaurant.reviews_live or restaurant.gmb_refresh_token) else '#d4a030'}}">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Source</div>
+    </div>
+  </div>
+
+  <!-- Padded content below stats -->
+  <div style="max-width:1080px;margin:0 auto;padding:0 28px">
+
   <!-- Review request card -->
-  <div id="rr-card" class="card" style="padding:14px 18px;margin-bottom:14px;border-left:3px solid #4a9eca;background:linear-gradient(to right,#e8f4fd,white)">
+  <div id="rr-card" class="card" style="padding:14px 18px;margin-bottom:14px;border-left:3px solid var(--ember);background:rgba(200,75,47,.04)">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
       <div>
-        <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#1a56cc;margin-bottom:3px">Request a review</div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember);margin-bottom:3px">Request a review</div>
         <div style="font-size:12px;color:var(--ink3)">Send a customer a direct link to leave a Google review — takes 60 seconds for them</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input id="rr-name"  type="text"  placeholder="Customer name (optional)" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;padding:7px 11px;border:1px solid var(--paper3);border-radius:6px;width:160px;outline:none;color:var(--ink)">
         <input id="rr-email" type="email" placeholder="Email (optional)" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;padding:7px 11px;border:1px solid var(--paper3);border-radius:6px;width:160px;outline:none;color:var(--ink)">
         <input id="rr-phone" type="tel"   placeholder="Phone for SMS (optional)" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;padding:7px 11px;border:1px solid var(--paper3);border-radius:6px;width:172px;outline:none;color:var(--ink)">
-        <button onclick="sendReviewRequest(this)" class="btn-blue" style="padding:7px 16px">Send request<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button onclick="sendReviewRequest(this)" class="btn-primary" style="padding:7px 16px">Send request<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
     </div>
     <div id="rr-stat" style="margin-top:8px;font-size:11px;color:var(--ink3)">
@@ -1174,57 +1228,6 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
-  <!-- ═══ PRIMARY STATS: editorial floating numbers ═══ -->
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0">
-    {% set _rating = restaurant.gbp_rating or rstats.avg_rating %}
-    {% set _rcolor = '#4ead7a' if _rating >= 4.5 else ('#d4a030' if _rating >= 3.5 else '#e05555') %}
-    <div id="stat-rating" style="text-align:center;padding:28px 12px 32px">
-      <div id="stat-rating-n" style="font-family:'Fraunces',serif;font-size:58px;font-weight:500;line-height:1;letter-spacing:-2px;color:{{_rcolor}}">{{_rating}}<span style="font-size:22px;letter-spacing:0;margin-left:2px">★</span></div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">{% if restaurant.gbp_rating %}Google rating{% else %}Avg rating{% endif %}</div>
-      {% if restaurant.gbp_rating %}<div style="font-size:10px;color:var(--ink3);margin-top:4px">Dashboard avg: <strong>{{rstats.avg_rating}}★</strong></div>{% endif %}
-    </div>
-    {% set _rrcolor = '#4ead7a' if rstats.response_rate >= 70 else ('#d4a030' if rstats.response_rate >= 40 else '#e05555') %}
-    <div style="text-align:center;padding:28px 12px 32px">
-      <div style="font-family:'Fraunces',serif;font-size:58px;font-weight:500;line-height:1;letter-spacing:-2px;color:{{_rrcolor}}">{{rstats.response_rate}}<span style="font-size:26px;letter-spacing:0">%</span></div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Response rate</div>
-      <div style="font-size:10px;color:var(--ink3);margin-top:4px">{{rstats.get('responded', rstats.posted)}} of {{rstats.total}} reviews</div>
-    </div>
-    <div id="stat-received-mo" style="text-align:center;padding:28px 12px 32px">
-      <div id="stat-received-mo-n" style="font-family:'Fraunces',serif;font-size:58px;font-weight:500;line-height:1;letter-spacing:-2px;color:var(--ink)">{{rstats.received_this_month}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">New this month</div>
-    </div>
-    {% set _apcolor = '#e05555' if rstats.awaiting_approval > 2 else ('#c84b2f' if rstats.awaiting_approval > 0 else 'var(--ink3)') %}
-    <div id="stat-pending" style="text-align:center;padding:28px 12px 32px">
-      <div id="stat-pending-n" style="font-family:'Fraunces',serif;font-size:58px;font-weight:500;line-height:1;letter-spacing:-2px;color:{{_apcolor}}">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:13px;color:#2d6a4f;margin-left:4px">↓</span></div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">To approve</div>
-    </div>
-  </div>
-
-  <!-- SECONDARY STATS: compact row -->
-  <div style="display:flex;justify-content:center;gap:44px;padding:16px 0 20px;flex-wrap:wrap">
-    <div style="text-align:center">
-      {% set _pcolor = '#4ead7a' if rstats.positive_pct >= 70 else ('#d4a030' if rstats.positive_pct >= 50 else '#e05555') %}
-      <div id="stat-positive-n" style="font-size:24px;font-weight:700;letter-spacing:-.5px;color:{{_pcolor}}">{{rstats.positive_pct}}%</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Positive</div>
-    </div>
-    <div id="stat-urgent" style="text-align:center">
-      <div id="stat-urgent-n" style="font-size:24px;font-weight:700;letter-spacing:-.5px;color:{{'#e05555' if rstats.urgent > 0 else 'var(--ink3)'}}">{{rstats.urgent}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Urgent</div>
-    </div>
-    <div style="text-align:center">
-      <div id="stat-this-month-n" style="font-size:24px;font-weight:700;letter-spacing:-.5px;color:var(--ink)">{{rstats.this_month}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Responded/mo</div>
-    </div>
-    <div style="text-align:center">
-      <div id="stat-resp-time-n" style="font-size:24px;font-weight:700;letter-spacing:-.5px;color:var(--ink)">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Avg response time</div>
-    </div>
-    <div style="text-align:center">
-      <div style="font-size:24px;font-weight:700;letter-spacing:-.5px;color:{{'#4ead7a' if (restaurant.reviews_live or restaurant.gmb_refresh_token) else '#d4a030'}}">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Source</div>
-    </div>
-  </div>
-  <div style="max-width:1080px;margin:0 auto;padding:0 28px">
   <div id="review-savings-bar" style="display:{% if savings_breakdown and savings_breakdown.reviews > 0 %}flex{% else %}none{% endif %};background:linear-gradient(to right,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:10px 16px;margin-bottom:14px;align-items:center;justify-content:space-between">
     <div style="font-size:12px;color:#a3d9b8;line-height:1.5">
       <strong style="color:#6fcf97" id="review-savings-amt">${{savings_breakdown.reviews|format_num if savings_breakdown else '0'}}</strong> saved in review management —
@@ -1234,12 +1237,13 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div style="font-size:11px;color:#6fcf97;font-weight:700;white-space:nowrap;margin-left:12px" id="review-savings-rate">{{rstats.response_rate}}% rate</div>
   </div>
 
-  <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
+  <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:20px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Review Intelligence</div>
     <div class="insight-text insight-loading" id="review-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:88%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:72%">&nbsp;</div><div class="skeleton" style="height:13px;width:60%">&nbsp;</div></div>
   </div>
-  </div><!-- /inner-padding -->
+
+  </div><!-- /padded-content -->
   </div><!-- /rv-inbox-header -->
 
 <div style="max-width:1080px;margin:0 auto;padding:0 28px 28px">
