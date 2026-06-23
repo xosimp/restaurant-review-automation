@@ -261,6 +261,14 @@ class Restaurant:
     toast_token_expires: Optional[str]   = None
     toast_last_synced: Optional[str]     = None
     toast_sync_error: Optional[str]      = None
+    square_access_token: Optional[str]   = None
+    square_location_id: Optional[str]    = None
+    square_last_synced: Optional[str]    = None
+    square_sync_error: Optional[str]     = None
+    clover_merchant_id: Optional[str]    = None
+    clover_api_token: Optional[str]      = None
+    clover_last_synced: Optional[str]    = None
+    clover_sync_error: Optional[str]     = None
     pos_system: Optional[str]       = None
     owner_name: Optional[str]       = None
     owner_phone: Optional[str]      = None
@@ -530,6 +538,14 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN toast_token_expires TEXT",
         "ALTER TABLE restaurants ADD COLUMN toast_last_synced TEXT",
         "ALTER TABLE restaurants ADD COLUMN toast_sync_error TEXT",
+        "ALTER TABLE restaurants ADD COLUMN square_access_token TEXT",
+        "ALTER TABLE restaurants ADD COLUMN square_location_id TEXT",
+        "ALTER TABLE restaurants ADD COLUMN square_last_synced TEXT",
+        "ALTER TABLE restaurants ADD COLUMN square_sync_error TEXT",
+        "ALTER TABLE restaurants ADD COLUMN clover_merchant_id TEXT",
+        "ALTER TABLE restaurants ADD COLUMN clover_api_token TEXT",
+        "ALTER TABLE restaurants ADD COLUMN clover_last_synced TEXT",
+        "ALTER TABLE restaurants ADD COLUMN clover_sync_error TEXT",
         "ALTER TABLE restaurants ADD COLUMN gbp_rating REAL",
         "ALTER TABLE restaurants ADD COLUMN gbp_review_count INTEGER",
         """CREATE TABLE IF NOT EXISTS review_requests (
@@ -962,6 +978,8 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","login_notify",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
         "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error",
+        "square_access_token","square_location_id","square_last_synced","square_sync_error",
+        "clover_merchant_id","clover_api_token","clover_last_synced","clover_sync_error",
         "gbp_rating","gbp_review_count",
         "alert_1star","alert_2star","alert_health","alert_neg_spike","alert_negative_trend","alert_no_response",
         "alert_5star","alert_rating_threshold","alert_rating_floor","alert_labor_over",
@@ -1080,6 +1098,14 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         toast_token_expires=row["toast_token_expires"] if "toast_token_expires" in row.keys() else None,
         toast_last_synced=row["toast_last_synced"] if "toast_last_synced" in row.keys() else None,
         toast_sync_error=row["toast_sync_error"] if "toast_sync_error" in row.keys() else None,
+        square_access_token=row["square_access_token"] if "square_access_token" in row.keys() else None,
+        square_location_id=row["square_location_id"] if "square_location_id" in row.keys() else None,
+        square_last_synced=row["square_last_synced"] if "square_last_synced" in row.keys() else None,
+        square_sync_error=row["square_sync_error"] if "square_sync_error" in row.keys() else None,
+        clover_merchant_id=row["clover_merchant_id"] if "clover_merchant_id" in row.keys() else None,
+        clover_api_token=row["clover_api_token"] if "clover_api_token" in row.keys() else None,
+        clover_last_synced=row["clover_last_synced"] if "clover_last_synced" in row.keys() else None,
+        clover_sync_error=row["clover_sync_error"] if "clover_sync_error" in row.keys() else None,
         last_activity=row["last_activity"] if "last_activity" in row.keys() else None,
         gbp_rating=row["gbp_rating"] if "gbp_rating" in row.keys() else None,
         gbp_review_count=row["gbp_review_count"] if "gbp_review_count" in row.keys() else None,

@@ -2818,6 +2818,60 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         </div>
       </div>
 
+      <!-- Square POS -->
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0">
+          {% if restaurant.square_location_id %}
+          <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Square POS</div>
+            <div style="font-size:11px;color:var(--ink3)">{% if restaurant.square_last_synced %}Last synced {{ restaurant.square_last_synced[:16].replace('T',' ') }} UTC{% else %}Connected — initial sync pending{% endif %}</div>
+          </div>
+          {% else %}
+          <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Square POS</div>
+            <div style="font-size:11px;color:var(--ink3)">Connect to power live labor data</div>
+          </div>
+          {% endif %}
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          {% if restaurant.square_location_id %}
+          <button onclick="squareSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
+          <button onclick="squareDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
+          {% else %}
+          <button onclick="openSquareModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Clover POS -->
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0">
+          {% if restaurant.clover_merchant_id %}
+          <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Clover POS</div>
+            <div style="font-size:11px;color:var(--ink3)">{% if restaurant.clover_last_synced %}Last synced {{ restaurant.clover_last_synced[:16].replace('T',' ') }} UTC{% else %}Connected — initial sync pending{% endif %}</div>
+          </div>
+          {% else %}
+          <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Clover POS</div>
+            <div style="font-size:11px;color:var(--ink3)">Connect to power live labor data</div>
+          </div>
+          {% endif %}
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          {% if restaurant.clover_merchant_id %}
+          <button onclick="cloverSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
+          <button onclick="cloverDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
+          {% else %}
+          <button onclick="openCloverModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          {% endif %}
+        </div>
+      </div>
+
       <!-- Alert Contacts -->
       <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper3)">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
@@ -3145,6 +3199,127 @@ function toastDisconnect(btn){
     if (d.ok){ toast('Toast disconnected','success'); setTimeout(function(){ window.location.reload(); },600); }
     else { btn.disabled=false; toast(d.error||'Failed','error'); }
   }).catch(function(){ btn.disabled=false; toast('Request failed','error'); });
+}
+function openSquareModal(){
+  document.getElementById('square-token').value='';
+  document.getElementById('square-location').value='';
+  var b=document.getElementById('square-form-banner');
+  if(b){b.style.display='none';}
+  var btn=document.getElementById('square-save-btn');
+  if(btn){btn.textContent='Test & Connect';btn.disabled=false;}
+  document.getElementById('square-modal').style.display='flex';
+}
+function closeSquareModal(){
+  document.getElementById('square-modal').style.display='none';
+}
+function _setSquareBanner(msg, type){
+  var b=document.getElementById('square-form-banner');
+  if(!b) return;
+  if(!msg){b.style.display='none';return;}
+  b.innerHTML=msg; b.style.display='block';
+  if(type==='ok'){b.style.background='var(--green-bg)';b.style.border='1px solid var(--green)';b.style.color='var(--green)';}
+  else if(type==='warn'){b.style.background='var(--amber-bg)';b.style.border='1px solid var(--amber)';b.style.color='var(--amber)';}
+  else{b.style.background='var(--red-bg)';b.style.border='1px solid var(--red)';b.style.color='var(--red)';}
+}
+function squareSaveCredentials(btn){
+  var token=(document.getElementById('square-token')||{}).value||'';
+  var loc=(document.getElementById('square-location')||{}).value||'';
+  if(!token.trim()||!loc.trim()){_setSquareBanner('Both fields are required.','err');return;}
+  btn.disabled=true; btn.textContent='Testing connection…'; _setSquareBanner('','');
+  fetch('/api/square/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({access_token:token.trim(),location_id:loc.trim()})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      btn.disabled=false;
+      if(d.ok){
+        _setSquareBanner('&#x2713; Connected! Starting initial sync…','ok');
+        fetch('/api/square/sync',{method:'POST'});
+        setTimeout(function(){window.location.reload();},1200);
+      } else {
+        btn.textContent='Test & Connect';
+        _setSquareBanner('&#x2717; '+(d.error||'Unknown error'),'err');
+      }
+    })
+    .catch(function(){
+      btn.disabled=false; btn.textContent='Test & Connect';
+      _setSquareBanner('&#x2717; Request failed — check your connection.','err');
+    });
+}
+function squareSyncNow(btn){
+  btn.disabled=true; btn.textContent='Syncing…';
+  fetch('/api/square/sync',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    btn.disabled=false; btn.textContent='&#x21BB; Sync';
+    if(d.ok) toast('Square sync started — labor data updates in ~30s','success');
+    else toast(d.error||'Sync failed','error');
+  }).catch(function(){btn.disabled=false;btn.textContent='&#x21BB; Sync';toast('Request failed','error');});
+}
+function squareDisconnect(btn){
+  if(!confirm('Disconnect Square POS? Existing synced labor data will remain.')) return;
+  btn.disabled=true;
+  fetch('/api/square/disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    if(d.ok){toast('Square disconnected','success');setTimeout(function(){window.location.reload();},600);}
+    else{btn.disabled=false;toast(d.error||'Failed','error');}
+  }).catch(function(){btn.disabled=false;toast('Request failed','error');});
+}
+
+function openCloverModal(){
+  document.getElementById('clover-mid').value='';
+  document.getElementById('clover-token').value='';
+  var b=document.getElementById('clover-form-banner');
+  if(b){b.style.display='none';}
+  var btn=document.getElementById('clover-save-btn');
+  if(btn){btn.textContent='Test & Connect';btn.disabled=false;}
+  document.getElementById('clover-modal').style.display='flex';
+}
+function closeCloverModal(){
+  document.getElementById('clover-modal').style.display='none';
+}
+function _setCloverBanner(msg, type){
+  var b=document.getElementById('clover-form-banner');
+  if(!b) return;
+  if(!msg){b.style.display='none';return;}
+  b.innerHTML=msg; b.style.display='block';
+  if(type==='ok'){b.style.background='var(--green-bg)';b.style.border='1px solid var(--green)';b.style.color='var(--green)';}
+  else if(type==='warn'){b.style.background='var(--amber-bg)';b.style.border='1px solid var(--amber)';b.style.color='var(--amber)';}
+  else{b.style.background='var(--red-bg)';b.style.border='1px solid var(--red)';b.style.color='var(--red)';}
+}
+function cloverSaveCredentials(btn){
+  var mid=(document.getElementById('clover-mid')||{}).value||'';
+  var token=(document.getElementById('clover-token')||{}).value||'';
+  if(!mid.trim()||!token.trim()){_setCloverBanner('Both fields are required.','err');return;}
+  btn.disabled=true; btn.textContent='Testing connection…'; _setCloverBanner('','');
+  fetch('/api/clover/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({merchant_id:mid.trim(),api_token:token.trim()})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      btn.disabled=false;
+      if(d.ok){
+        _setCloverBanner('&#x2713; Connected! Starting initial sync…','ok');
+        fetch('/api/clover/sync',{method:'POST'});
+        setTimeout(function(){window.location.reload();},1200);
+      } else {
+        btn.textContent='Test & Connect';
+        _setCloverBanner('&#x2717; '+(d.error||'Unknown error'),'err');
+      }
+    })
+    .catch(function(){
+      btn.disabled=false; btn.textContent='Test & Connect';
+      _setCloverBanner('&#x2717; Request failed — check your connection.','err');
+    });
+}
+function cloverSyncNow(btn){
+  btn.disabled=true; btn.textContent='Syncing…';
+  fetch('/api/clover/sync',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    btn.disabled=false; btn.textContent='&#x21BB; Sync';
+    if(d.ok) toast('Clover sync started — labor data updates in ~30s','success');
+    else toast(d.error||'Sync failed','error');
+  }).catch(function(){btn.disabled=false;btn.textContent='&#x21BB; Sync';toast('Request failed','error');});
+}
+function cloverDisconnect(btn){
+  if(!confirm('Disconnect Clover POS? Existing synced labor data will remain.')) return;
+  btn.disabled=true;
+  fetch('/api/clover/disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    if(d.ok){toast('Clover disconnected','success');setTimeout(function(){window.location.reload();},600);}
+    else{btn.disabled=false;toast(d.error||'Failed','error');}
+  }).catch(function(){btn.disabled=false;toast('Request failed','error');});
 }
 function igConnect(){
   var popup = window.open('/instagram/connect','ig_connect','width=600,height=700,left=200,top=100');
@@ -6375,6 +6550,64 @@ document.addEventListener('click', function(e) {
     </div>
     <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--paper3);font-size:11px;color:var(--ink3);line-height:1.6">
       <strong style="color:var(--ink2)">Where to find these:</strong> Toast Admin → Integrations → API Access → create a credential set with <em>Labor</em> and <em>Orders</em> permissions. Copy the Client ID, Secret, and Location GUID here.
+    </div>
+  </div>
+</div>
+
+<!-- Square Modal -->
+<div id="square-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center" onclick="if(event.target===this)closeSquareModal()">
+  <div style="background:var(--paper);border-radius:14px;padding:28px 32px;max-width:460px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55),0 0 0 1px rgba(200,75,47,.18)">
+    <button onclick="closeSquareModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3);line-height:1">&#x2715;</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <span style="font-size:22px">&#9632;</span>
+      <div style="font-size:16px;font-weight:700;color:var(--ink)">Connect Square POS</div>
+    </div>
+    <div style="font-size:12px;color:var(--ink3);margin-bottom:20px">Powers live labor data in the Labor tab</div>
+    <div id="square-form-banner" style="display:none;padding:9px 13px;border-radius:7px;font-size:12px;margin-bottom:14px;line-height:1.5"></div>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px">
+      <div>
+        <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Access Token</label>
+        <input id="square-token" type="password" placeholder="EAAAl…" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
+        <div style="font-size:10px;color:var(--ink3);margin-top:4px">Square Developer → Applications → your app → Production → Access Token</div>
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Location ID</label>
+        <input id="square-location" type="text" placeholder="L1A2B3C4…" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
+        <div style="font-size:10px;color:var(--ink3);margin-top:4px">Square Dashboard → Locations → click your location → copy the ID from the URL</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button id="square-save-btn" onclick="squareSaveCredentials(this)" class="btn-primary" style="padding:9px 18px;font-size:13px">Test &amp; Connect</button>
+      <button onclick="closeSquareModal()" class="btn btn-skip" style="padding:9px 14px;font-size:12px">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Clover Modal -->
+<div id="clover-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.7);align-items:center;justify-content:center" onclick="if(event.target===this)closeCloverModal()">
+  <div style="background:var(--paper);border-radius:14px;padding:28px 32px;max-width:460px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55),0 0 0 1px rgba(200,75,47,.18)">
+    <button onclick="closeCloverModal()" style="position:absolute;top:12px;right:16px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3);line-height:1">&#x2715;</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <span style="font-size:22px">&#9827;</span>
+      <div style="font-size:16px;font-weight:700;color:var(--ink)">Connect Clover POS</div>
+    </div>
+    <div style="font-size:12px;color:var(--ink3);margin-bottom:20px">Powers live labor data in the Labor tab</div>
+    <div id="clover-form-banner" style="display:none;padding:9px 13px;border-radius:7px;font-size:12px;margin-bottom:14px;line-height:1.5"></div>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px">
+      <div>
+        <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">Merchant ID</label>
+        <input id="clover-mid" type="text" placeholder="ABCDE12345" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
+        <div style="font-size:10px;color:var(--ink3);margin-top:4px">Clover Dashboard → Account &amp; Setup → About your business → Merchant ID</div>
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);display:block;margin-bottom:4px">API Token</label>
+        <input id="clover-token" type="password" placeholder="••••••••••••••••" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-size:13px;font-family:monospace;outline:none;background:var(--paper2);color:var(--ink);box-sizing:border-box">
+        <div style="font-size:10px;color:var(--ink3);margin-top:4px">Clover Developer → API Tokens → create token with Employee &amp; Order read permissions</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button id="clover-save-btn" onclick="cloverSaveCredentials(this)" class="btn-primary" style="padding:9px 18px;font-size:13px">Test &amp; Connect</button>
+      <button onclick="closeCloverModal()" class="btn btn-skip" style="padding:9px 14px;font-size:12px">Cancel</button>
     </div>
   </div>
 </div>
