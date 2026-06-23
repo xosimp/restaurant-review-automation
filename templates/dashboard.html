@@ -1186,26 +1186,30 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
-  <!-- SECONDARY STATS: compact row -->
-  <div style="display:flex;justify-content:center;gap:44px;padding:12px 0 32px;flex-wrap:wrap">
-    <div style="text-align:center;min-width:60px">
+  <!-- SECONDARY STATS: compact row with dividers -->
+  <div style="display:flex;justify-content:center;align-items:center;padding:12px 0 32px;flex-wrap:wrap">
+    <div style="text-align:center;min-width:60px;padding:0 32px">
       {% set _pcolor = '#4ead7a' if rstats.positive_pct >= 70 else ('#d4a030' if rstats.positive_pct >= 50 else '#e05555') %}
       <div id="stat-positive-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{_pcolor}};line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{rstats.positive_pct}}%</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Positive</div>
     </div>
-    <div id="stat-urgent" style="text-align:center;min-width:60px">
+    <div style="width:1px;height:36px;background:var(--paper3);flex-shrink:0"></div>
+    <div id="stat-urgent" style="text-align:center;min-width:60px;padding:0 32px">
       <div id="stat-urgent-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{'#e05555' if rstats.urgent > 0 else 'var(--ink3)'}};line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{rstats.urgent}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Urgent</div>
     </div>
-    <div style="text-align:center;min-width:60px">
+    <div style="width:1px;height:36px;background:var(--paper3);flex-shrink:0"></div>
+    <div style="text-align:center;min-width:60px;padding:0 32px">
       <div id="stat-this-month-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:var(--ink);line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{rstats.this_month}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Responded/mo</div>
     </div>
-    <div style="text-align:center;min-width:60px">
+    <div style="width:1px;height:36px;background:var(--paper3);flex-shrink:0"></div>
+    <div style="text-align:center;min-width:60px;padding:0 32px">
       <div id="stat-resp-time-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:var(--ink);line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Avg response time</div>
     </div>
-    <div style="text-align:center;min-width:60px">
+    <div style="width:1px;height:36px;background:var(--paper3);flex-shrink:0"></div>
+    <div style="text-align:center;min-width:60px;padding:0 32px">
       <div style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{'#4ead7a' if (restaurant.reviews_live or restaurant.gmb_refresh_token) else '#d4a030'}};line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Source</div>
     </div>
@@ -1216,10 +1220,9 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div style="max-width:1080px;margin:0 auto;padding:0 28px">
 
   <!-- Request a review trigger -->
-  <div id="rr-card" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-    <div style="font-size:11px;color:var(--ink3)"><strong id="rr-sent-mo-inline">—</strong> requests sent this month &nbsp;·&nbsp; <strong id="rr-sent-total-inline">—</strong> all time</div>
-    <button onclick="document.getElementById('rr-modal').style.display='flex'" class="btn-primary" style="padding:7px 18px;font-size:12px">+ Request a review</button>
-  </div>
+  <!-- hidden els so loadReviewRequestStats() still has targets -->
+  <strong id="rr-sent-mo-inline" style="display:none"></strong>
+  <strong id="rr-sent-total-inline" style="display:none"></strong>
 
   <div id="review-savings-bar" style="display:{% if savings_breakdown and savings_breakdown.reviews > 0 %}flex{% else %}none{% endif %};background:linear-gradient(to right,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:10px 16px;margin-bottom:14px;align-items:center;justify-content:space-between">
     <div style="font-size:12px;color:#a3d9b8;line-height:1.5">
@@ -1379,7 +1382,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <button class="fpill {{'active' if rfilter=='positive'}}" onclick="setRF('positive',this)">Positive</button>
     </div>
     <span class="count-lbl">{{reviews|length}} review{{'s' if reviews|length!=1}}</span>
-    <button class="btn-primary" style="margin-left:auto;padding:6px 14px;font-size:12px" onclick="exportReviews()">Export CSV<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <div style="display:flex;gap:8px;margin-left:auto">
+      <button onclick="document.getElementById('rr-modal').style.display='flex'" class="btn-primary" style="padding:6px 14px;font-size:12px">+ Request a review</button>
+      <button class="btn-primary" style="padding:6px 14px;font-size:12px" onclick="exportReviews()">Export CSV<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    </div>
   </div>
   {% if reviews %}
   {% set colors=['#c84b2f','#2d6a4f','#b7791f','#1a56cc','#6b4fa0','#1e7a8c'] %}
