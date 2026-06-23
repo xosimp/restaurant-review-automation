@@ -13,6 +13,19 @@ from auth import login_required
 
 client_bp = Blueprint('client', __name__)
 
+# Simple in-memory insight cache: {cache_key: (timestamp, value)}
+_insight_cache = {}
+_INSIGHT_TTL = 300  # 5 minutes
+
+def _cache_get(key):
+    entry = _insight_cache.get(key)
+    if entry and (datetime.utcnow() - entry[0]).total_seconds() < _INSIGHT_TTL:
+        return entry[1]
+    return None
+
+def _cache_set(key, value):
+    _insight_cache[key] = (datetime.utcnow(), value)
+
 @client_bp.route("/approve/<int:rid>", methods=["POST"])
 @login_required
 def approve(rid, current_user):
@@ -346,6 +359,10 @@ def sentiment_trend_api(current_user):
 @client_bp.route("/api/review-insight")
 @login_required
 def review_insight_api(current_user):
+    rid = current_user["restaurant_id"]
+    cached = _cache_get("review-insight:" + str(rid))
+    if cached:
+        return jsonify(insight=cached)
     try:
         import os, json, anthropic as _anth
         from models import get_restaurant, get_review_stats, get_top_issues
@@ -472,10 +489,14 @@ def review_insight_api(current_user):
         import re as _re_ri
         insight = _re_ri.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), insight)
         insight = _re_ri.sub(r'\*(.+?)\*',   lambda m: m.group(1), insight)
+        _cache_set("review-insight:" + str(rid), insight)
         return jsonify(insight=insight)
     except Exception as _re:
         import traceback
         print(f"[review-insight ERROR] {_re}\n{traceback.format_exc()}")
+        stale = _insight_cache.get("review-insight:" + str(rid))
+        if stale:
+            return jsonify(insight=stale[1])
         return jsonify(insight="Analysis unavailable — check back shortly.", error=str(_re)), 500
 
 @client_bp.route("/api/recent-topics")
@@ -558,15 +579,18 @@ def mkt_stats_api(current_user):
 @client_bp.route("/api/mkt-insight")
 @login_required
 def mkt_insight_api(current_user):
+    rid = current_user["restaurant_id"]
+    cached = _cache_get("mkt-insight:" + str(rid))
+    if cached:
+        return jsonify(insight=cached)
     try:
         from marketing import get_profile_for_restaurant, get_recent_content, get_upcoming_holidays, generate_content
         from models import get_restaurant
         from datetime import datetime
         from zoneinfo import ZoneInfo
-        restaurant = get_restaurant(current_user["restaurant_id"])
+        restaurant = get_restaurant(rid)
         name = restaurant.name if restaurant else "your restaurant"
         owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
-        rid = current_user["restaurant_id"]
         p = get_profile_for_restaurant(rid)
         recent = get_recent_content(rid, limit=5)
         now = datetime.now(ZoneInfo("America/Chicago"))
@@ -665,31 +689,45 @@ Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No co
             messages=[{"role": "user", "content": prompt}]
         )
         insight = msg.content[0].text.strip()
-        return jsonify(insight=format_insight_html(insight))
+        formatted = format_insight_html(insight)
+        _cache_set("mkt-insight:" + str(rid), formatted)
+        return jsonify(insight=formatted)
     except Exception as e:
         import traceback; traceback.print_exc()
         print(f"[MktInsight] ERROR: {str(e)}")
-        return jsonify(insight=f"Marketing brief unavailable — check back shortly.")
+        stale = _insight_cache.get("mkt-insight:" + str(rid))
+        if stale:
+            return jsonify(insight=stale[1])
+        return jsonify(insight="Marketing brief unavailable — check back shortly.")
 
 @client_bp.route("/api/labor-insight")
 @login_required
 def labor_insight_api(current_user):
+    rid = current_user["restaurant_id"]
+    cached = _cache_get("labor-insight:" + str(rid))
+    if cached:
+        return jsonify(insight=cached)
     try:
         from labor import analyse_shifts_for_restaurant, get_claude_insights
         from models import get_restaurant
-        restaurant = get_restaurant(current_user["restaurant_id"])
+        restaurant = get_restaurant(rid)
         name  = restaurant.name if restaurant else "your restaurant"
         owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
-        analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
+        analysis = analyse_shifts_for_restaurant(rid)
         from models import get_staff_notes as _gsn_labor
-        _staff_notes_labor = _gsn_labor(current_user["restaurant_id"])
+        _staff_notes_labor = _gsn_labor(rid)
         insight = get_claude_insights(analysis, restaurant_name=name, owner_name=owner,
-                                      restaurant_id=current_user["restaurant_id"],
+                                      restaurant_id=rid,
                                       staff_notes=_staff_notes_labor if _staff_notes_labor else None)
-        return jsonify(insight=format_insight_html(insight))
+        formatted = format_insight_html(insight)
+        _cache_set("labor-insight:" + str(rid), formatted)
+        return jsonify(insight=formatted)
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify(insight=f"Unable to load analysis. Error: {str(e)[:100]}")
+        stale = _insight_cache.get("labor-insight:" + str(rid))
+        if stale:
+            return jsonify(insight=stale[1])
+        return jsonify(insight="Unable to load analysis — check back shortly.")
 
 @client_bp.route("/api/inv-insight")
 @login_required
