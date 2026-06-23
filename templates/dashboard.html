@@ -110,6 +110,8 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] #aiv-idle{background:#1a1428!important;border-color:#3a2d5a!important}
 [data-theme="dark"] #aiv-idle [style*="color:#374151"]{color:var(--ink)!important}
 [data-theme="dark"] #panel-home{background:radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.18) 40%,transparent 70%),linear-gradient(180deg,#0a0806 0%,#0e0c0a 100%)!important}
+#panel-reviews{background:radial-gradient(ellipse 80% 40% at 50% 0%,rgba(200,75,47,.18) 0%,rgba(200,75,47,.05) 50%,transparent 75%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%)}
+[data-theme="dark"] #panel-reviews{background:radial-gradient(ellipse 80% 40% at 50% 0%,rgba(200,75,47,.38) 0%,rgba(200,75,47,.12) 45%,transparent 75%),linear-gradient(180deg,#0a0806 0%,#0e0c0a 100%)!important}
 [data-theme="dark"] #panel-home [style*="background:var(--paper)"]{background:var(--surface)!important}
 [data-theme="dark"] #panel-home [style*="background:rgba(200,75,47,.06)"]{background:rgba(200,75,47,.12)!important}
 [data-theme="dark"] #panel-home [style*="background:rgba(192,57,43,.06)"]{background:rgba(192,57,43,.12)!important}
@@ -1170,49 +1172,54 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
-  <div class="stat-row">
-    <!-- 1. How am I doing overall? GBP official rating if connected, else dashboard avg -->
-    <div class="stat {{'ok' if (restaurant.gbp_rating or rstats.avg_rating) >= 4.5 else ('warn' if (restaurant.gbp_rating or rstats.avg_rating) >= 3.5 else 'hi')}}" id="stat-rating">
-      {% if restaurant.gbp_rating %}
-        <div class="stat-n" id="stat-rating-n">{{restaurant.gbp_rating}}</div>
-        <div class="stat-l" style="margin-bottom:2px">Google rating</div>
-        <div style="font-size:10px;color:var(--ink3);line-height:1.3">Dashboard avg: <strong style="color:var(--ink2)">{{rstats.avg_rating}}★</strong></div>
-      {% else %}
-        <div class="stat-n" id="stat-rating-n">{{rstats.avg_rating}}</div>
-        <div class="stat-l">Avg rating</div>
-        <div style="font-size:9px;color:var(--ink3);line-height:1.3;margin-top:2px">Connect GBP for live score</div>
-      {% endif %}
+  <!-- ═══ PRIMARY STATS: editorial floating numbers ═══ -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin:0 -28px 0;border-top:1px solid var(--paper3);border-bottom:1px solid var(--paper3)">
+    {% set _rating = restaurant.gbp_rating or rstats.avg_rating %}
+    {% set _rcolor = '#4ead7a' if _rating >= 4.5 else ('#d4a030' if _rating >= 3.5 else '#e05555') %}
+    <div id="stat-rating" style="text-align:center;padding:24px 12px 28px;border-right:1px solid var(--paper3)">
+      <div id="stat-rating-n" style="font-family:'Fraunces',serif;font-size:58px;font-weight:500;line-height:1;letter-spacing:-2px;color:{{_rcolor}}">{{_rating}}<span style="font-size:22px;letter-spacing:0;margin-left:2px">★</span></div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">{% if restaurant.gbp_rating %}Google rating{% else %}Avg rating{% endif %}</div>
+      {% if restaurant.gbp_rating %}<div style="font-size:10px;color:var(--ink3);margin-top:4px">Dashboard avg: <strong>{{rstats.avg_rating}}★</strong></div>{% endif %}
     </div>
-    <!-- 2. What's the sentiment? -->
-    <div class="stat {{'ok' if rstats.positive_pct >= 70 else ('warn' if rstats.positive_pct >= 50 else 'hi')}}" id="stat-positive">
-      <div class="stat-n" id="stat-positive-n">{{rstats.positive_pct}}%</div>
-      <div class="stat-l">Positive</div>
+    {% set _rrcolor = '#4ead7a' if rstats.response_rate >= 70 else ('#d4a030' if rstats.response_rate >= 40 else '#e05555') %}
+    <div style="text-align:center;padding:24px 12px 28px;border-right:1px solid var(--paper3)">
+      <div style="font-family:'Fraunces',serif;font-size:58px;font-weight:500;line-height:1;letter-spacing:-2px;color:{{_rrcolor}}">{{rstats.response_rate}}<span style="font-size:26px;letter-spacing:0">%</span></div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Response rate</div>
+      <div style="font-size:10px;color:var(--ink3);margin-top:4px">{{rstats.get('responded', rstats.posted)}} of {{rstats.total}} reviews</div>
     </div>
-    <!-- 3. How many reviews am I getting? -->
-    <div class="stat ok" id="stat-received-mo">
-      <div class="stat-n" id="stat-received-mo-n">{{rstats.received_this_month}}</div>
-      <div class="stat-l">Received/mo</div>
+    <div id="stat-received-mo" style="text-align:center;padding:24px 12px 28px;border-right:1px solid var(--paper3)">
+      <div id="stat-received-mo-n" style="font-family:'Fraunces',serif;font-size:58px;font-weight:500;line-height:1;letter-spacing:-2px;color:var(--ink)">{{rstats.received_this_month}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">New this month</div>
     </div>
-    <!-- 4. What needs immediate attention? -->
-    <div class="stat {{'hi' if rstats.urgent > 0 else 'ok'}}" id="stat-urgent"><div class="stat-n" id="stat-urgent-n">{{rstats.urgent}}</div><div class="stat-l">Urgent</div></div>
-    <!-- 5. What do I need to do right now? -->
-    <div class="stat {{'ok' if rstats.awaiting_approval <= 2 else 'warn'}}" id="stat-pending"><div class="stat-n" id="stat-pending-n">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:11px;color:#2d6a4f;margin-left:4px">↓</span></div><div class="stat-l">To approve</div></div>
-    <!-- 6. How much have I responded this month? -->
-    <div class="stat ok" id="stat-this-month">
-      <div class="stat-n" id="stat-this-month-n">{{rstats.this_month}}</div>
-      <div class="stat-l">Responded/mo</div>
+    {% set _apcolor = '#e05555' if rstats.awaiting_approval > 2 else ('#c84b2f' if rstats.awaiting_approval > 0 else 'var(--ink3)') %}
+    <div id="stat-pending" style="text-align:center;padding:24px 12px 28px">
+      <div id="stat-pending-n" style="font-family:'Fraunces',serif;font-size:58px;font-weight:500;line-height:1;letter-spacing:-2px;color:{{_apcolor}}">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:13px;color:#2d6a4f;margin-left:4px">↓</span></div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">To approve</div>
     </div>
-    <!-- 7. How fast am I responding? -->
-    <div class="stat ok" id="stat-resp-time">
-      <div class="stat-n" id="stat-resp-time-n" style="font-size:{% if rstats.avg_response_hours and rstats.avg_response_hours >= 100 %}14px{% else %}18px{% endif %}">
-        {% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}
-      </div>
-      <div class="stat-l">Avg response time</div>
+  </div>
+
+  <!-- SECONDARY STATS: compact row -->
+  <div style="display:flex;justify-content:center;gap:44px;padding:18px 0 24px;border-bottom:1px solid var(--paper3);margin:0 -28px 24px;flex-wrap:wrap">
+    <div id="stat-positive" style="text-align:center">
+      {% set _pcolor = '#4ead7a' if rstats.positive_pct >= 70 else ('#d4a030' if rstats.positive_pct >= 50 else '#e05555') %}
+      <div id="stat-positive-n" style="font-size:24px;font-weight:700;letter-spacing:-.5px;color:{{_pcolor}}">{{rstats.positive_pct}}%</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Positive</div>
     </div>
-    <!-- 8. Is this live data? -->
-    <div class="stat {{'ok' if restaurant.reviews_live or restaurant.gmb_refresh_token else 'warn'}}">
-      <div class="stat-n" style="font-size:14px;margin-top:4px">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
-      <div class="stat-l">Review source</div>
+    <div id="stat-urgent" style="text-align:center">
+      <div id="stat-urgent-n" style="font-size:24px;font-weight:700;letter-spacing:-.5px;color:{{'#e05555' if rstats.urgent > 0 else 'var(--ink3)'}}">{{rstats.urgent}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Urgent</div>
+    </div>
+    <div id="stat-this-month" style="text-align:center">
+      <div id="stat-this-month-n" style="font-size:24px;font-weight:700;letter-spacing:-.5px;color:var(--ink)">{{rstats.this_month}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Responded/mo</div>
+    </div>
+    <div id="stat-resp-time" style="text-align:center">
+      <div id="stat-resp-time-n" style="font-size:24px;font-weight:700;letter-spacing:-.5px;color:var(--ink)">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Avg response time</div>
+    </div>
+    <div style="text-align:center">
+      <div style="font-size:24px;font-weight:700;letter-spacing:-.5px;color:{{'#4ead7a' if (restaurant.reviews_live or restaurant.gmb_refresh_token) else '#d4a030'}}">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Source</div>
     </div>
   </div>
   <div id="review-savings-bar" style="display:{% if savings_breakdown and savings_breakdown.reviews > 0 %}flex{% else %}none{% endif %};background:linear-gradient(to right,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:10px 16px;margin-bottom:14px;align-items:center;justify-content:space-between">
@@ -1388,7 +1395,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           {% if r.review_date %}<span>{{r.review_date|format_date}}</span>{% endif %}
         </div>
       </div>
-      <span class="schip {{'sp' if r.sentiment=='positive' else ('sn' if r.sentiment=='negative' else 'su')}}">{{r.sentiment or 'neutral'}}</span>
+      <span style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:{{'#4ead7a' if r.sentiment=='positive' else ('#e05555' if r.sentiment=='negative' else '#d4a030')}}">{{r.sentiment or 'neutral'}}</span>
       <button onclick="deleteReview({{r.id}},this)" title="Remove review" style="background:none;border:none;color:var(--ink3);font-size:15px;cursor:pointer;padding:2px 6px;line-height:1;opacity:.5;transition:opacity .15s" onmouseover="this.style.opacity='1';this.style.color='#c0392b'" onmouseout="this.style.opacity='.5';this.style.color='var(--ink3)'">✕</button>
     </div>
     <div class="card-body">
