@@ -2760,12 +2760,87 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
 
 
-    <!-- Right: Alerts + Billing -->
+    <!-- Right: Connections + Alerts + Billing -->
     <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px" id="billing-card">
 
-      <!-- Alerts section -->
-      <div style="margin-bottom:18px;padding-bottom:18px;border-bottom:1px solid var(--paper3)">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <!-- Connections -->
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Connections</div>
+      <!-- Google Business -->
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0">
+          {% if restaurant.gmb_refresh_token %}
+          <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Google Business</div>
+            <div style="font-size:11px;color:var(--ink3)">Auto-posts responses to Google</div>
+          </div>
+          {% else %}
+          <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Google Business</div>
+            <div style="font-size:11px;color:var(--ink3)">Not connected</div>
+          </div>
+          {% endif %}
+        </div>
+        {% if restaurant.gmb_refresh_token %}
+        <button onclick="gmbDisconnect()" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
+        {% else %}
+        <button onclick="gmbConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        {% endif %}
+      </div>
+      <!-- Instagram / Facebook -->
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0">
+          {% if restaurant.ig_token %}
+          <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Instagram &amp; Facebook</div>
+            <div style="font-size:11px;color:var(--ink3)">Posts generated content directly</div>
+          </div>
+          {% else %}
+          <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Instagram &amp; Facebook</div>
+            <div style="font-size:11px;color:var(--ink3)">Not connected</div>
+          </div>
+          {% endif %}
+        </div>
+        {% if restaurant.ig_token %}
+        <button onclick="disconnectInstagram(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
+        {% else %}
+        <button onclick="igConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        {% endif %}
+      </div>
+      <!-- Toast POS -->
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0">
+          {% if restaurant.toast_restaurant_guid %}
+          <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS</div>
+            <div style="font-size:11px;color:var(--ink3)">{% if restaurant.toast_last_synced %}Last synced {{ restaurant.toast_last_synced[:16].replace('T',' ') }} UTC{% else %}Connected — initial sync pending{% endif %}</div>
+          </div>
+          {% else %}
+          <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS</div>
+            <div style="font-size:11px;color:var(--ink3)">Connect to power live labor data</div>
+          </div>
+          {% endif %}
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          {% if restaurant.toast_restaurant_guid %}
+          <button onclick="toastSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
+          <button onclick="toastDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
+          {% else %}
+          <button onclick="openToastClientModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Alert Contacts -->
+      <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper3)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Alert Contacts</div>
           <button onclick="openAlertsModal()" style="background:none;border:none;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
@@ -2773,103 +2848,31 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div id="alerts-types-summary" style="font-size:11px;color:var(--ink3);margin-top:6px"></div>
       </div>
 
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:14px">Billing</div>
-      <div id="billing-loading" style="font-size:13px;color:var(--ink3)">Loading&hellip;</div>
-      <div id="billing-content" style="display:none">
-        <div style="margin-bottom:16px">
-          <div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Next charge</div>
-          <div style="font-size:26px;font-weight:800;color:var(--ink);letter-spacing:-0.5px;line-height:1" id="billing-next-prominent">—</div>
-        </div>
-        <div style="margin-bottom:16px">
-          <div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Amount</div>
-          <div style="font-size:26px;font-weight:800;color:var(--ink);letter-spacing:-0.5px;line-height:1" id="billing-amount-prominent">—</div>
-        </div>
-        <div style="font-size:12px;color:var(--ink3);margin-bottom:4px" id="billing-status"></div>
-        <div style="font-size:12px;color:var(--ink3);margin-bottom:16px" id="billing-pm"></div>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <a id="billing-portal-link" href="#" target="_blank" style="font-size:13px;color:var(--ember);text-decoration:none;font-weight:600">Manage payment method<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
-          <a id="billing-invoice-link" href="#" target="_blank" style="font-size:13px;color:var(--ink3);text-decoration:none;font-weight:500">View invoice history<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
-        </div>
-      </div>
-      <div id="billing-no-sub" style="display:none;font-size:12px;color:var(--ink3)">
-        No active subscription. <a href="mailto:will@cavnar.ai" style="color:var(--ember)">Contact Will</a>
-      </div>
-      <!-- Connections -->
+      <!-- Billing -->
       <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper3)">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Connections</div>
-        <!-- Google Business -->
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
-          <div style="display:flex;align-items:center;gap:8px;min-width:0">
-            {% if restaurant.gmb_refresh_token %}
-            <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
-            <div>
-              <div style="font-size:12px;font-weight:600;color:var(--ink)">Google Business</div>
-              <div style="font-size:11px;color:var(--ink3)">Auto-posts responses to Google</div>
-            </div>
-            {% else %}
-            <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
-            <div>
-              <div style="font-size:12px;font-weight:600;color:var(--ink)">Google Business</div>
-              <div style="font-size:11px;color:var(--ink3)">Not connected</div>
-            </div>
-            {% endif %}
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:14px">Billing</div>
+        <div id="billing-loading" style="font-size:13px;color:var(--ink3)">Loading&hellip;</div>
+        <div id="billing-content" style="display:none">
+          <div style="margin-bottom:16px">
+            <div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Next charge</div>
+            <div style="font-size:26px;font-weight:800;color:var(--ink);letter-spacing:-0.5px;line-height:1" id="billing-next-prominent">—</div>
           </div>
-          {% if restaurant.gmb_refresh_token %}
-          <button onclick="gmbDisconnect()" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
-          {% else %}
-          <button onclick="gmbConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-          {% endif %}
+          <div style="margin-bottom:16px">
+            <div style="font-size:11px;color:var(--ink3);margin-bottom:3px">Amount</div>
+            <div style="font-size:26px;font-weight:800;color:var(--ink);letter-spacing:-0.5px;line-height:1" id="billing-amount-prominent">—</div>
+          </div>
+          <div style="font-size:12px;color:var(--ink3);margin-bottom:4px" id="billing-status"></div>
+          <div style="font-size:12px;color:var(--ink3);margin-bottom:16px" id="billing-pm"></div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <a id="billing-portal-link" href="#" target="_blank" style="font-size:13px;color:var(--ember);text-decoration:none;font-weight:600">Manage payment method<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+            <a id="billing-invoice-link" href="#" target="_blank" style="font-size:13px;color:var(--ink3);text-decoration:none;font-weight:500">View invoice history<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+          </div>
         </div>
-        <!-- Instagram / Facebook -->
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px">
-          <div style="display:flex;align-items:center;gap:8px;min-width:0">
-            {% if restaurant.ig_token %}
-            <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
-            <div>
-              <div style="font-size:12px;font-weight:600;color:var(--ink)">Instagram &amp; Facebook</div>
-              <div style="font-size:11px;color:var(--ink3)">Posts generated content directly</div>
-            </div>
-            {% else %}
-            <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
-            <div>
-              <div style="font-size:12px;font-weight:600;color:var(--ink)">Instagram &amp; Facebook</div>
-              <div style="font-size:11px;color:var(--ink3)">Not connected</div>
-            </div>
-            {% endif %}
-          </div>
-          {% if restaurant.ig_token %}
-          <button onclick="disconnectInstagram(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
-          {% else %}
-          <button onclick="igConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-          {% endif %}
-        </div>
-        <!-- Toast POS -->
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-          <div style="display:flex;align-items:center;gap:8px;min-width:0">
-            {% if restaurant.toast_restaurant_guid %}
-            <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
-            <div>
-              <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS</div>
-              <div style="font-size:11px;color:var(--ink3)">{% if restaurant.toast_last_synced %}Last synced {{ restaurant.toast_last_synced[:16].replace('T',' ') }} UTC{% else %}Connected — initial sync pending{% endif %}</div>
-            </div>
-            {% else %}
-            <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
-            <div>
-              <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS</div>
-              <div style="font-size:11px;color:var(--ink3)">Connect to power live labor data</div>
-            </div>
-            {% endif %}
-          </div>
-          <div style="display:flex;gap:6px;flex-shrink:0">
-            {% if restaurant.toast_restaurant_guid %}
-            <button onclick="toastSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
-            <button onclick="toastDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
-            {% else %}
-            <button onclick="openToastClientModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-            {% endif %}
-          </div>
+        <div id="billing-no-sub" style="display:none;font-size:12px;color:var(--ink3)">
+          No active subscription. <a href="mailto:will@cavnar.ai" style="color:var(--ember)">Contact Will</a>
         </div>
       </div>
+
     </div>
   </div>
 
@@ -5026,7 +5029,6 @@ function updateSmsConsentVisibility() {
   if (!smsOn) document.getElementById('al-sms-consent').checked = false;
 }
 
-document.getElementById('al-via-sms').addEventListener('change', updateSmsConsentVisibility);
 
 function saveAlertSettings() {
   var smsOn = document.getElementById('al-via-sms').checked;
@@ -6451,7 +6453,7 @@ document.addEventListener('click', function(e) {
     <div style="border-top:1px solid var(--paper3);padding-top:16px;margin-bottom:20px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Delivery method</div>
       <div style="display:flex;gap:16px;margin-bottom:10px">
-        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-via-sms" style="accent-color:var(--ember)"> SMS text message</label>
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-via-sms" onchange="updateSmsConsentVisibility()" style="accent-color:var(--ember)"> SMS text message</label>
         <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-via-email" style="accent-color:var(--ember)"> Email</label>
       </div>
       <!-- SMS consent always visible, dims when SMS off -->
