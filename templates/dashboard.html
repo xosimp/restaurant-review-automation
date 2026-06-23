@@ -5020,7 +5020,10 @@ function closeAlertsModal() {
 
 function updateSmsConsentVisibility() {
   var smsOn = document.getElementById('al-via-sms').checked;
-  document.getElementById('al-sms-consent-row').style.display = smsOn ? 'block' : 'none';
+  var row = document.getElementById('al-sms-consent-row');
+  row.style.opacity = smsOn ? '1' : '.35';
+  row.style.pointerEvents = smsOn ? 'auto' : 'none';
+  if (!smsOn) document.getElementById('al-sms-consent').checked = false;
 }
 
 document.getElementById('al-via-sms').addEventListener('change', updateSmsConsentVisibility);
@@ -6451,8 +6454,8 @@ document.addEventListener('click', function(e) {
         <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-via-sms" style="accent-color:var(--ember)"> SMS text message</label>
         <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-via-email" style="accent-color:var(--ember)"> Email</label>
       </div>
-      <!-- SMS consent inline under checkboxes -->
-      <div id="al-sms-consent-row" style="background:rgba(200,75,47,.06);border:1px solid rgba(200,75,47,.2);border-radius:8px;padding:10px 12px;display:none">
+      <!-- SMS consent always visible, dims when SMS off -->
+      <div id="al-sms-consent-row" style="background:rgba(200,75,47,.06);border:1px solid rgba(200,75,47,.2);border-radius:8px;padding:10px 12px;margin-top:10px;opacity:.35;pointer-events:none">
         <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:11px;color:var(--ink);line-height:1.5">
           <input type="checkbox" id="al-sms-consent" style="accent-color:var(--ember);margin-top:2px;flex-shrink:0">
           I agree to receive operational SMS alerts from Cavnar AI. Message &amp; data rates may apply. Reply STOP to cancel, HELP for help. <a href="/privacy" target="_blank" style="color:var(--ember)">Privacy</a> &middot; <a href="/terms" target="_blank" style="color:var(--ember)">Terms</a>
