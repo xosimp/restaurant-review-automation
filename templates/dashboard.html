@@ -183,7 +183,8 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 /* Orange buttons — muted in dark mode (--ember is #e06444, too bright) */
 [data-theme="dark"] .btn-primary{background:#923020!important}
 [data-theme="dark"] .btn-primary:hover{background:#7a2818!important;box-shadow:0 4px 10px rgba(146,48,32,.22)!important}
-[data-theme="dark"] #rv-tab-inbox{background:#923020!important}
+.rv-tab-active{background:var(--ember)!important;color:#fff!important}
+[data-theme="dark"] .rv-tab-active{background:#923020!important}
 [data-theme="dark"] .btn-link-ember{background:#923020!important}
 [data-theme="dark"] .btn-link-ember:hover{background:#7a2818!important;box-shadow:0 2px 8px rgba(146,48,32,.2)!important}
 [data-theme="dark"] button[style*="background:#c84b2f"],
@@ -1165,7 +1166,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Reviews sub-tab toggle (segmented pill, top-right) -->
   <div style="display:flex;justify-content:flex-end;margin-bottom:20px">
     <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-      <button id="rv-tab-inbox"     onclick="switchReviewsTab('inbox')"     style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:var(--ember);color:#fff;transition:background .15s,color .15s">Inbox</button>
+      <button id="rv-tab-inbox"     onclick="switchReviewsTab('inbox')"     class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Inbox</button>
       <button id="rv-tab-analytics" onclick="switchReviewsTab('analytics')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
     </div>
   </div>
@@ -3291,8 +3292,8 @@ window.switchReviewsTab = function(tab) {
   document.getElementById('rv-panel-analytics').style.display = isInbox ? 'none' : '';
   var ti = document.getElementById('rv-tab-inbox');
   var ta = document.getElementById('rv-tab-analytics');
-  if(ti){ ti.style.background = isInbox ? 'var(--ember)' : 'transparent'; ti.style.color = isInbox ? 'white' : 'var(--ink3)'; }
-  if(ta){ ta.style.background = isInbox ? 'transparent' : 'var(--ember)'; ta.style.color = isInbox ? 'var(--ink3)' : 'white'; }
+  if(ti){ ti.classList.toggle('rv-tab-active', isInbox); ti.style.background=''; ti.style.color = isInbox ? '' : 'var(--ink3)'; }
+  if(ta){ ta.classList.toggle('rv-tab-active', !isInbox); ta.style.background=''; ta.style.color = isInbox ? 'var(--ink3)' : ''; }
   if (!isInbox) {
     loadTopicHeatmap();
     loadSentimentTrend();
