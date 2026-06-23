@@ -25,6 +25,10 @@
 }
 html[data-theme="dark"]{background:#1a1714!important;background-image:none!important}
 html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
+/* Stat number glow states */
+.stat-glow-green{color:#3ecf6e!important;text-shadow:0 0 28px rgba(62,207,110,.55),0 0 8px rgba(62,207,110,.3)!important}
+.stat-glow-red{color:#f05555!important;text-shadow:0 0 28px rgba(240,85,85,.55),0 0 8px rgba(240,85,85,.3)!important}
+.stat-glow-amber{color:#e8a825!important;text-shadow:0 0 28px rgba(232,168,37,.55),0 0 8px rgba(232,168,37,.3)!important}
 /* Universal: replace hardcoded white with warm cream in dark mode */
 [data-theme="dark"] [style*="color:white"]{color:#ddd0b8!important}
 [data-theme="dark"] [style*="color: white"]{color:#ddd0b8!important}
@@ -1163,25 +1167,25 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div style="max-width:1080px;margin:0 auto">
   <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0">
     {% set _rating = restaurant.gbp_rating or rstats.avg_rating %}
-    {% set _rcolor = '#4ead7a' if _rating >= 4.5 else ('#d4a030' if _rating >= 3.5 else '#e05555') %}
+    {% set _rglow = 'stat-glow-green' if _rating >= 4.5 else ('stat-glow-amber' if _rating >= 3.5 else 'stat-glow-red') %}
     <div id="stat-rating" style="text-align:center;padding:28px 12px 32px">
-      <div id="stat-rating-n" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;color:{{_rcolor}}">{{_rating}}</div>
+      <div id="stat-rating-n" class="{{_rglow}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em">{{_rating}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">{% if restaurant.gbp_rating %}Google rating{% else %}Avg rating{% endif %}</div>
       {% if restaurant.gbp_rating %}<div style="font-size:10px;color:var(--ink3);margin-top:4px">Dashboard avg: {{rstats.avg_rating}}</div>{% endif %}
     </div>
-    {% set _rrcolor = '#4ead7a' if rstats.response_rate >= 70 else ('#d4a030' if rstats.response_rate >= 40 else '#e05555') %}
-    <div style="text-align:center;padding:28px 12px 32px">
-      <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;color:{{_rrcolor}}">{{rstats.response_rate}}<span style="font-size:.5em;letter-spacing:0;margin-left:1px">%</span></div>
+    {% set _rrglow = 'stat-glow-green' if rstats.response_rate >= 70 else ('stat-glow-amber' if rstats.response_rate >= 40 else 'stat-glow-red') %}
+    <div id="stat-rr" style="text-align:center;padding:28px 12px 32px">
+      <div id="stat-rr-n" class="{{_rrglow}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em">{{rstats.response_rate}}<span id="stat-rr-pct" style="font-size:.5em;letter-spacing:0;margin-left:1px">%</span></div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Response rate</div>
-      <div style="font-size:10px;color:var(--ink3);margin-top:4px">{{rstats.get('responded', rstats.posted)}} of {{rstats.total}} reviews</div>
+      <div id="stat-rr-detail" style="font-size:10px;color:var(--ink3);margin-top:4px">{{rstats.get('responded', rstats.posted)}} of {{rstats.total}} reviews</div>
     </div>
     <div id="stat-received-mo" style="text-align:center;padding:28px 12px 32px">
       <div id="stat-received-mo-n" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;color:var(--ink)">{{rstats.received_this_month}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">New this month</div>
     </div>
-    {% set _apcolor = '#e05555' if rstats.awaiting_approval > 2 else ('#c84b2f' if rstats.awaiting_approval > 0 else 'var(--ink3)') %}
+    {% set _apglow = 'stat-glow-red' if rstats.awaiting_approval > 2 else ('stat-glow-amber' if rstats.awaiting_approval > 0 else '') %}
     <div id="stat-pending" style="text-align:center;padding:28px 12px 32px">
-      <div id="stat-pending-n" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;color:{{_apcolor}}">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:13px;color:#2d6a4f;margin-left:4px">↓</span></div>
+      <div id="stat-pending-n" class="{{_apglow}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;{% if not _apglow %}color:var(--ink3){% endif %}">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:13px;color:#2d6a4f;margin-left:4px">↓</span></div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">To approve</div>
     </div>
   </div>
@@ -1189,28 +1193,29 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- SECONDARY STATS: compact row with dividers -->
   <div style="display:flex;justify-content:center;align-items:center;padding:12px 0 32px;flex-wrap:wrap">
     <div style="text-align:center;min-width:60px;padding:0 32px">
-      {% set _pcolor = '#4ead7a' if rstats.positive_pct >= 70 else ('#d4a030' if rstats.positive_pct >= 50 else '#e05555') %}
-      <div id="stat-positive-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{_pcolor}};line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{rstats.positive_pct}}%</div>
+      {% set _pglow = 'stat-glow-green' if rstats.positive_pct >= 70 else ('stat-glow-amber' if rstats.positive_pct >= 50 else 'stat-glow-red') %}
+      <div id="stat-positive-n" class="{{_pglow}}" style="font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:500;letter-spacing:-.02em;line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{rstats.positive_pct}}%</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Positive</div>
     </div>
     <div style="width:1px;height:36px;background:var(--paper3);flex-shrink:0"></div>
     <div id="stat-urgent" style="text-align:center;min-width:60px;padding:0 32px">
-      <div id="stat-urgent-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{'#e05555' if rstats.urgent > 0 else 'var(--ink3)'}};line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{rstats.urgent}}</div>
+      <div id="stat-urgent-n" class="{{'stat-glow-red' if rstats.urgent > 0 else ''}}" style="font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:500;letter-spacing:-.02em;{% if not rstats.urgent %}color:var(--ink3);{% endif %}line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{rstats.urgent}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Urgent</div>
     </div>
     <div style="width:1px;height:36px;background:var(--paper3);flex-shrink:0"></div>
     <div style="text-align:center;min-width:60px;padding:0 32px">
-      <div id="stat-this-month-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:var(--ink);line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{rstats.this_month}}</div>
+      <div id="stat-this-month-n" style="font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:500;letter-spacing:-.02em;color:var(--ink);line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{rstats.this_month}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Responded/mo</div>
     </div>
     <div style="width:1px;height:36px;background:var(--paper3);flex-shrink:0"></div>
     <div style="text-align:center;min-width:60px;padding:0 32px">
-      <div id="stat-resp-time-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:var(--ink);line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
+      <div id="stat-resp-time-n" style="font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:500;letter-spacing:-.02em;color:var(--ink);line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Avg response time</div>
     </div>
     <div style="width:1px;height:36px;background:var(--paper3);flex-shrink:0"></div>
     <div style="text-align:center;min-width:60px;padding:0 32px">
-      <div style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{'#4ead7a' if (restaurant.reviews_live or restaurant.gmb_refresh_token) else '#d4a030'}};line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
+      {% set _srcglow = 'stat-glow-green' if (restaurant.reviews_live or restaurant.gmb_refresh_token) else 'stat-glow-amber' %}
+      <div class="{{_srcglow}}" style="font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:500;letter-spacing:-.02em;line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Source</div>
     </div>
   </div>
@@ -3761,13 +3766,16 @@ function filterReviews(){
   if(topicF) label+=' — '+topicF.replace(/_/g,' ');
   if(countEl)countEl.textContent=label;
 }
+function statGlow(el, cls){
+  if(!el) return;
+  el.className = cls || '';
+  if(!cls){ el.style.color='var(--ink3)'; } else { el.style.color=''; }
+}
 function setPendingClass(el, count){
-  var nEl = document.getElementById('stat-pending-n');
-  if(nEl) nEl.style.color = count===0 ? 'var(--ink3)' : count<=2 ? '#c84b2f' : '#e05555';
+  statGlow(document.getElementById('stat-pending-n'), count===0 ? '' : count<=2 ? 'stat-glow-amber' : 'stat-glow-red');
 }
 function setUrgentClass(el, count){
-  var nEl = document.getElementById('stat-urgent-n');
-  if(nEl) nEl.style.color = count===0 ? 'var(--ink3)' : '#e05555';
+  statGlow(document.getElementById('stat-urgent-n'), count===0 ? '' : 'stat-glow-red');
 }
 function updateReviewStats(){
   fetch('/api/review-stats').then(function(r){return r.json();}).then(function(d){
@@ -3879,7 +3887,7 @@ function updateReviewStats(){
     var ratingNEl = document.getElementById('stat-rating-n');
     if(ratingEl && ratingNEl && d.avg_rating !== undefined){
       ratingNEl.textContent = d.avg_rating;
-      ratingNEl.style.color = d.avg_rating >= 4.5 ? '#4ead7a' : d.avg_rating >= 3.5 ? '#d4a030' : '#e05555';
+      statGlow(ratingNEl, d.avg_rating >= 4.5 ? 'stat-glow-green' : d.avg_rating >= 3.5 ? 'stat-glow-amber' : 'stat-glow-red');
     }
 
     // ── Responded this month ───────────────────────────────
@@ -3892,7 +3900,17 @@ function updateReviewStats(){
     var positiveNEl = document.getElementById('stat-positive-n');
     if(positiveEl && positiveNEl && d.positive_pct !== undefined){
       positiveNEl.textContent = d.positive_pct + '%';
-      positiveNEl.style.color = d.positive_pct >= 70 ? '#4ead7a' : d.positive_pct >= 50 ? '#d4a030' : '#e05555';
+      statGlow(positiveNEl, d.positive_pct >= 70 ? 'stat-glow-green' : d.positive_pct >= 50 ? 'stat-glow-amber' : 'stat-glow-red');
+    }
+
+    // ── Response rate big number ───────────────────────────
+    var rrNEl     = document.getElementById('stat-rr-n');
+    var rrDetail  = document.getElementById('stat-rr-detail');
+    if(rrNEl && d.response_rate !== undefined){
+      var rr = d.response_rate || 0;
+      rrNEl.firstChild.nodeValue = rr;
+      statGlow(rrNEl, rr >= 70 ? 'stat-glow-green' : rr >= 40 ? 'stat-glow-amber' : 'stat-glow-red');
+      if(rrDetail) rrDetail.textContent = (d.responded || d.posted || 0) + ' of ' + (d.total || 0) + ' reviews';
     }
 
     // ── Reviews received this month ────────────────────────
