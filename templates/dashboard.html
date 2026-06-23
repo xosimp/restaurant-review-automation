@@ -2760,8 +2760,19 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
 
 
-    <!-- Right: Billing -->
+    <!-- Right: Alerts + Billing -->
     <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px" id="billing-card">
+
+      <!-- Alerts section -->
+      <div style="margin-bottom:18px;padding-bottom:18px;border-bottom:1px solid var(--paper3)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Alert Contacts</div>
+          <button onclick="openAlertsModal()" style="background:none;border:none;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        </div>
+        <div id="alerts-contacts-summary" style="font-size:12px;color:var(--ink3)">Loading&hellip;</div>
+        <div id="alerts-types-summary" style="font-size:11px;color:var(--ink3);margin-top:6px"></div>
+      </div>
+
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:14px">Billing</div>
       <div id="billing-loading" style="font-size:13px;color:var(--ink3)">Loading&hellip;</div>
       <div id="billing-content" style="display:none">
@@ -3550,7 +3561,7 @@ function switchTab(n,btn){
     if(!invLoaded)loadInvInsight();
   }
   if(n==='labor'){renderBars();loadLaborTrend();}
-  if(n==='account'){loadBillingInfo();loadSessions();}
+  if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();}
   if(n==='competitor'){var _ab=document.getElementById('aiv-body');if(_ab){_ab.style.maxHeight=_ab.scrollHeight+'px';_ab.style.opacity='1';}}
   if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();loadMktStats();startMetricsPoller();}else{stopMetricsPoller();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
@@ -4974,6 +4985,135 @@ function generateFromCal(type, topic) {
   document.getElementById('mkoutput').scrollIntoView({behavior:'smooth', block:'nearest'});
   genContent(true);
 }
+// ── Alert Settings ────────────────────────────────────────────
+function openAlertsModal() {
+  var modal = document.getElementById('alerts-modal');
+  modal.style.display = 'flex';
+  fetch('/api/alert-settings').then(function(r){ return r.json(); }).then(function(d) {
+    if (!d.ok) return;
+    var c = d.contacts || [];
+    document.getElementById('alert-c1-name').value  = (c[0] && c[0].name)  || '';
+    document.getElementById('alert-c1-phone').value = (c[0] && c[0].phone) || '';
+    document.getElementById('alert-c2-name').value  = (c[1] && c[1].name)  || '';
+    document.getElementById('alert-c2-phone').value = (c[1] && c[1].phone) || '';
+    var s = d.settings || {};
+    document.getElementById('al-1star').checked       = !!s.alert_1star;
+    document.getElementById('al-2star').checked       = !!s.alert_2star;
+    document.getElementById('al-health').checked      = !!s.alert_health;
+    document.getElementById('al-neg-spike').checked   = !!s.alert_neg_spike;
+    document.getElementById('al-neg-trend').checked   = !!s.alert_negative_trend;
+    document.getElementById('al-no-resp').checked     = !!s.alert_no_response;
+    document.getElementById('al-5star').checked       = !!s.alert_5star;
+    document.getElementById('al-rating-thresh').checked = !!s.alert_rating_threshold;
+    document.getElementById('al-rating-floor').value  = s.alert_rating_floor || 4.0;
+    var laborEl = document.getElementById('al-labor-over');
+    if (laborEl) laborEl.checked = !!s.alert_labor_over;
+    document.getElementById('al-via-sms').checked   = !!s.urgent_via_sms;
+    document.getElementById('al-via-email').checked = !!s.urgent_via_email;
+    updateSmsConsentVisibility();
+  });
+}
+
+function closeAlertsModal() {
+  document.getElementById('alerts-modal').style.display = 'none';
+}
+
+function updateSmsConsentVisibility() {
+  var smsOn = document.getElementById('al-via-sms').checked;
+  var c1phone = (document.getElementById('alert-c1-phone').value || '').trim();
+  var row = document.getElementById('al-sms-consent-row');
+  row.style.display = (smsOn && c1phone) ? 'block' : 'none';
+}
+
+document.getElementById('al-via-sms').addEventListener('change', updateSmsConsentVisibility);
+document.getElementById('alert-c1-phone').addEventListener('input', updateSmsConsentVisibility);
+
+function saveAlertSettings() {
+  var smsOn = document.getElementById('al-via-sms').checked;
+  var c1phone = (document.getElementById('alert-c1-phone').value || '').trim();
+  if (smsOn && c1phone && !document.getElementById('al-sms-consent').checked) {
+    alert('Please check the SMS consent box before enabling SMS alerts.');
+    return;
+  }
+  var contacts = [];
+  var c1name = (document.getElementById('alert-c1-name').value || '').trim();
+  if (c1phone) contacts.push({name: c1name, phone: c1phone});
+  var c2name  = (document.getElementById('alert-c2-name').value  || '').trim();
+  var c2phone = (document.getElementById('alert-c2-phone').value || '').trim();
+  if (c2phone) contacts.push({name: c2name, phone: c2phone});
+  var laborEl = document.getElementById('al-labor-over');
+  var payload = {
+    contacts: contacts,
+    alert_1star:           document.getElementById('al-1star').checked ? 1 : 0,
+    alert_2star:           document.getElementById('al-2star').checked ? 1 : 0,
+    alert_health:          document.getElementById('al-health').checked ? 1 : 0,
+    alert_neg_spike:       document.getElementById('al-neg-spike').checked ? 1 : 0,
+    alert_negative_trend:  document.getElementById('al-neg-trend').checked ? 1 : 0,
+    alert_no_response:     document.getElementById('al-no-resp').checked ? 1 : 0,
+    alert_5star:           document.getElementById('al-5star').checked ? 1 : 0,
+    alert_rating_threshold: document.getElementById('al-rating-thresh').checked ? 1 : 0,
+    alert_rating_floor:    parseFloat(document.getElementById('al-rating-floor').value) || 4.0,
+    alert_labor_over:      laborEl ? (laborEl.checked ? 1 : 0) : 0,
+    urgent_via_sms:        smsOn ? 1 : 0,
+    urgent_via_email:      document.getElementById('al-via-email').checked ? 1 : 0
+  };
+  var msg = document.getElementById('alerts-save-msg');
+  msg.style.display = 'inline';
+  msg.style.color = 'var(--ink3)';
+  msg.textContent = 'Saving…';
+  fetch('/api/alert-settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  }).then(function(r){ return r.json(); }).then(function(d) {
+    if (d.ok) {
+      msg.style.color = '#3ecf6e';
+      msg.textContent = 'Saved!';
+      loadAlertsSummary();
+      setTimeout(function(){ closeAlertsModal(); }, 800);
+    } else {
+      msg.style.color = 'var(--ember)';
+      msg.textContent = d.error || 'Error saving.';
+    }
+  }).catch(function() {
+    msg.style.color = 'var(--ember)';
+    msg.textContent = 'Network error.';
+  });
+}
+
+function loadAlertsSummary() {
+  fetch('/api/alert-settings').then(function(r){ return r.json(); }).then(function(d) {
+    var cEl = document.getElementById('alerts-contacts-summary');
+    var tEl = document.getElementById('alerts-types-summary');
+    if (!d.ok || !cEl) return;
+    var c = d.contacts || [];
+    if (c.length === 0) {
+      cEl.textContent = 'No contacts set — click Manage to add a phone number.';
+      tEl.textContent = '';
+    } else {
+      cEl.innerHTML = c.map(function(ct) {
+        return '<span style="font-weight:600;color:var(--ink)">' + (ct.name || 'Contact') + '</span> &middot; ' + ct.phone;
+      }).join('<br>');
+      var s = d.settings || {};
+      var on = [];
+      if (s.alert_1star) on.push('1★');
+      if (s.alert_2star) on.push('2★');
+      if (s.alert_health) on.push('Health');
+      if (s.alert_neg_spike) on.push('Neg spike');
+      if (s.alert_negative_trend) on.push('Neg trend');
+      if (s.alert_no_response) on.push('No response');
+      if (s.alert_5star) on.push('5★');
+      if (s.alert_rating_threshold) on.push('Rating rise');
+      if (s.alert_labor_over) on.push('Labor');
+      var via = [];
+      if (s.urgent_via_sms) via.push('SMS');
+      if (s.urgent_via_email) via.push('Email');
+      tEl.textContent = (on.length ? on.join(', ') : 'No alerts enabled') + (via.length ? ' via ' + via.join(' & ') : '');
+    }
+  });
+}
+// ── End Alert Settings ─────────────────────────────────────────
+
 function saveDigestDay() {
   var day     = document.getElementById('digest-day-select').value;
   var enabled = document.getElementById('digest-enabled-select').value;
@@ -5836,7 +5976,7 @@ function revokeOtherSessions(btn){
 // Load sessions when account tab is active
 (function(){
   var panel=document.getElementById('panel-account');
-  if(panel&&panel.classList.contains('active')){loadSessions();}
+  if(panel&&panel.classList.contains('active')){loadSessions();loadAlertsSummary();}
 })();
 
 // ── Live status indicator ─────────────────────────────────────────────────────
@@ -6237,6 +6377,96 @@ document.addEventListener('click', function(e) {
     </div>
     <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--paper3);font-size:11px;color:var(--ink3);line-height:1.6">
       <strong style="color:var(--ink2)">Where to find these:</strong> Toast Admin → Integrations → API Access → create a credential set with <em>Labor</em> and <em>Orders</em> permissions. Copy the Client ID, Secret, and Location GUID here.
+    </div>
+  </div>
+</div>
+
+<!-- Alerts Modal -->
+<div id="alerts-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.72);align-items:center;justify-content:center" onclick="if(event.target===this)closeAlertsModal()">
+  <div style="background:var(--paper);border-radius:14px;padding:28px;max-width:520px;width:94%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55);max-height:90vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div style="font-size:16px;font-weight:700;color:var(--ink)">Alert Settings</div>
+      <button onclick="closeAlertsModal()" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;line-height:1;padding:0">&times;</button>
+    </div>
+
+    <!-- Contact 1 -->
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px">Primary Contact</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+      <div>
+        <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Name</div>
+        <input id="alert-c1-name" type="text" placeholder="e.g. Owner" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Mobile number</div>
+        <input id="alert-c1-phone" type="tel" placeholder="+1 (555) 000-0000" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+      </div>
+    </div>
+
+    <!-- Contact 2 -->
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:8px">Secondary Contact <span style="font-weight:400;text-transform:none;letter-spacing:0;font-size:10px">(optional)</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px">
+      <div>
+        <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Name</div>
+        <input id="alert-c2-name" type="text" placeholder="e.g. Manager" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Mobile number</div>
+        <input id="alert-c2-phone" type="tel" placeholder="+1 (555) 000-0000" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+      </div>
+    </div>
+
+    <!-- Alert types -->
+    <div style="border-top:1px solid var(--paper3);padding-top:16px;margin-bottom:16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Which alerts do you want?</div>
+
+      <div style="font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Urgent</div>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-1star" style="accent-color:var(--ember)"> 1&#9733; review received</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-2star" style="accent-color:var(--ember)"> 2&#9733; review received</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-health" style="accent-color:var(--ember)"> Health or safety mention in a review</label>
+      </div>
+
+      <div style="font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Trends</div>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-neg-spike" style="accent-color:var(--ember)"> Negative review spike (3+ in 48hrs)</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-neg-trend" style="accent-color:var(--ember)"> Negative trend alert</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-no-resp" style="accent-color:var(--ember)"> No response to a review in 14 days</label>
+      </div>
+
+      <div style="font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Wins</div>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-5star" style="accent-color:var(--ember)"> 5&#9733; review received</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-rating-thresh" style="accent-color:var(--ember)"> Rating climbs above <input type="number" id="al-rating-floor" min="1" max="5" step="0.1" style="width:46px;padding:2px 5px;border:1px solid var(--paper3);border-radius:5px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);text-align:center"> stars</label>
+      </div>
+
+      {% if mod_labor %}
+      <div style="font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Labor</div>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-labor-over" style="accent-color:var(--ember)"> Labor cost exceeds budget target</label>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Delivery -->
+    <div style="border-top:1px solid var(--paper3);padding-top:16px;margin-bottom:20px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Delivery method</div>
+      <div style="display:flex;gap:16px">
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-via-sms" style="accent-color:var(--ember)"> SMS text message</label>
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-via-email" style="accent-color:var(--ember)"> Email</label>
+      </div>
+    </div>
+
+    <!-- SMS consent -->
+    <div id="al-sms-consent-row" style="background:rgba(200,75,47,.06);border:1px solid rgba(200,75,47,.2);border-radius:8px;padding:10px 12px;margin-bottom:20px;display:none">
+      <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:11px;color:var(--ink);line-height:1.5">
+        <input type="checkbox" id="al-sms-consent" style="accent-color:var(--ember);margin-top:2px;flex-shrink:0">
+        I agree to receive operational SMS alerts from Cavnar AI, including review notifications and urgent activity alerts. Message &amp; data rates may apply. Reply STOP to cancel, HELP for help. <a href="/privacy" target="_blank" style="color:var(--ember)">Privacy Policy</a> &middot; <a href="/terms" target="_blank" style="color:var(--ember)">Terms</a>
+      </label>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <span id="alerts-save-msg" style="font-size:12px;display:none"></span>
+      <button onclick="saveAlertSettings()" class="btn-primary" style="margin-left:auto;padding:8px 22px">Save alerts</button>
     </div>
   </div>
 </div>

@@ -1180,6 +1180,67 @@ def billing_info(current_user):
         print(f"Stripe billing info error: {e}")
         return jsonify(ok=False, reason="stripe_error", error=str(e))
 
+@client_bp.route("/api/alert-settings", methods=["GET"])
+@login_required
+def get_alert_settings(current_user):
+    from notify import get_alert_contacts
+    from models import get_restaurant
+    rid = current_user["restaurant_id"]
+    contacts = get_alert_contacts(rid)
+    r = get_restaurant(rid)
+    settings = {
+        "alert_1star":           r.alert_1star,
+        "alert_2star":           r.alert_2star,
+        "alert_health":          r.alert_health,
+        "alert_neg_spike":       r.alert_neg_spike,
+        "alert_negative_trend":  r.alert_negative_trend,
+        "alert_no_response":     r.alert_no_response,
+        "alert_5star":           r.alert_5star,
+        "alert_rating_threshold": r.alert_rating_threshold,
+        "alert_rating_floor":    r.alert_rating_floor,
+        "alert_labor_over":      r.alert_labor_over,
+        "urgent_via_sms":        getattr(r, "urgent_via_sms", 0),
+        "urgent_via_email":      getattr(r, "urgent_via_email", 0),
+    }
+    return jsonify(ok=True, contacts=contacts, settings=settings)
+
+
+@client_bp.route("/api/alert-settings", methods=["POST"])
+@login_required
+def save_alert_settings(current_user):
+    from notify import get_alert_contacts, add_alert_contact, delete_alert_contact
+    from models import update_restaurant
+    data = request.get_json() or {}
+    rid = current_user["restaurant_id"]
+
+    # Sync contacts — max 2
+    new_contacts = (data.get("contacts") or [])[:2]
+    existing = get_alert_contacts(rid)
+    for ec in existing:
+        delete_alert_contact(ec["id"])
+    for nc in new_contacts:
+        phone = (nc.get("phone") or "").strip()
+        name  = (nc.get("name")  or "").strip()
+        if phone:
+            add_alert_contact(rid, name, phone)
+
+    update_restaurant(rid, {
+        "alert_1star":           int(bool(data.get("alert_1star"))),
+        "alert_2star":           int(bool(data.get("alert_2star"))),
+        "alert_health":          int(bool(data.get("alert_health"))),
+        "alert_neg_spike":       int(bool(data.get("alert_neg_spike"))),
+        "alert_negative_trend":  int(bool(data.get("alert_negative_trend"))),
+        "alert_no_response":     int(bool(data.get("alert_no_response"))),
+        "alert_5star":           int(bool(data.get("alert_5star"))),
+        "alert_rating_threshold": int(bool(data.get("alert_rating_threshold"))),
+        "alert_rating_floor":    float(data.get("alert_rating_floor") or 4.0),
+        "alert_labor_over":      int(bool(data.get("alert_labor_over"))),
+        "urgent_via_sms":        int(bool(data.get("urgent_via_sms"))),
+        "urgent_via_email":      int(bool(data.get("urgent_via_email"))),
+    })
+    return jsonify(ok=True)
+
+
 @client_bp.route("/api/update-digest-day", methods=["POST"])
 @login_required
 def update_digest_day(current_user):
