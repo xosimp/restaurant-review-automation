@@ -37,8 +37,9 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 .stat-glow-amber{color:var(--ember)!important;text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.14),0 3px 12px rgba(0,0,0,.6)!important}
 .rv-stat-n{color:var(--ink3);text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.08),0 3px 8px rgba(0,0,0,.5)}
 /* Option 3: frosted glass stat cells */
-.rv-stat-cell{text-align:center;padding:28px 16px;background:linear-gradient(160deg,rgba(255,255,255,.05) 0%,transparent 100%);border-radius:12px;border:1px solid rgba(247,244,239,.09);position:relative;overflow:hidden}
-.rv-stat-cell::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:rgba(255,255,255,.13)}
+.rv-stat-cell{text-align:center;padding:28px 16px;background:linear-gradient(160deg,rgba(200,75,47,.22) 0%,rgba(200,75,47,.10) 100%);border-radius:12px;border:1px solid rgba(200,75,47,.28);position:relative;overflow:hidden}
+.rv-stat-cell::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:rgba(200,75,47,.35)}
+[data-theme="dark"] .rv-stat-cell{background:linear-gradient(160deg,rgba(200,75,47,.28) 0%,rgba(200,75,47,.13) 100%);border-color:rgba(200,75,47,.35)}
 /* Universal: replace hardcoded white with warm cream in dark mode */
 [data-theme="dark"] [style*="color:white"]{color:#ddd0b8!important}
 [data-theme="dark"] [style*="color: white"]{color:#ddd0b8!important}
