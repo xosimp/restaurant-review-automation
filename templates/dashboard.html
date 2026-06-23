@@ -1156,6 +1156,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div id="rv-inbox-header">
 
   <!-- ═══ PRIMARY STATS: editorial floating numbers ═══ -->
+  <div style="max-width:1080px;margin:0 auto">
   <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0">
     {% set _rating = restaurant.gbp_rating or rstats.avg_rating %}
     {% set _rcolor = '#4ead7a' if _rating >= 4.5 else ('#d4a030' if _rating >= 3.5 else '#e05555') %}
@@ -1182,50 +1183,38 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div>
 
   <!-- SECONDARY STATS: compact row -->
-  <div style="display:flex;justify-content:center;gap:44px;padding:12px 0 28px;flex-wrap:wrap">
-    <div style="text-align:center">
+  <div style="display:flex;justify-content:center;gap:44px;padding:12px 0 32px;flex-wrap:wrap">
+    <div style="text-align:center;min-width:60px">
       {% set _pcolor = '#4ead7a' if rstats.positive_pct >= 70 else ('#d4a030' if rstats.positive_pct >= 50 else '#e05555') %}
-      <div id="stat-positive-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{_pcolor}}">{{rstats.positive_pct}}%</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Positive</div>
+      <div id="stat-positive-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{_pcolor}};line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{rstats.positive_pct}}%</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Positive</div>
     </div>
-    <div id="stat-urgent" style="text-align:center">
-      <div id="stat-urgent-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{'#e05555' if rstats.urgent > 0 else 'var(--ink3)'}}">{{rstats.urgent}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Urgent</div>
+    <div id="stat-urgent" style="text-align:center;min-width:60px">
+      <div id="stat-urgent-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{'#e05555' if rstats.urgent > 0 else 'var(--ink3)'}};line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{rstats.urgent}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Urgent</div>
     </div>
-    <div style="text-align:center">
-      <div id="stat-this-month-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:var(--ink)">{{rstats.this_month}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Responded/mo</div>
+    <div style="text-align:center;min-width:60px">
+      <div id="stat-this-month-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:var(--ink);line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{rstats.this_month}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Responded/mo</div>
     </div>
-    <div style="text-align:center">
-      <div id="stat-resp-time-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:var(--ink)">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Avg response time</div>
+    <div style="text-align:center;min-width:60px">
+      <div id="stat-resp-time-n" style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:var(--ink);line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Avg response time</div>
     </div>
-    <div style="text-align:center">
-      <div style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{'#4ead7a' if (restaurant.reviews_live or restaurant.gmb_refresh_token) else '#d4a030'}}">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
-      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:4px">Source</div>
+    <div style="text-align:center;min-width:60px">
+      <div style="font-size:22px;font-weight:600;letter-spacing:-.5px;color:{{'#4ead7a' if (restaurant.reviews_live or restaurant.gmb_refresh_token) else '#d4a030'}};line-height:1.2;height:28px;display:flex;align-items:center;justify-content:center">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Source</div>
     </div>
   </div>
+  </div><!-- /stats max-width -->
 
   <!-- Padded content below stats -->
   <div style="max-width:1080px;margin:0 auto;padding:0 28px">
 
-  <!-- Review request card -->
-  <div id="rr-card" class="card" style="padding:14px 18px;margin-bottom:14px;border-left:3px solid var(--ember);background:rgba(200,75,47,.04)">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
-      <div>
-        <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember);margin-bottom:3px">Request a review</div>
-        <div style="font-size:12px;color:var(--ink3)">Send a customer a direct link to leave a Google review — takes 60 seconds for them</div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <input id="rr-name"  type="text"  placeholder="Customer name (optional)" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;padding:7px 11px;border:1px solid var(--paper3);border-radius:6px;width:160px;outline:none;color:var(--ink)">
-        <input id="rr-email" type="email" placeholder="Email (optional)" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;padding:7px 11px;border:1px solid var(--paper3);border-radius:6px;width:160px;outline:none;color:var(--ink)">
-        <input id="rr-phone" type="tel"   placeholder="Phone for SMS (optional)" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;padding:7px 11px;border:1px solid var(--paper3);border-radius:6px;width:172px;outline:none;color:var(--ink)">
-        <button onclick="sendReviewRequest(this)" class="btn-primary" style="padding:7px 16px">Send request<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-      </div>
-    </div>
-    <div id="rr-stat" style="margin-top:8px;font-size:11px;color:var(--ink3)">
-      Sent this month: <strong id="rr-sent-mo">—</strong> &nbsp;·&nbsp; All time: <strong id="rr-sent-total">—</strong>
-    </div>
+  <!-- Request a review trigger -->
+  <div id="rr-card" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <div style="font-size:11px;color:var(--ink3)"><strong id="rr-sent-mo-inline">—</strong> requests sent this month &nbsp;·&nbsp; <strong id="rr-sent-total-inline">—</strong> all time</div>
+    <button onclick="document.getElementById('rr-modal').style.display='flex'" class="btn-primary" style="padding:7px 18px;font-size:12px">+ Request a review</button>
   </div>
 
   <div id="review-savings-bar" style="display:{% if savings_breakdown and savings_breakdown.reviews > 0 %}flex{% else %}none{% endif %};background:linear-gradient(to right,#0d2b1a,#0f3020);border:1px solid #1a3d24;border-radius:8px;padding:10px 16px;margin-bottom:14px;align-items:center;justify-content:space-between">
@@ -1485,6 +1474,22 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div><!-- /rv-inbox-reviews -->
 </div><!-- /outer-content-wrapper -->
 </div><!-- /panel-reviews -->
+
+<!-- Review request modal -->
+<div id="rr-modal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(14,12,10,.72);align-items:center;justify-content:center" onclick="if(event.target===this)this.style.display='none'">
+  <div style="background:var(--paper);border-radius:14px;padding:32px;max-width:460px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 40px rgba(0,0,0,.45)">
+    <button onclick="document.getElementById('rr-modal').style.display='none'" style="position:absolute;top:12px;right:14px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3);line-height:1">&#x2715;</button>
+    <div style="font-family:'Fraunces',serif;font-size:22px;color:var(--ink);margin-bottom:4px">Request a review</div>
+    <div style="font-size:12px;color:var(--ink3);margin-bottom:20px">Send a customer a direct link to leave a Google review — takes 60 seconds for them.</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <input id="rr-name"  type="text"  placeholder="Customer name (optional)" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
+      <input id="rr-email" type="email" placeholder="Email address (optional)" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
+      <input id="rr-phone" type="tel"   placeholder="Phone number for SMS (optional)" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
+    </div>
+    <div style="font-size:11px;color:var(--ink3);margin:10px 0 4px">Sent this month: <strong id="rr-sent-mo">—</strong> &nbsp;·&nbsp; All time: <strong id="rr-sent-total">—</strong></div>
+    <button onclick="sendReviewRequest(this)" class="btn-primary" style="width:100%;padding:11px;margin-top:14px;font-size:13px">Send request<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:6px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+  </div>
+</div>
 
 <!-- 2FA setup modal — lives at body level so position:fixed covers full viewport -->
 <div id="twofa-modal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(14,12,10,0.72);align-items:center;justify-content:center">
@@ -3863,7 +3868,7 @@ function updateReviewStats(){
     var ratingEl = document.getElementById('stat-rating');
     var ratingNEl = document.getElementById('stat-rating-n');
     if(ratingEl && ratingNEl && d.avg_rating !== undefined){
-      ratingNEl.textContent = d.avg_rating + '★';
+      ratingNEl.textContent = d.avg_rating;
       ratingNEl.style.color = d.avg_rating >= 4.5 ? '#4ead7a' : d.avg_rating >= 3.5 ? '#d4a030' : '#e05555';
     }
 
@@ -3977,6 +3982,7 @@ function sendReviewRequest(btn){
       if(phoneEl) phoneEl.value = '';
       nameEl.value  = '';
       loadReviewRequestStats();
+      setTimeout(function(){ document.getElementById('rr-modal').style.display='none'; }, 800);
     } else {
       toast('Error: ' + (d.error || 'Failed to send'),'error');
     }
@@ -3989,10 +3995,9 @@ function sendReviewRequest(btn){
 
 function loadReviewRequestStats(){
   fetch('/api/review-request-stats').then(function(r){ return r.json(); }).then(function(d){
-    var moEl    = document.getElementById('rr-sent-mo');
-    var totalEl = document.getElementById('rr-sent-total');
-    if(moEl)    moEl.textContent    = d.sent_this_month || 0;
-    if(totalEl) totalEl.textContent = d.total_sent      || 0;
+    var els = ['rr-sent-mo-inline','rr-sent-mo','rr-sent-total-inline','rr-sent-total'];
+    var vals = [d.sent_this_month||0, d.sent_this_month||0, d.total_sent||0, d.total_sent||0];
+    for(var _i=0;_i<els.length;_i++){var _e=document.getElementById(els[_i]);if(_e)_e.textContent=vals[_i];}
   }).catch(function(){});
 }
 
