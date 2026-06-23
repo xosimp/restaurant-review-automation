@@ -646,6 +646,22 @@ function clientUpload(dataType, input) {
     });
 }
 </script>
+<style>
+.pjs-loading #stat-rating-n,
+.pjs-loading #stat-rr-n,
+.pjs-loading #stat-received-mo-n,
+.pjs-loading #stat-pending-n,
+.pjs-loading #stat-positive-n,
+.pjs-loading #stat-urgent-n,
+.pjs-loading #stat-responded-mo-n,
+.pjs-loading #stat-resp-time-n{visibility:hidden}
+</style>
+<script>
+document.documentElement.classList.add('pjs-loading');
+(document.fonts ? document.fonts.load('800 16px "Plus Jakarta Sans"') : Promise.resolve()).then(function(){
+  document.documentElement.classList.remove('pjs-loading');
+});
+</script>
 </head>
 <body>
 
