@@ -1609,7 +1609,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     {% endif %}
     <div style="display:flex;align-items:center;gap:10px">
       {% if not restaurant.toast_restaurant_guid %}
-      <label style="display:inline-flex;align-items:center;gap:6px;background:#c84b2f;color:white;padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">
+      <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px">
         {% if labor.is_live %}Update CSV{% else %}📂 Upload shifts CSV{% endif %}
         <input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)">
       </label>
@@ -1656,28 +1656,28 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </div>
       <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
         <div>
-          <span id="gap-current-pct" style="font-size:48px;font-weight:800;color:var(--paper);line-height:1;letter-spacing:-1px">{{labor.overall_labor_pct}}%</span>
+          <span id="gap-current-pct" style="font-family:'Space Grotesk',sans-serif;font-size:48px;font-weight:700;color:var(--paper);line-height:1;letter-spacing:-1px">{{labor.overall_labor_pct}}%</span>
           <span style="font-size:13px;color:var(--ink3);margin-left:6px">current</span>
           {% if labor.trend_delta is not none and labor.trend_delta != 0 %}
-          <span style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:12px;margin-left:8px;{% if labor.trend_delta > 0 %}background:rgba(192,57,43,0.25);color:#ff9b8a{% else %}background:rgba(45,106,79,0.25);color:#6fcf97{% endif %}">
+          <span style="font-family:'Space Grotesk',sans-serif;font-size:11px;font-weight:700;padding:2px 7px;border-radius:12px;margin-left:8px;{% if labor.trend_delta > 0 %}background:rgba(192,57,43,0.25);color:#ff9b8a{% else %}background:rgba(45,106,79,0.25);color:#6fcf97{% endif %}">
             {% if labor.trend_delta > 0 %}↑{% else %}↓{% endif %} {{labor.trend_delta|abs|round(1)}}% vs last period
           </span>
           {% endif %}
         </div>
         <div style="color:var(--ink3)"><svg width="20" height="20" viewBox="0 0 16 16" fill="none" style="vertical-align:middle"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".12"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         <div>
-          <span style="font-size:32px;font-weight:800;color:#6fcf97;line-height:1;letter-spacing:-1px">{{labor_target|default(30.0)}}%</span>
+          <span style="font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:700;color:#6fcf97;line-height:1;letter-spacing:-1px">{{labor_target|default(30.0)}}%</span>
           <span style="font-size:13px;color:var(--ink3);margin-left:4px">target</span>
         </div>
       </div>
       <div id="gap-dollar" style="font-size:13px;color:var(--ember2);margin-top:6px;font-weight:500">{% if labor.overall_labor_pct > labor.labor_target|default(30.0) %}Your labor is at {{labor.overall_labor_pct}}% vs {{labor.labor_target|default(30.0)}}% target — loading gap calculation…{% else %}Your labor is on target at {{labor.overall_labor_pct}}% — great work.{% endif %}</div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-        <span style="font-size:11px;color:var(--ink3);background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:3px 10px">Revenue (2 wks) &nbsp;<strong style="color:var(--paper)">${{labor.total_sales|int|format_num}}</strong></span>
-        <span style="font-size:11px;color:var(--ink3);background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:3px 10px">Labor cost (2 wks) &nbsp;<strong style="color:{% if labor.overall_labor_pct > (labor.labor_target|default(30.0)) + 5 %}#ff9b8a{% elif labor.overall_labor_pct > (labor.labor_target|default(30.0)) %}#ef9f27{% else %}#6fcf97{% endif %}">${{labor.total_labor_cost|int|format_num}}</strong></span>
+        <span style="font-size:11px;color:var(--ink3);background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:3px 10px">Revenue (2 wks) &nbsp;<strong style="font-family:'Space Grotesk',sans-serif;color:var(--paper)">${{labor.total_sales|int|format_num}}</strong></span>
+        <span style="font-size:11px;color:var(--ink3);background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:3px 10px">Labor cost (2 wks) &nbsp;<strong style="font-family:'Space Grotesk',sans-serif;color:{% if labor.overall_labor_pct > (labor.labor_target|default(30.0)) + 5 %}#ff9b8a{% elif labor.overall_labor_pct > (labor.labor_target|default(30.0)) %}#ef9f27{% else %}#6fcf97{% endif %}">${{labor.total_labor_cost|int|format_num}}</strong></span>
       </div>
     </div>
     <div style="text-align:right">
-      <div id="gap-amount" style="font-size:36px;font-weight:800;color:var(--ember2);line-height:1;letter-spacing:-1px">—</div>
+      <div id="gap-amount" style="font-family:'Space Grotesk',sans-serif;font-size:36px;font-weight:700;color:var(--ember2);line-height:1;letter-spacing:-1px">—</div>
       <div style="font-size:11px;color:var(--ink3);margin-top:4px">estimated monthly overspend</div>
 
       <button onclick="generateSchedule(this)" id="gen-sched-btn" class="btn-primary" style="margin-top:12px;padding:9px 18px">
