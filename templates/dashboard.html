@@ -1994,8 +1994,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <!-- Chart + target line wrapper -->
       <div style="flex:1;position:relative">
         <div id="perf-gridlines" style="position:absolute;inset:0 0 0 0;pointer-events:none;z-index:0"></div>
-        <div id="perf-target-line" style="position:absolute;left:0;right:0;height:1px;background:rgba(200,75,47,.7);z-index:3;pointer-events:none;display:flex;align-items:flex-end;justify-content:flex-end">
-          <span style="font-size:9px;font-family:'Space Grotesk',sans-serif;color:rgba(200,75,47,.9);padding:0 4px 2px;white-space:nowrap">{{labor_target|default(30.0)}}% target</span>
+        <div id="perf-target-line" style="position:absolute;left:0;right:0;height:2px;background:repeating-linear-gradient(90deg,rgba(200,75,47,.9) 0px,rgba(200,75,47,.9) 8px,transparent 8px,transparent 14px);z-index:3;pointer-events:none">
+          <span style="position:absolute;right:0;bottom:4px;font-size:10px;font-family:'Space Grotesk',sans-serif;font-weight:700;color:#e8956a;background:rgba(18,12,8,.85);padding:1px 6px;border-radius:4px;white-space:nowrap;letter-spacing:.3px">{{labor_target|default(30.0)}}% target</span>
         </div>
         <div id="perf-bars" style="height:200px;display:flex;align-items:flex-end;gap:5px;position:relative;z-index:1">
           <div style="color:rgba(255,255,255,.3);font-size:12px;font-style:italic;align-self:center;padding:16px">Loading…</div>
@@ -3900,6 +3900,8 @@ function clearFilters(){
     if (thumb) thumb.style.transform = isDark ? 'translateX(20px)' : 'none';
     var activeTab = (document.querySelector('.tab.active')||{}).id||'';
     setPageBg(activeTab.replace('tab-','') || 'home');
+    var _pt=document.getElementById('perf-tab-trend');
+    if(_pt)_pt.style.background=_perfActiveColor();
   });
 })();
 
@@ -4469,13 +4471,20 @@ var _laborTarget={{labor_target|default(30.0)}};
 var _perfTab='trend';
 var _perfTrendData=null;
 var _perfDowData=null;
+var _perfDowPeriod='{% if labor.date_range and labor.date_range.start %}{{labor.date_range.start[5:7]|int}}/{{labor.date_range.start[8:10]|int}}/{{labor.date_range.start[2:4]}} – {{labor.date_range.end[5:7]|int}}/{{labor.date_range.end[8:10]|int}}/{{labor.date_range.end[2:4]}}{% endif %}';
+var _perfTrendPeriod='';
+
+function _perfActiveColor(){return _dark()?'#923020':'var(--ember)';}
 
 function switchPerfTab(tab){
   _perfTab=tab;
   var t=document.getElementById('perf-tab-trend');
   var d=document.getElementById('perf-tab-dow');
-  if(t){t.style.background=tab==='trend'?'var(--ember)':'transparent';t.style.color=tab==='trend'?'white':'rgba(255,255,255,.45)';}
-  if(d){d.style.background=tab==='dow'?'var(--ember)':'transparent';d.style.color=tab==='dow'?'white':'rgba(255,255,255,.45)';}
+  var ac=_perfActiveColor();
+  if(t){t.style.background=tab==='trend'?ac:'transparent';t.style.color=tab==='trend'?'white':'rgba(255,255,255,.45)';}
+  if(d){d.style.background=tab==='dow'?ac:'transparent';d.style.color=tab==='dow'?'white':'rgba(255,255,255,.45)';}
+  var pEl=document.getElementById('perf-period-label');
+  if(pEl)pEl.textContent=tab==='trend'?_perfTrendPeriod:_perfDowPeriod;
   renderPerfChart();
 }
 
@@ -5421,6 +5430,11 @@ function loadLaborTrend(){
   fetch('/api/labor-trend').then(function(r){return r.json();}).then(function(data){
     if(!data.weeks||!data.weeks.length){_perfTrendData=[];renderPerfChart();return;}
     _perfTrendData=data.weeks.map(function(w){return{pct:w.pct,label:w.label};});
+    var first=data.weeks[0].label;
+    var last=data.weeks[data.weeks.length-1].label;
+    _perfTrendPeriod=first===last?first:first+' – '+last;
+    var pEl=document.getElementById('perf-period-label');
+    if(pEl&&_perfTab==='trend')pEl.textContent=_perfTrendPeriod;
     if(_perfTab==='trend')renderPerfChart();
   }).catch(function(){_perfTrendData=[];renderPerfChart();});
 }
