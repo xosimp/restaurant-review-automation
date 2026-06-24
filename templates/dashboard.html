@@ -235,6 +235,8 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] #rate-card{background:linear-gradient(to right,#2a1010,var(--surface))!important}
 /* Platform breakdown cards */
 .plat-card{background:var(--paper);border:1px solid var(--paper3);border-radius:8px;padding:12px 14px;cursor:pointer;transition:box-shadow .15s,border-color .15s}
+.hm-stat-tile{flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity 60ms}
+.hm-stat-tile:hover{opacity:.72}
 .plat-worst{background:linear-gradient(to bottom,#f5d5d5,var(--paper));border-color:#f5c6c6}
 .plat-best{background:linear-gradient(to bottom,#d5ede0,var(--paper));border-color:#b7dfca}
 [data-theme="dark"] .plat-card{background:var(--surface)!important;border-color:var(--paper3)!important}
@@ -1002,7 +1004,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 <div style="display:flex;align-items:stretch;margin-bottom:36px;padding:12px 0 32px">
 
   <!-- Reviews -->
-  <div style="flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity .15s" onclick="switchTab('reviews',document.getElementById('tab-reviews'))" onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'">
+  <div class="hm-stat-tile" onclick="switchTab('reviews',document.getElementById('tab-reviews'))">
     <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span id="home-responded-n" class="stat-shimmer" data-countup="{{rstats.responded or 0}}" data-countup-int="1">0</span><span id="home-total-n" style="font-size:.45em;font-weight:400;color:var(--ink3);letter-spacing:0;margin-left:4px">/{{rstats.total or 0}}</span></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Reviews</div>
     <div id="home-rr-sub" style="font-size:11px;color:var(--ink3);margin-top:4px">{{rstats.response_rate or 0}}% response rate</div>
@@ -1012,7 +1014,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
   <!-- Labor cost -->
   {% if mod_labor %}
-  <div style="flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity .15s" onclick="switchTab('labor',document.getElementById('tab-labor'))" onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'">
+  <div class="hm-stat-tile" onclick="switchTab('labor',document.getElementById('tab-labor'))">
     <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span class="stat-shimmer" data-countup="{{labor.overall_labor_pct|round(1)}}" data-countup-decimals="1">0</span><span style="font-size:.5em;font-weight:400;color:var(--ink3);letter-spacing:0;margin-left:2px">%</span></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Labor Cost</div>
     <div style="font-size:11px;color:var(--ink3);margin-top:4px">target {{labor_target}}%<br>{% if labor.overall_labor_pct <= labor_target %}<span style="color:var(--green);font-weight:600">on track</span>{% else %}<span style="color:var(--red);font-weight:600">over target</span>{% endif %}</div>
@@ -1029,7 +1031,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
   <!-- Food cost -->
   {% if mod_inventory %}
-  <div style="flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity .15s" onclick="switchTab('inventory',document.getElementById('tab-inventory'))" onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'">
+  <div class="hm-stat-tile" onclick="switchTab('inventory',document.getElementById('tab-inventory'))">
     <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span style="font-size:.6em;font-weight:400;vertical-align:baseline;color:var(--ink3);margin-right:3px">$</span><span class="stat-shimmer" data-countup="{{(inv.recoverable_monthly or 0)|int}}" data-countup-int="1">0</span></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Food Cost</div>
     <div style="font-size:11px;color:var(--ink3);margin-top:4px">recoverable waste / mo</div>
@@ -1046,7 +1048,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
   <!-- Marketing -->
   {% if mod_marketing %}
-  <div style="flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity .15s" onclick="switchTab('marketing',document.getElementById('tab-marketing'))" onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'">
+  <div class="hm-stat-tile" onclick="switchTab('marketing',document.getElementById('tab-marketing'))">
     <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span class="stat-shimmer" data-countup="{{mkt_stats.this_month or 0}}" data-countup-int="1">0</span></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Marketing</div>
     <div style="font-size:11px;color:var(--ink3);margin-top:4px">pieces this month</div>
