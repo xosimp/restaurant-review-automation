@@ -443,7 +443,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .cal-day{background:white;border:1px solid var(--paper3);border-radius:6px;padding:8px 6px;font-size:10px}
 .cal-day-name{font-weight:500;color:var(--ink2);margin-bottom:3px}
 .cal-platform{font-size:8px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);margin-bottom:2px}
-.btn-primary{background:var(--ember);color:white;padding:8px 16px;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
+.btn-primary{background:var(--ember);color:white;padding:0 16px;height:34px;display:inline-flex;align-items:center;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
 .btn-primary:hover{background:#a83d25;box-shadow:0 2px 8px rgba(200,75,47,.18);transform:translateY(-1px)}
 .btn-primary:active{transform:scale(.97)}
 .btn-secondary{background:white;color:var(--ink2);border:1px solid var(--paper3);padding:8px 16px;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
@@ -1603,8 +1603,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </label>
       {% endif %}
       <div style="display:inline-flex;box-shadow:0 0 0 1px var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-        <button id="lb-tab-schedule"  onclick="switchLaborTab('schedule')"  class="rv-tab-active" style="border:none;padding:8px 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Schedule</button>
-        <button id="lb-tab-analytics" onclick="switchLaborTab('analytics')" style="border:none;padding:8px 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
+        <button id="lb-tab-schedule"  onclick="switchLaborTab('schedule')"  class="rv-tab-active" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Schedule</button>
+        <button id="lb-tab-analytics" onclick="switchLaborTab('analytics')" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
       </div>
     </div>
   </div>
@@ -4767,7 +4767,7 @@ function loadLaborInsight(){
       if(msgEl) msgEl.textContent='You are at '+d.current_pct+'% vs your '+_laborTarget+'% target — that gap is costing around $'+Math.round(d.monthly_gap).toLocaleString()+'/mo. An optimized schedule can help close it.';
       if(pctEl) pctEl.style.color='#ef9f27';
     } else {
-      if(gapEl){ gapEl.textContent='On target ✓'; gapEl.style.color='#6fcf97'; gapEl.style.fontFamily="'Fraunces',serif"; gapEl.style.fontStyle='italic'; }
+      if(gapEl){ gapEl.textContent='On target ✓'; gapEl.style.color='#6fcf97'; gapEl.style.fontFamily="'Fraunces',serif"; gapEl.style.fontStyle='normal'; }
       if(msgEl) msgEl.textContent='Your labor is at '+d.current_pct+'% — at or below your '+_laborTarget+'% target. Great work. Keep an eye on individual days that spike.';
       if(pctEl) pctEl.style.color='#6fcf97';
     }
