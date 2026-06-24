@@ -729,7 +729,10 @@ def index(current_user):
                         _days = (_hdate - _now_labor).days
                         if 0 <= _days <= 21:
                             _name = _chunk[:_chunk.rfind("(")].strip()
-                            _labor_upcoming.append({"name": _name, "days_away": _days, "date_str": _m.group(1)})
+                            _d = _hdate.day
+                            _suf = "th" if 11 <= _d <= 13 else {1:"st",2:"nd",3:"rd"}.get(_d % 10, "th")
+                            _date_str = _hdate.strftime("%B %-d") + _suf
+                            _labor_upcoming.append({"name": _name, "days_away": _days, "date_str": _date_str})
                     except Exception:
                         pass
     except Exception:

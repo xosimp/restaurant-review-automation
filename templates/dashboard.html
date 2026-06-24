@@ -191,6 +191,7 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 .rv-tab-active{background:var(--ember)!important;color:#fff!important}
 [data-theme="dark"] .rv-tab-active{background:#923020!important}
 #rv-tab-inbox:not(.rv-tab-active),#rv-tab-analytics:not(.rv-tab-active){background:transparent!important;color:var(--ink3)!important}
+#lb-tab-schedule:not(.rv-tab-active),#lb-tab-analytics:not(.rv-tab-active){background:transparent!important;color:var(--ink3)!important}
 [data-theme="dark"] .btn-link-ember{background:#923020!important}
 [data-theme="dark"] .btn-link-ember:hover{background:#7a2818!important;box-shadow:0 2px 8px rgba(146,48,32,.2)!important}
 [data-theme="dark"] button[style*="background:#c84b2f"],
@@ -1592,7 +1593,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
 <!-- LABOR -->
 <div class="panel {{'active' if not mod_reviews and mod_labor}}" id="panel-labor">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+  <!-- Labor header: status left, tab toggle + CSV right -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px">
     {% if restaurant and restaurant.toast_restaurant_guid %}
       <div style="display:flex;align-items:center;gap:6px;font-size:11px">
         <span style="display:inline-flex;align-items:center;gap:5px;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;padding:4px 10px;border-radius:20px;font-weight:600">
@@ -1604,18 +1606,18 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div style="font-size:11px;color:var(--ink3)">Data updates nightly automatically</div>
     {% else %}
       <div style="font-size:11px;color:var(--ink3)">{% if labor.is_live %}<span style="color:#2d6a4f;font-weight:600">✓ Live data</span> — upload a new CSV anytime to update{% else %}<span style="color:#8a6a00;font-weight:600">Sample data</span> — upload your shift CSV to see real numbers{% endif %}</div>
+    {% endif %}
+    <div style="display:flex;align-items:center;gap:10px">
+      {% if not restaurant.toast_restaurant_guid %}
       <label style="display:inline-flex;align-items:center;gap:6px;background:#c84b2f;color:white;padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">
         {% if labor.is_live %}Update CSV{% else %}📂 Upload shifts CSV{% endif %}
         <input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)">
       </label>
-    {% endif %}
-  </div>
-
-  <!-- Labor sub-tab toggle -->
-  <div style="display:flex;justify-content:flex-end;margin-bottom:20px">
-    <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-      <button id="lb-tab-schedule"  onclick="switchLaborTab('schedule')"  class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Schedule</button>
-      <button id="lb-tab-analytics" onclick="switchLaborTab('analytics')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
+      {% endif %}
+      <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
+        <button id="lb-tab-schedule"  onclick="switchLaborTab('schedule')"  class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Schedule</button>
+        <button id="lb-tab-analytics" onclick="switchLaborTab('analytics')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
+      </div>
     </div>
   </div>
 
@@ -1778,7 +1780,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div>
       <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px">
         <div class="slabel" style="margin-bottom:0">Overstaffed days — where the money is going</div>
-        {% if labor.overstaffed_days|length > 5 %}
+        {% if labor.overstaffed_days|length > 10 %}
         <button onclick="toggleRows('overstaffed-tbody','overstaffed-toggle',{{labor.overstaffed_days|length}})" id="overstaffed-toggle" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.overstaffed_days|length}} ↓</button>
         {% endif %}
       </div>
@@ -1788,7 +1790,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         {% for d in labor.overstaffed_days %}
         {% set diff = (d.labor_pct - (labor_target|default(30.0)))|round(1) %}
         {% set is_top_cost = loop.first %}
-        <tr class="{% if loop.index > 5 %}collapsible-row overstaffed-extra{% endif %}" style="{% if is_top_cost %}background:linear-gradient(to right,#f5d5d5,#fdf0f0,white);border-left:3px solid #c0392b;{% else %}border-left:3px solid transparent;{% endif %}{% if loop.index > 5 %}display:none;{% endif %}">
+        <tr class="{% if loop.index > 10 %}collapsible-row overstaffed-extra{% endif %}" style="{% if is_top_cost %}background:linear-gradient(to right,#f5d5d5,#fdf0f0,white);border-left:3px solid #c0392b;{% else %}border-left:3px solid transparent;{% endif %}{% if loop.index > 10 %}display:none;{% endif %}">
           <td style="color:var(--ink3);font-size:11px">{{d.date}}</td>
           <td style="font-weight:{% if is_top_cost %}700{% else %}500{% endif %}">{{d.day}}{% if is_top_cost %} <span style="font-size:9px;font-weight:700;background:#fde8e8;color:#c0392b;padding:1px 5px;border-radius:8px;margin-left:4px;vertical-align:middle">most expensive</span>{% endif %}</td>
           <td>${{d.sales|int|format_num}}</td>
@@ -1843,7 +1845,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Understaffed days — full width -->
   <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:16px;margin-bottom:4px">
     <div class="slabel" style="margin-bottom:0">Understaffed days — possible missed revenue ⚠</div>
-    {% if labor.understaffed_days|length > 5 %}
+    {% if labor.understaffed_days|length > 10 %}
     <button onclick="toggleRows('understaffed-tbody','understaffed-toggle',{{labor.understaffed_days|length}})" id="understaffed-toggle" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.understaffed_days|length}} ↓</button>
     {% endif %}
   </div>
@@ -1854,7 +1856,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor %</th><th>Why it matters</th></tr></thead>
       <tbody id="understaffed-tbody">
       {% for d in labor.understaffed_days %}
-      <tr{% if loop.index > 5 %} style="display:none"{% endif %}>
+      <tr{% if loop.index > 10 %} style="display:none"{% endif %}>
         <td style="color:var(--ink3);font-size:11px">{{d.date}}</td>
         <td style="font-weight:600">{{d.day}}</td>
         <td>${{d.sales|int|format_num}}</td>
@@ -1868,7 +1870,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </table>
     {% if labor.understaffed_days %}
     <div class="understaffed-tip" style="padding:10px 16px;font-size:11px;color:#7a4f00;background:rgba(239,159,39,0.06);border-top:1px solid rgba(239,159,39,0.15);position:relative;z-index:1">
-      💡 Consider adding 1–2 staff on your highest-revenue days: {% for d in labor.understaffed_days[:5] %}<strong>{{d.date}} ({{d.day}})</strong>{% if not loop.last %}, {% endif %}{% endfor %}{% if labor.understaffed_days|length > 5 %} and {{labor.understaffed_days|length - 5}} more{% endif %} — volume on these days justifies the coverage and drives higher check averages.
+      💡 Consider adding 1–2 staff on your highest-revenue days: {% for d in labor.understaffed_days[:5] %}<strong>{{d.date}} ({{d.day}})</strong>{% if not loop.last %}, {% endif %}{% endfor %}{% if labor.understaffed_days|length > 10 %} and {{labor.understaffed_days|length - 5}} more{% endif %} — volume on these days justifies the coverage and drives higher check averages.
     </div>
     {% endif %}
   </div>
