@@ -1877,12 +1877,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div class="stat-glow-green labor-num" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">${{savings_breakdown.labor_monthly|format_num}}</div>
         <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Monthly savings</div>
         <div style="font-size:10px;color:var(--ink3);margin-top:3px">if schedule optimized</div>
-        <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Weekly overspend × 4.33 weeks, based on your actual sales and labor % vs target.</span></span>
+        <span class="calc-tip calc-tip-up"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Weekly overspend × 4.33 weeks, based on your actual sales and labor % vs target.</span></span>
       {% else %}
         <div class="stat-glow-green labor-num" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">${{savings_breakdown.labor_vs_industry_monthly|format_num}}</div>
         <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Saving vs. industry avg</div>
         <div style="font-size:10px;color:var(--ink3);margin-top:3px">per month vs. 32% avg</div>
-        <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Your labor % is below the 32% full-service restaurant industry average. This is the monthly dollar difference.</span></span>
+        <span class="calc-tip calc-tip-up"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Your labor % is below the 32% full-service restaurant industry average. This is the monthly dollar difference.</span></span>
       {% endif %}
     </div>
     <div class="rv-stat-cell" style="padding:20px 16px">
@@ -1890,12 +1890,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div class="stat-glow-green labor-num" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">${{savings_breakdown.labor_annual|format_num}}</div>
         <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Annual savings</div>
         <div style="font-size:10px;color:var(--ink3);margin-top:3px">extrapolated yearly</div>
-        <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Monthly savings potential × 12 months.</span></span>
+        <span class="calc-tip calc-tip-up"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Monthly savings potential × 12 months.</span></span>
       {% else %}
         <div class="stat-glow-green labor-num" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">${{savings_breakdown.labor_vs_industry_annual|format_num}}</div>
         <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Annual advantage</div>
         <div style="font-size:10px;color:var(--ink3);margin-top:3px">vs. 32% industry avg/yr</div>
-        <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Monthly industry-average savings × 12 months. You're staying below the 32% full-service benchmark.</span></span>
+        <span class="calc-tip calc-tip-up"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Monthly industry-average savings × 12 months. You're staying below the 32% full-service benchmark.</span></span>
       {% endif %}
     </div>
     {% if savings_breakdown.labor_overtime > 0 %}
@@ -1903,11 +1903,11 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div class="stat-glow-red labor-num" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">${{savings_breakdown.labor_overtime|format_num}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Overtime premium</div>
       <div style="font-size:10px;color:var(--ink3);margin-top:3px">0.5× rate on hours over 40</div>
-      <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Hours over 40 × hourly rate × 0.5 — standard FLSA overtime premium.</span></span>
+      <span class="calc-tip calc-tip-up"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Hours over 40 × hourly rate × 0.5 — standard FLSA overtime premium.</span></span>
     </div>
     {% endif %}
     <div class="rv-stat-cell" style="padding:20px 16px">
-      <div class="{% if labor.overstaffed_days|length > 0 %}stat-glow-amber{% endif %} labor-num" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em{% if labor.overstaffed_days|length == 0 %};color:var(--ink3){% endif %}">{{labor.overstaffed_days|length}}</div>
+      <div class="{% if labor.overstaffed_days|length > 0 %}stat-glow-amber{% endif %}" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em{% if labor.overstaffed_days|length == 0 %};color:var(--ink3){% endif %}">{{labor.overstaffed_days|length}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Overstaffed days</div>
       <div style="font-size:10px;color:var(--ink3);margin-top:3px">vs {{labor.understaffed_days|length}} understaffed</div>
     </div>
@@ -1945,30 +1945,72 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
-  <!-- Role cost breakdown -->
+  <!-- Role cost breakdown — donut ring chart -->
   {% if labor.role_summary %}
-  <div class="card" id="role-cost-card" style="padding:14px 16px;margin-bottom:14px;border-left:3px solid #2d6a4f;background:linear-gradient(to right,#e8f4ee,white)">
-    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink);margin-bottom:12px">Labor cost by role</div>
-    <div style="display:flex;flex-direction:column;gap:8px">
-    {% set max_role_pct = labor.role_max_pct|default(30.0) %}
-    {% for role, data in labor.role_summary_sorted %}
-    {% set bar_w = ((data.labor_pct / max_role_pct) * 100)|int if max_role_pct > 0 else 0 %}
-    {% set role_color = '#c0392b' if data.labor_pct > (labor_target|default(30.0)) else ('#ef9f27' if data.labor_pct > (labor_target|default(30.0) - 5) else '#2d6a4f') %}
-    <div style="display:flex;align-items:center;gap:10px">
-      <div style="width:90px;font-size:11px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{role}}</div>
-      <div class="role-bar-track" style="flex:1;position:relative;height:8px;background:var(--paper3);border-radius:4px;overflow:hidden">
-        <div style="position:absolute;left:0;top:0;height:100%;width:{{bar_w}}%;background:{{role_color}};border-radius:4px;transition:width .4s"></div>
-      </div>
-      <div style="display:flex;gap:8px;font-size:11px;min-width:160px">
-        <span style="color:{{role_color}};font-weight:700">{{data.labor_pct}}%</span>
-        <span style="color:var(--ink3)">{{data.hours}}h</span>
-        <span style="color:var(--ink3)">{{data.headcount}} staff</span>
-        <span style="color:var(--ink3)">${{data.labor_cost|int|format_num}}</span>
-      </div>
+  <div style="background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%);border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:20px 24px;margin-bottom:14px;position:relative;overflow:hidden;box-shadow:0 0 0 1px rgba(200,75,47,.1),0 8px 32px rgba(200,75,47,.18)">
+    <div style="position:absolute;top:-40px;right:-60px;width:280px;height:200px;background:radial-gradient(ellipse at center,rgba(200,75,47,.12) 0%,transparent 70%);pointer-events:none;z-index:0"></div>
+    <div style="display:flex;align-items:center;margin-bottom:16px;position:relative;z-index:1">
+      <span style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,.4)">Labor Cost by Role</span>
     </div>
-    {% endfor %}
+    <div style="display:flex;align-items:center;gap:28px;position:relative;z-index:1;flex-wrap:wrap">
+      <div style="position:relative;flex-shrink:0;width:180px;height:180px">
+        <svg id="role-donut-svg" viewBox="0 0 200 200" width="180" height="180" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none">
+          <div id="role-donut-total" style="font-family:'Space Grotesk',sans-serif;font-size:20px;font-weight:700;color:white;line-height:1"></div>
+          <div style="font-size:9px;font-weight:700;letter-spacing:.08em;color:rgba(255,255,255,.3);margin-top:4px;text-transform:uppercase">Total</div>
+        </div>
+      </div>
+      <div id="role-donut-legend" style="flex:1;min-width:200px"></div>
     </div>
   </div>
+  <script>
+  var _roleColors=['#c84b2f','#6fcf97','#ef9f27','#60adf5','#b39df3','#f472b6','#4dd0e1'];
+  var _roleData=[
+    {% for role, data in labor.role_summary_sorted %}
+    {"name":"{{role|e}}","pct":{{data.labor_pct}},"hours":"{{data.hours|default('0')}}","hc":{{data.headcount|default(0)}},"cost":{{data.labor_cost|int|default(0)}}},
+    {% endfor %}
+  ];
+  function _fmtK(n){if(n>=1000000)return '$'+(n/1000000).toFixed(1)+'M';if(n>=1000)return '$'+(n/1000).toFixed(0)+'k';return '$'+Math.round(n);}
+  function _fmtComma(n){return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,',');}
+  function renderRoleDonut(){
+    var svgEl=document.getElementById('role-donut-svg');
+    var legend=document.getElementById('role-donut-legend');
+    var totalEl=document.getElementById('role-donut-total');
+    if(!svgEl||!_roleData||!_roleData.length)return;
+    var r=72,cx=100,cy=100,sw=22;
+    var circ=2*Math.PI*r;
+    var gap=4;
+    var total=0;
+    for(var i=0;i<_roleData.length;i++)total+=_roleData[i].cost;
+    var circles='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="rgba(255,255,255,.05)" stroke-width="'+sw+'"/>';
+    var cumOffset=0;
+    for(var i=0;i<_roleData.length;i++){
+      var d=_roleData[i];
+      var col=_roleColors[i%_roleColors.length];
+      var segLen=total>0?(d.cost/total)*circ-gap:0;
+      if(segLen<0)segLen=0;
+      circles+='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+col+'" stroke-width="'+sw+'" stroke-dasharray="'+segLen+' '+(circ-segLen)+'" stroke-dashoffset="'+(-cumOffset)+'" transform="rotate(-90 '+cx+' '+cy+')" style="filter:drop-shadow(0 0 7px '+col+'99)"></circle>';
+      cumOffset+=segLen+gap;
+    }
+    svgEl.innerHTML=circles;
+    if(totalEl)totalEl.textContent=_fmtK(total);
+    var lhtml='';
+    for(var i=0;i<_roleData.length;i++){
+      var d=_roleData[i];
+      var col=_roleColors[i%_roleColors.length];
+      var isLast=i===_roleData.length-1;
+      lhtml+='<div style="display:flex;align-items:center;gap:10px;padding:7px 0;'+(isLast?'':'border-bottom:1px solid rgba(255,255,255,.05)')+'">';
+      lhtml+='<span style="width:9px;height:9px;border-radius:50%;background:'+col+';flex-shrink:0;box-shadow:0 0 7px '+col+'99"></span>';
+      lhtml+='<span style="font-size:12px;font-weight:600;color:rgba(255,255,255,.8);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.name+'</span>';
+      lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:12px;font-weight:700;color:'+col+';width:38px;text-align:right">'+d.pct+'%</span>';
+      lhtml+='<span style="font-size:11px;color:rgba(255,255,255,.3);width:38px;text-align:right">'+d.hours+'h</span>';
+      lhtml+='<span style="font-size:11px;color:rgba(255,255,255,.3);width:22px;text-align:right">'+d.hc+'</span>';
+      lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:11px;color:rgba(255,255,255,.5);width:56px;text-align:right">$'+_fmtComma(d.cost)+'</span>';
+      lhtml+='</div>';
+    }
+    if(legend)legend.innerHTML=lhtml;
+  }
+  </script>
   {% endif %}
 
   <!-- Labor performance chart — redesigned -->
@@ -3510,6 +3552,7 @@ window.switchLaborTab = function(tab) {
   var ta = document.getElementById('lb-tab-analytics');
   if(ts){ ts.classList.toggle('rv-tab-active', isSched); ts.style.background=''; ts.style.color = isSched ? '' : 'var(--ink3)'; }
   if(ta){ ta.classList.toggle('rv-tab-active', !isSched); ta.style.background=''; ta.style.color = isSched ? 'var(--ink3)' : ''; }
+  if(!isSched && typeof renderRoleDonut === 'function') renderRoleDonut();
 };
 
 window.switchReviewsTab = function(tab) {
