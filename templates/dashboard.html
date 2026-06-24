@@ -26,7 +26,7 @@
   --surface:#201d19;--hdr-bg:#0f0d0b
 }
 html[data-theme="dark"]{background:#1a1714!important;background-image:none!important}
-html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
+html[data-theme="dark"] body{color:var(--ink)}
 /* Review status badge dark mode overrides */
 [data-theme="dark"] .rv-status-approved{background:#0a1828!important;color:#6aabff!important}
 [data-theme="dark"] .rv-status-live{background:#0c2318!important;color:#4ead7a!important}
@@ -128,9 +128,6 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] #aiv-card{background:var(--surface)!important}
 [data-theme="dark"] #aiv-idle{background:#1a1428!important;border-color:#3a2d5a!important}
 [data-theme="dark"] #aiv-idle [style*="color:#374151"]{color:var(--ink)!important}
-[data-theme="dark"] #panel-home{background:radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.18) 40%,transparent 70%),linear-gradient(180deg,#0a0806 0%,#0e0c0a 100%)!important}
-#panel-reviews,#panel-labor,#panel-inventory,#panel-marketing,#panel-competitor{background:radial-gradient(ellipse 80% 40% at 50% 0%,rgba(200,75,47,.18) 0%,rgba(200,75,47,.05) 50%,transparent 75%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%)}
-[data-theme="dark"] #panel-reviews,[data-theme="dark"] #panel-labor,[data-theme="dark"] #panel-inventory,[data-theme="dark"] #panel-marketing,[data-theme="dark"] #panel-competitor{background:radial-gradient(ellipse 80% 40% at 50% 0%,rgba(200,75,47,.38) 0%,rgba(200,75,47,.12) 45%,transparent 75%),linear-gradient(180deg,#0a0806 0%,#0e0c0a 100%)!important}
 [data-theme="dark"] #panel-home [style*="background:var(--paper)"]{background:var(--surface)!important}
 [data-theme="dark"] #panel-home [style*="background:rgba(200,75,47,.06)"]{background:rgba(200,75,47,.12)!important}
 [data-theme="dark"] #panel-home [style*="background:rgba(192,57,43,.06)"]{background:rgba(192,57,43,.12)!important}
@@ -822,7 +819,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 </script>
 
 <!-- HOME -->
-<div class="panel active" id="panel-home" style="max-width:100%;padding:0;background:radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.32) 0%,rgba(200,75,47,.10) 45%,transparent 70%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%);min-height:100%;position:relative;overflow:hidden">
+<div class="panel active" id="panel-home" style="max-width:100%;padding:0;min-height:100%;position:relative;overflow:hidden">
 <div class="home-rays" aria-hidden="true">
   <div class="home-ray" style="left:7%;width:58px;animation:rayA 17s ease-in-out infinite"></div>
   <div class="home-ray" style="left:19%;width:40px;animation:rayB 21s ease-in-out infinite;animation-delay:-6s"></div>
@@ -1595,28 +1592,17 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 <div class="panel {{'active' if not mod_reviews and mod_labor}}" id="panel-labor">
   <!-- Labor header: status left, tab toggle + CSV right -->
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px">
-    {% if restaurant and restaurant.toast_restaurant_guid %}
-      <div style="display:flex;align-items:center;gap:6px;font-size:11px">
-        <span style="display:inline-flex;align-items:center;gap:5px;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;padding:4px 10px;border-radius:20px;font-weight:600">
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="4" fill="#22c55e"/></svg>
-          Live from Toast POS
-        </span>
-        {% if restaurant.toast_last_synced %}{% set _tsd = restaurant.toast_last_synced[:10].split('-') %}<span style="color:var(--ink3)">· Synced {{ _tsd[1]|int }}/{{ _tsd[2]|int }}/{{ _tsd[0][2:] }}</span>{% endif %}
-      </div>
-      <div style="font-size:11px;color:var(--ink3)">Data updates nightly automatically</div>
-    {% else %}
-      <div style="font-size:11px;color:var(--ink3)">{% if labor.is_live %}<span style="color:#2d6a4f;font-weight:600">✓ Live data</span> — upload a new CSV anytime to update{% else %}<span style="color:#8a6a00;font-weight:600">Sample data</span> — upload your shift CSV to see real numbers{% endif %}</div>
-    {% endif %}
+    <div></div>
     <div style="display:flex;align-items:center;gap:10px">
       {% if not restaurant.toast_restaurant_guid %}
-      <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px">
+      <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;font-size:12px">
         {% if labor.is_live %}Update CSV{% else %}📂 Upload shifts CSV{% endif %}
         <input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)">
       </label>
       {% endif %}
       <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-        <button id="lb-tab-schedule"  onclick="switchLaborTab('schedule')"  class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Schedule</button>
-        <button id="lb-tab-analytics" onclick="switchLaborTab('analytics')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
+        <button id="lb-tab-schedule"  onclick="switchLaborTab('schedule')"  class="rv-tab-active" style="border:none;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Schedule</button>
+        <button id="lb-tab-analytics" onclick="switchLaborTab('analytics')" style="border:none;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
       </div>
     </div>
   </div>
@@ -3726,7 +3712,19 @@ function _moveTabIndicator(tabEl){
   ind.style.left=tabEl.offsetLeft+'px';
   ind.style.width=tabEl.offsetWidth+'px';
 }
+function _dark(){return document.documentElement.getAttribute('data-theme')==='dark';}
+function setPageBg(n){
+  var d=_dark();
+  var home = d
+    ? 'radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.18) 40%,transparent 70%),linear-gradient(180deg,#0a0806 0%,#0e0c0a 100%)'
+    : 'radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.32) 0%,rgba(200,75,47,.10) 45%,transparent 70%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%)';
+  var mod = d
+    ? 'radial-gradient(ellipse 80% 40% at 50% 0%,rgba(200,75,47,.38) 0%,rgba(200,75,47,.12) 45%,transparent 75%),linear-gradient(180deg,#0a0806 0%,#0e0c0a 100%)'
+    : 'radial-gradient(ellipse 80% 40% at 50% 0%,rgba(200,75,47,.18) 0%,rgba(200,75,47,.05) 50%,transparent 75%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%)';
+  document.body.style.background = (n==='home') ? home : mod;
+}
 function switchTab(n,btn){
+  setPageBg(n);
   document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});
   document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
   var _swPanel = document.getElementById('panel-'+n);
@@ -3886,6 +3884,8 @@ function clearFilters(){
     if (tog) tog.checked = isDark;
     if (track) track.style.background = isDark ? '#923020' : '#d0cbc4';
     if (thumb) thumb.style.transform = isDark ? 'translateX(20px)' : 'none';
+    var activeTab = (document.querySelector('.tab.active')||{}).id||'';
+    setPageBg(activeTab.replace('tab-','') || 'home');
   });
 })();
 
@@ -3951,6 +3951,8 @@ function toggleDarkMode() {
   var isDark = tog ? tog.checked : (document.documentElement.getAttribute('data-theme') === 'dark');
   document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
   localStorage.setItem('cavnar_theme', isDark ? 'dark' : 'light');
+  var activeTab = (document.querySelector('.tab.active')||{}).id||'';
+  setPageBg(activeTab.replace('tab-','') || 'home');
   var track = document.getElementById('dark-mode-track');
   var thumb = document.getElementById('dark-mode-thumb');
   if (track) track.style.background = isDark ? '#923020' : '#d0cbc4';
