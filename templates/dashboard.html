@@ -237,6 +237,7 @@ html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 .plat-card{background:var(--paper);border:1px solid var(--paper3);border-radius:8px;padding:12px 14px;cursor:pointer;transition:box-shadow .15s,border-color .15s}
 .hm-stat-tile{flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity 60ms}
 .hm-stat-tile:hover{opacity:.72}
+.labor-num{font-family:'Space Grotesk',sans-serif!important}
 .plat-worst{background:linear-gradient(to bottom,#f5d5d5,var(--paper));border-color:#f5c6c6}
 .plat-best{background:linear-gradient(to bottom,#d5ede0,var(--paper));border-color:#b7dfca}
 [data-theme="dark"] .plat-card{background:var(--surface)!important;border-color:var(--paper3)!important}
@@ -786,7 +787,7 @@ document.documentElement.classList.add('pjs-loading');
     <span style="font-size:16px">💰</span>
     <div>
       <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:1px">Total value delivered</div>
-      <div id="global-savings-total" style="font-size:22px;font-weight:800;color:white;letter-spacing:-0.5px">${{_sb.total|format_num if _sb.total else '0'}}</div>
+      <div id="global-savings-total" style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:700;color:white;letter-spacing:-0.5px">${{_sb.total|format_num if _sb.total else '0'}}</div>
     </div>
   </div>
   <div style="display:flex;gap:20px;flex-wrap:wrap">
@@ -1309,7 +1310,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink)">Response rate vs industry benchmark</div>
       <div style="display:flex;align-items:center;gap:8px">
-        <span class="review-rate-pct" style="font-size:13px;font-weight:700;color:{{rrate_color}}">{{rrate}}%</span>
+        <span class="review-rate-pct" style="font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;color:{{rrate_color}}">{{rrate}}%</span>
         <span class="review-rate-label" style="background:{{rrate_color}};color:white;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.5px">{{rrate_label}}</span>
       </div>
     </div>
@@ -1351,7 +1352,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           {% if is_worst %}<span style="font-size:9px;font-weight:700;background:#fde8e8;color:#c0392b;padding:1px 6px;border-radius:10px">needs attention</span>
           {% elif is_best %}<span style="font-size:9px;font-weight:700;background:#e8f5ee;color:#2d6a4f;padding:1px 6px;border-radius:10px">strongest</span>{% endif %}
         </div>
-        <div style="font-size:28px;font-weight:800;color:{{rating_col}};letter-spacing:-1px;line-height:1">{{p.avg_rating}} <span style="font-size:14px;color:var(--ink3)">★</span></div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:700;color:{{rating_col}};letter-spacing:-1px;line-height:1">{{p.avg_rating}} <span style="font-size:14px;color:var(--ink3)">★</span></div>
         <div style="display:flex;gap:10px;margin-top:8px;font-size:11px">
           <span style="color:#2d6a4f">▲ {{p.positive}} positive</span>
           <span style="color:#c0392b">▼ {{p.negative}} negative</span>
@@ -1916,7 +1917,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     {% endif %}
     <div style="background:linear-gradient(135deg,#1e1605,#26200a);border:1px solid #4a3c10;border-radius:8px;padding:12px 16px;text-align:center">
       <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#d4a030;margin-bottom:4px">Overstaffed days</div>
-      <div style="font-size:22px;font-weight:800;color:white">{{labor.overstaffed_days|length}}</div>
+      <div style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:700;color:white">{{labor.overstaffed_days|length}}</div>
       <div style="font-size:10px;color:#d4a030;margin-top:2px">vs {{labor.understaffed_days|length}} understaffed</div>
     </div>
   </div>
@@ -1931,7 +1932,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink)">Labor % vs industry benchmark</div>
       <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-size:13px;font-weight:700;color:{{lb_color}}">{{lp}}%</span>
+        <span style="font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;color:{{lb_color}}">{{lp}}%</span>
         <span style="background:{{lb_color}};color:white;font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.5px">{{lb_label}}</span>
       </div>
     </div>
