@@ -1971,43 +1971,53 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div>
   {% endif %}
 
-  <!-- Labor performance charts — combined side by side -->
-  <div class="slabel" style="margin-top:16px">Labor % performance</div>
-  <div class="card" style="padding:16px">
-    <div style="display:grid;grid-template-columns:3fr 2fr;gap:24px">
+  <!-- Labor performance chart — redesigned -->
+  <div style="background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%);border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:20px 24px;margin-top:16px;position:relative;overflow:hidden;box-shadow:0 0 0 1px rgba(200,75,47,.1),0 8px 32px rgba(200,75,47,.18)">
+    <div style="position:absolute;top:-60px;right:-80px;width:320px;height:260px;background:radial-gradient(ellipse at center,rgba(200,75,47,.14) 0%,transparent 70%);pointer-events:none;z-index:0"></div>
 
-      <!-- Left: 8-week trend -->
+    <!-- Header -->
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px;position:relative;z-index:1;flex-wrap:wrap;gap:10px">
       <div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:4px">8-week trend</div>
-        <div style="font-size:10px;color:transparent;margin-bottom:8px;user-select:none">placeholder</div>
-        <div id="labor-trend-bars" style="display:flex;align-items:flex-end;gap:6px;height:120px;">
-          <div style="color:var(--ink3);font-size:12px;font-style:italic">Loading trend data…</div>
-        </div>
-        <div id="labor-trend-labels" style="display:flex;font-size:9px;color:var(--ink3);margin-top:4px"></div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:3px">Labor % Performance</div>
+        <div id="perf-period-label" style="font-size:11px;color:rgba(255,255,255,.35)">{% if labor.date_range and labor.date_range.start %}{{labor.date_range.start[5:7]|int}}/{{labor.date_range.start[8:10]|int}}/{{labor.date_range.start[2:4]}} – {{labor.date_range.end[5:7]|int}}/{{labor.date_range.end[8:10]|int}}/{{labor.date_range.end[2:4]}}{% else %}Loading…{% endif %}</div>
       </div>
-
-      <!-- Right: DOW breakdown -->
-      <div>
-        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3);margin-bottom:4px">By day of week</div>
-        <div style="font-size:10px;color:var(--ink3);margin-bottom:8px">From your uploaded CSV{% if labor.date_range and labor.date_range.start %} ({{labor.date_range.start[5:7]|int}}/{{labor.date_range.start[8:10]|int}}/{{labor.date_range.start[2:4]}} – {{labor.date_range.end[5:7]|int}}/{{labor.date_range.end[8:10]|int}}/{{labor.date_range.end[2:4]}}){% endif %}</div>
-        <div style="position:relative">
-          <div class="day-bars" id="day-bars" style="height:120px;display:flex;align-items:flex-end;gap:4px;position:relative;z-index:1"></div>
-          <div id="dow-target-line" style="position:absolute;left:0;right:0;bottom:0;height:2px;background:#ef9f27;opacity:0.6;z-index:2;pointer-events:none"></div>
-        </div>
-        <div style="display:flex;justify-content:space-around;font-size:9px;color:var(--ink3);margin-top:4px">
-          {% for d in ["M","T","W","Th","F","Sa","Su"] %}<span>{{d}}</span>{% endfor %}
-        </div>
+      <div style="display:inline-flex;box-shadow:0 0 0 1px rgba(200,75,47,.4);border-radius:8px;overflow:hidden;background:rgba(200,75,47,.1)">
+        <button id="perf-tab-trend" onclick="switchPerfTab('trend')" style="border:none;height:32px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:var(--ember);color:white;transition:background .15s,color .15s">8-Week Trend</button>
+        <button id="perf-tab-dow"   onclick="switchPerfTab('dow')"   style="border:none;height:32px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:rgba(255,255,255,.45);transition:background .15s,color .15s">By Day</button>
       </div>
     </div>
 
-    <!-- Shared legend -->
-    <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--paper3);display:flex;gap:16px;flex-wrap:wrap;font-size:10px;color:var(--ink3)">
-      <span><span style="color:var(--red)">■</span> Over {{labor_target|default(30.0)|int}}%</span>
-      <span><span style="color:#ef9f27">■</span> {{(labor_target|default(30.0)-3)|int}}–{{labor_target|default(30.0)|int}}%</span>
-      <span><span style="color:#6fcf97">■</span> Under {{(labor_target|default(30.0)-3)|int}}%</span>
-      <span style="margin-left:auto">Target: {{labor_target|default(30.0)}}%</span>
+    <!-- Chart area -->
+    <div style="display:flex;gap:10px;position:relative;z-index:1">
+      <!-- Y-axis -->
+      <div id="perf-y-axis" style="display:flex;flex-direction:column;justify-content:space-between;align-items:flex-end;width:30px;font-size:9px;color:rgba(255,255,255,.28);font-family:'Space Grotesk',sans-serif;padding-bottom:2px;flex-shrink:0"></div>
+      <!-- Chart + target line wrapper -->
+      <div style="flex:1;position:relative">
+        <div id="perf-gridlines" style="position:absolute;inset:0 0 0 0;pointer-events:none;z-index:0"></div>
+        <div id="perf-target-line" style="position:absolute;left:0;right:0;height:1px;background:rgba(200,75,47,.7);z-index:3;pointer-events:none;display:flex;align-items:flex-end;justify-content:flex-end">
+          <span style="font-size:9px;font-family:'Space Grotesk',sans-serif;color:rgba(200,75,47,.9);padding:0 4px 2px;white-space:nowrap">{{labor_target|default(30.0)}}% target</span>
+        </div>
+        <div id="perf-bars" style="height:200px;display:flex;align-items:flex-end;gap:5px;position:relative;z-index:1">
+          <div style="color:rgba(255,255,255,.3);font-size:12px;font-style:italic;align-self:center;padding:16px">Loading…</div>
+        </div>
+        <div id="perf-labels" style="display:flex;gap:5px;margin-top:6px;font-size:9px;color:rgba(255,255,255,.35);font-family:'Plus Jakarta Sans',sans-serif"></div>
+      </div>
+    </div>
+
+    <!-- Legend -->
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,.06);display:flex;gap:16px;flex-wrap:wrap;font-size:10px;color:rgba(255,255,255,.38);position:relative;z-index:1;align-items:center">
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:#c0392b;display:inline-block;box-shadow:0 0 6px rgba(192,57,43,.6)"></span>Over {{labor_target|default(30.0)|int}}%</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:#ef9f27;display:inline-block;box-shadow:0 0 6px rgba(239,159,39,.6)"></span>{{(labor_target|default(30.0)-3)|int}}–{{labor_target|default(30.0)|int}}%</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:#6fcf97;display:inline-block;box-shadow:0 0 6px rgba(111,207,151,.6)"></span>Under {{(labor_target|default(30.0)-3)|int}}%</span>
+      <span style="margin-left:auto;color:rgba(200,75,47,.6);display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:20px;height:1px;background:rgba(200,75,47,.7);vertical-align:middle"></span>Target line</span>
     </div>
   </div>
+
+  <!-- Hidden containers kept for compat with existing renderBars() -->
+  <div id="day-bars" style="display:none"></div>
+  <div id="dow-target-line" style="display:none"></div>
+  <div id="labor-trend-bars" style="display:none"></div>
+  <div id="labor-trend-labels" style="display:none"></div>
 
   </div><!-- /lb-panel-analytics -->
 
@@ -4456,39 +4466,76 @@ var _laborTarget={{labor_target|default(30.0)}};
   }
   elPeriod.textContent='Data: '+fmt(laborDateRange.start)+' — '+fmt(laborDateRange.end)+' ('+laborDateRange.days+' days)';
 })();
+var _perfTab='trend';
+var _perfTrendData=null;
+var _perfDowData=null;
+
+function switchPerfTab(tab){
+  _perfTab=tab;
+  var t=document.getElementById('perf-tab-trend');
+  var d=document.getElementById('perf-tab-dow');
+  if(t){t.style.background=tab==='trend'?'var(--ember)':'transparent';t.style.color=tab==='trend'?'white':'rgba(255,255,255,.45)';}
+  if(d){d.style.background=tab==='dow'?'var(--ember)':'transparent';d.style.color=tab==='dow'?'white':'rgba(255,255,255,.45)';}
+  renderPerfChart();
+}
+
+function renderPerfChart(){
+  var barsEl=document.getElementById('perf-bars');
+  var labelsEl=document.getElementById('perf-labels');
+  var yAxisEl=document.getElementById('perf-y-axis');
+  var gridEl=document.getElementById('perf-gridlines');
+  var targetEl=document.getElementById('perf-target-line');
+  if(!barsEl)return;
+  var items=_perfTab==='trend'?_perfTrendData:_perfDowData;
+  if(!items||!items.length){
+    barsEl.innerHTML='<div style="color:rgba(255,255,255,.3);font-size:12px;font-style:italic;align-self:center;padding:16px">No data yet.</div>';
+    if(labelsEl)labelsEl.innerHTML='';
+    if(yAxisEl)yAxisEl.innerHTML='';
+    return;
+  }
+  var maxPct=0;
+  for(var i=0;i<items.length;i++){if(items[i].pct>maxPct)maxPct=items[i].pct;}
+  maxPct=Math.ceil(Math.max(maxPct,_laborTarget+8)/5)*5;
+  var steps=[0,Math.round(maxPct*.25),Math.round(maxPct*.5),Math.round(maxPct*.75),maxPct];
+  var yHtml='';
+  for(var i=steps.length-1;i>=0;i--){yHtml+='<span>'+steps[i]+'%</span>';}
+  if(yAxisEl)yAxisEl.innerHTML=yHtml;
+  var glHtml='';
+  for(var i=0;i<5;i++){glHtml+='<div style="position:absolute;left:0;right:0;bottom:'+(i/4*100)+'%;height:1px;background:rgba(255,255,255,.'+(i===0?'10':'05')+')"></div>';}
+  if(gridEl)gridEl.innerHTML=glHtml;
+  if(targetEl)targetEl.style.bottom=(_laborTarget/maxPct*100)+'%';
+  var barHtml='';
+  var labHtml='';
+  for(var i=0;i<items.length;i++){
+    var item=items[i];
+    var pct=item.pct;
+    var hPct=Math.max(2,(pct/maxPct)*100);
+    var isOver=pct>_laborTarget;
+    var isClose=pct>=(_laborTarget-3);
+    var col=isOver?'#c0392b':isClose?'#ef9f27':'#6fcf97';
+    var grad=isOver?'linear-gradient(to top,rgba(120,20,20,.9),rgba(192,57,43,1))':isClose?'linear-gradient(to top,rgba(120,90,10,.9),rgba(239,159,39,1))':'linear-gradient(to top,rgba(20,80,50,.9),rgba(111,207,151,1))';
+    var glow=isOver?'rgba(192,57,43,.5)':isClose?'rgba(239,159,39,.5)':'rgba(111,207,151,.5)';
+    barHtml+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;height:100%">';
+    barHtml+='<span style="font-family:\'Space Grotesk\',sans-serif;font-size:10px;font-weight:700;color:'+col+';line-height:1">'+pct+'%</span>';
+    barHtml+='<div style="width:85%;height:'+hPct+'%;background:'+grad+';border-radius:4px 4px 0 0;box-shadow:0 -2px 12px '+glow+',0 0 6px '+glow+';min-height:4px"></div>';
+    barHtml+='</div>';
+    labHtml+='<span style="flex:1;text-align:center">'+item.label+'</span>';
+  }
+  barsEl.innerHTML=barHtml;
+  if(labelsEl)labelsEl.innerHTML=labHtml;
+}
+
 function renderBars(){
   var days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
-  var filled=[];
-  var i;
-  for(i=0;i<days.length;i++){ if(dowData[days[i]]>0) filled.push(dowData[days[i]]); }
-  if(!filled.length)return;
-  var dataMin=Math.max(0,Math.min.apply(null,filled)-8);
-  var dataMax=Math.max.apply(null,filled)+5;
-  var range=dataMax-dataMin||1;
-  var c=document.getElementById('day-bars');
-  if(!c)return;
-  var maxH=120;
-  var html='';
-  for(i=0;i<days.length;i++){
-    var d=days[i];
-    var pct=dowData[d]||0;
-    var h=pct>0?Math.max(8,Math.round(((pct-dataMin)/range)*maxH)):0;
-    var col=pct>_laborTarget?'var(--red)':pct>=(_laborTarget-3)?'#ef9f27':'#6fcf97';
-    var lbl=pct>0?pct+'%':'';
-    html+='<div class="day-bar-wrap" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px">'+
-      '<span style="font-size:10px;color:'+col+';font-weight:700;line-height:1">'+lbl+'</span>'+
-      '<div style="width:80%;height:'+h+'px;background:'+col+';border-radius:4px 4px 0 0;opacity:0.9" title="'+d+': '+pct+'%"></div>'+
-    '</div>';
+  var shortLabels=['M','T','W','Th','F','Sa','Su'];
+  var items=[];
+  for(var i=0;i<days.length;i++){
+    var pct=dowData[days[i]]||0;
+    if(pct>0)items.push({pct:pct,label:shortLabels[i]});
+    else items.push({pct:0,label:shortLabels[i]});
   }
-  c.innerHTML=html;
-  // Draw target line on DOW chart
-  var tline=document.getElementById('dow-target-line');
-  if(tline&&filled.length){
-    var pxPerPct=120/(dataMax-dataMin||1);
-    var targetFromBottom=Math.round((_laborTarget-dataMin)*pxPerPct);
-    tline.style.bottom=targetFromBottom+'px';
-    tline.style.display='block';
-  }
+  _perfDowData=items;
+  if(_perfTab==='dow')renderPerfChart();
 }
 var _gbpReload=!!sessionStorage.getItem('_gbpReload');if(_gbpReload)sessionStorage.removeItem('_gbpReload');
 var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false,homeInsightLoaded=false;
@@ -5371,34 +5418,11 @@ function loadBillingInfo() {
 
 
 function loadLaborTrend(){
-  var container=document.getElementById('labor-trend-bars');
-  var labels=document.getElementById('labor-trend-labels');
-  if(!container)return;
   fetch('/api/labor-trend').then(function(r){return r.json();}).then(function(data){
-    if(!data.weeks||!data.weeks.length){
-      container.innerHTML='<div style="color:var(--ink3);font-size:12px;font-style:italic">No shift data available yet.</div>';
-      return;
-    }
-    var maxPct=0;
-    for(var i=0;i<data.weeks.length;i++){if(data.weeks[i].pct>maxPct)maxPct=data.weeks[i].pct;}
-    maxPct=Math.max(maxPct,35);
-    var html='';
-    var lblHtml='';
-    for(var i=0;i<data.weeks.length;i++){
-      var w=data.weeks[i];
-      var h=Math.max(6,Math.round((w.pct/maxPct)*80));
-      var col=w.pct>_laborTarget?'var(--red)':w.pct>=(_laborTarget-3)?'#ef9f27':'#6fcf97';
-      html+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px">';
-      html+='<span style="font-size:10px;color:'+col+';font-weight:600">'+w.pct+'%</span>';
-      html+='<div style="width:80%;height:'+h+'px;background:'+col+';border-radius:3px 3px 0 0"></div>';
-      html+='</div>';
-      lblHtml+='<span style="flex:1;text-align:center">'+w.label+'</span>';
-    }
-    container.innerHTML=html;
-    if(labels)labels.innerHTML=lblHtml;
-  }).catch(function(){
-    container.innerHTML='<div style="color:var(--ink3);font-size:12px;font-style:italic">Trend data unavailable.</div>';
-  });
+    if(!data.weeks||!data.weeks.length){_perfTrendData=[];renderPerfChart();return;}
+    _perfTrendData=data.weeks.map(function(w){return{pct:w.pct,label:w.label};});
+    if(_perfTab==='trend')renderPerfChart();
+  }).catch(function(){_perfTrendData=[];renderPerfChart();});
 }
 function exportReviews(){window.location='/api/export-reviews';}
 function toggle2FA(enable){
