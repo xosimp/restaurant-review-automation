@@ -1608,6 +1608,17 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     {% endif %}
   </div>
 
+  <!-- Labor sub-tab toggle -->
+  <div style="display:flex;justify-content:flex-end;margin-bottom:20px">
+    <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
+      <button id="lb-tab-schedule"  onclick="switchLaborTab('schedule')"  class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Schedule</button>
+      <button id="lb-tab-analytics" onclick="switchLaborTab('analytics')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
+    </div>
+  </div>
+
+  <!-- ══ SCHEDULE TAB ══ -->
+  <div id="lb-panel-schedule">
+
   <!-- Schedule download tooltip -->
   <div id="schedule-tooltip" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:999;background:rgba(14,12,10,0.6);align-items:center;justify-content:center">
     <div style="background:var(--ink);border-radius:12px;padding:28px 32px;max-width:420px;width:90%;position:relative;border:1px solid #3d3530">
@@ -1752,6 +1763,118 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
+  <!-- AI insight -->
+  <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Labor Consultant</div>
+    <div class="insight-text insight-loading" id="labor-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:88%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:72%">&nbsp;</div><div class="skeleton" style="height:13px;width:60%">&nbsp;</div></div>
+  </div>
+
+  <!-- Two col: overstaffed table + overtime alerts -->
+  <div class="two-col">
+    <div>
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px">
+        <div class="slabel" style="margin-bottom:0">Overstaffed days — where the money is going</div>
+        {% if labor.overstaffed_days|length > 5 %}
+        <button onclick="toggleRows('overstaffed-tbody','overstaffed-toggle',{{labor.overstaffed_days|length}})" id="overstaffed-toggle" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.overstaffed_days|length}} ↓</button>
+        {% endif %}
+      </div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor cost</th><th>Labor %</th><th>Over target</th></tr></thead>
+        <tbody id="overstaffed-tbody">
+        {% for d in labor.overstaffed_days %}
+        {% set diff = (d.labor_pct - (labor_target|default(30.0)))|round(1) %}
+        {% set is_top_cost = loop.first %}
+        <tr class="{% if loop.index > 5 %}collapsible-row overstaffed-extra{% endif %}" style="{% if is_top_cost %}background:linear-gradient(to right,#f5d5d5,#fdf0f0,white);border-left:3px solid #c0392b;{% else %}border-left:3px solid transparent;{% endif %}{% if loop.index > 5 %}display:none;{% endif %}">
+          <td style="color:var(--ink3);font-size:11px">{{d.date}}</td>
+          <td style="font-weight:{% if is_top_cost %}700{% else %}500{% endif %}">{{d.day}}{% if is_top_cost %} <span style="font-size:9px;font-weight:700;background:#fde8e8;color:#c0392b;padding:1px 5px;border-radius:8px;margin-left:4px;vertical-align:middle">most expensive</span>{% endif %}</td>
+          <td>${{d.sales|int|format_num}}</td>
+          <td style="font-weight:{% if is_top_cost %}700{% else %}400{% endif %};color:{% if is_top_cost %}var(--red){% else %}var(--ink){% endif %}">${{d.labor_cost|format_num}}</td>
+          <td><span class="pill {{'pill-red' if d.labor_pct>35 else 'pill-amber'}}">{{d.labor_pct}}%</span></td>
+          {% if diff > 0 %}
+          <td style="color:{% if is_top_cost %}var(--red){% else %}var(--ink3){% endif %};font-size:11px;font-weight:{% if is_top_cost %}700{% else %}500{% endif %}">+{{diff}}% over</td>
+          {% else %}
+          <td style="color:var(--green);font-size:11px;font-weight:500">{{diff}}% under ✓</td>
+          {% endif %}
+        </tr>
+        {% else %}
+        <tr><td colspan="6" style="color:var(--ink3);font-style:italic;padding:10px">No overstaffed days — great work!</td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+    <div style="display:flex;flex-direction:column;">
+      {% if labor.overtime_risk %}
+      <div class="slabel">Overtime alerts</div>
+      <div class="card"><table class="tbl">
+        <thead><tr><th>Employee</th><th>Week of</th><th>Hours that week</th><th>2-wk total</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for emp in labor.overtime_risk %}
+        {% set two_wk = labor.employee_hours.get(emp.employee, {}).get("actual", 0)|round(1) %}
+        {% set _emp_key = emp.employee.lower().strip().rstrip('.') %}
+        {% set emp_constraint = labor.staff_constraints.get(_emp_key, labor.staff_constraints.get(_emp_key.split(' ')[0], '')) %}
+        {% set _ec = emp_constraint.lower() if emp_constraint else '' %}
+        {% set has_ot_allowance = emp_constraint and ('overtime' in _ec or 'extra hours' in _ec or ' ot ' in (' ' + _ec + ' ') or _ec.startswith('ot ') or _ec.endswith(' ot')) %}
+        <tr style="{% if emp.status == "overtime" and emp.hours >= 55 and not has_ot_allowance %}background:linear-gradient(to right,rgba(192,57,43,0.08),white);{% elif has_ot_allowance %}background:linear-gradient(to right,rgba(45,106,79,0.06),white);{% endif %}">
+          <td style="font-weight:500">{{emp.employee}}{% if has_ot_allowance %} <span style="font-size:9px;background:#eaf4ee;color:#2d6a4f;padding:1px 5px;border-radius:8px;font-weight:600;vertical-align:middle">constraint</span>{% endif %}</td>
+          <td style="font-size:11px;color:var(--ink3)">{{emp.week}}</td>
+          <td style="font-weight:{% if emp.hours >= 55 and not has_ot_allowance %}700{% else %}400{% endif %};color:{% if emp.hours >= 55 and not has_ot_allowance %}var(--red){% else %}var(--ink){% endif %}">{{emp.hours}}h</td>
+          <td style="font-size:11px;color:var(--ink3)">{{two_wk}}h</td>
+          <td>
+            {% if has_ot_allowance %}
+              <span class="pill" style="background:#eaf4ee;color:#2d6a4f">✓ OT allowed per constraint</span>
+            {% elif emp.status == "overtime" %}
+              <span class="pill pill-red">Overtime (40h+) — review pay</span>
+            {% else %}
+              <span class="pill pill-amber">⚠ Approaching 40h</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Understaffed days — full width -->
+  <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:16px;margin-bottom:4px">
+    <div class="slabel" style="margin-bottom:0">Understaffed days — possible missed revenue ⚠</div>
+    {% if labor.understaffed_days|length > 5 %}
+    <button onclick="toggleRows('understaffed-tbody','understaffed-toggle',{{labor.understaffed_days|length}})" id="understaffed-toggle" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.understaffed_days|length}} ↓</button>
+    {% endif %}
+  </div>
+  <div class="understaffed-wrap" style="position:relative;overflow:hidden;border-radius:var(--r);border:1px solid var(--paper3);background:white">
+    <div style="position:absolute;inset:0;background:linear-gradient(to right,rgba(200,75,47,0.07) 0%,rgba(239,159,39,0.05) 40%,rgba(239,159,39,0.0) 100%);pointer-events:none;z-index:0"></div>
+    <div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(to bottom,#c84b2f,#ef9f27);z-index:1"></div>
+    <table class="tbl" style="position:relative;z-index:1">
+      <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor %</th><th>Why it matters</th></tr></thead>
+      <tbody id="understaffed-tbody">
+      {% for d in labor.understaffed_days %}
+      <tr{% if loop.index > 5 %} style="display:none"{% endif %}>
+        <td style="color:var(--ink3);font-size:11px">{{d.date}}</td>
+        <td style="font-weight:600">{{d.day}}</td>
+        <td>${{d.sales|int|format_num}}</td>
+        <td><span class="pill pill-amber">{{d.labor_pct}}% ⚠</span></td>
+        <td style="font-size:11px;color:#7a4f00">Strong sales day — lean staffing may have left revenue on the table</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" style="color:var(--ink3);font-style:italic;padding:12px">No understaffed days flagged — great balance this period</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if labor.understaffed_days %}
+    <div class="understaffed-tip" style="padding:10px 16px;font-size:11px;color:#7a4f00;background:rgba(239,159,39,0.06);border-top:1px solid rgba(239,159,39,0.15);position:relative;z-index:1">
+      💡 Consider adding 1–2 staff on your highest-revenue days: {% for d in labor.understaffed_days[:5] %}<strong>{{d.date}} ({{d.day}})</strong>{% if not loop.last %}, {% endif %}{% endfor %}{% if labor.understaffed_days|length > 5 %} and {{labor.understaffed_days|length - 5}} more{% endif %} — volume on these days justifies the coverage and drives higher check averages.
+    </div>
+    {% endif %}
+  </div>
+
+  </div><!-- /lb-panel-schedule -->
+
+  <!-- ══ ANALYTICS TAB ══ -->
+  <div id="lb-panel-analytics" style="display:none">
+
   <!-- Labor savings summary — show whenever live labor data exists, regardless of banner value -->
   {% if labor and labor.is_live and (savings_breakdown.labor_vs_industry_monthly > 0 or savings_breakdown.labor_monthly > 0 or savings_breakdown.labor_overtime > 0 or labor.overstaffed_days|length > 0) %}
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
@@ -1854,115 +1977,6 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div>
   {% endif %}
 
-  <!-- AI insight -->
-  <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
-    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Labor Consultant</div>
-    <div class="insight-text insight-loading" id="labor-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:88%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:72%">&nbsp;</div><div class="skeleton" style="height:13px;width:60%">&nbsp;</div></div>
-  </div>
-
-  <!-- Two col: overstaffed table + bar chart -->
-  <div class="two-col">
-    <div>
-      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px">
-        <div class="slabel" style="margin-bottom:0">Overstaffed days — where the money is going</div>
-        {% if labor.overstaffed_days|length > 5 %}
-        <button onclick="toggleRows('overstaffed-tbody','overstaffed-toggle',{{labor.overstaffed_days|length}})" id="overstaffed-toggle" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.overstaffed_days|length}} ↓</button>
-        {% endif %}
-      </div>
-      <div class="card"><table class="tbl">
-        <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor cost</th><th>Labor %</th><th>Over target</th></tr></thead>
-        <tbody id="overstaffed-tbody">
-        {% for d in labor.overstaffed_days %}
-        {% set diff = (d.labor_pct - (labor_target|default(30.0)))|round(1) %}
-        {% set is_top_cost = loop.first %}
-        <tr class="{% if loop.index > 5 %}collapsible-row overstaffed-extra{% endif %}" style="{% if is_top_cost %}background:linear-gradient(to right,#f5d5d5,#fdf0f0,white);border-left:3px solid #c0392b;{% else %}border-left:3px solid transparent;{% endif %}{% if loop.index > 5 %}display:none;{% endif %}">
-          <td style="color:var(--ink3);font-size:11px">{{d.date}}</td>
-          <td style="font-weight:{% if is_top_cost %}700{% else %}500{% endif %}">{{d.day}}{% if is_top_cost %} <span style="font-size:9px;font-weight:700;background:#fde8e8;color:#c0392b;padding:1px 5px;border-radius:8px;margin-left:4px;vertical-align:middle">most expensive</span>{% endif %}</td>
-          <td>${{d.sales|int|format_num}}</td>
-          <td style="font-weight:{% if is_top_cost %}700{% else %}400{% endif %};color:{% if is_top_cost %}var(--red){% else %}var(--ink){% endif %}">${{d.labor_cost|format_num}}</td>
-          <td><span class="pill {{'pill-red' if d.labor_pct>35 else 'pill-amber'}}">{{d.labor_pct}}%</span></td>
-          {% if diff > 0 %}
-          <td style="color:{% if is_top_cost %}var(--red){% else %}var(--ink3){% endif %};font-size:11px;font-weight:{% if is_top_cost %}700{% else %}500{% endif %}">+{{diff}}% over</td>
-          {% else %}
-          <td style="color:var(--green);font-size:11px;font-weight:500">{{diff}}% under ✓</td>
-          {% endif %}
-        </tr>
-        {% else %}
-        <tr><td colspan="6" style="color:var(--ink3);font-style:italic;padding:10px">No overstaffed days — great work!</td></tr>
-        {% endfor %}
-        </tbody>
-      </table></div>
-
-    </div>
-
-    <div style="display:flex;flex-direction:column;">
-      {% if labor.overtime_risk %}
-      <div class="slabel">Overtime alerts</div>
-      <div class="card"><table class="tbl">
-        <thead><tr><th>Employee</th><th>Week of</th><th>Hours that week</th><th>2-wk total</th><th>Status</th></tr></thead>
-        <tbody>
-        {% for emp in labor.overtime_risk %}
-        {% set two_wk = labor.employee_hours.get(emp.employee, {}).get("actual", 0)|round(1) %}
-        {% set _emp_key = emp.employee.lower().strip().rstrip('.') %}
-        {% set emp_constraint = labor.staff_constraints.get(_emp_key, labor.staff_constraints.get(_emp_key.split(' ')[0], '')) %}
-        {% set _ec = emp_constraint.lower() if emp_constraint else '' %}
-        {% set has_ot_allowance = emp_constraint and ('overtime' in _ec or 'extra hours' in _ec or ' ot ' in (' ' + _ec + ' ') or _ec.startswith('ot ') or _ec.endswith(' ot')) %}
-        <tr style="{% if emp.status == "overtime" and emp.hours >= 55 and not has_ot_allowance %}background:linear-gradient(to right,rgba(192,57,43,0.08),white);{% elif has_ot_allowance %}background:linear-gradient(to right,rgba(45,106,79,0.06),white);{% endif %}">
-          <td style="font-weight:500">{{emp.employee}}{% if has_ot_allowance %} <span style="font-size:9px;background:#eaf4ee;color:#2d6a4f;padding:1px 5px;border-radius:8px;font-weight:600;vertical-align:middle">constraint</span>{% endif %}</td>
-          <td style="font-size:11px;color:var(--ink3)">{{emp.week}}</td>
-          <td style="font-weight:{% if emp.hours >= 55 and not has_ot_allowance %}700{% else %}400{% endif %};color:{% if emp.hours >= 55 and not has_ot_allowance %}var(--red){% else %}var(--ink){% endif %}">{{emp.hours}}h</td>
-          <td style="font-size:11px;color:var(--ink3)">{{two_wk}}h</td>
-          <td>
-            {% if has_ot_allowance %}
-              <span class="pill" style="background:#eaf4ee;color:#2d6a4f">✓ OT allowed per constraint</span>
-            {% elif emp.status == "overtime" %}
-              <span class="pill pill-red">Overtime (40h+) — review pay</span>
-            {% else %}
-              <span class="pill pill-amber">⚠ Approaching 40h</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-      </table></div>
-      {% endif %}
-
-    </div>
-  </div>
-  <!-- Understaffed days — full width -->
-  <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:16px;margin-bottom:4px">
-    <div class="slabel" style="margin-bottom:0">Understaffed days — possible missed revenue ⚠</div>
-    {% if labor.understaffed_days|length > 5 %}
-    <button onclick="toggleRows('understaffed-tbody','understaffed-toggle',{{labor.understaffed_days|length}})" id="understaffed-toggle" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.understaffed_days|length}} ↓</button>
-    {% endif %}
-  </div>
-  <div class="understaffed-wrap" style="position:relative;overflow:hidden;border-radius:var(--r);border:1px solid var(--paper3);background:white">
-    <div style="position:absolute;inset:0;background:linear-gradient(to right,rgba(200,75,47,0.07) 0%,rgba(239,159,39,0.05) 40%,rgba(239,159,39,0.0) 100%);pointer-events:none;z-index:0"></div>
-    <div style="position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(to bottom,#c84b2f,#ef9f27);z-index:1"></div>
-    <table class="tbl" style="position:relative;z-index:1">
-      <thead><tr><th>Date</th><th>Day</th><th>Sales</th><th>Labor %</th><th>Why it matters</th></tr></thead>
-      <tbody id="understaffed-tbody">
-      {% for d in labor.understaffed_days %}
-      <tr{% if loop.index > 5 %} style="display:none"{% endif %}>
-        <td style="color:var(--ink3);font-size:11px">{{d.date}}</td>
-        <td style="font-weight:600">{{d.day}}</td>
-        <td>${{d.sales|int|format_num}}</td>
-        <td><span class="pill pill-amber">{{d.labor_pct}}% ⚠</span></td>
-        <td style="font-size:11px;color:#7a4f00">Strong sales day — lean staffing may have left revenue on the table</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="5" style="color:var(--ink3);font-style:italic;padding:12px">No understaffed days flagged — great balance this period</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    {% if labor.understaffed_days %}
-    <div class="understaffed-tip" style="padding:10px 16px;font-size:11px;color:#7a4f00;background:rgba(239,159,39,0.06);border-top:1px solid rgba(239,159,39,0.15);position:relative;z-index:1">
-      💡 Consider adding 1–2 staff on your highest-revenue days: {% for d in labor.understaffed_days[:5] %}<strong>{{d.date}} ({{d.day}})</strong>{% if not loop.last %}, {% endif %}{% endfor %}{% if labor.understaffed_days|length > 5 %} and {{labor.understaffed_days|length - 5}} more{% endif %} — volume on these days justifies the coverage and drives higher check averages.
-    </div>
-    {% endif %}
-  </div>
-
   <!-- Labor performance charts — combined side by side -->
   <div class="slabel" style="margin-top:16px">Labor % performance</div>
   <div class="card" style="padding:16px">
@@ -2000,6 +2014,9 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <span style="margin-left:auto">Target: {{labor_target|default(30.0)}}%</span>
     </div>
   </div>
+
+  </div><!-- /lb-panel-analytics -->
+
 </div>
 
 <!-- FOOD COST -->
@@ -3479,6 +3496,16 @@ function loadResponsePerf(days){
       if(body) body.innerHTML = '<div style="font-size:12px;color:var(--ink3)">Unavailable.</div>';
     });
 }
+
+window.switchLaborTab = function(tab) {
+  var isSched = tab === 'schedule';
+  document.getElementById('lb-panel-schedule').style.display  = isSched ? '' : 'none';
+  document.getElementById('lb-panel-analytics').style.display = isSched ? 'none' : '';
+  var ts = document.getElementById('lb-tab-schedule');
+  var ta = document.getElementById('lb-tab-analytics');
+  if(ts){ ts.classList.toggle('rv-tab-active', isSched); ts.style.background=''; ts.style.color = isSched ? '' : 'var(--ink3)'; }
+  if(ta){ ta.classList.toggle('rv-tab-active', !isSched); ta.style.background=''; ta.style.color = isSched ? 'var(--ink3)' : ''; }
+};
 
 window.switchReviewsTab = function(tab) {
   var isInbox = tab === 'inbox';
