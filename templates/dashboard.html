@@ -11,7 +11,7 @@
 <meta name="theme-color" content="#0e0c0a">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600&family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=block" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=block" rel="stylesheet">
 {% if restaurant.brand_color %}<style>:root{--ember:{{ restaurant.brand_color | e }};--ember2:{{ restaurant.brand_color | e }}cc}</style>{% endif %}
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -855,10 +855,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 <!-- Hero — content pre-rendered; JS grabs innerHTML and re-types it -->
 <div style="text-align:center;padding:48px 0 36px">
   <div id="home-tw-date" style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ember);margin-bottom:18px;visibility:hidden">{% if now %}{{ now }}{% endif %}</div>
-  <div id="home-tw-headline" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,5vw,66px);font-weight:500;color:var(--ink);line-height:1.06;letter-spacing:-.01em;margin-bottom:16px;text-shadow:0 2px 12px rgba(14,10,6,.18),0 1px 3px rgba(14,10,6,.12);visibility:hidden;min-height:2.2em"><span style="color:var(--ember)">{% if current_user.username %}{{ current_user.username|title }}{% else %}Welcome back{% endif %}</span> — your restaurant<br>is running on AI.</div>
+  <div id="home-tw-headline" style="font-family:'DM Serif Display',serif;font-size:clamp(40px,5vw,66px);font-weight:500;color:var(--ink);line-height:1.06;letter-spacing:-.01em;margin-bottom:16px;text-shadow:0 2px 12px rgba(14,10,6,.18),0 1px 3px rgba(14,10,6,.12);visibility:hidden;min-height:2.2em"><span style="color:var(--ember)">{% if current_user.username %}{{ current_user.username|title }}{% else %}Welcome back{% endif %}</span> — your restaurant<br>is running on AI.</div>
   <div id="home-tw-sub" style="font-size:14px;color:var(--ink3);letter-spacing:.01em;visibility:hidden">{{ restaurant.name }}{% if restaurant.location_name %} &mdash; {{ restaurant.location_name }}{% endif %}{% if rstats.awaiting_approval > 0 %} &nbsp;·&nbsp; <span style="color:var(--ember);font-weight:600">{{ rstats.awaiting_approval }} review{% if rstats.awaiting_approval != 1 %}s{% endif %} awaiting approval</span>{% endif %}</div>
   {% if _sb.total and _sb.total > 0 %}
-  <div id="home-tw-dollar" style="margin-top:20px;display:none;align-items:baseline;gap:8px;visibility:hidden"><span style="font-family:'Cormorant Garamond',serif;font-size:clamp(28px,3.5vw,46px);font-weight:500;color:var(--ink);letter-spacing:-.02em">${{(_sb.total or 0)|format_num}}</span><span style="font-size:12px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;font-weight:500;margin-left:8px">delivered since launch</span></div>
+  <div id="home-tw-dollar" style="margin-top:20px;display:none;align-items:baseline;gap:8px;visibility:hidden"><span style="font-family:'DM Serif Display',serif;font-size:clamp(28px,3.5vw,46px);font-weight:500;color:var(--ink);letter-spacing:-.02em">${{(_sb.total or 0)|format_num}}</span><span style="font-size:12px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;font-weight:500;margin-left:8px">delivered since launch</span></div>
   {% endif %}
 </div>
 <script>
@@ -1005,7 +1005,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
   <!-- Reviews -->
   <div class="hm-stat-tile" onclick="switchTab('reviews',document.getElementById('tab-reviews'))">
-    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span id="home-responded-n" class="stat-shimmer" data-countup="{{rstats.responded or 0}}" data-countup-int="1">0</span><span id="home-total-n" style="font-size:.45em;font-weight:400;color:var(--ink3);letter-spacing:0;margin-left:4px">/{{rstats.total or 0}}</span></div>
+    <div style="font-family:'DM Serif Display',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span id="home-responded-n" class="stat-shimmer" data-countup="{{rstats.responded or 0}}" data-countup-int="1">0</span><span id="home-total-n" style="font-size:.45em;font-weight:400;color:var(--ink3);letter-spacing:0;margin-left:4px">/{{rstats.total or 0}}</span></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Reviews</div>
     <div id="home-rr-sub" style="font-size:11px;color:var(--ink3);margin-top:4px">{{rstats.response_rate or 0}}% response rate</div>
   </div>
@@ -1015,13 +1015,13 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Labor cost -->
   {% if mod_labor %}
   <div class="hm-stat-tile" onclick="switchTab('labor',document.getElementById('tab-labor'))">
-    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span class="stat-shimmer" data-countup="{{labor.overall_labor_pct|round(1)}}" data-countup-decimals="1">0</span><span style="font-size:.5em;font-weight:400;color:var(--ink3);letter-spacing:0;margin-left:2px">%</span></div>
+    <div style="font-family:'DM Serif Display',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span class="stat-shimmer" data-countup="{{labor.overall_labor_pct|round(1)}}" data-countup-decimals="1">0</span><span style="font-size:.5em;font-weight:400;color:var(--ink3);letter-spacing:0;margin-left:2px">%</span></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Labor Cost</div>
     <div style="font-size:11px;color:var(--ink3);margin-top:4px">target {{labor_target}}%<br>{% if labor.overall_labor_pct <= labor_target %}<span style="color:var(--green);font-weight:600">on track</span>{% else %}<span style="color:var(--red);font-weight:600">over target</span>{% endif %}</div>
   </div>
   {% else %}
   <div style="flex:1;text-align:center;padding:0 12px;opacity:.35">
-    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
+    <div style="font-family:'DM Serif Display',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Labor Cost</div>
     <div style="font-size:11px;color:var(--ink3);margin-top:4px">not active</div>
   </div>
@@ -1032,13 +1032,13 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Food cost -->
   {% if mod_inventory %}
   <div class="hm-stat-tile" onclick="switchTab('inventory',document.getElementById('tab-inventory'))">
-    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span style="font-size:.6em;font-weight:400;vertical-align:baseline;color:var(--ink3);margin-right:3px">$</span><span class="stat-shimmer" data-countup="{{(inv.recoverable_monthly or 0)|int}}" data-countup-int="1">0</span></div>
+    <div style="font-family:'DM Serif Display',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span style="font-size:.6em;font-weight:400;vertical-align:baseline;color:var(--ink3);margin-right:3px">$</span><span class="stat-shimmer" data-countup="{{(inv.recoverable_monthly or 0)|int}}" data-countup-int="1">0</span></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Food Cost</div>
     <div style="font-size:11px;color:var(--ink3);margin-top:4px">recoverable waste / mo</div>
   </div>
   {% else %}
   <div style="flex:1;text-align:center;padding:0 12px;opacity:.35">
-    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
+    <div style="font-family:'DM Serif Display',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Food Cost</div>
     <div style="font-size:11px;color:var(--ink3);margin-top:4px">not active</div>
   </div>
@@ -1049,13 +1049,13 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Marketing -->
   {% if mod_marketing %}
   <div class="hm-stat-tile" onclick="switchTab('marketing',document.getElementById('tab-marketing'))">
-    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span class="stat-shimmer" data-countup="{{mkt_stats.this_month or 0}}" data-countup-int="1">0</span></div>
+    <div style="font-family:'DM Serif Display',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1;text-shadow:0 2px 8px rgba(14,10,6,.12)"><span class="stat-shimmer" data-countup="{{mkt_stats.this_month or 0}}" data-countup-int="1">0</span></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-top:10px">Marketing</div>
     <div style="font-size:11px;color:var(--ink3);margin-top:4px">pieces this month</div>
   </div>
   {% else %}
   <div style="flex:1;text-align:center;padding:0 12px;opacity:.35">
-    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
+    <div style="font-family:'DM Serif Display',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Marketing</div>
     <div style="font-size:11px;color:var(--ink3);margin-top:4px">not active</div>
   </div>
@@ -1064,7 +1064,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Waitlist (coming soon) — always shown, scales uniformly with future modules -->
   <div style="width:1px;background:rgba(247,244,239,.18);flex-shrink:0;margin:4px 0"></div>
   <div style="flex:1;text-align:center;padding:0 12px;opacity:.28">
-    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
+    <div style="font-family:'DM Serif Display',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Waitlist</div>
     <div style="font-size:11px;color:var(--ink3);margin-top:4px;font-style:italic">coming soon</div>
   </div>
@@ -1072,7 +1072,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Bar & Alcohol (coming soon) -->
   <div style="width:1px;background:rgba(247,244,239,.18);flex-shrink:0;margin:4px 0"></div>
   <div style="flex:1;text-align:center;padding:0 12px;opacity:.28">
-    <div style="font-family:'Cormorant Garamond',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
+    <div style="font-family:'DM Serif Display',serif;font-size:clamp(32px,3.5vw,52px);font-weight:500;color:var(--ink3);line-height:1">—</div>
     <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Bar & Alcohol</div>
     <div style="font-size:11px;color:var(--ink3);margin-top:4px;font-style:italic">coming soon</div>
   </div>
@@ -1084,7 +1084,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
   <!-- Needs attention -->
   <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:20px 22px">
-    <div style="font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:500;color:var(--ink);margin-bottom:14px;display:flex;align-items:center;gap:8px">
+    <div style="font-family:'DM Serif Display',serif;font-size:17px;font-weight:500;color:var(--ink);margin-bottom:14px;display:flex;align-items:center;gap:8px">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       Needs attention
     </div>
@@ -1128,7 +1128,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
         </div>
         <div>
-          <div style="font-family:'Cormorant Garamond',serif;font-size:15px;font-weight:500;color:var(--ink);margin-bottom:3px">All clear</div>
+          <div style="font-family:'DM Serif Display',serif;font-size:15px;font-weight:500;color:var(--ink);margin-bottom:3px">All clear</div>
           <div style="font-size:11px;color:var(--ink3)">Nothing needs your attention right now</div>
         </div>
       </div>
@@ -1140,7 +1140,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   {% if mod_reviews %}
   <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:var(--r);padding:20px 22px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <div style="font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:500;color:var(--ink);display:flex;align-items:center;gap:8px">
+      <div style="font-family:'DM Serif Display',serif;font-size:17px;font-weight:500;color:var(--ink);display:flex;align-items:center;gap:8px">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2.5" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         Latest reviews
       </div>
@@ -1206,23 +1206,23 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     {% set _rating = restaurant.gbp_rating or rstats.avg_rating %}
     {% set _rglow = 'stat-glow-green' if _rating >= 4.0 else ('stat-glow-amber' if _rating >= 3.0 else 'stat-glow-red') %}
     <div id="stat-rating" class="rv-stat-cell">
-      <div id="stat-rating-n" class="{{_rglow}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em">{{_rating}}</div>
+      <div id="stat-rating-n" class="{{_rglow}}" style="font-family:'DM Serif Display',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em">{{_rating}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">{% if restaurant.gbp_rating %}Google rating{% else %}Avg rating{% endif %}</div>
       {% if restaurant.gbp_rating %}<div style="font-size:10px;color:var(--ink3);margin-top:4px">Dashboard avg: {{rstats.avg_rating}}</div>{% endif %}
     </div>
     {% set _rrglow = 'stat-glow-green' if rstats.response_rate >= 70 else ('stat-glow-amber' if rstats.response_rate >= 40 else 'stat-glow-red') %}
     <div id="stat-rr" class="rv-stat-cell">
-      <div id="stat-rr-n" class="{{_rrglow}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em">{{rstats.response_rate}}<span id="stat-rr-pct" style="font-size:.5em;letter-spacing:0;margin-left:1px">%</span></div>
+      <div id="stat-rr-n" class="{{_rrglow}}" style="font-family:'DM Serif Display',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em">{{rstats.response_rate}}<span id="stat-rr-pct" style="font-size:.5em;letter-spacing:0;margin-left:1px">%</span></div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Response rate</div>
       <div id="stat-rr-detail" style="font-size:10px;color:var(--ink3);margin-top:4px">{{rstats.get('responded', rstats.posted)}} of {{rstats.total}} reviews</div>
     </div>
     <div id="stat-received-mo" class="rv-stat-cell">
-      <div id="stat-received-mo-n" class="rv-stat-n" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{rstats.received_this_month}}</div>
+      <div id="stat-received-mo-n" class="rv-stat-n" style="font-family:'DM Serif Display',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;text-shadow:0 2px 10px rgba(0,0,0,.5),0 1px 3px rgba(0,0,0,.4)">{{rstats.received_this_month}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">New this month</div>
     </div>
     {% set _apglow = 'stat-glow-red' if rstats.awaiting_approval > 2 else ('stat-glow-amber' if rstats.awaiting_approval > 0 else '') %}
     <div id="stat-pending" class="rv-stat-cell">
-      <div id="stat-pending-n" class="{{_apglow}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;{% if not _apglow %}color:var(--ink3){% endif %}">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:13px;color:#2d6a4f;margin-left:4px">↓</span></div>
+      <div id="stat-pending-n" class="{{_apglow}}" style="font-family:'DM Serif Display',serif;font-size:clamp(40px,4.5vw,62px);font-weight:500;line-height:1;letter-spacing:-.02em;{% if not _apglow %}color:var(--ink3){% endif %}">{{rstats.awaiting_approval}}<span id="stat-pending-arrow" style="display:none;font-size:13px;color:#2d6a4f;margin-left:4px">↓</span></div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">To approve</div>
     </div>
   </div>
@@ -1231,28 +1231,28 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div style="display:flex;justify-content:center;align-items:center;padding:28px 0 36px;flex-wrap:wrap">
     <div style="text-align:center;min-width:72px;padding:0 36px">
       {% set _pglow = 'stat-glow-green' if rstats.positive_pct >= 70 else ('stat-glow-amber' if rstats.positive_pct >= 50 else 'stat-glow-red') %}
-      <div id="stat-positive-n" class="{{_pglow}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;line-height:1">{{rstats.positive_pct}}%</div>
+      <div id="stat-positive-n" class="{{_pglow}}" style="font-family:'DM Serif Display',serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;line-height:1">{{rstats.positive_pct}}%</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Positive</div>
     </div>
     <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
     <div id="stat-urgent" style="text-align:center;min-width:72px;padding:0 36px">
-      <div id="stat-urgent-n" class="{{'stat-glow-red' if rstats.urgent > 0 else ''}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;line-height:1;{% if not rstats.urgent %}color:var(--ink3);{% endif %}">{{rstats.urgent}}</div>
+      <div id="stat-urgent-n" class="{{'stat-glow-red' if rstats.urgent > 0 else ''}}" style="font-family:'DM Serif Display',serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;line-height:1;{% if not rstats.urgent %}color:var(--ink3);{% endif %}">{{rstats.urgent}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Urgent</div>
     </div>
     <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
     <div style="text-align:center;min-width:72px;padding:0 36px">
-      <div id="stat-this-month-n" style="font-family:'Cormorant Garamond',serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;color:var(--ink);line-height:1">{{rstats.this_month}}</div>
+      <div id="stat-this-month-n" style="font-family:'DM Serif Display',serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;color:var(--ink);line-height:1">{{rstats.this_month}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Responded/mo</div>
     </div>
     <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
     <div style="text-align:center;min-width:72px;padding:0 36px">
-      <div id="stat-resp-time-n" style="font-family:'Cormorant Garamond',serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;color:var(--ink);line-height:1">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
+      <div id="stat-resp-time-n" style="font-family:'DM Serif Display',serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;color:var(--ink);line-height:1">{% if rstats.avg_response_hours and rstats.avg_response_hours <= 720 %}{% if rstats.avg_response_hours < 24 %}{{rstats.avg_response_hours}}h{% elif rstats.avg_response_hours < 168 %}{{(rstats.avg_response_hours / 24)|int}}d{% else %}{{(rstats.avg_response_hours / 168)|int}}w{% endif %}{% else %}—{% endif %}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Avg response time</div>
     </div>
     <div style="width:1px;height:56px;background:rgba(247,244,239,.22);flex-shrink:0"></div>
     <div style="text-align:center;min-width:72px;padding:0 36px">
       {% set _srcglow = 'stat-glow-green' if (restaurant.reviews_live or restaurant.gmb_refresh_token) else '' %}
-      <div class="{{_srcglow}}" style="font-family:'Cormorant Garamond',serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;line-height:1;{% if not _srcglow %}color:var(--ink3){% endif %}">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
+      <div class="{{_srcglow}}" style="font-family:'DM Serif Display',serif;font-size:clamp(26px,2.8vw,38px);font-weight:500;letter-spacing:-.01em;line-height:1;{% if not _srcglow %}color:var(--ink3){% endif %}">{{'Live' if restaurant.reviews_live else ('Connected' if restaurant.gmb_refresh_token else 'Demo')}}</div>
       <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:5px">Source</div>
     </div>
   </div>
