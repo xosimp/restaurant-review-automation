@@ -1972,6 +1972,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   ];
   function _fmtK(n){if(n>=1000000)return '$'+(n/1000000).toFixed(1)+'M';if(n>=1000)return '$'+(n/1000).toFixed(0)+'k';return '$'+Math.round(n);}
   function _fmtComma(n){return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,',');}
+  function _fmtHours(h){return String(h).replace(/\.0$/,'');}
   function renderRoleDonut(){
     var svgEl=document.getElementById('role-donut-svg');
     var legend=document.getElementById('role-donut-legend');
@@ -2003,7 +2004,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       lhtml+='<span style="width:9px;height:9px;border-radius:50%;background:'+col+';flex-shrink:0;box-shadow:0 0 7px '+col+'99"></span>';
       lhtml+='<span style="font-size:12px;font-weight:600;color:rgba(255,255,255,.8);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+d.name+'</span>';
       lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:12px;font-weight:700;color:'+col+';width:38px;text-align:right">'+d.pct+'%</span>';
-      lhtml+='<span style="font-size:11px;color:rgba(255,255,255,.3);width:38px;text-align:right">'+d.hours+'h</span>';
+      lhtml+='<span style="font-size:11px;color:rgba(255,255,255,.3);width:38px;text-align:right">'+_fmtHours(d.hours)+'h</span>';
       lhtml+='<span style="font-size:11px;color:rgba(255,255,255,.3);width:22px;text-align:right">'+d.hc+'</span>';
       lhtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:11px;color:rgba(255,255,255,.5);width:56px;text-align:right">$'+_fmtComma(d.cost)+'</span>';
       lhtml+='</div>';
