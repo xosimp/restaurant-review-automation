@@ -9,6 +9,7 @@
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="shortcut icon" href="/favicon.ico">
 <meta name="theme-color" content="#0e0c0a">
+<script>(function(){var d=localStorage.getItem('cavnar_theme')==='dark';if(d)document.documentElement.setAttribute('data-theme','dark');document.documentElement.style.background=d?'radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.18) 40%,transparent 70%),linear-gradient(180deg,#0a0806 0%,#0e0c0a 100%)':'radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.32) 0%,rgba(200,75,47,.10) 45%,transparent 70%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%)';}());</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=block" rel="stylesheet">
@@ -1601,7 +1602,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <input type="file" accept=".csv" style="display:none" id="shifts-inline-input" onchange="clientUpload('shifts', this)">
       </label>
       {% endif %}
-      <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
+      <div style="display:inline-flex;box-shadow:0 0 0 1px var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
         <button id="lb-tab-schedule"  onclick="switchLaborTab('schedule')"  class="rv-tab-active" style="border:none;padding:8px 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Schedule</button>
         <button id="lb-tab-analytics" onclick="switchLaborTab('analytics')" style="border:none;padding:8px 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
       </div>
@@ -1631,7 +1632,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div>
 
   <!-- Hero metric — dollar gap -->
-  <div id="labor-gap-banner" style="background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%);border:1px solid rgba(200,75,47,.22);border-radius:var(--r);padding:20px 24px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;position:relative;overflow:hidden;box-shadow:0 4px 24px rgba(200,75,47,.12),0 1px 0 rgba(255,255,255,.04) inset">
+  <div id="labor-gap-banner" style="background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%);border:1px solid rgba(200,75,47,.55);border-radius:var(--r);padding:20px 24px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;position:relative;overflow:hidden;box-shadow:0 0 0 1px rgba(200,75,47,.18),0 8px 32px rgba(200,75,47,.28),0 1px 0 rgba(255,255,255,.06) inset">
     <div style="position:absolute;top:-40px;right:-60px;width:280px;height:200px;background:radial-gradient(ellipse at center,rgba(200,75,47,.18) 0%,transparent 70%);pointer-events:none;z-index:0"></div>
     <div style="position:relative;z-index:1">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
@@ -1658,7 +1659,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           <span style="font-size:13px;color:var(--ink3);margin-left:4px">target</span>
         </div>
       </div>
-      <div id="gap-dollar" style="font-family:'Fraunces',serif;font-size:14px;color:var(--ember2);margin-top:6px;font-weight:500;font-style:italic">{% if labor.overall_labor_pct > labor.labor_target|default(30.0) %}Your labor is at {{labor.overall_labor_pct}}% vs {{labor.labor_target|default(30.0)}}% target — loading gap calculation…{% else %}Your labor is on target at {{labor.overall_labor_pct}}% — great work.{% endif %}</div>
+      <div id="gap-dollar" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;color:var(--ember2);margin-top:6px;font-weight:500">{% if labor.overall_labor_pct > labor.labor_target|default(30.0) %}Your labor is at {{labor.overall_labor_pct}}% vs {{labor.labor_target|default(30.0)}}% target — loading gap calculation…{% else %}Your labor is on target at {{labor.overall_labor_pct}}% — great work.{% endif %}</div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
         <span style="font-size:11px;color:var(--ink3);background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:3px 10px">Revenue (2 wks) &nbsp;<strong style="font-family:'Space Grotesk',sans-serif;color:var(--paper)">${{labor.total_sales|int|format_num}}</strong></span>
         <span style="font-size:11px;color:var(--ink3);background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:3px 10px">Labor cost (2 wks) &nbsp;<strong style="font-family:'Space Grotesk',sans-serif;color:{% if labor.overall_labor_pct > (labor.labor_target|default(30.0)) + 5 %}#ff9b8a{% elif labor.overall_labor_pct > (labor.labor_target|default(30.0)) %}#ef9f27{% else %}#6fcf97{% endif %}">${{labor.total_labor_cost|int|format_num}}</strong></span>
@@ -4766,7 +4767,7 @@ function loadLaborInsight(){
       if(msgEl) msgEl.textContent='You are at '+d.current_pct+'% vs your '+_laborTarget+'% target — that gap is costing around $'+Math.round(d.monthly_gap).toLocaleString()+'/mo. An optimized schedule can help close it.';
       if(pctEl) pctEl.style.color='#ef9f27';
     } else {
-      if(gapEl){ gapEl.textContent='On target ✓'; gapEl.style.color='#6fcf97'; }
+      if(gapEl){ gapEl.textContent='On target ✓'; gapEl.style.color='#6fcf97'; gapEl.style.fontFamily="'Fraunces',serif"; gapEl.style.fontStyle='italic'; }
       if(msgEl) msgEl.textContent='Your labor is at '+d.current_pct+'% — at or below your '+_laborTarget+'% target. Great work. Keep an eye on individual days that spike.';
       if(pctEl) pctEl.style.color='#6fcf97';
     }
