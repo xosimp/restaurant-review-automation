@@ -3428,7 +3428,7 @@ function loadTopicHeatmap(days) {
         html += '<div style="font-size:11px;font-weight:600;color:var(--ink2);line-height:1.3">' + item.label + '</div>';
         html += '<span style="font-size:10px;font-weight:700;color:' + trendCol + '">' + trendSym + '</span>';
         html += '</div>';
-        html += '<div style="font-size:24px;font-weight:700;color:' + numColor + ';line-height:1;margin-bottom:8px">' + (empty ? '—' : item.count) + '</div>';
+        html += '<div style="font-family:\'Space Grotesk\',sans-serif;font-size:24px;font-weight:700;color:' + numColor + ';line-height:1;margin-bottom:8px">' + (empty ? '—' : item.count) + '</div>';
         if (!empty) {
           html += '<div style="height:4px;border-radius:2px;overflow:hidden;display:flex;background:' + (_dark ? 'var(--paper3)' : '#e5e7eb') + '">';
           html += '<div style="width:' + posW + '%;background:#2d6a4f;height:100%"></div>';
