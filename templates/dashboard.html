@@ -1949,8 +1949,9 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   {% if labor.role_summary %}
   <div style="background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%);border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:20px 24px;margin-bottom:14px;position:relative;overflow:hidden;box-shadow:0 0 0 1px rgba(200,75,47,.1),0 8px 32px rgba(200,75,47,.18)">
     <div style="position:absolute;top:-40px;right:-60px;width:280px;height:200px;background:radial-gradient(ellipse at center,rgba(200,75,47,.12) 0%,transparent 70%);pointer-events:none;z-index:0"></div>
-    <div style="display:flex;align-items:center;margin-bottom:16px;position:relative;z-index:1">
-      <span style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,.4)">Labor Cost by Role</span>
+    <div style="margin-bottom:16px;position:relative;z-index:1">
+      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:3px">Labor Cost by Role</div>
+      {% if labor.date_range and labor.date_range.start %}<div style="font-size:11px;color:rgba(255,255,255,.35)">{{labor.date_range.start[5:7]|int}}/{{labor.date_range.start[8:10]|int}}/{{labor.date_range.start[2:4]}} – {{labor.date_range.end[5:7]|int}}/{{labor.date_range.end[8:10]|int}}/{{labor.date_range.end[2:4]}}</div>{% endif %}
     </div>
     <div style="display:flex;align-items:center;gap:28px;position:relative;z-index:1;flex-wrap:wrap">
       <div style="position:relative;flex-shrink:0;width:180px;height:180px">
