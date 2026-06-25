@@ -2077,7 +2077,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 <div style="max-width:1080px;margin:0 auto;padding:24px 28px">
 
   <!-- Header: CSV + tab switcher grouped right (matching labor) -->
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:8px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px">
     <div></div>
     <div style="display:flex;align-items:center;gap:10px">
       {% if inv.is_live %}
@@ -2093,6 +2093,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <button id="fc-tab-tracker"   onclick="switchFcTab('tracker')"   class="rv-tab-active" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Tracker</button>
         <button id="fc-tab-analytics" onclick="switchFcTab('analytics')" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
       </div>
+    </div>
   </div>
   <span id="inventory-inline-result" style="font-size:12px;color:#2d6a4f;display:none;margin-bottom:10px"></span>
 
