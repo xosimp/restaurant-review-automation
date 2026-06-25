@@ -636,6 +636,7 @@ function clientUpload(dataType, input) {
           resultEl.style.color = '#2d6a4f';
           resultEl.textContent = '✓ ' + data.rows + ' rows loaded — refreshing…';
         }
+        try{sessionStorage.removeItem('labor_insight');sessionStorage.removeItem('labor_insight_at');sessionStorage.removeItem('inv_insight');sessionStorage.removeItem('inv_insight_at');}catch(e){}
         setTimeout(function() { location.reload(); }, 1200);
       } else {
         if (resultEl) {

@@ -1445,6 +1445,17 @@ def client_upload_data(current_user):
                 _sldh(restaurant_id, _shift_analysis.get("by_day", {}))
             except Exception as _dh_e:
                 print(f"[daily history] {_dh_e}")
+            # Persist this upload as a labor_history snapshot so trend chart is immediately correct
+            try:
+                from models import save_labor_snapshot as _sls
+                _dr = _shift_analysis.get("date_range", {})
+                if _dr.get("start") and _dr.get("end"):
+                    _sls(restaurant_id, _dr["start"], _dr["end"],
+                         _shift_analysis["overall_labor_pct"],
+                         _shift_analysis["total_labor_cost"],
+                         _shift_analysis["total_sales"])
+            except Exception as _snap_e:
+                print(f"[labor snapshot] {_snap_e}")
             try:
                 from webhooks import fire_webhook as _fw_labor
                 _fw_labor(restaurant_id, "labor.updated", {
