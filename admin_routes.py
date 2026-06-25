@@ -1146,8 +1146,8 @@ def inv_trend_api(current_user):
                 # Format label: "5/27" from "2026-05-27"
                 parts = (row["week_end"] or "").split("-")
                 label = f"{int(parts[1])}/{int(parts[2])}" if len(parts) == 3 else row["week_end"]
-                waste_rate = round(float(data.get("waste_rate_pct", 0)), 1)
-                inv_value = round(float(data.get("inventory_value", 0)), 2)
+                waste_rate = round(float(data.get("waste_rate_pct") or 0), 1)
+                inv_value = round(float(data.get("inventory_value") or 0), 2)
                 # week_start = 6 days before week_end
                 import datetime as _dt
                 try:
