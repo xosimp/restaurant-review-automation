@@ -551,6 +551,44 @@ button:not(.tab):not(.logout-btn):not([disabled]):active{transform:scale(.97)}
 }
 </style>
 <script>
+function addCustomFoodItem(){
+  var tbody=document.getElementById('fc-rows');
+  if(!tbody)return;
+  var tr=document.createElement('tr');
+  tr.style.borderBottom='1px solid rgba(255,255,255,.07)';
+  tr.setAttribute('data-custom','1');
+  var inpStyle='width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none';
+  var numStyle='width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:Space Grotesk,sans-serif;outline:none';
+  tr.innerHTML='<td style="padding:7px 8px"><input type="text" placeholder="Item name" style="'+inpStyle+'" onblur="saveFcCustomItem(this.closest('tr'))"></td>'
+    +'<td style="padding:7px 8px"><input type="text" placeholder="unit" style="'+inpStyle+'"></td>'
+    +'<td style="padding:7px 8px"><input type="number" step="0.01" min="0" placeholder="0.00" style="'+numStyle+'"></td>'
+    +'<td style="padding:7px 8px"><input type="number" step="0.1" min="0" placeholder="0" style="'+numStyle+'"></td>'
+    +'<td style="padding:7px 8px;width:70px;text-align:right"><span class="fc-save-badge" style="font-size:9px;color:rgba(255,255,255,.25);font-weight:600;letter-spacing:.05em">UNSAVED</span></td>';
+  tbody.appendChild(tr);
+  tr.querySelector('input').focus();
+  tr.querySelector('input').style.borderBottom='1px solid rgba(200,75,47,.5)';
+}
+function saveFcCustomItem(row){
+  var inputs=row.querySelectorAll('input');
+  if(!inputs.length)return;
+  var name=inputs[0].value.trim();
+  var unit=inputs[1]?inputs[1].value.trim():'';
+  var badge=row.querySelector('.fc-save-badge');
+  if(!name)return;
+  if(badge){badge.textContent='SAVING…';badge.style.color='rgba(255,255,255,.35)';}
+  fetch('/api/food-cost/save-custom-item',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
+    body:JSON.stringify({name:name,unit:unit})
+  }).then(function(r){return r.json();}).then(function(d){
+    if(badge){
+      if(d.ok){badge.textContent='SAVED';badge.style.color='#6fcf97';}
+      else{badge.textContent='ERROR';badge.style.color='#ef4444';}
+    }
+  }).catch(function(){
+    if(badge){badge.textContent='ERROR';badge.style.color='#ef4444';}
+  });
+}
 function submitFoodCostCount() {
   var rows = document.querySelectorAll('#fc-rows tr');
   var items = [];
@@ -2156,32 +2194,53 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         </tr>
       </thead>
       <tbody id="fc-rows">
-        {% set _fc_items = food_cost_data.current.items if food_cost_data and food_cost_data.current else [
-          {"name":"Chicken Breast","unit":"lb","price":"","usage":""},
-          {"name":"Beef/Steak","unit":"lb","price":"","usage":""},
-          {"name":"Salmon / Fish","unit":"lb","price":"","usage":""},
-          {"name":"Shrimp","unit":"lb","price":"","usage":""},
-          {"name":"Heavy Cream","unit":"qt","price":"","usage":""},
-          {"name":"Butter","unit":"lb","price":"","usage":""},
-          {"name":"Produce (misc)","unit":"case","price":"","usage":""},
-          {"name":"Custom item","unit":"","price":"","usage":""}
-        ] %}
-        {% for _fci in _fc_items %}
-        <tr style="border-bottom:1px solid rgba(255,255,255,.07)">
-          <td style="padding:7px 8px"><input type="text" value="{{_fci.name}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="Item name"></td>
-          <td style="padding:7px 8px"><input type="text" value="{{_fci.unit}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="lb"></td>
-          <td style="padding:7px 8px"><input type="number" value="{{_fci.price}}" step="0.01" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0.00"></td>
-          <td style="padding:7px 8px"><input type="number" value="{{_fci.usage}}" step="0.1" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0"></td>
-        </tr>
-        {% endfor %}
+        {% if food_cost_data and food_cost_data.current %}
+          {% for _fci in food_cost_data.current.items %}
+          <tr style="border-bottom:1px solid rgba(255,255,255,.07)">
+            <td style="padding:7px 8px"><input type="text" value="{{_fci.name}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="Item name"></td>
+            <td style="padding:7px 8px"><input type="text" value="{{_fci.unit}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="lb"></td>
+            <td style="padding:7px 8px"><input type="number" value="{{_fci.price}}" step="0.01" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0.00"></td>
+            <td style="padding:7px 8px"><input type="number" value="{{_fci.usage}}" step="0.1" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0"></td>
+          </tr>
+          {% endfor %}
+        {% else %}
+          {% for _fci in [
+            {"name":"Chicken Breast","unit":"lb","price":"","usage":""},
+            {"name":"Beef/Steak","unit":"lb","price":"","usage":""},
+            {"name":"Salmon / Fish","unit":"lb","price":"","usage":""},
+            {"name":"Shrimp","unit":"lb","price":"","usage":""},
+            {"name":"Heavy Cream","unit":"qt","price":"","usage":""},
+            {"name":"Butter","unit":"lb","price":"","usage":""},
+            {"name":"Produce (misc)","unit":"case","price":"","usage":""}
+          ] %}
+          <tr style="border-bottom:1px solid rgba(255,255,255,.07)">
+            <td style="padding:7px 8px"><input type="text" value="{{_fci.name}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="Item name"></td>
+            <td style="padding:7px 8px"><input type="text" value="{{_fci.unit}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="lb"></td>
+            <td style="padding:7px 8px"><input type="number" value="" step="0.01" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0.00"></td>
+            <td style="padding:7px 8px"><input type="number" value="" step="0.1" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0"></td>
+          </tr>
+          {% endfor %}
+          {% for _ci in (food_cost_data.custom_items if food_cost_data and food_cost_data.custom_items else []) %}
+          <tr style="border-bottom:1px solid rgba(255,255,255,.07)" data-custom="1">
+            <td style="padding:7px 8px"><input type="text" value="{{_ci.name}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="Item name"></td>
+            <td style="padding:7px 8px"><input type="text" value="{{_ci.unit}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="lb"></td>
+            <td style="padding:7px 8px"><input type="number" value="" step="0.01" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0.00"></td>
+            <td style="padding:7px 8px"><input type="number" value="" step="0.1" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0"></td>
+            <td style="padding:7px 8px;width:70px;text-align:right"><span style="font-size:9px;color:#6fcf97;font-weight:600;letter-spacing:.05em">SAVED</span></td>
+          </tr>
+          {% endfor %}
+        {% endif %}
       </tbody>
     </table>
     </div>
 
     <!-- Submit row -->
-    <div style="display:flex;align-items:center;gap:12px;margin-top:20px;position:relative;z-index:1">
-      <button onclick="submitFoodCostCount()" class="btn-primary" style="padding:0 24px">Submit this week's prices</button>
-      <span id="fc-submit-msg" style="font-size:12px;color:#6fcf97;display:none"></span>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:20px;position:relative;z-index:1;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button onclick="submitFoodCostCount()" class="btn-primary" style="padding:0 24px">Submit this week's prices</button>
+        <span id="fc-submit-msg" style="font-size:12px;color:#6fcf97;display:none"></span>
+      </div>
+      <button onclick="addCustomFoodItem()" style="background:#166534;color:white;border:none;border-radius:6px;height:36px;padding:0 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;display:inline-flex;align-items:center;gap:6px;transition:background .15s" onmouseover="this.style.background='#14532d'" onmouseout="this.style.background='#166534'"><span style="font-size:17px;line-height:1;margin-top:-1px">+</span> Add Custom Item</button>
     </div>
   </div>
 

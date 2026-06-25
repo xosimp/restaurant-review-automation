@@ -1656,6 +1656,46 @@ def food_cost_quickcount(current_user):
                    submitted_at=now_str, prev_submitted_at=prev.get("submitted_at") if prev else None)
 
 
+@client_bp.route("/api/food-cost/save-custom-item", methods=["POST"])
+@login_required
+def save_food_cost_custom_item(current_user):
+    """Persist a custom ingredient name+unit to food_cost_json so it appears on next load."""
+    import json as _jci
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    unit = (data.get("unit") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="Name required"), 400
+
+    rid = current_user["restaurant_id"]
+    from models import get_client_data as _gcd_ci, get_conn as _gcc_ci
+    existing_raw = _gcd_ci(rid)
+    fc = {}
+    if existing_raw and existing_raw.get("food_cost_json"):
+        try:
+            fc = _jci.loads(existing_raw["food_cost_json"])
+        except Exception:
+            fc = {}
+
+    custom_items = fc.get("custom_items", [])
+    existing_names = [ci["name"].lower() for ci in custom_items if ci.get("name")]
+    if name.lower() not in existing_names:
+        custom_items.append({"name": name, "unit": unit})
+        fc["custom_items"] = custom_items
+        payload = _jci.dumps(fc)
+        conn = _gcc_ci()
+        row = conn.execute("SELECT id FROM client_data WHERE restaurant_id=?", (rid,)).fetchone()
+        if row:
+            conn.execute("UPDATE client_data SET food_cost_json=?, updated_at=datetime('now') WHERE restaurant_id=?",
+                         (payload, rid))
+        else:
+            conn.execute("INSERT INTO client_data (restaurant_id, food_cost_json) VALUES (?, ?)", (rid, payload))
+        conn.commit()
+        conn.close()
+
+    return jsonify(ok=True, name=name, unit=unit)
+
+
 # ── Review request ────────────────────────────────────────────────────────────
 
 @client_bp.route("/api/send-review-request", methods=["POST"])
