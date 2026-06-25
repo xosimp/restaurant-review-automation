@@ -5471,11 +5471,8 @@ function renderInvTrend(){
     var glow=isLast?'rgba(255,159,74,.6)':isOver?'rgba(192,57,43,.5)':isLow?'rgba(111,207,151,.5)':'rgba(239,159,74,.5)';
     var hPx=Math.max(4,Math.round((w.waste/maxWaste)*200));
     var vsAvg=Math.round(w.waste-avg);
-    var vsAvgStr=(vsAvg>=0?'<span style="color:#ef4444">&#8593; $'+Math.abs(vsAvg)+'</span>':'<span style="color:#6fcf97">&#8595; $'+Math.abs(vsAvg)+'</span>')+' vs avg';
-    var vsPrev='';
-    if(i>0){var diff=Math.round(w.waste-items[i-1].waste);vsPrev=(diff>=0?'<span style="color:#ef4444">&#8593; $'+Math.abs(diff)+'</span>':'<span style="color:#6fcf97">&#8595; $'+Math.abs(diff)+'</span>')+' vs prior week';}
-    var rateStr=w.waste_rate_pct?w.waste_rate_pct+'% waste rate':'';
-    var tipData='data-week="Week of '+w.week_start_label+' – '+w.label+'" data-waste="$'+Math.round(w.waste)+'" data-vsavg="'+vsAvgStr+'" data-vsprev="'+vsPrev+'" data-rate="'+rateStr+'"';
+    var vsPrevDiff=(i>0)?Math.round(w.waste-items[i-1].waste):999999;
+    var tipData='data-week="Week of '+w.week_start_label+' – '+w.label+'" data-waste="'+Math.round(w.waste)+'" data-vsavg="'+vsAvg+'" data-vsprev="'+vsPrevDiff+'" data-rate="'+w.waste_rate_pct+'"';
     barHtml+='<div '+tipData+' class="inv-tip-bar" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;height:100%;cursor:default">';
     barHtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:10px;font-weight:700;color:'+col+';line-height:1">$'+Math.round(w.waste)+'</span>';
     barHtml+='<div style="width:85%;height:'+hPx+'px;background:'+grad+';border-radius:4px 4px 0 0;box-shadow:0 -2px 12px '+glow+',0 0 6px '+glow+';transition:opacity .15s" onmouseover="this.style.opacity=\'.75\'" onmouseout="this.style.opacity=\'1\'"></div>';
@@ -5490,15 +5487,18 @@ function renderInvTrend(){
     (function(bar){
       bar.addEventListener('mouseenter',function(e){
         var week=bar.getAttribute('data-week');
-        var waste=bar.getAttribute('data-waste');
-        var vsavg=bar.getAttribute('data-vsavg');
-        var vsprev=bar.getAttribute('data-vsprev');
-        var rate=bar.getAttribute('data-rate');
+        var waste=parseInt(bar.getAttribute('data-waste'),10);
+        var vsavg=parseInt(bar.getAttribute('data-vsavg'),10);
+        var vsprev=parseInt(bar.getAttribute('data-vsprev'),10);
+        var rate=parseFloat(bar.getAttribute('data-rate'));
+        var arrowUp='&#8593;',arrowDn='&#8595;';
         var html='<div style="font-size:10px;font-weight:700;color:rgba(255,255,255,.4);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px">'+week+'</div>';
-        html+='<div style="font-size:18px;font-weight:700;color:#ff9f4a;font-family:\'Space Grotesk\',sans-serif;line-height:1;margin-bottom:8px">'+waste+'</div>';
-        if(rate)html+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-bottom:4px">'+rate+'</div>';
-        html+='<div style="font-size:11px;color:rgba(255,255,255,.7);margin-bottom:3px">'+vsavg+'</div>';
-        if(vsprev)html+='<div style="font-size:11px;color:rgba(255,255,255,.7)">'+vsprev+'</div>';
+        html+='<div style="font-size:18px;font-weight:700;color:#ff9f4a;font-family:\'Space Grotesk\',sans-serif;line-height:1;margin-bottom:8px">$'+waste+'</div>';
+        if(rate)html+='<div style="font-size:11px;color:rgba(255,255,255,.45);margin-bottom:6px">'+rate+'% waste rate</div>';
+        var avgClr=vsavg>=0?'#ef4444':'#6fcf97';
+        var avgArr=vsavg>=0?arrowUp:arrowDn;
+        html+='<div style="font-size:11px;margin-bottom:3px"><span style="color:'+avgClr+'">'+avgArr+' $'+Math.abs(vsavg)+'</span><span style="color:rgba(255,255,255,.45)"> vs 8-wk avg</span></div>';
+        if(vsprev!==999999){var pvClr=vsprev>=0?'#ef4444':'#6fcf97';var pvArr=vsprev>=0?arrowUp:arrowDn;html+='<div style="font-size:11px"><span style="color:'+pvClr+'">'+pvArr+' $'+Math.abs(vsprev)+'</span><span style="color:rgba(255,255,255,.45)"> vs prior week</span></div>';}
         tipEl.innerHTML=html;
         tipEl.style.display='block';
       });
