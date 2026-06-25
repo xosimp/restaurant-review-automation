@@ -190,6 +190,7 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] .rv-tab-active{background:#923020!important}
 #rv-tab-inbox:not(.rv-tab-active),#rv-tab-analytics:not(.rv-tab-active){background:transparent!important;color:var(--ink3)!important}
 #lb-tab-schedule:not(.rv-tab-active),#lb-tab-analytics:not(.rv-tab-active){background:transparent!important;color:var(--ink3)!important}
+#fc-tab-tracker:not(.rv-tab-active),#fc-tab-analytics:not(.rv-tab-active){background:transparent!important;color:var(--ink3)!important}
 [data-theme="dark"] .btn-link-ember{background:#923020!important}
 [data-theme="dark"] .btn-link-ember:hover{background:#7a2818!important;box-shadow:0 2px 8px rgba(146,48,32,.2)!important}
 [data-theme="dark"] button[style*="background:#c84b2f"],
@@ -2070,30 +2071,53 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 </div><!-- /panel-labor -->
 
 <!-- FOOD COST -->
-<div class="panel {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="panel-inventory">
+<div class="panel {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="panel-inventory" style="max-width:100%;padding:0;min-height:100%">
+<div style="max-width:1080px;margin:0 auto;padding:24px 28px">
 
-  <!-- Header: tab switcher -->
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px">
-    <div></div>
+  <!-- Header: CSV upload (left) + tab switcher (right) -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+    <div style="display:flex;align-items:center;gap:10px">
+      {% if inv.is_live %}
+      <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px">
+        Update CSV <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
+      </label>
+      {% else %}
+      <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px;background:var(--paper3);color:var(--ink)">
+        Upload CSV <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
+      </label>
+      {% endif %}
+    </div>
     <div style="display:inline-flex;box-shadow:0 0 0 1px var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
       <button id="fc-tab-tracker"   onclick="switchFcTab('tracker')"   class="rv-tab-active" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Tracker</button>
       <button id="fc-tab-analytics" onclick="switchFcTab('analytics')" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
     </div>
   </div>
+  <span id="inventory-inline-result" style="font-size:12px;color:#2d6a4f;display:none;margin-bottom:10px"></span>
 
   <!-- ══ TRACKER sub-panel ══ -->
   <div id="fc-panel-tracker">
 
-  <!-- ── Key Ingredient Price Monitor (Big 8 Quick Count) ── -->
-  <div class="slabel" style="margin-bottom:8px">Key Ingredient Price Monitor</div>
-  <div class="card" style="padding:16px 18px;margin-bottom:14px">
-    <div style="font-size:12px;color:var(--ink3);margin-bottom:12px;line-height:1.5">
-      Track your 8 highest-cost ingredients weekly. Submit every time you get an invoice — we'll flag price drift and weekly cost impact automatically.
+  <!-- Key Ingredient Price Monitor — ember hero card -->
+  <div style="background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%);border:1px solid rgba(200,75,47,.55);border-radius:var(--r);padding:24px 28px;position:relative;overflow:hidden;box-shadow:0 0 0 1px rgba(200,75,47,.18),0 8px 32px rgba(200,75,47,.28),0 1px 0 rgba(255,255,255,.06) inset;max-width:720px;margin:0 auto">
+    <div style="position:absolute;top:-40px;right:-60px;width:300px;height:220px;background:radial-gradient(ellipse at center,rgba(200,75,47,.18) 0%,transparent 70%);pointer-events:none;z-index:0"></div>
+
+    <!-- Card header -->
+    <div style="position:relative;z-index:1;display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+      <div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:6px">Key Ingredient Price Monitor</div>
+        <div style="font-size:13px;color:rgba(255,255,255,.55);line-height:1.5;max-width:480px">Track your 8 highest-cost ingredients weekly. Submit every time you get an invoice — we'll flag price drift automatically.</div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        {% if food_cost_data and food_cost_data.current %}
+        <div style="font-size:10px;color:rgba(255,255,255,.3);letter-spacing:.05em">Last submitted</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:rgba(255,255,255,.6);margin-top:2px">{{food_cost_data.current.submitted_at}}</div>
+        {% endif %}
+      </div>
     </div>
 
-    <!-- Price drift results (shown after submission or from saved data) -->
+    <!-- Price drift status -->
     {% if food_cost_data and food_cost_data.current and food_cost_data.previous and food_cost_data.previous.items %}
-    <div id="fc-drift-saved" style="margin-bottom:14px">
+    <div id="fc-drift-saved" style="position:relative;z-index:1;margin-bottom:16px">
       {% set curr_map = {} %}
       {% for it in food_cost_data.current.items %}{% if it.name %}{% set _ = curr_map.update({it.name|lower: it}) %}{% endif %}{% endfor %}
       {% set drift_found = namespace(count=0) %}
@@ -2105,27 +2129,27 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         {% endif %}
       {% endfor %}
       {% if drift_found.count > 0 %}
-      <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:10px 14px;font-size:12px;color:#7a4f00;font-weight:600">
-        ⚠ {{drift_found.count}} ingredient price change{{''  if drift_found.count == 1 else 's'}} vs last week — submit new prices below to refresh.
+      <div style="background:rgba(239,159,39,.12);border:1px solid rgba(239,159,39,.35);border-radius:8px;padding:10px 14px;font-size:12px;color:#ef9f27;font-weight:600">
+        ⚠ {{drift_found.count}} ingredient price change{{''  if drift_found.count == 1 else 's'}} vs last week — update below to refresh.
       </div>
       {% else %}
-      <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:8px 14px;font-size:12px;color:#2d6a4f">
-        ✓ Prices stable vs last week ({{food_cost_data.previous.submitted_at}}) — update below if you have a new invoice.
+      <div style="background:rgba(111,207,151,.1);border:1px solid rgba(111,207,151,.3);border-radius:8px;padding:8px 14px;font-size:12px;color:#6fcf97;font-weight:600">
+        ✓ Prices stable vs last week ({{food_cost_data.previous.submitted_at}})
       </div>
       {% endif %}
     </div>
     {% endif %}
+    <div id="fc-drift-live" style="display:none;margin-bottom:14px;position:relative;z-index:1"></div>
 
-    <div id="fc-drift-live" style="display:none;margin-bottom:14px"></div>
-
-    <!-- Quick count form table -->
+    <!-- Ingredient table -->
+    <div style="position:relative;z-index:1">
     <table style="width:100%;border-collapse:collapse;font-size:12px" id="fc-table">
       <thead>
-        <tr style="border-bottom:1px solid var(--paper3)">
-          <th style="text-align:left;padding:5px 6px;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Ingredient</th>
-          <th style="text-align:left;padding:5px 6px;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;width:60px">Unit</th>
-          <th style="text-align:left;padding:5px 6px;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;width:90px">Price/unit $</th>
-          <th style="text-align:left;padding:5px 6px;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;width:80px">Wk usage</th>
+        <tr style="border-bottom:1px solid rgba(200,75,47,.25)">
+          <th style="text-align:left;padding:6px 8px;color:rgba(255,255,255,.35);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase">Ingredient</th>
+          <th style="text-align:left;padding:6px 8px;color:rgba(255,255,255,.35);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;width:60px">Unit</th>
+          <th style="text-align:left;padding:6px 8px;color:rgba(255,255,255,.35);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;width:100px">Price/unit $</th>
+          <th style="text-align:left;padding:6px 8px;color:rgba(255,255,255,.35);font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;width:80px">Wk usage</th>
         </tr>
       </thead>
       <tbody id="fc-rows">
@@ -2140,22 +2164,22 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           {"name":"Custom item","unit":"","price":"","usage":""}
         ] %}
         {% for _fci in _fc_items %}
-        <tr style="border-bottom:1px solid var(--paper3)">
-          <td style="padding:5px 4px"><input type="text" value="{{_fci.name}}" style="width:100%;border:none;background:transparent;font-size:12px;color:var(--ink);font-family:inherit;outline:none" placeholder="Item name"></td>
-          <td style="padding:5px 4px"><input type="text" value="{{_fci.unit}}" style="width:100%;border:none;background:transparent;font-size:12px;color:var(--ink);font-family:inherit;outline:none" placeholder="lb"></td>
-          <td style="padding:5px 4px"><input type="number" value="{{_fci.price}}" step="0.01" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:var(--ink);font-family:inherit;outline:none" placeholder="0.00"></td>
-          <td style="padding:5px 4px"><input type="number" value="{{_fci.usage}}" step="0.1" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:var(--ink);font-family:inherit;outline:none" placeholder="0"></td>
+        <tr style="border-bottom:1px solid rgba(255,255,255,.07)">
+          <td style="padding:7px 8px"><input type="text" value="{{_fci.name}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="Item name"></td>
+          <td style="padding:7px 8px"><input type="text" value="{{_fci.unit}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="lb"></td>
+          <td style="padding:7px 8px"><input type="number" value="{{_fci.price}}" step="0.01" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0.00"></td>
+          <td style="padding:7px 8px"><input type="number" value="{{_fci.usage}}" step="0.1" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0"></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
-    <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
-      <button onclick="submitFoodCostCount()" style="background:#2d6a4f;color:white;border:none;border-radius:6px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">Submit this week's prices</button>
-      <span id="fc-submit-msg" style="font-size:12px;color:#2d6a4f;display:none"></span>
     </div>
-    {% if food_cost_data and food_cost_data.current %}
-    <div style="font-size:11px;color:var(--ink3);margin-top:8px">Last submitted: {{food_cost_data.current.submitted_at}}{% if food_cost_data.previous and food_cost_data.previous.submitted_at %} · Previous: {{food_cost_data.previous.submitted_at}}{% endif %}</div>
-    {% endif %}
+
+    <!-- Submit row -->
+    <div style="display:flex;align-items:center;gap:12px;margin-top:20px;position:relative;z-index:1">
+      <button onclick="submitFoodCostCount()" class="btn-primary" style="padding:0 24px">Submit this week's prices</button>
+      <span id="fc-submit-msg" style="font-size:12px;color:#6fcf97;display:none"></span>
+    </div>
   </div>
 
   </div><!-- /fc-panel-tracker -->
@@ -2163,24 +2187,11 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- ══ ANALYTICS sub-panel ══ -->
   <div id="fc-panel-analytics" style="display:none">
 
-  <!-- CSV upload header -->
-  {% if inv.is_live %}
-  <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:20px;flex-wrap:wrap;gap:8px">
-    <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px">
-      Update CSV <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
-    </label>
-  </div>
-  {% else %}
-  <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:20px;flex-wrap:wrap;gap:8px">
-    <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px;background:var(--paper3);color:var(--ink)">
-      Upload CSV (optional) <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
-    </label>
-  </div>
-  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#8a6a00">
+  {% if not inv.is_live %}
+  <div style="background:rgba(239,159,39,.1);border:1px solid rgba(239,159,39,.3);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#ef9f27">
     <strong>Sample data below.</strong> Upload a CSV with item, current_stock, par_level, unit_cost, waste_last_week to see your real numbers.
   </div>
   {% endif %}
-  <span id="inventory-inline-result" style="font-size:12px;color:#2d6a4f;display:none;margin-bottom:10px;display:block"></span>
 
   <!-- Annual waste banner -->
   <div style="background:{{inv.banner_gradient}};border-radius:10px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
@@ -2197,13 +2208,28 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
-  <!-- Stat tiles -->
-  <div class="stat-row">
-    <div class="stat hi"><div class="stat-n">${{inv.total_waste_cost_week|format_num}}</div><div class="stat-l">Waste/week</div></div>
-    <div class="stat hi"><div class="stat-n">${{inv.monthly_waste_projection|int|format_num}}</div><div class="stat-l">Projected/mo</div></div>
-    <div class="stat {% if inv.waste_items|length == 0 %}ok{% else %}warn{% endif %}"><div class="stat-n">{{inv.waste_items|length}}</div><div class="stat-l">Waste items</div></div>
-    <div class="stat {% if inv.critical_low|length == 0 %}ok{% else %}hi{% endif %}"><div class="stat-n">{{inv.critical_low|length}}</div><div class="stat-l">Critical low</div></div>
-    <div class="stat"><div class="stat-n">${{inv.total_stock_value|int|format_num}}</div><div class="stat-l">Inventory value</div></div>
+  <!-- Stat tiles — rv-stat-cell style matching labor analytics -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
+    <div class="rv-stat-cell" style="padding:20px 16px">
+      <div class="stat-glow-red" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">${{inv.total_waste_cost_week|format_num}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Waste/week</div>
+    </div>
+    <div class="rv-stat-cell" style="padding:20px 16px">
+      <div class="stat-glow-amber" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">${{inv.monthly_waste_projection|int|format_num}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Projected/mo</div>
+    </div>
+    <div class="rv-stat-cell" style="padding:20px 16px">
+      <div class="{% if inv.waste_items|length == 0 %}stat-glow-green{% else %}stat-glow-amber{% endif %}" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">{{inv.waste_items|length}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Waste items</div>
+    </div>
+    <div class="rv-stat-cell" style="padding:20px 16px">
+      <div class="{% if inv.critical_low|length == 0 %}stat-glow-green{% else %}stat-glow-red{% endif %}" style="font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em">{{inv.critical_low|length}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Critical low</div>
+    </div>
+    <div class="rv-stat-cell" style="padding:20px 16px">
+      <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(22px,2.6vw,34px);font-weight:700;line-height:1;letter-spacing:-.02em;color:var(--ink)">${{inv.total_stock_value|int|format_num}}</div>
+      <div style="font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Inventory value</div>
+    </div>
   </div>
 
   <!-- Waste rate benchmark -->
@@ -2308,6 +2334,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   {% endif %}
 
   </div><!-- /fc-panel-analytics -->
+</div><!-- /inner-fc-content -->
 </div>
 <!-- MARKETING -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing">
