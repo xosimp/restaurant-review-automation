@@ -2262,7 +2262,11 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:20px;position:relative;z-index:1;flex-wrap:wrap">
       <div style="display:flex;align-items:center;gap:12px">
         <button onclick="submitFoodCostCount()" class="btn-primary" style="padding:0 24px">Submit this week's prices</button>
-        <span id="fc-submit-msg" style="font-size:12px;color:#6fcf97;display:none"></span>
+        <div id="fc-submit-pill" style="display:{% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}inline-flex{% else %}none{% endif %};flex-direction:column;align-items:flex-start;justify-content:center;gap:1px;height:36px;padding:0 14px;background:rgba(111,207,151,.1);border:1px solid rgba(111,207,151,.28);border-radius:6px">
+          <div id="fc-pill-line1" style="font-size:11px;font-weight:700;color:#6fcf97;line-height:1.3;white-space:nowrap">&#10003; Saved {% if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}{% set _sa=food_cost_data.current.submitted_at %}{{ _sa[5:7]|int }}/{{ _sa[8:10]|int }}/{{ _sa[2:4] }}{% endif %}</div>
+          <div id="fc-pill-line2" style="font-size:9px;color:rgba(111,207,151,.5);letter-spacing:.02em;line-height:1.3;white-space:nowrap">{% if food_cost_data and food_cost_data.previous and food_cost_data.previous.submitted_at %}{% set _pa=food_cost_data.previous.submitted_at %}Last saved: {{ _pa[5:7]|int }}/{{ _pa[8:10]|int }}/{{ _pa[2:4] }}{% elif food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at %}First submission{% endif %}</div>
+        </div>
+        <script>var _fcPrevSaved='{{food_cost_data.current.submitted_at if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at else ""}}';</script>
       </div>
       <button onclick="addCustomFoodItem()" style="background:#166534;color:white;border:none;border-radius:6px;height:36px;padding:0 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;display:inline-flex;align-items:center;gap:6px;transition:background .15s" onmouseover="this.style.background='#14532d'" onmouseout="this.style.background='#166534'"><span style="font-size:17px;line-height:1;margin-top:-1px">+</span> Add Custom Item</button>
     </div>
