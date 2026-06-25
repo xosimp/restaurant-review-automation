@@ -616,8 +616,13 @@ function submitFoodCostCount() {
     }
   }
   if (items.length === 0) return;
-  var msg = document.getElementById('fc-submit-msg');
-  if (msg) { msg.style.display = 'inline'; msg.textContent = 'Saving…'; msg.style.color = 'var(--ink3)'; }
+  var _fcPill=document.getElementById('fc-submit-pill');
+  var _fcL1=document.getElementById('fc-pill-line1');
+  var _fcL2=document.getElementById('fc-pill-line2');
+  var _fmtFcDate=function(s){var p=String(s).split(/[-T ]/);return p.length>=3?(parseInt(p[1],10)+'/'+parseInt(p[2],10)+'/'+String(s).slice(2,4)):s;};
+  if(_fcPill){_fcPill.style.display='inline-flex';}
+  if(_fcL1){_fcL1.textContent='Saving…';_fcL1.style.color='rgba(255,255,255,.4)';}
+  if(_fcL2){_fcL2.textContent='';}
   fetch('/api/food-cost-quickcount', {
     method: 'POST',
     headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{csrf_token}}'},
@@ -625,32 +630,39 @@ function submitFoodCostCount() {
   })
     .then(function(r) { return r.json(); })
     .then(function(data) {
+      var _isDark=document.documentElement.getAttribute('data-theme')==='dark';
       if (!data.ok) {
-        if (msg) { msg.textContent = 'Error — try again'; msg.style.color = '#c84b2f'; }
+        if(_fcL1){_fcL1.textContent='Error — try again';_fcL1.style.color='#c84b2f';}
+        if(_fcL2){_fcL2.textContent='';}
         return;
       }
-      if (msg) { msg.style.display = 'inline'; msg.textContent = 'Saved ' + data.submitted_at; msg.style.color = '#2d6a4f'; }
+      if(_fcL1){_fcL1.textContent='✓ Saved '+_fmtFcDate(data.submitted_at);_fcL1.style.color='#6fcf97';}
+      if(_fcL2){_fcL2.textContent=_fcPrevSaved?'Last saved: '+_fmtFcDate(_fcPrevSaved):'First submission';_fcL2.style.color='rgba(111,207,151,.5)';}
+      _fcPrevSaved=data.submitted_at;
       var driftEl = document.getElementById('fc-drift-live');
       if (!driftEl) return;
+      var _cb=_isDark?'rgba(111,207,151,.1)':'#f0faf4',_cbr=_isDark?'rgba(111,207,151,.28)':'#a7d7b8',_ct=_isDark?'#6fcf97':'#2d6a4f';
+      var _bb=_isDark?'rgba(239,159,39,.12)':'#fff8e6',_bbr=_isDark?'rgba(239,159,39,.3)':'#f0c040',_bht=_isDark?'#ef9f27':'#7a4f00';
+      var _brt=_isDark?'rgba(239,159,39,.2)':'#e0c870',_bit=_isDark?'rgba(255,255,255,.8)':'#0e0c0a',_bmt=_isDark?'rgba(255,255,255,.38)':'#7a736a';
       if (!data.drift || data.drift.length === 0) {
         driftEl.style.display = 'block';
-        driftEl.innerHTML = '<div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:8px 14px;font-size:12px;color:#2d6a4f">&#10003; No significant price changes vs last week — your costs are holding steady.</div>';
+        driftEl.innerHTML='<div style="background:'+_cb+';border:1px solid '+_cbr+';border-radius:6px;padding:8px 14px;font-size:12px;color:'+_ct+'">&#10003; No significant price changes vs last week — your costs are holding steady.</div>';
         return;
       }
-      var html = '<div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:12px 14px;font-size:12px">';
-      html += '<div style="font-weight:700;color:#7a4f00;margin-bottom:8px">&#9888; ' + data.drift.length + ' price change' + (data.drift.length > 1 ? 's' : '') + ' detected';
+      var html = '<div style="background:'+_bb+';border:1px solid '+_bbr+';border-radius:6px;padding:12px 14px;font-size:12px">';
+      html += '<div style="font-weight:700;color:'+_bht+';margin-bottom:8px">&#9888; ' + data.drift.length + ' price change' + (data.drift.length > 1 ? 's' : '') + ' detected';
       if (data.total_weekly_impact > 0) { html += ' — +$' + data.total_weekly_impact.toFixed(2) + '/wk added cost'; }
       html += '</div>';
       html += '<table style="width:100%;border-collapse:collapse;font-size:12px">';
-      html += '<tr style="color:#7a4f00;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px"><td style="padding:3px 6px">Item</td><td style="padding:3px 6px">Was</td><td style="padding:3px 6px">Now</td><td style="padding:3px 6px">Change</td><td style="padding:3px 6px">Weekly $</td></tr>';
+      html += '<tr style="color:'+_bht+';font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.8px"><td style="padding:3px 6px">Item</td><td style="padding:3px 6px">Was</td><td style="padding:3px 6px">Now</td><td style="padding:3px 6px">Change</td><td style="padding:3px 6px">Weekly $</td></tr>';
       for (var j = 0; j < data.drift.length; j++) {
         var d = data.drift[j];
-        var clr = d.direction === 'up' ? '#c0392b' : '#2d6a4f';
+        var clr = d.direction === 'up' ? (_isDark?'#ef4444':'#c0392b') : (_isDark?'#6fcf97':'#2d6a4f');
         var arrow = d.direction === 'up' ? '&#8593;' : '&#8595;';
-        html += '<tr style="border-top:1px solid #e0c870">';
-        html += '<td style="padding:4px 6px;font-weight:600;color:#0e0c0a">' + d.name + '</td>';
-        html += '<td style="padding:4px 6px;color:#7a736a">$' + d.prev_price.toFixed(2) + '</td>';
-        html += '<td style="padding:4px 6px;color:#0e0c0a;font-weight:600">$' + d.curr_price.toFixed(2) + '</td>';
+        html += '<tr style="border-top:1px solid '+_brt+'">';
+        html += '<td style="padding:4px 6px;font-weight:600;color:'+_bit+'">' + d.name + '</td>';
+        html += '<td style="padding:4px 6px;color:'+_bmt+'">$' + d.prev_price.toFixed(2) + '</td>';
+        html += '<td style="padding:4px 6px;color:'+_bit+';font-weight:600">$' + d.curr_price.toFixed(2) + '</td>';
         html += '<td style="padding:4px 6px;color:' + clr + ';font-weight:700">' + arrow + ' ' + Math.abs(d.pct_change) + '%</td>';
         html += '<td style="padding:4px 6px;color:' + clr + ';font-weight:600">' + (d.direction === 'up' ? '+' : '-') + '$' + Math.abs(d.weekly_impact).toFixed(2) + '</td>';
         html += '</tr>';
@@ -2526,7 +2538,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:#6fcf97;display:inline-block;box-shadow:0 0 6px rgba(111,207,151,.6)"></span>Below average</span>
       <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:#ef9f27;display:inline-block;box-shadow:0 0 6px rgba(239,159,39,.6)"></span>Near average</span>
       <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:#c0392b;display:inline-block;box-shadow:0 0 6px rgba(192,57,43,.6)"></span>Above average</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:var(--ember);display:inline-block;box-shadow:0 0 6px rgba(200,75,47,.6)"></span>This week</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:3px;background:#ff9f4a;display:inline-block;box-shadow:0 0 6px rgba(255,159,74,.7)"></span>This week</span>
       <span style="margin-left:auto;color:rgba(200,75,47,.6);display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:20px;height:1px;background:rgba(200,75,47,.7);vertical-align:middle"></span>8-wk avg</span>
     </div>
   </div>
@@ -5447,9 +5459,9 @@ function renderInvTrend(){
     var isLast=(i===items.length-1);
     var isOver=w.waste>avg*1.15;
     var isLow=w.waste<avg*0.85;
-    var col=isLast?'#c84b2f':isOver?'#c0392b':isLow?'#6fcf97':'#ef9f27';
-    var grad=isLast?'linear-gradient(to top,rgba(140,40,20,.9),rgba(200,75,47,1))':isOver?'linear-gradient(to top,rgba(120,20,20,.9),rgba(192,57,43,1))':isLow?'linear-gradient(to top,rgba(20,80,50,.9),rgba(111,207,151,1))':'linear-gradient(to top,rgba(120,90,10,.9),rgba(239,159,39,1))';
-    var glow=isLast?'rgba(200,75,47,.5)':isOver?'rgba(192,57,43,.5)':isLow?'rgba(111,207,151,.5)':'rgba(239,159,39,.5)';
+    var col=isLast?'#ff9f4a':isOver?'#c0392b':isLow?'#6fcf97':'#ef9f27';
+    var grad=isLast?'linear-gradient(to top,rgba(180,80,10,.9),rgba(255,159,74,1))':isOver?'linear-gradient(to top,rgba(120,20,20,.9),rgba(192,57,43,1))':isLow?'linear-gradient(to top,rgba(20,80,50,.9),rgba(111,207,151,1))':'linear-gradient(to top,rgba(120,90,10,.9),rgba(239,159,39,1))';
+    var glow=isLast?'rgba(255,159,74,.6)':isOver?'rgba(192,57,43,.5)':isLow?'rgba(111,207,151,.5)':'rgba(239,159,74,.5)';
     var hPx=Math.max(4,Math.round((w.waste/maxWaste)*200));
     barHtml+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;height:100%">';
     barHtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:10px;font-weight:700;color:'+col+';line-height:1">$'+Math.round(w.waste)+'</span>';
