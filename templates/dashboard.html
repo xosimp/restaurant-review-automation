@@ -2420,36 +2420,76 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </script>
 
   <!-- Order list -->
-  <div class="slabel">Order list — recommended quantities</div>
+  <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px">Order List — Recommended Quantities</div>
   {% if inv.critical_low or inv.reorder_soon or inv.order_reduction %}
-  <div class="card"><table class="tbl">
-    <thead><tr><th>Item</th><th>Status</th><th>Order qty</th><th>Last order</th><th>Savings</th></tr></thead>
-    <tbody>
-    {% for item in inv.critical_low %}<tr>
-      <td><strong>{{item.item}}</strong></td>
-      <td><span class="pill pill-red">{{item.days_remaining}}d — urgent</span></td>
-      <td><strong>{% if item.suggested_order_qty == 0 %}<span style="color:var(--ink3)">skip</span>{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</strong></td>
-      <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
-      <td>{% if item.savings_vs_last > 0 %}<span style="color:#2d6a4f;font-weight:600">↓ ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:var(--red)">↑ ${{"{:.2f}".format(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:var(--ink3)">—</span>{% endif %}</td>
-    </tr>{% endfor %}
-    {% for item in inv.reorder_soon %}<tr>
-      <td><strong>{{item.item}}</strong></td>
-      <td><span class="pill pill-amber">{{item.days_remaining}}d — order soon</span></td>
-      <td><strong>{% if item.suggested_order_qty == 0 %}<span style="color:var(--ink3)">skip</span>{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</strong></td>
-      <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
-      <td>{% if item.savings_vs_last > 0 %}<span style="color:#2d6a4f;font-weight:600">↓ ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:var(--red)">↑ ${{"{:.2f}".format(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:var(--ink3)">—</span>{% endif %}</td>
-    </tr>{% endfor %}
-    {% for item in inv.order_reduction %}<tr>
-      <td><strong>{{item.item}}</strong></td>
-      <td><span class="pill" style="background:#e8f4f0;color:#2d6a4f">reduce order</span></td>
-      <td><strong>{% if item.suggested_order_qty == 0 %}<span style="color:var(--ink3)">skip</span>{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</strong></td>
-      <td style="color:var(--ink3)">{{item.last_order_qty|int}}</td>
-      <td><span style="color:#2d6a4f;font-weight:600">↓ ${{item.savings_vs_last}}</span></td>
-    </tr>{% endfor %}
-    </tbody>
-  </table></div>
+  <div style="background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%);border:1px solid rgba(200,75,47,.45);border-radius:12px;overflow:hidden;box-shadow:0 0 0 1px rgba(200,75,47,.1),0 8px 32px rgba(200,75,47,.18)">
+
+    {% if inv.critical_low %}
+    <div style="border-left:3px solid #ef4444">
+      <div style="display:flex;align-items:center;gap:8px;padding:11px 20px 9px;background:rgba(239,68,68,.07)">
+        <div style="width:7px;height:7px;border-radius:50%;background:#ef4444;box-shadow:0 0 8px rgba(239,68,68,.8);flex-shrink:0"></div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#ef4444;flex:1">Urgent — Order Now</div>
+        <div style="font-size:9px;background:rgba(239,68,68,.18);color:#ef4444;border-radius:10px;padding:2px 8px;font-weight:700;letter-spacing:.05em">{{inv.critical_low|length}} item{{'s' if inv.critical_low|length != 1}}</div>
+      </div>
+      {% for item in inv.critical_low %}
+      <div style="display:flex;align-items:center;padding:10px 20px;border-top:1px solid rgba(255,255,255,.045);gap:12px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.88);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{item.item}}</div>
+          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">{{item.days_remaining}}d remaining · last: {{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %}</div>
+        </div>
+        <div style="font-size:12px;font-weight:700;color:white;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.32);border-radius:6px;padding:4px 12px;white-space:nowrap;font-family:'Space Grotesk',sans-serif;flex-shrink:0">{% if item.suggested_order_qty == 0 %}skip{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</div>
+        <div style="width:64px;text-align:right;font-size:11px;font-weight:700;font-family:'Space Grotesk',sans-serif;flex-shrink:0">{% if item.savings_vs_last > 0 %}<span style="color:#6fcf97">↓ ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:#ef4444">↑ ${{"{:.2f}".format(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:rgba(255,255,255,.25)">—</span>{% endif %}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if inv.reorder_soon %}
+    <div style="border-left:3px solid #ef9f27{% if inv.critical_low %};border-top:1px solid rgba(255,255,255,.07){% endif %}">
+      <div style="display:flex;align-items:center;gap:8px;padding:11px 20px 9px;background:rgba(239,159,39,.05)">
+        <div style="width:7px;height:7px;border-radius:50%;background:#ef9f27;box-shadow:0 0 8px rgba(239,159,39,.7);flex-shrink:0"></div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#ef9f27;flex:1">Order Soon</div>
+        <div style="font-size:9px;background:rgba(239,159,39,.14);color:#ef9f27;border-radius:10px;padding:2px 8px;font-weight:700;letter-spacing:.05em">{{inv.reorder_soon|length}} item{{'s' if inv.reorder_soon|length != 1}}</div>
+      </div>
+      {% for item in inv.reorder_soon %}
+      <div style="display:flex;align-items:center;padding:10px 20px;border-top:1px solid rgba(255,255,255,.045);gap:12px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.88);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{item.item}}</div>
+          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">{{item.days_remaining}}d remaining · last: {{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %}</div>
+        </div>
+        <div style="font-size:12px;font-weight:700;color:white;background:rgba(239,159,39,.11);border:1px solid rgba(239,159,39,.28);border-radius:6px;padding:4px 12px;white-space:nowrap;font-family:'Space Grotesk',sans-serif;flex-shrink:0">{% if item.suggested_order_qty == 0 %}skip{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</div>
+        <div style="width:64px;text-align:right;font-size:11px;font-weight:700;font-family:'Space Grotesk',sans-serif;flex-shrink:0">{% if item.savings_vs_last > 0 %}<span style="color:#6fcf97">↓ ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:#ef4444">↑ ${{"{:.2f}".format(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:rgba(255,255,255,.25)">—</span>{% endif %}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if inv.order_reduction %}
+    <div style="border-left:3px solid #6fcf97{% if inv.critical_low or inv.reorder_soon %};border-top:1px solid rgba(255,255,255,.07){% endif %}">
+      <div style="display:flex;align-items:center;gap:8px;padding:11px 20px 9px;background:rgba(111,207,151,.04)">
+        <div style="width:7px;height:7px;border-radius:50%;background:#6fcf97;box-shadow:0 0 8px rgba(111,207,151,.6);flex-shrink:0"></div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;flex:1">Reduce Order</div>
+        <div style="font-size:9px;background:rgba(111,207,151,.1);color:#6fcf97;border-radius:10px;padding:2px 8px;font-weight:700;letter-spacing:.05em">{{inv.order_reduction|length}} item{{'s' if inv.order_reduction|length != 1}}</div>
+      </div>
+      {% for item in inv.order_reduction %}
+      <div style="display:flex;align-items:center;padding:10px 20px;border-top:1px solid rgba(255,255,255,.045);gap:12px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.88);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{item.item}}</div>
+          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">last: {{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %}</div>
+        </div>
+        <div style="font-size:12px;font-weight:700;color:#6fcf97;background:rgba(111,207,151,.09);border:1px solid rgba(111,207,151,.25);border-radius:6px;padding:4px 12px;white-space:nowrap;font-family:'Space Grotesk',sans-serif;flex-shrink:0">{% if item.suggested_order_qty == 0 %}skip{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</div>
+        <div style="width:64px;text-align:right;font-size:11px;font-weight:700;font-family:'Space Grotesk',sans-serif;flex-shrink:0"><span style="color:#6fcf97">↓ ${{item.savings_vs_last}}</span></div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+  </div>
   {% else %}
-  <div class="card" style="padding:14px 16px;color:#2d6a4f;font-style:italic;font-size:13px">✓ Your ordering looks well-calibrated this week — no adjustments needed.</div>
+  <div style="background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%);border:1px solid rgba(111,207,151,.3);border-radius:12px;padding:16px 20px;display:flex;align-items:center;gap:10px">
+    <div style="width:8px;height:8px;border-radius:50%;background:#6fcf97;box-shadow:0 0 8px rgba(111,207,151,.7);flex-shrink:0"></div>
+    <div style="font-size:13px;color:#6fcf97;font-weight:500">Your ordering looks well-calibrated this week — no adjustments needed.</div>
+  </div>
   {% endif %}
 
   <!-- 8-week waste cost trend — labor-style dark ember card, moved to bottom -->
