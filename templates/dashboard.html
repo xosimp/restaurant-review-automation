@@ -2072,6 +2072,18 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 <!-- FOOD COST -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="panel-inventory">
 
+  <!-- Header: tab switcher -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px">
+    <div></div>
+    <div style="display:inline-flex;box-shadow:0 0 0 1px var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
+      <button id="fc-tab-tracker"   onclick="switchFcTab('tracker')"   class="rv-tab-active" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Tracker</button>
+      <button id="fc-tab-analytics" onclick="switchFcTab('analytics')" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
+    </div>
+  </div>
+
+  <!-- ══ TRACKER sub-panel ══ -->
+  <div id="fc-panel-tracker">
+
   <!-- ── Key Ingredient Price Monitor (Big 8 Quick Count) ── -->
   <div class="slabel" style="margin-bottom:8px">Key Ingredient Price Monitor</div>
   <div class="card" style="padding:16px 18px;margin-bottom:14px">
@@ -2094,7 +2106,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       {% endfor %}
       {% if drift_found.count > 0 %}
       <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:6px;padding:10px 14px;font-size:12px;color:#7a4f00;font-weight:600">
-        ⚠ {{drift_found.count}} ingredient price change{{'' if drift_found.count == 1 else 's'}} vs last week — submit new prices below to refresh.
+        ⚠ {{drift_found.count}} ingredient price change{{''  if drift_found.count == 1 else 's'}} vs last week — submit new prices below to refresh.
       </div>
       {% else %}
       <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:8px 14px;font-size:12px;color:#2d6a4f">
@@ -2146,28 +2158,31 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     {% endif %}
   </div>
 
-  <!-- ── Waste Analysis (CSV-based — only shown when live data uploaded) ── -->
+  </div><!-- /fc-panel-tracker -->
+
+  <!-- ══ ANALYTICS sub-panel ══ -->
+  <div id="fc-panel-analytics" style="display:none">
+
+  <!-- CSV upload header -->
   {% if inv.is_live %}
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
-    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Waste Analysis — from uploaded data</div>
-    <label style="display:inline-flex;align-items:center;gap:6px;background:#2d6a4f;color:white;padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">
+  <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:20px;flex-wrap:wrap;gap:8px">
+    <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px">
       Update CSV <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
     </label>
   </div>
   {% else %}
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
-    <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Waste Analysis</div>
-    <label style="display:inline-flex;align-items:center;gap:8px;background:var(--paper3);color:var(--ink);padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">
-      Upload detailed CSV (optional)
-      <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
+  <div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:20px;flex-wrap:wrap;gap:8px">
+    <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px;background:var(--paper3);color:var(--ink)">
+      Upload CSV (optional) <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
     </label>
   </div>
-  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#8a6a00">
+  <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#8a6a00">
     <strong>Sample data below.</strong> Upload a CSV with item, current_stock, par_level, unit_cost, waste_last_week to see your real numbers.
   </div>
   {% endif %}
-  <span id="inventory-inline-result" style="font-size:12px;color:#2d6a4f;display:none"></span>
+  <span id="inventory-inline-result" style="font-size:12px;color:#2d6a4f;display:none;margin-bottom:10px;display:block"></span>
 
+  <!-- Annual waste banner -->
   <div style="background:{{inv.banner_gradient}};border-radius:10px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
     <div>
       <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#f4a4a4;margin-bottom:4px">Projected annual food waste cost</div>
@@ -2181,6 +2196,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">65% of your logged waste cost — industry estimate for avoidable spoilage with optimized par levels and ordering.</span></span>
     </div>
   </div>
+
+  <!-- Stat tiles -->
   <div class="stat-row">
     <div class="stat hi"><div class="stat-n">${{inv.total_waste_cost_week|format_num}}</div><div class="stat-l">Waste/week</div></div>
     <div class="stat hi"><div class="stat-n">${{inv.monthly_waste_projection|int|format_num}}</div><div class="stat-l">Projected/mo</div></div>
@@ -2189,6 +2206,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div class="stat"><div class="stat-n">${{inv.total_stock_value|int|format_num}}</div><div class="stat-l">Inventory value</div></div>
   </div>
 
+  <!-- Waste rate benchmark -->
   <div class="card" style="padding:14px 16px;margin-bottom:14px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Waste rate vs industry benchmark</div>
@@ -2210,13 +2228,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
+  <!-- Week + AI insight -->
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-    <div style="font-size:13px;font-weight:600;color:var(--ink)">
-      Week of {{inv.week_start}} – {{inv.week_end}}
-    </div>
-    <div style="font-size:11px;color:var(--ink3)">
-      Last updated: {{inv.last_updated}}
-    </div>
+    <div style="font-size:13px;font-weight:600;color:var(--ink)">Week of {{inv.week_start}} – {{inv.week_end}}</div>
+    <div style="font-size:11px;color:var(--ink3)">Last updated: {{inv.last_updated}}</div>
   </div>
   <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
@@ -2224,6 +2239,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div class="insight-text insight-loading" id="inv-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:88%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:72%">&nbsp;</div><div class="skeleton" style="height:13px;width:60%">&nbsp;</div></div>
   </div>
 
+  <!-- Waste trend chart -->
   <div class="slabel" style="margin-top:16px">Waste cost trend — last 6 weeks</div>
   <div class="card" style="padding:14px 16px 10px">
     <div id="inv-trend-bars" style="display:flex;align-items:flex-end;gap:10px;height:80px;margin-bottom:6px">
@@ -2232,6 +2248,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div id="inv-trend-labels" style="display:flex;gap:10px;font-size:10px;color:var(--ink3)"></div>
   </div>
 
+  <!-- Two-col: waste offenders + overstocked -->
   <div class="two-col">
     <div>
       <div class="slabel">Top waste offenders</div>
@@ -2257,6 +2274,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
+  <!-- Order list -->
   <div class="slabel">Order list — recommended quantities</div>
   {% if inv.critical_low or inv.reorder_soon or inv.order_reduction %}
   <div class="card"><table class="tbl">
@@ -2288,8 +2306,9 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   {% else %}
   <div class="card" style="padding:14px 16px;color:#2d6a4f;font-style:italic;font-size:13px">✓ Your ordering looks well-calibrated this week — no adjustments needed.</div>
   {% endif %}
-</div>
 
+  </div><!-- /fc-panel-analytics -->
+</div>
 <!-- MARKETING -->
 <div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing">
 
@@ -3547,6 +3566,23 @@ function loadResponsePerf(days){
     });
 }
 
+window.switchFcTab = function(tab) {
+  var isTracker = tab === 'tracker';
+  document.getElementById('fc-panel-tracker').style.display   = isTracker ? '' : 'none';
+  document.getElementById('fc-panel-analytics').style.display = isTracker ? 'none' : '';
+  var tt = document.getElementById('fc-tab-tracker');
+  var ta = document.getElementById('fc-tab-analytics');
+  if(tt){ tt.classList.toggle('rv-tab-active', isTracker);  tt.style.background=''; tt.style.color = isTracker ? '' : 'var(--ink3)'; }
+  if(ta){ ta.classList.toggle('rv-tab-active', !isTracker); ta.style.background=''; ta.style.color = isTracker ? 'var(--ink3)' : ''; }
+  if(!isTracker){
+    if(!invLoaded) loadInvInsight();
+    var _iw=document.getElementById('inv-annual-waste');
+    if(_iw&&!_iw.dataset.animated){_iw.dataset.animated='1';var _iwR=parseInt((_iw.textContent||'').replace(/[$,]/g,'').trim(),10);if(!isNaN(_iwR)&&_iwR>0)countUpMoney(_iw,_iwR,900);}
+    var _ir=document.getElementById('inv-annual-recoverable');
+    if(_ir&&!_ir.dataset.animated){_ir.dataset.animated='1';var _irR=parseInt((_ir.textContent||'').replace(/[$,]/g,'').trim(),10);if(!isNaN(_irR)&&_irR>0)countUpMoney(_ir,_irR,900);}
+  }
+};
+
 window.switchLaborTab = function(tab) {
   var isSched = tab === 'schedule';
   document.getElementById('lb-panel-schedule').style.display  = isSched ? '' : 'none';
@@ -3815,11 +3851,7 @@ function switchTab(n,btn){
   if(n==='reviews'&&!reviewInsightLoaded){loadReviewInsight();loadSentimentTrend();loadTopicHeatmap();}
   if(n==='labor'&&!laborLoaded){loadLaborInsight();}
   if(n==='inventory'){
-    var _iwEl=document.getElementById('inv-annual-waste');
-    if(_iwEl&&!_iwEl.dataset.animated){_iwEl.dataset.animated='1';var _iwRaw=parseInt((_iwEl.textContent||'').replace(/[$,]/g,'').trim(),10);if(!isNaN(_iwRaw)&&_iwRaw>0)countUpMoney(_iwEl,_iwRaw,1000);}
-    var _irEl=document.getElementById('inv-annual-recoverable');
-    if(_irEl&&!_irEl.dataset.animated){_irEl.dataset.animated='1';var _irRaw=parseInt((_irEl.textContent||'').replace(/[$,]/g,'').trim(),10);if(!isNaN(_irRaw)&&_irRaw>0)countUpMoney(_irEl,_irRaw,1000);}
-    if(!invLoaded)loadInvInsight();
+    // countUp animations and insight load triggered by switchFcTab when analytics tab is shown
   }
   if(n==='labor'){renderBars();loadLaborTrend(false);}
   if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();}
