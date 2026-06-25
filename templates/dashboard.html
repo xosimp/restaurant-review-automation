@@ -5473,9 +5473,9 @@ function renderInvTrend(){
     var vsAvg=Math.round(w.waste-avg);
     var vsPrevDiff=(i>0)?Math.round(w.waste-items[i-1].waste):999999;
     var tipData='data-week="Week of '+w.week_start_label+' – '+w.label+'" data-waste="'+Math.round(w.waste)+'" data-vsavg="'+vsAvg+'" data-vsprev="'+vsPrevDiff+'" data-rate="'+w.waste_rate_pct+'"';
-    barHtml+='<div '+tipData+' class="inv-tip-bar" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;height:100%;cursor:default">';
+    barHtml+='<div '+tipData+' class="inv-tip-bar" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;height:100%;cursor:pointer;transition:opacity .2s">';
     barHtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:10px;font-weight:700;color:'+col+';line-height:1">$'+Math.round(w.waste)+'</span>';
-    barHtml+='<div style="width:85%;height:'+hPx+'px;background:'+grad+';border-radius:4px 4px 0 0;box-shadow:0 -2px 12px '+glow+',0 0 6px '+glow+';transition:opacity .15s" onmouseover="this.style.opacity=\'.75\'" onmouseout="this.style.opacity=\'1\'"></div>';
+    barHtml+='<div style="width:85%;height:'+hPx+'px;background:'+grad+';border-radius:4px 4px 0 0;box-shadow:0 -2px 12px '+glow+',0 0 6px '+glow+'"></div>';
     barHtml+='</div>';
     labHtml+='<span style="flex:1;text-align:center">'+w.label+'</span>';
   }
@@ -5485,7 +5485,7 @@ function renderInvTrend(){
   var bars=barsEl.querySelectorAll('.inv-tip-bar');
   for(var b=0;b<bars.length;b++){
     (function(bar){
-      bar.addEventListener('mouseenter',function(e){
+      bar.addEventListener('mouseenter',function(e){bar.style.opacity='.72';
         var week=bar.getAttribute('data-week');
         var waste=parseInt(bar.getAttribute('data-waste'),10);
         var vsavg=parseInt(bar.getAttribute('data-vsavg'),10);
@@ -5509,7 +5509,7 @@ function renderInvTrend(){
         tipEl.style.left=tx+'px';
         tipEl.style.top=ty+'px';
       });
-      bar.addEventListener('mouseleave',function(){tipEl.style.display='none';});
+      bar.addEventListener('mouseleave',function(){bar.style.opacity='1';tipEl.style.display='none';});
     })(bars[b]);
   }
 }
