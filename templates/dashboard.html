@@ -5398,6 +5398,7 @@ function loadInvInsight(){
   invLoaded=true;
   var el=document.getElementById('inv-insight');
   if(!el)return;
+  loadInvTrend();
   var fiveMin=5*60*1000;
   try{
     var cached=sessionStorage.getItem('inv_insight');
