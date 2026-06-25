@@ -4832,7 +4832,7 @@ function renderPerfChart(){
   for(var i=0;i<items.length;i++){
     var item=items[i];
     var pct=item.pct;
-    var hPct=Math.max(2,(pct/maxPct)*100);
+    var hPx=Math.max(4,Math.round((pct/maxPct)*200));
     var isOver=pct>_laborTarget;
     var isClose=pct>=(_laborTarget-3);
     var col=isOver?'#c0392b':isClose?'#ef9f27':'#6fcf97';
@@ -4840,7 +4840,7 @@ function renderPerfChart(){
     var glow=isOver?'rgba(192,57,43,.5)':isClose?'rgba(239,159,39,.5)':'rgba(111,207,151,.5)';
     barHtml+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;height:100%">';
     barHtml+='<span style="font-family:\'Space Grotesk\',sans-serif;font-size:10px;font-weight:700;color:'+col+';line-height:1">'+pct+'%</span>';
-    barHtml+='<div style="width:85%;height:'+hPct+'%;background:'+grad+';border-radius:4px 4px 0 0;box-shadow:0 -2px 12px '+glow+',0 0 6px '+glow+';min-height:4px"></div>';
+    barHtml+='<div style="width:85%;height:'+hPx+'px;background:'+grad+';border-radius:4px 4px 0 0;box-shadow:0 -2px 12px '+glow+',0 0 6px '+glow+'"></div>';
     barHtml+='</div>';
     labHtml+='<span style="flex:1;text-align:center">'+item.label+'</span>';
   }
@@ -5450,10 +5450,10 @@ function renderInvTrend(){
     var col=isLast?'#c84b2f':isOver?'#c0392b':isLow?'#6fcf97':'#ef9f27';
     var grad=isLast?'linear-gradient(to top,rgba(140,40,20,.9),rgba(200,75,47,1))':isOver?'linear-gradient(to top,rgba(120,20,20,.9),rgba(192,57,43,1))':isLow?'linear-gradient(to top,rgba(20,80,50,.9),rgba(111,207,151,1))':'linear-gradient(to top,rgba(120,90,10,.9),rgba(239,159,39,1))';
     var glow=isLast?'rgba(200,75,47,.5)':isOver?'rgba(192,57,43,.5)':isLow?'rgba(111,207,151,.5)':'rgba(239,159,39,.5)';
-    var hPct=Math.max(2,(w.waste/maxWaste)*100);
+    var hPx=Math.max(4,Math.round((w.waste/maxWaste)*200));
     barHtml+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;height:100%">';
     barHtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:10px;font-weight:700;color:'+col+';line-height:1">$'+Math.round(w.waste)+'</span>';
-    barHtml+='<div style="width:85%;height:'+hPct+'%;background:'+grad+';border-radius:4px 4px 0 0;box-shadow:0 -2px 12px '+glow+',0 0 6px '+glow+';min-height:4px"></div>';
+    barHtml+='<div style="width:85%;height:'+hPx+'px;background:'+grad+';border-radius:4px 4px 0 0;box-shadow:0 -2px 12px '+glow+',0 0 6px '+glow+'"></div>';
     barHtml+='</div>';
     labHtml+='<span style="flex:1;text-align:center">'+w.label+'</span>';
   }
