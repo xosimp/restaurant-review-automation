@@ -1696,6 +1696,37 @@ def save_food_cost_custom_item(current_user):
     return jsonify(ok=True, name=name, unit=unit)
 
 
+@client_bp.route("/api/food-cost/delete-custom-item", methods=["POST"])
+@login_required
+def delete_food_cost_custom_item(current_user):
+    """Remove a saved custom ingredient by name from food_cost_json."""
+    import json as _jcd
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip().lower()
+    if not name:
+        return jsonify(ok=False, error="Name required"), 400
+
+    rid = current_user["restaurant_id"]
+    from models import get_client_data as _gcd_d, get_conn as _gcc_d
+    existing_raw = _gcd_d(rid)
+    fc = {}
+    if existing_raw and existing_raw.get("food_cost_json"):
+        try:
+            fc = _jcd.loads(existing_raw["food_cost_json"])
+        except Exception:
+            fc = {}
+
+    custom_items = fc.get("custom_items", [])
+    fc["custom_items"] = [ci for ci in custom_items if (ci.get("name") or "").lower() != name]
+    payload = _jcd.dumps(fc)
+    conn = _gcc_d()
+    conn.execute("UPDATE client_data SET food_cost_json=?, updated_at=datetime('now') WHERE restaurant_id=?",
+                 (payload, rid))
+    conn.commit()
+    conn.close()
+    return jsonify(ok=True)
+
+
 # ── Review request ────────────────────────────────────────────────────────────
 
 @client_bp.route("/api/send-review-request", methods=["POST"])
