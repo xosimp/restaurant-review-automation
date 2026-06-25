@@ -924,7 +924,9 @@ def labor_trend_api(current_user):
                 "labor": h["total_labor"],
                 "sales": h["total_sales"],
             })
-        return jsonify(weeks=weeks)
+        resp = jsonify(weeks=weeks)
+        resp.headers['Cache-Control'] = 'no-store'
+        return resp
     except Exception as e:
         return jsonify(weeks=[], error=str(e))
 

@@ -3555,6 +3555,13 @@ window.switchLaborTab = function(tab) {
   if(ts){ ts.classList.toggle('rv-tab-active', isSched); ts.style.background=''; ts.style.color = isSched ? '' : 'var(--ink3)'; }
   if(ta){ ta.classList.toggle('rv-tab-active', !isSched); ta.style.background=''; ta.style.color = isSched ? 'var(--ink3)' : ''; }
   if(!isSched && typeof renderRoleDonut === 'function') renderRoleDonut();
+  if(isSched && _laborInsightFull){
+    var _liEl=document.getElementById('labor-insight');
+    if(_liEl&&_liEl.classList.contains('insight-loading')===false&&_twTokens[_liEl.id]!==undefined){
+      _twTokens[_liEl.id]=(_twTokens[_liEl.id]||0)+1;
+      _liEl.innerHTML=_laborInsightFull;
+    }
+  }
 };
 
 window.switchReviewsTab = function(tab) {
@@ -3666,13 +3673,14 @@ function loadReviewInsight(){
   reviewInsightLoaded=true;
   var el=document.getElementById('review-insight');
   if(!el)return;
+  var fiveMin=5*60*1000;
   try{
     var cached=sessionStorage.getItem('review_insight');
     var cachedAt=parseInt(sessionStorage.getItem('review_insight_at')||'0',10);
-    var fourHours=4*60*60*1000;
-    if(cached&&cachedAt&&(Date.now()-cachedAt)<fourHours){
+    if(cached&&cachedAt&&(Date.now()-cachedAt)<fiveMin){
       el.classList.remove('insight-loading');
-      typewriterEffect(el,processInsightHtml(cached));
+      _twTokens[el.id]=(_twTokens[el.id]||0)+1;
+      el.innerHTML=processInsightHtml(cached);
       return;
     }
   }catch(e){}
@@ -3812,7 +3820,7 @@ function switchTab(n,btn){
     if(_irEl&&!_irEl.dataset.animated){_irEl.dataset.animated='1';var _irRaw=parseInt((_irEl.textContent||'').replace(/[$,]/g,'').trim(),10);if(!isNaN(_irRaw)&&_irRaw>0)countUpMoney(_irEl,_irRaw,1000);}
     if(!invLoaded)loadInvInsight();
   }
-  if(n==='labor'){renderBars();loadLaborTrend();}
+  if(n==='labor'){renderBars();loadLaborTrend(false);}
   if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();}
   if(n==='competitor'){var _ab=document.getElementById('aiv-body');if(_ab){_ab.style.maxHeight=_ab.scrollHeight+'px';_ab.style.opacity='1';}}
   if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();loadMktStats();startMetricsPoller();}else{stopMetricsPoller();}
@@ -4593,6 +4601,8 @@ function renderBars(){
 }
 var _gbpReload=!!sessionStorage.getItem('_gbpReload');if(_gbpReload)sessionStorage.removeItem('_gbpReload');
 var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false,homeInsightLoaded=false;
+var _twTokens={};
+var _laborInsightFull=null,_invInsightFull=null;
 function loadHomeInsight(){
   homeInsightLoaded=true;
   var el=document.getElementById('home-insight-text');
@@ -4822,10 +4832,11 @@ function loadMktInsight(){
   try{
     var cached=sessionStorage.getItem('mkt_brief');
     var cachedAt=parseInt(sessionStorage.getItem('mkt_brief_at')||'0',10);
-    var fourHours=4*60*60*1000;
-    if(cached&&cachedAt&&(Date.now()-cachedAt)<fourHours){
+    var fiveMin=5*60*1000;
+    if(cached&&cachedAt&&(Date.now()-cachedAt)<fiveMin){
       el.classList.remove('insight-loading');
-      typewriterEffect(el,cached);
+      _twTokens[el.id]=(_twTokens[el.id]||0)+1;
+      el.innerHTML=cached;
       mktLoaded=true;
       return;
     }
@@ -4844,11 +4855,28 @@ function loadMktInsight(){
 }
 function loadLaborInsight(){
   laborLoaded=true;
+  var el=document.getElementById('labor-insight');
+  if(!el)return;
+  var fiveMin=5*60*1000;
+  try{
+    var cached=sessionStorage.getItem('labor_insight');
+    var cachedAt=parseInt(sessionStorage.getItem('labor_insight_at')||'0',10);
+    if(cached&&cachedAt&&(Date.now()-cachedAt)<fiveMin){
+      el.classList.remove('insight-loading');
+      _laborInsightFull=cached;
+      _twTokens[el.id]=(_twTokens[el.id]||0)+1;
+      el.innerHTML=cached;
+      return;
+    }
+  }catch(e){}
   fetch('/api/labor-insight').then(function(r){return r.json();}).then(function(d){
     var elLaborInsight=document.getElementById('labor-insight');
     if(elLaborInsight){
+      var html=d.insight||'Analysis unavailable.';
+      _laborInsightFull=html;
+      try{sessionStorage.setItem('labor_insight',html);sessionStorage.setItem('labor_insight_at',String(Date.now()));}catch(e){}
       elLaborInsight.classList.remove('insight-loading');
-      typewriterEffect(elLaborInsight,d.insight||'Analysis unavailable.');
+      typewriterEffect(elLaborInsight,html);
     }
   }).catch(function(){
     var elLaborErr=document.getElementById('labor-insight');
@@ -5096,11 +5124,28 @@ function downloadScheduleFromPreview() {
 }
 function loadInvInsight(){
   invLoaded=true;
+  var el=document.getElementById('inv-insight');
+  if(!el)return;
+  var fiveMin=5*60*1000;
+  try{
+    var cached=sessionStorage.getItem('inv_insight');
+    var cachedAt=parseInt(sessionStorage.getItem('inv_insight_at')||'0',10);
+    if(cached&&cachedAt&&(Date.now()-cachedAt)<fiveMin){
+      el.classList.remove('insight-loading');
+      _invInsightFull=cached;
+      _twTokens[el.id]=(_twTokens[el.id]||0)+1;
+      el.innerHTML=cached;
+      return;
+    }
+  }catch(e){}
   fetch('/api/inv-insight').then(function(r){return r.json();}).then(function(d){
     var elInvInsight=document.getElementById('inv-insight');
     if(elInvInsight){
+      var html=d.insight||'Analysis unavailable.';
+      _invInsightFull=html;
+      try{sessionStorage.setItem('inv_insight',html);sessionStorage.setItem('inv_insight_at',String(Date.now()));}catch(e){}
       elInvInsight.classList.remove('insight-loading');
-      typewriterEffect(elInvInsight,d.insight||'Analysis unavailable.');
+      typewriterEffect(elInvInsight,html);
     }
   }).catch(function(){
     var elInvErr=document.getElementById('inv-insight');
@@ -5471,8 +5516,11 @@ function loadBillingInfo() {
 }
 
 
-function loadLaborTrend(){
-  fetch('/api/labor-trend').then(function(r){return r.json();}).then(function(data){
+var _laborTrendLoaded=false;
+function loadLaborTrend(force){
+  if(_laborTrendLoaded&&!force){return;}
+  _laborTrendLoaded=true;
+  fetch('/api/labor-trend',{cache:'no-store'}).then(function(r){return r.json();}).then(function(data){
     if(!data.weeks||!data.weeks.length){_perfTrendData=[];renderPerfChart();return;}
     _perfTrendData=data.weeks.map(function(w){return{pct:w.pct,label:w.label};});
     var first=data.weeks[0].label;
@@ -6019,6 +6067,8 @@ window.addEventListener('load', function(){
 });
 // ── Animation Utilities ──────────────────────────────────────────────────────
 function typewriterEffect(el, html) {
+  var tok = ((_twTokens[el.id]||0)+1);
+  _twTokens[el.id]=tok;
   var hasHtml = html.indexOf('<') !== -1;
   if (!hasHtml) {
     var words = html.split(' ');
@@ -6027,6 +6077,7 @@ function typewriterEffect(el, html) {
     var i = 0;
     el.textContent = '';
     function nextWord() {
+      if(_twTokens[el.id]!==tok)return;
       if (i >= total) return;
       el.textContent += (i > 0 ? ' ' : '') + words[i];
       i++;
@@ -6060,6 +6111,7 @@ function typewriterEffect(el, html) {
   var twDelay = Math.min(Math.max(Math.round(1400 / (wordCount || 1)), 16), 55);
   var ai = 0;
   function nextTw() {
+    if(_twTokens[el.id]!==tok)return;
     if (ai >= allWords.length) return;
     var item = allWords[ai++];
     var par = item.n.parentElement;
