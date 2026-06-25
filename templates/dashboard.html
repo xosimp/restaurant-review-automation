@@ -2071,11 +2071,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 </div><!-- /panel-labor -->
 
 <!-- FOOD COST -->
-<div class="panel {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="panel-inventory" style="max-width:100%;padding:0;min-height:100%">
+<div class="panel {{'active' if not mod_reviews and not mod_labor and mod_inventory}}" id="panel-inventory" style="max-width:100%;padding:0;min-height:100vh">
 <div style="max-width:1080px;margin:0 auto;padding:24px 28px">
 
-  <!-- Header: CSV upload (left) + tab switcher (right) -->
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+  <!-- Header: CSV + tab switcher grouped right (matching labor) -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:8px">
+    <div></div>
     <div style="display:flex;align-items:center;gap:10px">
       {% if inv.is_live %}
       <label class="btn-primary" style="display:inline-flex;align-items:center;gap:6px">
@@ -2086,11 +2087,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         Upload CSV <input type="file" accept=".csv" style="display:none" id="inventory-inline-input" onchange="clientUpload('inventory', this)">
       </label>
       {% endif %}
-    </div>
-    <div style="display:inline-flex;box-shadow:0 0 0 1px var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-      <button id="fc-tab-tracker"   onclick="switchFcTab('tracker')"   class="rv-tab-active" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Tracker</button>
-      <button id="fc-tab-analytics" onclick="switchFcTab('analytics')" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
-    </div>
+      <div style="display:inline-flex;box-shadow:0 0 0 1px var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
+        <button id="fc-tab-tracker"   onclick="switchFcTab('tracker')"   class="rv-tab-active" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Tracker</button>
+        <button id="fc-tab-analytics" onclick="switchFcTab('analytics')" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
+      </div>
   </div>
   <span id="inventory-inline-result" style="font-size:12px;color:#2d6a4f;display:none;margin-bottom:10px"></span>
 
@@ -2164,7 +2164,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           {"name":"Custom item","unit":"","price":"","usage":""}
         ] %}
         {% for _fci in _fc_items %}
-        <tr style="border-bottom:1px solid rgba(255,255,255,.07)">
+        <tr>
           <td style="padding:7px 8px"><input type="text" value="{{_fci.name}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="Item name"></td>
           <td style="padding:7px 8px"><input type="text" value="{{_fci.unit}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="lb"></td>
           <td style="padding:7px 8px"><input type="number" value="{{_fci.price}}" step="0.01" min="0" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:'Space Grotesk',sans-serif;outline:none" placeholder="0.00"></td>
@@ -2193,18 +2193,24 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div>
   {% endif %}
 
-  <!-- Annual waste banner -->
-  <div style="background:{{inv.banner_gradient}};border-radius:10px;padding:16px 20px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
-    <div>
-      <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#f4a4a4;margin-bottom:4px">Projected annual food waste cost</div>
-      <div style="font-size:32px;font-weight:800;color:#f87171;letter-spacing:-1px"><span id="inv-annual-waste">${{inv.annual_waste_projection|int|format_num}}</span></div>
-      <div style="font-size:12px;color:#f4a4a4;margin-top:3px">Based on this week — ${{inv.monthly_waste_projection|int|format_num}}/mo projected</div>
-    </div>
-    <div style="text-align:right">
-      <div style="font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#a8d5b5;margin-bottom:4px">Recoverable with better ordering</div>
-      <div style="font-size:28px;font-weight:800;color:#6fcf97;letter-spacing:-1px"><span id="inv-annual-recoverable">${{inv.annual_recoverable|int|format_num}}</span><span style="font-size:14px;font-weight:600;color:#a8d5b5">/yr</span></div>
-      <div style="font-size:12px;color:#a8d5b5;margin-top:3px">${{inv.recoverable_monthly|int|format_num}}/mo recoverable</div>
-      <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">65% of your logged waste cost — industry estimate for avoidable spoilage with optimized par levels and ordering.</span></span>
+  <!-- Annual waste hero — dark ember card, two columns -->
+  <div style="background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%);border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:20px 28px;margin-bottom:14px;position:relative;overflow:hidden;box-shadow:0 0 0 1px rgba(200,75,47,.1),0 8px 32px rgba(200,75,47,.18)">
+    <div style="position:absolute;top:-40px;right:-60px;width:300px;height:220px;background:radial-gradient(ellipse at center,rgba(200,75,47,.12) 0%,transparent 70%);pointer-events:none;z-index:0"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:20px;position:relative;z-index:1">
+      <div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px">Projected Annual Waste Cost</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:38px;font-weight:700;line-height:1;letter-spacing:-.02em" class="stat-glow-red"><span id="inv-annual-waste">${{inv.annual_waste_projection|int|format_num}}</span></div>
+        <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:8px">Based on this week — ${{inv.monthly_waste_projection|int|format_num}}/mo projected</div>
+      </div>
+      <div style="width:1px;height:60px;background:rgba(200,75,47,.3);flex-shrink:0;display:none" class="hero-divider"></div>
+      <div style="text-align:right">
+        <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px">Recoverable with Better Ordering</div>
+        <div style="display:flex;align-items:baseline;gap:4px;justify-content:flex-end">
+          <span style="font-family:'Space Grotesk',sans-serif;font-size:38px;font-weight:700;line-height:1;letter-spacing:-.02em" class="stat-glow-green" id="inv-annual-recoverable">${{inv.annual_recoverable|int|format_num}}</span>
+          <span style="font-size:14px;font-weight:600;color:rgba(255,255,255,.3)">/yr</span>
+        </div>
+        <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:8px">${{inv.recoverable_monthly|int|format_num}}/mo recoverable <span class="calc-tip"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">65% of your logged waste cost — industry estimate for avoidable spoilage with optimized par levels and ordering.</span></span></div>
+      </div>
     </div>
   </div>
 
