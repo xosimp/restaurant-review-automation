@@ -2328,36 +2328,16 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
-  <!-- Waste rate benchmark -->
-  <div class="card" style="padding:14px 16px;margin-bottom:14px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Waste rate vs industry benchmark</div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-size:13px;font-weight:700;color:{{inv.benchmark_color}}">{{inv.waste_rate_pct}}%</span>
-        <span style="background:{{inv.benchmark_color}};color:rgba(0,0,0,.85);font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;letter-spacing:.5px">{{inv.benchmark_label}}</span>
-      </div>
-    </div>
-    <div style="position:relative;height:10px;background:var(--paper3);border-radius:5px;overflow:hidden">
-      <div style="position:absolute;left:0;top:0;height:100%;width:{% if inv.waste_rate_pct > 0 %}{{[inv.waste_rate_pct * 5, 100]|min}}%{% else %}2px{% endif %};background:{{inv.benchmark_color}};border-radius:5px;transition:width .4s"></div>
-      <div style="position:absolute;left:20%;top:-2px;height:14px;width:2px;background:#2d6a4f;opacity:.7" title="4% target"></div>
-      <div style="position:absolute;left:25%;top:-2px;height:14px;width:2px;background:#6fcf97;opacity:.7" title="5% target"></div>
-    </div>
-    <div style="display:flex;justify-content:space-between;margin-top:5px;font-size:10px;color:var(--ink3)">
-      <span>0%</span>
-      <span style="color:#2d6a4f;font-weight:600">▲ 4-5% target</span>
-      <span>{{inv.benchmark_detail}}</span>
-      <span>20%+</span>
-    </div>
-  </div>
-
-  <!-- Week + AI insight -->
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-    <div style="font-size:13px;font-weight:600;color:var(--ink)">Week of {{inv.week_start}} – {{inv.week_end}}</div>
-    <div style="font-size:11px;color:var(--ink3)">Last updated: {{inv.last_updated}}</div>
-  </div>
+  <!-- AI insight banner with week range in header -->
   <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
-    <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Food Cost Analysis</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-left:4px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember)">Cavnar AI Food Cost Analysis</div>
+      <div style="text-align:right">
+        <div style="font-size:11px;font-weight:600;color:rgba(255,255,255,.6)">Week of {{inv.week_start}} – {{inv.week_end}}</div>
+        <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:1px">Last updated: {{inv.last_updated}}</div>
+      </div>
+    </div>
     <div class="insight-text insight-loading" id="inv-insight" style="color:#f0ebe0;font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:88%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:72%">&nbsp;</div><div class="skeleton" style="height:13px;width:60%">&nbsp;</div></div>
   </div>
 
@@ -5472,6 +5452,14 @@ function renderInvTrend(){
   if(gridEl)gridEl.innerHTML=glHtml;
   if(avgEl)avgEl.style.bottom=(avg/maxWaste*100)+'%';
   if(avgLbl)avgLbl.textContent='$'+Math.round(avg)+' avg';
+  // ensure tooltip el exists
+  var tipEl=document.getElementById('inv-trend-tip');
+  if(!tipEl){
+    tipEl=document.createElement('div');
+    tipEl.id='inv-trend-tip';
+    tipEl.style.cssText='position:fixed;z-index:9999;pointer-events:none;display:none;background:rgba(18,12,8,.97);border:1px solid rgba(200,75,47,.4);border-radius:8px;padding:10px 14px;min-width:160px;box-shadow:0 8px 24px rgba(0,0,0,.6)';
+    document.body.appendChild(tipEl);
+  }
   var barHtml='',labHtml='';
   for(var i=0;i<items.length;i++){
     var w=items[i];
@@ -5482,18 +5470,52 @@ function renderInvTrend(){
     var grad=isLast?'linear-gradient(to top,rgba(180,80,10,.9),rgba(255,159,74,1))':isOver?'linear-gradient(to top,rgba(120,20,20,.9),rgba(192,57,43,1))':isLow?'linear-gradient(to top,rgba(20,80,50,.9),rgba(111,207,151,1))':'linear-gradient(to top,rgba(120,90,10,.9),rgba(239,159,39,1))';
     var glow=isLast?'rgba(255,159,74,.6)':isOver?'rgba(192,57,43,.5)':isLow?'rgba(111,207,151,.5)':'rgba(239,159,74,.5)';
     var hPx=Math.max(4,Math.round((w.waste/maxWaste)*200));
-    barHtml+='<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;height:100%">';
+    var vsAvg=Math.round(w.waste-avg);
+    var vsAvgStr=(vsAvg>=0?'<span style="color:#ef4444">&#8593; $'+Math.abs(vsAvg)+'</span>':'<span style="color:#6fcf97">&#8595; $'+Math.abs(vsAvg)+'</span>')+' vs avg';
+    var vsPrev='';
+    if(i>0){var diff=Math.round(w.waste-items[i-1].waste);vsPrev=(diff>=0?'<span style="color:#ef4444">&#8593; $'+Math.abs(diff)+'</span>':'<span style="color:#6fcf97">&#8595; $'+Math.abs(diff)+'</span>')+' vs prior week';}
+    var rateStr=w.waste_rate_pct?w.waste_rate_pct+'% waste rate':'';
+    var tipData='data-week="Week of '+w.week_start_label+' – '+w.label+'" data-waste="$'+Math.round(w.waste)+'" data-vsavg="'+vsAvgStr+'" data-vsprev="'+vsPrev+'" data-rate="'+rateStr+'"';
+    barHtml+='<div '+tipData+' class="inv-tip-bar" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;height:100%;cursor:default">';
     barHtml+='<span style="font-family:Space Grotesk,sans-serif;font-size:10px;font-weight:700;color:'+col+';line-height:1">$'+Math.round(w.waste)+'</span>';
-    barHtml+='<div style="width:85%;height:'+hPx+'px;background:'+grad+';border-radius:4px 4px 0 0;box-shadow:0 -2px 12px '+glow+',0 0 6px '+glow+'"></div>';
+    barHtml+='<div style="width:85%;height:'+hPx+'px;background:'+grad+';border-radius:4px 4px 0 0;box-shadow:0 -2px 12px '+glow+',0 0 6px '+glow+';transition:opacity .15s" onmouseover="this.style.opacity=\'.75\'" onmouseout="this.style.opacity=\'1\'"></div>';
     barHtml+='</div>';
     labHtml+='<span style="flex:1;text-align:center">'+w.label+'</span>';
   }
   barsEl.innerHTML=barHtml;
   if(labelsEl)labelsEl.innerHTML=labHtml;
+  // wire tooltip
+  var bars=barsEl.querySelectorAll('.inv-tip-bar');
+  for(var b=0;b<bars.length;b++){
+    (function(bar){
+      bar.addEventListener('mouseenter',function(e){
+        var week=bar.getAttribute('data-week');
+        var waste=bar.getAttribute('data-waste');
+        var vsavg=bar.getAttribute('data-vsavg');
+        var vsprev=bar.getAttribute('data-vsprev');
+        var rate=bar.getAttribute('data-rate');
+        var html='<div style="font-size:10px;font-weight:700;color:rgba(255,255,255,.4);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px">'+week+'</div>';
+        html+='<div style="font-size:18px;font-weight:700;color:#ff9f4a;font-family:\'Space Grotesk\',sans-serif;line-height:1;margin-bottom:8px">'+waste+'</div>';
+        if(rate)html+='<div style="font-size:11px;color:rgba(255,255,255,.5);margin-bottom:4px">'+rate+'</div>';
+        html+='<div style="font-size:11px;color:rgba(255,255,255,.7);margin-bottom:3px">'+vsavg+'</div>';
+        if(vsprev)html+='<div style="font-size:11px;color:rgba(255,255,255,.7)">'+vsprev+'</div>';
+        tipEl.innerHTML=html;
+        tipEl.style.display='block';
+      });
+      bar.addEventListener('mousemove',function(e){
+        var tx=e.clientX+14;
+        var ty=e.clientY-10;
+        if(tx+180>window.innerWidth)tx=e.clientX-180;
+        tipEl.style.left=tx+'px';
+        tipEl.style.top=ty+'px';
+      });
+      bar.addEventListener('mouseleave',function(){tipEl.style.display='none';});
+    })(bars[b]);
+  }
 }
 function loadInvTrend(){
   fetch('/api/inv-trend',{cache:'no-store'}).then(function(r){return r.json();}).then(function(data){
-    _invTrendData=data.weeks?data.weeks.map(function(w){return{waste:w.waste,label:w.label};}):[];
+    _invTrendData=data.weeks?data.weeks.map(function(w){return{waste:w.waste,label:w.label,week_start_label:w.week_start_label||w.label,waste_rate_pct:w.waste_rate_pct||0,inv_value:w.inv_value||0};}):[];
     renderInvTrend();
   }).catch(function(){_invTrendData=[];renderInvTrend();});
 }

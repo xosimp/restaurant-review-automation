@@ -1146,7 +1146,18 @@ def inv_trend_api(current_user):
                 # Format label: "5/27" from "2026-05-27"
                 parts = (row["week_end"] or "").split("-")
                 label = f"{int(parts[1])}/{int(parts[2])}" if len(parts) == 3 else row["week_end"]
-                weeks.append({"label": label, "waste": waste, "week_end": row["week_end"]})
+                waste_rate = round(float(data.get("waste_rate_pct", 0)), 1)
+                inv_value = round(float(data.get("inventory_value", 0)), 2)
+                # week_start = 6 days before week_end
+                import datetime as _dt
+                try:
+                    we = _dt.date.fromisoformat(row["week_end"])
+                    ws_str = (we - _dt.timedelta(days=6)).isoformat()
+                    ws_parts = ws_str.split("-")
+                    week_start_label = f"{int(ws_parts[1])}/{int(ws_parts[2])}"
+                except Exception:
+                    week_start_label = label
+                weeks.append({"label": label, "waste": waste, "week_end": row["week_end"], "week_start_label": week_start_label, "waste_rate_pct": waste_rate, "inv_value": inv_value})
             except Exception:
                 continue
 
