@@ -778,39 +778,24 @@ SCHEDULING RULES:
 - No employee over 40h for the week
 - Weekly hours target is {hours_budget}h (±10h). Use shift length and later start times to reach the target before adding headcount. Never schedule extra people purely to fill hours.
 
-ROLE STAGGER RULES (apply every day without exception):
-- Servers: exactly ONE server opens (1h before restaurant open). Second server starts AT open or 30min after based on day volume. Additional servers only at 12pm+ and only when YoY/event data justifies it. Never two servers at the same opening time.
-- Bartenders: ONE bar opener (arrives 30–45min before bar service begins). If a second bartender is needed, they start at peak bar hours (typically 5–6pm). Never two bartenders starting at the same time.
-- Cooks/Kitchen: ONE opener arrives before kitchen open for prep. A second cook staggers in 30–60min later. Closers stay through full breakdown — do not end kitchen shifts at restaurant close.
-- Hosts: ONE host opens (30min before doors). Second host (if needed on high-volume days) starts at the first cover rush.
-- Food Runners: ONE food runner for dinner service daily — arrives with the dinner kitchen crew. On high-volume days (Fridays, Pizza Mondays, event days), add a food runner for lunch as well. Never two food runners unless a private event requires it.
-
-MINIMUM STAFFING FLOORS (never go below these on any service day):
-- Servers: minimum 1 on the floor at all times during service
-- Cooks/Kitchen: minimum 2 on any service day (1 opener + 1 who overlaps through dinner)
-- Bartenders: minimum 1 whenever the bar is open
-- Hosts: minimum 1 whenever the dining room is open
-- Food Runners: minimum 1 for every dinner service. Add 1 for lunch only on high-volume days (see RESTAURANT HOURS & SHIFT RULES for specifics).{_role_minimums_extra}
+ROLE STAGGER RULE (universal — applies to every restaurant):
+- Never schedule two employees in the same role at the exact same start time. The first person opens; additional staff stagger in based on volume. Only add headcount when YoY data or a flagged event justifies it.
 
 CONSECUTIVE DAYS OFF:
-- Every employee must receive at least 2 consecutive days off per week — do not schedule anyone 7 days straight or give isolated single days off. Spread days off so they form blocks of 2+.
-- Aim to give part-time staff 3+ consecutive days off so their schedule is predictable.
+- Every employee must receive at least 2 consecutive days off per week. Never give isolated single days off. Part-time staff should have 3+ consecutive days off.
 
 CROSS-TRAINING:
-- When a gap exists in a role, check CROSS-TRAINED STAFF first before adding a new person. Flexing a cross-trained employee to fill a role costs nothing extra and keeps headcount lean.
+- When a gap exists in a role, check CROSS-TRAINED STAFF first before adding a new person. Flexing a cross-trained employee costs nothing extra and keeps headcount lean.
 
 NO-SHOW BUFFER:
-- Friday and Saturday are highest-risk days for callouts. Schedule one extra server per high-volume Friday/Saturday if headcount allows, or note in the summary that a standby server should be on-call.
+- On the highest-volume days of the week (typically Fri/Sat for most restaurants), note in the summary that a standby should be on-call if headcount is already at ceiling.
 
-SHIFT LENGTHS:
-- Servers: 4–7h shifts. Openers typically run longer (6–7h through lunch close). Closers run 5–7h.
-- Bartenders/Cooks: 6–9h shifts. Kitchen closers often need 9–10h to cover full service + breakdown.
-- Hosts: 5–8h. One opener, close when last seated table is covered.
-- Food Runners: 4–6h for dinner-only shifts. 8–10h on days they run both lunch and dinner.
+ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
+- Follow the RESTAURANT HOURS & SHIFT RULES block above exactly. Those are the definitive rules for this restaurant.
+- If a rule is not specified there, infer reasonable defaults from the historical shift data patterns.{_role_minimums_extra}
 
-- Shifts per day: use the TYPICAL HEADCOUNT block as your baseline. Only go above on high-volume YoY days or flagged events. Use CROSS-TRAINED STAFF to fill role gaps before adding headcount.
-- Notes column: one brief phrase per shift (e.g. "YoY match - high Father's Day volume", "staggered - 2nd server at open", "cross-trained flex - bartender covering server gap")
-- Match shift times to the operation type visible in the staff data (lunch/dinner vs breakfast/brunch)
+- Shifts per day: use the TYPICAL HEADCOUNT block as your ceiling. Only go above on high-volume YoY days or flagged events. Use CROSS-TRAINED STAFF to fill role gaps before adding headcount.
+- Notes column: one brief phrase per shift (e.g. "YoY match - high volume", "staggered opener", "cross-trained flex")
 - IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time.{constraints}"""
 
     msg = client.messages.create(

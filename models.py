@@ -697,26 +697,71 @@ def _seed_gia_mia(db_path: str = DB_PATH):
 
     gia_mia_hours = (
         "RESTAURANT HOURS: Open 11:00am daily. "
-        "Close: 9:00pm Sun–Wed; 10:00pm Thu–Sat. "
-        "\n\nSTAFF ARRIVAL TIMES (hard rules — do not deviate):\n"
+        "Close: 9:00pm Sun–Wed; 10:00pm Thu–Sat.\n\n"
+        "STAFF ARRIVAL TIMES (hard rules — do not deviate):\n"
         "- Bussers: arrive 8:00am every day.\n"
         "- Cooks: arrive 8:30am Mon–Thu; arrive 8:00am Fri, Sat, Sun.\n"
         "- Servers: arrive 10:00am every day (1 hour before 11am open for side work).\n"
-        "- Bartenders: NO morning shifts — evening only. "
-        "Bartenders start no earlier than 3:00pm. "
-        "Bartenders stay 1 hour after close: until 10:00pm Sun–Wed; until 11:00pm Thu–Sat.\n"
-        "\nSHIFT END / CLOSER RULES:\n"
+        "- Bartenders: NO morning shifts — evening only. Start no earlier than 3:00pm. "
+        "Stay 1 hour after close: until 10:00pm Sun–Wed; until 11:00pm Thu–Sat.\n"
+        "- Food Runners: arrive with kitchen for dinner service. "
+        "On Pizza Mondays and Fridays, also scheduled for lunch.\n\n"
+        "SHIFT END / CLOSER RULES:\n"
         "- Always keep 2 servers as closers (until restaurant close time).\n"
         "- Cut all other servers 1–1.5h before close when volume allows.\n"
         "- Fri/Sat: 3 server closers + 2 bartender closers.\n"
         "- Cooks: 1 cook always stays through close; cut others 45min–1h early on slow nights.\n"
-        "- Bussers cut 30min before close."
+        "- Bussers cut 30min before close.\n"
+        "- Food Runners: cut after dinner rush, typically 1–2h before close.\n\n"
+        "FLOOR LAYOUT & SECTIONS:\n"
+        "- 31 tables inside, 24 tables on patio (patio open May–Labor Day).\n"
+        "- Sections: 10s, 20s, 30s, 40s, PDR (private dining room — events only), outside patio.\n"
+        "- Each server handles approximately 6 tables per section.\n"
+        "- HARD CAP: never schedule more than 7 servers at once. "
+        "Only in extreme circumstances would 8 ever be needed — avoid this.\n\n"
+        "SERVER STAGGER RULES:\n"
+        "- Exactly ONE server opens (arrives 10:00am, 1h before 11am open).\n"
+        "- Second server starts at 11am (open) or 11:30am depending on day volume.\n"
+        "- Additional servers only at 12pm+ and only when YoY/event data backs it up.\n"
+        "- Never two servers at the same start time.\n\n"
+        "MINIMUM STAFFING FLOORS:\n"
+        "- Servers: minimum 1 on the floor at all times during service. Maximum 7 at once.\n"
+        "- Cooks/Kitchen: minimum 2 on any service day (1 opener + 1 through dinner).\n"
+        "- Bartenders: minimum 1 whenever the bar is open.\n"
+        "- Hosts: minimum 1 whenever the dining room is open.\n"
+        "- Food Runners: minimum 1 for every dinner service. "
+        "Add 1 for lunch only on Mondays and Fridays.\n\n"
+        "SHIFT LENGTHS:\n"
+        "- Servers: 4–7h. Openers run 6–7h through lunch. Closers run 5–7h.\n"
+        "- Bartenders: 6–9h. Closers stay 1h after restaurant close.\n"
+        "- Cooks: 6–10h. Kitchen closers often need 9–10h for full service + breakdown.\n"
+        "- Hosts: 5–8h. One opener, close when last table is seated.\n"
+        "- Food Runners: 4–6h dinner-only; 8–10h on days they run both lunch and dinner.\n"
+        "- Bussers: 6–9h.\n\n"
+        "PIZZA MONDAY RULE:\n"
+        "- Monday is Pizza Monday (half-price pizzas all day) — significantly busier than a typical Monday.\n"
+        "- Staff Monday closer to a busy Friday than a slow weekday.\n"
+        "- Schedule a food runner for BOTH lunch AND dinner on Mondays.\n\n"
+        "FOOD RUNNER RULES:\n"
+        "- Always 1 food runner on for dinner service, 7 days a week — no exceptions.\n"
+        "- Add food runner for lunch ONLY on Mondays (Pizza Monday) and Fridays.\n"
+        "- Never more than 1 food runner unless a private PDR event requires it."
+    )
+    gia_mia_sched_notes = (
+        "Monday is Pizza Monday — treat Monday lunch like a busy Friday for staffing. "
+        "Always schedule a food runner for both lunch and dinner on Mondays and Fridays. "
+        "Hard cap: never exceed 7 servers on floor at once. "
+        "PDR (private dining room) is separate from floor sections and requires a dedicated server for private events."
     )
     # Use update_restaurant so the correct DB connection path is always used
     update_restaurant(2, {
         "monthly_revenue_target": 365000.0,
         "labor_target_pct": 23.0,
+        "hourly_rate": 26.0,
         "hours_notes": gia_mia_hours,
+        "sched_notes": gia_mia_sched_notes,
+        "section_count": 7,
+        "daypart_split": "lunch 40%, dinner 60%",
         "role_rates_json": None,
         "location_name": "St. Charles, IL",
     })
