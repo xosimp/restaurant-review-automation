@@ -628,11 +628,20 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             if _day_lines:
                 _daily_targets = "\n  Per-day targets (YoY scaled to PAR):\n" + "\n".join(_day_lines)
 
-    par_block = (f"\n\nPAR HOURS TARGET — CRITICAL, your schedule is verified against actual column totals:\n"
+    # Cap PAR by what's physically achievable with this roster (headcount × 40h max per employee)
+    _roster_size = len(employees)
+    _max_achievable = round(_roster_size * 38, 1)  # 38h avg accounting for part-timers
+    _effective_budget = min(hours_budget, _max_achievable)
+    _par_note = ""
+    if hours_budget > _max_achievable:
+        _par_note = (f"\n  NOTE: Revenue-based PAR ({hours_budget}h) exceeds what {_roster_size} staff can work without"
+                     f" exceeding 40h each. Capped to {_effective_budget}h. Prioritize TYPICAL HEADCOUNT counts and"
+                     f" extend shift lengths (within role limits) before adding people.")
+    par_block = (f"\n\nPAR HOURS TARGET — your schedule is verified against actual column totals:\n"
                  f"  Projected revenue: ${projected_revenue:,.0f} | Labor target: {labor_target}% = ${labor_budget_dollars:,.0f}\n"
-                 f"  Blended rate: ${hourly_rate}/hr → schedule EXACTLY {hours_budget}h total (±5h max)\n"
-                 f"  As you build each day, track your running total. DO NOT finish if you are more than 5h from {hours_budget}h.\n"
-                 f"  The scheduled_hours column will be summed and checked — your narrative total doesn't count.{_daily_targets}")
+                 f"  Blended rate: ${hourly_rate}/hr → target {_effective_budget}h total (±10h acceptable){_par_note}\n"
+                 f"  PRIORITY ORDER: 1) TYPICAL HEADCOUNT per day (never exceed without reason), "
+                 f"2) per-day YoY targets below, 3) total hours target. If headcounts produce fewer hours than target, that is OK — do not add ghost shifts.{_daily_targets}")
 
     prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.
 
@@ -664,7 +673,7 @@ SCHEDULING RULES:
 - Base each day's staffing on the YoY same-day data when available — that is your primary projection
 - For holiday weeks, match staffing to last year's holiday labor hours, not recent averages
 - No employee over 40h for the week
-- Total weekly hours MUST be within ±5h of {hours_budget}h PAR. Use the per-day targets above. If you finish a day and are running short, add a shift. The scheduled_hours column is machine-summed — your own count in the summary does not override it.
+- Weekly hours target is {_effective_budget}h (±10h). DO NOT add staff beyond TYPICAL HEADCOUNT to chase this number — if headcounts produce fewer hours, accept the gap and note it in the summary. Never schedule a person just to fill hours.
 - Servers: 4-6h shifts; bartenders/cooks: 5-8h shifts
 - Shifts per day: use the TYPICAL HEADCOUNT block above as your baseline — do not add extra staff just to fill the day. Only go above typical counts on high-volume YoY days or flagged events.
 - Notes column: one brief phrase per shift explaining any change (e.g. "YoY match - high Father's Day volume" or "reduced - YoY shows slow Monday")

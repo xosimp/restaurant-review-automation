@@ -1773,11 +1773,11 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div style="padding:16px 20px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
         <div>
           <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:4px">AI-Optimized Schedule</div>
-          <div id="sched-week-label" style="font-size:14px;font-weight:700;color:var(--paper)">Week of —</div>
+          <div id="sched-week-label" style="font-size:14px;font-weight:700;color:rgba(255,255,255,.88)">Week of —</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button onclick="downloadScheduleFromPreview()" class="btn-primary" style="background:#2d6a4f;font-size:12px;padding:7px 16px" onmouseover="this.style.background='#235c42';this.style.boxShadow='0 4px 14px rgba(45,106,79,.38)';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='#2d6a4f';this.style.boxShadow='none';this.style.transform=''" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Download CSV</button>
-          <button onclick="document.getElementById('schedule-preview-panel').style.display='none'" style="background:rgba(255,255,255,.08);color:var(--paper);border:none;border-radius:var(--r);padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s,box-shadow .15s,transform .15s" onmouseover="this.style.background='rgba(255,255,255,.16)';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='rgba(255,255,255,.08)';this.style.transform=''" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Close</button>
+          <button onclick="document.getElementById('schedule-preview-panel').style.display='none'" style="background:rgba(255,255,255,.08);color:rgba(255,255,255,.8);border:none;border-radius:var(--r);padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s,box-shadow .15s,transform .15s" onmouseover="this.style.background='rgba(255,255,255,.16)';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='rgba(255,255,255,.08)';this.style.transform=''" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Close</button>
         </div>
       </div>
 
@@ -1792,7 +1792,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
           <div>
             <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#6fcf97;margin-bottom:6px">PAR Hours Check</div>
-            <div id="sched-par-text" style="font-size:12px;color:var(--paper);line-height:1.7"></div>
+            <div id="sched-par-text" style="font-size:12px;color:rgba(255,255,255,.75);line-height:1.7"></div>
           </div>
           <div id="sched-par-badge" style="font-size:13px;font-weight:800;padding:8px 16px;border-radius:8px;white-space:nowrap"></div>
         </div>
@@ -5249,9 +5249,9 @@ function _schedHandleResult(data) {
         : '';
       tHtml += '<tr style="' + bgStyle + (constraintNote ? ';background:rgba(242,153,74,.04)' : '') + '">';
       tHtml += '<td style="padding:7px 12px;color:' + (isNewDay ? 'var(--ember2)' : 'transparent') + ';font-weight:700;font-size:11px;white-space:nowrap">' + day + '</td>';
-      tHtml += '<td style="padding:7px 12px;color:var(--paper);font-weight:600">' + empName + constraintBadge + '</td>';
-      tHtml += '<td style="padding:7px 12px;color:var(--ink3)">' + (row.role || '') + '</td>';
-      tHtml += '<td style="padding:7px 12px;color:var(--paper);white-space:nowrap">' + (row.shift_start || '') + '–' + (row.shift_end || '') + '</td>';
+      tHtml += '<td style="padding:7px 12px;color:rgba(255,255,255,.88);font-weight:600">' + empName + constraintBadge + '</td>';
+      tHtml += '<td style="padding:7px 12px;color:rgba(255,255,255,.45)">' + (row.role || '') + '</td>';
+      tHtml += '<td style="padding:7px 12px;color:rgba(255,255,255,.75);white-space:nowrap">' + (row.shift_start || '') + '–' + (row.shift_end || '') + '</td>';
       tHtml += '<td style="padding:7px 12px;color:#6fcf97;font-weight:600">' + (row.scheduled_hours || '') + '</td>';
       tHtml += '<td style="padding:7px 12px;color:var(--ink3);font-size:10px">' + (row.notes || '') + '</td>';
       tHtml += '</tr>';
