@@ -962,6 +962,14 @@ def _build_schedule_result(restaurant_id):
     owner    = restaurant.owner_name if restaurant else None
     staff_notes = get_staff_notes(restaurant_id) or None
 
+    # Employee availability
+    from models import get_staff_availability as _gsa, init_staff_availability as _isa
+    try:
+        _isa()
+        staff_availability = _gsa(restaurant_id) or []
+    except Exception:
+        staff_availability = []
+
     # Compute next week dates
     today = _dt.now(_ZI('America/Chicago')).replace(tzinfo=None)
     days_ahead = (7 - today.weekday()) % 7 or 7
@@ -1035,6 +1043,12 @@ def _build_schedule_result(restaurant_id):
         monthly_revenue_target=monthly_rev_target,
         hours_notes=getattr(restaurant, 'hours_notes', None),
         role_rates=analysis.get("role_rates") or {},
+        section_count=getattr(restaurant, 'section_count', None),
+        daypart_split=getattr(restaurant, 'daypart_split', None),
+        delivery_pct=getattr(restaurant, 'delivery_pct', None),
+        role_minimums_json=getattr(restaurant, 'role_minimums_json', None),
+        sched_notes=getattr(restaurant, 'sched_notes', None),
+        staff_availability=staff_availability or None,
     )
     result["restaurant_name"] = restaurant.name if restaurant else "Restaurant"
     return result

@@ -471,7 +471,13 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  upcoming_events: list = None,
                                  monthly_revenue_target: float = 0.0,
                                  hours_notes: str = None,
-                                 role_rates: dict = None) -> dict:
+                                 role_rates: dict = None,
+                                 section_count: int = None,
+                                 daypart_split: str = None,
+                                 delivery_pct: int = None,
+                                 role_minimums_json: str = None,
+                                 sched_notes: str = None,
+                                 staff_availability: list = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -480,6 +486,48 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     overstaffed = analysis.get("overstaffed_days", [])[:5]
     understaffed = analysis.get("understaffed_days", [])[:3]
     dow = analysis.get("dow_summary", {})
+
+    # Compute no-show risk per DOW from shifts where actual_hours is 0 (employee didn't work)
+    _noshows = {}
+    _dow_shift_counts = {}
+    for s in shifts:
+        _actual = float(s.get("actual_hours") or 0)
+        _sched  = float(s.get("scheduled_hours") or s.get("hours") or 0)
+        _date = s.get("date","")
+        _dn = ""
+        try:
+            from datetime import datetime as _dt3
+            _dn = _dt3.strptime(_date, "%Y-%m-%d").strftime("%A")
+        except Exception:
+            _dn = s.get("day","")
+        if _dn and _sched > 0:
+            _dow_shift_counts[_dn] = _dow_shift_counts.get(_dn, 0) + 1
+            if _actual == 0:
+                _noshows[_dn] = _noshows.get(_dn, 0) + 1
+    _noshows_block = ""
+    _high_risk_days = []
+    for _dn, _cnt in _noshows.items():
+        _total = _dow_shift_counts.get(_dn, 1)
+        _rate = round(_cnt / _total * 100)
+        if _rate >= 10:
+            _high_risk_days.append(f"{_dn} ({_rate}% historical no-show rate)")
+    if _high_risk_days:
+        _noshows_block = (f"\n\nNO-SHOW RISK (from historical data): {', '.join(_high_risk_days)}. "
+                          f"On these days, consider scheduling one extra flex staff member or note "
+                          f"in the summary that a standby should be on-call.")
+
+    # Detect cross-trained employees from shift history (appear with 2+ distinct roles)
+    _emp_roles = {}
+    for s in shifts:
+        e, r = s.get("employee",""), s.get("role","")
+        if e and r:
+            _emp_roles.setdefault(e, set()).add(r)
+    _cross_trained = {e: sorted(roles) for e, roles in _emp_roles.items() if len(roles) > 1}
+    _cross_block = ""
+    if _cross_trained:
+        _lines = [f"  {e}: {' / '.join(roles)}" for e, roles in sorted(_cross_trained.items())]
+        _cross_block = ("\n\nCROSS-TRAINED STAFF — these employees can flex between roles. "
+                        "Use this flexibility to fill gaps before adding headcount:\n" + "\n".join(_lines))
 
     # Compute typical headcount per role per day-of-week from actual shift history
     # This prevents the AI from over/under-staffing vs what the restaurant actually runs
@@ -630,6 +678,68 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             if _day_lines:
                 _daily_targets = "\n  Per-day targets (YoY scaled to PAR):\n" + "\n".join(_day_lines)
 
+    # Section count — caps how many servers can work simultaneously
+    _section_block = ""
+    if section_count:
+        _section_block = (f"\n\nDINING SECTIONS: {section_count} sections/tables. "
+                          f"Maximum {section_count} servers can work simultaneously (one per section). "
+                          f"Never schedule more servers than sections — extra servers have nothing to serve.")
+
+    # Daypart split — tells AI how to weight lunch vs dinner staffing
+    _daypart_block = ""
+    if daypart_split:
+        _daypart_block = (f"\n\nDAYPART REVENUE SPLIT: {daypart_split}. "
+                          f"Weight staffing toward the higher-revenue daypart. "
+                          f"If dinner is 70%+, prioritize closers and dinner openers over lunch staffing.")
+
+    # Delivery/takeout split — shifts labor toward kitchen, away from FOH
+    _delivery_block = ""
+    if delivery_pct and delivery_pct > 0:
+        foh_note = "fewer servers needed" if delivery_pct >= 20 else "minor FOH impact"
+        _delivery_block = (f"\n\nDELIVERY/TAKEOUT: {delivery_pct}% of revenue is off-premise. "
+                           f"This means more kitchen labor is needed for packaging/output, "
+                           f"but {foh_note} — do not over-schedule servers to cover revenue that isn't dine-in.")
+
+    # Role minimums from settings (overrides the defaults in the prompt if provided)
+    _role_minimums_extra = ""
+    if role_minimums_json:
+        import json as _jrm
+        try:
+            _rm = _jrm.loads(role_minimums_json)
+            _rm_lines = [f"  {role}: minimum {count} on any service day" for role, count in _rm.items()]
+            _role_minimums_extra = ("\n  Restaurant-specific overrides:\n" + "\n".join(_rm_lines))
+        except Exception:
+            pass
+
+    # Employee availability block
+    import json as _jav
+    _avail_block = ""
+    if staff_availability:
+        _av_lines = []
+        for av in staff_availability:
+            _name = av.get("employee_name","")
+            _avail = _jav.loads(av.get("available_days") or "[]")
+            _unavail = _jav.loads(av.get("unavailable_days") or "[]")
+            _anote = av.get("notes","")
+            parts = []
+            if _avail:
+                parts.append(f"available: {', '.join(_avail)}")
+            if _unavail:
+                parts.append(f"NOT available: {', '.join(_unavail)}")
+            if _anote:
+                parts.append(_anote)
+            if parts:
+                _av_lines.append(f"  {_name}: {' | '.join(parts)}")
+        if _av_lines:
+            _avail_block = ("\n\nEMPLOYEE AVAILABILITY — do not schedule anyone on days they are unavailable. "
+                            "This is a hard constraint, same priority as STAFF CONSTRAINTS:\n"
+                            + "\n".join(_av_lines))
+
+    # Extra scheduling notes from admin
+    _sched_notes_block = ""
+    if sched_notes:
+        _sched_notes_block = f"\n\nADDITIONAL SCHEDULING NOTES (from management):\n{sched_notes}"
+
     par_block = (f"\n\nPAR HOURS TARGET — schedule is verified against actual column totals:\n"
                  f"  Projected revenue: ${projected_revenue:,.0f} | Labor target: {labor_target}% = ${labor_budget_dollars:,.0f}\n"
                  f"  Blended rate: ${hourly_rate}/hr → target {hours_budget}h total (±10h acceptable)\n"
@@ -644,7 +754,7 @@ CONTEXT:
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
 - Recent labor % by day of week: {dow}
-- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}
+- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_avail_block}{_sched_notes_block}
 
 Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
@@ -667,10 +777,36 @@ SCHEDULING RULES:
 - For holiday weeks, match staffing to last year's holiday labor hours, not recent averages
 - No employee over 40h for the week
 - Weekly hours target is {hours_budget}h (±10h). Use shift length and later start times to reach the target before adding headcount. Never schedule extra people purely to fill hours.
-- SERVER STAGGER RULE (apply every day): exactly ONE server opens (comes in 1h before restaurant open). The second server starts AT restaurant open or 30 min after depending on day projection. Any additional servers on busy days start at lunch rush (12:00pm or later) — only add them if YoY or event data backs up the volume. Never schedule two servers at the same opening time.
-- Servers: 4-6h shifts; bartenders/cooks: 5-8h shifts
-- Shifts per day: use the TYPICAL HEADCOUNT block above as your baseline — do not add extra staff just to fill the day. Only go above typical counts on high-volume YoY days or flagged events.
-- Notes column: one brief phrase per shift explaining any change (e.g. "YoY match - high Father's Day volume" or "reduced - YoY shows slow Monday")
+
+ROLE STAGGER RULES (apply every day without exception):
+- Servers: exactly ONE server opens (1h before restaurant open). Second server starts AT open or 30min after based on day volume. Additional servers only at 12pm+ and only when YoY/event data justifies it. Never two servers at the same opening time.
+- Bartenders: ONE bar opener (arrives 30–45min before bar service begins). If a second bartender is needed, they start at peak bar hours (typically 5–6pm). Never two bartenders starting at the same time.
+- Cooks/Kitchen: ONE opener arrives before kitchen open for prep. A second cook staggers in 30–60min later. Closers stay through full breakdown — do not end kitchen shifts at restaurant close.
+- Hosts: ONE host opens (30min before doors). Second host (if needed on high-volume days) starts at the first cover rush.
+
+MINIMUM STAFFING FLOORS (never go below these on any service day):
+- Servers: minimum 1 on the floor at all times during service
+- Cooks/Kitchen: minimum 2 on any service day (1 opener + 1 who overlaps through dinner)
+- Bartenders: minimum 1 whenever the bar is open
+- Hosts: minimum 1 whenever the dining room is open{_role_minimums_extra}
+
+CONSECUTIVE DAYS OFF:
+- Every employee must receive at least 2 consecutive days off per week — do not schedule anyone 7 days straight or give isolated single days off. Spread days off so they form blocks of 2+.
+- Aim to give part-time staff 3+ consecutive days off so their schedule is predictable.
+
+CROSS-TRAINING:
+- When a gap exists in a role, check CROSS-TRAINED STAFF first before adding a new person. Flexing a cross-trained employee to fill a role costs nothing extra and keeps headcount lean.
+
+NO-SHOW BUFFER:
+- Friday and Saturday are highest-risk days for callouts. Schedule one extra server per high-volume Friday/Saturday if headcount allows, or note in the summary that a standby server should be on-call.
+
+SHIFT LENGTHS:
+- Servers: 4–7h shifts. Openers typically run longer (6–7h through lunch close). Closers run 5–7h.
+- Bartenders/Cooks: 6–9h shifts. Kitchen closers often need 9–10h to cover full service + breakdown.
+- Hosts: 5–8h. One opener, close when last seated table is covered.
+
+- Shifts per day: use the TYPICAL HEADCOUNT block as your baseline. Only go above on high-volume YoY days or flagged events. Use CROSS-TRAINED STAFF to fill role gaps before adding headcount.
+- Notes column: one brief phrase per shift (e.g. "YoY match - high Father's Day volume", "staggered - 2nd server at open", "cross-trained flex - bartender covering server gap")
 - Match shift times to the operation type visible in the staff data (lunch/dinner vs breakfast/brunch)
 - IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time.{constraints}"""
 

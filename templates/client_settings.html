@@ -264,6 +264,31 @@ textarea{resize:vertical;min-height:60px}
           <textarea id="hours_notes" rows="5" placeholder="e.g. Open 11am–9pm Sun–Wed, 11am–10pm Thu–Sat. Cooks arrive 8:30am. Bartenders evening only, stay 1h after close...">{{ restaurant.hours_notes or '' }}</textarea>
           <div class="hint">Exact open/close times, role-specific arrival rules, and closer policies. The AI follows these exactly when generating schedules.</div>
         </div>
+        <div class="form-group full">
+          <label>Additional scheduling notes (admin override)</label>
+          <textarea id="sched_notes" rows="3" placeholder="e.g. Always keep at least 1 experienced server on Saturdays. Maria trains new hires and should open when available.">{{ restaurant.sched_notes or '' }}</textarea>
+          <div class="hint">Freeform notes injected directly into the AI prompt. Use for one-off policies or manager preferences not captured by other settings.</div>
+        </div>
+        <div class="form-group">
+          <label>Dining sections (#)</label>
+          <input type="number" id="section_count" value="{{ restaurant.section_count or '' }}" min="1" max="30" placeholder="e.g. 5">
+          <div class="hint">Max concurrent servers is capped to this number. Leave blank to skip.</div>
+        </div>
+        <div class="form-group">
+          <label>Delivery % of sales</label>
+          <input type="number" id="delivery_pct" value="{{ restaurant.delivery_pct or '' }}" min="0" max="100" placeholder="e.g. 25">
+          <div class="hint">If delivery is 25%+ of sales, the AI weights more labor toward kitchen roles.</div>
+        </div>
+        <div class="form-group full">
+          <label>Daypart split</label>
+          <input type="text" id="daypart_split" value="{{ restaurant.daypart_split or '' }}" placeholder="e.g. lunch 35%, dinner 65%">
+          <div class="hint">Tells the AI which daypart drives more revenue so it can weight staffing accordingly.</div>
+        </div>
+        <div class="form-group full">
+          <label>Role minimums (JSON override)</label>
+          <textarea id="role_minimums_json" rows="3" placeholder='e.g. {"Server": 2, "Cook": 3, "Bartender": 1}'>{{ restaurant.role_minimums_json or '' }}</textarea>
+          <div class="hint">Override the default minimum floor per role. Must be valid JSON. Leave blank to use defaults.</div>
+        </div>
       </div>
       <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--paper3)">
         <div style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink3);margin-bottom:10px">Staff scheduling constraints</div>
@@ -891,6 +916,11 @@ async function saveSettings() {
     labor_target_pct:        parseFloat(document.getElementById('labor_target_pct').value) || 30.0,
     monthly_revenue_target:  parseFloat(document.getElementById('monthly_revenue_target').value) || 0,
     hours_notes:             document.getElementById('hours_notes').value,
+    sched_notes:             document.getElementById('sched_notes').value,
+    section_count:           parseInt(document.getElementById('section_count').value) || null,
+    delivery_pct:            parseInt(document.getElementById('delivery_pct').value) || null,
+    daypart_split:           document.getElementById('daypart_split').value,
+    role_minimums_json:      document.getElementById('role_minimums_json').value,
     billing_status:  document.getElementById('billing_status').value,
     internal_notes:  document.getElementById('internal_notes').value,
     module_reviews:  document.getElementById('setting-mod-reviews').checked ? 1 : 0,

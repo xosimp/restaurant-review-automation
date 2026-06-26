@@ -852,12 +852,13 @@ def server_error(e):
 
 try:
     from models import init_db as _init_db, ensure_columns as _ec, init_email_log as _iel, init_onboarding_emails as _ioe
-    from models import init_staff_notes as _isn
+    from models import init_staff_notes as _isn, init_staff_availability as _isa
     from auth import init_auth as _init_auth
     from webhooks import init_webhooks as _iwh
     _init_db()
     _init_auth()
     _isn()
+    _isa()
     _ec()
     _iel()
     _ioe()

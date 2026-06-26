@@ -1823,6 +1823,45 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
+  <!-- Employee Availability Manager -->
+  <div style="margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ink3)">Employee Availability</div>
+      <button onclick="toggleAvailPanel()" style="font-size:11px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0" id="avail-toggle-btn">Manage ↓</button>
+    </div>
+    <div id="avail-panel" style="display:none">
+      <div class="card" style="padding:16px">
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:12px">Set which days each employee is available. The AI will never schedule someone on their unavailable days — this has the same priority as staff constraints.</div>
+        <!-- Add new entry -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-end">
+          <div>
+            <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Employee name</div>
+            <input id="av-name" type="text" placeholder="e.g. Jake M." style="font-size:12px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;width:160px;background:var(--surface);color:var(--ink);font-family:inherit">
+          </div>
+          <div>
+            <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Available days</div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap" id="av-days-available">
+              {% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}
+              <label style="display:flex;align-items:center;gap:3px;font-size:11px;cursor:pointer;padding:4px 7px;border:1px solid var(--paper3);border-radius:5px;user-select:none">
+                <input type="checkbox" value="{{day}}" style="margin:0"> {{day}}
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+          <div>
+            <div style="font-size:10px;font-weight:600;color:var(--ink3);margin-bottom:4px">Notes (optional)</div>
+            <input id="av-notes" type="text" placeholder="e.g. student, no mornings" style="font-size:12px;padding:6px 10px;border:1px solid var(--paper3);border-radius:6px;width:200px;background:var(--surface);color:var(--ink);font-family:inherit">
+          </div>
+          <button onclick="saveAvailability()" class="btn-primary" style="padding:7px 16px;font-size:12px;flex-shrink:0">Save</button>
+        </div>
+        <!-- Saved entries -->
+        <div id="avail-list" style="display:flex;flex-direction:column;gap:6px">
+          <div style="font-size:11px;color:var(--ink3);font-style:italic">Loading availability…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- AI insight -->
   <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
@@ -5374,6 +5413,77 @@ function generateSchedule(btn) {
 }
 
 var _schedTableOpen = false;
+// ── Employee Availability ──────────────────────────────────────────────────
+var _availOpen = false;
+function toggleAvailPanel() {
+  _availOpen = !_availOpen;
+  var p = document.getElementById('avail-panel');
+  var btn = document.getElementById('avail-toggle-btn');
+  if (p) p.style.display = _availOpen ? '' : 'none';
+  if (btn) btn.textContent = _availOpen ? 'Close ↑' : 'Manage ↓';
+  if (_availOpen) loadAvailability();
+}
+var _restaurantId = '{{current_user.restaurant_id if current_user else ""}}';
+function loadAvailability() {
+  var list = document.getElementById('avail-list');
+  if (!list) return;
+  fetch('/admin/staff-availability/' + _restaurantId).then(function(r){return r.json();}).then(function(d){
+    if (!d.ok || !d.availability || !d.availability.length) {
+      list.innerHTML = '<div style="font-size:11px;color:var(--ink3);font-style:italic">No availability set yet — add employees above.</div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < d.availability.length; i++) {
+      var av = d.availability[i];
+      var avDays = JSON.parse(av.available_days || '[]');
+      var unDays = JSON.parse(av.unavailable_days || '[]');
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--paper);border:1px solid var(--paper3);border-radius:6px;gap:12px;flex-wrap:wrap">';
+      html += '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:var(--ink)">' + av.employee_name + '</div>';
+      if (avDays.length) html += '<div style="font-size:10px;color:#2d6a4f;margin-top:2px">✓ Available: ' + avDays.join(', ') + '</div>';
+      if (unDays.length) html += '<div style="font-size:10px;color:#c0392b;margin-top:1px">✗ Not available: ' + unDays.join(', ') + '</div>';
+      if (av.notes) html += '<div style="font-size:10px;color:var(--ink3);margin-top:1px">' + av.notes + '</div>';
+      html += '</div>';
+      html += '<button onclick="deleteAvailability(\'' + av.employee_name.replace(/'/g,'\\\'') + '\')" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;padding:0 4px;line-height:1" title="Remove">&#x2715;</button>';
+      html += '</div>';
+    }
+    list.innerHTML = html;
+  }).catch(function(){
+    list.innerHTML = '<div style="font-size:11px;color:var(--ink3)">Could not load availability.</div>';
+  });
+}
+function saveAvailability() {
+  var name = (document.getElementById('av-name').value || '').trim();
+  if (!name) { alert('Enter an employee name.'); return; }
+  var avDays = [], unDays = [];
+  var checks = document.querySelectorAll('#av-days-available input[type=checkbox]');
+  for (var i = 0; i < checks.length; i++) {
+    var dayMap = {Mon:'Monday',Tue:'Tuesday',Wed:'Wednesday',Thu:'Thursday',Fri:'Friday',Sat:'Saturday',Sun:'Sunday'};
+    if (checks[i].checked) avDays.push(dayMap[checks[i].value] || checks[i].value);
+    else unDays.push(dayMap[checks[i].value] || checks[i].value);
+  }
+  var notes = (document.getElementById('av-notes').value || '').trim();
+  fetch('/admin/staff-availability/' + _restaurantId, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
+    body: JSON.stringify({employee_name: name, available_days: avDays, unavailable_days: unDays, notes: notes || null})
+  }).then(function(r){return r.json();}).then(function(d){
+    if (d.ok) {
+      document.getElementById('av-name').value = '';
+      document.getElementById('av-notes').value = '';
+      for (var i = 0; i < checks.length; i++) checks[i].checked = false;
+      loadAvailability();
+    }
+  });
+}
+function deleteAvailability(name) {
+  fetch('/admin/staff-availability/' + _restaurantId + '/delete', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-CSRFToken':'{{csrf_token}}'},
+    body: JSON.stringify({employee_name: name})
+  }).then(function(r){return r.json();}).then(function(d){if(d.ok) loadAvailability();});
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 function toggleSchedTable() {
   var wrap = document.getElementById('sched-table-wrap');
   var label = document.getElementById('sched-toggle-label');

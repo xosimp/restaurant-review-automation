@@ -368,6 +368,40 @@ def delete_staff_note_route(note_id, current_user):
     delete_staff_note(note_id)
     return jsonify(ok=True)
 
+@admin_bp.route("/admin/staff-availability/<int:restaurant_id>", methods=["GET"])
+@login_required
+def get_staff_availability_route(restaurant_id, current_user):
+    from models import get_staff_availability, init_staff_availability
+    init_staff_availability()
+    return jsonify(ok=True, availability=get_staff_availability(restaurant_id))
+
+@admin_bp.route("/admin/staff-availability/<int:restaurant_id>", methods=["POST"])
+@login_required
+def save_staff_availability_route(restaurant_id, current_user):
+    from models import save_staff_availability, init_staff_availability
+    init_staff_availability()
+    data = request.get_json() or {}
+    name = (data.get("employee_name") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="employee_name required"), 400
+    save_staff_availability(
+        restaurant_id, name,
+        available_days=data.get("available_days") or [],
+        unavailable_days=data.get("unavailable_days") or [],
+        notes=(data.get("notes") or "").strip() or None
+    )
+    return jsonify(ok=True)
+
+@admin_bp.route("/admin/staff-availability/<int:restaurant_id>/delete", methods=["POST"])
+@login_required
+def delete_staff_availability_route(restaurant_id, current_user):
+    from models import delete_staff_availability
+    data = request.get_json() or {}
+    name = (data.get("employee_name") or "").strip()
+    if name:
+        delete_staff_availability(restaurant_id, name)
+    return jsonify(ok=True)
+
 @admin_bp.route("/admin/alert-contacts/<int:restaurant_id>", methods=["GET"])
 @admin_required
 def get_alert_contacts_route(restaurant_id, current_user):
@@ -492,6 +526,11 @@ def save_client_settings(restaurant_id, current_user):
             "inventory_notes":       sanitize(data.get("inventory_notes","")),
             "hours_notes":           sanitize(data.get("hours_notes",""), max_len=2000),
             "role_rates_json":       data.get("role_rates_json","") or None,
+            "section_count":         int(data["section_count"]) if data.get("section_count") else None,
+            "daypart_split":         data.get("daypart_split","").strip() or None,
+            "delivery_pct":          int(data["delivery_pct"]) if data.get("delivery_pct") is not None and str(data.get("delivery_pct","")) != "" else None,
+            "role_minimums_json":    data.get("role_minimums_json","") or None,
+            "sched_notes":           sanitize(data.get("sched_notes",""), max_len=2000),
             "monthly_revenue_target": float(data.get("monthly_revenue_target") or 0),
             "food_cost_target":      float(data.get("food_cost_target", 30) or 30),
             "digest_day":      data.get("digest_day","monday"),

@@ -238,6 +238,11 @@ class Restaurant:
     monthly_revenue_target: float        = 0.0
     hours_notes: Optional[str]           = None
     role_rates_json: Optional[str]       = None
+    section_count: Optional[int]         = None
+    daypart_split: Optional[str]         = None   # e.g. "lunch:35,dinner:65"
+    delivery_pct: Optional[int]          = None   # % of revenue from delivery/takeout
+    role_minimums_json: Optional[str]    = None   # e.g. {"Server":2,"Cook":2,"Bartender":1}
+    sched_notes: Optional[str]           = None   # freeform scheduling notes from admin
     inventory_updated_at: Optional[str]  = None
     temp_password: Optional[str]         = None
     ig_token: Optional[str]              = None
@@ -405,6 +410,11 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "monthly_revenue_target", "REAL"),
         ("restaurants", "hours_notes", "TEXT"),
         ("restaurants", "role_rates_json", "TEXT"),
+        ("restaurants", "section_count", "INTEGER"),
+        ("restaurants", "daypart_split", "TEXT"),
+        ("restaurants", "delivery_pct", "INTEGER"),
+        ("restaurants", "role_minimums_json", "TEXT"),
+        ("restaurants", "sched_notes", "TEXT"),
         ("restaurants", "inventory_updated_at", "TEXT"),
         ("restaurants", "gbp_rating", "REAL"),
         ("restaurants", "gbp_review_count", "INTEGER"),
@@ -1319,6 +1329,17 @@ CREATE TABLE IF NOT EXISTS staff_notes (
     created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     UNIQUE(restaurant_id, employee_name)
 );
+
+CREATE TABLE IF NOT EXISTS staff_availability (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+    employee_name   TEXT    NOT NULL,
+    available_days  TEXT    NOT NULL,  -- JSON list e.g. ["Friday","Saturday","Sunday"]
+    unavailable_days TEXT,             -- JSON list of days they cannot work
+    notes           TEXT,              -- e.g. "student — no weekday mornings before noon"
+    updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(restaurant_id, employee_name)
+);
 """
 
 def init_email_log(db_path: str = DB_PATH):
@@ -1403,6 +1424,59 @@ def get_staff_notes(restaurant_id: int,
 def delete_staff_note(note_id: int, db_path: str = DB_PATH):
     conn = get_conn(db_path)
     conn.execute("DELETE FROM staff_notes WHERE id=?", (note_id,))
+    conn.commit()
+    conn.close()
+
+# ── Staff availability ────────────────────────────────────────────────────────
+
+def init_staff_availability(db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS staff_availability (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+        employee_name   TEXT    NOT NULL,
+        available_days  TEXT    NOT NULL DEFAULT '[]',
+        unavailable_days TEXT,
+        notes           TEXT,
+        updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(restaurant_id, employee_name)
+    )""")
+    conn.commit()
+    conn.close()
+
+def get_staff_availability(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    conn = get_conn(db_path)
+    rows = conn.execute(
+        "SELECT * FROM staff_availability WHERE restaurant_id=? ORDER BY employee_name",
+        (restaurant_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def save_staff_availability(restaurant_id: int, employee_name: str,
+                             available_days: list, unavailable_days: list = None,
+                             notes: str = None, db_path: str = DB_PATH):
+    import json as _j
+    conn = get_conn(db_path)
+    conn.execute("""INSERT INTO staff_availability
+        (restaurant_id, employee_name, available_days, unavailable_days, notes, updated_at)
+        VALUES (?,?,?,?,?,datetime('now'))
+        ON CONFLICT(restaurant_id, employee_name) DO UPDATE SET
+            available_days=excluded.available_days,
+            unavailable_days=excluded.unavailable_days,
+            notes=excluded.notes,
+            updated_at=excluded.updated_at""",
+        (restaurant_id, employee_name,
+         _j.dumps(available_days or []),
+         _j.dumps(unavailable_days or []) if unavailable_days else None,
+         notes))
+    conn.commit()
+    conn.close()
+
+def delete_staff_availability(restaurant_id: int, employee_name: str, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("DELETE FROM staff_availability WHERE restaurant_id=? AND employee_name=?",
+                 (restaurant_id, employee_name))
     conn.commit()
     conn.close()
 
