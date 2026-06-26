@@ -783,12 +783,14 @@ ROLE STAGGER RULES (apply every day without exception):
 - Bartenders: ONE bar opener (arrives 30–45min before bar service begins). If a second bartender is needed, they start at peak bar hours (typically 5–6pm). Never two bartenders starting at the same time.
 - Cooks/Kitchen: ONE opener arrives before kitchen open for prep. A second cook staggers in 30–60min later. Closers stay through full breakdown — do not end kitchen shifts at restaurant close.
 - Hosts: ONE host opens (30min before doors). Second host (if needed on high-volume days) starts at the first cover rush.
+- Food Runners: ONE food runner for dinner service daily — arrives with the dinner kitchen crew. On high-volume days (Fridays, Pizza Mondays, event days), add a food runner for lunch as well. Never two food runners unless a private event requires it.
 
 MINIMUM STAFFING FLOORS (never go below these on any service day):
 - Servers: minimum 1 on the floor at all times during service
 - Cooks/Kitchen: minimum 2 on any service day (1 opener + 1 who overlaps through dinner)
 - Bartenders: minimum 1 whenever the bar is open
-- Hosts: minimum 1 whenever the dining room is open{_role_minimums_extra}
+- Hosts: minimum 1 whenever the dining room is open
+- Food Runners: minimum 1 for every dinner service. Add 1 for lunch only on high-volume days (see RESTAURANT HOURS & SHIFT RULES for specifics).{_role_minimums_extra}
 
 CONSECUTIVE DAYS OFF:
 - Every employee must receive at least 2 consecutive days off per week — do not schedule anyone 7 days straight or give isolated single days off. Spread days off so they form blocks of 2+.
@@ -804,6 +806,7 @@ SHIFT LENGTHS:
 - Servers: 4–7h shifts. Openers typically run longer (6–7h through lunch close). Closers run 5–7h.
 - Bartenders/Cooks: 6–9h shifts. Kitchen closers often need 9–10h to cover full service + breakdown.
 - Hosts: 5–8h. One opener, close when last seated table is covered.
+- Food Runners: 4–6h for dinner-only shifts. 8–10h on days they run both lunch and dinner.
 
 - Shifts per day: use the TYPICAL HEADCOUNT block as your baseline. Only go above on high-volume YoY days or flagged events. Use CROSS-TRAINED STAFF to fill role gaps before adding headcount.
 - Notes column: one brief phrase per shift (e.g. "YoY match - high Father's Day volume", "staggered - 2nd server at open", "cross-trained flex - bartender covering server gap")
