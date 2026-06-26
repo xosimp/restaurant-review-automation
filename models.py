@@ -660,40 +660,41 @@ def _seed_gia_mia(db_path: str = DB_PATH):
     except Exception:
         conn.close()
         return
-    if row and row["shifts_source"] == "upload":
-        conn.close()
-        return  # preserve real data
-
-    # Seed June 2025 daily history (YoY context for schedule generation)
-    DAY_TEMPLATES = {
-        0: {"sales": 8200,  "hours": 71},
-        1: {"sales": 8800,  "hours": 76},
-        2: {"sales": 10500, "hours": 91},
-        3: {"sales": 12200, "hours": 105},
-        4: {"sales": 16400, "hours": 142},
-        5: {"sales": 18800, "hours": 163},
-        6: {"sales": 13200, "hours": 114},
-    }
-    HOLIDAY_OVERRIDES = {"2025-06-15": {"sales": 22400, "hours": 194}}
-    DAYS_OF_WEEK = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
-    d = date(2025, 6, 2)
-    while d <= date(2025, 6, 29):
-        ds = d.strftime("%Y-%m-%d")
-        tmpl = HOLIDAY_OVERRIDES.get(ds, DAY_TEMPLATES[d.weekday()])
-        sales = float(tmpl["sales"])
-        hours = float(tmpl["hours"])
-        labor_cost = round(hours * 26, 2)
-        labor_pct  = round(labor_cost / sales * 100, 2)
-        conn.execute("""
-            INSERT OR REPLACE INTO labor_daily_history
-              (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales, total_hours, saved_at)
-            VALUES (?,?,?,?,?,?,?,datetime('now'))
-        """, (2, ds, DAYS_OF_WEEK[d.weekday()], labor_pct, labor_cost, sales, hours))
-        d += timedelta(days=1)
-
-    # Commit and close before calling helpers that open their own connections
-    conn.commit()
+    skip_shift_seed = row and row["shifts_source"] == "upload"
     conn.close()
+
+    if not skip_shift_seed:
+        # Seed June 2025 daily history (YoY context for schedule generation)
+        _conn2 = sqlite3.connect(db_path, timeout=5)
+        _conn2.row_factory = sqlite3.Row
+        _conn2.execute("PRAGMA journal_mode=WAL")
+        DAY_TEMPLATES = {
+            0: {"sales": 8200,  "hours": 71},
+            1: {"sales": 8800,  "hours": 76},
+            2: {"sales": 10500, "hours": 91},
+            3: {"sales": 12200, "hours": 105},
+            4: {"sales": 16400, "hours": 142},
+            5: {"sales": 18800, "hours": 163},
+            6: {"sales": 13200, "hours": 114},
+        }
+        HOLIDAY_OVERRIDES = {"2025-06-15": {"sales": 22400, "hours": 194}}
+        DAYS_OF_WEEK = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+        d = date(2025, 6, 2)
+        while d <= date(2025, 6, 29):
+            ds = d.strftime("%Y-%m-%d")
+            tmpl = HOLIDAY_OVERRIDES.get(ds, DAY_TEMPLATES[d.weekday()])
+            sales = float(tmpl["sales"])
+            hours = float(tmpl["hours"])
+            labor_cost = round(hours * 26, 2)
+            labor_pct  = round(labor_cost / sales * 100, 2)
+            _conn2.execute("""
+                INSERT OR REPLACE INTO labor_daily_history
+                  (restaurant_id, date, day_of_week, labor_pct, labor_cost, sales, total_hours, saved_at)
+                VALUES (?,?,?,?,?,?,?,datetime('now'))
+            """, (2, ds, DAYS_OF_WEEK[d.weekday()], labor_pct, labor_cost, sales, hours))
+            d += timedelta(days=1)
+        _conn2.commit()
+        _conn2.close()
 
     gia_mia_hours = (
         "RESTAURANT HOURS: Open 11:00am daily. "
@@ -991,9 +992,11 @@ def _seed_gia_mia(db_path: str = DB_PATH):
 2026-06-14,Sunday,James H.,Host,11:00am,5:30pm,6.5,6.5,12250,
 2026-06-14,Sunday,Lena S.,Host,4:00pm,10:30pm,6.5,6.5,12250,"""
 
-    # Use save_client_data so the correct DB path is always used
-    save_client_data(2, "shifts", gia_mia_csv, source="seed")
-    print("[auto-seed] Gia Mia data seeded successfully")
+    if not skip_shift_seed:
+        # Use save_client_data so the correct DB path is always used
+        save_client_data(2, "shifts", gia_mia_csv, source="seed")
+        print("[auto-seed] Gia Mia shift data seeded successfully")
+    print("[auto-seed] Gia Mia settings always applied")
 
 
 # ── Restaurant CRUD ───────────────────────────────────────────────────────────
@@ -1046,6 +1049,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "changelog_seen_at",
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
+        "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
