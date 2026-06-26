@@ -481,6 +481,63 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     understaffed = analysis.get("understaffed_days", [])[:3]
     dow = analysis.get("dow_summary", {})
 
+    # Compute typical headcount per role per day-of-week from actual shift history
+    # This prevents the AI from over/under-staffing vs what the restaurant actually runs
+    from collections import defaultdict as _dd
+    _dow_role_staff = _dd(lambda: _dd(set))  # {dow -> {role -> set of employees}}
+    for s in shifts:
+        _date = s.get("date", "")
+        _role = s.get("role", "Unknown")
+        _emp  = s.get("employee", "")
+        _dn   = ""
+        try:
+            from datetime import datetime as _dt2
+            _dn = _dt2.strptime(_date, "%Y-%m-%d").strftime("%A")
+        except Exception:
+            _dn = s.get("day", "")
+        if _dn and _emp:
+            _dow_role_staff[_dn][_role].add(_emp)
+    # Summarize: avg unique staff per DOW per role (count unique across all dates / occurrences of that DOW)
+    _dow_counts = _dd(int)
+    for s in shifts:
+        _date = s.get("date", "")
+        try:
+            _dn = _dt2.strptime(_date, "%Y-%m-%d").strftime("%A")
+        except Exception:
+            _dn = s.get("day", "")
+        if _dn:
+            _dow_counts[_dn] = max(_dow_counts[_dn], 1)
+    # Count unique dates per DOW
+    _dow_date_sets = _dd(set)
+    for s in shifts:
+        _date = s.get("date", "")
+        try:
+            _dn = _dt2.strptime(_date, "%Y-%m-%d").strftime("%A")
+        except Exception:
+            _dn = s.get("day", "")
+        if _dn and _date:
+            _dow_date_sets[_dn].add(_date)
+    # Build headcount block: "Monday: Server 4, Cook 3, Bartender 1"
+    _dow_order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+    _hc_lines = []
+    for _dn in _dow_order:
+        if _dn not in _dow_role_staff:
+            continue
+        _n_weeks = max(len(_dow_date_sets[_dn]), 1)
+        _parts = []
+        for _role, _emps in sorted(_dow_role_staff[_dn].items()):
+            # Unique employees seen on this DOW divided by number of occurrences = avg per week
+            _avg = max(1, round(len(_emps) / _n_weeks))
+            _parts.append(f"{_role}: {_avg}")
+        if _parts:
+            _hc_lines.append(f"  {_dn}: {', '.join(_parts)}")
+    _headcount_block = ""
+    if _hc_lines:
+        _headcount_block = ("\n\nTYPICAL HEADCOUNT PER DAY — CRITICAL: these are the actual staff counts this restaurant runs. "
+                            "Do NOT exceed these numbers per role per day without a specific reason (event, YoY spike). "
+                            "Going over means you are scheduling people that weren't scheduled historically:\n"
+                            + "\n".join(_hc_lines))
+
     # Next Monday as schedule start
     today = datetime.now(ZoneInfo('America/Chicago')).replace(tzinfo=None)
     days_ahead = (7 - today.weekday()) % 7 or 7
@@ -585,7 +642,7 @@ CONTEXT:
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
 - Recent labor % by day of week: {dow}
-- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{role_rates_block}{hours_block}{par_block}{constraints}
+- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{constraints}
 
 Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
@@ -609,7 +666,7 @@ SCHEDULING RULES:
 - No employee over 40h for the week
 - Total weekly hours MUST be within ±5h of {hours_budget}h PAR. Use the per-day targets above. If you finish a day and are running short, add a shift. The scheduled_hours column is machine-summed — your own count in the summary does not override it.
 - Servers: 4-6h shifts; bartenders/cooks: 5-8h shifts
-- 8-14 shifts per day (scale with revenue — high-volume days need more shifts)
+- Shifts per day: use the TYPICAL HEADCOUNT block above as your baseline — do not add extra staff just to fill the day. Only go above typical counts on high-volume YoY days or flagged events.
 - Notes column: one brief phrase per shift explaining any change (e.g. "YoY match - high Father's Day volume" or "reduced - YoY shows slow Monday")
 - Match shift times to the operation type visible in the staff data (lunch/dinner vs breakfast/brunch)
 - IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time."""
