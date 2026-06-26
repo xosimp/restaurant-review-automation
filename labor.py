@@ -545,10 +545,12 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     week_dates = [(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
     week_days  = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
 
-    # Build staff constraints block
+    # Build staff constraints block — placed LAST in prompt so it overrides all rules
     constraints = ""
     if staff_notes:
-        constraints = "\nStaff scheduling constraints (MUST be respected):\n"
+        constraints = ("\n\nSTAFF CONSTRAINTS — HIGHEST PRIORITY. These override ALL scheduling rules above, "
+                       "including server stagger, PAR hours target, typical headcount, and shift length guidelines. "
+                       "If a constraint conflicts with any rule, the constraint wins, always:\n")
         for note in staff_notes:
             constraints += f"- {note['employee_name']}: {note['notes']}\n"
 
@@ -642,7 +644,7 @@ CONTEXT:
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
 - Recent labor % by day of week: {dow}
-- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{constraints}
+- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}
 
 Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
@@ -670,7 +672,7 @@ SCHEDULING RULES:
 - Shifts per day: use the TYPICAL HEADCOUNT block above as your baseline — do not add extra staff just to fill the day. Only go above typical counts on high-volume YoY days or flagged events.
 - Notes column: one brief phrase per shift explaining any change (e.g. "YoY match - high Father's Day volume" or "reduced - YoY shows slow Monday")
 - Match shift times to the operation type visible in the staff data (lunch/dinner vs breakfast/brunch)
-- IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time."""
+- IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time.{constraints}"""
 
     msg = client.messages.create(
         model=os.getenv("SCHEDULE_MODEL", "claude-sonnet-4-6"),
