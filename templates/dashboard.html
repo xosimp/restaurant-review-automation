@@ -2658,8 +2658,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     @keyframes aiv-scan { 0%{left:-30%} 100%{left:130%} }
     @keyframes aiv-fade-up { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
     .aiv-reveal { animation: aiv-fade-up .45s ease both; }
-    #aiv-card { position:relative; overflow:hidden; }
-    #aiv-glow { position:absolute; top:-60px; right:-80px; width:280px; height:220px; background:radial-gradient(ellipse at center,rgba(200,75,47,.20) 0%,transparent 70%); pointer-events:none; animation: aiv-glow 4s ease-in-out infinite; z-index:0; }
+    #aiv-card { position:relative; overflow:visible !important; }
+    #aiv-glow { position:absolute; top:-20px; right:-20px; width:220px; height:160px; background:radial-gradient(ellipse at center,rgba(200,75,47,.16) 0%,transparent 65%); pointer-events:none; animation: aiv-glow 4s ease-in-out infinite; z-index:0; }
     #aiv-scan-track { position:relative; height:3px; border-radius:2px; background:rgba(200,75,47,.12); overflow:hidden; margin-top:18px; }
     #aiv-scan-bar { position:absolute; top:0; height:100%; width:30%; background:linear-gradient(90deg,transparent,var(--ember),transparent); animation: aiv-scan 1.4s linear infinite; }
   </style>
@@ -3904,8 +3904,8 @@ window.switchIntelTab = function(tab) {
   if (visEl) visEl.style.display = isComp ? 'none' : '';
   var tc = document.getElementById('intel-tab-competitors-btn');
   var tv = document.getElementById('intel-tab-visibility-btn');
-  if (tc) { tc.classList.toggle('rv-tab-active', isComp); tc.style.background = ''; tc.style.color = isComp ? '' : 'var(--ink3)'; }
-  if (tv) { tv.classList.toggle('rv-tab-active', !isComp); tv.style.background = ''; tv.style.color = isComp ? 'var(--ink3)' : ''; }
+  if (tc) { tc.classList.toggle('rv-tab-active', isComp); tc.style.background = isComp ? '' : 'transparent'; tc.style.color = isComp ? '' : 'var(--ink3)'; }
+  if (tv) { tv.classList.toggle('rv-tab-active', !isComp); tv.style.background = isComp ? 'transparent' : ''; tv.style.color = isComp ? 'var(--ink3)' : ''; }
 };
 
 function loadSentimentTrend(){
