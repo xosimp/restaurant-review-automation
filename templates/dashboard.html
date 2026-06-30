@@ -120,10 +120,7 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] .toast.toast-success{background:#0c2318!important;color:#6fcf97!important;border-left-color:#2d6a4f!important}
 [data-theme="dark"] .toast.toast-error{background:#2a1010!important;color:#ff9b8a!important;border-left-color:#c0392b!important}
 [data-theme="dark"] .toast.toast-warning{background:#251d08!important;color:#d4a030!important;border-left-color:#d4a030!important}
-/* Intel / Competitor module */
-[data-theme="dark"] #aiv-card{background:var(--surface)!important}
-[data-theme="dark"] #aiv-idle{background:#1a1428!important;border-color:#3a2d5a!important}
-[data-theme="dark"] #aiv-idle [style*="color:#374151"]{color:var(--ink)!important}
+/* Home module */
 [data-theme="dark"] #panel-home [style*="background:var(--paper)"]{background:var(--surface)!important}
 [data-theme="dark"] #panel-home [style*="background:rgba(200,75,47,.06)"]{background:rgba(200,75,47,.12)!important}
 [data-theme="dark"] #panel-home [style*="background:rgba(192,57,43,.06)"]{background:rgba(192,57,43,.12)!important}
@@ -132,19 +129,6 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] #panel-home [style*="background:rgba(184,150,80,.07)"]{background:rgba(184,150,80,.12)!important}
 [data-theme="dark"] #panel-home [style*="background:rgba(124,58,237,.07)"]{background:rgba(124,58,237,.14)!important}
 [data-theme="dark"] #panel-home [style*="background:rgba(26,84,204,.07)"]{background:rgba(26,84,204,.12)!important}
-[data-theme="dark"] #panel-competitor [style*="background:white"]{background:var(--surface)!important}
-[data-theme="dark"] #panel-competitor [style*="background:#f9f8ff"]{background:#1a1428!important;border-color:#3a2d5a!important}
-[data-theme="dark"] #panel-competitor [style*="background:#f9fafb"]{background:var(--surface)!important;border-color:var(--paper3)!important}
-[data-theme="dark"] #panel-competitor [style*="color:#0d1b2a"]{color:var(--ink)!important}
-[data-theme="dark"] #panel-competitor [style*="color:#374151"]{color:var(--ink)!important}
-[data-theme="dark"] #panel-competitor [style*="color:#6b7280"]{color:var(--ink2)!important}
-[data-theme="dark"] #panel-competitor .data-card [style*="color:#0d1b2a"]{color:var(--ink)!important}
-[data-theme="dark"] #comp-cards-static .scroll-reveal{background:var(--surface)!important}
-[data-theme="dark"] #panel-competitor [style*="background:#9ca3af"]{background:rgba(255,255,255,.22)!important}
-[data-theme="dark"] #panel-competitor [style*="background:#f3f4f6"]{background:var(--paper3)!important}
-/* Diff badges */
-[data-theme="dark"] #panel-competitor [style*="background:#dcfce7"]{background:#0c2318!important;color:#4ead7a!important}
-[data-theme="dark"] #panel-competitor [style*="background:#fff7ed"]{background:#251d08!important;color:#f97316!important}
 /* GBP checklist */
 [data-theme="dark"] #aiv-gbp-checklist{background:var(--surface)!important;border-color:var(--paper3)!important}
 /* Disclaimer */
@@ -2667,7 +2651,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 </div>
 
 <!-- COMPETITOR INTEL -->
-<div class="panel" id="panel-competitor">
+<div class="panel" id="panel-competitor" style="margin:0 auto">
 <div style="max-width:1080px;margin:0 auto;padding:24px 28px">
 
   <style>
