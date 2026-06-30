@@ -1899,6 +1899,39 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         {% endfor %}
         </div>
       </div>
+
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:16px;margin-bottom:4px">
+        <div class="slabel" style="margin-bottom:0">Understaffed days — possible missed revenue ⚠</div>
+        {% if labor.understaffed_days|length > 10 %}
+        <button onclick="toggleRows('understaffed-tbody','understaffed-toggle',{{labor.understaffed_days|length}})" id="understaffed-toggle" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.understaffed_days|length}} ↓</button>
+        {% endif %}
+      </div>
+      <div style="background:linear-gradient(135deg,#1a1409 0%,#141009 60%,#0e0a06 100%);border:1px solid rgba(239,159,39,.45);border-radius:12px;overflow:hidden">
+        <div id="understaffed-tbody">
+        {% for d in labor.understaffed_days %}
+        <div data-row style="display:flex;align-items:center;gap:12px;padding:12px 18px;{% if loop.index > 10 %}display:none;{% endif %}{% if not loop.last %}border-bottom:1px solid rgba(255,255,255,.06);{% endif %}">
+          <div style="min-width:60px">
+            <div style="font-size:10px;color:rgba(255,255,255,.4)">{{d.date}}</div>
+            <div style="font-size:13px;font-weight:600;color:rgba(255,255,255,.88)">{{d.day}}</div>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:rgba(255,255,255,.55);margin-bottom:2px">
+              <span style="font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:700;color:#ffc266">${{d.sales|int|format_num}}</span>
+              <span style="font-size:10px;font-weight:700;background:rgba(239,159,39,.2);color:#ffc266;padding:2px 8px;border-radius:10px;white-space:nowrap">{{d.labor_pct}}% ⚠</span>
+            </div>
+            <div style="font-size:10px;color:rgba(255,255,255,.45)">Strong sales day — lean staffing may have left revenue on the table</div>
+          </div>
+        </div>
+        {% else %}
+        <div style="padding:16px 18px;color:rgba(255,255,255,.4);font-style:italic;font-size:12px">No understaffed days flagged — great balance this period</div>
+        {% endfor %}
+        </div>
+        {% if labor.understaffed_days %}
+        <div style="padding:10px 18px;font-size:11px;color:#ffc266;background:rgba(239,159,39,.08);border-top:1px solid rgba(239,159,39,.15)">
+          💡 Consider adding 1–2 staff on: {% for d in labor.understaffed_days[:5] %}<strong>{{d.date}}</strong>{% if not loop.last %}, {% endif %}{% endfor %}{% if labor.understaffed_days|length > 10 %} +{{labor.understaffed_days|length - 5}} more{% endif %}.
+        </div>
+        {% endif %}
+      </div>
     </div>
     <div style="display:flex;flex-direction:column;">
       {% if labor.overtime_risk %}
@@ -1930,36 +1963,6 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </div>
       {% endif %}
     </div>
-  </div>
-
-  <!-- Understaffed days — full width -->
-  <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:16px;margin-bottom:4px">
-    <div class="slabel" style="margin-bottom:0">Understaffed days — possible missed revenue ⚠</div>
-    {% if labor.understaffed_days|length > 10 %}
-    <button onclick="toggleRows('understaffed-tbody','understaffed-toggle',{{labor.understaffed_days|length}})" id="understaffed-toggle" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;padding:0;white-space:nowrap">Show all {{labor.understaffed_days|length}} ↓</button>
-    {% endif %}
-  </div>
-  <div style="background:linear-gradient(135deg,#1a1409 0%,#141009 60%,#0e0a06 100%);border:1px solid rgba(239,159,39,.45);border-radius:12px;overflow:hidden">
-    <div id="understaffed-tbody">
-    {% for d in labor.understaffed_days %}
-    <div data-row style="display:flex;align-items:center;gap:16px;padding:12px 18px;{% if loop.index > 10 %}display:none;{% endif %}{% if not loop.last %}border-bottom:1px solid rgba(255,255,255,.06);{% endif %}">
-      <div style="min-width:60px">
-        <div style="font-size:10px;color:rgba(255,255,255,.4)">{{d.date}}</div>
-        <div style="font-size:13px;font-weight:600;color:rgba(255,255,255,.88)">{{d.day}}</div>
-      </div>
-      <div style="font-family:'Space Grotesk',sans-serif;font-size:14px;font-weight:700;color:#ffc266;min-width:74px">${{d.sales|int|format_num}}</div>
-      <span style="font-size:10px;font-weight:700;background:rgba(239,159,39,.2);color:#ffc266;padding:3px 9px;border-radius:10px;white-space:nowrap">{{d.labor_pct}}% ⚠</span>
-      <div style="flex:1;min-width:0;font-size:11px;color:rgba(255,255,255,.5)">Strong sales day — lean staffing may have left revenue on the table</div>
-    </div>
-    {% else %}
-    <div style="padding:16px 18px;color:rgba(255,255,255,.4);font-style:italic;font-size:12px">No understaffed days flagged — great balance this period</div>
-    {% endfor %}
-    </div>
-    {% if labor.understaffed_days %}
-    <div style="padding:10px 18px;font-size:11px;color:#ffc266;background:rgba(239,159,39,.08);border-top:1px solid rgba(239,159,39,.15)">
-      💡 Consider adding 1–2 staff on your highest-revenue days: {% for d in labor.understaffed_days[:5] %}<strong>{{d.date}} ({{d.day}})</strong>{% if not loop.last %}, {% endif %}{% endfor %}{% if labor.understaffed_days|length > 10 %} and {{labor.understaffed_days|length - 5}} more{% endif %} — volume on these days justifies the coverage and drives higher check averages.
-    </div>
-    {% endif %}
   </div>
 
   </div><!-- /lb-panel-schedule -->
