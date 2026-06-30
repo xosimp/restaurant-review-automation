@@ -304,20 +304,19 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         if has_inventory: modules_active.append("Inventory Control")
         if has_marketing: modules_active.append("Marketing Autopilot")
 
-        # Build per-module instructions
-        module_instruction = ""
-        if has_all_four:
-            module_instruction = """
+        # Build per-module instructions — every ACTIVE module must produce a line, even with thin data
+        required_lines = ["REVIEWS"]
+        if has_labor: required_lines.append("LABOR")
+        if has_inventory: required_lines.append("INVENTORY")
+        if has_marketing: required_lines.append("MARKETING")
+        module_instruction = f"""
 
-This client has all 4 modules active. Write 4-5 sentences total covering ALL of these:
-- Reviews: overall rating picture, call out any multi-week trend if present, mention any urgent reviewer by name
-- Labor: state the labor % and explicitly note if it is trending up or down vs prior weeks (data provided above)
-- Inventory: mention whether waste improved or worsened vs last week (% change if available), name the top waste item
-- Marketing: if post performance data is available, name the best-performing topic and suggest the owner double down on it or try a specific new angle
-Do NOT focus only on reviews. Every module must get a specific data point — no vague sentences."""
-        elif modules_active:
-            active_list = "Review Intelligence, " + ", ".join(modules_active)
-            module_instruction = f"\n\nActive modules: {active_list}. Cover each active module — not just reviews."
+Active modules for this client: {", ".join(required_lines)}. You MUST output exactly these lines (plus HEADLINE and ACTION) — never skip an active module even if the data section above is thin or missing for it.
+- REVIEWS: overall rating picture, call out any multi-week trend if present, mention any urgent reviewer by name
+- LABOR (if active): state the labor % and whether it's trending up or down vs prior weeks; if no prior-week comparison is available, state the current % and that it's the first week of tracking
+- INVENTORY (if active): mention whether waste improved or worsened vs last week (% change if available), name the top waste item; if no waste data at all, state that inventory is tracking clean with no waste flagged
+- MARKETING (if active): if post performance data is available, name the best-performing topic and suggest doubling down or trying a new angle; if no performance data exists yet, suggest one concrete content idea based on what guests are saying in reviews this week
+Do NOT omit an active module's line just because its data section above is empty — always write something specific and useful for it."""
 
         prompt = f"""You are the Cavnar AI Consultant writing a weekly digest for {restaurant_name}.
 
@@ -333,20 +332,20 @@ Today: {today_rpt}
 
 Notable reviews:{specific_reviews}
 
-Respond in EXACTLY this structure, one item per line, label followed by a colon, nothing else on the line before the colon:
+Respond in EXACTLY this structure, one item per line, label followed by a colon, nothing else on the line before the colon. Output ONLY the lines listed as required in "Active modules" above (plus HEADLINE and ACTION) — do not add lines for inactive modules, and do not skip lines for active ones:
 
 HEADLINE: one sentence — the single most important takeaway this week, addressed to the owner by name ("{greeting},")
-REVIEWS: one short sentence on review performance this week, only include this line if reviews data exists
-LABOR: one short sentence stating the labor % and whether it's trending up or down, only include this line if labor data exists
-INVENTORY: one short sentence on waste cost and the top waste item, only include this line if inventory data exists
-MARKETING: one short sentence on best-performing content or a suggested angle, only include this line if marketing data exists
+REVIEWS: one short sentence on review performance this week
+LABOR: one short sentence stating the labor % and whether it's trending up or down
+INVENTORY: one short sentence on waste cost and the top waste item
+MARKETING: one short sentence on best-performing content or a suggested content angle
 ACTION: one specific, concrete next step the owner should take this week
 
 Rules:
-- Omit a label entirely (do not write the line) if that module has no data — do not write "N/A" or filler
+- Only write lines for modules listed as active above — never write a line for an inactive module, and never skip a line for an active one, regardless of how much data is available
 - Each line is ONE sentence, plain text, no markdown, no bullets, no bold
 - Always use $ signs before dollar amounts ($2,400 not 2400)
-- Be specific with real numbers from the data above
+- Be specific with real numbers from the data above when available
 - Do not list every review — only mention a reviewer by name if they stand out
 - The ACTION line must always be present and must be concrete (a specific call, message, schedule change, or order — not vague advice)"""
 
@@ -386,6 +385,17 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
     else:
         rating_color = "#dc2626"; rating_label = "Needs work"
 
+    # Fetch restaurant record once — used for location header, module flags, and scorecards
+    _rest = None
+    try:
+        from models import get_restaurant as _gr_d
+        _rest = _gr_d(restaurant_id or report.restaurant_id)
+    except Exception:
+        pass
+    location_label = ""
+    if _rest and getattr(_rest, "location_name", None):
+        location_label = f" — {_rest.location_name}"
+
     # AI consultant summary — structured dict: headline, reviews, labor, inventory, marketing, action
     ai_summary = generate_ai_digest_summary(report, restaurant_name, owner_name,
                                              restaurant_id=restaurant_id)
@@ -397,10 +407,10 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
         _val = ai_summary.get(_key)
         if _val:
             ai_module_rows += f"""
-<tr><td style="padding:0 0 8px"><table cellpadding="0" cellspacing="0"><tr>
-  <td valign="top" style="padding-right:10px;white-space:nowrap"><span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{_module_colors[_key]}">{_module_labels[_key]}</span></td>
-  <td style="font-size:13px;color:#f0ebe0;line-height:1.55">{_html.escape(_val)}</td>
-</tr></table></td></tr>"""
+<tr><td style="padding:0 0 10px">
+  <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{_module_colors[_key]};margin-bottom:3px">{_module_labels[_key]}</div>
+  <div style="font-size:13px;color:#f0ebe0;line-height:1.55">{_html.escape(_val)}</div>
+</td></tr>"""
     ai_action_block = ""
     if ai_summary.get("action"):
         ai_action_block = f"""
@@ -413,8 +423,6 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
     labor_card = ""
     inventory_card = ""
     try:
-        from models import get_restaurant as _gr_d
-        _rest = _gr_d(restaurant_id) if restaurant_id else None
         if _rest and _rest.module_labor:
             from labor import analyse_shifts_for_restaurant
             labor_data = analyse_shifts_for_restaurant(restaurant_id)
@@ -522,15 +530,15 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 <body style="margin:0;padding:0;background:#f5f3f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3f0;padding:24px 0">
 <tr><td align="center">
-<table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">
+<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">
 
 <!-- HEADER -->
 <tr><td style="background:#1a1410;padding:24px 32px">
-  <table width="100%"><tr>
+  <table width="100%" cellpadding="0" cellspacing="0"><tr>
     <td><span style="font-family:Georgia,serif;font-size:22px;font-weight:400;color:#f0ebe0">Cavnar <em style="color:#c84b2f">AI</em></span></td>
     <td align="right"><span style="font-size:11px;color:#7a6f65;letter-spacing:.1em;text-transform:uppercase">Weekly Digest</span></td>
   </tr></table>
-  <div style="margin-top:6px;font-size:13px;color:#9a8f85">{restaurant_name} &nbsp;·&nbsp; {week_label}</div>
+  <div style="margin-top:6px;font-size:13px;color:#9a8f85">{_html.escape(restaurant_name)}{location_label} &nbsp;·&nbsp; {week_label}</div>
 </td></tr>
 
 <!-- AI CONSULTANT SUMMARY -->
