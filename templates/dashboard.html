@@ -6129,12 +6129,24 @@ function toggleExtraReviews(idx, btn){
 function refreshCompetitorIntel(btn){
   var _rs='<span style="display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;vertical-align:middle;animation:spin .7s linear infinite"></span>';
   btn.innerHTML='Fetching... '+_rs;btn.disabled=true;btn.style.opacity='0.7';
+  function _resetBtn(){btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';}
   fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
-    btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';
-    if(d.ok){toast('Competitor data updated','success');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},600);}
-    else{toast('Error: '+(d.error||'failed'),'error');}
+    if(!d.ok){_resetBtn();toast('Error: '+(d.error||'failed'),'error');return;}
+    var jobId = d.job_id;
+    var attempts = 0;
+    var poll = function(){
+      attempts++;
+      if(attempts > 30){_resetBtn();toast('Still working — check back in a minute','error');return;}
+      fetch('/api/competitor-intel-status/'+jobId).then(function(r){return r.json();}).then(function(s){
+        if(s.status === 'pending'){setTimeout(poll, 2000);return;}
+        _resetBtn();
+        if(s.ok){toast('Competitor data updated','success');setTimeout(function(){window.location.href=window.location.pathname+'?tab=competitor';},600);}
+        else{toast('Error: '+(s.error||'failed'),'error');}
+      }).catch(function(){setTimeout(poll, 2000);});
+    };
+    setTimeout(poll, 1500);
   }).catch(function(){
-    btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';
+    _resetBtn();
     toast('Request failed','error');
   });
 }

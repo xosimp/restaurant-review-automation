@@ -1446,17 +1446,47 @@ def competitor_intel_api(current_user):
     except Exception:
         return jsonify(ok=False, data=None)
 
+_competitor_jobs = {}  # job_id -> {"status": "pending"|"done"|"error", "result": ...}
+
+def _run_competitor_job(job_id, restaurant_id):
+    from competitor import run_competitor_analysis
+    try:
+        result = run_competitor_analysis(restaurant_id)
+        _competitor_jobs[job_id] = {"status": "done" if result.get("ok") else "error", "result": result}
+    except Exception as e:
+        import traceback as _tb
+        print(f"[competitor job] FAILED:\n{_tb.format_exc()}")
+        _competitor_jobs[job_id] = {"status": "error", "result": {"ok": False, "error": str(e)}}
+
 @admin_bp.route("/api/refresh-competitor-intel", methods=["POST"])
 @login_required
 def refresh_competitor_intel(current_user):
+    """Kick off async competitor analysis — returns immediately with a job_id to poll.
+    The analysis itself (Google Places calls + Claude generation) can take 20-40s,
+    which can exceed platform-level edge/proxy timeouts on a synchronous request."""
     # Require all 4 modules (Full System only)
     from models import get_restaurant as _gr
     _r = _gr(current_user["restaurant_id"])
     if not (_r and _r.module_reviews and _r.module_labor and _r.module_inventory and _r.module_marketing):
         return jsonify(ok=False, error="Competitor intelligence is available on the Full System plan only."), 403
-    """Manually trigger competitor analysis."""
-    from competitor import run_competitor_analysis
-    result = run_competitor_analysis(current_user["restaurant_id"])
+    import threading, uuid
+    job_id = str(uuid.uuid4())
+    _competitor_jobs[job_id] = {"status": "pending", "result": None}
+    t = threading.Thread(target=_run_competitor_job, args=(job_id, current_user["restaurant_id"]), daemon=True)
+    t.start()
+    return jsonify(ok=True, job_id=job_id)
+
+@admin_bp.route("/api/competitor-intel-status/<job_id>", methods=["GET"])
+def competitor_intel_status(job_id):
+    """Poll for competitor analysis result. No login_required — job_id is an unguessable UUID."""
+    job = _competitor_jobs.get(job_id)
+    if not job:
+        return jsonify({"ok": False, "status": "error", "error": "Job not found"}), 404
+    if job["status"] == "pending":
+        return jsonify({"ok": True, "status": "pending"})
+    result = dict(job["result"])
+    result["status"] = job["status"]
+    _competitor_jobs.pop(job_id, None)
     return jsonify(result)
 
 @admin_bp.route("/api/send-referral", methods=["POST"])
