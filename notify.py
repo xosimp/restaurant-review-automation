@@ -78,32 +78,50 @@ def _send_alert_email(owner_email: str, subject: str, html: str) -> bool:
         return False
 
 
-def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta_label: str = "View on dashboard") -> str:
+def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta_label: str = "View on dashboard", restaurant_id: int = None) -> str:
     def _safe(s): return _html.escape(str(s)) if s else ""
-    body_html = "".join(f'<p style="font-size:14px;color:#3a3530;line-height:1.6;margin:0 0 10px">{l}</p>' for l in body_lines)
+    is_dark = True
+    if restaurant_id is not None:
+        try:
+            from models import get_restaurant as _gr_n
+            _r = _gr_n(restaurant_id)
+            is_dark = not (_r and getattr(_r, "email_theme", "dark") == "light")
+        except Exception:
+            pass
+    if is_dark:
+        page_bg, card_bg, card_border = "#0e0a06", "#15100b", "rgba(200,75,47,.3)"
+        text_primary, text_body, header_sub = "#f0ebe0", "rgba(255,255,255,.65)", "#9a8f85"
+        footer_border, footer_text = "rgba(200,75,47,.2)", "#7a6f65"
+    else:
+        page_bg, card_bg, card_border = "#f7f4ef", "#ffffff", "rgba(0,0,0,.08)"
+        text_primary, text_body, header_sub = "#1a1410", "rgba(0,0,0,.65)", "#7a6f65"
+        footer_border, footer_text = "rgba(0,0,0,.08)", "#9a8f85"
+    body_html = "".join(f'<p style="font-size:14px;color:{text_body};line-height:1.6;margin:0 0 10px">{l}</p>' for l in body_lines)
     return f"""
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="background:{page_bg};padding:24px 0">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;background:{card_bg};border:1px solid {card_border};border-radius:12px;padding:28px;color:{text_primary}">
   <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
-    <h2 style="font-family:Georgia,serif;font-size:20px;font-weight:400;margin:0 0 4px">
+    <h2 style="font-family:Georgia,serif;font-size:20px;font-weight:400;margin:0 0 4px;color:{text_primary}">
       Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
     </h2>
-    <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Alert &mdash; {_safe(restaurant_name)}</p>
+    <p style="font-size:11px;color:{header_sub};margin:0;letter-spacing:1px;text-transform:uppercase">Alert &mdash; {_safe(restaurant_name)}</p>
   </div>
-  <h3 style="font-size:16px;font-weight:600;margin:0 0 12px;color:#1a1714">{_safe(headline)}</h3>
+  <h3 style="font-size:16px;font-weight:600;margin:0 0 12px;color:{text_primary}">{_safe(headline)}</h3>
   {body_html}
   <div style="margin-top:20px">
     <a href="https://dashboard.cavnar.ai"
        style="display:inline-block;background:#c84b2f;color:white;padding:11px 22px;
-              border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">
+              border-radius:8px;text-decoration:none;font-size:13px;font-weight:600">
       {cta_label} &#8594;
     </a>
   </div>
-  <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
-  <p style="font-size:12px;color:#7a736a;margin:0">
+  <hr style="border:none;border-top:1px solid {footer_border};margin:24px 0"/>
+  <p style="font-size:12px;color:{footer_text};margin:0">
     Cavnar AI &middot;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
     &middot; Reply to this email or log in to manage alert settings.
   </p>
+</div>
 </div>"""
 
 
@@ -316,6 +334,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                     "This requires an immediate response.",
                 ],
                 cta_label="Respond now",
+                restaurant_id=restaurant_id,
             )
             blast(sms, f"🚨 Health alert — {restaurant_name}", html, "health", review.id)
             continue
@@ -336,6 +355,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                     f'<em>"{preview}{ellipsis}"</em>',
                 ],
                 cta_label="Respond now",
+                restaurant_id=restaurant_id,
             )
             blast(sms, f"🔴 1★ review — {restaurant_name}", html, "1star", review.id)
 
@@ -356,6 +376,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                     "Consider thanking them — a response to a great review builds loyalty.",
                 ],
                 cta_label="View & respond",
+                restaurant_id=restaurant_id,
             )
             blast(sms, f"⭐ 5★ review — {restaurant_name}", html, "5star", review.id)
 
@@ -374,6 +395,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                     f'<strong>{author}</strong> left a 2-star review on {platform}:' if author else f"A 2-star review was posted on {platform}:",
                     f'<em>"{preview}{ellipsis}"</em>',
                 ],
+                restaurant_id=restaurant_id,
             )
             blast(sms, f"🟠 2★ review — {restaurant_name}", html, "2star", review.id)
 
@@ -392,6 +414,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                     f"<strong>{count} negative reviews</strong> have been received in the last 7 days.",
                     "This may indicate a recurring issue worth investigating.",
                 ],
+                restaurant_id=restaurant_id,
             )
             blast(sms, f"⚠️ Negative spike — {restaurant_name}", html, "neg_spike")
 
@@ -452,6 +475,7 @@ def check_no_response_alerts(db_path: str = DB_PATH):
                 "Responding promptly helps protect your rating.",
             ],
             cta_label="View & respond",
+            restaurant_id=rid,
         )
 
         if via_sms:
@@ -553,6 +577,7 @@ def check_daily_alerts(db_path: str = DB_PATH):
                             f"<strong>{avgs[0]:.1f} → {avgs[1]:.1f} → {avgs[2]:.1f}★</strong>",
                             "This trend warrants a closer look at what guests are saying.",
                         ],
+                        restaurant_id=rid,
                     )
                     _fire(sms, f"📉 Rating trend down — {name}", html, "negative_trend")
 
@@ -575,6 +600,7 @@ def check_daily_alerts(db_path: str = DB_PATH):
                         "Responding to recent negative reviews can help recover your score.",
                     ],
                     cta_label="Review & respond",
+                    restaurant_id=rid,
                 )
                 _fire(sms, f"⚠️ Rating below threshold — {name}", html, "rating_threshold")
 
@@ -607,5 +633,6 @@ def check_daily_alerts(db_path: str = DB_PATH):
                             f"Period: {recent['period_start']} – {recent['period_end']}",
                         ],
                         cta_label="View labor dashboard",
+                        restaurant_id=rid,
                     )
                     _fire(sms, f"💸 Labor over target — {name}", html, "labor_over")
