@@ -396,6 +396,25 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
     if _rest and getattr(_rest, "location_name", None):
         location_label = f" — {_rest.location_name}"
 
+    # Theme — per-client toggle set in dashboard account settings, defaults to dark
+    is_dark = not (_rest and getattr(_rest, "email_theme", "dark") == "light")
+    if is_dark:
+        T = {
+            "page_bg": "#0e0a06", "outer_bg": "#15100b", "outer_border": "rgba(200,75,47,.3)",
+            "text_primary": "#f0ebe0", "text_muted": "rgba(255,255,255,.4)", "text_body": "rgba(255,255,255,.6)",
+            "header_sub": "#9a8f85", "card_style": "background:#15100b;background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%)",
+            "footer_bg": "#0e0a06", "footer_border": "rgba(200,75,47,.2)", "footer_text": "#7a6f65",
+            "stat_sub": "rgba(255,255,255,.4)",
+        }
+    else:
+        T = {
+            "page_bg": "#f7f4ef", "outer_bg": "#ffffff", "outer_border": "rgba(0,0,0,.08)",
+            "text_primary": "#1a1410", "text_muted": "rgba(0,0,0,.45)", "text_body": "rgba(0,0,0,.6)",
+            "header_sub": "#7a6f65", "card_style": "background:#fbf8f3",
+            "footer_bg": "#f7f4ef", "footer_border": "rgba(0,0,0,.08)", "footer_text": "#9a8f85",
+            "stat_sub": "rgba(0,0,0,.45)",
+        }
+
     # AI consultant summary — structured dict: headline, reviews, labor, inventory, marketing, action
     ai_summary = generate_ai_digest_summary(report, restaurant_name, owner_name,
                                              restaurant_id=restaurant_id)
@@ -409,25 +428,26 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
             ai_module_rows += f"""
 <tr><td style="padding:0 0 10px">
   <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{_module_colors[_key]};margin-bottom:3px">{_module_labels[_key]}</div>
-  <div style="font-size:13px;color:#f0ebe0;line-height:1.55">{_html.escape(_val)}</div>
+  <div style="font-size:13px;color:{T['text_primary']};line-height:1.55">{_html.escape(_val)}</div>
 </td></tr>"""
     ai_action_block = ""
     if ai_summary.get("action"):
         ai_action_block = f"""
-<div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.12)">
+<div style="margin-top:14px;padding-top:12px;border-top:1px solid {T['outer_border']}">
   <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c84b2f">→ This week's action</span>
-  <p style="margin:5px 0 0;font-size:13px;color:#f0ebe0;line-height:1.55;font-weight:600">{_html.escape(ai_summary.get("action"))}</p>
+  <p style="margin:5px 0 0;font-size:13px;color:{T['text_primary']};line-height:1.55;font-weight:600">{_html.escape(ai_summary.get("action"))}</p>
 </div>"""
 
-    _card_bg = "background:#15100b"  # solid fallback (Outlook/older clients ignore gradients)
-    _card_grad = "background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%)"
+    _card_bg = T["card_style"]
+    _card_grad = ""  # folded into card_style per theme
     _SG = "font-family:'Space Grotesk',sans-serif"
 
     def _stat_pill(color, label):
         return f'<span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:{color};background:{color}26;padding:3px 9px;border-radius:20px">{label}</span>'
 
-    def _stat_num(value, sub, color="#f0ebe0"):
-        return f'<div><div style="{_SG};font-size:24px;font-weight:700;color:{color}">{value}</div><div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:2px">{sub}</div></div>'
+    def _stat_num(value, sub, color=None):
+        color = color or T["text_primary"]
+        return f'<div><div style="{_SG};font-size:24px;font-weight:700;color:{color}">{value}</div><div style="font-size:10px;color:{T["stat_sub"]};margin-top:2px">{sub}</div></div>'
 
     # Pull labor and inventory data for module scorecards
     labor_card = ""
@@ -444,7 +464,7 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
                 l_label = "On target" if lp <= 32 else ("Watch closely" if lp <= 36 else "Over budget")
                 labor_card = f"""
 <tr><td style="padding:0 0 12px">
-  <div style="{_card_bg};{_card_grad};border:1px solid rgba(111,207,151,.4);border-radius:12px;padding:16px 18px">
+  <div style="{_card_bg};border:1px solid rgba(111,207,151,.4);border-radius:12px;padding:16px 18px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
       <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#6fcf97">Labor Optimizer</span>
       {_stat_pill(l_color, l_label)}
@@ -468,15 +488,18 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
             i_label = "Low waste" if waste < 200 else ("Moderate" if waste < 500 else "High waste")
             inventory_card = f"""
 <tr><td style="padding:0 0 12px">
-  <div style="{_card_bg};{_card_grad};border:1px solid rgba(255,194,102,.4);border-radius:12px;padding:16px 18px">
+  <div style="{_card_bg};border:1px solid rgba(255,194,102,.4);border-radius:12px;padding:16px 18px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
       <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#ffc266">Inventory Control</span>
       {_stat_pill(i_color, i_label)}
     </div>
-    <div style="display:flex;gap:22px;align-items:flex-start">
+    <div style="display:flex;gap:22px">
       {_stat_num(f"${waste:,.0f}", "waste this week", i_color)}
       {_stat_num(f"${recoverable:,.0f}", "recoverable/mo")}
-      <div style="max-width:120px"><div style="font-size:13px;font-weight:600;color:#f0ebe0;padding-top:1px">{_html.escape(top_item)}</div><div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:2px">top waste item</div></div>
+    </div>
+    <div style="margin-top:12px;padding-top:10px;border-top:1px solid {T['outer_border']}">
+      <div style="font-size:10px;color:{T['stat_sub']};text-transform:uppercase;letter-spacing:.06em">Top waste item</div>
+      <div style="font-size:14px;font-weight:600;color:{T['text_primary']};margin-top:3px">{_html.escape(top_item)}</div>
     </div>
   </div>
 </td></tr>"""
@@ -492,12 +515,12 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
             snippet = _html.escape((r.text or "")[:120])
             urgent_rows += f"""
 <tr><td style="padding:0 0 8px">
-  <div style="{_card_bg};{_card_grad};border:1px solid rgba(255,90,90,.4);border-radius:10px;padding:12px 14px">
+  <div style="{_card_bg};border:1px solid rgba(255,90,90,.4);border-radius:10px;padding:12px 14px">
     <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-      <span style="font-size:12px;font-weight:600;color:#f0ebe0">{name}</span>
+      <span style="font-size:12px;font-weight:600;color:{T['text_primary']}">{name}</span>
       <span style="{_SG};font-size:12px;color:#ff5a5a">{stars}</span>
     </div>
-    <p style="font-size:12px;color:rgba(255,255,255,.6);margin:0;line-height:1.5">"{snippet}{"..." if len(r.text or "") > 120 else ""}"</p>
+    <p style="font-size:12px;color:{T['text_body']};margin:0;line-height:1.5">"{snippet}{"..." if len(r.text or "") > 120 else ""}"</p>
   </div>
 </td></tr>"""
 
@@ -510,12 +533,12 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
         snippet = _html.escape((top_pos.text or "")[:120])
         pos_row = f"""
 <tr><td style="padding:0 0 8px">
-  <div style="{_card_bg};{_card_grad};border:1px solid rgba(111,207,151,.4);border-radius:10px;padding:12px 14px">
+  <div style="{_card_bg};border:1px solid rgba(111,207,151,.4);border-radius:10px;padding:12px 14px">
     <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-      <span style="font-size:12px;font-weight:600;color:#f0ebe0">{name}</span>
+      <span style="font-size:12px;font-weight:600;color:{T['text_primary']}">{name}</span>
       <span style="{_SG};font-size:12px;color:#6fcf97">{stars}</span>
     </div>
-    <p style="font-size:12px;color:rgba(255,255,255,.6);margin:0;line-height:1.5">"{snippet}{"..." if len(top_pos.text or "") > 120 else ""}"</p>
+    <p style="font-size:12px;color:{T['text_body']};margin:0;line-height:1.5">"{snippet}{"..." if len(top_pos.text or "") > 120 else ""}"</p>
   </div>
 </td></tr>"""
 
@@ -527,12 +550,12 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
     urgent_section_html = ""
     if urgent:
         urgent_section_html = ('<tr><td style="padding:0 32px 12px">' +
-            '<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px"><span style="width:7px;height:7px;border-radius:50%;background:#ff5a5a"></span><span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#f0ebe0">Needs immediate response</span></div>' +
+            f'<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px"><span style="width:7px;height:7px;border-radius:50%;background:#ff5a5a"></span><span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{T["text_primary"]}">Needs immediate response</span></div>' +
             '<table width="100%" cellpadding="0" cellspacing="0">' + urgent_rows + '</table></td></tr>')
     pos_section_html = ""
     if pos_row:
         pos_section_html = ('<tr><td style="padding:0 32px 12px">' +
-            '<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px"><span style="width:7px;height:7px;border-radius:50%;background:#6fcf97"></span><span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#f0ebe0">Highlight of the week</span></div>' +
+            f'<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px"><span style="width:7px;height:7px;border-radius:50%;background:#6fcf97"></span><span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{T["text_primary"]}">Highlight of the week</span></div>' +
             '<table width="100%" cellpadding="0" cellspacing="0">' + pos_row + '</table></td></tr>')
     urgent_stat = (_stat_num(f"⚠ {len(urgent)}", "urgent", "#ff5a5a") if urgent else "")
 
@@ -540,25 +563,25 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 <head>
 <style>@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap');</style>
 </head>
-<body style="margin:0;padding:0;background:#0e0a06;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#0e0a06;padding:24px 0">
+<body style="margin:0;padding:0;background:{T['page_bg']};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:{T['page_bg']};padding:24px 0">
 <tr><td align="center">
-<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#15100b;border-radius:12px;overflow:hidden;border:1px solid rgba(200,75,47,.3)">
+<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:{T['outer_bg']};border-radius:12px;overflow:hidden;border:1px solid {T['outer_border']}">
 
 <!-- HEADER -->
-<tr><td style="background:#15100b;border-bottom:1px solid rgba(200,75,47,.3);padding:24px 32px">
+<tr><td style="background:{T['outer_bg']};border-bottom:1px solid {T['outer_border']};padding:24px 32px">
   <table width="100%" cellpadding="0" cellspacing="0"><tr>
-    <td><span style="font-family:Georgia,serif;font-size:22px;font-weight:400;color:#f0ebe0">Cavnar <em style="color:#c84b2f">AI</em></span></td>
-    <td align="right"><span style="font-size:11px;color:#7a6f65;letter-spacing:.1em;text-transform:uppercase">Weekly Digest</span></td>
+    <td><span style="font-family:Georgia,serif;font-size:22px;font-weight:400;color:{T['text_primary']}">Cavnar <em style="color:#c84b2f">AI</em></span></td>
+    <td align="right"><span style="font-size:11px;color:{T['header_sub']};letter-spacing:.1em;text-transform:uppercase">Weekly Digest</span></td>
   </tr></table>
-  <div style="margin-top:6px;font-size:13px;color:#9a8f85">{_html.escape(restaurant_name)}{location_label} &nbsp;·&nbsp; {week_label}</div>
+  <div style="margin-top:6px;font-size:13px;color:{T['header_sub']}">{_html.escape(restaurant_name)}{location_label} &nbsp;·&nbsp; {week_label}</div>
 </td></tr>
 
 <!-- AI CONSULTANT SUMMARY -->
 <tr><td style="padding:24px 32px 0">
-  <div style="{_card_bg};{_card_grad};border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:18px 20px">
+  <div style="{_card_bg};border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:18px 20px">
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#c84b2f;margin-bottom:10px">Cavnar AI Consultant</div>
-    <p style="font-size:14px;font-weight:600;color:#f0ebe0;line-height:1.55;margin:0 0 12px">{_html.escape(ai_headline)}</p>
+    <p style="font-size:14px;font-weight:600;color:{T['text_primary']};line-height:1.55;margin:0 0 12px">{_html.escape(ai_headline)}</p>
     {f'<table cellpadding="0" cellspacing="0" width="100%">{ai_module_rows}</table>' if ai_module_rows else ''}
     {ai_action_block}
   </div>
@@ -568,7 +591,7 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 <tr><td style="padding:24px 32px 12px">
   <table width="100%" cellpadding="0" cellspacing="0">
   <tr><td style="padding:0 0 12px">
-    <div style="{_card_bg};{_card_grad};border:1px solid rgba(255,138,101,.4);border-radius:12px;padding:16px 18px">
+    <div style="{_card_bg};border:1px solid rgba(255,138,101,.4);border-radius:12px;padding:16px 18px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
         <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#ff8a65">Review Intelligence</span>
         {_stat_pill(rating_color, rating_label)}
@@ -598,8 +621,8 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 </td></tr>
 
 <!-- FOOTER -->
-<tr><td style="background:#0e0a06;padding:16px 32px;border-top:1px solid rgba(200,75,47,.2)">
-  <p style="font-size:11px;color:#7a6f65;margin:0;text-align:center">Cavnar AI &nbsp;·&nbsp; will@cavnar.ai &nbsp;·&nbsp; <a href="https://cavnar.ai" style="color:#7a6f65">cavnar.ai</a></p>
+<tr><td style="background:{T['footer_bg']};padding:16px 32px;border-top:1px solid {T['footer_border']}">
+  <p style="font-size:11px;color:{T['footer_text']};margin:0;text-align:center">Cavnar AI &nbsp;·&nbsp; will@cavnar.ai &nbsp;·&nbsp; <a href="https://cavnar.ai" style="color:{T['footer_text']}">cavnar.ai</a></p>
 </td></tr>
 
 </table>

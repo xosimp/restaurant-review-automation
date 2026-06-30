@@ -215,6 +215,17 @@ def changelog_unread_count(current_user):
     unread = get_changelog(since=since) if since else get_changelog()
     return jsonify(ok=True, count=len(unread))
 
+@client_bp.route("/api/theme", methods=["POST"])
+@login_required
+def save_theme_api(current_user):
+    from models import update_restaurant
+    data = request.get_json() or {}
+    theme = data.get("theme")
+    if theme not in ("dark", "light"):
+        return jsonify(ok=False, error="invalid theme"), 400
+    update_restaurant(current_user["restaurant_id"], {"email_theme": theme})
+    return jsonify(ok=True)
+
 @client_bp.route("/api/templates", methods=["GET"])
 @login_required
 def list_templates(current_user):

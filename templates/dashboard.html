@@ -4336,6 +4336,7 @@ function toggleDarkMode() {
   var isDark = tog ? tog.checked : (document.documentElement.getAttribute('data-theme') === 'dark');
   document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
   localStorage.setItem('cavnar_theme', isDark ? 'dark' : 'light');
+  fetch('/api/theme', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({theme: isDark ? 'dark' : 'light'})}).catch(function(){});
   var activeTab = (document.querySelector('.tab.active')||{}).id||'';
   setPageBg(activeTab.replace('tab-','') || 'home');
   var track = document.getElementById('dark-mode-track');

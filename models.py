@@ -243,6 +243,7 @@ class Restaurant:
     delivery_pct: Optional[int]          = None   # % of revenue from delivery/takeout
     role_minimums_json: Optional[str]    = None   # e.g. {"Server":2,"Cook":2,"Bartender":1}
     sched_notes: Optional[str]           = None   # freeform scheduling notes from admin
+    email_theme: Optional[str]           = "dark"  # 'dark' or 'light' — drives weekly digest email theme
     inventory_updated_at: Optional[str]  = None
     temp_password: Optional[str]         = None
     ig_token: Optional[str]              = None
@@ -415,6 +416,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "delivery_pct", "INTEGER"),
         ("restaurants", "role_minimums_json", "TEXT"),
         ("restaurants", "sched_notes", "TEXT"),
+        ("restaurants", "email_theme", "TEXT DEFAULT 'dark'"),
         ("restaurants", "inventory_updated_at", "TEXT"),
         ("restaurants", "gbp_rating", "REAL"),
         ("restaurants", "gbp_review_count", "INTEGER"),
@@ -1049,7 +1051,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "changelog_seen_at",
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
-        "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes",
+        "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -1089,6 +1091,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         food_cost_target=row["food_cost_target"] if "food_cost_target" in row.keys() else 30.0,
         monthly_revenue_target=float(row["monthly_revenue_target"]) if "monthly_revenue_target" in row.keys() and row["monthly_revenue_target"] else 0.0,
         hours_notes=row["hours_notes"] if "hours_notes" in row.keys() else None,
+        email_theme=row["email_theme"] if "email_theme" in row.keys() and row["email_theme"] else "dark",
         role_rates_json=row["role_rates_json"] if "role_rates_json" in row.keys() else None,
         inventory_updated_at=row["inventory_updated_at"] if "inventory_updated_at" in row.keys() else None,
         temp_password=row["temp_password"] if "temp_password" in row.keys() else None,
