@@ -319,7 +319,7 @@ Do NOT focus only on reviews. Every module must get a specific data point — no
             active_list = "Review Intelligence, " + ", ".join(modules_active)
             module_instruction = f"\n\nActive modules: {active_list}. Cover each active module — not just reviews."
 
-        prompt = f"""You are the Cavnar AI Consultant writing a weekly summary for {restaurant_name}.
+        prompt = f"""You are the Cavnar AI Consultant writing a weekly digest for {restaurant_name}.
 
 This week's data:
 - Total reviews: {report.total_reviews}
@@ -333,24 +333,39 @@ Today: {today_rpt}
 
 Notable reviews:{specific_reviews}
 
-Start with "{greeting}," then write a natural, flowing summary covering the most important points across all active modules. Be specific with numbers. End with one clear action item.
+Respond in EXACTLY this structure, one item per line, label followed by a colon, nothing else on the line before the colon:
+
+HEADLINE: one sentence — the single most important takeaway this week, addressed to the owner by name ("{greeting},")
+REVIEWS: one short sentence on review performance this week, only include this line if reviews data exists
+LABOR: one short sentence stating the labor % and whether it's trending up or down, only include this line if labor data exists
+INVENTORY: one short sentence on waste cost and the top waste item, only include this line if inventory data exists
+MARKETING: one short sentence on best-performing content or a suggested angle, only include this line if marketing data exists
+ACTION: one specific, concrete next step the owner should take this week
 
 Rules:
-- No markdown, no bullet points, no bold, plain sentences only
+- Omit a label entirely (do not write the line) if that module has no data — do not write "N/A" or filler
+- Each line is ONE sentence, plain text, no markdown, no bullets, no bold
 - Always use $ signs before dollar amounts ($2,400 not 2400)
-- Do not list every review — only mention a specific reviewer if they stand out
-- 3-4 sentences for single module clients, 4-5 sentences for full system clients"""
+- Be specific with real numbers from the data above
+- Do not list every review — only mention a reviewer by name if they stand out
+- The ACTION line must always be present and must be concrete (a specific call, message, schedule change, or order — not vague advice)"""
 
         msg = client.messages.create(
             model=os.getenv("CLAUDE_REPORTER_MODEL", "claude-sonnet-4-6"),
-            max_tokens=600,
+            max_tokens=500,
             messages=[{"role": "user", "content": prompt}]
         )
         raw = msg.content[0].text.strip()
         import re as _re_rpt
-        return raw
+        parsed = {}
+        for line in raw.split("\n"):
+            line = line.strip()
+            m = _re_rpt.match(r'^(HEADLINE|REVIEWS|LABOR|INVENTORY|MARKETING|ACTION):\s*(.+)$', line)
+            if m:
+                parsed[m.group(1).lower()] = m.group(2).strip()
+        return parsed if parsed.get("headline") else {"headline": raw}
     except Exception as e:
-        return ""
+        return {}
 
 def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = None,
                 restaurant_id: int = None) -> str:
@@ -371,9 +386,28 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
     else:
         rating_color = "#dc2626"; rating_label = "Needs work"
 
-    # AI consultant summary
+    # AI consultant summary — structured dict: headline, reviews, labor, inventory, marketing, action
     ai_summary = generate_ai_digest_summary(report, restaurant_name, owner_name,
                                              restaurant_id=restaurant_id)
+    _module_colors = {"reviews": "#ff8a65", "labor": "#6fcf97", "inventory": "#ffc266", "marketing": "#7fb8e6"}
+    _module_labels = {"reviews": "Reviews", "labor": "Labor", "inventory": "Inventory", "marketing": "Marketing"}
+    ai_headline = ai_summary.get("headline") or f"Hi {first_name}, here is your weekly summary for {restaurant_name}."
+    ai_module_rows = ""
+    for _key in ("reviews", "labor", "inventory", "marketing"):
+        _val = ai_summary.get(_key)
+        if _val:
+            ai_module_rows += f"""
+<tr><td style="padding:0 0 8px"><table cellpadding="0" cellspacing="0"><tr>
+  <td valign="top" style="padding-right:10px;white-space:nowrap"><span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{_module_colors[_key]}">{_module_labels[_key]}</span></td>
+  <td style="font-size:13px;color:#f0ebe0;line-height:1.55">{_html.escape(_val)}</td>
+</tr></table></td></tr>"""
+    ai_action_block = ""
+    if ai_summary.get("action"):
+        ai_action_block = f"""
+<div style="margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.12)">
+  <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c84b2f">→ This week's action</span>
+  <p style="margin:5px 0 0;font-size:13px;color:#f0ebe0;line-height:1.55;font-weight:600">{_html.escape(ai_summary.get("action"))}</p>
+</div>"""
 
     # Pull labor and inventory data for module scorecards
     labor_card = ""
@@ -502,8 +536,10 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 <!-- AI CONSULTANT SUMMARY -->
 <tr><td style="padding:24px 32px 0">
   <div style="background:#1a1410;border-radius:8px;padding:18px 20px">
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#c84b2f;margin-bottom:8px">Cavnar AI Consultant</div>
-    <p style="font-size:14px;color:#f0ebe0;line-height:1.75;margin:0">{ai_summary or f"Hi {first_name}, here is your weekly summary for {restaurant_name}."}</p>
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#c84b2f;margin-bottom:10px">Cavnar AI Consultant</div>
+    <p style="font-size:14px;font-weight:600;color:#f0ebe0;line-height:1.55;margin:0 0 12px">{_html.escape(ai_headline)}</p>
+    {f'<table cellpadding="0" cellspacing="0" width="100%">{ai_module_rows}</table>' if ai_module_rows else ''}
+    {ai_action_block}
   </div>
 </td></tr>
 
