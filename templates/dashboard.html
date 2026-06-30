@@ -140,14 +140,11 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] #aiv-queries [style*="background:#dcfce7"]{background:#0c2318!important;color:#4ead7a!important}
 [data-theme="dark"] #aiv-queries [style*="background:#fee2e2"]{background:#2a1010!important;color:#ff9b8a!important}
 [data-theme="dark"] #aiv-queries [style*="background:white"]{background:var(--surface)!important}
-[data-theme="dark"] #aiv-queries [style*="color:#0d1b2a"]{color:var(--ink)!important}
 /* JS-generated roadmap action cards */
 [data-theme="dark"] .aiv-card[style*="background:#fefce8"]{background:#251d08!important}
 [data-theme="dark"] .aiv-card[style*="background:#eaf4ee"]{background:#0c2318!important}
 [data-theme="dark"] .aiv-card[style*="background:#f5ece3"]{background:#241a10!important}
 [data-theme="dark"] .aiv-card[style*="background:#fff5f2"]{background:#2a1010!important}
-[data-theme="dark"] .aiv-card [style*="color:#0d1b2a"]{color:var(--ink)!important}
-[data-theme="dark"] .aiv-card [style*="color:#4b5563"]{color:var(--ink2)!important}
 /* Marketing module */
 [data-theme="dark"] .ct-btn{background:var(--surface)!important;border-color:var(--paper3)!important}
 [data-theme="dark"] .ct-btn:hover,[data-theme="dark"] .ct-btn.selected{background:#2a1810!important;border-color:var(--ember)!important}
@@ -6242,7 +6239,9 @@ function renderAIVisibility(d) {
           : '<span style="width:18px;height:18px;border-radius:50%;background:#fee2e2;color:#dc2626;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0">&#8999;</span>');
       var ptsTag = item.done
         ? '<span style="font-size:9px;font-weight:700;color:#16a34a;background:#dcfce7;padding:1px 6px;border-radius:8px;flex-shrink:0">+' + item.pts + ' pts</span>'
-        : '<span style="font-size:9px;font-weight:700;color:#9ca3af;background:#f3f4f6;padding:1px 6px;border-radius:8px;flex-shrink:0">+' + item.pts + ' pts</span>';
+        : (item.needs_gmb
+          ? '<span style="font-size:9px;font-weight:700;color:#9ca3af;background:#f3f4f6;padding:1px 6px;border-radius:8px;flex-shrink:0">+' + item.pts + ' pts</span>'
+          : '<span style="font-size:9px;font-weight:700;color:var(--ember);background:rgba(200,75,47,.14);padding:1px 6px;border-radius:8px;flex-shrink:0">+' + item.pts + ' pts</span>');
       var lockTag = item.needs_gmb && !item.done ? '<span style="font-size:9px;color:#9ca3af;font-style:italic;margin-left:4px">needs GBP connect</span>' : '';
       chtml += '<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 14px;border-bottom:1px solid var(--paper3)">';
       chtml += icon;
@@ -6394,11 +6393,11 @@ function renderAIVisibility(d) {
     html += '<div style="width:28px;height:28px;border-radius:7px;background:' + c.color + '12;display:flex;align-items:center;justify-content:center;color:' + c.color + ';flex-shrink:0;margin-top:1px">' + c.svg + '</div>';
     html += '<div style="flex:1;min-width:0">';
     html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">';
-    html += '<span style="font-size:13px;font-weight:600;color:#0d1b2a">' + c.title + '</span>';
+    html += '<span style="font-size:13px;font-weight:600;color:var(--ink)">' + c.title + '</span>';
     html += doneBadge;
     html += '</div>';
     html += '<div style="font-size:11px;color:var(--ink3);margin-bottom:10px">' + c.timeframe + '</div>';
-    html += '<div class="aiv-why-text" id="aiv-why-' + k + '" style="font-size:12px;color:#4b5563;line-height:1.65;margin-bottom:10px;display:none">' + c.why + '</div>';
+    html += '<div class="aiv-why-text" id="aiv-why-' + k + '" style="font-size:12px;color:var(--ink2);line-height:1.65;margin-bottom:10px;display:none">' + c.why + '</div>';
     html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
     if (!c.done) {
       html += '<button class="aiv-card-btn" onclick="' + c.actionFn + '" style="background:' + c.color + ';color:white;border:none;padding:6px 13px;border-radius:6px;font-family:\'DM Sans\',sans-serif;font-size:11px;font-weight:600;letter-spacing:.02em">' + c.action + '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
