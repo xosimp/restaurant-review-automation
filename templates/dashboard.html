@@ -2674,11 +2674,11 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ember);margin-bottom:4px">AI Search Presence</div>
           <div style="font-weight:700;font-size:15px;color:var(--ink)">AI Visibility Score</div>
         </div>
-        <span id="aiv-collapse-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(200,75,47,.1);border:1px solid rgba(200,75,47,.25);color:var(--ember);margin-top:10px;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span id="aiv-collapse-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(200,75,47,.1);border:1px solid rgba(200,75,47,.25);color:var(--ember);margin-top:10px;transition:transform .25s;transform:rotate(-90deg);flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
       </div>
       <button onclick="runAIVisibility(this)" id="aiv-run-btn" class="btn-primary" style="padding:7px 16px">Check Visibility</button>
     </div>
-    <div id="aiv-body">
+    <div id="aiv-body" style="max-height:0px;opacity:0;overflow:hidden;transition:max-height .3s ease,opacity .3s ease">
 
     <div id="aiv-idle" style="background:rgba(200,75,47,.05);border:1px solid rgba(200,75,47,.18);border-radius:8px;padding:16px;text-align:center">
       <div style="font-size:13px;color:var(--ink)">See how often your restaurant appears when someone asks an AI for local dining recommendations.</div>
@@ -2743,23 +2743,19 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div><!-- /aiv-body -->
   </div>
 
-  <div class="card" style="border:1px solid rgba(200,75,47,.3);overflow:hidden;margin-bottom:20px">
-    <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);padding:20px 24px;position:relative;overflow:hidden">
-      <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
-      <div style="padding-left:8px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--ember);margin-bottom:6px">Cavnar AI · Competitor Intelligence</div>
-        <div style="font-family:'Fraunces',serif;font-size:20px;color:#f0ebe0">What your neighbors are doing</div>
-      </div>
-    </div>
+  <div style="text-align:center;padding:8px 0 24px">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--ember);margin-bottom:8px">Cavnar AI · Competitor Intelligence</div>
+    <div style="font-family:'Fraunces',serif;font-size:28px;color:var(--ink)">What your neighbors are doing</div>
+  </div>
+
   {% if not competitor_data %}
-    <div class="empty-state" style="padding:52px 24px">
+    <div class="card empty-state" style="padding:52px 24px">
       <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5"/><circle cx="17" cy="15" r="4" opacity=".4"/><path d="M14 9h6M17 6v6" opacity=".4"/></svg>
       <div class="empty-state-title">No competitor data yet</div>
       <div class="empty-state-sub">See how your ratings, review volume, and reputation stack up against nearby restaurants. Takes about 30 seconds.</div>
       <button onclick="refreshCompetitorIntel(this)" class="btn-primary" style="padding:8px 20px">Fetch competitor data</button>
     </div>
   {% endif %}
-  </div>
 
   {% if competitor_data %}
     {% set recs = competitor_data.insight | extract_recs %}
@@ -2770,43 +2766,34 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
     <!-- Summary stat row -->
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
-      <div class="card" style="padding:14px 16px;text-align:center;margin-bottom:0">
-        <div style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:800;color:var(--ink);letter-spacing:-1px;line-height:1">{{comp_count}}</div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Competitors tracked</div>
+      <div class="rv-stat-cell">
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(28px,3vw,38px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1">{{comp_count}}</div>
+        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Competitors tracked</div>
       </div>
-      {% set avg_color = '#16a34a' if avg_comp_rating >= 4.5 else ('#22c55e' if avg_comp_rating >= 4.0 else ('#84cc16' if avg_comp_rating >= 3.5 else '#f59e0b')) %}
-      <div class="card" style="padding:14px 16px;text-align:center;margin-bottom:0">
-        <div style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:800;letter-spacing:-1px;line-height:1;color:{{avg_color}}">{{avg_comp_rating}}★</div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Avg competitor rating</div>
+      <div class="rv-stat-cell">
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(28px,3vw,38px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1">{{avg_comp_rating}}★</div>
+        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Avg competitor rating</div>
       </div>
       {% if mod_reviews and rstats.avg_rating %}
       {% set own_vs_avg = (rstats.avg_rating - avg_comp_rating) | round(1) %}
-      <div class="card" style="padding:14px 16px;text-align:center;margin-bottom:0">
-        <div style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:800;letter-spacing:-1px;line-height:1;color:var(--ink)">{{rstats.avg_rating}}★</div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Your rating <span style="color:{{'#16a34a' if own_vs_avg > 0 else ('#dc2626' if own_vs_avg < 0 else 'var(--ink3)')}}">{% if own_vs_avg > 0 %}▲{{own_vs_avg}} above avg{% elif own_vs_avg < 0 %}▼{{own_vs_avg|abs}} below avg{% endif %}</span></div>
+      {% set yrglow = 'stat-glow-green' if rstats.avg_rating >= 4.0 else ('stat-glow-amber' if rstats.avg_rating >= 3.0 else 'stat-glow-red') %}
+      <div class="rv-stat-cell">
+        <div class="{{yrglow}}" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(28px,3vw,38px);font-weight:500;letter-spacing:-.02em;line-height:1">{{rstats.avg_rating}}★</div>
+        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Your rating</div>
+        <div style="font-size:10px;color:{{'#3ecf6e' if own_vs_avg > 0 else ('#e02828' if own_vs_avg < 0 else 'var(--ink3)')}};margin-top:4px">{% if own_vs_avg > 0 %}▲{{own_vs_avg}} above avg{% elif own_vs_avg < 0 %}▼{{own_vs_avg|abs}} below avg{% else %}even with avg{% endif %}</div>
       </div>
       {% else %}
-      <div class="card" style="padding:14px 16px;text-align:center;margin-bottom:0">
-        <div style="font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:800;color:var(--ink);letter-spacing:-1px;line-height:1">{{recs | length}}</div>
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-top:4px">Action items</div>
+      <div class="rv-stat-cell">
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(28px,3vw,38px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1">{{recs | length}}</div>
+        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Action items</div>
       </div>
       {% endif %}
     </div>
 
-    <!-- Recommendations — most prominent, first -->
-    {% if recs %}
-    <div style="margin-bottom:16px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ember);margin-bottom:10px">Action items for this week</div>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        {% for rec in recs %}
-        <div class="card aiv-reveal" style="border-left:3px solid var(--ember);padding:12px 16px;display:flex;gap:12px;align-items:flex-start;margin-bottom:0;animation-delay:{{loop.index0 * 0.06}}s">
-          <span style="flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--ember);color:white;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px">{{loop.index}}</span>
-          <span style="font-size:13px;color:var(--ink);line-height:1.6;font-weight:500">{{rec}}</span>
-        </div>
-        {% endfor %}
-      </div>
+    <!-- Intel body: intro + well/poorly only -->
+    <div class="card" style="padding:18px 20px;margin-bottom:16px" id="intel-insight-card">
+      {{ competitor_data.insight | format_intel_body }}
     </div>
-    {% endif %}
 
     <!-- Rating bar chart -->
     {% if mod_reviews and rstats.avg_rating %}
@@ -2823,21 +2810,31 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         </div>
         {% for c in competitor_data.competitors %}
         <div style="display:flex;align-items:center;gap:10px">
-          <div style="width:130px;font-size:12px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">{{c.name}}</div>
+          <div style="width:130px;font-size:12px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0">{{c.name}}</div>
           <div style="flex:1;background:var(--paper3);border-radius:3px;height:10px;overflow:hidden">
-            <div class="anim-bar" data-w="{{((c.rating / 5) * 100)|int}}" style="height:100%;width:0%;background:var(--ink3);border-radius:3px"></div>
+            <div class="anim-bar" data-w="{{((c.rating / 5) * 100)|int}}" style="height:100%;width:0%;background:rgba(200,75,47,.45);border-radius:3px"></div>
           </div>
-          <div style="width:36px;font-family:'Space Grotesk',sans-serif;font-size:12px;color:var(--ink3);text-align:right;flex-shrink:0">{{c.rating}}</div>
+          <div style="width:36px;font-family:'Space Grotesk',sans-serif;font-size:12px;color:var(--ink2);text-align:right;flex-shrink:0">{{c.rating}}</div>
         </div>
         {% endfor %}
       </div>
     </div>
     {% endif %}
 
-    <!-- Intel body: intro + well/poorly only -->
-    <div class="card" style="padding:18px 20px;margin-bottom:16px" id="intel-insight-card">
-      {{ competitor_data.insight | format_intel_body }}
+    <!-- Recommendations — most prominent, first -->
+    {% if recs %}
+    <div class="card" style="padding:18px 20px;margin-bottom:16px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ember);margin-bottom:14px">Action items for this week</div>
+      <div style="display:flex;flex-direction:column">
+        {% for rec in recs %}
+        <div class="aiv-reveal" style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;{% if not loop.last %}border-bottom:1px solid var(--paper3);{% endif %}animation-delay:{{loop.index0 * 0.06}}s">
+          <span style="flex-shrink:0;width:22px;height:22px;border-radius:50%;background:var(--ember);color:white;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px">{{loop.index}}</span>
+          <span style="font-size:13px;color:var(--ink);line-height:1.6;font-weight:500">{{rec}}</span>
+        </div>
+        {% endfor %}
+      </div>
     </div>
+    {% endif %}
 
     <!-- Competitor cards -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
@@ -4123,7 +4120,6 @@ function switchTab(n,btn){
   }
   if(n==='labor'){renderBars();loadLaborTrend(false);}
   if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();}
-  if(n==='competitor'){var _ab=document.getElementById('aiv-body');if(_ab){_ab.style.maxHeight=_ab.scrollHeight+'px';_ab.style.opacity='1';}}
   if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();loadMktStats();startMetricsPoller();}else{stopMetricsPoller();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
