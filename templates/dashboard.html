@@ -36,7 +36,7 @@ html[data-theme="dark"] body{color:var(--ink)}
 .stat-glow-green{color:#3ecf6e!important;text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.18),0 3px 12px rgba(0,0,0,.6),0 -2px 4px rgba(62,207,110,.12)!important}
 .stat-glow-red{color:#e02828!important;text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.14),0 3px 12px rgba(0,0,0,.6),0 -2px 4px rgba(224,40,40,.12)!important}
 .stat-glow-amber{color:var(--ember)!important;text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.14),0 3px 12px rgba(0,0,0,.6)!important}
-.rv-stat-n{color:var(--ink3);text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.08),0 3px 8px rgba(0,0,0,.5)}
+.rv-stat-n{color:var(--ink2);text-shadow:0 2px 0 rgba(0,0,0,.9),0 -1px 0 rgba(255,255,255,.08),0 3px 8px rgba(0,0,0,.5)}
 /* Option 3: frosted glass stat cells */
 .rv-stat-cell{text-align:center;padding:28px 16px;background:linear-gradient(160deg,rgba(200,75,47,.22) 0%,rgba(200,75,47,.10) 100%);border-radius:12px;border:1px solid rgba(200,75,47,.28);position:relative;overflow:hidden}
 .rv-stat-cell::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:rgba(200,75,47,.35)}
@@ -366,6 +366,8 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 [data-theme="dark"] .home-ptcl{background:rgba(235,155,95,.95)}
 .name-underlined{position:relative;display:inline-block}
 .name-underlined::after{content:'';position:absolute;bottom:-3px;left:0;right:0;height:1.5px;background:linear-gradient(90deg,var(--ember),rgba(200,75,47,.4));transform:scaleX(0);transform-origin:left;animation:nameUnderline .65s cubic-bezier(.25,.46,.45,.94) forwards}
+.name-underlined-slow{position:relative;display:inline-block}
+.name-underlined-slow::after{content:'';position:absolute;bottom:-3px;left:0;right:0;height:1.5px;background:linear-gradient(90deg,var(--ember),rgba(200,75,47,.4));transform:scaleX(0);transform-origin:left;animation:nameUnderline 1.4s cubic-bezier(.25,.46,.45,.94) forwards}
 @keyframes btnShimmer{from{background-position:-100% 0}to{background-position:250% 0}}
 @keyframes spin{to{transform:rotate(360deg)}}
 .skeleton{background:rgba(255,255,255,.22);animation:skeletonPulse 1.1s ease-in-out infinite;border-radius:5px;color:transparent!important}
@@ -2756,8 +2758,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div id="intel-tab-competitors">
 
   <div style="text-align:center;padding:8px 0 24px">
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--ember);margin-bottom:8px">Cavnar AI · Competitor Intelligence</div>
-    <div class="name-underlined" style="font-family:'Fraunces',serif;font-size:28px;color:var(--ink)">What your neighbors are doing</div>
+    <div class="name-underlined-slow" style="font-family:'Fraunces',serif;font-size:28px;color:var(--ink)">What your neighbors are doing</div>
   </div>
 
   {% if not competitor_data %}
@@ -2778,26 +2779,28 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
     <!-- Summary stat row -->
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
-      <div class="rv-stat-cell" style="padding:16px 14px">
-        <div class="rv-stat-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(20px,2.2vw,26px);font-weight:500;letter-spacing:-.02em;line-height:1">{{comp_count}}</div>
-        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Competitors tracked</div>
+      <div class="rv-stat-cell" style="padding:18px 16px">
+        <div class="rv-stat-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,2.8vw,34px);font-weight:500;letter-spacing:-.02em;line-height:1">{{comp_count}}</div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Competitors tracked</div>
       </div>
-      <div class="rv-stat-cell" style="padding:16px 14px">
-        <div class="rv-stat-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(20px,2.2vw,26px);font-weight:500;letter-spacing:-.02em;line-height:1">{{avg_comp_rating}}<span style="font-size:.5em">★</span></div>
-        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Avg competitor rating</div>
+      <div class="rv-stat-cell" style="padding:18px 16px">
+        <div class="rv-stat-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,2.8vw,34px);font-weight:500;letter-spacing:-.02em;line-height:1">{{avg_comp_rating}}<span style="font-size:.5em;padding-left:.2em">★</span></div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Avg competitor rating</div>
       </div>
       {% if mod_reviews and rstats.avg_rating %}
       {% set own_vs_avg = (rstats.avg_rating - avg_comp_rating) | round(1) %}
       {% set yrglow = 'stat-glow-green' if rstats.avg_rating >= 4.0 else ('stat-glow-amber' if rstats.avg_rating >= 3.0 else 'stat-glow-red') %}
-      <div class="rv-stat-cell" style="padding:16px 14px">
-        <div class="{{yrglow}}" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(20px,2.2vw,26px);font-weight:500;letter-spacing:-.02em;line-height:1">{{rstats.avg_rating}}<span style="font-size:.5em">★</span></div>
-        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Your rating</div>
-        <div style="font-size:10px;color:{{'#3ecf6e' if own_vs_avg > 0 else ('#e02828' if own_vs_avg < 0 else 'var(--ink3)')}};margin-top:3px">{% if own_vs_avg > 0 %}▲{{own_vs_avg}} above avg{% elif own_vs_avg < 0 %}▼{{own_vs_avg|abs}} below avg{% else %}even with avg{% endif %}</div>
+      <div class="rv-stat-cell" style="padding:18px 16px">
+        <div class="{{yrglow}}" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,2.8vw,34px);font-weight:500;letter-spacing:-.02em;line-height:1">{{rstats.avg_rating}}<span style="font-size:.5em;padding-left:.2em">★</span></div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Your rating</div>
+        {% if own_vs_avg != 0 %}
+        <div style="font-size:11px;color:{{'#3ecf6e' if own_vs_avg > 0 else '#e02828'}};margin-top:3px">{% if own_vs_avg > 0 %}▲{{own_vs_avg}} above avg{% else %}▼{{own_vs_avg|abs}} below avg{% endif %}</div>
+        {% endif %}
       </div>
       {% else %}
-      <div class="rv-stat-cell" style="padding:16px 14px">
-        <div class="rv-stat-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(20px,2.2vw,26px);font-weight:500;letter-spacing:-.02em;line-height:1">{{recs | length}}</div>
-        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Action items</div>
+      <div class="rv-stat-cell" style="padding:18px 16px">
+        <div class="rv-stat-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,2.8vw,34px);font-weight:500;letter-spacing:-.02em;line-height:1">{{recs | length}}</div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Action items</div>
       </div>
       {% endif %}
     </div>
@@ -6528,6 +6531,11 @@ function checkTabParam(){
 }
 window.addEventListener('load', function(){
   checkTabParam();
+  // Run bar/stat animations for whichever panel was server-rendered active —
+  // these otherwise only fire from inside switchTab(), so a panel that's
+  // active on first paint (no click involved) never gets them.
+  var _activePanel = document.querySelector('.panel.active');
+  if (_activePanel) { animateBars(_activePanel.id); animateStatNums(_activePanel.id); }
   // Restore AI visibility from sessionStorage cache (survives page reloads)
   try {
     var aivCached = sessionStorage.getItem('aiv_cache');
