@@ -80,7 +80,7 @@ def format_intel_filter(text):
             intro_lines.append(line)
 
     if intro_lines:
-        html_parts.append('<p style="font-size:13px;color:#374151;line-height:1.7;margin-bottom:14px">' + str(_esc(" ".join(intro_lines))) + "</p>")
+        html_parts.append('<p style="font-size:13px;color:var(--ink);line-height:1.7;margin-bottom:14px">' + str(_esc(" ".join(intro_lines))) + "</p>")
 
     current_section = None
     bullets = []
@@ -97,7 +97,7 @@ def format_intel_filter(text):
             out += (
                 '<div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start">'
                 + '<span style="flex-shrink:0;color:' + color + ';font-weight:700;font-size:13px">' + icon + "</span>"
-                + '<span style="font-size:13px;color:#374151;line-height:1.6">' + str(_esc(b)) + "</span></div>"
+                + '<span style="font-size:13px;color:var(--ink);line-height:1.6">' + str(_esc(b)) + "</span></div>"
             )
         return out
 
@@ -204,7 +204,7 @@ def format_intel_body_filter(text):
         else:
             intro_lines.append(line)
     if intro_lines:
-        html_parts.append('<p style="font-size:13px;color:#374151;line-height:1.7;margin-bottom:14px">' + str(_esc(" ".join(intro_lines))) + "</p>")
+        html_parts.append('<p style="font-size:13px;color:var(--ink);line-height:1.7;margin-bottom:14px">' + str(_esc(" ".join(intro_lines))) + "</p>")
     current_section = None
     bullets = []
 
@@ -219,7 +219,7 @@ def format_intel_body_filter(text):
             out += (
                 '<div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start">'
                 + '<span style="flex-shrink:0;color:' + color + ';font-weight:700;font-size:13px">' + icon + "</span>"
-                + '<span style="font-size:13px;color:#374151;line-height:1.6">' + str(_esc(b)) + "</span></div>"
+                + '<span style="font-size:13px;color:var(--ink);line-height:1.6">' + str(_esc(b)) + "</span></div>"
             )
         return out
 
@@ -246,7 +246,7 @@ def format_intel_body_filter(text):
     if current_section and bullets:
         html_parts.append(_flush(current_section, bullets))
     if not html_parts:
-        return Markup('<p style="font-size:13px;color:#374151;line-height:1.7">' + str(_esc(text)) + "</p>")
+        return Markup('<p style="font-size:13px;color:var(--ink);line-height:1.7">' + str(_esc(text)) + "</p>")
     return Markup("".join(html_parts))
 
 
