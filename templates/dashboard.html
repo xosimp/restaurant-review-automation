@@ -4323,6 +4323,11 @@ function _escHtml(s) {
     }
   }).catch(function(){});
 })();
+// Sync current theme to server every load — catches state set before server-side sync existed
+(function(){
+  var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  fetch('/api/theme', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({theme: isDark ? 'dark' : 'light'})}).catch(function(){});
+})();
 // Close changelog panel on outside click
 document.addEventListener('click', function(e) {
   var wrap = document.getElementById('changelog-wrap');
