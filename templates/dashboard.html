@@ -6259,7 +6259,7 @@ function renderAIVisibility(d) {
       chtml += icon;
       chtml += '<div style="flex:1;min-width:0">';
       chtml += '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">';
-      chtml += '<span style="font-size:12px;font-weight:' + (item.done ? '500' : '600') + ';color:' + (item.done ? 'var(--ink3)' : '#0d1b2a') + '">' + item.label + '</span>';
+      chtml += '<span style="font-size:12px;font-weight:' + (item.done ? '500' : '600') + ';color:' + (item.done ? 'var(--ink3)' : 'var(--ink)') + '">' + item.label + '</span>';
       chtml += ptsTag + lockTag;
       chtml += '</div>';
       if (!item.done && item.action && !item.needs_gmb) {
