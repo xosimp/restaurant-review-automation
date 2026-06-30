@@ -1282,6 +1282,9 @@ def get_alert_settings(current_user):
         "urgent_via_email":      getattr(r, "urgent_via_email", 0),
         "digest_enabled":        getattr(r, "digest_enabled", 1),
         "digest_day":            getattr(r, "digest_day", "monday"),
+        "alert_quiet_start":     getattr(r, "alert_quiet_start", None),
+        "alert_quiet_end":       getattr(r, "alert_quiet_end", None),
+        "alert_max_per_day":     getattr(r, "alert_max_per_day", 0),
     }
     return jsonify(ok=True, contacts=contacts, settings=settings)
 
@@ -1322,6 +1325,9 @@ def save_alert_settings(current_user):
         "alert_resp_approved":   int(bool(data.get("alert_resp_approved"))),
         "digest_enabled":        int(bool(data.get("digest_enabled"))),
         "digest_day":            data.get("digest_day", "monday"),
+        "alert_quiet_start":     data.get("alert_quiet_start") or None,
+        "alert_quiet_end":       data.get("alert_quiet_end") or None,
+        "alert_max_per_day":     int(data.get("alert_max_per_day") or 0),
     })
     return jsonify(ok=True)
 

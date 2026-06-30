@@ -5814,6 +5814,9 @@ function openAlertsModal() {
     var digestDayEl = document.getElementById('al-digest-day');
     if (digestEl) digestEl.checked = !!s.digest_enabled;
     if (digestDayEl) digestDayEl.value = s.digest_day || 'monday';
+    document.getElementById('al-quiet-start').value = s.alert_quiet_start || '';
+    document.getElementById('al-quiet-end').value   = s.alert_quiet_end || '';
+    document.getElementById('al-max-per-day').value = s.alert_max_per_day || 0;
     updateSmsConsentVisibility();
   });
 }
@@ -5864,7 +5867,10 @@ function saveAlertSettings() {
     urgent_via_sms:        smsOn ? 1 : 0,
     urgent_via_email:      document.getElementById('al-via-email').checked ? 1 : 0,
     digest_enabled:        digestEnabledEl ? (digestEnabledEl.checked ? 1 : 0) : 1,
-    digest_day:            digestDayEl2 ? digestDayEl2.value : 'monday'
+    digest_day:            digestDayEl2 ? digestDayEl2.value : 'monday',
+    alert_quiet_start:     document.getElementById('al-quiet-start').value || null,
+    alert_quiet_end:       document.getElementById('al-quiet-end').value || null,
+    alert_max_per_day:     parseInt(document.getElementById('al-max-per-day').value) || 0
   };
   var msg = document.getElementById('alerts-save-msg');
   msg.style.display = 'inline';
@@ -7340,6 +7346,31 @@ document.addEventListener('click', function(e) {
           I agree to receive operational SMS alerts from Cavnar AI. Message &amp; data rates may apply. Reply STOP to cancel, HELP for help. <a href="/privacy" target="_blank" style="color:var(--ember)">Privacy</a> &middot; <a href="/terms" target="_blank" style="color:var(--ember)">Terms</a>
         </label>
       </div>
+    </div>
+
+    <!-- DND / frequency -->
+    <div style="border-top:1px solid var(--paper3);padding-top:16px;margin-bottom:20px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Do-not-disturb &amp; frequency</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end">
+        <div>
+          <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Quiet start</div>
+          <input id="al-quiet-start" type="time" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Quiet end</div>
+          <input id="al-quiet-end" type="time" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Max alerts/day</div>
+          <select id="al-max-per-day" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+            <option value="0">Unlimited</option>
+            {% for n in [1,2,3,5,10] %}
+            <option value="{{n}}">{{n}} per day</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div style="font-size:10px;color:var(--ink3);margin-top:8px">Times use Chicago timezone. Leave start/end blank to disable quiet hours.</div>
     </div>
 
     <div style="display:flex;align-items:center;justify-content:space-between">
