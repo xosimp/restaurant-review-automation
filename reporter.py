@@ -377,13 +377,13 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
     # Rating trend indicator
     rating = report.avg_rating or 0
     if rating >= 4.5:
-        rating_color = "#16a34a"; rating_label = "Excellent"
+        rating_color = "#6fcf97"; rating_label = "Excellent"
     elif rating >= 4.0:
-        rating_color = "#2d6a4f"; rating_label = "Good"
+        rating_color = "#6fcf97"; rating_label = "Good"
     elif rating >= 3.5:
-        rating_color = "#d97706"; rating_label = "Fair"
+        rating_color = "#ffc266"; rating_label = "Fair"
     else:
-        rating_color = "#dc2626"; rating_label = "Needs work"
+        rating_color = "#ff5a5a"; rating_label = "Needs work"
 
     # Fetch restaurant record once — used for location header, module flags, and scorecards
     _rest = None
@@ -419,6 +419,16 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
   <p style="margin:5px 0 0;font-size:13px;color:#f0ebe0;line-height:1.55;font-weight:600">{_html.escape(ai_summary.get("action"))}</p>
 </div>"""
 
+    _card_bg = "background:#15100b"  # solid fallback (Outlook/older clients ignore gradients)
+    _card_grad = "background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%)"
+    _SG = "font-family:'Space Grotesk',sans-serif"
+
+    def _stat_pill(color, label):
+        return f'<span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:{color};background:{color}26;padding:3px 9px;border-radius:20px">{label}</span>'
+
+    def _stat_num(value, sub, color="#f0ebe0"):
+        return f'<div><div style="{_SG};font-size:24px;font-weight:700;color:{color}">{value}</div><div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:2px">{sub}</div></div>'
+
     # Pull labor and inventory data for module scorecards
     labor_card = ""
     inventory_card = ""
@@ -430,19 +440,19 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
                 lp = labor_data.get("overall_labor_pct", 0)
                 ls = labor_data.get("total_sales", 0)
                 lc = labor_data.get("total_labor_cost", 0)
-                l_color = "#16a34a" if lp <= 32 else ("#d97706" if lp <= 36 else "#dc2626")
+                l_color = "#6fcf97" if lp <= 32 else ("#ffc266" if lp <= 36 else "#ff5a5a")
                 l_label = "On target" if lp <= 32 else ("Watch closely" if lp <= 36 else "Over budget")
                 labor_card = f"""
 <tr><td style="padding:0 0 12px">
-  <div style="background:#f9fafb;border-radius:8px;padding:16px;border-left:4px solid {l_color}">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-      <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#6b7280">Labor Optimizer</span>
-      <span style="font-size:11px;font-weight:600;color:{l_color};background:{l_color}18;padding:2px 8px;border-radius:12px">{l_label}</span>
+  <div style="{_card_bg};{_card_grad};border:1px solid rgba(111,207,151,.4);border-radius:12px;padding:16px 18px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#6fcf97">Labor Optimizer</span>
+      {_stat_pill(l_color, l_label)}
     </div>
-    <div style="display:flex;gap:20px">
-      <div><div style="font-size:26px;font-weight:700;color:{l_color}">{lp}%</div><div style="font-size:11px;color:#9ca3af">labor ratio</div></div>
-      <div><div style="font-size:26px;font-weight:700;color:#111">${lc:,.0f}</div><div style="font-size:11px;color:#9ca3af">labor cost</div></div>
-      <div><div style="font-size:26px;font-weight:700;color:#111">${ls:,.0f}</div><div style="font-size:11px;color:#9ca3af">in sales</div></div>
+    <div style="display:flex;gap:22px">
+      {_stat_num(f"{lp}%", "labor ratio", l_color)}
+      {_stat_num(f"${lc:,.0f}", "labor cost")}
+      {_stat_num(f"${ls:,.0f}", "in sales")}
     </div>
   </div>
 </td></tr>"""
@@ -454,19 +464,19 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
             recoverable = inv.get("recoverable_monthly", 0)
             top_waste = inv.get("waste_items", [])
             top_item = top_waste[0]["item"] if top_waste else "None"
-            i_color = "#16a34a" if waste < 200 else ("#d97706" if waste < 500 else "#dc2626")
+            i_color = "#6fcf97" if waste < 200 else ("#ffc266" if waste < 500 else "#ff5a5a")
             i_label = "Low waste" if waste < 200 else ("Moderate" if waste < 500 else "High waste")
             inventory_card = f"""
 <tr><td style="padding:0 0 12px">
-  <div style="background:#f9fafb;border-radius:8px;padding:16px;border-left:4px solid {i_color}">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-      <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#6b7280">Inventory Control</span>
-      <span style="font-size:11px;font-weight:600;color:{i_color};background:{i_color}18;padding:2px 8px;border-radius:12px">{i_label}</span>
+  <div style="{_card_bg};{_card_grad};border:1px solid rgba(255,194,102,.4);border-radius:12px;padding:16px 18px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#ffc266">Inventory Control</span>
+      {_stat_pill(i_color, i_label)}
     </div>
-    <div style="display:flex;gap:20px">
-      <div><div style="font-size:26px;font-weight:700;color:{i_color}">${waste:,.0f}</div><div style="font-size:11px;color:#9ca3af">waste this week</div></div>
-      <div><div style="font-size:26px;font-weight:700;color:#111">${recoverable:,.0f}</div><div style="font-size:11px;color:#9ca3af">recoverable/mo</div></div>
-      <div style="max-width:120px"><div style="font-size:13px;font-weight:600;color:#111;padding-top:4px">{top_item}</div><div style="font-size:11px;color:#9ca3af">top waste item</div></div>
+    <div style="display:flex;gap:22px;align-items:flex-start">
+      {_stat_num(f"${waste:,.0f}", "waste this week", i_color)}
+      {_stat_num(f"${recoverable:,.0f}", "recoverable/mo")}
+      <div style="max-width:120px"><div style="font-size:13px;font-weight:600;color:#f0ebe0;padding-top:1px">{_html.escape(top_item)}</div><div style="font-size:10px;color:rgba(255,255,255,.4);margin-top:2px">top waste item</div></div>
     </div>
   </div>
 </td></tr>"""
@@ -482,12 +492,12 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
             snippet = _html.escape((r.text or "")[:120])
             urgent_rows += f"""
 <tr><td style="padding:0 0 8px">
-  <div style="background:#fef2f2;border-radius:6px;padding:12px 14px;border-left:3px solid #dc2626">
+  <div style="{_card_bg};{_card_grad};border:1px solid rgba(255,90,90,.4);border-radius:10px;padding:12px 14px">
     <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-      <span style="font-size:12px;font-weight:600">{name}</span>
-      <span style="font-size:12px;color:#dc2626">{stars}</span>
+      <span style="font-size:12px;font-weight:600;color:#f0ebe0">{name}</span>
+      <span style="{_SG};font-size:12px;color:#ff5a5a">{stars}</span>
     </div>
-    <p style="font-size:12px;color:#374151;margin:0;line-height:1.5">"{snippet}{"..." if len(r.text or "") > 120 else ""}"</p>
+    <p style="font-size:12px;color:rgba(255,255,255,.6);margin:0;line-height:1.5">"{snippet}{"..." if len(r.text or "") > 120 else ""}"</p>
   </div>
 </td></tr>"""
 
@@ -500,12 +510,12 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
         snippet = _html.escape((top_pos.text or "")[:120])
         pos_row = f"""
 <tr><td style="padding:0 0 8px">
-  <div style="background:#f0fdf4;border-radius:6px;padding:12px 14px;border-left:3px solid #16a34a">
+  <div style="{_card_bg};{_card_grad};border:1px solid rgba(111,207,151,.4);border-radius:10px;padding:12px 14px">
     <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-      <span style="font-size:12px;font-weight:600">{name}</span>
-      <span style="font-size:12px;color:#16a34a">{stars}</span>
+      <span style="font-size:12px;font-weight:600;color:#f0ebe0">{name}</span>
+      <span style="{_SG};font-size:12px;color:#6fcf97">{stars}</span>
     </div>
-    <p style="font-size:12px;color:#374151;margin:0;line-height:1.5">"{snippet}{"..." if len(top_pos.text or "") > 120 else ""}"</p>
+    <p style="font-size:12px;color:rgba(255,255,255,.6);margin:0;line-height:1.5">"{snippet}{"..." if len(top_pos.text or "") > 120 else ""}"</p>
   </div>
 </td></tr>"""
 
@@ -517,23 +527,26 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
     urgent_section_html = ""
     if urgent:
         urgent_section_html = ('<tr><td style="padding:0 32px 12px">' +
-            '<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#dc2626;margin-bottom:8px">⚠ Needs Immediate Response</div>' +
+            '<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px"><span style="width:7px;height:7px;border-radius:50%;background:#ff5a5a"></span><span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#f0ebe0">Needs immediate response</span></div>' +
             '<table width="100%" cellpadding="0" cellspacing="0">' + urgent_rows + '</table></td></tr>')
     pos_section_html = ""
     if pos_row:
         pos_section_html = ('<tr><td style="padding:0 32px 12px">' +
-            '<div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#16a34a;margin-bottom:8px">★ Highlight of the Week</div>' +
+            '<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px"><span style="width:7px;height:7px;border-radius:50%;background:#6fcf97"></span><span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#f0ebe0">Highlight of the week</span></div>' +
             '<table width="100%" cellpadding="0" cellspacing="0">' + pos_row + '</table></td></tr>')
-    urgent_stat = (f"<div><div style='font-size:26px;font-weight:700;color:#dc2626'>⚠ {len(urgent)}</div><div style='font-size:11px;color:#9ca3af'>urgent</div></div>" if urgent else "")
+    urgent_stat = (_stat_num(f"⚠ {len(urgent)}", "urgent", "#ff5a5a") if urgent else "")
 
     return f"""<html>
-<body style="margin:0;padding:0;background:#f5f3f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3f0;padding:24px 0">
+<head>
+<style>@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap');</style>
+</head>
+<body style="margin:0;padding:0;background:#0e0a06;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#0e0a06;padding:24px 0">
 <tr><td align="center">
-<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)">
+<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#15100b;border-radius:12px;overflow:hidden;border:1px solid rgba(200,75,47,.3)">
 
 <!-- HEADER -->
-<tr><td style="background:#1a1410;padding:24px 32px">
+<tr><td style="background:#15100b;border-bottom:1px solid rgba(200,75,47,.3);padding:24px 32px">
   <table width="100%" cellpadding="0" cellspacing="0"><tr>
     <td><span style="font-family:Georgia,serif;font-size:22px;font-weight:400;color:#f0ebe0">Cavnar <em style="color:#c84b2f">AI</em></span></td>
     <td align="right"><span style="font-size:11px;color:#7a6f65;letter-spacing:.1em;text-transform:uppercase">Weekly Digest</span></td>
@@ -543,7 +556,7 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 
 <!-- AI CONSULTANT SUMMARY -->
 <tr><td style="padding:24px 32px 0">
-  <div style="background:#1a1410;border-radius:8px;padding:18px 20px">
+  <div style="{_card_bg};{_card_grad};border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:18px 20px">
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#c84b2f;margin-bottom:10px">Cavnar AI Consultant</div>
     <p style="font-size:14px;font-weight:600;color:#f0ebe0;line-height:1.55;margin:0 0 12px">{_html.escape(ai_headline)}</p>
     {f'<table cellpadding="0" cellspacing="0" width="100%">{ai_module_rows}</table>' if ai_module_rows else ''}
@@ -555,16 +568,16 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 <tr><td style="padding:24px 32px 12px">
   <table width="100%" cellpadding="0" cellspacing="0">
   <tr><td style="padding:0 0 12px">
-    <div style="background:#f9fafb;border-radius:8px;padding:16px;border-left:4px solid {rating_color}">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-        <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#6b7280">Review Intelligence</span>
-        <span style="font-size:11px;font-weight:600;color:{rating_color};background:{rating_color}18;padding:2px 8px;border-radius:12px">{rating_label}</span>
+    <div style="{_card_bg};{_card_grad};border:1px solid rgba(255,138,101,.4);border-radius:12px;padding:16px 18px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#ff8a65">Review Intelligence</span>
+        {_stat_pill(rating_color, rating_label)}
       </div>
-      <div style="display:flex;gap:20px">
-        <div><div style="font-size:26px;font-weight:700;color:{rating_color}">{rating}★</div><div style="font-size:11px;color:#9ca3af">avg rating</div></div>
-        <div><div style="font-size:26px;font-weight:700;color:#111">{report.total_reviews}</div><div style="font-size:11px;color:#9ca3af">total reviews</div></div>
-        <div><div style="font-size:26px;font-weight:700;color:#16a34a">{pos_count}</div><div style="font-size:11px;color:#9ca3af">positive</div></div>
-        <div><div style="font-size:26px;font-weight:700;color:#dc2626">{neg_count}</div><div style="font-size:11px;color:#9ca3af">negative</div></div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap">
+        {_stat_num(f"{rating}★", "avg rating", rating_color)}
+        {_stat_num(report.total_reviews, "total reviews")}
+        {_stat_num(pos_count, "positive", "#6fcf97")}
+        {_stat_num(neg_count, "negative", "#ff5a5a")}
         {urgent_stat}
       </div>
     </div>
@@ -581,12 +594,12 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 
 <!-- CTA -->
 <tr><td style="padding:0 32px 24px">
-  <a href="https://dashboard.cavnar.ai" style="display:block;background:#c84b2f;color:white;text-align:center;padding:13px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">View Dashboard & Approve Responses →</a>
+  <a href="https://dashboard.cavnar.ai" style="display:block;background:#c84b2f;color:white;text-align:center;padding:13px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">View Dashboard & Approve Responses →</a>
 </td></tr>
 
 <!-- FOOTER -->
-<tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #e5e7eb">
-  <p style="font-size:11px;color:#9ca3af;margin:0;text-align:center">Cavnar AI &nbsp;·&nbsp; will@cavnar.ai &nbsp;·&nbsp; <a href="https://cavnar.ai" style="color:#9ca3af">cavnar.ai</a></p>
+<tr><td style="background:#0e0a06;padding:16px 32px;border-top:1px solid rgba(200,75,47,.2)">
+  <p style="font-size:11px;color:#7a6f65;margin:0;text-align:center">Cavnar AI &nbsp;·&nbsp; will@cavnar.ai &nbsp;·&nbsp; <a href="https://cavnar.ai" style="color:#7a6f65">cavnar.ai</a></p>
 </td></tr>
 
 </table>
