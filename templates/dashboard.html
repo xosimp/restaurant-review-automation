@@ -2664,7 +2664,16 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     #aiv-scan-bar { position:absolute; top:0; height:100%; width:30%; background:linear-gradient(90deg,transparent,var(--ember),transparent); animation: aiv-scan 1.4s linear infinite; }
   </style>
 
+  <!-- Intel sub-tab toggle (segmented pill, top-right) -->
+  <div style="display:flex;justify-content:flex-end;margin-bottom:20px">
+    <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
+      <button id="intel-tab-competitors-btn" onclick="switchIntelTab('competitors')" class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Competitors</button>
+      <button id="intel-tab-visibility-btn" onclick="switchIntelTab('visibility')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">AI Visibility</button>
+    </div>
+  </div>
+
   <!-- AI Visibility Checker -->
+  <div id="intel-tab-visibility" style="display:none">
   <div class="card" style="padding:18px 20px;margin-bottom:20px;border:1px solid rgba(200,75,47,.3)" id="aiv-card">
     <div id="aiv-glow"></div>
     <div style="position:relative;z-index:1">
@@ -2674,11 +2683,11 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ember);margin-bottom:4px">AI Search Presence</div>
           <div style="font-weight:700;font-size:15px;color:var(--ink)">AI Visibility Score</div>
         </div>
-        <span id="aiv-collapse-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(200,75,47,.1);border:1px solid rgba(200,75,47,.25);color:var(--ember);margin-top:10px;transition:transform .25s;transform:rotate(-90deg);flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span id="aiv-collapse-arrow" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:rgba(200,75,47,.1);border:1px solid rgba(200,75,47,.25);color:var(--ember);margin-top:10px;transition:transform .25s;flex-shrink:0"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
       </div>
       <button onclick="runAIVisibility(this)" id="aiv-run-btn" class="btn-primary" style="padding:7px 16px">Check Visibility</button>
     </div>
-    <div id="aiv-body" style="max-height:0px;opacity:0;overflow:hidden;transition:max-height .3s ease,opacity .3s ease">
+    <div id="aiv-body" style="max-height:none;opacity:1;overflow:visible;transition:max-height .3s ease,opacity .3s ease">
 
     <div id="aiv-idle" style="background:rgba(200,75,47,.05);border:1px solid rgba(200,75,47,.18);border-radius:8px;padding:16px;text-align:center">
       <div style="font-size:13px;color:var(--ink)">See how often your restaurant appears when someone asks an AI for local dining recommendations.</div>
@@ -2742,10 +2751,13 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div><!-- /z-index wrap -->
   </div><!-- /aiv-body -->
   </div>
+  </div><!-- /intel-tab-visibility -->
+
+  <div id="intel-tab-competitors">
 
   <div style="text-align:center;padding:8px 0 24px">
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--ember);margin-bottom:8px">Cavnar AI · Competitor Intelligence</div>
-    <div style="font-family:'Fraunces',serif;font-size:28px;color:var(--ink)">What your neighbors are doing</div>
+    <div class="name-underlined" style="font-family:'Fraunces',serif;font-size:28px;color:var(--ink)">What your neighbors are doing</div>
   </div>
 
   {% if not competitor_data %}
@@ -2766,26 +2778,26 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
     <!-- Summary stat row -->
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
-      <div class="rv-stat-cell">
-        <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(28px,3vw,38px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1">{{comp_count}}</div>
-        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Competitors tracked</div>
+      <div class="rv-stat-cell" style="padding:16px 14px">
+        <div class="rv-stat-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(20px,2.2vw,26px);font-weight:500;letter-spacing:-.02em;line-height:1">{{comp_count}}</div>
+        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Competitors tracked</div>
       </div>
-      <div class="rv-stat-cell">
-        <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(28px,3vw,38px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1">{{avg_comp_rating}}★</div>
-        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Avg competitor rating</div>
+      <div class="rv-stat-cell" style="padding:16px 14px">
+        <div class="rv-stat-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(20px,2.2vw,26px);font-weight:500;letter-spacing:-.02em;line-height:1">{{avg_comp_rating}}<span style="font-size:.5em">★</span></div>
+        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Avg competitor rating</div>
       </div>
       {% if mod_reviews and rstats.avg_rating %}
       {% set own_vs_avg = (rstats.avg_rating - avg_comp_rating) | round(1) %}
       {% set yrglow = 'stat-glow-green' if rstats.avg_rating >= 4.0 else ('stat-glow-amber' if rstats.avg_rating >= 3.0 else 'stat-glow-red') %}
-      <div class="rv-stat-cell">
-        <div class="{{yrglow}}" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(28px,3vw,38px);font-weight:500;letter-spacing:-.02em;line-height:1">{{rstats.avg_rating}}★</div>
-        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Your rating</div>
-        <div style="font-size:10px;color:{{'#3ecf6e' if own_vs_avg > 0 else ('#e02828' if own_vs_avg < 0 else 'var(--ink3)')}};margin-top:4px">{% if own_vs_avg > 0 %}▲{{own_vs_avg}} above avg{% elif own_vs_avg < 0 %}▼{{own_vs_avg|abs}} below avg{% else %}even with avg{% endif %}</div>
+      <div class="rv-stat-cell" style="padding:16px 14px">
+        <div class="{{yrglow}}" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(20px,2.2vw,26px);font-weight:500;letter-spacing:-.02em;line-height:1">{{rstats.avg_rating}}<span style="font-size:.5em">★</span></div>
+        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Your rating</div>
+        <div style="font-size:10px;color:{{'#3ecf6e' if own_vs_avg > 0 else ('#e02828' if own_vs_avg < 0 else 'var(--ink3)')}};margin-top:3px">{% if own_vs_avg > 0 %}▲{{own_vs_avg}} above avg{% elif own_vs_avg < 0 %}▼{{own_vs_avg|abs}} below avg{% else %}even with avg{% endif %}</div>
       </div>
       {% else %}
-      <div class="rv-stat-cell">
-        <div style="font-family:'Space Grotesk',sans-serif;font-size:clamp(28px,3vw,38px);font-weight:500;color:var(--ink);letter-spacing:-.02em;line-height:1">{{recs | length}}</div>
-        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:10px">Action items</div>
+      <div class="rv-stat-cell" style="padding:16px 14px">
+        <div class="rv-stat-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(20px,2.2vw,26px);font-weight:500;letter-spacing:-.02em;line-height:1">{{recs | length}}</div>
+        <div style="font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);margin-top:8px">Action items</div>
       </div>
       {% endif %}
     </div>
@@ -2903,6 +2915,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
   {% endif %}
   <div id="comp-refresh-result" style="margin-top:12px;font-size:12px;display:none"></div>
+
+  </div><!-- /intel-tab-competitors -->
 
 </div><!-- /centered wrap -->
 </div>
@@ -3880,6 +3894,18 @@ window.switchReviewsTab = function(tab) {
     loadSentimentTrend();
     if (!_perfLoaded) loadResponsePerf();
   }
+};
+
+window.switchIntelTab = function(tab) {
+  var isComp = tab === 'competitors';
+  var compEl = document.getElementById('intel-tab-competitors');
+  var visEl = document.getElementById('intel-tab-visibility');
+  if (compEl) compEl.style.display = isComp ? '' : 'none';
+  if (visEl) visEl.style.display = isComp ? 'none' : '';
+  var tc = document.getElementById('intel-tab-competitors-btn');
+  var tv = document.getElementById('intel-tab-visibility-btn');
+  if (tc) { tc.classList.toggle('rv-tab-active', isComp); tc.style.background = ''; tc.style.color = isComp ? '' : 'var(--ink3)'; }
+  if (tv) { tv.classList.toggle('rv-tab-active', !isComp); tv.style.background = ''; tv.style.color = isComp ? 'var(--ink3)' : ''; }
 };
 
 function loadSentimentTrend(){
