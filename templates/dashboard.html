@@ -6541,19 +6541,16 @@ window.addEventListener('load', function(){
   // against each other and corrupts the result.
   var _activePanel = _switchedViaParam ? null : document.querySelector('.panel.active');
   if (_activePanel) { animateBars(_activePanel.id); animateStatNums(_activePanel.id); }
-  // Restore AI visibility from sessionStorage cache (survives page reloads)
+  // Keep cached AI visibility data in memory (so "Re-run" knows a prior
+  // scan exists) without auto-rendering it on load — the tab should
+  // always start at the idle "Check Visibility" state, never silently
+  // pre-populate results the client never actually requested this load.
   try {
     var aivCached = sessionStorage.getItem('aiv_cache');
     var aivCachedAt = parseInt(sessionStorage.getItem('aiv_cache_at') || '0', 10);
     var fourHours = 4 * 60 * 60 * 1000;
     if (aivCached && aivCachedAt && (Date.now() - aivCachedAt) < fourHours) {
-      var aivData = JSON.parse(aivCached);
-      _aivData = aivData;
-      // Only auto-render if we're on the competitor/intel tab
-      var compPanel = document.getElementById('panel-competitor');
-      if (compPanel && compPanel.classList.contains('active')) {
-        renderAIVisibility(aivData);
-      }
+      _aivData = JSON.parse(aivCached);
     }
   } catch(e) {}
 });
