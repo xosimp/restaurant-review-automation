@@ -38,16 +38,35 @@ def _record_failed_attempt(ip):
 def _clear_attempts(ip):
     _login_attempts.pop(ip, None)
 
+# ── CSRF validation ───────────────────────────────────────────────────────────
+# These auth forms set a csrf_token cookie and render it into a hidden field;
+# this confirms the submitted value actually matches the cookie set for this
+# browser, instead of just checking that *a* token was generated somewhere.
+
+def _csrf_ok():
+    import hmac as _hmac_csrf
+    cookie_val = request.cookies.get("csrf_token", "")
+    form_val   = request.form.get("csrf_token", "")
+    if not cookie_val or not form_val:
+        return False
+    return _hmac_csrf.compare_digest(cookie_val, form_val)
+
 @auth_bp.route("/forgot-password", methods=["GET", "POST"])
 def forgot_password():
     if request.method == "GET":
+        import secrets as _sec_fp
         sent = request.args.get("sent")
-        return render_template('forgot_password.html', sent=sent)
+        csrf_fp = _sec_fp.token_hex(16)
+        resp_fp = make_response(render_template('forgot_password.html', sent=sent, csrf_token=csrf_fp))
+        resp_fp.set_cookie("csrf_token", csrf_fp, httponly=True, samesite="Lax")
+        return resp_fp
 
     # POST — send reset email
     ip = _get_client_ip()
     if _is_rate_limited(ip):
         return render_template('rate_limited.html'), 429
+    if not _csrf_ok():
+        return redirect("/forgot-password")
     _record_failed_attempt(ip)  # Count each forgot-password POST
 
     email = request.form.get("email", "").strip().lower()
@@ -89,13 +108,22 @@ def reset_password(token):
     valid = validate_reset_token(token)
 
     if request.method == "GET":
-        return render_template('reset_password.html', valid=valid)
+        import secrets as _sec_rp
+        error = request.args.get("error")
+        csrf_rp = _sec_rp.token_hex(16)
+        resp_rp = make_response(render_template('reset_password.html', valid=valid, error=error, csrf_token=csrf_rp))
+        resp_rp.set_cookie("csrf_token", csrf_rp, httponly=True, samesite="Lax")
+        return resp_rp
 
     # POST — set new password
     ip = _get_client_ip()
     if _is_rate_limited(ip):
         from flask import redirect as _redir
         return _redir("/forgot-password?sent=1"), 429
+
+    if not _csrf_ok():
+        from flask import redirect as _redir
+        return _redir(f"/reset-password/{token}")
 
     if not valid:
         from flask import redirect as _redir
@@ -106,7 +134,7 @@ def reset_password(token):
 
     if len(password) < 8 or password != confirm:
         from flask import redirect as _redir
-        return _redir(f"/reset-password/{token}")
+        return _redir(f"/reset-password/{token}?error=mismatch")
 
     success = consume_reset_token(token, password)
     if success:
@@ -123,15 +151,19 @@ def login():
         ip = _get_client_ip()
 
         _google_sso_post = bool(os.getenv("GOOGLE_SSO_CLIENT_ID"))
+        _csrf_cookie = request.cookies.get('csrf_token', '')
         if _is_rate_limited(ip):
-            return render_template('login.html', google_sso_enabled=_google_sso_post,
+            return render_template('login.html', google_sso_enabled=_google_sso_post, csrf_token=_csrf_cookie,
                 error="Too many failed attempts. Please wait 5 minutes and try again.")
+        if not _csrf_ok():
+            return render_template('login.html', google_sso_enabled=_google_sso_post, csrf_token=_csrf_cookie,
+                error="Your session expired — please try again.")
         username = request.form.get("username","").strip()
         password = request.form.get("password","")
         user = verify_password(username, password)
         if not user:
             _record_failed_attempt(ip)
-            return render_template('login.html', error="Invalid username or password", google_sso_enabled=_google_sso_post)
+            return render_template('login.html', error="Invalid username or password", google_sso_enabled=_google_sso_post, csrf_token=_csrf_cookie)
         _clear_attempts(ip)
         next_url = request.args.get("next", "/admin" if user["is_admin"] else "/")
 
@@ -153,7 +185,12 @@ def login():
             from models import update_restaurant, get_restaurant
             code = str(random.randint(100000, 999999))
             expires = (_dt2.datetime.now() + _dt2.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
-            update_restaurant(_rid, {"two_fa_code": code, "two_fa_expires": expires})
+            # pending is a per-login-attempt secret bound into the token AND stored
+            # server-side, so verify-2fa can confirm the submitted token was actually
+            # issued by this login — not just that it decodes to a valid restaurant_id.
+            import secrets as _sec3
+            pending = _sec3.token_hex(24)
+            update_restaurant(_rid, {"two_fa_code": code, "two_fa_expires": expires, "two_fa_pending": pending})
             # Send email
             try:
                 rest2 = get_restaurant(_rid)
@@ -167,9 +204,6 @@ def login():
                     masked = "your registered email"
             except Exception:
                 masked = "your registered email"
-            # Store pending token in DB so it works across Gunicorn workers
-            import secrets as _sec3
-            pending = _sec3.token_hex(24)
             # Encode uid into pending token: "uid:token"
             pending_signed = str(_rid) + ":" + pending
             import base64 as _b64
@@ -201,7 +235,7 @@ def login():
     import secrets as _sec2
     csrf2 = _sec2.token_hex(16)
     _google_sso = bool(os.getenv("GOOGLE_SSO_CLIENT_ID"))
-    resp2 = make_response(render_template('login.html', error=None, google_sso_enabled=_google_sso))
+    resp2 = make_response(render_template('login.html', error=None, google_sso_enabled=_google_sso, csrf_token=csrf2))
     resp2.set_cookie("csrf_token", csrf2, httponly=True, samesite="Lax")
     return resp2
 
@@ -209,17 +243,28 @@ def login():
 def verify_2fa():
     import flask as _fl3
     import datetime as _dt3
+    import hmac as _hmac_2fa
     from models import get_restaurant, update_restaurant
     if request.method == "POST":
+        ip = _get_client_ip()
         pending_token = request.form.get("pending_token","")
         code_entered  = request.form.get("code","").strip()
         next_url      = request.form.get("next_url", "/")
         remember      = request.form.get("remember_device","")
-        # Decode uid from token
+        # Rate-limit code-guessing attempts the same way /login is throttled —
+        # this is the actual brute-force defense, since a 6-digit code only has
+        # ~1M possibilities and the pending_token alone used to provide none.
+        if _is_rate_limited("2fa:" + ip):
+            return render_template('two_fa.html',
+                masked_email="your registered email", error="Too many attempts. Please wait 5 minutes and try again.",
+                pending_token=pending_token, next_url=next_url, csrf_token=request.cookies.get('csrf_token',''))
+        if not _csrf_ok():
+            return redirect("/login")
+        # Decode uid + pending secret from token
         try:
             import base64 as _b64_v
             decoded = _b64_v.urlsafe_b64decode(pending_token.encode()).decode()
-            uid_str, _ = decoded.split(":", 1)
+            uid_str, pending_secret = decoded.split(":", 1)
             uid = int(uid_str)
         except Exception:
             return redirect("/login")
@@ -227,6 +272,12 @@ def verify_2fa():
             return redirect("/login")
         rest = get_restaurant(uid)
         if not rest:
+            return redirect("/login")
+        # Confirm this token was actually issued by OUR login flow for this
+        # restaurant — not just a base64 blob with a guessed restaurant_id.
+        stored_pending = getattr(rest, "two_fa_pending", "") or ""
+        if not stored_pending or not _hmac_2fa.compare_digest(stored_pending, pending_secret):
+            _record_failed_attempt("2fa:" + ip)
             return redirect("/login")
         # Check code
         now = _dt3.datetime.now()
@@ -243,7 +294,8 @@ def verify_2fa():
         except Exception as _e_v:
             print(f"[verify_2fa] error: {_e_v}")
             masked = "your registered email"
-        if rest.two_fa_code != code_entered:
+        if not (rest.two_fa_code and _hmac_2fa.compare_digest(rest.two_fa_code, code_entered)):
+            _record_failed_attempt("2fa:" + ip)
             resp_err = make_response(render_template('two_fa.html',
                 masked_email=masked, error="Incorrect code. Try again.",
                 pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
@@ -255,8 +307,9 @@ def verify_2fa():
                 pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
             resp_exp.set_cookie("csrf_token", csrf4, httponly=True, samesite="Lax")
             return resp_exp
-        # Code correct — clear it and create session
-        update_restaurant(uid, {"two_fa_code": "", "two_fa_expires": ""})
+        # Code correct — clear it (and the pending secret, single-use) and create session
+        _clear_attempts("2fa:" + ip)
+        update_restaurant(uid, {"two_fa_code": "", "two_fa_expires": "", "two_fa_pending": ""})
         _fl3.session.pop("pending_uid", None)
         _fl3.session.pop("pending_token", None)
         _ip_2fa = _get_client_ip()
@@ -290,14 +343,18 @@ def verify_2fa():
 
 @auth_bp.route("/resend-2fa", methods=["POST"])
 def resend_2fa():
-    import flask as _fl4, random, datetime as _dt4
+    import flask as _fl4, random, datetime as _dt4, hmac as _hmac_r2fa
     from models import get_restaurant, update_restaurant
+    ip = _get_client_ip()
+    if _is_rate_limited("2fa-resend:" + ip):
+        return jsonify(ok=False, error="Too many requests — please wait a few minutes")
+    _record_failed_attempt("2fa-resend:" + ip)
     data_r = request.get_json() or {}
     pending_token_r = data_r.get("pending_token", "")
     try:
         import base64 as _b64_r
         decoded_r = _b64_r.urlsafe_b64decode(pending_token_r.encode()).decode()
-        uid_r, _ = decoded_r.split(":", 1)
+        uid_r, pending_secret_r = decoded_r.split(":", 1)
         uid = int(uid_r)
     except Exception:
         return jsonify(ok=False, error="Session expired — please log in again")
@@ -306,6 +363,11 @@ def resend_2fa():
     rest = get_restaurant(uid)
     if not rest:
         return jsonify(ok=False)
+    # Only the holder of a token actually issued by login() can trigger a resend —
+    # otherwise this endpoint let anyone refresh any restaurant's 2FA code on demand.
+    stored_pending_r = getattr(rest, "two_fa_pending", "") or ""
+    if not stored_pending_r or not _hmac_r2fa.compare_digest(stored_pending_r, pending_secret_r):
+        return jsonify(ok=False, error="Session expired — please log in again")
     code = str(random.randint(100000, 999999))
     expires = (_dt4.datetime.now() + _dt4.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
     update_restaurant(uid, {"two_fa_code": code, "two_fa_expires": expires})
@@ -552,23 +614,34 @@ def gmb_connect(current_user):
     from gmb import get_auth_url
     if not os.getenv("GOOGLE_CLIENT_ID"):
         return jsonify(ok=False, error="Google OAuth not configured"), 500
-    url = get_auth_url(current_user["restaurant_id"])
+    import secrets as _sec_gmb
+    nonce = _sec_gmb.token_hex(16)
+    url = get_auth_url(current_user["restaurant_id"], nonce)
     from flask import redirect as _redirect
-    return _redirect(url)
+    resp = make_response(_redirect(url))
+    resp.set_cookie("gmb_oauth_state", nonce, httponly=True, samesite="Lax", max_age=600)
+    return resp
 
 
 @auth_bp.route("/auth/google/callback")
-def gmb_callback():
-    """Handle Google OAuth callback — exchange code, store tokens, discover location."""
+@login_required
+def gmb_callback(current_user):
+    """Handle Google OAuth callback — exchange code, store tokens, discover location.
+
+    state is "<nonce>:<restaurant_id>" from gmb_connect(). The nonce must match
+    the gmb_oauth_state cookie set when THIS user started the flow, and the
+    tokens are always stored against the logged-in user's own restaurant_id —
+    never a restaurant_id taken from the query string — so a forged state value
+    can't attach an attacker's Google tokens to a victim's restaurant."""
     from gmb import exchange_code, get_gmb_account_id, get_gmb_location_id
     from models import update_restaurant, get_restaurant
     from datetime import datetime, timezone, timedelta
 
-    code          = request.args.get("code")
-    restaurant_id = request.args.get("state")
-    error         = request.args.get("error")
+    code  = request.args.get("code")
+    state = request.args.get("state", "")
+    error = request.args.get("error")
 
-    if error or not code or not restaurant_id:
+    if error or not code or not state:
         msg = error or "No code returned"
         return (
             "<html><body><script>"
@@ -577,8 +650,20 @@ def gmb_callback():
             "</script><p>Connection failed. Close this window.</p></body></html>"
         )
 
+    state_nonce, _, state_rid = state.partition(":")
+    cookie_nonce = request.cookies.get("gmb_oauth_state", "")
+    import hmac as _hmac_gmb
+    if not cookie_nonce or not _hmac_gmb.compare_digest(cookie_nonce, state_nonce):
+        return (
+            "<html><body><script>"
+            "window.opener&&window.opener.postMessage({gmb:'error',msg:'Connection expired — please try again'},'*');"
+            "window.close();"
+            "</script><p>Connection expired. Close this window and try again.</p></body></html>"
+        )
+
     try:
-        restaurant_id = int(restaurant_id)
+        # Always use the logged-in user's own restaurant — state_rid is not trusted.
+        restaurant_id = current_user["restaurant_id"]
         tokens        = exchange_code(code)
         access_token  = tokens["access_token"]
         refresh_token = tokens.get("refresh_token", "")

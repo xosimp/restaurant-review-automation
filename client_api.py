@@ -45,11 +45,11 @@ def approve(rid, current_user):
             else:
                 _action = "approved_as_is"
             _ac2 = get_conn()
-            _ac2.execute("UPDATE reviews SET response_action=? WHERE id=?", (_action, rid))
+            _ac2.execute("UPDATE reviews SET response_action=? WHERE id=? AND restaurant_id=?", (_action, rid, current_user["restaurant_id"]))
             _ac2.commit(); _ac2.close()
     except Exception as _ae:
         print(f"[approve] response_action error: {_ae}")
-    approve_response(rid)
+    approve_response(rid, restaurant_id=current_user["restaurant_id"])
     try:
         from models import log_event
         log_event(current_user["restaurant_id"], "review_approved", {"review_id": rid})
@@ -260,7 +260,7 @@ def delete_template(tid, current_user):
 @login_required
 def use_template(tid, current_user):
     from models import increment_template_use
-    increment_template_use(tid)
+    increment_template_use(tid, restaurant_id=current_user["restaurant_id"])
     return jsonify(ok=True)
 
 @client_bp.route("/api/import-tripadvisor", methods=["POST"])
@@ -2233,14 +2233,17 @@ def webhook_get(current_user):
 @client_bp.route("/api/webhook", methods=["POST"])
 @login_required
 def webhook_save(current_user):
-    from webhooks import save_webhook
+    from webhooks import save_webhook, InvalidWebhookURL
     import json
     data   = request.get_json()
     url    = (data.get("url") or "").strip()
     events = data.get("events") or ["review.received", "alert.fired", "response.approved"]
     if not url.startswith("http"):
         return jsonify(ok=False, error="Invalid URL")
-    secret = save_webhook(current_user["restaurant_id"], url, events)
+    try:
+        secret = save_webhook(current_user["restaurant_id"], url, events)
+    except InvalidWebhookURL as e:
+        return jsonify(ok=False, error=str(e))
     return jsonify(ok=True, secret=secret)
 
 @client_bp.route("/api/webhook", methods=["DELETE"])

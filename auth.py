@@ -273,11 +273,26 @@ def get_current_user():
         return None
     return get_session_user(token)
 
+def _wants_json_response():
+    """True for the AJAX/fetch calls the dashboard makes constantly (POST/DELETE
+    mutations, and any GET to an /api/ route), False for a real page navigation.
+    A redirect-to-login on an expired-session fetch() call used to come back as
+    a 302 to an HTML login page; fetch() follows it silently and .json() then
+    throws, surfacing as a generic "Request failed" toast with no indication
+    the session actually expired. Returning real JSON here lets the existing
+    error handling show something meaningful instead."""
+    if request.method != "GET":
+        return True
+    return request.path.startswith("/api/")
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         user = get_current_user()
         if not user:
+            if _wants_json_response():
+                from flask import jsonify as _jsonify_lr
+                return _jsonify_lr(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
             return redirect(url_for("auth.login", next=request.path))
         return f(*args, **kwargs, current_user=user)
     return decorated
@@ -287,6 +302,9 @@ def admin_required(f):
     def decorated(*args, **kwargs):
         user = get_current_user()
         if not user or not user["is_admin"]:
+            if _wants_json_response():
+                from flask import jsonify as _jsonify_ar
+                return _jsonify_ar(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
             return redirect(url_for("auth.login"))
         return f(*args, **kwargs, current_user=user)
     return decorated

@@ -484,6 +484,9 @@ button:not(.tab):not(.logout-btn):not([disabled]):active{transform:scale(.97)}
   .stat-n { font-size: 22px !important; }
   .stat-l { font-size: 10px; }
 
+  /* Intel stat row — 3 columns is too cramped on a phone, stack to 1 */
+  .intel-stat-row { grid-template-columns: 1fr !important; gap: 8px !important; }
+
   /* Two-col — stack on mobile */
   .two-col { grid-template-columns: 1fr; }
 
@@ -2780,7 +2783,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     {% set avg_comp_rating = (ns.rating_sum / comp_count) | round(1) if comp_count > 0 else 0 %}
 
     <!-- Summary stat row -->
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
+    <div class="intel-stat-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
       <div class="rv-stat-cell" style="padding:18px 16px">
         <div class="rv-stat-n" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(26px,2.8vw,34px);font-weight:500;letter-spacing:-.02em;line-height:1">{{comp_count}}</div>
         <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Competitors tracked</div>
@@ -3314,7 +3317,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Signing secret</div>
         <div style="display:flex;align-items:center;gap:8px">
           <code id="webhook-secret" style="font-size:11px;color:var(--ink);font-family:monospace;word-break:break-all;flex:1"></code>
-          <button onclick="copyWebhookSecret()" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--paper3);background:white;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap" id="wh-copy-btn">Copy</button>
+          <button onclick="copyWebhookSecret()" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--paper3);background:white;color:#1a1410;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap" id="wh-copy-btn">Copy</button>
         </div>
       </div>
       <div style="font-size:11px;color:var(--ink3);margin-bottom:6px">Last delivery: <span id="webhook-last-status">—</span></div>
@@ -3370,7 +3373,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button onclick="saveWebhook()" style="padding:8px 14px;background:var(--ember);color:white;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif" id="wh-save-btn">Save webhook</button>
-      <button onclick="testWebhook()" id="wh-test-btn" style="padding:8px 14px;background:white;border:1px solid var(--paper3);border-radius:6px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;display:none">Send test</button>
+      <button onclick="testWebhook()" id="wh-test-btn" style="padding:8px 14px;background:white;color:#1a1410;border:1px solid var(--paper3);border-radius:6px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;display:none">Send test</button>
       <button onclick="deleteWebhook()" id="wh-delete-btn" style="padding:8px 14px;background:white;border:1px solid #f5c6c2;color:#c0392b;border-radius:6px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;display:none">Remove</button>
     </div>
     <div id="wh-status" style="font-size:12px;margin-top:8px;display:none"></div>
@@ -4389,7 +4392,7 @@ function _highlightText(el, q){
   var escaped = q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
   var re = new RegExp('(' + escaped + ')', 'gi');
   el.innerHTML = el.dataset.orig.replace(re,
-    '<strong style="color:#0e0c0a;font-size:1.05em">$1</strong>');
+    '<strong style="color:var(--ink);font-size:1.05em">$1</strong>');
 }
 
 function filterReviews(){

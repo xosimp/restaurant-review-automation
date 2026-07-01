@@ -212,6 +212,7 @@ input:focus{
     {% if error %}<div class="error">{{ error }}</div>{% endif %}
     {% if request.args.get('reset') %}<div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:10px 14px;font-size:13px;color:#2d6a4f;margin-bottom:14px;text-align:center">✓ Password updated — sign in with your new password.</div>{% endif %}
     <form method="POST">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="form-group">
         <label>Username</label>
         <input type="text" name="username" placeholder="your-restaurant" autofocus required>

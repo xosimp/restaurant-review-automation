@@ -227,11 +227,19 @@ def docusign_callback():
 @webhook_bp.route("/docusign/webhook", methods=["POST"])
 def docusign_webhook():
     """Receive DocuSign connect notifications when envelope status changes."""
-    # Basic authentication check — DocuSign sends a secret header if configured
+    # HMAC-SHA256 check — DocuSign Connect signs the raw body with the configured
+    # HMAC key and sends it base64-encoded in X-DocuSign-Signature-1. Previously
+    # this only checked the header was *present*, which any caller can fake —
+    # now it actually verifies the signature matches the body.
     ds_secret = os.getenv("DOCUSIGN_WEBHOOK_SECRET", "")
     if ds_secret:
+        import hmac as _hmac_ds, hashlib as _hashlib_ds, base64 as _b64_ds
         auth_header = request.headers.get("X-DocuSign-Signature-1", "")
-        if not auth_header:
+        raw_bytes = request.get_data()
+        expected = _b64_ds.b64encode(
+            _hmac_ds.new(ds_secret.encode(), raw_bytes, _hashlib_ds.sha256).digest()
+        ).decode()
+        if not auth_header or not _hmac_ds.compare_digest(auth_header, expected):
             return jsonify(error="Unauthorized"), 401
     try:
         raw = request.get_data(as_text=True)

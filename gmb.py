@@ -12,15 +12,19 @@ SCOPES = "https://www.googleapis.com/auth/business.manage"
 
 # ── OAuth helpers ─────────────────────────────────────────────────────────────
 
-def get_auth_url(restaurant_id: int) -> str:
-    """Build Google OAuth URL. restaurant_id passed as state."""
+def get_auth_url(restaurant_id: int, nonce: str) -> str:
+    """Build Google OAuth URL. state carries both the restaurant_id and a
+    per-flow nonce the caller must verify against a cookie on callback, so
+    the callback can't be tricked into attaching tokens to an arbitrary
+    restaurant_id just by forging the query string."""
+    state = f"{nonce}:{restaurant_id}"
     return (
         "https://accounts.google.com/o/oauth2/v2/auth"
         f"?client_id={GOOGLE_CLIENT_ID}"
         f"&redirect_uri={REDIRECT_URI}"
         f"&response_type=code"
         f"&scope={SCOPES}"
-        f"&state={restaurant_id}"
+        f"&state={state}"
         f"&access_type=offline"
         f"&prompt=consent"
     )
