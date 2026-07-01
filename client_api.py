@@ -127,6 +127,22 @@ def format_insight_html(text):
     import re as _re
     if not text:
         return 'Analysis unavailable.'
+    # Pull out a trailing "FORECAST: ..." line before any other parsing, so it
+    # renders as its own callout regardless of which branch below handles the
+    # rest of the text (intro+recommendations, or plain paragraph).
+    forecast_html = ''
+    fmatch = _re.search(r'(?im)^\s*forecast:\s*(.+)$', text)
+    if fmatch:
+        forecast_text = fmatch.group(1).strip()
+        text = (text[:fmatch.start()] + text[fmatch.end():]).strip()
+        if forecast_text:
+            forecast_html = (
+                '<div style="margin-top:10px;padding:10px 12px;background:rgba(200,75,47,.08);'
+                'border-left:2px solid var(--ember);border-radius:0 6px 6px 0">'
+                '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;'
+                'color:var(--ember);margin-bottom:4px">\U0001f52e Forecast</div>'
+                '<div style="font-style:italic;line-height:1.6">' + forecast_text + '</div></div>'
+            )
     # Try splitting on explicit Recommendations: heading first
     parts = _re.split(r'(?i)recommendations?:', text, maxsplit=1)
     if len(parts) == 2:
@@ -155,7 +171,7 @@ def format_insight_html(text):
             else:
                 para_lines.append(line)
         if not rec_lines:
-            return '<p style="margin:0;line-height:1.7">' + text + '</p>'
+            return '<p style="margin:0;line-height:1.7">' + text + '</p>' + forecast_html
         intro = ' '.join(para_lines).strip()
         recs = rec_lines
     html = ''
@@ -172,7 +188,7 @@ def format_insight_html(text):
             + str(num) +
             '</span><span style="line-height:1.6;color:#b7791f;font-weight:500">' + clean + '</span></div>')
         num += 1
-    return html
+    return html + forecast_html
 
 @client_bp.route("/api/review-stats")
 @login_required
@@ -474,8 +490,14 @@ def review_insight_api(current_user):
         rest_name  = restaurant.name if restaurant else "this restaurant"
         name_line  = f"Owner: {owner_name}" if owner_name else ""
         trend_block = (f"4-week trend: {trend_str}\n" if trend_str else "") + (f"Persistent issues: {persist_str}\n" if persist_str else "")
+        has_trend = bool(trend_str)
+        format_count = "4" if has_trend else "3"
+        forecast_line = (
+            "\n\U0001f52e Next week: [1 sentence predicting where the rating/negative-review "
+            "trend is headed if it continues, based on the 4-week trend above.]"
+        ) if has_trend else ""
         prompt = (
-            f"You are a restaurant reputation assistant. Output ONLY a 3-line snapshot.\n\n"
+            f"You are a restaurant reputation assistant. Output ONLY a {format_count}-line snapshot.\n\n"
             f"Restaurant: {rest_name} | Today: {today_str}\n"
             f"Data: {rstats['total']} reviews | {rstats['avg_rating']}★ avg | "
             f"{rstats['positive']} pos / {rstats['negative']} neg / {rstats['neutral']} neutral | "
@@ -483,16 +505,20 @@ def review_insight_api(current_user):
             f"Top topics: {issues_str} | {wow_str}\n"
             f"{trend_block}"
             f"Urgent excerpts: {urgent_texts}\n\n"
-            "Return EXACTLY this format — 3 lines:\n"
+            f"Return EXACTLY this format — {format_count} lines:\n"
             "\U0001f4ca This week: [1 punchy sentence on the most important number or multi-week trend. Be specific.]\n"
             "\u26a0\ufe0f Watch: [1 sentence on the biggest risk — multi-week declining trend, recurring complaint, rising negative %, or urgent review. Skip if nothing notable.]\n"
-            "\u2705 Do today: [1 concrete action — e.g. 'Respond to Amanda L.s 1-star review about cold food.' Never generic.]\n\n"
+            "\u2705 Do today: [1 concrete action — e.g. 'Respond to Amanda L.s 1-star review about cold food.' Never generic.]"
+            f"{forecast_line}\n\n"
             "Rules: no markdown, no extra lines, no preamble. Each line max 20 words. Never invent data. Prioritize multi-week trends over single-week blips."
         )
 
-        msg = _client_ri.messages.create(
+        from ai_utils import create_with_retry
+        msg = create_with_retry(
+            _client_ri,
             model=os.getenv("CLAUDE_MODEL","claude-haiku-4-5-20251001"),
-            max_tokens=200,
+            max_tokens=260,
+            temperature=0.2,
             messages=[{"role":"user","content":prompt}]
         )
         insight = msg.content[0].text.strip()
@@ -615,6 +641,7 @@ def mkt_insight_api(current_user):
             upcoming = ", ".join(h for h in upcoming.split(", ") if not any(s in h.lower() for s in skip_h)) or None
         # Pull post performance with weekly trend detection
         perf_clause = ""
+        _trend_lines = []
         try:
             from models import get_conn as _gc
             _conn = _gc()
@@ -675,6 +702,12 @@ def mkt_insight_api(current_user):
                 perf_clause += "\nDouble down on BEST topics. Rethink or avoid WEAK ones. Reference the trend when advising."
         except Exception:
             pass
+        has_trend = bool(_trend_lines)
+        forecast_instruction = (
+            '\n\nAfter the two paragraphs, add one final line starting with exactly "FORECAST:" '
+            "— one sentence predicting next week's reach/engagement trajectory based on the trend "
+            "above. Only include this if the trend is genuinely supported by the data given."
+        ) if has_trend else ""
         prompt = f"""You are the Cavnar AI Marketing Consultant for {name}.
 Write a short, punchy weekly marketing brief for {owner or "the owner"} — 3-4 sentences max.
 
@@ -691,12 +724,14 @@ Structure exactly like this — no headers, no bullets, just two short paragraph
 Paragraph 1: Start with "{greeting}" then give 1 specific marketing opportunity this week tied to the season, upcoming holidays, or a gap in recent content. If post performance data is available, mention what's working.
 Paragraph 2: One concrete content suggestion with a specific angle. Reference real menu items if provided. End with a one-line encouragement.
 
-Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No corporate language. Under 120 words total. If multiple holidays are coming up, mention both briefly."""
+Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No corporate language. Under 120 words total. If multiple holidays are coming up, mention both briefly.{forecast_instruction}"""
         import anthropic as _anth
+        from ai_utils import create_with_retry
         _client = _anth.Anthropic(api_key=__import__("os").getenv("ANTHROPIC_API_KEY"))
-        msg = _client.messages.create(
+        msg = create_with_retry(
+            _client,
             model=__import__("os").getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-            max_tokens=300,
+            max_tokens=350,
             messages=[{"role": "user", "content": prompt}]
         )
         insight = msg.content[0].text.strip()
@@ -761,7 +796,10 @@ def inv_insight_api(current_user):
 def gen_content(current_user):
     data = request.get_json()
     from marketing import generate_content, mark_calendar_idea_used
+    from ai_utils import ai_rate_limited
     rid = current_user["restaurant_id"] if current_user else None
+    if rid and ai_rate_limited(f"gencontent:{rid}", max_calls=8, window_secs=60):
+        return jsonify(content="", error="Too many requests — please wait a moment and try again.")
     content_type = data.get("type","instagram_post")
     topic = data.get("topic","")
     result = generate_content(content_type, topic, restaurant_id=rid)
@@ -783,7 +821,11 @@ def content_calendar(current_user):
 @login_required
 def regenerate_draft(review_id, current_user):
     """Regenerate AI draft for a review."""
-    from models import get_conn, update_draft
+    from models import get_conn, get_approved_examples
+    from drafter import draft_response
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"regen:{current_user['restaurant_id']}", max_calls=10, window_secs=60):
+        return jsonify(ok=False, error="Too many regenerations — please wait a moment and try again.")
     conn = get_conn()
     row = conn.execute("SELECT * FROM reviews WHERE id=? AND restaurant_id=?",
                        (review_id, current_user["restaurant_id"])).fetchone()
@@ -793,92 +835,23 @@ def regenerate_draft(review_id, current_user):
     r = dict(row)
     restaurant = get_restaurant(current_user["restaurant_id"])
     try:
-        import anthropic
-        client = anthropic.Anthropic()
-        sentiment_note = {"positive":"positive","negative":"negative","neutral":"neutral"}.get(r.get("sentiment","neutral"),"neutral")
-
-        # Pull approved examples to teach the AI this owner's style
-        from models import get_approved_examples
+        # Delegate to drafter.draft_response() — this used to be a separate,
+        # inline reimplementation of the same prompt (on Haiku, with no retry,
+        # no temperature, and no urgency awareness) that had drifted out of
+        # sync with drafter.py's version. Sharing one implementation means a
+        # regenerated draft gets the same quality/model/urgency-escalation as
+        # the original draft.
         examples = get_approved_examples(current_user["restaurant_id"], limit=4)
-        examples_block = ""
-        if examples:
-            ex_lines = "\n".join([
-                f"  Review ({e['rating']}★): \"{e['review']}\"\n  Response: \"{e['response']}\""
-                for e in examples
-            ])
-            examples_block = f"\n\nHere are {len(examples)} recent responses this owner approved — match this exact tone and style:\n{ex_lines}"
-
-        # Extract reviewer first name if available
-        reviewer_name = ""
-        if r.get("review_name"):
-            first = r["review_name"].strip().split()[0]
-            # Only use if it looks like a real name (not "A Google User" etc)
-            if len(first) > 1 and first.lower() not in ("a","an","the","anonymous","user","google","yelp"):
-                reviewer_name = first
-
-        # Pull recurring negative themes to address patterns
-        theme_context = ""
-        if sentiment_note == "negative":
-            try:
-                from models import get_conn as _gc_r
-                _conn_r = _gc_r()
-                recent_neg = _conn_r.execute("""
-                    SELECT text FROM reviews
-                    WHERE restaurant_id=? AND sentiment='negative'
-                    AND response_status NOT IN ('skipped')
-                    ORDER BY fetched_at DESC LIMIT 5
-                """, (current_user["restaurant_id"],)).fetchall()
-                _conn_r.close()
-                if len(recent_neg) >= 3:
-                    theme_context = f"\n\nNote: This restaurant has had {len(recent_neg)} negative reviews recently. If this review shares themes with common complaints, acknowledge the pattern and note that it's being actively addressed."
-            except Exception:
-                pass
-
-        # Platform-specific guidance
-        platform = r.get("platform", "google")
-        if platform == "google":
-            platform_guidance = "This is a Google review — naturally include the restaurant name once for SEO. Keep it professional and inviting."
-        elif platform == "yelp":
-            platform_guidance = "This is a Yelp review — be conversational and genuine. Do NOT include the restaurant name repeatedly."
-        else:
-            platform_guidance = "Keep the response professional and genuine."
-
-        # Length calibration by rating
-        rating = r.get("rating", 3)
-        if rating >= 4:
-            length_guidance = "Keep it brief and warm — 25-40 words is ideal for a positive review. Don't over-explain."
-        elif rating == 3:
-            length_guidance = "Keep it 40-60 words — acknowledge both the positives and address any concerns mentioned."
-        else:
-            length_guidance = "This needs a fuller response — 60-80 words. Acknowledge specific complaints mentioned, apologize sincerely, and explain what will be done differently."
-
-        # Build reviewer address
-        reviewer_line = f"Address the reviewer as {reviewer_name} by name at the start." if reviewer_name else "Do not invent a name — start without one."
-
-        prompt = f"""Write a professional, warm restaurant response to this {sentiment_note} review.
-
-Restaurant: {restaurant.name}
-Platform: {platform_guidance}
-Voice guidance: {restaurant.voice_notes or "Warm, genuine, never corporate. Always invite guests back."}
-Sign off as: {restaurant.sign_off_name or restaurant.name}
-Never use: {restaurant.never_say or ""}{examples_block}
-{reviewer_line}
-Length: {length_guidance}
-
-IMPORTANT: If the reviewer mentions specific complaints (cold food, slow service, wrong order, etc.) — address each one directly by name. Do not give a generic apology.{theme_context}
-
-Review (rating: {r["rating"]}/5):
-{r["text"]}
-
-Write ONLY the response, no preamble. Sound like a real person, not a PR firm."""
-
-        msg = client.messages.create(
-            model=os.getenv("CLAUDE_MODEL","claude-haiku-4-5-20251001"),
-            max_tokens=300,
-            messages=[{"role":"user","content":prompt}]
+        new_draft = draft_response(
+            review_id, r.get("rating", 3), r["text"], r.get("sentiment", "neutral"),
+            restaurant.name,
+            voice_notes=restaurant.voice_notes or "",
+            restaurant_id=current_user["restaurant_id"],
+            approved_examples=examples,
+            sign_off=restaurant.sign_off_name or restaurant.name,
+            never_say=restaurant.never_say or "",
+            urgency=r.get("urgency", "normal"),
         )
-        new_draft = msg.content[0].text.strip()
-        update_draft(review_id, new_draft)
         conn = get_conn()
         conn.execute(
             "UPDATE reviews SET response_status='drafted', regenerate_count=COALESCE(regenerate_count,0)+1 WHERE id=? AND restaurant_id=?",
@@ -1129,6 +1102,9 @@ def _run_schedule_job(job_id, restaurant_id):
 def generate_schedule_json(current_user):
     """Start async schedule generation. Returns job_id for polling."""
     import threading, uuid
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"schedule:{current_user['restaurant_id']}", max_calls=3, window_secs=60):
+        return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again.")
     job_id = str(uuid.uuid4())
     _schedule_jobs[job_id] = {"status": "pending", "result": None}
     t = threading.Thread(target=_run_schedule_job, args=(job_id, current_user["restaurant_id"]), daemon=True)
@@ -1966,6 +1942,9 @@ def ai_visibility(current_user):
 
 def _ai_visibility_inner(current_user):
     rid = current_user["restaurant_id"]
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"aivis:{rid}", max_calls=3, window_secs=60):
+        return jsonify(ok=False, error="Too many visibility checks — please wait a moment and try again.")
     r = get_restaurant(rid)
     if not r:
         return jsonify(ok=False, error="Restaurant not found"), 404

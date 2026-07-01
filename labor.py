@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import anthropic
+from ai_utils import create_with_retry
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 DEFAULT_HOURLY_RATE = 26.0  # fallback if not set per client
@@ -367,6 +368,7 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
 
     # Pull labor history for trend awareness
     trend_context = ""
+    has_trend = False
     if restaurant_id:
         try:
             from models import get_labor_history, save_labor_snapshot
@@ -378,6 +380,7 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
                 trend_context = f"\n- Previous uploads (for trend comparison): {'; '.join(trend_lines)}"
                 # Check if trending up or down
                 if len(history) >= 2:
+                    has_trend = True
                     diff = analysis['overall_labor_pct'] - history[0]['labor_pct']
                     if abs(diff) >= 1:
                         direction = "UP" if diff > 0 else "DOWN"
@@ -418,6 +421,13 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
             constraints_context += f"  * {note['employee_name']}: {note['notes']}\n"
         constraints_context += "  IMPORTANT: If an employee appears in overtime risk but has a constraint allowing overtime or extra hours, explicitly acknowledge this and do NOT flag it as a problem."
 
+    forecast_instruction = (
+        '\nAfter the 3 recommendations, add one final line starting with exactly "FORECAST:" '
+        "— one sentence predicting where labor % is headed next week based on the trend data "
+        "above, and what happens if the current trajectory continues. Only write this if the "
+        "trend direction is genuinely supported by the data given."
+    ) if has_trend else ""
+
     prompt = f"""You are the Cavnar AI Consultant — a friendly, experienced restaurant labor advisor.
 You are writing a weekly labor summary for {owner_name or "the owner"} of {restaurant_name}.
 Today's date: {today_labor}{upload_context}{holiday_context}
@@ -444,11 +454,12 @@ Tone: warm, direct, human. Use the owner name once or twice. Be specific with nu
 Always use $ signs before dollar amounts (e.g. $2,400 not 2400 or 2,400).
 Do NOT use markdown, asterisks, bold, or special characters.
 There must be EXACTLY 3 numbered recommendations and nothing after number 3.
-The Recommendations section must start with exactly the word "Recommendations:" on its own line."""
+The Recommendations section must start with exactly the word "Recommendations:" on its own line.{forecast_instruction}"""
 
-    msg = client.messages.create(
-        model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-        max_tokens=600,
+    msg = create_with_retry(
+        client,
+        model=os.getenv("LABOR_INSIGHT_MODEL", "claude-sonnet-5"),
+        max_tokens=650,
         messages=[{"role": "user", "content": prompt}],
     )
     # Strip any markdown that slips through
@@ -798,8 +809,9 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
 - Notes column: one brief phrase per shift (e.g. "YoY match - high volume", "staggered opener", "cross-trained flex")
 - IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time.{constraints}"""
 
-    msg = client.messages.create(
-        model=os.getenv("SCHEDULE_MODEL", "claude-sonnet-4-6"),
+    msg = create_with_retry(
+        client,
+        model=os.getenv("SCHEDULE_MODEL", "claude-sonnet-5"),
         max_tokens=8000,
         messages=[{"role": "user", "content": prompt}],
     )

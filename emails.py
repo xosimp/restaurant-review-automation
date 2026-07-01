@@ -5,6 +5,39 @@ import os
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 FROM_EMAIL     = os.getenv("FROM_EMAIL", "will@cavnar.ai")
 
+
+def generate_email_personalization(context: str, fallback: str) -> str:
+    """Ask Claude for one short, warm paragraph personalizing an onboarding/
+    summary email using the real activity data passed in `context`. Falls
+    back to static copy if the API isn't configured or the call fails —
+    an email should never fail to send because personalization couldn't
+    be generated."""
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        return fallback
+    try:
+        import anthropic
+        from ai_utils import create_with_retry
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        prompt = (
+            "You are Will, writing a short, warm, genuine paragraph (2-4 sentences) "
+            "in a client email for a restaurant using the Cavnar AI dashboard. "
+            "Write in first person as Will. No greeting ('Hi X') and no sign-off — "
+            "just the paragraph itself, it will be inserted into an existing email. "
+            "Reference the specific data given below naturally, not as a list. "
+            "Plain text only, no markdown.\n\n" + context
+        )
+        msg = create_with_retry(
+            client,
+            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
+            max_tokens=200,
+            temperature=0.6,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = msg.content[0].text.strip()
+        return text if text else fallback
+    except Exception:
+        return fallback
+
 def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: str = None):
     """Send 2FA verification code email."""
     if not RESEND_API_KEY:
@@ -510,7 +543,7 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
     </p>
   </div>"""
 
-        # Pre-compute activity sentences
+        # Pre-compute activity sentences (fallback copy if AI personalization fails)
         if approved_count > 0:
             s = "s" if approved_count != 1 else ""
             activity_sentence = f"You've approved {approved_count} review response{s} so far — great start."
@@ -521,6 +554,19 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
             pending_sentence = f"You still have {pending_count} review{s} waiting for your approval."
         else:
             pending_sentence = ""
+        fallback_paragraph = (
+            f"It's been one week since {restaurant_name} went live on Cavnar AI. "
+            f"{activity_sentence} {pending_sentence}"
+        ).strip()
+
+        ai_context = (
+            f"Restaurant: {restaurant_name}. It's been one week since they went live on the dashboard.\n"
+            f"Approved review responses so far: {approved_count}.\n"
+            f"Reviews still pending their approval: {pending_count}.\n"
+            f"Modules: {'Labor Optimizer, ' if has_labor else ''}{'Inventory Control' if has_inventory else ''}\n"
+            "Write the one-week check-in paragraph referencing this activity naturally."
+        )
+        body_paragraph = generate_email_personalization(ai_context, fallback_paragraph)
 
         _resend.Emails.send({
             "from": f"Will Cavnar <{FROM_EMAIL}>",
@@ -536,9 +582,7 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:16px">
-    It's been one week since {{restaurant_name}} went live on Cavnar AI.
-    {{activity_sentence}}
-    {{pending_sentence}}
+    {body_paragraph}
   </p>
   {upload_block}
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:20px">
@@ -620,6 +664,7 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
 
         # Pull review stats for the month
         review_block = ""
+        total = avg = pos = neg = 0
         if has_reviews and restaurant_id:
             try:
                 from models import get_reviews_since
@@ -659,11 +704,25 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
     <p style="font-size:13px;color:#3a3530;margin:0;line-height:1.6">Food cost and waste tracking has been running. Check your dashboard for this month's waste report and ordering recommendations.</p>
   </div>"""
         if has_marketing:
-            module_blocks += """
+            module_blocks += f"""
   <div style="background:#f5f3f0;border-radius:8px;padding:14px 20px;margin-bottom:12px">
     <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#7a736a;margin-bottom:6px">Marketing Autopilot</div>
     <p style="font-size:13px;color:#3a3530;margin:0;line-height:1.6">Your AI content engine has been ready all month. Log in to generate your content calendar and social posts for {now.strftime("%B")}.</p>
   </div>"""
+
+        # AI-personalized summary paragraph, using the real stats pulled above
+        fallback_paragraph = f"Here's a look at how {restaurant_name} performed on Cavnar AI in {month_name}."
+        modules_in_use = ", ".join(m for m, on in [
+            ("Review Intelligence", has_reviews), ("Labor Optimizer", has_labor),
+            ("Inventory Control", has_inventory), ("Marketing Autopilot", has_marketing),
+        ] if on) or "Review Intelligence"
+        ai_context = (
+            f"Restaurant: {restaurant_name}. This is their {month_name} {year} monthly summary email.\n"
+            f"Modules in use: {modules_in_use}.\n"
+            + (f"Reviews this month: {total} total, {avg}★ average, {pos} positive, {neg} negative.\n" if total else "No new reviews this month.\n")
+            + "Write the opening summary paragraph (1-2 sentences) referencing this real data naturally."
+        )
+        summary_paragraph = generate_email_personalization(ai_context, fallback_paragraph)
 
         _resend.Emails.send({
             "from": f"Will Cavnar <{FROM_EMAIL}>",
@@ -679,7 +738,7 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:20px">
-    Here's a look at how <strong>{restaurant_name}</strong> performed on Cavnar AI in {month_name}.
+    {summary_paragraph}
   </p>
   {review_block}
   {module_blocks}
@@ -700,7 +759,7 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
 
 
 def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str = None,
-                           modules: list = None):
+                           modules: list = None, restaurant_id: int = None):
     """Day 30 — 30-day check-in, celebrate milestone, soft feedback ask."""
     if not RESEND_API_KEY:
         return
@@ -722,6 +781,30 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
     If you ever want to expand what the dashboard covers, just reply here and I'll walk you through what's included.
   </p>"""
 
+        # Pull real 30-day activity for personalization
+        total = avg_rating = responded = 0
+        if restaurant_id:
+            try:
+                from models import get_review_stats
+                rstats = get_review_stats(restaurant_id)
+                total = rstats.get("total", 0) or 0
+                avg_rating = round(rstats.get("avg_rating", 0) or 0, 1)
+                responded = rstats.get("responded", 0) or 0
+            except Exception:
+                pass
+
+        fallback_paragraph = (
+            f"{restaurant_name} has been on Cavnar AI for 30 days. "
+            "That's a full month of reviews monitored, responses drafted, and data working quietly in the background for you."
+        )
+        ai_context = (
+            f"Restaurant: {restaurant_name}. They've been on the Cavnar AI dashboard for 30 days.\n"
+            f"Reviews handled this month: {total}. Responses given: {responded}. Average rating: {avg_rating or 'n/a'}.\n"
+            f"Modules in use: {', '.join(modules) if modules else 'Review Intelligence'}.\n"
+            "Write the 30-day milestone paragraph referencing this real activity — celebratory but genuine, not over the top."
+        )
+        body_paragraph = generate_email_personalization(ai_context, fallback_paragraph)
+
         _resend.Emails.send({
             "from": f"Will Cavnar <{FROM_EMAIL}>",
             "to": [to_email],
@@ -736,8 +819,7 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:16px">
-    <strong>{restaurant_name}</strong> has been on Cavnar AI for 30 days.
-    That's a full month of reviews monitored, responses drafted, and data working quietly in the background for you.
+    {body_paragraph}
   </p>
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:16px">
     I'd love to hear how it's feeling — is the dashboard saving you time? Anything that could work better?

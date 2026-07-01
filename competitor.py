@@ -3,6 +3,7 @@ competitor.py — Competitor intelligence for Cavnar AI
 Pulls nearby restaurant reviews via Google Places API and generates AI insights.
 """
 import os, json, requests, anthropic
+from ai_utils import create_with_retry
 
 PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
 ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
@@ -105,9 +106,11 @@ def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "") -> st
             "Only include actual menu items. Max 300 words. "
             "If no menu items found, respond with exactly: NO_MENU_FOUND\n\nMenu text:\n" + text
         )
-        msg = client.messages.create(
+        msg = create_with_retry(
+            client,
             model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
             max_tokens=400,
+            temperature=0.2,
             messages=[{"role": "user", "content": extract_prompt}]
         )
         result = msg.content[0].text.strip()
@@ -124,54 +127,18 @@ def fetch_menu_from_url(menu_url: str) -> str:
     try:
         import requests as _req
         import anthropic, os
-        import time as _time, random as _random
-        # Realistic browser header sets — rotate through them
-        browser_profiles = [
-            {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Cache-Control": "max-age=0",
-            },
-            {
-                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-            },
-            {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-            },
-        ]
-        page_text = ""
-        session = _req.Session()
-        for i, profile in enumerate(browser_profiles):
-            try:
-                # Small random delay between retries — looks more human
-                if page_text == "" and i > 0:
-                    _time.sleep(_random.uniform(0.5, 1.5))
-                r = session.get(menu_url, headers=profile, timeout=12, allow_redirects=True)
-                if r.status_code == 200 and len(r.text) > 500:
-                    page_text = r.text[:10000]
-                    break
-                elif r.status_code == 403:
-                    continue  # Bot blocked — try next profile
-            except Exception:
-                continue
-        if not page_text:
-            return ""  # All profiles blocked
+        # Identify as a normal browser so servers don't reject a bare
+        # "python-requests" client — this is a single honest identity, not
+        # rotated or retried to work around a site's bot-blocking response.
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        r = _req.get(menu_url, headers=headers, timeout=12, allow_redirects=True)
+        if r.status_code != 200 or len(r.text) <= 500:
+            return ""  # Not available, or the site declined the request — fail cleanly
+        page_text = r.text[:10000]
 
         # Check if page has useful content or is just a JS shell
         # Strip script/style tags first, then check remaining content
@@ -191,9 +158,11 @@ def fetch_menu_from_url(menu_url: str) -> str:
             "Only include actual menu items. Skip prices and HTML. Max 300 words. "
             "If no menu items found, respond with exactly: NO_MENU_FOUND\n\nPage content:\n" + page_text
         )
-        msg = client.messages.create(
+        msg = create_with_retry(
+            client,
             model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
             max_tokens=400,
+            temperature=0.2,
             messages=[{"role": "user", "content": extract_prompt}]
         )
         result = msg.content[0].text.strip()
@@ -444,8 +413,9 @@ Recommendations:
 
 Tone: sharp, direct, trusted business advisor. No generic advice. Name specific competitors and cite specific review themes. Always use $ signs before dollar amounts."""
 
-        msg = client.messages.create(
-            model=os.getenv("CLAUDE_REPORTER_MODEL", "claude-sonnet-4-6"),
+        msg = create_with_retry(
+            client,
+            model=os.getenv("CLAUDE_REPORTER_MODEL", "claude-sonnet-5"),
             max_tokens=900,
             messages=[{"role": "user", "content": prompt}]
         )

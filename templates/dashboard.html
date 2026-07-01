@@ -3995,6 +3995,13 @@ function processInsightHtml(html){
   for(var _i=0;_i<lines.length;_i++){
     var ln = lines[_i].trim();
     if(!ln) continue;
+    if(ln.indexOf('🔮')===0){
+      ln=ln.slice(2).replace(/^[️\s]+/,'');
+      out += '<div style="margin-top:8px;padding:8px 10px;background:rgba(200,75,47,.10);border-left:2px solid var(--ember);border-radius:0 6px 6px 0">'
+           + '<div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ember);margin-bottom:3px">Forecast</div>'
+           + '<div style="font-style:italic">'+ln+'</div></div>';
+      continue;
+    }
     var icon = '';
     for(var k in _svgs){
       if(ln.indexOf(k)===0){ icon=_svgs[k]; ln=ln.slice(k.length).replace(/^[️\s]+/,''); break; }

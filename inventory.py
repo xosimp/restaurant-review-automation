@@ -5,6 +5,7 @@ import os, csv, json
 import anthropic
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from ai_utils import create_with_retry
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -454,6 +455,14 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
     except Exception as _he:
         print(f"[inventory holiday context] {_he}")
 
+    has_trend = bool(wow_context)
+    forecast_instruction = (
+        '\n- Then, on a final new line, add exactly "FORECAST:" followed by one sentence '
+        "predicting where waste cost is headed next week based on the week-over-week trend "
+        "above, and what that means in dollars if it continues. Only include this if the trend "
+        "is genuinely supported by the data given."
+    ) if has_trend else ""
+
     prompt = f"""You are a food cost consultant reviewing weekly inventory data for a restaurant.
 {rest_line}
 {name_line}
@@ -500,11 +509,12 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
 Finally, on a new line with NO number, write one short warm closing sentence:
 - Tied loosely to how the week looks — good week gets a small celebration, rough week gets encouragement
 - Never generic filler, no more than one sentence
-- Do NOT start it with a number"""
+- Do NOT start it with a number{forecast_instruction}"""
 
-    msg = client.messages.create(
-        model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
-        max_tokens=900,
+    msg = create_with_retry(
+        client,
+        model=os.getenv("INVENTORY_INSIGHT_MODEL", "claude-sonnet-5"),
+        max_tokens=950,
         messages=[{"role": "user", "content": prompt}],
     )
     result = msg.content[0].text.strip()

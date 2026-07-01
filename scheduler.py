@@ -684,6 +684,7 @@ def run_onboarding_sequence():
                     restaurant_name=r.name,
                     owner_name=r.owner_name,
                     modules=modules,
+                    restaurant_id=r.id,
                 )
                 mark_onboarding_sent(r.id, "day_30")
                 log_email(r.id, "Onboarding Day 30", r.owner_email, f"30-day check-in — {r.name}")

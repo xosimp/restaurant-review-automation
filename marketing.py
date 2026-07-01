@@ -3,6 +3,7 @@ marketing.py — AI-powered marketing content generation for restaurants
 """
 import os
 import anthropic
+from ai_utils import create_with_retry
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -364,8 +365,9 @@ def generate_content(content_type: str, topic: str,
         topic=topic,
     ) + location_context + recent_context + seasonal_context + never_clause + menu_clause + perf_context
 
-    msg = client.messages.create(
-        model=os.getenv("MARKETING_MODEL", "claude-sonnet-4-6"),
+    msg = create_with_retry(
+        client,
+        model=os.getenv("MARKETING_MODEL", "claude-sonnet-5"),
         max_tokens=500,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -442,8 +444,9 @@ Rules:
 - Make every idea specific enough that the owner knows exactly what to post
 - NEVER invent geographic or setting details — only reference location specifics (waterfront, patio, views) if they are explicitly mentioned in the restaurant profile above"""
 
-    msg = client.messages.create(
-        model=os.getenv("MARKETING_MODEL", "claude-sonnet-4-6"),
+    msg = create_with_retry(
+        client,
+        model=os.getenv("MARKETING_MODEL", "claude-sonnet-5"),
         max_tokens=600,
         messages=[{"role": "user", "content": prompt}],
     )

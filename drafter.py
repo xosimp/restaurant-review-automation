@@ -1,5 +1,6 @@
 import os, re, anthropic
 from models import get_conn, update_draft, get_pending_drafts, get_restaurant
+from ai_utils import create_with_retry
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -52,7 +53,8 @@ def draft_response(review_id: int, rating: int, text: str,
                    voice_notes: str = "", restaurant_id: int = None,
                    approved_examples: list = None,
                    sign_off: str = None,
-                   never_say: str = None) -> str:
+                   never_say: str = None,
+                   urgency: str = "normal") -> str:
 
     # Extract reviewer first name if available
     reviewer_name = ""
@@ -112,15 +114,15 @@ def draft_response(review_id: int, rating: int, text: str,
     # Sign off
     sign_off_name = sign_off or restaurant_name
 
-    # Health/safety escalation
-    health_keywords = ['sick', 'food poison', 'ill ', 'vomit', 'allergic reaction',
-                       'hospital', 'health department', 'cockroach', 'rat', 'rodent',
-                       'bug in', 'foreign object', 'glass in', 'metal in', 'hair in',
-                       'mold', 'raw chicken', 'raw meat']
-    is_health_issue = rating <= 2 and any(kw in text.lower() for kw in health_keywords)
-    if is_health_issue:
-        length_note = "80-100 words — this is a serious health/safety concern, it requires a full and careful response."
-    health_note = """\nIMPORTANT: This review mentions a health or safety issue. Take it extremely seriously — no defensiveness, no minimising. Apologise specifically, invite them to contact the owner directly by email or phone.""" if is_health_issue else ""
+    # Serious-issue escalation — driven by analyser.py's AI urgency classification
+    # (food safety, injury, legal threats, staff misconduct, etc.) rather than a
+    # separate keyword list here, which used to disagree with the AI's own
+    # classification and could false-positive on negated mentions (e.g. "no
+    # roach problem at all!" would have tripped the old keyword match).
+    is_urgent_issue = urgency == "high"
+    if is_urgent_issue:
+        length_note = "80-100 words — this is a serious concern, it requires a full and careful response."
+    health_note = """\nIMPORTANT: This review was flagged as urgent (health/safety, injury, legal threat, or staff misconduct concern). Take it extremely seriously — no defensiveness, no minimising. Apologise specifically, invite them to contact the owner directly by email or phone.""" if is_urgent_issue else ""
 
     prompt = f"""Write a public {sentiment} review response for {restaurant_name}.
 
@@ -137,9 +139,11 @@ Review ({rating}/5 stars, {sentiment}):
 
 Write ONLY the response. No preamble, no labels, no quotation marks around the response. Sound like a real person — not a PR firm, not a template."""
 
-    message = client.messages.create(
-        model=os.getenv("DRAFTER_MODEL", "claude-sonnet-4-6"),
+    message = create_with_retry(
+        client,
+        model=os.getenv("DRAFTER_MODEL", "claude-sonnet-5"),
         max_tokens=300,
+        temperature=0.7,
         messages=[{"role": "user", "content": prompt}],
     )
     draft = message.content[0].text.strip()
@@ -168,6 +172,7 @@ def draft_pending(restaurant_id: int, limit: int = 50):
                 approved_examples=approved_examples,
                 sign_off=restaurant.sign_off_name or restaurant.name,
                 never_say=restaurant.never_say or "",
+                urgency=r.urgency,
             )
             print(f"    [{r.id}] drafted ({len(draft)} chars)")
         except Exception as e:

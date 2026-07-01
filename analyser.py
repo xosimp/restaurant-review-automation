@@ -1,5 +1,6 @@
 import os, json, anthropic
 from models import get_conn, update_analysis, get_pending_analysis
+from ai_utils import create_with_retry
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -37,9 +38,11 @@ def analyse_review(review_id: int, rating: int, text: str) -> dict:
         text=text.replace('"', "'"),
         categories=", ".join(CATEGORIES),
     )
-    message = client.messages.create(
+    message = create_with_retry(
+        client,
         model="claude-haiku-4-5-20251001",
         max_tokens=256,
+        temperature=0.2,
         messages=[{"role": "user", "content": prompt}],
     )
     raw = message.content[0].text.strip()
