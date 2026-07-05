@@ -44,3 +44,13 @@ def test_new_dbs_get_timezone_column(db_path):
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(restaurants)").fetchall()]
     conn.close()
     assert "timezone" in cols
+
+
+def test_create_restaurant_persists_timezone(db_path):
+    """create_restaurant's explicit INSERT column list silently dropped the
+    field at first — this pins the round-trip."""
+    from models import create_restaurant, get_restaurant
+    rid = create_restaurant(
+        Restaurant(name="LA Spot", owner_email="la@x.com", timezone="America/Los_Angeles"),
+        db_path=db_path)
+    assert get_restaurant(rid, db_path=db_path).timezone == "America/Los_Angeles"

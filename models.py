@@ -1037,8 +1037,8 @@ def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
             hourly_rate, labor_target_pct, stripe_customer_id,
             location_group, location_name, pos_system, reviews_live, billing_status,
             service_tier, module_reviews, module_labor, module_inventory, module_marketing,
-            owner_name, owner_phone, digest_day, digest_enabled, created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            owner_name, owner_phone, digest_day, digest_enabled, created_at, timezone)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (r.name, r.owner_email, r.google_place_id, r.yelp_business_id,
           r.voice_notes, r.neighborhood, r.vibe, r.known_for,
           r.sign_off_name, r.never_say, r.hourly_rate, r.labor_target_pct,
@@ -1046,7 +1046,8 @@ def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
           r.service_tier,
           r.module_reviews, r.module_labor, r.module_inventory,
           r.module_marketing, r.owner_name, r.owner_phone,
-          r.digest_day, r.digest_enabled, r.created_at))
+          r.digest_day, r.digest_enabled, r.created_at,
+          r.timezone or "America/Chicago"))
     conn.commit()
     rid = cur.lastrowid
     conn.close()
