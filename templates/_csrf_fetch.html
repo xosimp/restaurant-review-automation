@@ -1,0 +1,29 @@
+<script>
+/* CSRF double-submit: echo the csrf_js cookie back as an X-CSRF header on
+   every same-origin state-changing fetch. Must load before any other script
+   so all later fetch() calls go through the wrapper. ES5 only. */
+(function(){
+  var _origFetch = window.fetch;
+  if (!_origFetch) return;
+  function _csrfTok(){
+    var m = document.cookie.match(/(?:^|;\s*)csrf_js=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  window.fetch = function(input, init){
+    var url = (typeof input === 'string') ? input : ((input && input.url) || '');
+    var external = /^https?:\/\//i.test(url) && url.indexOf(window.location.origin) !== 0;
+    var method = ((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+    if (!external && method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+      init = init || {};
+      var h = init.headers || {};
+      if (typeof Headers !== 'undefined' && h instanceof Headers) {
+        h.set('X-CSRF', _csrfTok());
+      } else {
+        h['X-CSRF'] = _csrfTok();
+      }
+      init.headers = h;
+    }
+    return _origFetch.call(window, input, init);
+  };
+})();
+</script>

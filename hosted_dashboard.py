@@ -338,6 +338,14 @@ from toast_routes import toast_bp
 from square_routes import square_bp
 from clover_routes import clover_bp
 from status_routes import status_bp
+from csrf import csrf_protect, ensure_csrf_cookie
+
+# Every browser-facing blueprint gets double-submit CSRF enforcement.
+# webhook_bp (HMAC-verified external callers), auth_bp (own form tokens),
+# and status_bp (public GETs) are intentionally exempt.
+for _bp in (admin_bp, client_bp, social_bp, toast_bp, square_bp, clover_bp):
+    csrf_protect(_bp)
+
 app.register_blueprint(admin_bp)
 app.register_blueprint(webhook_bp)
 app.register_blueprint(social_bp)
@@ -347,6 +355,8 @@ app.register_blueprint(toast_bp)
 app.register_blueprint(square_bp)
 app.register_blueprint(clover_bp)
 app.register_blueprint(status_bp)
+
+app.after_request(ensure_csrf_cookie)
 _secret_key = os.getenv("SECRET_KEY", "")
 if not _secret_key:
     _secret_key = os.urandom(32).hex()

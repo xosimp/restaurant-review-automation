@@ -715,6 +715,7 @@ document.documentElement.classList.add('pjs-loading');
 </script>
 </head>
 <body>
+{% include "_csrf_fetch.html" %}
 
 <!-- Branded upload loading overlay -->
 <div id="upload-loading-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.85);align-items:center;justify-content:center;flex-direction:column">
