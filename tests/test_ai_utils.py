@@ -35,10 +35,16 @@ def test_retry_recovers_from_transient_failure(monkeypatch):
 
 def test_retry_gives_up_after_budget(monkeypatch):
     monkeypatch.setattr("ai_utils.time.sleep", lambda s: None)
+    # Final failure triggers ops.capture — keep the test from writing to the
+    # real database.
+    import ops
+    captured = []
+    monkeypatch.setattr(ops, "capture", lambda e, **kw: captured.append(kw))
     client = FakeClient(failures=99, exc=_conn_error())
     with pytest.raises(anthropic.APIConnectionError):
         create_with_retry(client, retries=2, model="m", max_tokens=10)
     assert client.calls == 3  # 1 try + 2 retries, no more
+    assert captured and captured[0]["job"] == "ai_call"  # exhaustion was reported
 
 
 def test_non_retryable_error_raises_immediately():

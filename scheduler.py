@@ -13,6 +13,7 @@ Jobs:
 """
 import os, threading, time, logging, html as _html
 from status_manager import record_scheduler_heartbeat, run_health_checks
+import ops as _ops
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo as _ZI_sch
 def _chi_now():
@@ -187,16 +188,19 @@ def run_daily_fetch():
                             reviews += fetch_reviews_via_gmb(token, loc_id, rid)
                 except Exception as e:
                     log.error(f"GMB fetch [{restaurant.name}]: {e}")
+                    _ops.capture(e, job="review_fetch", context=f"GMB {restaurant.name}")
             elif restaurant.google_place_id:
                 try:
                     reviews += fetch_google(restaurant.google_place_id, rid)
                 except Exception as e:
                     log.error(f"Google fetch [{restaurant.name}]: {e}")
+                    _ops.capture(e, job="review_fetch", context=f"Google {restaurant.name}")
             if restaurant.yelp_business_id:
                 try:
                     reviews += fetch_yelp(restaurant.yelp_business_id, rid)
                 except Exception as e:
                     log.error(f"Yelp fetch [{restaurant.name}]: {e}")
+                    _ops.capture(e, job="review_fetch", context=f"Yelp {restaurant.name}")
 
             update_last_fetched(rid)
 
@@ -241,6 +245,7 @@ def run_daily_fetch():
                     analyse_review(r.id, r.rating, r.text)
                 except Exception as e:
                     log.error(f"Analyse error: {e}")
+                    _ops.capture(e, job="review_analyse", context=restaurant.name)
 
             # Draft — include approved examples for style learning
             from models import get_approved_examples
@@ -254,6 +259,7 @@ def run_daily_fetch():
                                   never_say=restaurant.never_say or "")
                 except Exception as e:
                     log.error(f"Draft error: {e}")
+                    _ops.capture(e, job="review_draft", context=restaurant.name)
 
             # Check for urgent reviews fetched in last hour
             conn = get_conn()
@@ -515,6 +521,7 @@ _last_onboard_date    = None
 _last_stale_inv_date  = None
 _last_inactive_date   = None
 _last_monthly_date    = None
+_last_opsdigest_date  = None
 
 
 def backup_db():
@@ -804,7 +811,7 @@ def check_inactive_clients():
 def scheduler_loop():
     global _last_fetch_date, _last_digest_date, _last_backup_date
     global _last_toast_sync_date, _last_onboard_date, _last_stale_inv_date
-    global _last_inactive_date, _last_monthly_date
+    global _last_inactive_date, _last_monthly_date, _last_opsdigest_date
     log.info("Scheduler started — review fetch every 4hr (8am/12pm/4pm/8pm CT), digests 9am on client's chosen day")
 
 
@@ -818,7 +825,7 @@ def scheduler_loop():
             if now.hour == 2 and _last_backup_date != today:
                 _last_backup_date = today
                 log.info("Running daily DB backup...")
-                backup_db()
+                _ops.run_job("backup_db", backup_db)
 
             if now.hour == 6 and now.weekday() == 0 and _last_fetch_date != today:
                 log.info("Running weekly competitor analysis...")
@@ -840,28 +847,33 @@ def scheduler_loop():
             if now.hour == 3 and _last_toast_sync_date != today:
                 _last_toast_sync_date = today
                 log.info("Running nightly Toast POS sync...")
-                run_toast_sync()
+                _ops.run_job("pos_sync", run_toast_sync)
 
             if now.hour == 7 and _last_fetch_date != today:
                 log.info("Refreshing expiring IG/FB tokens...")
-                refresh_expiring_tokens()
+                _ops.run_job("refresh_tokens", refresh_expiring_tokens)
 
             # Fetch every 4 hours: 8am, 12pm, 4pm, 8pm Chicago time
             if now.hour in (8, 12, 16, 20) and _last_fetch_date != f"{today}-{now.hour}":
                 _last_fetch_date = f"{today}-{now.hour}"
                 log.info(f"Running review fetch (every 4hr) at {now.hour}:00 CT...")
-                run_daily_fetch()
+                _ops.run_job("review_fetch", run_daily_fetch)
+
+            # 8am daily — operator failure digest (only sends if something failed)
+            if now.hour == 8 and _last_opsdigest_date != today:
+                _last_opsdigest_date = today
+                _ops.run_job("ops_failure_digest", _ops.send_failure_digest)
 
             if now.hour == 9 and _last_digest_date != today:
                 _last_digest_date = today
                 log.info("Running weekly digest check...")
-                run_weekly_digests()
+                _ops.run_job("weekly_digests", run_weekly_digests)
 
             if now.hour == 10 and now.weekday() == 0 and _last_stale_inv_date != today:
                 _last_stale_inv_date = today
                 # Monday 10am — check for stale inventory data
                 log.info("Running stale inventory check...")
-                check_stale_inventory()
+                _ops.run_job("stale_inventory", check_stale_inventory)
 
             # 10am daily — no-response + trend/threshold/labor alerts
             if now.hour == 10 and _last_fetch_date != f"noresponse-{today}":
@@ -903,13 +915,13 @@ def scheduler_loop():
                 _last_onboard_date = today
                 # 10am daily — onboarding email sequence
                 log.info("Running onboarding sequence check...")
-                run_onboarding_sequence()
+                _ops.run_job("onboarding_emails", run_onboarding_sequence)
 
             if now.hour == 11 and now.weekday() == 0 and _last_inactive_date != today:
                 _last_inactive_date = today
                 # Monday 11am — inactive client check
                 log.info("Running inactive client check...")
-                check_inactive_clients()
+                _ops.run_job("inactive_clients", check_inactive_clients)
 
             try:
                 record_scheduler_heartbeat()

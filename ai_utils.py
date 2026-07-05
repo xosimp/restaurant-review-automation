@@ -32,6 +32,14 @@ def create_with_retry(client, retries=2, backoff=1.5, **kwargs):
         except _RETRYABLE as e:
             attempt += 1
             if attempt > retries:
+                # Retry budget exhausted — this is the "AI is down" signal the
+                # operator digest exists for, so record it before re-raising.
+                try:
+                    import ops
+                    ops.capture(e, job="ai_call",
+                                context=str(kwargs.get("model", "unknown")))
+                except Exception:
+                    pass
                 raise
             time.sleep(backoff ** attempt)
 
