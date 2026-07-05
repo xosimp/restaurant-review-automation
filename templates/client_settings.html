@@ -129,6 +129,20 @@ textarea{resize:vertical;min-height:60px}
           <label>Sign-off name (for emails & responses)</label>
           <input type="text" id="sign_off_name" value="{{ restaurant.sign_off_name or '' }}" placeholder="e.g. Sarah, or The Maplewood Team">
         </div>
+        <div class="form-group">
+          <label>Timezone</label>
+          {% set tz = restaurant.timezone or 'America/Chicago' %}
+          <select id="timezone">
+            <option value="America/New_York" {{ 'selected' if tz == 'America/New_York' else '' }}>Eastern (New York)</option>
+            <option value="America/Chicago" {{ 'selected' if tz == 'America/Chicago' else '' }}>Central (Chicago)</option>
+            <option value="America/Denver" {{ 'selected' if tz == 'America/Denver' else '' }}>Mountain (Denver)</option>
+            <option value="America/Phoenix" {{ 'selected' if tz == 'America/Phoenix' else '' }}>Arizona (Phoenix)</option>
+            <option value="America/Los_Angeles" {{ 'selected' if tz == 'America/Los_Angeles' else '' }}>Pacific (Los Angeles)</option>
+            <option value="America/Anchorage" {{ 'selected' if tz == 'America/Anchorage' else '' }}>Alaska (Anchorage)</option>
+            <option value="Pacific/Honolulu" {{ 'selected' if tz == 'Pacific/Honolulu' else '' }}>Hawaii (Honolulu)</option>
+          </select>
+          <div class="hint">Drives "today", weekly trends, and schedule weeks for this restaurant</div>
+        </div>
       </div>
     </div>
   </div>
@@ -730,6 +744,7 @@ async function saveSettings() {
     digest_enabled:  parseInt(document.getElementById('digest_enabled').value),
     pos_system:      document.getElementById('pos_system').value,
     sign_off_name:   document.getElementById('sign_off_name').value,
+    timezone:        document.getElementById('timezone').value,
     google_place_id: document.getElementById('google_place_id').value,
     yelp_business_id:document.getElementById('yelp_business_id').value,
     reviews_live:    {{ 1 if restaurant.gmb_refresh_token else 0 }},

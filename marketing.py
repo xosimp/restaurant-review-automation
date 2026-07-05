@@ -312,10 +312,10 @@ def generate_content(content_type: str, topic: str,
         )
         recent_context = f"\n\nIMPORTANT: You have recently generated content about: {recent_topics}. Do NOT repeat these themes or topics. Be fresh and different."
 
-    # Seasonal awareness with real date
+    # Seasonal awareness with real date — the restaurant's date, not ours
     try:
-        from zoneinfo import ZoneInfo
-        now_dt = datetime.now(ZoneInfo('America/Chicago')).replace(tzinfo=None)
+        from time_utils import restaurant_now_by_id
+        now_dt = restaurant_now_by_id(restaurant_id, naive=True)
     except Exception:
         now_dt = datetime.now()
     month = now_dt.strftime("%B")
@@ -394,8 +394,8 @@ def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
     """Generate a week of content ideas using Claude. v2"""
     p = get_profile_for_restaurant(restaurant_id)
     from datetime import datetime as _dt, timedelta as _td
-    from zoneinfo import ZoneInfo as _ZI
-    now = _dt.now(_ZI('America/Chicago')).replace(tzinfo=None)
+    from time_utils import restaurant_now_by_id as _rnbi
+    now = _rnbi(restaurant_id, naive=True)
     # Sunday-based week — always show Sun through Sat of the CURRENT week
     # Week never changes until a new Sunday arrives
     days_since_sunday = (now.weekday() + 1) % 7  # Sun=0, Mon=1, ..., Sat=6

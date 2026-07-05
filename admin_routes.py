@@ -492,6 +492,20 @@ def client_settings_page(restaurant_id, current_user):
 def save_client_settings(restaurant_id, current_user):
     from models import update_restaurant
     data = request.get_json()
+
+    def _valid_tz(name):
+        """Only store real IANA zone names — a typo here would silently skew
+        every date this restaurant sees."""
+        name = (name or "").strip()
+        if not name:
+            return "America/Chicago"
+        try:
+            from zoneinfo import ZoneInfo
+            ZoneInfo(name)
+            return name
+        except Exception:
+            return "America/Chicago"
+
     try:
         from models import set_service_tier
         tier = data.get("service_tier","trial")
@@ -505,6 +519,7 @@ def save_client_settings(restaurant_id, current_user):
             "neighborhood":    data.get("neighborhood","").strip() or None,
             "vibe":            sanitize(data.get("vibe","")),
             "known_for":       sanitize(data.get("known_for","")),
+            "timezone":        _valid_tz(data.get("timezone","")),
             "sign_off_name":   data.get("sign_off_name","").strip() or None,
             "never_say":       sanitize(data.get("never_say","")),
             "menu_notes":      sanitize(data.get("menu_notes",""), max_len=2000),

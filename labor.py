@@ -338,7 +338,9 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
                         staff_notes: list = None) -> str:
     """Ask Claude to narrate labor findings in a warm, direct consultant tone."""
     greeting = f"{owner_name}," if owner_name else "Hi,"
-    today_labor = datetime.now(ZoneInfo('America/Chicago')).strftime("%B %d, %Y")
+    from time_utils import restaurant_now_by_id
+    _local_now = restaurant_now_by_id(restaurant_id) if restaurant_id else datetime.now(ZoneInfo('America/Chicago'))
+    today_labor = _local_now.strftime("%B %d, %Y")
 
     # Guard: if no sales data, return a helpful message instead of nonsense
     total_sales = analysis.get("total_sales", 0)
@@ -408,7 +410,7 @@ def get_claude_insights(analysis: dict, restaurant_name: str = "your restaurant"
     # Add upcoming holidays for scheduling context
     try:
         from marketing import get_upcoming_holidays as _get_hols
-        _upcoming = _get_hols(datetime.now(ZoneInfo('America/Chicago')).replace(tzinfo=None))
+        _upcoming = _get_hols(_local_now.replace(tzinfo=None))
         holiday_context = f"\n- Upcoming holidays (affects scheduling): {_upcoming}" if _upcoming else ""
     except Exception:
         holiday_context = ""
@@ -488,7 +490,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  delivery_pct: int = None,
                                  role_minimums_json: str = None,
                                  sched_notes: str = None,
-                                 staff_availability: list = None) -> dict:
+                                 staff_availability: list = None,
+                                 tz_name: str = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -597,8 +600,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                             "Going over means you are scheduling people that weren't scheduled historically:\n"
                             + "\n".join(_hc_lines))
 
-    # Next Monday as schedule start
-    today = datetime.now(ZoneInfo('America/Chicago')).replace(tzinfo=None)
+    # Next Monday as schedule start — in the restaurant's local week, not ours
+    from time_utils import restaurant_now
+    today = restaurant_now(tz_name, naive=True)
     days_ahead = (7 - today.weekday()) % 7 or 7
     monday = today + timedelta(days=days_ahead)
     week_dates = [(monday + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]

@@ -400,7 +400,8 @@ def review_insight_api(current_user):
         restaurant = get_restaurant(rid)
         rstats = get_review_stats(rid)
         top_issues = get_top_issues(rid, days=90, limit=5)
-        now_chi = _dt_ri.now(_ZI_ri('America/Chicago'))
+        from time_utils import restaurant_now
+        now_chi = restaurant_now(restaurant)
         today_str = now_chi.strftime("%B %d, %Y")
         from models import get_conn as _gc_ri
         _conn_ri = _gc_ri()
@@ -630,7 +631,8 @@ def mkt_insight_api(current_user):
         owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
         p = get_profile_for_restaurant(rid)
         recent = get_recent_content(rid, limit=5)
-        now = datetime.now(ZoneInfo("America/Chicago"))
+        from time_utils import restaurant_now
+        now = restaurant_now(restaurant)
         upcoming = get_upcoming_holidays(now.replace(tzinfo=None))
         recent_str = ", ".join(r["topic"] for r in recent) if recent else "none yet"
         greeting = f"{owner}," if owner else "Hi,"
@@ -954,8 +956,9 @@ def _build_schedule_result(restaurant_id):
     except Exception:
         staff_availability = []
 
-    # Compute next week dates
-    today = _dt.now(_ZI('America/Chicago')).replace(tzinfo=None)
+    # Compute next week dates — the restaurant's week, not the server's
+    from time_utils import restaurant_now
+    today = restaurant_now(restaurant, naive=True)
     days_ahead = (7 - today.weekday()) % 7 or 7
     monday = today + _td(days=days_ahead)
     next_week_dates = [(monday + _td(days=i)).strftime("%Y-%m-%d") for i in range(7)]
@@ -1033,6 +1036,7 @@ def _build_schedule_result(restaurant_id):
         role_minimums_json=getattr(restaurant, 'role_minimums_json', None),
         sched_notes=getattr(restaurant, 'sched_notes', None),
         staff_availability=staff_availability or None,
+        tz_name=getattr(restaurant, 'timezone', None),
     )
     result["restaurant_name"] = restaurant.name if restaurant else "Restaurant"
     return result

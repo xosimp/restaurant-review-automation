@@ -344,7 +344,8 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
             try:
                 _week_end_str = datetime.strptime(analysis.get("week_end", ""), "%m/%d/%y").strftime("%Y-%m-%d")
             except Exception:
-                _week_end_str = datetime.now(ZoneInfo('America/Chicago')).strftime('%Y-%m-%d')
+                from time_utils import restaurant_now_by_id as _rnbi
+                _week_end_str = _rnbi(restaurant_id).strftime('%Y-%m-%d')
             snapshot = {
                 "total_waste_cost": analysis['total_waste_cost_week'],
                 "top_items": [x["item"] for x in analysis["waste_items"][:4]]
@@ -411,7 +412,9 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
         except Exception:
             pass
 
-    today_inv = datetime.now(ZoneInfo('America/Chicago')).strftime("%B %d, %Y")
+    from time_utils import restaurant_now_by_id as _rnbi_today
+    today_inv = (_rnbi_today(restaurant_id) if restaurant_id
+                 else datetime.now(ZoneInfo('America/Chicago'))).strftime("%B %d, %Y")
 
     # Seasonal/event awareness — pull upcoming holidays for ordering recommendations
     holiday_context = ""

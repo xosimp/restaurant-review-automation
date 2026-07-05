@@ -323,7 +323,7 @@ def get_competitor_reviews(place_id: str, max_reviews: int = 5) -> list:
         return []
 
 
-def generate_competitor_insight(restaurant_name: str, competitors: list, owner_name: str = None, restaurant_profile: dict = None) -> str:
+def generate_competitor_insight(restaurant_name: str, competitors: list, owner_name: str = None, restaurant_profile: dict = None, tz_name: str = None) -> str:
     """Use Claude to generate a strategic competitor insight."""
     if not competitors or not ANTHROPIC_KEY:
         return ""
@@ -367,9 +367,8 @@ def generate_competitor_insight(restaurant_name: str, competitors: list, owner_n
         # Add upcoming holidays for timely recommendations
         try:
             from marketing import get_upcoming_holidays as _get_hols_c
-            from datetime import datetime as _dt_hc
-            from zoneinfo import ZoneInfo as _ZI_hc
-            _now_hc = _dt_hc.now(_ZI_hc('America/Chicago')).replace(tzinfo=None)
+            from time_utils import restaurant_now
+            _now_hc = restaurant_now(tz_name, naive=True)
             _upcoming_hc = _get_hols_c(_now_hc)
             holiday_rec_context = f"\nUpcoming holidays/events in the next 30 days: {_upcoming_hc}. Consider these when making recommendations." if _upcoming_hc else ""
             today_comp = _now_hc.strftime("%B %d, %Y")
@@ -480,13 +479,14 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
                 "vibe": restaurant.vibe or "",
                 "known_for": restaurant.known_for or "",
                 "neighborhood": restaurant.neighborhood or "",
-            }
+            },
+            tz_name=getattr(restaurant, "timezone", None),
         )
 
-        # Store in DB
-        from datetime import datetime as _dt
-        from zoneinfo import ZoneInfo as _ZI
-        _now_ct = _dt.now(_ZI("America/Chicago")).replace(tzinfo=None)
+        # Store in DB — stamped in the restaurant's local time so "generated
+        # today" reads correctly on their dashboard
+        from time_utils import restaurant_now
+        _now_ct = restaurant_now(restaurant, naive=True)
         result = {
             "competitors": competitors,
             "insight": insight,

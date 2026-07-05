@@ -221,10 +221,10 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
         # Pull last week's stats for comparison
         wow_context = ""
         try:
-            from datetime import datetime, timedelta
+            from datetime import timedelta
             from models import get_reviews_since, get_conn as _gc_r
-            from zoneinfo import ZoneInfo
-            now_chi = datetime.now(ZoneInfo('America/Chicago'))
+            from time_utils import restaurant_now_by_id
+            now_chi = restaurant_now_by_id(restaurant_id or report.restaurant_id)
             last_week_start = (now_chi - timedelta(days=14)).isoformat()
             last_week_end = (now_chi - timedelta(days=7)).isoformat()
             _conn_r = _gc_r()
@@ -279,9 +279,8 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             pass
 
         greeting = f"Hi {owner_name}" if owner_name else "Hi"
-        from datetime import datetime as _dt_rpt
-        from zoneinfo import ZoneInfo as _ZI_rpt
-        today_rpt = _dt_rpt.now(_ZI_rpt('America/Chicago')).strftime('%B %d, %Y')
+        from time_utils import restaurant_now_by_id as _rnbi_rpt
+        today_rpt = _rnbi_rpt(restaurant_id or report.restaurant_id).strftime('%B %d, %Y')
 
         # Build module context for full system clients
         module_lines = []
@@ -544,9 +543,9 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
   </div>
 </td></tr>"""
 
-    from datetime import datetime as _dt_html
-    from zoneinfo import ZoneInfo as _ZI_html
-    week_label = _dt_html.now(_ZI_html("America/Chicago")).strftime("Week of %B %d, %Y")
+    from time_utils import restaurant_now_by_id as _rnbi_html
+    week_label = (_rnbi_html(restaurant_id or report.restaurant_id)
+                  .strftime("Week of %B %d, %Y"))
 
     # Pre-build conditional HTML sections to avoid f-string nesting issues
     urgent_section_html = ""
