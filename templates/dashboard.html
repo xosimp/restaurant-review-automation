@@ -855,7 +855,7 @@ document.documentElement.classList.add('pjs-loading');
     {% if mod_inventory %}<button class="tab" id="tab-inventory" onclick="switchTab('inventory',this)">Food Cost</button>{% endif %}
     {% if mod_marketing %}<button class="tab" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
     {% if restaurant.google_place_id and mod_reviews and mod_labor and mod_inventory and mod_marketing %}<button class="tab" id="tab-competitor" onclick="switchTab('competitor',this)">Intel</button>{% endif %}
-    <button class="tab" onclick="switchTab('account',this)" style="margin-left:auto">Account</button>
+    <button class="tab" id="tab-account" onclick="switchTab('account',this)" style="margin-left:auto">Account</button>
     <span id="tab-indicator"></span>
 </div>
 
@@ -1262,6 +1262,44 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 <!-- REVIEWS -->
 <div class="panel" id="panel-reviews" style="max-width:100%;padding:0;min-height:100%">
 <div style="max-width:1080px;margin:0 auto;padding:24px 28px 0">
+
+  {% if onboarding_steps %}
+  {% set ob_done = onboarding_steps | selectattr('done') | list | length %}
+  <!-- Getting-started checklist — renders until every step is done or dismissed -->
+  <div id="onboarding-card" style="background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%);border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:20px 22px;margin-bottom:18px;position:relative;overflow:hidden">
+    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
+    <button onclick="dismissOnboarding()" aria-label="Dismiss getting started checklist" style="position:absolute;top:10px;right:12px;background:none;border:none;font-size:16px;cursor:pointer;color:rgba(240,235,224,.4);line-height:1;padding:4px">&#x2715;</button>
+    <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:4px;padding-left:6px">
+      <div style="font-family:'Fraunces',serif;font-size:19px;color:#f0ebe0">Let&#8217;s get {{ restaurant.name }} set up</div>
+      <div style="font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;color:var(--ember)">{{ ob_done }}/{{ onboarding_steps | length }}</div>
+    </div>
+    <div style="font-size:12px;color:rgba(240,235,224,.55);margin-bottom:14px;padding-left:6px">A few minutes each — every step makes the AI noticeably smarter about your restaurant.</div>
+    <div style="height:4px;background:rgba(240,235,224,.12);border-radius:2px;margin:0 6px 16px;overflow:hidden">
+      <div style="height:100%;width:{{ (ob_done * 100 / (onboarding_steps | length)) | round }}%;background:var(--ember);border-radius:2px;transition:width .4s ease"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;padding-left:6px">
+      {% for s in onboarding_steps %}
+      {% if s.done %}
+      <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:8px;background:rgba(78,173,122,.08);border:1px solid rgba(78,173,122,.25)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:1px"><circle cx="8" cy="8" r="7" fill="#4ead7a" fill-opacity=".9"/><path d="M5 8.2l2 2 4-4.2" stroke="#0e0a06" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div>
+          <div style="font-size:12.5px;font-weight:600;color:rgba(240,235,224,.5);text-decoration:line-through">{{ s.label }}</div>
+        </div>
+      </div>
+      {% else %}
+      <div role="button" tabindex="0" onclick="_obJump('{{ s.tab }}')" onkeydown="if(event.key==='Enter')_obJump('{{ s.tab }}')" style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:8px;background:rgba(240,235,224,.04);border:1px solid rgba(200,75,47,.3);cursor:pointer;transition:background .15s">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" style="flex-shrink:0;margin-top:1px"><circle cx="8" cy="8" r="6.5" stroke="var(--ember)" stroke-width="1.6"/></svg>
+        <div>
+          <div style="font-size:12.5px;font-weight:600;color:#f0ebe0">{{ s.label }}</div>
+          <div style="font-size:11px;color:rgba(240,235,224,.5);margin-top:2px;line-height:1.5">{{ s.sub }}</div>
+        </div>
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   <!-- New reviews notification banner -->
   <div id="new-reviews-banner" style="display:none;background:#1a1410;color:#f0ebe0;padding:10px 16px;border-radius:6px;margin-bottom:12px;font-size:13px;cursor:pointer;align-items:center;justify-content:space-between" onclick="window.location.reload()">
     <span id="new-reviews-text"></span>
@@ -6767,6 +6805,15 @@ function dismissWelcome(){
   var b=document.getElementById('welcome-banner');
   if(b) b.style.display='none';
   fetch('/api/dismiss-welcome', {method:'POST'});
+}
+function dismissOnboarding(){
+  var c=document.getElementById('onboarding-card');
+  if(c) c.style.display='none';
+  fetch('/api/dismiss-onboarding', {method:'POST'});
+}
+function _obJump(tab){
+  var btn=document.getElementById('tab-'+tab);
+  if(btn){ switchTab(tab, btn); window.scrollTo(0,0); }
 }
 function closeEmailModal(){
   document.getElementById('email-modal').style.display='none';

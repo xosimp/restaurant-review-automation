@@ -618,6 +618,48 @@ def index(current_user):
     from auth import get_user_by_id
     _user_row = get_user_by_id(current_user["id"]) if not current_user.get("is_admin") else None
     show_welcome = bool(_user_row and not _user_row.get("last_login"))
+
+    # Getting-started checklist: real completion state per step, shown until
+    # everything's done or the owner dismisses it. Answers "what do I do
+    # first?" in the app instead of leaving it to the onboarding emails.
+    onboarding_steps = []
+    try:
+        if restaurant and not getattr(restaurant, "onboarding_dismissed", 0):
+            onboarding_steps = [
+                {"key": "reviews", "label": "Connect your Google reviews",
+                 "sub": "Live reviews flow in automatically once connected",
+                 "done": bool(restaurant.gmb_refresh_token or restaurant.reviews_live),
+                 "tab": "account"},
+                {"key": "voice", "label": "Set your brand voice",
+                 "sub": "Teaches the AI how you talk to guests",
+                 "done": bool(restaurant.voice_notes),
+                 "tab": "account"},
+                {"key": "respond", "label": "Approve your first review response",
+                 "sub": "Review the AI draft, tweak it, hit approve",
+                 "done": (rstats.get("responded", 0) or 0) > 0,
+                 "tab": "reviews"},
+            ]
+            if restaurant.module_labor:
+                onboarding_steps.append(
+                    {"key": "labor", "label": "Upload your first shift schedule",
+                     "sub": "Unlocks labor cost analysis and AI scheduling",
+                     "done": bool(labor.get("is_live")),
+                     "tab": "labor"})
+            if restaurant.module_marketing:
+                try:
+                    from marketing import get_recent_content as _grc_ob
+                    _mkt_done = bool(_grc_ob(rid, limit=1))
+                except Exception:
+                    _mkt_done = False
+                onboarding_steps.append(
+                    {"key": "marketing", "label": "Generate your first post",
+                     "sub": "One click — the AI writes it in your voice",
+                     "done": _mkt_done,
+                     "tab": "marketing"})
+            if all(s["done"] for s in onboarding_steps):
+                onboarding_steps = []   # everything done — card retires itself
+    except Exception:
+        onboarding_steps = []
     # Load competitor intel if available
     competitor_data = None
     if (restaurant and restaurant.google_place_id and restaurant.competitor_intel
@@ -776,6 +818,7 @@ def index(current_user):
 
     return render_template('dashboard.html',
         show_welcome=show_welcome,
+        onboarding_steps=onboarding_steps,
         csrf_token=csrf_token,
         current_user=current_user, restaurant=restaurant,
         group_locations=_group_locations,

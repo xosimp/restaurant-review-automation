@@ -1327,6 +1327,14 @@ def update_digest_day(current_user):
     })
     return jsonify(ok=True)
 
+@client_bp.route("/api/dismiss-onboarding", methods=["POST"])
+@login_required
+def dismiss_onboarding(current_user):
+    """Hide the getting-started checklist permanently for this restaurant."""
+    from models import update_restaurant
+    update_restaurant(current_user["restaurant_id"], {"onboarding_dismissed": 1})
+    return jsonify(ok=True)
+
 @client_bp.route("/api/dismiss-welcome", methods=["POST"])
 @login_required
 def dismiss_welcome(current_user):
