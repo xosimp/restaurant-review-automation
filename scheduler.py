@@ -430,31 +430,17 @@ def check_stale_inventory():
 
 def run_toast_sync():
     """
-    Nightly sync: pull fresh Toast POS data for every connected restaurant
-    and write it into client_data.shifts_csv so the Labor module stays current.
-    Runs at 3am CT — before the 8am review fetch, so labor data is ready for the day.
+    Nightly POS sync (3am CT): pull fresh shift data for every connected
+    restaurant into client_data.shifts_csv so the Labor module stays current.
+    Dispatches through the pos.py registry — this used to be Toast-only,
+    which silently skipped Square and Clover clients every night.
     """
     try:
-        from models import get_all_restaurants
-        from toast import is_connected, sync_to_db
-
-        restaurants = get_all_restaurants()
-        connected   = [r for r in restaurants if is_connected(r.id)]
-
-        if not connected:
-            return
-
-        log.info(f"Toast nightly sync for {len(connected)} restaurant(s)")
-        for r in connected:
-            try:
-                result = sync_to_db(r.id)
-                if result["ok"]:
-                    log.info(f"Toast sync OK for {r.name} — {result.get('rows', '?')} shift rows")
-                else:
-                    log.warning(f"Toast sync failed for {r.name}: {result.get('error')}")
-            except Exception as e:
-                log.error(f"Toast sync error for {r.name}: {e}")
-
+        import pos
+        results = pos.sync_all()
+        if results:
+            ok = sum(1 for r in results if r.get("ok"))
+            log.info(f"POS nightly sync: {ok}/{len(results)} restaurants OK")
     except Exception as e:
         log.error(f"run_toast_sync error: {e}")
 
