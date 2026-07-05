@@ -524,6 +524,43 @@ button:not(.tab):not(.logout-btn):not([disabled]):active{transform:scale(.97)}
   /* Hero banner — stack on mobile */
   .acct-hero { flex-direction: column; gap: 12px !important; }
   .acct-hero-right { text-align: left !important; }
+
+  /* Inline-styled 1080px content wrappers — the 28px gutters eat a phone */
+  div[style*="max-width:1080px"] { padding-left: 12px !important; padding-right: 12px !important; }
+
+  /* Modals: 32px padding + no scroll overflow is brutal at 375px wide */
+  #rr-modal > div, #twofa-modal > div, #schedule-tooltip > div,
+  #posting-overlay > div, #congrats-inner, #pw-modal > div,
+  #alerts-modal > div, #email-modal > div, #toast-client-modal > div,
+  #square-modal > div, #clover-modal > div {
+    padding: 20px 16px !important;
+    width: 94% !important;
+    max-height: 88vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Intel page: sub-tab switcher and AI Visibility card */
+  #intel-tab-competitors-btn, #intel-tab-visibility-btn { padding: 6px 12px !important; font-size: 11px !important; }
+  #aiv-card { padding: 14px 12px !important; }
+
+  /* Any flex row styled inline with a big gap tends to overflow — let the
+     common wide ones wrap instead of forcing horizontal scroll */
+  div[style*="display:flex"][style*="gap:24px"],
+  div[style*="display:flex"][style*="gap:20px"] { flex-wrap: wrap; }
+
+  /* Insight/forecast cards: keep line length readable */
+  .insight-text { font-size: 12.5px !important; }
+}
+
+/* Tablet — between phone and the 1080px desktop container */
+@media (min-width: 641px) and (max-width: 900px) {
+  .stat-row { grid-template-columns: repeat(2, 1fr); }
+  .two-col { grid-template-columns: 1fr; }
+  .intel-stat-row { grid-template-columns: repeat(2, 1fr) !important; }
+  .ct-grid { grid-template-columns: repeat(2, 1fr); }
+  .account-top-row, .account-two-col { grid-template-columns: 1fr !important; }
+  div[style*="max-width:1080px"] { padding-left: 18px !important; padding-right: 18px !important; }
 }
 </style>
 <script>
