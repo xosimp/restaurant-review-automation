@@ -1,0 +1,3 @@
+# Test/CI-only dependencies — not installed on Railway.
+-r requirements.txt
+pytest>=8.0.0

@@ -1,0 +1,53 @@
+"""Regression tests for the tenant-scoping (IDOR) fixes in models.py — a
+client must never be able to approve or mutate another restaurant's rows by
+guessing IDs."""
+from models import approve_response, get_conn
+
+
+def _status(db_path, review_id):
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT response_status FROM reviews WHERE id=?", (review_id,)).fetchone()
+    conn.close()
+    return row["response_status"]
+
+
+def _review_ids(db_path, rid):
+    conn = get_conn(db_path)
+    rows = conn.execute("SELECT id FROM reviews WHERE restaurant_id=?", (rid,)).fetchall()
+    conn.close()
+    return [r["id"] for r in rows]
+
+
+def test_approve_scoped_to_owner(two_restaurants):
+    w = two_restaurants
+    review_a = _review_ids(w["db_path"], w["rid_a"])[0]
+    approve_response(review_a, restaurant_id=w["rid_a"], db_path=w["db_path"])
+    assert _status(w["db_path"], review_a) == "approved"
+
+
+def test_approve_blocked_cross_tenant(two_restaurants):
+    """Restaurant B passing Restaurant A's review id must be a silent no-op."""
+    w = two_restaurants
+    review_a = _review_ids(w["db_path"], w["rid_a"])[0]
+    before = _status(w["db_path"], review_a)
+    approve_response(review_a, restaurant_id=w["rid_b"], db_path=w["db_path"])
+    assert _status(w["db_path"], review_a) == before != "approved"
+
+
+def test_save_reviews_dedupes_by_external_id(two_restaurants):
+    from models import save_reviews, Review
+    w = two_restaurants
+    added, _ = save_reviews([
+        Review(restaurant_id=w["rid_a"], platform="google", external_id="ext-a1",
+               author="Ann", rating=2, text="Cold food and a long wait."),
+    ], db_path=w["db_path"])
+    assert added == 0
+    assert len(_review_ids(w["db_path"], w["rid_a"])) == 1
+
+
+def test_restaurant_has_two_fa_pending_field(two_restaurants):
+    """The 2FA anti-bruteforce fix depends on this column existing."""
+    conn = get_conn(two_restaurants["db_path"])
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(restaurants)").fetchall()]
+    conn.close()
+    assert "two_fa_pending" in cols
