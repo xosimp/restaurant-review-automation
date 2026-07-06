@@ -333,6 +333,14 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .empty-state svg{width:40px;height:40px;stroke:var(--paper3);margin-bottom:16px;flex-shrink:0}
 .empty-state-title{font-size:14px;font-weight:600;color:var(--ink2);margin-bottom:6px}
 .empty-state-sub{font-size:12px;color:var(--ink3);line-height:1.6;max-width:300px;margin-bottom:18px}
+/* Compact variant for inside cards/widgets — same voice, smaller footprint */
+.empty-state-sm{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px 14px;text-align:center;width:100%;grid-column:1/-1;align-self:center}
+.empty-state-sm svg{width:22px;height:22px;stroke:var(--ink3);opacity:.55;margin-bottom:8px;flex-shrink:0}
+.empty-state-sm .es-title{font-size:12.5px;font-weight:600;color:var(--ink2)}
+.empty-state-sm .es-sub{font-size:11px;color:var(--ink3);line-height:1.5;margin-top:3px;max-width:260px}
+.empty-state-sm.on-dark svg{stroke:rgba(240,235,224,.45)}
+.empty-state-sm.on-dark .es-title{color:rgba(240,235,224,.75)}
+.empty-state-sm.on-dark .es-sub{color:rgba(240,235,224,.45)}
 .insight{background:var(--ink);border-radius:var(--r);padding:16px 18px;margin-bottom:16px}
 .insight-lbl{font-size:9px;color:var(--ink3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px}
 .insight-text{font-size:12px;line-height:1.7;color:rgba(250,248,245,.85);white-space:pre-wrap}
@@ -1243,7 +1251,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         </div>
       </div>
       {% else %}
-      <div style="font-size:13px;color:var(--ink3);padding:8px 0">No reviews yet.</div>
+      <div class="empty-state-sm" style="padding:14px 8px"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l5-5 4 3 6-7"></path><path d="M3 21h18"></path></svg><div class="es-title">No reviews yet</div><div class="es-sub">New reviews land here automatically once your platforms are connected</div></div>
       {% endfor %}
     </div>
   </div>
@@ -3825,7 +3833,7 @@ function loadTopicHeatmap(days) {
   fetch('/api/topic-heatmap?days=' + _hmDays)
     .then(function(r) { return r.json(); })
     .then(function(d) {
-      if (!d.ok || !d.data) { grid.innerHTML = '<div style="color:var(--ink3);font-size:12px;padding:8px;grid-column:1/-1">No data yet</div>'; return; }
+      if (!d.ok || !d.data) { grid.innerHTML = emptyStateHtml('No topics yet', 'Topics appear as reviews get analyzed'); return; }
       var html = '';
       for (var i = 0; i < d.data.length; i++) {
         var item = d.data[i];
@@ -3873,7 +3881,7 @@ function loadTopicHeatmap(days) {
       grid.innerHTML = html;
       _hmLoaded = true;
     }).catch(function() {
-      grid.innerHTML = '<div style="color:var(--ink3);font-size:12px;padding:8px;grid-column:1/-1">Could not load</div>';
+      grid.innerHTML = emptyStateHtml('Could not load topics', 'Refresh the page to try again');
     });
 }
 
@@ -4053,7 +4061,7 @@ function loadSentimentTrend(){
     container.innerHTML=html;
     if(labels)labels.innerHTML=lblHtml;
   }).catch(function(){
-    if(container)container.innerHTML='<div style="color:var(--ink3);font-size:12px;font-style:italic">Trend unavailable.</div>';
+    if(container)container.innerHTML=emptyStateHtml('Trend unavailable', 'Check back shortly — this refreshes automatically');
   });
 }
 function processInsightHtml(html){
@@ -4112,7 +4120,7 @@ function loadReviewInsight(){
     typewriterEffect(el,processInsightHtml(html));
   }).catch(function(){
     el.classList.remove('insight-loading');
-    el.textContent='Analysis unavailable — check back shortly.';
+    el.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);
   });
 }
 function filterByTopic(category){
@@ -4972,7 +4980,7 @@ function renderPerfChart(){
   if(!barsEl)return;
   var items=_perfTab==='trend'?_perfTrendData:_perfDowData;
   if(!items||!items.length){
-    barsEl.innerHTML='<div style="color:rgba(255,255,255,.3);font-size:12px;font-style:italic;align-self:center;padding:16px">No data yet.</div>';
+    barsEl.innerHTML=emptyStateHtml('No competitor data yet', 'Hit refresh to scan nearby restaurants', true);
     if(labelsEl)labelsEl.innerHTML='';
     if(yAxisEl)yAxisEl.innerHTML='';
     return;
@@ -5302,7 +5310,7 @@ function loadLaborInsight(){
     }
   }).catch(function(){
     var elLaborErr=document.getElementById('labor-insight');
-    if(elLaborErr){elLaborErr.classList.remove('insight-loading');elLaborErr.textContent='Analysis unavailable — check back shortly.';}
+    if(elLaborErr){elLaborErr.classList.remove('insight-loading');elLaborErr.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);}
   });
   fetch('/api/labor-gap').then(function(r){return r.json();}).then(function(d){
     var gapEl=document.getElementById('gap-amount');
@@ -5643,7 +5651,7 @@ function loadInvInsight(){
     }
   }).catch(function(){
     var elInvErr=document.getElementById('inv-insight');
-    if(elInvErr){elInvErr.classList.remove('insight-loading');elInvErr.textContent='Analysis unavailable — check back shortly.';}
+    if(elInvErr){elInvErr.classList.remove('insight-loading');elInvErr.innerHTML=emptyStateHtml('Analysis unavailable', 'Check back shortly — the AI retries automatically', true);}
   });
   loadInvTrend();
 }
@@ -6805,6 +6813,17 @@ function dismissWelcome(){
   var b=document.getElementById('welcome-banner');
   if(b) b.style.display='none';
   fetch('/api/dismiss-welcome', {method:'POST'});
+}
+function emptyStateHtml(title, sub, onDark){
+  /* Shared compact empty/error state — replaces the scattered bare-text
+     "No data yet" / "Analysis unavailable" strings with one consistent look. */
+  var cls = 'empty-state-sm' + (onDark ? ' on-dark' : '');
+  var icon = '<svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<path d="M3 17l5-5 4 3 6-7"></path><path d="M3 21h18"></path></svg>';
+  return '<div class="' + cls + '">' + icon
+    + '<div class="es-title">' + title + '</div>'
+    + (sub ? '<div class="es-sub">' + sub + '</div>' : '')
+    + '</div>';
 }
 function dismissOnboarding(){
   var c=document.getElementById('onboarding-card');
