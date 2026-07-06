@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SMS Opt-In Flow — Cavnar AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --ink: #0e0c0a; --ink2: #3a3530; --ink3: #7a736a;
+      --ember: #c84b2f; --paper: #f7f4ef; --paper2: #ede9e2; --paper3: #e0dbd0;
+    }
+    body { background: var(--paper); color: var(--ink); font-family: 'DM Sans', sans-serif; font-size: 15px; line-height: 1.75; }
+    header { background: var(--ink); padding: 18px 40px; display: flex; align-items: center; justify-content: space-between; }
+    .logo { font-family: 'DM Serif Display', serif; font-size: 22px; color: white; text-decoration: none; }
+    .logo span { color: var(--ember); font-style: italic; }
+    header nav a { color: #a09890; text-decoration: none; font-size: 13px; margin-left: 24px; }
+    .hero { background: var(--ink); padding: 48px 40px 40px; border-bottom: 3px solid var(--ember); }
+    .hero-inner { max-width: 720px; margin: 0 auto; }
+    .pill { display: inline-block; font-size: 10px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--ember); border: 1px solid #3a2820; padding: 4px 12px; border-radius: 20px; margin-bottom: 18px; }
+    .hero h1 { font-family: 'DM Serif Display', serif; font-size: 32px; color: white; margin-bottom: 10px; }
+    .hero p { color: #b5aca4; font-size: 15px; max-width: 600px; }
+    main { max-width: 720px; margin: 0 auto; padding: 48px 40px 80px; }
+    h2 { font-family: 'DM Serif Display', serif; font-size: 20px; margin-bottom: 12px; color: var(--ink); }
+    p { color: var(--ink2); margin-bottom: 16px; }
+    .meta { font-size: 13px; color: var(--ink3); margin-bottom: 32px; }
+    .meta strong { color: var(--ink2); }
+
+    /* ── Mockup: exact reproduction of the live, authenticated form ── */
+    .mockup-wrap { border: 1.5px solid var(--ember); border-radius: 14px; padding: 0; margin: 24px 0 32px; overflow: hidden; box-shadow: 0 8px 24px rgba(14,12,10,.12); }
+    .mockup-titlebar { background: var(--ink); color: white; font-size: 12px; padding: 10px 20px; display: flex; align-items: center; justify-content: space-between; }
+    .mockup-titlebar span:first-child { font-weight: 600; }
+    .mockup-titlebar span:last-child { color: #a09890; font-size: 11px; }
+    .mockup-body { background: var(--paper); padding: 24px 24px 8px; }
+    .field-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--ink3); margin-bottom: 10px; }
+    .delivery-row { display: flex; gap: 20px; margin-bottom: 14px; font-size: 13px; color: var(--ink); }
+    .delivery-row label { display: flex; align-items: center; gap: 8px; }
+    .chk { width: 15px; height: 15px; border: 1.5px solid var(--ember); border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .chk.checked { background: var(--ember); }
+    .chk.checked::after { content: '✓'; color: white; font-size: 10px; font-weight: 700; }
+    .consent-box { background: rgba(200,75,47,.06); border: 1px solid rgba(200,75,47,.25); border-radius: 8px; padding: 14px 16px; margin-bottom: 24px; }
+    .consent-box .row { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; color: var(--ink); line-height: 1.6; }
+    .consent-box .row .chk { margin-top: 2px; }
+    .consent-box a { color: var(--ember); }
+
+    .caption { font-size: 12px; color: var(--ink3); font-style: italic; margin: -20px 0 32px; }
+    footer { border-top: 1px solid var(--paper3); padding: 24px 40px; text-align: center; font-size: 12px; color: var(--ink3); }
+    footer a { color: var(--ember); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="https://cavnar.ai" class="logo">Cavnar <span>AI</span></a>
+    <nav>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="/terms">Terms of Service</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <div class="hero-inner">
+      <div class="pill">A2P 10DLC Compliance</div>
+      <h1>SMS opt-in flow</h1>
+      <p>A record of the exact opt-in screen restaurant owners and managers see when enabling SMS alerts inside the Cavnar AI dashboard — provided for carrier/campaign review since that screen sits behind an authenticated login.</p>
+    </div>
+  </div>
+
+  <main>
+    <div class="meta">
+      <strong>Product:</strong> Cavnar AI Restaurant Intelligence Dashboard (dashboard.cavnar.ai)<br>
+      <strong>Where this appears:</strong> Account tab → Alert Settings → Delivery method<br>
+      <strong>Who sees it:</strong> The restaurant's owner/manager, while configuring how they receive review and operational alerts for their own account
+    </div>
+
+    <h2>How opt-in works</h2>
+    <p>
+      Every Cavnar AI client account includes an Alert Settings screen where the restaurant owner or manager chooses how they want to be notified about new reviews, urgent activity (e.g. a 1-star or health-related review), and labor/inventory alerts. SMS is one of two delivery options (the other is email) and is <strong>off by default</strong>. To turn SMS on, the account holder must enter their own mobile number and affirmatively check a dedicated consent box before the setting can be saved — the consent checkbox is disabled and unchecked until SMS delivery is selected, and the save action is blocked entirely if SMS is selected without consent checked.
+    </p>
+    <p>
+      The mockup below reproduces that section of the authenticated dashboard exactly, including the live consent language and the links to our Privacy Policy and Terms of Service (both of which include a dedicated SMS Messaging section covering message frequency, "Message & data rates may apply," and STOP/HELP instructions).
+    </p>
+
+    <div class="mockup-wrap">
+      <div class="mockup-titlebar">
+        <span>Alert Settings</span>
+        <span>dashboard.cavnar.ai/account (authenticated)</span>
+      </div>
+      <div class="mockup-body">
+        <div class="field-label">Delivery method</div>
+        <div class="delivery-row">
+          <label><span class="chk checked"></span> SMS text message</label>
+          <label><span class="chk"></span> Email</label>
+        </div>
+        <div class="consent-box">
+          <div class="row">
+            <span class="chk checked"></span>
+            <span>I agree to receive operational SMS alerts from Cavnar AI. Message &amp; data rates may apply. Reply STOP to cancel, HELP for help. <a href="/privacy">Privacy</a> &middot; <a href="/terms">Terms</a></span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="caption">Reproduced verbatim from the live dashboard's Alert Settings modal.</p>
+
+    <h2>Message program details</h2>
+    <p>
+      <strong>Sender:</strong> Cavnar AI LLC &middot;
+      <strong>Use case:</strong> Low-volume operational alerts (account owners/managers only) &middot;
+      <strong>Frequency:</strong> Typically 1–5 messages per week per recipient, driven by account activity (e.g. a new negative review) &middot;
+      <strong>Opt-out:</strong> Reply STOP at any time &middot;
+      <strong>Help:</strong> Reply HELP or email <a href="mailto:will@cavnar.ai">will@cavnar.ai</a>
+    </p>
+  </main>
+
+  <footer>
+    Cavnar AI &middot; <a href="mailto:will@cavnar.ai">will@cavnar.ai</a> &middot; <a href="/privacy">Privacy</a> &middot; <a href="/terms">Terms</a>
+  </footer>
+</body>
+</html>

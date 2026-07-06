@@ -1043,6 +1043,23 @@ def terms_page():
         html = "<h1>Terms of Service</h1><p>Coming soon. Contact will@cavnar.ai</p>"
     return Response(html, mimetype="text/html")
 
+@admin_bp.route("/sms-optin-preview")
+def sms_optin_preview_page():
+    """Public, unauthenticated mirror of the Alert Settings SMS consent flow —
+    Twilio's A2P 10DLC campaign reviewers can't log into the dashboard to see
+    the real opt-in checkbox, and 'no publicly reachable opt-in URL' is a
+    standard rejection reason (error 30909/30921). This page exists to give
+    reviewers something to look at without needing credentials."""
+    from flask import Response
+    import os as _os
+    try:
+        html_path = _os.path.join(_os.path.dirname(__file__), "sms_optin_preview.html")
+        with open(html_path, "r") as f:
+            html = f.read()
+    except FileNotFoundError:
+        html = "<h1>SMS Opt-In Flow</h1><p>Contact will@cavnar.ai</p>"
+    return Response(html, mimetype="text/html")
+
 @admin_bp.route("/.well-known/security.txt")
 def security_txt():
     from flask import Response
