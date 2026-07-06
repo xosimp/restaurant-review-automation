@@ -22,6 +22,9 @@ jobs:
       - name: Compile every module
         run: python -m py_compile *.py
 
+      - name: Theme-safety color lint
+        run: python scripts/check_colors.py
+
       - name: Run tests
         run: pytest tests/ -v
         env:

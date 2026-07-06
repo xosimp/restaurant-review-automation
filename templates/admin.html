@@ -12,8 +12,8 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--green:#2d6a4f;--green-bg:#eaf4ee;--r:8px}
-[data-theme="dark"]{--ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#7a736a;--paper:#1a1714;--paper2:#231f1b;--paper3:#4a4038;--ember:#e06444;--green:#4ead7a;--green-bg:#0c2318}
+:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--green:#2d6a4f;--green-bg:#eaf4ee;--red:#c0392b;--purple:#7c3aed;--r:8px}
+[data-theme="dark"]{--ink:#f0ebe0;--ink2:#c4bdb4;--ink3:#7a736a;--paper:#1a1714;--paper2:#231f1b;--paper3:#4a4038;--ember:#e06444;--green:#4ead7a;--green-bg:#0c2318;--red:#e05555;--purple:#a78bfa}
 html[data-theme="dark"],html[data-theme="dark"] body{background:#1a1714!important;color:var(--ink)}
 [data-theme="dark"] .hdr{background:#0f0d0b!important}
 [data-theme="dark"] .hdr-logo{color:#f0ebe0!important}
@@ -46,7 +46,7 @@ html[data-theme="dark"],html[data-theme="dark"] body{background:#1a1714!importan
 [data-theme="dark"] [style*="background:#fff3e0"]{background:#251a08!important}
 [data-theme="dark"] [style*="color:#2d6a4f"]{color:#4ead7a!important}
 [data-theme="dark"] [style*="color:#b7791f"]{color:#d4a030!important}
-[data-theme="dark"] [style*="color:#c84b2f"],[data-theme="dark"] [style*="color:#c0392b"]{color:#e07055!important}
+[data-theme="dark"] [style*="color:#c84b2f"],[data-theme="dark"] [style*="color:var(--red)"]{color:#e07055!important}
 [data-theme="dark"] [style*="color:#1565c0"]{color:#6aabff!important}
 [data-theme="dark"] [style*="color:#e65100"]{color:#e89060!important}
 [data-theme="dark"] [style*="color:#6b7280"],[data-theme="dark"] [style*="color:#9ca3af"]{color:#7a736a!important}
@@ -102,8 +102,8 @@ input:focus,select:focus{border-color:var(--ember)}
 .action-item:last-child{border-bottom:none}
 .action-item:hover{background:var(--paper2);color:var(--ink);transform:translateX(2px)}
 .action-item:active{transform:scale(.98)}
-.action-item-danger{color:#c0392b}
-.action-item-danger:hover{background:#fdf0ef;color:#c0392b}
+.action-item-danger{color:var(--red)}
+.action-item-danger:hover{background:#fdf0ef;color:var(--red)}
 .action-item-success{color:var(--green)}
 .action-item-success:hover{background:var(--green-bg);color:var(--green)}
 .group-filter-btn{padding:3px 10px;border-radius:20px;border:1px solid var(--paper3);background:white;font-family:'DM Sans',sans-serif;font-size:11px;cursor:pointer;color:var(--ink2);transition:background .15s,box-shadow .15s,transform .15s}
@@ -321,7 +321,7 @@ input:focus,select:focus{border-color:var(--ember)}
           {% if user.last_active_tab %}<span><strong style="color:var(--ink2)">Last tab:</strong> {{user.last_active_tab}}</span>{% endif %}
           <span><strong style="color:var(--ink2)">Reviews fetched:</strong> {{user.last_fetched_at or 'Never'}}</span>
           <span><strong style="color:var(--ink2)">Account:</strong> {% if user.is_active %}<span style="color:#2d6a4f">Active</span>{% else %}<span style="color:#9ca3af">Inactive</span>{% endif %}</span>
-          <span><strong style="color:var(--ink2)">Role:</strong> <span style="{% if user.role == 'owner' %}color:#7c3aed;font-weight:600{% else %}color:var(--ink3){% endif %}">{{ user.role or 'client' }}</span></span>
+          <span><strong style="color:var(--ink2)">Role:</strong> <span style="{% if user.role == 'owner' %}color:var(--purple);font-weight:600{% else %}color:var(--ink3){% endif %}">{{ user.role or 'client' }}</span></span>
           {% if not user.is_admin %}
           <button onclick="toggleUsage({{user.restaurant_id}}, this)" style="font-size:10px;color:var(--ember);background:none;border:none;cursor:pointer;padding:0;font-weight:500;margin-left:auto">Show usage ▾</button>
           {% endif %}
@@ -1168,7 +1168,7 @@ function adminLoadChangelog() {
       html += '<div style="font-size:13px;font-weight:600;color:'+(isDark?'var(--ink)':'#0e0c0a')+';margin-top:5px">'+escHtml(e.title)+'</div>';
       if (e.body) html += '<div style="font-size:12px;color:'+(isDark?'var(--ink2)':'#3a3530')+';margin-top:2px">'+escHtml(e.body)+'</div>';
       html += '</div>';
-      html += '<button onclick="adminDeleteChangelog('+e.id+',this)" style="background:none;border:none;cursor:pointer;color:#c0392b;font-size:15px;flex-shrink:0;padding:0 2px" title="Delete">✕</button>';
+      html += '<button onclick="adminDeleteChangelog('+e.id+',this)" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:15px;flex-shrink:0;padding:0 2px" title="Delete">✕</button>';
       html += '</div>';
     });
     el.innerHTML = html;

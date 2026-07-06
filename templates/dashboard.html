@@ -1698,7 +1698,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
         <input type="text" maxlength="1" class="twofa-setup-digit" inputmode="numeric" style="width:46px;height:54px;text-align:center;font-size:24px;font-weight:700;border:2px solid #e0dbd0;border-radius:8px;font-family:monospace;outline:none">
       </div>
-      <div id="twofa-setup-error" style="display:none;color:#c0392b;font-size:12px;text-align:center;margin-bottom:12px"></div>
+      <div id="twofa-setup-error" style="display:none;color:var(--red);font-size:12px;text-align:center;margin-bottom:12px"></div>
       <button onclick="twoFAVerify()" class="btn-primary" style="width:100%;padding:11px;margin-bottom:10px">Verify &amp; enable 2FA</button>
       <button onclick="twoFAStep2()" class="btn-secondary" style="width:100%;padding:9px;font-size:12px">Resend code</button>
     </div>
@@ -2107,7 +2107,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div style="position:relative;height:18px;font-size:10px;margin-bottom:4px">
       <span style="position:absolute;left:0;color:var(--ink3)">0%</span>
       <span style="position:absolute;left:{{target_pos}}%;transform:translateX(-50%);color:#2d6a4f;font-weight:700;white-space:nowrap">{{lt}}% target ↓</span>
-      <span style="position:absolute;left:70%;transform:translateX(-50%);color:#c0392b;font-weight:700;white-space:nowrap">35% high ↓</span>
+      <span style="position:absolute;left:70%;transform:translateX(-50%);color:var(--red);font-weight:700;white-space:nowrap">35% high ↓</span>
       <span style="position:absolute;right:0;color:var(--ink3)">50%+</span>
     </div>
     <div style="position:relative;height:10px;background:var(--paper3);border-radius:5px;overflow:hidden">
@@ -4023,7 +4023,7 @@ function loadSentimentTrend(){
     var trendSummary=document.getElementById('trend-summary');
     if(trendSummary){
       if(lastPct>firstPct+10) trendSummary.innerHTML='<span style="color:#2d6a4f;font-weight:700">↑ Trending positive</span>';
-      else if(lastPct<firstPct-10) trendSummary.innerHTML='<span style="color:#c0392b;font-weight:700">↓ Trending negative</span>';
+      else if(lastPct<firstPct-10) trendSummary.innerHTML='<span style="color:var(--red);font-weight:700">↓ Trending negative</span>';
       else trendSummary.innerHTML='<span style="color:var(--ink3)">→ Holding steady</span>';
     }
     // Avg rating across all weeks
@@ -6301,7 +6301,7 @@ function runAIVisibility(btn) {
     if (!d.ok) {
       if (btn) { btn.textContent = 'Retry'; btn.disabled = false; }
       document.getElementById('aiv-idle').style.display = 'block';
-      document.getElementById('aiv-idle').innerHTML = '<div style="color:#dc2626;font-size:13px;text-align:center">Error: ' + (d.error || 'Unknown error') + '</div>';
+      document.getElementById('aiv-idle').innerHTML = '<div style="color:var(--red);font-size:13px;text-align:center">Error: ' + (d.error || 'Unknown error') + '</div>';
       toast('AI check failed: ' + (d.error || 'Unknown error'), 'error');
       return;
     }
