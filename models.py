@@ -631,6 +631,13 @@ def init_db(db_path: str = DB_PATH):
             created_at    TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_alert_contacts_restaurant ON alert_contacts(restaurant_id)",
+        # SMS consent must come from the number's own owner, not a third party
+        # typing it in on their behalf — the admin "add alert contact" endpoint
+        # had no consent check at all, so an admin-added number could receive
+        # SMS with zero record of that person ever opting in. Every contact now
+        # carries whether real consent was captured and when.
+        "ALTER TABLE alert_contacts ADD COLUMN sms_consent INTEGER DEFAULT 0",
+        "ALTER TABLE alert_contacts ADD COLUMN sms_consent_at TEXT",
         """CREATE TABLE IF NOT EXISTS alert_log (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             restaurant_id INTEGER NOT NULL,

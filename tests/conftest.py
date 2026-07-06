@@ -8,13 +8,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from models import init_db, create_restaurant, save_reviews, Restaurant, Review
+from models import init_db, ensure_columns, create_restaurant, save_reviews, Restaurant, Review
 
 
 @pytest.fixture
 def db_path(tmp_path):
     path = str(tmp_path / "test_reviews.db")
     init_db(db_path=path)
+    # Real app boot (hosted_dashboard.py) calls both init_db() AND
+    # ensure_columns() — they're two separate migration paths (the latter
+    # covers columns like alert_quiet_start/alert_max_per_day). Skipping
+    # ensure_columns() here meant tests had a schema real production never has.
+    ensure_columns(db_path=path)
     return path
 
 

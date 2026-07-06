@@ -126,8 +126,8 @@ def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta
 
 
 def send_test_sms(restaurant_id: int) -> dict:
-    """Send a test SMS to all contacts for a restaurant."""
-    contacts = get_alert_contacts(restaurant_id)
+    """Send a test SMS to all consented contacts for a restaurant."""
+    contacts = get_alert_contacts(restaurant_id, sms_consent_only=True)
     if not contacts:
         return {"ok": False, "error": "No alert contacts configured"}
     from models import get_restaurant
@@ -146,21 +146,36 @@ def send_test_sms(restaurant_id: int) -> dict:
 
 # ── Contact CRUD ───────────────────────────────────────────────
 
-def get_alert_contacts(restaurant_id: int, db_path: str = DB_PATH) -> list:
+def get_alert_contacts(restaurant_id: int, sms_consent_only: bool = False, db_path: str = DB_PATH) -> list:
+    """sms_consent_only=True is the enforcement point for actually sending
+    SMS — only contacts whose number's owner personally checked the consent
+    box get texted. Management/display UI wants sms_consent_only=False (the
+    owner should see and be able to remove any contact, consented or not)."""
     conn = get_conn(db_path)
-    rows = conn.execute(
-        "SELECT id, name, phone FROM alert_contacts WHERE restaurant_id=? ORDER BY id",
-        (restaurant_id,),
-    ).fetchall()
+    query = "SELECT id, name, phone, sms_consent FROM alert_contacts WHERE restaurant_id=?"
+    if sms_consent_only:
+        query += " AND sms_consent=1"
+    rows = conn.execute(query + " ORDER BY id", (restaurant_id,)).fetchall()
     conn.close()
-    return [{"id": r["id"], "name": r["name"] or "", "phone": r["phone"]} for r in rows]
+    return [{"id": r["id"], "name": r["name"] or "", "phone": r["phone"],
+             "sms_consent": bool(r["sms_consent"])} for r in rows]
 
 
-def add_alert_contact(restaurant_id: int, name: str, phone: str, db_path: str = DB_PATH) -> int:
+def add_alert_contact(restaurant_id: int, name: str, phone: str,
+                      sms_consent: bool = False, db_path: str = DB_PATH) -> int:
+    """sms_consent must only be True when the number's own owner affirmatively
+    checked the consent box in their own authenticated session — never set it
+    True on someone else's behalf (e.g. an admin adding a contact for a
+    client). A contact added without consent still appears in the account's
+    contact list and can still receive email, it just never gets SMS."""
+    consent_at = None
+    if sms_consent:
+        from time_utils import restaurant_now_by_id
+        consent_at = restaurant_now_by_id(restaurant_id, naive=True).isoformat()
     conn = get_conn(db_path)
     cur = conn.execute(
-        "INSERT INTO alert_contacts (restaurant_id, name, phone) VALUES (?,?,?)",
-        (restaurant_id, name.strip(), phone.strip()),
+        "INSERT INTO alert_contacts (restaurant_id, name, phone, sms_consent, sms_consent_at) VALUES (?,?,?,?,?)",
+        (restaurant_id, name.strip(), phone.strip(), int(sms_consent), consent_at),
     )
     conn.commit()
     contact_id = cur.lastrowid
@@ -251,7 +266,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
     if not global_sms and not global_email:
         return
 
-    contacts    = get_alert_contacts(restaurant_id, db_path) if global_sms else []
+    contacts    = get_alert_contacts(restaurant_id, sms_consent_only=True, db_path=db_path) if global_sms else []
     owner_email = row["owner_email"] or ""
     if global_email and not owner_email:
         print(f"[notify] rid={restaurant_id} has email alerts on but no owner_email — email suppressed")
@@ -479,7 +494,7 @@ def check_no_response_alerts(db_path: str = DB_PATH):
         )
 
         if via_sms:
-            contacts = get_alert_contacts(rid, db_path)
+            contacts = get_alert_contacts(rid, sms_consent_only=True, db_path=db_path)
             for c in contacts:
                 send_sms(c["phone"], sms)
 
@@ -520,7 +535,7 @@ def check_daily_alerts(db_path: str = DB_PATH):
         if via_email and not owner_email:
             print(f"[notify] rid={rid} has email alerts on but no owner_email — email suppressed")
 
-        contacts = get_alert_contacts(rid, db_path) if via_sms else []
+        contacts = get_alert_contacts(rid, sms_consent_only=True, db_path=db_path) if via_sms else []
 
         def _fire(sms_text, subject, html, alert_type):
             if via_sms and contacts:

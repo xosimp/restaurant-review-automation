@@ -412,13 +412,18 @@ def get_alert_contacts_route(restaurant_id, current_user):
 @admin_bp.route("/admin/alert-contacts/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def add_alert_contact_route(restaurant_id, current_user):
+    """Admin-added contacts never get sms_consent=True — an operator typing in
+    someone else's number isn't that person consenting. They still receive
+    email alerts; only the client's own self-service Alert Settings flow
+    (client_api.save_alert_settings, gated by the consent checkbox) can
+    enable SMS for a contact."""
     from notify import add_alert_contact
     data = request.get_json() or {}
     name  = (data.get("name") or "").strip()
     phone = (data.get("phone") or "").strip()
     if not phone:
         return jsonify(ok=False, error="Phone number required")
-    contact_id = add_alert_contact(restaurant_id, name, phone)
+    contact_id = add_alert_contact(restaurant_id, name, phone, sms_consent=False)
     return jsonify(ok=True, id=contact_id, name=name, phone=phone)
 
 

@@ -6059,6 +6059,7 @@ function saveAlertSettings() {
     alert_rating_floor:    parseFloat(document.getElementById('al-rating-floor').value) || 4.0,
     alert_labor_over:      laborEl ? (laborEl.checked ? 1 : 0) : 0,
     urgent_via_sms:        smsOn ? 1 : 0,
+    sms_consent:           document.getElementById('al-sms-consent').checked,
     urgent_via_email:      document.getElementById('al-via-email').checked ? 1 : 0,
     digest_enabled:        digestEnabledEl ? (digestEnabledEl.checked ? 1 : 0) : 1,
     digest_day:            digestDayEl2 ? digestDayEl2.value : 'monday',

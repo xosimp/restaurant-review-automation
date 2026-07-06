@@ -1341,6 +1341,14 @@ def save_alert_settings(current_user):
     data = request.get_json() or {}
     rid = current_user["restaurant_id"]
 
+    # SMS requires real, server-verified consent — the modal's checkbox is a
+    # UX nicety, not enforcement, since anyone can call this API directly.
+    # Turning SMS on without sms_consent=true in the payload is silently
+    # downgraded to off rather than trusted on faith.
+    sms_requested = bool(data.get("urgent_via_sms"))
+    sms_consented = bool(data.get("sms_consent"))
+    sms_on = sms_requested and sms_consented
+
     # Sync contacts — max 2
     new_contacts = (data.get("contacts") or [])[:2]
     existing = get_alert_contacts(rid)
@@ -1350,7 +1358,7 @@ def save_alert_settings(current_user):
         phone = _normalize_phone(nc.get("phone") or "")
         name  = (nc.get("name")  or "").strip()
         if phone:
-            add_alert_contact(rid, name, phone)
+            add_alert_contact(rid, name, phone, sms_consent=sms_on)
 
     update_restaurant(rid, {
         "alert_1star":           int(bool(data.get("alert_1star"))),
@@ -1363,7 +1371,7 @@ def save_alert_settings(current_user):
         "alert_rating_threshold": int(bool(data.get("alert_rating_threshold"))),
         "alert_rating_floor":    float(data.get("alert_rating_floor") or 4.0),
         "alert_labor_over":      int(bool(data.get("alert_labor_over"))),
-        "urgent_via_sms":        int(bool(data.get("urgent_via_sms"))),
+        "urgent_via_sms":        int(sms_on),
         "urgent_via_email":      int(bool(data.get("urgent_via_email"))),
         "alert_any_review":      int(bool(data.get("alert_any_review"))),
         "alert_resp_approved":   int(bool(data.get("alert_resp_approved"))),
