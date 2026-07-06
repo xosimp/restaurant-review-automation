@@ -16,7 +16,7 @@ def generate_email_personalization(context: str, fallback: str) -> str:
         return fallback
     try:
         import anthropic
-        from ai_utils import create_with_retry
+        from ai_utils import create_with_retry, extract_text
         client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         prompt = (
             "You are Will, writing a short, warm, genuine paragraph (2-4 sentences) "
@@ -33,7 +33,7 @@ def generate_email_personalization(context: str, fallback: str) -> str:
             temperature=0.6,
             messages=[{"role": "user", "content": prompt}],
         )
-        text = msg.content[0].text.strip()
+        text = extract_text(msg).strip()
         return text if text else fallback
     except Exception:
         return fallback

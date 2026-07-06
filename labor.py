@@ -6,7 +6,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import anthropic
-from ai_utils import create_with_retry
+from ai_utils import create_with_retry, extract_text
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 DEFAULT_HOURLY_RATE = 26.0  # fallback if not set per client
@@ -466,7 +466,7 @@ The Recommendations section must start with exactly the word "Recommendations:" 
     )
     # Strip any markdown that slips through
     import re
-    text = msg.content[0].text.strip()
+    text = extract_text(msg).strip()
     text = re.sub('\\*\\*(.+?)\\*\\*', lambda m: m.group(1), text)
     text = re.sub('\\*(.+?)\\*',   lambda m: m.group(1), text)
     text = re.sub(r'#{1,6}\s', '', text)
@@ -821,7 +821,7 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
     )
     # The assistant prefill forces output to begin with data rows directly.
     # raw = "<data rows>\n---SUMMARY---\n<bullets>"
-    raw = msg.content[0].text.strip()
+    raw = extract_text(msg).strip()
     print(f"[schedule] raw length={len(raw)} stop_reason={msg.stop_reason}")
     import re as _re_sched
 

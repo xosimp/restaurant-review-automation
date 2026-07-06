@@ -1,6 +1,6 @@
 import os, json, anthropic
 from models import get_conn, update_analysis, get_pending_analysis
-from ai_utils import create_with_retry
+from ai_utils import create_with_retry, extract_text
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -45,7 +45,7 @@ def analyse_review(review_id: int, rating: int, text: str) -> dict:
         temperature=0.2,
         messages=[{"role": "user", "content": prompt}],
     )
-    raw = message.content[0].text.strip()
+    raw = extract_text(message).strip()
     raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     result = json.loads(raw)
     update_analysis(

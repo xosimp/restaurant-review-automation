@@ -3,7 +3,7 @@ competitor.py — Competitor intelligence for Cavnar AI
 Pulls nearby restaurant reviews via Google Places API and generates AI insights.
 """
 import os, json, requests, anthropic
-from ai_utils import create_with_retry
+from ai_utils import create_with_retry, extract_text
 
 PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
 ANTHROPIC_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
@@ -113,7 +113,7 @@ def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "") -> st
             temperature=0.2,
             messages=[{"role": "user", "content": extract_prompt}]
         )
-        result = msg.content[0].text.strip()
+        result = extract_text(msg).strip()
         return "" if "NO_MENU_FOUND" in result or len(result) < 30 else result
     except Exception as e:
         print(f"[fetch_menu_from_pdf_bytes] error: {e}")
@@ -165,7 +165,7 @@ def fetch_menu_from_url(menu_url: str) -> str:
             temperature=0.2,
             messages=[{"role": "user", "content": extract_prompt}]
         )
-        result = msg.content[0].text.strip()
+        result = extract_text(msg).strip()
         if "NO_MENU_FOUND" in result or len(result) < 30:
             return ""
         return result
@@ -418,7 +418,7 @@ Tone: sharp, direct, trusted business advisor. No generic advice. Name specific 
             max_tokens=900,
             messages=[{"role": "user", "content": prompt}]
         )
-        return msg.content[0].text.strip()
+        return extract_text(msg).strip()
     except Exception as e:
         print(f"[Competitor] generate_competitor_insight error: {e}")
         return ""

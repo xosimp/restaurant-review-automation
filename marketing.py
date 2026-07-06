@@ -3,7 +3,7 @@ marketing.py — AI-powered marketing content generation for restaurants
 """
 import os
 import anthropic
-from ai_utils import create_with_retry
+from ai_utils import create_with_retry, extract_text
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -371,7 +371,7 @@ def generate_content(content_type: str, topic: str,
         max_tokens=500,
         messages=[{"role": "user", "content": prompt}],
     )
-    result = msg.content[0].text.strip()
+    result = extract_text(msg).strip()
 
     # Strip markdown formatting Claude sometimes adds
     import re as _re
@@ -434,7 +434,8 @@ Upcoming holidays/events in the next 30 days: {upcoming_holidays if upcoming_hol
 Recently generated content (avoid repeating these): {recent_topics}
 
 Return ONLY valid JSON — no markdown fences. Array of 7 objects with:
-{{"day": "Monday", "platform": "Instagram & FB|Email|Google|SMS", "angle": "one sentence topic idea", "type": "instagram_post|weekly_email|google_promo|happy_hour|loyalty_nudge"}}
+{{"day": "Monday", "platform": "Instagram & FB|Email|Google|SMS", "angle": "one short sentence, max 20 words", "type": "instagram_post|weekly_email|google_promo|happy_hour|loyalty_nudge"}}
+"day" must be just the weekday name (e.g. "Monday") — never include a date.
 
 Rules:
 - Include at least one SMS/loyalty_nudge idea per week to re-engage guests
@@ -447,10 +448,10 @@ Rules:
     msg = create_with_retry(
         client,
         model=os.getenv("MARKETING_MODEL", "claude-sonnet-5"),
-        max_tokens=600,
+        max_tokens=1000,
         messages=[{"role": "user", "content": prompt}],
     )
-    raw = msg.content[0].text.strip()
+    raw = extract_text(msg).strip()
     raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
         ideas = json.loads(raw)

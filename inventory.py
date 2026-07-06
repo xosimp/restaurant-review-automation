@@ -5,7 +5,7 @@ import os, csv, json
 import anthropic
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from ai_utils import create_with_retry
+from ai_utils import create_with_retry, extract_text
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -520,7 +520,7 @@ Finally, on a new line with NO number, write one short warm closing sentence:
         max_tokens=950,
         messages=[{"role": "user", "content": prompt}],
     )
-    result = msg.content[0].text.strip()
+    result = extract_text(msg).strip()
     # Strip any markdown that slips through
     import re as _re_inv
     result = _re_inv.sub('[*]{2}(.+?)[*]{2}', lambda m: m.group(1), result)

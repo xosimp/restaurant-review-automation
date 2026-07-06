@@ -514,7 +514,7 @@ def review_insight_api(current_user):
             "Rules: no markdown, no extra lines, no preamble. Each line max 20 words. Never invent data. Prioritize multi-week trends over single-week blips."
         )
 
-        from ai_utils import create_with_retry
+        from ai_utils import create_with_retry, extract_text
         msg = create_with_retry(
             _client_ri,
             model=os.getenv("CLAUDE_MODEL","claude-haiku-4-5-20251001"),
@@ -522,7 +522,7 @@ def review_insight_api(current_user):
             temperature=0.2,
             messages=[{"role":"user","content":prompt}]
         )
-        insight = msg.content[0].text.strip()
+        insight = extract_text(msg).strip()
         # Strip any markdown
         import re as _re_ri
         insight = _re_ri.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), insight)
@@ -792,7 +792,7 @@ Paragraph 2: One concrete content suggestion with a specific angle. Reference re
 
 Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No corporate language. Under 120 words total. If multiple holidays are coming up, mention both briefly.{forecast_instruction}"""
         import anthropic as _anth
-        from ai_utils import create_with_retry
+        from ai_utils import create_with_retry, extract_text
         _client = _anth.Anthropic(api_key=__import__("os").getenv("ANTHROPIC_API_KEY"))
         msg = create_with_retry(
             _client,
@@ -800,7 +800,7 @@ Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No co
             max_tokens=350,
             messages=[{"role": "user", "content": prompt}]
         )
-        insight = msg.content[0].text.strip()
+        insight = extract_text(msg).strip()
         formatted = format_insight_html(insight)
         _cache_set("mkt-insight:" + str(rid), formatted)
         return jsonify(insight=formatted)

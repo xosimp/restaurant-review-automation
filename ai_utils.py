@@ -24,7 +24,16 @@ _RETRYABLE = (
 
 def create_with_retry(client, retries=2, backoff=1.5, **kwargs):
     """client.messages.create(**kwargs) with exponential backoff on
-    transient failures. Raises the last exception if all attempts fail."""
+    transient failures. Raises the last exception if all attempts fail.
+
+    Extended thinking is off by default: newer Sonnet models will prepend a
+    ThinkingBlock to `message.content` for anything past a trivial prompt,
+    which breaks every `message.content[0].text` call site in this codebase
+    (there are 14 of them) with an AttributeError, and burns max_tokens on
+    reasoning the app never reads — every use here is short, deterministic,
+    format-constrained generation that doesn't need chain-of-thought.
+    Callers that ever want it can still pass thinking=... explicitly."""
+    kwargs.setdefault("thinking", {"type": "disabled"})
     attempt = 0
     while True:
         try:
@@ -65,3 +74,18 @@ def ai_rate_limited(key, max_calls=6, window_secs=60):
     recent.append(now)
     _ai_call_log[key] = recent
     return False
+
+
+def extract_text(message) -> str:
+    """First real text block from a Claude response. Every call site in this
+    codebase used to do message.content[0].text directly, which assumes
+    content[0] is text — true until a ThinkingBlock (or any other non-text
+    block) shows up first, at which point it's an AttributeError instead of
+    a response. create_with_retry() disables thinking by default so this
+    should be redundant in practice, but it's the difference between a
+    crash and a clean response if that ever changes upstream."""
+    for block in message.content:
+        text = getattr(block, "text", None)
+        if text is not None:
+            return text
+    return ""

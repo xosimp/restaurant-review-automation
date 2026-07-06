@@ -1,6 +1,6 @@
 import os, re, anthropic
 from models import get_conn, update_draft, get_pending_drafts, get_restaurant
-from ai_utils import create_with_retry
+from ai_utils import create_with_retry, extract_text
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
@@ -146,7 +146,7 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
         temperature=0.7,
         messages=[{"role": "user", "content": prompt}],
     )
-    draft = message.content[0].text.strip()
+    draft = extract_text(message).strip()
 
     # Strip markdown if AI slips any in
     draft = re.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), draft)
