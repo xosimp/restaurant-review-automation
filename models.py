@@ -653,6 +653,30 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN alert_labor_over INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN alert_any_review INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN alert_resp_approved INTEGER DEFAULT 0",
+        # marketing_content_log had 4 different ad-hoc CREATE TABLE statements
+        # scattered across client_api.py/hosted_dashboard.py/marketing.py, some
+        # missing post_id/post_platform — CREATE TABLE IF NOT EXISTS silently
+        # no-ops on a table that already exists with the wrong shape, so a
+        # database that hit the incomplete-schema path first stayed broken
+        # forever. One canonical schema, centrally migrated, fixes it for good.
+        """CREATE TABLE IF NOT EXISTS marketing_content_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            content_type TEXT,
+            topic TEXT,
+            post_id TEXT,
+            post_platform TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )""",
+        "ALTER TABLE marketing_content_log ADD COLUMN post_id TEXT",
+        "ALTER TABLE marketing_content_log ADD COLUMN post_platform TEXT",
+        "ALTER TABLE marketing_content_log ADD COLUMN reach INTEGER DEFAULT 0",
+        "ALTER TABLE marketing_content_log ADD COLUMN impressions INTEGER DEFAULT 0",
+        "ALTER TABLE marketing_content_log ADD COLUMN engaged INTEGER DEFAULT 0",
+        "ALTER TABLE marketing_content_log ADD COLUMN likes INTEGER DEFAULT 0",
+        "ALTER TABLE marketing_content_log ADD COLUMN comments INTEGER DEFAULT 0",
+        "ALTER TABLE marketing_content_log ADD COLUMN shares INTEGER DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_content_restaurant ON marketing_content_log(restaurant_id, created_at)",
     ]
     for m in migrations:
         try:

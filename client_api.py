@@ -612,7 +612,71 @@ def mkt_stats_api(current_user):
         conn.close()
         return jsonify(ok=True, generated=gen, published=pub, this_month=month)
     except Exception as e:
-        return jsonify(ok=False, generated=0, published=0, this_month=0)
+        return jsonify(ok=False, error=str(e))
+
+@client_bp.route("/api/mkt-performance")
+@login_required
+def mkt_performance_api(current_user):
+    """Aggregate real Meta post performance for the Marketing tab's analytics
+    card: total reach/engagement across published posts and the single
+    best-performing post. Reads the same reach/impressions/likes/comments/
+    shares columns refresh_post_metrics() (social_routes.py) keeps updated —
+    this endpoint never calls Meta itself, it just summarizes what's already
+    in the DB, so it stays fast even if Meta is slow or down."""
+    rid = current_user["restaurant_id"]
+    try:
+        conn = get_conn()
+        conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
+            content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
+            created_at TEXT DEFAULT (datetime('now')))""")
+        for col in ("reach", "impressions", "engaged", "likes", "comments", "shares"):
+            try:
+                conn.execute(f"ALTER TABLE marketing_content_log ADD COLUMN {col} INTEGER DEFAULT 0")
+            except Exception:
+                pass
+        conn.commit()
+
+        published = conn.execute(
+            "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL",
+            (rid,)
+        ).fetchone()[0] or 0
+
+        totals = conn.execute("""
+            SELECT COALESCE(SUM(reach),0) as reach, COALESCE(SUM(impressions),0) as impressions,
+                   COALESCE(SUM(likes),0) as likes, COALESCE(SUM(comments),0) as comments,
+                   COALESCE(SUM(shares),0) as shares
+            FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL
+        """, (rid,)).fetchone()
+
+        rows = conn.execute("""
+            SELECT topic, post_platform, reach, impressions, likes, comments, shares
+            FROM marketing_content_log
+            WHERE restaurant_id=? AND post_id IS NOT NULL
+              AND (reach > 0 OR impressions > 0 OR likes > 0 OR comments > 0)
+        """, (rid,)).fetchall()
+        conn.close()
+
+        top_post = None
+        if rows:
+            best = max(rows, key=lambda r: (r["reach"] or 0) + (r["impressions"] or 0))
+            top_post = {
+                "topic": best["topic"], "platform": best["post_platform"],
+                "reach": best["reach"] or 0, "likes": best["likes"] or 0,
+                "comments": best["comments"] or 0, "shares": best["shares"] or 0,
+            }
+
+        total_engagement = (totals["likes"] or 0) + (totals["comments"] or 0) + (totals["shares"] or 0)
+        return jsonify(
+            ok=True,
+            published=published,
+            has_data=bool(rows),
+            total_reach=(totals["reach"] or 0) + (totals["impressions"] or 0),
+            total_engagement=total_engagement,
+            top_post=top_post,
+        )
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
 
 @client_bp.route("/api/mkt-insight")
 @login_required

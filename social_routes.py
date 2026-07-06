@@ -7,6 +7,7 @@ import os
 
 from models import get_conn, get_restaurant, update_restaurant
 from auth import login_required, admin_required
+from meta_api import graph_url, oauth_dialog_url
 
 social_bp = Blueprint('social', __name__)
 
@@ -28,7 +29,7 @@ def instagram_connect(current_user):
         "response_type": "code",
         "state":         state,
     })
-    return flask_redirect(f"https://www.facebook.com/v19.0/dialog/oauth?{params}")
+    return flask_redirect(oauth_dialog_url(params))
 
 @social_bp.route("/instagram/callback")
 def instagram_callback():
@@ -52,7 +53,7 @@ def instagram_callback():
         )
 
     # Exchange code for short-lived token
-    r = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+    r = _req.get(graph_url("oauth/access_token"), params={
         "client_id": app_id, "client_secret": app_secret,
         "redirect_uri": redirect_uri, "code": code,
     })
@@ -67,21 +68,21 @@ def instagram_callback():
     short_token = r.json().get("access_token")
 
     # Exchange for long-lived token (60 days)
-    r2 = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+    r2 = _req.get(graph_url("oauth/access_token"), params={
         "grant_type": "fb_exchange_token", "client_id": app_id,
         "client_secret": app_secret, "fb_exchange_token": short_token,
     })
     long_token = r2.json().get("access_token", short_token)
 
     # Get Facebook pages
-    r3 = _req.get("https://graph.facebook.com/v19.0/me/accounts", params={"access_token": long_token})
+    r3 = _req.get(graph_url("me/accounts"), params={"access_token": long_token})
     pages = r3.json().get("data", [])
     ig_user_id = None
     page_token = long_token
     matched_page = None
 
     for page in pages:
-        r4 = _req.get(f"https://graph.facebook.com/v19.0/{page['id']}", params={
+        r4 = _req.get(graph_url(page['id']), params={
             "fields": "instagram_business_account",
             "access_token": page.get("access_token", long_token),
         })
@@ -148,7 +149,7 @@ def post_to_instagram(current_user):
     if not image_url:
         return jsonify(ok=False, error="Instagram requires an image. Paste a public image URL into the Image URL field before posting.")
 
-    r1 = _req.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/media", data={
+    r1 = _req.post(graph_url(f"{ig_user_id}/media"), data={
         "image_url":    image_url,
         "caption":      caption,
         "access_token": token,
@@ -166,14 +167,14 @@ def post_to_instagram(current_user):
     for _ in range(10):
         _time.sleep(2)
         _status = _req.get(
-            f"https://graph.facebook.com/v19.0/{creation_id}",
+            graph_url(creation_id),
             params={"fields": "status_code", "access_token": token}
         ).json().get("status_code", "")
         if _status == "FINISHED":
             break
 
     # Publish the media
-    r2 = _req.post(f"https://graph.facebook.com/v19.0/{ig_user_id}/media_publish", data={
+    r2 = _req.post(graph_url(f"{ig_user_id}/media_publish"), data={
         "creation_id":  creation_id,
         "access_token": token,
     })
@@ -221,25 +222,98 @@ def debug_insights(current_user):
     post_id = "1206793632506765_122108397639307271"
     results = {}
     # Try FB page token
-    r1 = _req.get(f"https://graph.facebook.com/v19.0/{post_id}",
+    r1 = _req.get(graph_url(post_id),
         params={"fields":"id,message,likes.summary(true),comments.summary(true),shares","access_token": restaurant.fb_page_token}, timeout=5)
     results["post_with_likes"] = r1.json()
     results["fb_page_id"] = restaurant.fb_page_id
     results["fb_token_present"] = bool(restaurant.fb_page_token)
     return __import__('flask').jsonify(results)
 
-@social_bp.route("/api/post-insights")
-@login_required
-def post_insights(current_user):
-    """Fetch engagement metrics for posted content."""
+def _fb_post_metrics(post_id, token, _req):
+    """Facebook Page post engagement + reach/impressions. Reach/impressions is
+    fetched separately from engagement so one deprecated metric name can't
+    zero out likes/comments/shares too — and falls back to a single metric
+    if the paired request is rejected."""
+    metrics = {}
+    r = _req.get(
+        graph_url(post_id),
+        params={"fields": "reactions.summary(true),comments.summary(true),shares",
+                "access_token": token},
+        timeout=5
+    )
+    if r.status_code == 200:
+        d = r.json()
+        metrics["likes"]    = d.get("reactions", {}).get("summary", {}).get("total_count", 0)
+        metrics["comments"] = d.get("comments", {}).get("summary", {}).get("total_count", 0)
+        metrics["shares"]   = d.get("shares", {}).get("count", 0)
+    else:
+        _capture_insights_error("facebook_engagement", post_id, r)
+
+    for metric_set in ("post_impressions,post_impressions_unique", "post_impressions_unique"):
+        r2 = _req.get(
+            graph_url(post_id + "/insights"),
+            params={"metric": metric_set, "period": "lifetime", "access_token": token},
+            timeout=5
+        )
+        if r2.status_code == 200:
+            for m in r2.json().get("data", []):
+                val = m.get("values", [{}])[-1].get("value", 0) if m.get("values") else m.get("value", 0)
+                if m["name"] == "post_impressions":
+                    metrics["impressions"] = val
+                elif m["name"] == "post_impressions_unique":
+                    metrics["reach"] = val
+            break
+        _capture_insights_error(f"facebook_insights({metric_set})", post_id, r2)
+    return metrics
+
+
+def _ig_post_metrics(post_id, token, _req):
+    """Instagram media insights. `impressions` has been deprecated on and off
+    across API versions for image/carousel media — request it first, and if
+    Meta rejects the whole field list, retry without it so reach/likes/
+    comments/saved still come through instead of the request failing whole."""
+    metrics = {}
+    for metric_set in ("reach,impressions,likes,comments_count,saved",
+                       "reach,likes,comments_count,saved"):
+        r = _req.get(
+            graph_url(post_id + "/insights"),
+            params={"metric": metric_set, "access_token": token},
+            timeout=5
+        )
+        if r.status_code == 200:
+            for m in r.json().get("data", []):
+                metrics[m["name"]] = m.get("values", [{}])[-1].get("value", 0)
+            return metrics
+        _capture_insights_error(f"instagram_insights({metric_set})", post_id, r)
+    return metrics
+
+
+def _capture_insights_error(what, post_id, resp):
+    """Surface a real Meta API failure (bad metric name, expired token,
+    revoked permission) instead of letting it disappear into empty metrics
+    forever — this is what makes 'analytics are working' verifiable rather
+    than assumed."""
+    print(f"[insights] {what} for {post_id} failed: {resp.status_code} {resp.text[:300]}")
+    try:
+        import ops
+        ops.capture(Exception(resp.text[:300]), job="post_insights",
+                    context=f"{what} post={post_id} status={resp.status_code}")
+    except Exception:
+        pass
+
+
+def refresh_post_metrics(restaurant_id, limit=25):
+    """Pull fresh engagement metrics for a restaurant's recent posts and
+    write them back to marketing_content_log. Shared by the on-demand
+    /api/post-insights route and the nightly scheduler sync — one
+    implementation, so a fix here reaches both callers."""
     import requests as _req
     from models import get_conn, get_restaurant
-    restaurant = get_restaurant(current_user["restaurant_id"])
+    restaurant = get_restaurant(restaurant_id)
     if not restaurant or (not restaurant.ig_token and not restaurant.fb_page_token):
-        return jsonify(ok=False, error="Not connected")
+        return {"ok": False, "error": "Not connected", "posts": []}
+    conn = get_conn()
     try:
-        conn = get_conn()
-        # Add metrics columns if they don't exist yet
         for col in ("reach", "impressions", "engaged", "likes", "comments", "shares"):
             try:
                 conn.execute(f"ALTER TABLE marketing_content_log ADD COLUMN {col} INTEGER DEFAULT 0")
@@ -251,61 +325,23 @@ def post_insights(current_user):
                       reach, impressions, engaged, likes, comments, shares
                FROM marketing_content_log
                WHERE restaurant_id=? AND post_id IS NOT NULL
-               ORDER BY created_at DESC LIMIT 10""",
-            (current_user["restaurant_id"],)
+               ORDER BY created_at DESC LIMIT ?""",
+            (restaurant_id, limit)
         ).fetchall()
         results = []
         for row in rows:
             if not row["post_id"]:
                 continue
             try:
-                _token = restaurant.fb_page_token if row["post_platform"] == "facebook" else restaurant.ig_token
-                if not _token:
+                token = restaurant.fb_page_token if row["post_platform"] == "facebook" else restaurant.ig_token
+                if not token:
                     results.append({"topic": row["topic"], "post_id": row["post_id"],
                                     "platform": row["post_platform"], "metrics": {}})
                     continue
-                metrics = {}
                 if row["post_platform"] == "facebook":
-                    # Basic engagement via post fields
-                    r = _req.get(
-                        "https://graph.facebook.com/v19.0/" + row["post_id"],
-                        params={"fields": "reactions.summary(true),comments.summary(true),shares",
-                                "access_token": _token},
-                        timeout=5
-                    )
-                    print(f"[insights] FB engagement status={r.status_code} body={r.text[:300]}")
-                    if r.status_code == 200:
-                        d = r.json()
-                        metrics["likes"]    = d.get("reactions", {}).get("summary", {}).get("total_count", 0)
-                        metrics["comments"] = d.get("comments", {}).get("summary", {}).get("total_count", 0)
-                        metrics["shares"]   = d.get("shares", {}).get("count", 0)
-                    # Reach + impressions via Page Insights API
-                    r2 = _req.get(
-                        "https://graph.facebook.com/v19.0/" + row["post_id"] + "/insights",
-                        params={"metric": "post_impressions,post_impressions_unique",
-                                "period": "lifetime",
-                                "access_token": _token},
-                        timeout=5
-                    )
-                    print(f"[insights] FB insights status={r2.status_code} body={r2.text[:300]}")
-                    if r2.status_code == 200:
-                        for m in r2.json().get("data", []):
-                            val = m.get("values", [{}])[-1].get("value", 0) if m.get("values") else m.get("value", 0)
-                            if m["name"] == "post_impressions":
-                                metrics["impressions"] = val
-                            elif m["name"] == "post_impressions_unique":
-                                metrics["reach"] = val
+                    metrics = _fb_post_metrics(row["post_id"], token, _req)
                 else:
-                    r = _req.get(
-                        "https://graph.facebook.com/v19.0/" + row["post_id"] + "/insights",
-                        params={"metric": "reach,impressions,likes,comments_count,saved",
-                                "access_token": _token},
-                        timeout=5
-                    )
-                    if r.status_code == 200:
-                        for m in r.json().get("data", []):
-                            metrics[m["name"]] = m.get("values", [{}])[-1].get("value", 0)
-                # Write metrics back to DB for AI trend analysis
+                    metrics = _ig_post_metrics(row["post_id"], token, _req)
                 if metrics:
                     conn.execute(
                         """UPDATE marketing_content_log
@@ -323,11 +359,22 @@ def post_insights(current_user):
                     "platform": row["post_platform"],
                     "metrics":  metrics
                 })
-            except Exception:
+            except Exception as e:
+                _capture_insights_error("refresh_post_metrics row", row["post_id"], type("R", (), {"status_code": 0, "text": str(e)})())
                 results.append({"topic": row["topic"], "post_id": row["post_id"],
                                "platform": row["post_platform"], "metrics": {}})
+        return {"ok": True, "posts": results}
+    finally:
         conn.close()
-        return jsonify(ok=True, posts=results)
+
+
+@social_bp.route("/api/post-insights")
+@login_required
+def post_insights(current_user):
+    """Fetch (and refresh) engagement metrics for posted content."""
+    try:
+        result = refresh_post_metrics(current_user["restaurant_id"])
+        return jsonify(**result)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
@@ -341,7 +388,7 @@ def post_to_facebook(current_user):
     restaurant = get_restaurant(current_user["restaurant_id"])
     if not restaurant or not restaurant.fb_page_token or not restaurant.fb_page_id:
         return jsonify(ok=False, error="Facebook not connected — click Connect Instagram & Facebook first")
-    r = _req.post(f"https://graph.facebook.com/v19.0/{restaurant.fb_page_id}/feed", data={
+    r = _req.post(graph_url(f"{restaurant.fb_page_id}/feed"), data={
         "message":      caption,
         "access_token": restaurant.fb_page_token,
     })
@@ -393,7 +440,7 @@ def meta_review_test(current_user):
     # Fall back to feed API if no DB post found
     if not fb_post_id:
         r_feed = _req.get(
-            "https://graph.facebook.com/v19.0/" + fb_page_id + "/feed",
+            graph_url(fb_page_id + "/feed"),
             params={"fields": "id", "limit": 1, "access_token": fb_token},
             timeout=10
         )
@@ -405,7 +452,7 @@ def meta_review_test(current_user):
     if fb_post_id:
         for metric in ["post_impressions,post_impressions_unique", "post_activity", "post_clicks"]:
             r1 = _req.get(
-                "https://graph.facebook.com/v19.0/" + fb_post_id + "/insights",
+                graph_url(fb_post_id + "/insights"),
                 params={"metric": metric, "period": "lifetime", "access_token": fb_token},
                 timeout=10
             )
@@ -416,7 +463,7 @@ def meta_review_test(current_user):
     # instagram_manage_insights
     if ig_token and ig_user_id:
         r4 = _req.get(
-            "https://graph.facebook.com/v19.0/" + ig_user_id + "/insights",
+            graph_url(ig_user_id + "/insights"),
             params={"metric": "reach", "period": "day", "access_token": ig_token},
             timeout=10
         )

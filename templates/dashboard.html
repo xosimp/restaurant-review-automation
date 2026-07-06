@@ -2720,9 +2720,46 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
   </div>
 
+  <!-- Post Performance — real Meta analytics, unlocked now that the app is Meta-approved -->
+  <div style="margin-top:20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="text-align:center;flex:1">
+        <div class="name-underlined-slow" style="font-family:'Fraunces',serif;font-size:22px;color:var(--ink);display:inline-block">Post performance</div>
+      </div>
+    </div>
+    <div id="mkt-perf-loading" class="intel-stat-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
+      <div class="rv-stat-cell skeleton" style="padding:18px 16px;height:78px"></div>
+      <div class="rv-stat-cell skeleton" style="padding:18px 16px;height:78px"></div>
+      <div class="rv-stat-cell skeleton" style="padding:18px 16px;height:78px"></div>
+    </div>
+    <div id="mkt-perf-body" style="display:none">
+      <div class="intel-stat-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
+        <div class="rv-stat-cell" style="padding:18px 16px">
+          <div class="rv-stat-n" id="mkt-perf-reach" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(24px,2.6vw,32px);font-weight:500;letter-spacing:-.02em;line-height:1">—</div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Total reach</div>
+        </div>
+        <div class="rv-stat-cell" style="padding:18px 16px">
+          <div class="rv-stat-n" id="mkt-perf-engagement" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(24px,2.6vw,32px);font-weight:500;letter-spacing:-.02em;line-height:1">—</div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Total engagement</div>
+        </div>
+        <div class="rv-stat-cell" style="padding:18px 16px">
+          <div class="rv-stat-n" id="mkt-perf-published" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(24px,2.6vw,32px);font-weight:500;letter-spacing:-.02em;line-height:1">—</div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Posts published</div>
+        </div>
+      </div>
+      <div id="mkt-perf-top-wrap" style="display:none;background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:14px 18px;position:relative;overflow:hidden">
+        <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
+        <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:8px;padding-left:4px">Top performing post</div>
+        <div style="padding-left:4px">
+          <div id="mkt-perf-top-topic" style="font-size:14px;font-weight:600;color:#f0ebe0;margin-bottom:4px"></div>
+          <div id="mkt-perf-top-metrics" style="font-size:12px;color:rgba(240,235,224,.6)"></div>
+        </div>
+      </div>
+    </div>
+    <div id="mkt-perf-empty" style="display:none"></div>
+  </div>
 
-
-  <div style="margin-top:24px;background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:16px">
+  <div class="card" style="margin-top:20px;padding:16px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Content Calendar</div>
       <div style="display:flex;gap:6px">
@@ -4248,7 +4285,7 @@ function switchTab(n,btn){
   }
   if(n==='labor'){renderBars();loadLaborTrend(false);}
   if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();}
-  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();loadMktStats();startMetricsPoller();}else{stopMetricsPoller();}
+  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();loadMktPerformance();startMetricsPoller();}else{stopMetricsPoller();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
@@ -5112,6 +5149,11 @@ function loadPostInsights(){
     if(!d.ok||!d.posts||!d.posts.length)return;
     var list=document.getElementById('recent-topics-list');
     if(!list)return;
+    var _isDark=document.documentElement.getAttribute('data-theme')==='dark';
+    var _bg=_isDark?'rgba(111,207,151,.1)':'#eaf4ee';
+    var _br=_isDark?'rgba(111,207,151,.28)':'#a7d7b8';
+    var _tx=_isDark?'#6fcf97':'#2d5a3d';
+    var _badgeTx=_isDark?'#6fcf97':'#2d6a4f';
     for(var i=0;i<d.posts.length;i++){
       var post=d.posts[i];
       var m=post.metrics||{};
@@ -5123,10 +5165,10 @@ function loadPostInsights(){
         if(chips[j].getAttribute('data-topic')===post.topic){
           // Re-apply posted (green) state on reload
           if(!chips[j].querySelector('.posted-badge')){
-            chips[j].innerHTML=post.topic+' <span class="posted-badge" style="color:#2d6a4f;font-weight:700;font-size:9px">✓ '+post.platform+'</span>';
-            chips[j].style.background='#eaf4ee';
-            chips[j].style.borderColor='#a7d7b8';
-            chips[j].style.color='#2d5a3d';
+            chips[j].innerHTML=post.topic+' <span class="posted-badge" style="color:'+_badgeTx+';font-weight:700;font-size:9px">✓ '+post.platform+'</span>';
+            chips[j].style.background=_bg;
+            chips[j].style.borderColor=_br;
+            chips[j].style.color=_tx;
           }
           // Add metrics below if available
           if(!chips[j].querySelector('.insights-badge')){
@@ -5137,7 +5179,7 @@ function loadPostInsights(){
             if(parts.length){
               var badge=document.createElement('span');
               badge.className='insights-badge';
-              badge.style.cssText='display:block;font-size:9px;color:#2d6a4f;font-weight:600;margin-top:3px;line-height:1.4;';
+              badge.style.cssText='display:block;font-size:9px;color:'+_badgeTx+';font-weight:600;margin-top:3px;line-height:1.4;';
               badge.innerHTML=parts.join(' · ');
               chips[j].style.flexDirection='column';
               chips[j].style.alignItems='flex-start';
@@ -5187,6 +5229,14 @@ function loadRecentTopics(){
       list.innerHTML='';
       if(d.topics&&d.topics.length){
         var frag=document.createDocumentFragment();
+        var _isDark=document.documentElement.getAttribute('data-theme')==='dark';
+        var _postedBg=_isDark?'rgba(111,207,151,.1)':'#eaf4ee';
+        var _postedBr=_isDark?'rgba(111,207,151,.28)':'#a7d7b8';
+        var _postedTx=_isDark?'#6fcf97':'#2d5a3d';
+        var _postedBadge=_isDark?'#6fcf97':'#2d6a4f';
+        var _pendingBg=_isDark?'rgba(212,160,48,.1)':'#fef0e8';
+        var _pendingBr=_isDark?'rgba(212,160,48,.28)':'#f5cdb0';
+        var _pendingTx=_isDark?'#d4a030':'#a84020';
         for(var i=0;i<d.topics.length;i++){
           var t=d.topics[i];
           var topic=t.topic||t;
@@ -5197,9 +5247,9 @@ function loadRecentTopics(){
           chip.setAttribute('data-topic',topic);
           var displayTopic=topic.length>40?topic.substring(0,40).trim()+'…':topic;
           if(posted){
-            chip.style.cssText='background:#eaf4ee;color:#2d5a3d;font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid #a7d7b8;white-space:nowrap;font-weight:500;display:inline-flex;flex-direction:column;align-items:flex-start;vertical-align:top';
+            chip.style.cssText='background:'+_postedBg+';color:'+_postedTx+';font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid '+_postedBr+';white-space:nowrap;font-weight:500;display:inline-flex;flex-direction:column;align-items:flex-start;vertical-align:top';
             var topLine=document.createElement('span');
-            topLine.innerHTML=displayTopic+' <span class="posted-badge" style="color:#2d6a4f;font-weight:700;font-size:9px">&#10003; '+platform+'</span>';
+            topLine.innerHTML=displayTopic+' <span class="posted-badge" style="color:'+_postedBadge+';font-weight:700;font-size:9px">&#10003; '+platform+'</span>';
             chip.appendChild(topLine);
             var reach=metrics.reach||metrics.impressions||0;
             var likes=metrics.likes||0;
@@ -5211,12 +5261,12 @@ function loadRecentTopics(){
             if(parts.length){
               var badge=document.createElement('span');
               badge.className='insights-badge';
-              badge.style.cssText='font-size:9px;color:#2d6a4f;font-weight:600;margin-top:2px;line-height:1.4;';
+              badge.style.cssText='font-size:9px;color:'+_postedBadge+';font-weight:600;margin-top:2px;line-height:1.4;';
               badge.innerHTML=parts.join(' &middot; ');
               chip.appendChild(badge);
             }
           } else {
-            chip.style.cssText='background:#fef0e8;color:#a84020;font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid #f5cdb0;white-space:nowrap;font-weight:500';
+            chip.style.cssText='background:'+_pendingBg+';color:'+_pendingTx+';font-size:10px;padding:2px 8px;border-radius:12px;border:1px solid '+_pendingBr+';white-space:nowrap;font-weight:500';
             chip.textContent=displayTopic;
           }
           frag.appendChild(chip);
@@ -5243,17 +5293,47 @@ function startMetricsPoller(){
 function stopMetricsPoller(){
   if(_metricsPoller){clearInterval(_metricsPoller);_metricsPoller=null;}
 }
-function loadMktStats(){
-  fetch('/api/mkt-stats').then(function(r){return r.json();}).then(function(d){
-    if(!d.ok)return;
-    var setEl=function(id,val){var el=document.getElementById(id);if(!el)return;el.textContent=val>0?val:'—';};
-    var setColor=function(id,val,col){var el=document.getElementById(id);if(!el)return;el.style.color=val>0?col:'var(--ink)';};
-    setEl('mkt-stat-generated',d.generated);
-    setEl('mkt-stat-published',d.published);
-    setEl('mkt-stat-month',d.this_month);
-    setColor('mkt-stat-published',d.published,'#2d6a4f');
-    setColor('mkt-stat-month',d.this_month,'#c84b2f');
-  }).catch(function(){});
+function loadMktPerformance(){
+  var loadingEl=document.getElementById('mkt-perf-loading');
+  var bodyEl=document.getElementById('mkt-perf-body');
+  var emptyEl=document.getElementById('mkt-perf-empty');
+  if(!loadingEl)return;
+  fetch('/api/mkt-performance').then(function(r){return r.json();}).then(function(d){
+    loadingEl.style.display='none';
+    if(!d.ok||!d.has_data){
+      bodyEl.style.display='none';
+      emptyEl.style.display='';
+      emptyEl.innerHTML=emptyStateHtml('No performance data yet','Post to Instagram or Facebook above — reach and engagement show up here once Meta reports them');
+      return;
+    }
+    emptyEl.style.display='none';
+    bodyEl.style.display='';
+    var reachEl=document.getElementById('mkt-perf-reach');
+    var engEl=document.getElementById('mkt-perf-engagement');
+    var pubEl=document.getElementById('mkt-perf-published');
+    if(reachEl)reachEl.textContent=(d.total_reach||0).toLocaleString();
+    if(engEl)engEl.textContent=(d.total_engagement||0).toLocaleString();
+    if(pubEl)pubEl.textContent=d.published||0;
+    var topWrap=document.getElementById('mkt-perf-top-wrap');
+    if(d.top_post&&topWrap){
+      topWrap.style.display='';
+      var topic=d.top_post.topic||'';
+      var platform=d.top_post.platform||'';
+      document.getElementById('mkt-perf-top-topic').textContent=(topic.length>60?topic.substring(0,60).trim()+'…':topic)+(platform?' · '+platform:'');
+      var parts=[];
+      if(d.top_post.reach)parts.push('👁 '+d.top_post.reach.toLocaleString()+' reach');
+      if(d.top_post.likes)parts.push('♥ '+d.top_post.likes+' likes');
+      if(d.top_post.comments)parts.push('💬 '+d.top_post.comments+' comments');
+      if(d.top_post.shares)parts.push('↻ '+d.top_post.shares+' shares');
+      document.getElementById('mkt-perf-top-metrics').textContent=parts.join('  ·  ');
+    } else if(topWrap){
+      topWrap.style.display='none';
+    }
+  }).catch(function(){
+    loadingEl.style.display='none';
+    emptyEl.style.display='';
+    emptyEl.innerHTML=emptyStateHtml('Could not load performance data','Refresh the page to try again');
+  });
 }
 function loadMktInsight(){
   mktLoaded=true;

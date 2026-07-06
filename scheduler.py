@@ -452,6 +452,7 @@ def refresh_expiring_tokens():
         from models import get_all_restaurants, update_restaurant
         from datetime import datetime, timedelta
 
+        from meta_api import graph_url
         app_id     = os.getenv("META_APP_ID","")
         app_secret = os.getenv("META_APP_SECRET","")
         if not app_id or not app_secret:
@@ -468,7 +469,7 @@ def refresh_expiring_tokens():
                 continue  # Not expiring soon
 
             try:
-                resp = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+                resp = _req.get(graph_url("oauth/access_token"), params={
                     "grant_type": "fb_exchange_token",
                     "client_id": app_id, "client_secret": app_secret,
                     "fb_exchange_token": r.ig_token,
@@ -478,7 +479,7 @@ def refresh_expiring_tokens():
                     new_expires = (_chi_now() + timedelta(days=60)).strftime("%Y-%m-%d")
                     update_data = {"ig_token": new_token, "ig_token_expires": new_expires}
                     if r.fb_page_token:
-                        resp2 = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+                        resp2 = _req.get(graph_url("oauth/access_token"), params={
                             "grant_type": "fb_exchange_token",
                             "client_id": app_id, "client_secret": app_secret,
                             "fb_exchange_token": r.fb_page_token,
@@ -497,6 +498,36 @@ def refresh_expiring_tokens():
         log.error(f"refresh_expiring_tokens error: {e}")
 
 
+def run_marketing_metrics_sync():
+    """Nightly: refresh Meta post-performance metrics for every restaurant
+    with marketing on and a connected account. Previously this only ever ran
+    client-side (a 60s poll while someone had the Marketing tab open), so the
+    numbers behind the tab's analytics card were stale the moment nobody was
+    looking — an owner who checks once a week saw whatever reach/engagement
+    happened to be cached from their last visit, not real current totals."""
+    try:
+        from models import get_all_restaurants
+        from social_routes import refresh_post_metrics
+
+        candidates = [r for r in get_all_restaurants()
+                     if r.module_marketing and (r.ig_token or r.fb_page_token)]
+        if not candidates:
+            return
+        log.info(f"Marketing metrics sync for {len(candidates)} restaurant(s)")
+        for r in candidates:
+            try:
+                result = refresh_post_metrics(r.id)
+                if result.get("ok"):
+                    log.info(f"Metrics synced for {r.name} — {len(result.get('posts', []))} posts")
+                else:
+                    log.warning(f"Metrics sync skipped for {r.name}: {result.get('error')}")
+            except Exception as e:
+                log.error(f"Metrics sync error for {r.name}: {e}")
+                _ops.capture(e, job="marketing_metrics_sync", context=r.name)
+    except Exception as e:
+        log.error(f"run_marketing_metrics_sync error: {e}")
+
+
 # ── Scheduler loop ────────────────────────────────────────────────────────────
 
 _last_fetch_date      = None
@@ -508,6 +539,7 @@ _last_stale_inv_date  = None
 _last_inactive_date   = None
 _last_monthly_date    = None
 _last_opsdigest_date  = None
+_last_mktmetrics_date = None
 
 
 def backup_db():
@@ -797,7 +829,7 @@ def check_inactive_clients():
 def scheduler_loop():
     global _last_fetch_date, _last_digest_date, _last_backup_date
     global _last_toast_sync_date, _last_onboard_date, _last_stale_inv_date
-    global _last_inactive_date, _last_monthly_date, _last_opsdigest_date
+    global _last_inactive_date, _last_monthly_date, _last_opsdigest_date, _last_mktmetrics_date
     log.info("Scheduler started — review fetch every 4hr (8am/12pm/4pm/8pm CT), digests 9am on client's chosen day")
 
 
@@ -834,6 +866,11 @@ def scheduler_loop():
                 _last_toast_sync_date = today
                 log.info("Running nightly Toast POS sync...")
                 _ops.run_job("pos_sync", run_toast_sync)
+
+            if now.hour == 4 and _last_mktmetrics_date != today:
+                _last_mktmetrics_date = today
+                log.info("Running marketing metrics sync...")
+                _ops.run_job("marketing_metrics_sync", run_marketing_metrics_sync)
 
             if now.hour == 7 and _last_fetch_date != today:
                 log.info("Refreshing expiring IG/FB tokens...")

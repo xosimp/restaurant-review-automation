@@ -1408,10 +1408,11 @@ def refresh_ig_token(restaurant_id, current_user):
         import requests as _req
         from datetime import datetime, timedelta
         from models import update_restaurant
+        from meta_api import graph_url
         app_secret = os.getenv("META_APP_SECRET","")
 
         # Refresh IG long-lived token
-        r = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+        r = _req.get(graph_url("oauth/access_token"), params={
             "grant_type":        "fb_exchange_token",
             "client_id":         os.getenv("META_APP_ID",""),
             "client_secret":     app_secret,
@@ -1427,7 +1428,7 @@ def refresh_ig_token(restaurant_id, current_user):
 
         # Refresh FB page token too if we have one
         if restaurant.fb_page_token:
-            r2 = _req.get("https://graph.facebook.com/v19.0/oauth/access_token", params={
+            r2 = _req.get(graph_url("oauth/access_token"), params={
                 "grant_type":        "fb_exchange_token",
                 "client_id":         os.getenv("META_APP_ID",""),
                 "client_secret":     app_secret,
