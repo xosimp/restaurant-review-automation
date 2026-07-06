@@ -146,14 +146,16 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] .aiv-card[style*="background:#f5ece3"]{background:#241a10!important}
 [data-theme="dark"] .aiv-card[style*="background:#fff5f2"]{background:#2a1010!important}
 /* Marketing module */
-[data-theme="dark"] .ct-btn{background:var(--surface)!important;border-color:var(--paper3)!important}
-[data-theme="dark"] .ct-btn:hover,[data-theme="dark"] .ct-btn.selected{background:#2a1810!important;border-color:var(--ember)!important}
+[data-theme="dark"] .ct-btn{background:linear-gradient(160deg,rgba(200,75,47,.16) 0%,rgba(200,75,47,.06) 100%)!important;border-color:rgba(200,75,47,.28)!important}
+[data-theme="dark"] .ct-btn:hover{background:linear-gradient(160deg,rgba(200,75,47,.24) 0%,rgba(200,75,47,.1) 100%)!important;border-color:rgba(200,75,47,.45)!important}
+[data-theme="dark"] .ct-btn.selected{background:linear-gradient(160deg,rgba(200,75,47,.34) 0%,rgba(200,75,47,.15) 100%)!important;border-color:var(--ember)!important}
 [data-theme="dark"] .ct-label{color:var(--ink)!important}
-[data-theme="dark"] .topic-input{background:var(--surface)!important;color:var(--ink)!important;border-color:var(--paper3)!important}
-[data-theme="dark"] .output-box{background:var(--surface)!important;color:var(--ink2)!important;border-color:var(--paper3)!important}
+[data-theme="dark"] .topic-input{background:var(--surface)!important;color:var(--ink)!important;border-color:rgba(200,75,47,.28)!important}
+[data-theme="dark"] .output-box{background:linear-gradient(160deg,rgba(200,75,47,.07) 0%,var(--surface) 100%)!important;color:var(--ink2)!important;border-color:rgba(200,75,47,.28)!important}
 [data-theme="dark"] .btn-secondary{background:var(--surface)!important;color:var(--ink2)!important;border-color:var(--paper3)!important}
 [data-theme="dark"] .btn-secondary:hover{background:var(--paper2)!important}
 [data-theme="dark"] #panel-marketing [style*="background:white"]{background:var(--surface)!important}
+[data-theme="dark"] .cal-card{background:linear-gradient(160deg,rgba(200,75,47,.14) 0%,rgba(200,75,47,.04) 100%)!important;border-color:rgba(200,75,47,.28)!important}
 [data-theme="dark"] .cal-day{background:var(--surface)!important;border-color:var(--paper3)!important}
 [data-theme="dark"] #char-counter,[data-theme="dark"] #sms-counter{background:rgba(0,0,0,.4)!important;color:var(--ink3)!important}
 /* Tables */
@@ -420,20 +422,23 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .day-bars{display:flex;align-items:flex-end;gap:6px;height:80px;margin:8px 0 3px}
 .day-bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center}
 .day-bar{width:100%;border-radius:3px 3px 0 0;min-height:3px}
-.ct-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px;margin-bottom:16px}
-.ct-btn{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:12px 10px;cursor:pointer;transition:all .2s;text-align:left}
-.ct-btn:hover,.ct-btn.selected{border-color:var(--ember);background:#fdf0ef}
-.ct-label{font-weight:600;font-size:12px;margin-bottom:2px}
+.ct-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:16px}
+.ct-btn{background:linear-gradient(160deg,rgba(200,75,47,.14) 0%,rgba(200,75,47,.05) 100%);border:1px solid rgba(200,75,47,.22);border-radius:12px;padding:12px 10px;cursor:pointer;transition:all .2s;text-align:left;position:relative}
+.ct-btn:hover{border-color:rgba(200,75,47,.4);background:linear-gradient(160deg,rgba(200,75,47,.20) 0%,rgba(200,75,47,.08) 100%);transform:translateY(-1px)}
+.ct-btn.selected{border-color:var(--ember);background:linear-gradient(160deg,rgba(200,75,47,.28) 0%,rgba(200,75,47,.13) 100%);box-shadow:0 4px 14px rgba(200,75,47,.18)}
+.ct-label{font-weight:600;font-size:12px;margin-bottom:2px;color:var(--ink)}
 .ct-desc{font-size:10px;color:var(--ink3);line-height:1.4}
 .topic-row{display:flex;gap:8px;margin-bottom:12px;align-items:center}
-.topic-input{flex:1;padding:8px 12px;border:1px solid var(--paper3);border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;background:white;outline:none}
-.topic-input:focus{border-color:var(--ember)}
-.output-box{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:14px;min-height:100px;font-size:12px;line-height:1.7;color:var(--ink2);white-space:pre-wrap}
-.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-top:10px}
+.topic-input{flex:1;padding:9px 14px;border:1px solid rgba(200,75,47,.22);border-radius:10px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;background:var(--paper2);outline:none;transition:border-color .15s,box-shadow .15s}
+.topic-input:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,75,47,.12)}
+.output-box{background:linear-gradient(160deg,rgba(200,75,47,.05) 0%,var(--paper2) 100%);border:1px solid rgba(200,75,47,.2);border-radius:12px;padding:16px 18px;min-height:100px;font-size:12px;line-height:1.7;color:var(--ink2);white-space:pre-wrap;position:relative;overflow:hidden;box-shadow:0 4px 12px rgba(14,12,10,.06)}
+.output-box::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:10px}
 
-.cal-card{background:white;border:1px solid var(--paper3);border-radius:6px;padding:12px;font-size:12px;display:flex;flex-direction:column}
+.cal-card{background:linear-gradient(160deg,rgba(200,75,47,.10) 0%,rgba(200,75,47,.03) 100%);border:1px solid rgba(200,75,47,.2);border-radius:10px;padding:12px;font-size:12px;display:flex;flex-direction:column;transition:transform .15s,box-shadow .15s}
+.cal-card:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(200,75,47,.14)}
 .cal-day{background:white;border:1px solid var(--paper3);border-radius:6px;padding:8px 6px;font-size:10px}
-.cal-day-name{font-weight:500;color:var(--ink2);margin-bottom:3px}
+.cal-day-name{font-weight:600;color:var(--ink);margin-bottom:3px}
 .cal-platform{font-size:8px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);margin-bottom:2px}
 .btn-primary{background:var(--ember);color:white;padding:0 16px;height:34px;display:inline-flex;align-items:center;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
 .btn-primary:hover{background:#a83d25;box-shadow:0 2px 8px rgba(200,75,47,.18);transform:translateY(-1px)}
@@ -2655,8 +2660,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 </div><!-- /inner-fc-content -->
 </div>
 <!-- MARKETING -->
-<div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing">
-
+<div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and mod_marketing}}" id="panel-marketing" style="margin:0 auto">
+<div style="max-width:1080px;margin:0 auto;padding:24px 28px">
 
   <!-- Posting overlay -->
   <div id="posting-overlay" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.88);align-items:center;justify-content:center">
@@ -2670,6 +2675,16 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </div>
     </div>
   </div>
+
+  <!-- Marketing sub-tab toggle (segmented pill, top-right) -->
+  <div style="display:flex;justify-content:flex-end;margin-bottom:20px">
+    <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
+      <button id="mkt-tab-content-btn"   onclick="switchMktTab('content')"   class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Content</button>
+      <button id="mkt-tab-analytics-btn" onclick="switchMktTab('analytics')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
+    </div>
+  </div>
+
+  <div id="mkt-tab-content">
 
   <!-- AI marketing brief -->
   <div style="background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
@@ -2720,13 +2735,28 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
   </div>
 
-  <!-- Post Performance — real Meta analytics, unlocked now that the app is Meta-approved -->
-  <div style="margin-top:20px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div style="text-align:center;flex:1">
-        <div class="name-underlined-slow" style="font-family:'Fraunces',serif;font-size:22px;color:var(--ink);display:inline-block">Post performance</div>
+  <div class="card" style="margin-top:20px;padding:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Content Calendar</div>
+      <div style="display:flex;gap:6px">
+        <button class="btn-primary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week <span style="font-size:15px;margin-left:6px">↺</span></button>
+        <button class="btn-secondary" id="cal-download-btn" onclick="downloadCal()" style="font-size:10px;padding:5px 10px;display:none">Download CSV<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
     </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <span id="cal-week-range" style="font-size:11px;color:var(--ink3);font-weight:500"></span>
+    </div>
+    <div class="cal-grid" id="cal-grid"><div class="no-data" style="grid-column:1/-1;padding:24px;text-align:center;color:var(--ink3);font-size:13px;font-style:italic">Click "Generate week ↺" above to build your content calendar.</div></div>
+  </div>
+
+  </div><!-- /mkt-tab-content -->
+
+  <!-- Analytics sub-tab: real Meta post performance, unlocked now that the app is Meta-approved -->
+  <div id="mkt-tab-analytics" style="display:none">
+    <div style="text-align:center;padding:8px 0 24px">
+      <div class="name-underlined-slow" style="font-family:'Fraunces',serif;font-size:36px;color:var(--ink)">How your posts are performing</div>
+    </div>
+
     <div id="mkt-perf-loading" class="intel-stat-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
       <div class="rv-stat-cell skeleton" style="padding:18px 16px;height:78px"></div>
       <div class="rv-stat-cell skeleton" style="padding:18px 16px;height:78px"></div>
@@ -2757,22 +2787,9 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </div>
     </div>
     <div id="mkt-perf-empty" style="display:none"></div>
-  </div>
+  </div><!-- /mkt-tab-analytics -->
 
-  <div class="card" style="margin-top:20px;padding:16px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Content Calendar</div>
-      <div style="display:flex;gap:6px">
-        <button class="btn-primary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week <span style="font-size:15px;margin-left:6px">↺</span></button>
-        <button class="btn-secondary" id="cal-download-btn" onclick="downloadCal()" style="font-size:10px;padding:5px 10px;display:none">Download CSV<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-      </div>
-    </div>
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-      <span id="cal-week-range" style="font-size:11px;color:var(--ink3);font-weight:500"></span>
-    </div>
-    <div class="cal-grid" id="cal-grid"><div class="no-data" style="grid-column:1/-1;padding:24px;text-align:center;color:var(--ink3);font-size:13px;font-style:italic">Click "Generate week ↺" above to build your content calendar.</div></div>
-  </div>
-
+</div>
 </div>
 
 <!-- COMPETITOR INTEL -->
@@ -4039,6 +4056,19 @@ window.switchIntelTab = function(tab) {
   if (isComp) { animateBars('panel-competitor'); animateStatNums('panel-competitor'); }
 };
 
+window.switchMktTab = function(tab) {
+  var isContent = tab === 'content';
+  var contentEl = document.getElementById('mkt-tab-content');
+  var analyticsEl = document.getElementById('mkt-tab-analytics');
+  if (contentEl) contentEl.style.display = isContent ? '' : 'none';
+  if (analyticsEl) analyticsEl.style.display = isContent ? 'none' : '';
+  var tc = document.getElementById('mkt-tab-content-btn');
+  var ta = document.getElementById('mkt-tab-analytics-btn');
+  if (tc) { tc.classList.toggle('rv-tab-active', isContent); tc.style.background = isContent ? '' : 'transparent'; tc.style.color = isContent ? '' : 'var(--ink3)'; }
+  if (ta) { ta.classList.toggle('rv-tab-active', !isContent); ta.style.background = isContent ? 'transparent' : ''; ta.style.color = isContent ? 'var(--ink3)' : ''; }
+  if (!isContent && !mktPerfLoaded) { mktPerfLoaded = true; loadMktPerformance(); }
+};
+
 function loadSentimentTrend(){
   if(sentimentTrendLoaded)return;
   sentimentTrendLoaded=true;
@@ -4285,7 +4315,7 @@ function switchTab(n,btn){
   }
   if(n==='labor'){renderBars();loadLaborTrend(false);}
   if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();}
-  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();loadMktPerformance();startMetricsPoller();}else{stopMetricsPoller();}
+  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();startMetricsPoller();}else{stopMetricsPoller();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
@@ -5068,7 +5098,7 @@ function renderBars(){
   if(_perfTab==='dow')renderPerfChart();
 }
 var _gbpReload=!!sessionStorage.getItem('_gbpReload');if(_gbpReload)sessionStorage.removeItem('_gbpReload');
-var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false,homeInsightLoaded=false;
+var laborLoaded=false,invLoaded=false,reviewInsightLoaded=false,sentimentTrendLoaded=false,mktLoaded=false,homeInsightLoaded=false,mktPerfLoaded=false;
 var _twTokens={};
 var _laborInsightFull=null,_invInsightFull=null;
 function loadHomeInsight(){
