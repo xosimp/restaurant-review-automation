@@ -155,6 +155,7 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] .btn-secondary{background:var(--surface)!important;color:var(--ink2)!important;border-color:var(--paper3)!important}
 [data-theme="dark"] .btn-secondary:hover{background:var(--paper2)!important}
 [data-theme="dark"] #panel-marketing [style*="background:white"]{background:var(--surface)!important}
+[data-theme="dark"] .cal-card{background:linear-gradient(160deg,rgba(200,75,47,.14) 0%,rgba(200,75,47,.04) 100%)!important;border-color:rgba(200,75,47,.28)!important;color:var(--ink2)!important}
 [data-theme="dark"] .cal-day{background:var(--surface)!important;border-color:var(--paper3)!important}
 [data-theme="dark"] #char-counter,[data-theme="dark"] #sms-counter{background:rgba(0,0,0,.4)!important;color:var(--ink3)!important}
 /* Tables */
@@ -434,17 +435,26 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .output-box::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:10px}
 
-/* Fixed-dark, like the AI Marketing Brief card — .cal-card only ever
-   appears inside the always-dark Content Calendar panel, not on the
-   page background, so it doesn't switch with [data-theme]. */
-.cal-card{background:rgba(200,75,47,.08);border:1px solid rgba(200,75,47,.25);border-radius:10px;padding:12px;font-size:12px;display:flex;flex-direction:column;transition:transform .15s,box-shadow .15s;color:#f0ebe0}
-.cal-card:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(200,75,47,.25);background:rgba(200,75,47,.14)}
+/* Theme-aware — the Content Calendar panel now reuses .output-box, which
+   already switches between light/dark, so its children follow suit
+   instead of being fixed-dark. */
+.cal-card{background:linear-gradient(160deg,rgba(200,75,47,.10) 0%,rgba(200,75,47,.03) 100%);border:1px solid rgba(200,75,47,.2);border-radius:10px;padding:12px;font-size:12px;display:flex;flex-direction:column;transition:transform .15s,box-shadow .15s;color:var(--ink2)}
+.cal-card:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(200,75,47,.14)}
 .cal-day{background:white;border:1px solid var(--paper3);border-radius:6px;padding:8px 6px;font-size:10px}
-.cal-day-name{font-weight:600;color:#f0ebe0;margin-bottom:3px}
-.cal-platform{font-size:8px;text-transform:uppercase;letter-spacing:.05em;color:rgba(240,235,224,.55);margin-bottom:2px}
+.cal-day-name{font-weight:600;color:var(--ink);margin-bottom:3px}
+.cal-platform{font-size:8px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);margin-bottom:2px}
 .btn-primary{background:var(--ember);color:white;padding:0 16px;height:34px;display:inline-flex;align-items:center;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
 .btn-primary:hover{background:#a83d25;box-shadow:0 2px 8px rgba(200,75,47,.18);transform:translateY(-1px)}
 .btn-primary:active{transform:scale(.97)}
+/* Platform-brand buttons (Post to Instagram/Facebook) — need to win over
+   the dark-mode .btn-primary override below, which forces ember via
+   !important; matching its specificity ([data-theme=dark] .btn-primary,
+   i.e. attribute+class) and declaring these after it in source order
+   is what makes them actually render brand-colored instead of ember. */
+.btn-instagram,[data-theme="dark"] .btn-instagram{background:linear-gradient(45deg,#f09433 0%,#e6683c 25%,#dc2743 50%,#cc2366 75%,#bc1888 100%)!important}
+.btn-instagram:hover,[data-theme="dark"] .btn-instagram:hover{filter:brightness(1.08);box-shadow:0 2px 8px rgba(220,39,67,.3)!important}
+.btn-facebook,[data-theme="dark"] .btn-facebook{background:#1877f2!important}
+.btn-facebook:hover,[data-theme="dark"] .btn-facebook:hover{background:#125fc4!important;box-shadow:0 2px 8px rgba(24,119,242,.3)!important}
 .btn-secondary{background:white;color:var(--ink2);border:1px solid var(--paper3);padding:8px 16px;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
 .btn-secondary:hover{background:var(--paper2);box-shadow:0 2px 10px rgba(14,12,10,.1);transform:translateY(-1px)}
 .btn-secondary:active{transform:scale(.97)}
@@ -2720,22 +2730,19 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div id="char-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="char-count">0</span> <span id="char-limit-label"></span><span id="char-over" style="color:var(--red);display:none"> over limit</span></div>
     <div id="sms-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="sms-char-count">0</span>/160<span id="sms-over" style="color:var(--red);display:none"> over</span></div>
   </div>
-  <div id="ig-image-row" style="display:none;margin-top:10px">
-    <div style="position:relative">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="position:absolute;left:14px;top:50%;transform:translateY(-50%);pointer-events:none" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" stroke="#e1306c" stroke-width="1.8"/><circle cx="12" cy="12" r="4.2" stroke="#e1306c" stroke-width="1.8"/><circle cx="17.2" cy="6.8" r="1.1" fill="#e1306c"/></svg>
-      <input type="text" id="ig-image-url" class="topic-input" placeholder="Image URL — required for Instagram" style="padding-left:36px">
-    </div>
-  </div>
   <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center">
+    <div id="ig-image-row" style="display:none;position:relative;flex:1;min-width:220px">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="position:absolute;left:14px;top:50%;transform:translateY(-50%);pointer-events:none" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" stroke="#e1306c" stroke-width="1.8"/><circle cx="12" cy="12" r="4.2" stroke="#e1306c" stroke-width="1.8"/><circle cx="17.2" cy="6.8" r="1.1" fill="#e1306c"/></svg>
+      <input type="text" id="ig-image-url" class="topic-input" placeholder="Image URL — required for Instagram" style="padding-left:36px;width:100%">
+    </div>
     <button class="btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').innerText||document.getElementById('mkoutput').textContent).then(function(){toast('Copied','success');})">Copy</button>
     <button class="btn-primary" onclick="genContent()">Regenerate <span style="font-size:15px;margin-left:6px">↺</span></button>
-    <button class="btn-primary" id="ig-post-btn" onclick="postToInstagram()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>Post to Instagram</button>
-    <button class="btn-primary" id="fb-post-btn" onclick="postToFacebook()" style="display:none;background:#1877f2"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>Post to Facebook</button>
+    <button class="btn-primary btn-instagram" id="ig-post-btn" onclick="postToInstagram()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>Post to Instagram</button>
+    <button class="btn-primary btn-facebook" id="fb-post-btn" onclick="postToFacebook()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>Post to Facebook</button>
     <span id="output-hint" style="display:none;font-size:10px;color:var(--ink3);margin-left:4px">✏ Edit above before posting</span>
   </div>
 
-  <div style="margin-top:20px;background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%);border:1px solid #3d2e1e;border-radius:10px;padding:16px 20px;position:relative;overflow:hidden">
-    <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
+  <div class="output-box" style="margin-top:20px;padding:16px 20px;white-space:normal">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;padding-left:4px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:var(--ember)">Content Calendar</div>
       <div style="display:flex;gap:6px">
@@ -2744,9 +2751,9 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </div>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;padding-left:4px">
-      <span id="cal-week-range" style="font-size:11px;color:rgba(240,235,224,.6);font-weight:500"></span>
+      <span id="cal-week-range" style="font-size:11px;color:var(--ink3);font-weight:500"></span>
     </div>
-    <div class="cal-grid" id="cal-grid" style="padding-left:4px;padding-right:4px"><div class="no-data" style="grid-column:1/-1;padding:24px;text-align:center;color:rgba(240,235,224,.5);font-size:13px;font-style:italic">Click "Generate week ↺" above to build your content calendar.</div></div>
+    <div class="cal-grid" id="cal-grid" style="padding-left:4px;padding-right:4px"><div class="no-data" style="grid-column:1/-1;padding:24px;text-align:center;color:var(--ink3);font-size:13px;font-style:italic">Click "Generate week ↺" above to build your content calendar.</div></div>
   </div>
 
   </div><!-- /mkt-tab-content -->
