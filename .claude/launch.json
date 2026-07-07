@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "hosted-dashboard",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["hosted_dashboard.py"],
+      "port": 5000,
+      "autoPort": true
+    }
+  ]
+}
