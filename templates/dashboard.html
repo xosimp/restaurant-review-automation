@@ -2737,7 +2737,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:var(--ember)">Content Calendar</div>
       <div style="display:flex;gap:6px">
         <button class="btn-primary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week <span style="font-size:15px;margin-left:6px">↺</span></button>
-        <button id="cal-download-btn" onclick="downloadCal()" style="font-size:10px;padding:5px 10px;display:none;background:rgba(200,75,47,.12);color:#f0ebe0;border:1px solid rgba(200,75,47,.35);border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-weight:500;cursor:pointer">Download CSV<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <button class="btn-primary" id="cal-download-btn" onclick="downloadCal()" style="font-size:10px;padding:5px 10px;display:none">Download CSV<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;padding-left:4px">
@@ -5133,7 +5133,7 @@ function postToInstagram(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Instagram ✓','success');markTopicPosted('IG');clearMktOutput();loadMktStats();}
+      if(d.ok){toast('Posted to Instagram ✓','success');markTopicPosted('IG');clearMktOutput();loadMktPerformance();}
       else{toast(d.error||'Post failed — try again','error');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
@@ -5156,7 +5156,7 @@ function postToFacebook(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Facebook ✓','success');markTopicPosted('FB');clearMktOutput();loadMktStats();}
+      if(d.ok){toast('Posted to Facebook ✓','success');markTopicPosted('FB');clearMktOutput();loadMktPerformance();}
       else{toast(d.error||'Post failed — try again','error');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
@@ -5895,7 +5895,7 @@ function genContent(fromCalendar){
       if(_igConnected&&igBtn){igBtn.style.display='inline-block';if(igImgInput)igImgInput.style.display='block';}
 if(_fbConnected&&fbBtn)fbBtn.style.display='inline-block';
       loadRecentTopics();
-      loadMktStats();
+      loadMktPerformance();
       var selBtn=document.querySelector('.ct-btn.selected');
       var selType=selBtn&&selBtn.dataset?selBtn.dataset.type:'';
       var isSms=selType==='loyalty_nudge';
