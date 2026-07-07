@@ -3083,7 +3083,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
 
 <!-- ACCOUNT -->
-<div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account">
+<div class="panel {{'active' if not mod_reviews and not mod_labor and not mod_inventory and not mod_marketing}}" id="panel-account" style="margin:0 auto">
+<div style="max-width:1080px;margin:0 auto;padding:24px 28px">
 
   <!-- SECTION 1: Consultant hero card -->
   <div class="acct-hero-card" style="background:var(--ink);border-radius:var(--r);padding:24px 28px;margin-bottom:16px">
@@ -3116,7 +3117,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div>
 
   <!-- SECTION 2: Restaurant profile (read-only) -->
-  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:14px">
+  <div class="card" style="padding:18px 20px;margin-bottom:14px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Your Restaurant Profile</div>
       <a href="mailto:will@cavnar.ai?subject=Profile update for {{restaurant.name}}" style="font-size:11px;color:var(--ember);text-decoration:none;font-weight:600">Request an update<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
@@ -3184,7 +3185,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px" class="account-two-col">
 
     <!-- Left: all settings in one card -->
-    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px">
+    <div class="card" style="padding:18px 20px">
 
       <!-- Identity -->
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Account</div>
@@ -3264,7 +3265,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
 
     <!-- Right: Connections + Alerts + Billing -->
-    <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px" id="billing-card">
+    <div class="card" style="padding:18px 20px" id="billing-card">
 
       <!-- Connections -->
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Connections</div>
@@ -3434,7 +3435,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div>
 
   <!-- SECTION 3: Community strip -->
-  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:0" class="account-two-col">
+  <div class="card account-two-col" style="padding:18px 20px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:0">
     <!-- Referral -->
     <div style="padding-right:24px">
       <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:3px">Know another restaurant owner?</div>
@@ -3460,7 +3461,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div>
 
   <!-- Webhooks -->
-  <div style="background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px 20px;margin-bottom:14px">
+  <div class="card" style="padding:18px 20px;margin-bottom:14px">
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Outbound webhook</div>
     <p style="font-size:12px;color:var(--ink3);line-height:1.6;margin:0 0 14px">Receive a POST request to your URL whenever a review comes in, an alert fires, or a response is approved. Use with Zapier, Slack, or your own tools.</p>
 
@@ -3469,7 +3470,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Signing secret</div>
         <div style="display:flex;align-items:center;gap:8px">
           <code id="webhook-secret" style="font-size:11px;color:var(--ink);font-family:monospace;word-break:break-all;flex:1"></code>
-          <button onclick="copyWebhookSecret()" style="font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--paper3);background:white;color:#1a1410;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap" id="wh-copy-btn">Copy</button>
+          <button onclick="copyWebhookSecret()" class="btn-secondary" style="font-size:10px;padding:3px 8px;white-space:nowrap" id="wh-copy-btn">Copy</button>
         </div>
       </div>
       <div style="font-size:11px;color:var(--ink3);margin-bottom:6px">Last delivery: <span id="webhook-last-status">—</span></div>
@@ -3524,9 +3525,9 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
 
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button onclick="saveWebhook()" style="padding:8px 14px;background:var(--ember);color:white;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif" id="wh-save-btn">Save webhook</button>
-      <button onclick="testWebhook()" id="wh-test-btn" style="padding:8px 14px;background:white;color:#1a1410;border:1px solid var(--paper3);border-radius:6px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;display:none">Send test</button>
-      <button onclick="deleteWebhook()" id="wh-delete-btn" style="padding:8px 14px;background:white;border:1px solid #f5c6c2;color:#c0392b;border-radius:6px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;display:none">Remove</button>
+      <button onclick="saveWebhook()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="wh-save-btn">Save webhook</button>
+      <button onclick="testWebhook()" id="wh-test-btn" class="btn-secondary" style="padding:8px 14px;font-size:12px;display:none">Send test</button>
+      <button onclick="deleteWebhook()" id="wh-delete-btn" style="padding:8px 14px;background:none;border:1px solid var(--red);color:var(--red);border-radius:6px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;display:none">Remove</button>
     </div>
     <div id="wh-status" style="font-size:12px;margin-top:8px;display:none"></div>
   </div>
@@ -3538,6 +3539,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <span style="font-size:11px;color:var(--ink3)">30 days written notice required</span>
   </div>
 
+</div>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
