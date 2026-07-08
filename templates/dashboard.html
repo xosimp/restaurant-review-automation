@@ -3520,6 +3520,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <p style="font-size:12px;color:var(--ink3);line-height:1.6;margin:0 0 14px">Receive a POST request to your URL whenever a review comes in, an alert fires, or a response is approved. Use with Zapier, Slack, or your own tools.</p>
 
     <div id="webhook-config" style="display:none">
+      <div id="wh-disabled-banner" style="display:none;background:var(--red-bg);border:1px solid var(--red);border-radius:6px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--red)">
+        <div style="font-weight:600;margin-bottom:4px" id="wh-disabled-reason"></div>
+        <div>This webhook stopped delivering and was automatically disabled. Fix the endpoint, then <button onclick="reactivateWebhook()" style="background:none;border:none;padding:0;color:var(--red);font-weight:700;text-decoration:underline;cursor:pointer;font-family:inherit;font-size:inherit">reactivate it</button>.</div>
+      </div>
       <div style="background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;padding:10px 12px;margin-bottom:12px">
         <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Signing secret</div>
         <div style="display:flex;align-items:center;gap:8px">
@@ -3528,6 +3532,20 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         </div>
       </div>
       <div style="font-size:11px;color:var(--ink3);margin-bottom:6px">Last delivery: <span id="webhook-last-status">—</span></div>
+      <div style="margin-bottom:6px">
+        <button type="button" onclick="toggleWhHistory()" style="background:none;border:none;padding:0;font-size:11px;color:var(--ember);font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">Delivery history <span id="wh-history-arrow" style="font-size:9px">▾</span></button>
+      </div>
+      <div id="wh-history-panel" style="display:none;margin-bottom:10px;max-height:220px;overflow-y:auto;border:1px solid var(--paper3);border-radius:6px">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead><tr style="background:var(--paper2)">
+            <th style="text-align:left;padding:6px 8px;font-weight:600;color:var(--ink3)">Event</th>
+            <th style="text-align:left;padding:6px 8px;font-weight:600;color:var(--ink3)">Status</th>
+            <th style="text-align:left;padding:6px 8px;font-weight:600;color:var(--ink3)">Attempts</th>
+            <th style="text-align:left;padding:6px 8px;font-weight:600;color:var(--ink3)">When</th>
+          </tr></thead>
+          <tbody id="wh-history-body"></tbody>
+        </table>
+      </div>
     </div>
 
     <div style="display:flex;gap:8px;margin-bottom:10px">
@@ -7207,8 +7225,55 @@ function revokeOtherSessions(btn){
         lastEl.textContent = wh.last_status + ' · ' + _fmt + ' CT';
         lastEl.style.color = (wh.last_status >= 200 && wh.last_status < 300) ? '#2d6a4f' : '#c0392b';
       }
+      var banner = document.getElementById('wh-disabled-banner');
+      if (wh.is_active === false) {
+        document.getElementById('wh-disabled-reason').textContent = wh.disabled_reason || 'Webhook disabled';
+        banner.style.display = 'block';
+      } else {
+        banner.style.display = 'none';
+      }
     }).catch(function(){});
   }
+
+  window.toggleWhHistory = function() {
+    var panel = document.getElementById('wh-history-panel');
+    var arrow = document.getElementById('wh-history-arrow');
+    if (panel.style.display === 'none') {
+      panel.style.display = 'block';
+      arrow.textContent = '▴';
+      fetch('/api/webhook/deliveries').then(function(r){ return r.json(); }).then(function(d){
+        var body = document.getElementById('wh-history-body');
+        if (!d.ok || !d.deliveries.length) {
+          body.innerHTML = '<tr><td colspan="4" style="padding:10px 8px;color:var(--ink3)">No deliveries yet.</td></tr>';
+          return;
+        }
+        var html = '';
+        for (var i = 0; i < d.deliveries.length; i++) {
+          var dl = d.deliveries[i];
+          var _dd = new Date(dl.created_at.replace(' ','T') + 'Z');
+          var _dfmt = _dd.toLocaleString('en-US', {timeZone:'America/Chicago', month:'numeric', day:'numeric', hour:'numeric', minute:'2-digit'});
+          var statusColor = dl.ok ? '#2d6a4f' : '#c0392b';
+          html += '<tr><td style="padding:6px 8px;border-top:1px solid var(--paper3)">' + dl.event_type + '</td>'
+            + '<td style="padding:6px 8px;border-top:1px solid var(--paper3);color:' + statusColor + '">' + (dl.status || 'failed') + '</td>'
+            + '<td style="padding:6px 8px;border-top:1px solid var(--paper3)">' + dl.attempts + '</td>'
+            + '<td style="padding:6px 8px;border-top:1px solid var(--paper3);color:var(--ink3)">' + _dfmt + '</td></tr>';
+        }
+        body.innerHTML = html;
+      }).catch(function(){});
+    } else {
+      panel.style.display = 'none';
+      arrow.textContent = '▾';
+    }
+  };
+
+  window.reactivateWebhook = function() {
+    fetch('/api/webhook/reactivate', {method: 'POST'}).then(function(r){ return r.json(); }).then(function(d){
+      if (d.ok) {
+        showWhStatus('Webhook reactivated', '#2d6a4f');
+        loadWebhook();
+      }
+    }).catch(function(){});
+  };
 
   window.toggleEvtPanel = function() {
     var panel = document.getElementById('evt-panel');

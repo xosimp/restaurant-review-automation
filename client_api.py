@@ -2287,16 +2287,44 @@ def _ai_visibility_inner(current_user):
 def webhook_get(current_user):
     from webhooks import get_webhook
     import json
-    wh = get_webhook(current_user["restaurant_id"])
+    # get_webhook() only returns is_active=1 rows, so an auto-disabled webhook
+    # (is_active=0) wouldn't show up here at all — the client would just see
+    # "no webhook configured" with no explanation of why it disappeared.
+    # Look it up directly so a disabled-but-still-configured webhook is
+    # visible, with disabled_reason explaining what happened.
+    from models import get_conn
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM webhooks WHERE restaurant_id=? LIMIT 1",
+        (current_user["restaurant_id"],)
+    ).fetchone()
+    conn.close()
+    wh = dict(row) if row else None
     if not wh:
         return jsonify(ok=True, webhook=None)
     return jsonify(ok=True, webhook={
-        "url":         wh["url"],
-        "secret":      wh["secret"],
-        "events":      json.loads(wh.get("events") or "[]"),
-        "last_fired":  wh.get("last_fired_at"),
-        "last_status": wh.get("last_status"),
+        "url":                  wh["url"],
+        "secret":               wh["secret"],
+        "events":               json.loads(wh.get("events") or "[]"),
+        "last_fired":           wh.get("last_fired_at"),
+        "last_status":          wh.get("last_status"),
+        "is_active":            bool(wh.get("is_active")),
+        "consecutive_failures": wh.get("consecutive_failures") or 0,
+        "disabled_reason":      wh.get("disabled_reason"),
     })
+
+@client_bp.route("/api/webhook/deliveries", methods=["GET"])
+@login_required
+def webhook_deliveries_route(current_user):
+    from webhooks import get_webhook_deliveries
+    return jsonify(ok=True, deliveries=get_webhook_deliveries(current_user["restaurant_id"], limit=20))
+
+@client_bp.route("/api/webhook/reactivate", methods=["POST"])
+@login_required
+def webhook_reactivate(current_user):
+    from webhooks import reactivate_webhook
+    reactivate_webhook(current_user["restaurant_id"])
+    return jsonify(ok=True)
 
 @client_bp.route("/api/webhook", methods=["POST"])
 @login_required

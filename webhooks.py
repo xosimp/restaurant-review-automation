@@ -6,11 +6,17 @@ Events fired:
   alert.fired       — any alert trigger fires
   response.approved — client approves a draft response
 """
-import hashlib, hmac, json, threading
+import hashlib, hmac, json, threading, time
 import ipaddress, socket
 from urllib.parse import urlparse
 from datetime import datetime, timezone
 from models import get_conn, DB_PATH
+
+# Auto-disable a webhook after this many consecutive failed deliveries —
+# previously a broken endpoint (dead Zapier hook, expired URL) just kept
+# firing into the void forever with no visibility and no way to stop it
+# short of the client manually removing it.
+_AUTO_DISABLE_AFTER = 10
 
 
 class InvalidWebhookURL(ValueError):
@@ -59,13 +65,35 @@ CREATE TABLE IF NOT EXISTS webhooks (
     is_active       INTEGER NOT NULL DEFAULT 1,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     last_fired_at   TEXT,
-    last_status     INTEGER
+    last_status     INTEGER,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    disabled_reason TEXT
+);
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    webhook_id      INTEGER NOT NULL,
+    restaurant_id   INTEGER NOT NULL,
+    event_type      TEXT NOT NULL,
+    status          INTEGER,
+    ok              INTEGER NOT NULL,
+    attempts        INTEGER NOT NULL,
+    error           TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
 
 def init_webhooks(db_path=DB_PATH):
     conn = get_conn(db_path)
     conn.executescript(_SCHEMA)
+    # Migration for webhooks rows created before consecutive_failures/disabled_reason existed.
+    for col_sql in (
+        "ALTER TABLE webhooks ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE webhooks ADD COLUMN disabled_reason TEXT",
+    ):
+        try:
+            conn.execute(col_sql)
+        except Exception:
+            pass
     conn.commit()
     conn.close()
 
@@ -89,8 +117,10 @@ def save_webhook(restaurant_id, url, events, db_path=DB_PATH):
         (restaurant_id,)
     ).fetchone()
     if existing:
+        # Saving/editing a webhook re-activates it and clears any auto-disable —
+        # a client updating the URL is explicitly trying to fix it.
         conn.execute(
-            "UPDATE webhooks SET url=?, events=?, is_active=1 WHERE id=?",
+            "UPDATE webhooks SET url=?, events=?, is_active=1, consecutive_failures=0, disabled_reason=NULL WHERE id=?",
             (url, json.dumps(events), existing["id"])
         )
         secret = existing["secret"]
@@ -112,6 +142,32 @@ def delete_webhook(restaurant_id, db_path=DB_PATH):
     conn.close()
 
 
+def reactivate_webhook(restaurant_id, db_path=DB_PATH):
+    """Manually clear an auto-disable and resume delivery — the client saw
+    the "this webhook looks broken" banner, fixed whatever was wrong on
+    their end (Zapier, Slack, etc.), and wants to try again without having
+    to re-enter the URL and secret from scratch."""
+    conn = get_conn(db_path)
+    conn.execute(
+        "UPDATE webhooks SET is_active=1, consecutive_failures=0, disabled_reason=NULL WHERE restaurant_id=?",
+        (restaurant_id,)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_webhook_deliveries(restaurant_id, limit=20, db_path=DB_PATH):
+    conn = get_conn(db_path)
+    rows = conn.execute(
+        """SELECT event_type, status, ok, attempts, error, created_at
+           FROM webhook_deliveries WHERE restaurant_id=?
+           ORDER BY id DESC LIMIT ?""",
+        (restaurant_id, limit)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def _sign(secret, payload_str):
     return "sha256=" + hmac.new(secret.encode(), payload_str.encode(), hashlib.sha256).hexdigest()
 
@@ -126,7 +182,17 @@ def _deliver(webhook, event_type, data, db_path=DB_PATH):
     }, separators=(",", ":"))
     sig    = _sign(webhook["secret"], payload_str)
     status = 0
-    for _ in range(2):
+    ok     = False
+    error  = None
+    # 3 attempts with exponential backoff (0s, 2s, 6s) instead of 2 back-to-back
+    # tries — gives a flaky-but-recovering endpoint (a Zapier hook cold-starting,
+    # a brief Slack outage) a real chance instead of failing twice in ~10ms.
+    backoffs = [0, 2, 6]
+    attempts = 0
+    for i, delay in enumerate(backoffs):
+        if delay:
+            time.sleep(delay)
+        attempts += 1
         try:
             resp = _req.post(
                 webhook["url"],
@@ -141,8 +207,10 @@ def _deliver(webhook, event_type, data, db_path=DB_PATH):
             )
             status = resp.status_code
             if resp.ok:
+                ok = True
                 break
         except Exception as e:
+            error = str(e)[:300]
             print(f"[webhook] delivery error ({webhook.get('url')}): {e}")
             status = 0
     try:
@@ -151,6 +219,24 @@ def _deliver(webhook, event_type, data, db_path=DB_PATH):
             "UPDATE webhooks SET last_fired_at=datetime('now'), last_status=? WHERE id=?",
             (status, webhook["id"])
         )
+        conn.execute(
+            """INSERT INTO webhook_deliveries
+               (webhook_id, restaurant_id, event_type, status, ok, attempts, error)
+               VALUES (?,?,?,?,?,?,?)""",
+            (webhook["id"], webhook["restaurant_id"], event_type, status, int(ok), attempts, error)
+        )
+        if ok:
+            conn.execute("UPDATE webhooks SET consecutive_failures=0 WHERE id=?", (webhook["id"],))
+        else:
+            row = conn.execute("SELECT consecutive_failures FROM webhooks WHERE id=?", (webhook["id"],)).fetchone()
+            failures = (row["consecutive_failures"] or 0) + 1 if row else 1
+            if failures >= _AUTO_DISABLE_AFTER:
+                conn.execute(
+                    "UPDATE webhooks SET consecutive_failures=?, is_active=0, disabled_reason=? WHERE id=?",
+                    (failures, f"Auto-disabled after {failures} consecutive failed deliveries", webhook["id"])
+                )
+            else:
+                conn.execute("UPDATE webhooks SET consecutive_failures=? WHERE id=?", (failures, webhook["id"]))
         conn.commit()
         conn.close()
     except Exception:
