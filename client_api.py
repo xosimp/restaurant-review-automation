@@ -520,7 +520,9 @@ def review_insight_api(current_user):
             model=os.getenv("CLAUDE_MODEL","claude-haiku-4-5-20251001"),
             max_tokens=260,
             temperature=0.2,
-            messages=[{"role":"user","content":prompt}]
+            messages=[{"role":"user","content":prompt}],
+            restaurant_id=rid,
+            action="review_insight",
         )
         insight = extract_text(msg).strip()
         # Strip any markdown
@@ -798,7 +800,9 @@ Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No co
             _client,
             model=__import__("os").getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
             max_tokens=350,
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
+            restaurant_id=rid,
+            action="marketing_insight",
         )
         insight = extract_text(msg).strip()
         formatted = format_insight_html(insight)
@@ -1101,6 +1105,7 @@ def _build_schedule_result(restaurant_id):
         sched_notes=getattr(restaurant, 'sched_notes', None),
         staff_availability=staff_availability or None,
         tz_name=getattr(restaurant, 'timezone', None),
+        restaurant_id=restaurant_id,
     )
     result["restaurant_name"] = restaurant.name if restaurant else "Restaurant"
     return result

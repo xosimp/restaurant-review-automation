@@ -22,7 +22,7 @@ _RETRYABLE = (
 )
 
 
-def create_with_retry(client, retries=2, backoff=1.5, **kwargs):
+def create_with_retry(client, retries=2, backoff=1.5, restaurant_id=None, action=None, **kwargs):
     """client.messages.create(**kwargs) with exponential backoff on
     transient failures. Raises the last exception if all attempts fail.
 
@@ -32,12 +32,19 @@ def create_with_retry(client, retries=2, backoff=1.5, **kwargs):
     (there are 14 of them) with an AttributeError, and burns max_tokens on
     reasoning the app never reads — every use here is short, deterministic,
     format-constrained generation that doesn't need chain-of-thought.
-    Callers that ever want it can still pass thinking=... explicitly."""
+    Callers that ever want it can still pass thinking=... explicitly.
+
+    Every call funnels through here, which makes it the one place to log
+    spend — pass restaurant_id/action (both optional) and usage is recorded
+    to the ai_usage table on success. Neither is forwarded to the Anthropic
+    API; they're popped off before reaching client.messages.create()."""
     kwargs.setdefault("thinking", {"type": "disabled"})
     attempt = 0
     while True:
         try:
-            return client.messages.create(**kwargs)
+            message = client.messages.create(**kwargs)
+            _log_usage_safe(message, kwargs.get("model", "unknown"), restaurant_id, action)
+            return message
         except _RETRYABLE as e:
             attempt += 1
             if attempt > retries:
@@ -51,6 +58,89 @@ def create_with_retry(client, retries=2, backoff=1.5, **kwargs):
                     pass
                 raise
             time.sleep(backoff ** attempt)
+
+
+# ── AI cost/usage tracking ──────────────────────────────────────────────────
+# Dozens of call sites across analyser/drafter/competitor/labor/marketing/
+# inventory/reporter call Claude with zero visibility into what any of it
+# costs — no way to see per-restaurant spend as client count grows, or
+# whether one client's usage pattern (e.g. mashing "Regenerate") is eating
+# margin. Every create_with_retry() call now logs here on success.
+_USAGE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS ai_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id INTEGER,
+    action TEXT,
+    model TEXT,
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    cost_usd REAL,
+    created_at TEXT DEFAULT (datetime('now'))
+)
+"""
+
+# $ per million tokens (input, output). Anthropic pricing as of this writing —
+# update here if it changes; unknown models fall back to Sonnet-tier pricing
+# so a forgotten update under-tracks rather than crashes.
+_MODEL_PRICING = {
+    "claude-haiku-4-5-20251001": (1.00, 5.00),
+    "claude-sonnet-5": (3.00, 15.00),
+}
+
+
+def _estimate_cost(model, input_tokens, output_tokens):
+    in_rate, out_rate = _MODEL_PRICING.get(model, (3.00, 15.00))
+    return (input_tokens / 1_000_000) * in_rate + (output_tokens / 1_000_000) * out_rate
+
+
+def _log_usage_safe(message, model, restaurant_id, action):
+    """Never let usage logging break the AI call it's measuring."""
+    try:
+        usage = getattr(message, "usage", None)
+        if usage is None:
+            return
+        log_ai_usage(
+            restaurant_id, action or "unspecified", model,
+            getattr(usage, "input_tokens", 0) or 0,
+            getattr(usage, "output_tokens", 0) or 0,
+        )
+    except Exception:
+        pass
+
+
+def log_ai_usage(restaurant_id, action, model, input_tokens, output_tokens, db_path=None):
+    from models import get_conn, DB_PATH
+    conn = get_conn(db_path or DB_PATH)
+    conn.execute(_USAGE_TABLE_SQL)
+    cost = _estimate_cost(model, input_tokens, output_tokens)
+    conn.execute(
+        "INSERT INTO ai_usage (restaurant_id, action, model, input_tokens, output_tokens, cost_usd) VALUES (?,?,?,?,?,?)",
+        (restaurant_id, action, model, input_tokens, output_tokens, cost),
+    )
+    conn.commit()
+    conn.close()
+
+
+def usage_summary(restaurant_id=None, since_days=30, db_path=None):
+    """Spend grouped by action+model, optionally scoped to one restaurant,
+    over the last `since_days` days — most-expensive first."""
+    from models import get_conn, DB_PATH
+    conn = get_conn(db_path or DB_PATH)
+    conn.execute(_USAGE_TABLE_SQL)
+    where = "WHERE created_at >= datetime('now', ?)"
+    params = [f"-{since_days} days"]
+    if restaurant_id is not None:
+        where += " AND restaurant_id=?"
+        params.append(restaurant_id)
+    rows = conn.execute(f"""
+        SELECT action, model, COUNT(*) as calls,
+               SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens,
+               SUM(cost_usd) as cost_usd
+        FROM ai_usage {where}
+        GROUP BY action, model ORDER BY cost_usd DESC
+    """, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # ── AI action rate limiting ─────────────────────────────────────────────────

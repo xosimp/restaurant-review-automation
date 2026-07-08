@@ -145,6 +145,8 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
         max_tokens=300,
         temperature=0.7,
         messages=[{"role": "user", "content": prompt}],
+        restaurant_id=restaurant_id,
+        action="draft_response",
     )
     draft = extract_text(message).strip()
 

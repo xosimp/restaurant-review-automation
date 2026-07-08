@@ -86,7 +86,7 @@ def fetch_menu_notes_from_places(google_place_id: str) -> str:
 
 
 
-def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "") -> str:
+def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "", restaurant_id: int = None) -> str:
     """Extract menu items from PDF bytes using pypdf then AI."""
     try:
         import io, anthropic, os
@@ -111,7 +111,9 @@ def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "") -> st
             model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
             max_tokens=400,
             temperature=0.2,
-            messages=[{"role": "user", "content": extract_prompt}]
+            messages=[{"role": "user", "content": extract_prompt}],
+            restaurant_id=restaurant_id,
+            action="menu_extract_pdf",
         )
         result = extract_text(msg).strip()
         return "" if "NO_MENU_FOUND" in result or len(result) < 30 else result
@@ -120,7 +122,7 @@ def fetch_menu_from_pdf_bytes(pdf_bytes: bytes, restaurant_name: str = "") -> st
         return ""
 
 
-def fetch_menu_from_url(menu_url: str) -> str:
+def fetch_menu_from_url(menu_url: str, restaurant_id: int = None) -> str:
     """Fetch a restaurant's menu page and use AI to extract key menu items."""
     if not menu_url:
         return ""
@@ -163,7 +165,9 @@ def fetch_menu_from_url(menu_url: str) -> str:
             model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001"),
             max_tokens=400,
             temperature=0.2,
-            messages=[{"role": "user", "content": extract_prompt}]
+            messages=[{"role": "user", "content": extract_prompt}],
+            restaurant_id=restaurant_id,
+            action="menu_extract_url",
         )
         result = extract_text(msg).strip()
         if "NO_MENU_FOUND" in result or len(result) < 30:
@@ -323,7 +327,7 @@ def get_competitor_reviews(place_id: str, max_reviews: int = 5) -> list:
         return []
 
 
-def generate_competitor_insight(restaurant_name: str, competitors: list, owner_name: str = None, restaurant_profile: dict = None, tz_name: str = None) -> str:
+def generate_competitor_insight(restaurant_name: str, competitors: list, owner_name: str = None, restaurant_profile: dict = None, tz_name: str = None, restaurant_id: int = None) -> str:
     """Use Claude to generate a strategic competitor insight."""
     if not competitors or not ANTHROPIC_KEY:
         return ""
@@ -416,7 +420,9 @@ Tone: sharp, direct, trusted business advisor. No generic advice. Name specific 
             client,
             model=os.getenv("CLAUDE_REPORTER_MODEL", "claude-sonnet-5"),
             max_tokens=900,
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
+            restaurant_id=restaurant_id,
+            action="competitor_insight",
         )
         return extract_text(msg).strip()
     except Exception as e:
@@ -481,6 +487,7 @@ def run_competitor_analysis(restaurant_id: int) -> dict:
                 "neighborhood": restaurant.neighborhood or "",
             },
             tz_name=getattr(restaurant, "timezone", None),
+            restaurant_id=restaurant_id,
         )
 
         # Store in DB — stamped in the restaurant's local time so "generated

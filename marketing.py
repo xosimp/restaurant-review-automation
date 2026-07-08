@@ -370,6 +370,8 @@ def generate_content(content_type: str, topic: str,
         model=os.getenv("MARKETING_MODEL", "claude-sonnet-5"),
         max_tokens=500,
         messages=[{"role": "user", "content": prompt}],
+        restaurant_id=restaurant_id,
+        action="marketing_content",
     )
     result = extract_text(msg).strip()
 
@@ -450,6 +452,8 @@ Rules:
         model=os.getenv("MARKETING_MODEL", "claude-sonnet-5"),
         max_tokens=1000,
         messages=[{"role": "user", "content": prompt}],
+        restaurant_id=restaurant_id,
+        action="content_calendar",
     )
     raw = extract_text(msg).strip()
     raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()

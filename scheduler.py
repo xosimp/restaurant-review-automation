@@ -242,7 +242,7 @@ def run_daily_fetch():
             # Analyse
             for r in get_pending_analysis(rid, limit=50):
                 try:
-                    analyse_review(r.id, r.rating, r.text)
+                    analyse_review(r.id, r.rating, r.text, restaurant_id=rid)
                 except Exception as e:
                     log.error(f"Analyse error: {e}")
                     _ops.capture(e, job="review_analyse", context=restaurant.name)
@@ -254,6 +254,7 @@ def run_daily_fetch():
                 try:
                     draft_response(r.id, r.rating, r.text, r.sentiment,
                                   restaurant.name, restaurant.voice_notes or "",
+                                  restaurant_id=rid,
                                   approved_examples=approved_examples,
                                   sign_off=restaurant.sign_off_name or restaurant.name,
                                   never_say=restaurant.never_say or "")
@@ -694,6 +695,7 @@ def run_onboarding_sequence():
                     has_inventory=bool(r.module_inventory),
                     approved_count=approved_count,
                     pending_count=pending_count,
+                    restaurant_id=r.id,
                 )
                 mark_onboarding_sent(r.id, "day_7")
                 log_email(r.id, "Onboarding Day 7", r.owner_email, f"One week in — {r.name}")

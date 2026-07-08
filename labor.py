@@ -463,6 +463,8 @@ The Recommendations section must start with exactly the word "Recommendations:" 
         model=os.getenv("LABOR_INSIGHT_MODEL", "claude-sonnet-5"),
         max_tokens=650,
         messages=[{"role": "user", "content": prompt}],
+        restaurant_id=restaurant_id,
+        action="labor_insight",
     )
     # Strip any markdown that slips through
     import re
@@ -491,7 +493,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  role_minimums_json: str = None,
                                  sched_notes: str = None,
                                  staff_availability: list = None,
-                                 tz_name: str = None) -> dict:
+                                 tz_name: str = None,
+                                 restaurant_id: int = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -818,6 +821,8 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         model=os.getenv("SCHEDULE_MODEL", "claude-sonnet-5"),
         max_tokens=8000,
         messages=[{"role": "user", "content": prompt}],
+        restaurant_id=restaurant_id,
+        action="labor_schedule",
     )
     # The assistant prefill forces output to begin with data rows directly.
     # raw = "<data rows>\n---SUMMARY---\n<bullets>"

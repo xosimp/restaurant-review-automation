@@ -32,7 +32,7 @@ urgency is "high" if ANY of these are present:
 - Direct staff misconduct complaint (harassment, theft, dishonesty)"""
 
 
-def analyse_review(review_id: int, rating: int, text: str) -> dict:
+def analyse_review(review_id: int, rating: int, text: str, restaurant_id: int = None) -> dict:
     prompt = ANALYSE_PROMPT.format(
         rating=rating,
         text=text.replace('"', "'"),
@@ -44,6 +44,8 @@ def analyse_review(review_id: int, rating: int, text: str) -> dict:
         max_tokens=256,
         temperature=0.2,
         messages=[{"role": "user", "content": prompt}],
+        restaurant_id=restaurant_id,
+        action="review_analysis",
     )
     raw = extract_text(message).strip()
     raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()

@@ -353,7 +353,9 @@ Rules:
             client,
             model=os.getenv("CLAUDE_REPORTER_MODEL", "claude-sonnet-5"),
             max_tokens=500,
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
+            restaurant_id=restaurant_id,
+            action="weekly_digest",
         )
         raw = extract_text(msg).strip()
         import re as _re_rpt

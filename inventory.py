@@ -519,6 +519,8 @@ Finally, on a new line with NO number, write one short warm closing sentence:
         model=os.getenv("INVENTORY_INSIGHT_MODEL", "claude-sonnet-5"),
         max_tokens=950,
         messages=[{"role": "user", "content": prompt}],
+        restaurant_id=restaurant_id,
+        action="inventory_insight",
     )
     result = extract_text(msg).strip()
     # Strip any markdown that slips through

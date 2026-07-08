@@ -830,6 +830,18 @@ def reseed_demo_data(restaurant_id, current_user):
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
 
+@admin_bp.route("/admin/ai-usage/<int:restaurant_id>")
+@admin_required
+def ai_usage(restaurant_id, current_user):
+    """Per-restaurant Claude spend, most-expensive action first — the
+    visibility gap flagged when nothing in the app tracked AI cost at all."""
+    from ai_utils import usage_summary
+    since_days = request.args.get("days", 30, type=int)
+    rows = usage_summary(restaurant_id=restaurant_id, since_days=since_days)
+    total_cost = sum(r["cost_usd"] or 0 for r in rows)
+    total_calls = sum(r["calls"] or 0 for r in rows)
+    return jsonify(ok=True, rows=rows, total_cost=round(total_cost, 4), total_calls=total_calls, since_days=since_days)
+
 @admin_bp.route("/admin/fetch-reviews/<int:restaurant_id>", methods=["POST"])
 @admin_required
 def fetch_reviews_now(restaurant_id, current_user):
@@ -911,7 +923,7 @@ def fetch_reviews_now(restaurant_id, current_user):
             from analyser import analyse_review
             from drafter import draft_response
             for r in get_pending_analysis(restaurant_id, limit=50):
-                try: analyse_review(r.id, r.rating, r.text)
+                try: analyse_review(r.id, r.rating, r.text, restaurant_id=restaurant_id)
                 except Exception: pass
             approved_examples = get_approved_examples(restaurant_id, limit=4)
             for r in get_pending_drafts(restaurant_id):
@@ -961,7 +973,7 @@ def redraft_all(restaurant_id, current_user):
             ).fetchall()
             _conn.close()
             for r in unanalysed:
-                try: analyse_review(r["id"], r["rating"], r["text"])
+                try: analyse_review(r["id"], r["rating"], r["text"], restaurant_id=restaurant_id)
                 except Exception: pass
             approved_examples = get_approved_examples(restaurant_id, limit=4)
             for r in get_pending_drafts(restaurant_id, limit=50):
@@ -1284,7 +1296,7 @@ def upload_menu_pdf(restaurant_id, current_user):
             return jsonify(ok=False, error="PDF too large — max 10MB")
         from competitor import fetch_menu_from_pdf_bytes
         from models import update_restaurant
-        menu_notes = fetch_menu_from_pdf_bytes(pdf_bytes, restaurant.name)
+        menu_notes = fetch_menu_from_pdf_bytes(pdf_bytes, restaurant.name, restaurant_id=restaurant_id)
         if not menu_notes:
             return jsonify(ok=False, error="Could not extract menu items from this PDF — try a text-based PDF rather than a scanned image")
         update_restaurant(restaurant_id, {"menu_notes": menu_notes})
@@ -1304,7 +1316,7 @@ def fetch_menu_from_url_route(restaurant_id, current_user):
     try:
         from competitor import fetch_menu_from_url
         from models import update_restaurant
-        menu_items = fetch_menu_from_url(url)
+        menu_items = fetch_menu_from_url(url, restaurant_id=restaurant_id)
         if not menu_items:
             return jsonify(ok=False, error="Could not extract menu from this URL. The site may block automated requests or use JavaScript to load content. Try the PDF upload option instead, or enter items manually.")
         # Save the URL and extracted notes

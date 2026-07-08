@@ -4,7 +4,10 @@ import anthropic
 import httpx
 import pytest
 
-from ai_utils import create_with_retry, ai_rate_limited, extract_text, _ai_call_log
+from ai_utils import (
+    create_with_retry, ai_rate_limited, extract_text, _ai_call_log,
+    log_ai_usage, usage_summary,
+)
 
 
 class FakeBlock:
@@ -115,3 +118,97 @@ def test_extract_text_plain_text_response():
 def test_extract_text_no_text_block_returns_empty():
     msg = FakeMessage([FakeBlock(thinking="only reasoning, response got cut off")])
     assert extract_text(msg) == ""
+
+
+# ── AI usage/cost tracking ──────────────────────────────────────────────────
+# Nothing tracked what any of this cost before — no per-restaurant spend
+# visibility as client count grows. Every create_with_retry() call now logs
+# to ai_usage on success.
+
+class FakeUsage:
+    def __init__(self, input_tokens, output_tokens):
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
+class FakeMessageWithUsage:
+    def __init__(self, usage):
+        self.usage = usage
+
+
+class FakeClientWithUsage:
+    def __init__(self, input_tokens=100, output_tokens=50):
+        self.messages = self
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+    def create(self, **kwargs):
+        return FakeMessageWithUsage(FakeUsage(self.input_tokens, self.output_tokens))
+
+
+def test_create_with_retry_logs_usage_on_success(monkeypatch):
+    logged = []
+    monkeypatch.setattr("ai_utils.log_ai_usage", lambda *a, **k: logged.append(a))
+    client = FakeClientWithUsage(input_tokens=100, output_tokens=50)
+    create_with_retry(client, model="claude-haiku-4-5-20251001", max_tokens=10,
+                       restaurant_id=42, action="test_action")
+    assert len(logged) == 1
+    restaurant_id, action, model, input_tokens, output_tokens = logged[0]
+    assert (restaurant_id, action, model, input_tokens, output_tokens) == (42, "test_action", "claude-haiku-4-5-20251001", 100, 50)
+
+
+def test_create_with_retry_does_not_log_when_response_has_no_usage(monkeypatch):
+    """FakeClient (used throughout the rest of this file) returns a plain
+    dict with no .usage attribute — logging must no-op, not crash."""
+    logged = []
+    monkeypatch.setattr("ai_utils.log_ai_usage", lambda *a, **k: logged.append(a))
+    client = FakeClient(failures=0, exc=None)
+    create_with_retry(client, model="m", max_tokens=10)
+    assert logged == []
+
+
+def test_create_with_retry_pops_restaurant_id_and_action_before_calling_api():
+    """restaurant_id/action are for our own logging only — the Anthropic
+    client should never see them as kwargs."""
+    client = FakeClient(failures=0, exc=None)
+    create_with_retry(client, model="m", max_tokens=10, restaurant_id=7, action="foo")
+    assert "restaurant_id" not in client.last_kwargs
+    assert "action" not in client.last_kwargs
+
+
+def test_create_with_retry_usage_logging_failure_does_not_break_call(monkeypatch):
+    """A broken DB should never take down the AI call it's trying to measure."""
+    monkeypatch.setattr("ai_utils.log_ai_usage", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db down")))
+    client = FakeClientWithUsage()
+    result = create_with_retry(client, model="m", max_tokens=10)
+    assert isinstance(result, FakeMessageWithUsage)  # call still succeeded
+
+
+def test_log_and_summarize_usage(db_path):
+    log_ai_usage(1, "draft_response", "claude-sonnet-5", 1000, 200, db_path=db_path)
+    log_ai_usage(1, "draft_response", "claude-sonnet-5", 500, 100, db_path=db_path)
+    log_ai_usage(2, "draft_response", "claude-sonnet-5", 1000, 200, db_path=db_path)
+
+    rows = usage_summary(restaurant_id=1, db_path=db_path)
+    assert len(rows) == 1
+    assert rows[0]["calls"] == 2
+    assert rows[0]["input_tokens"] == 1500
+    assert rows[0]["output_tokens"] == 300
+    assert rows[0]["cost_usd"] > 0
+
+
+def test_usage_summary_groups_by_action_and_model(db_path):
+    log_ai_usage(1, "draft_response", "claude-sonnet-5", 1000, 200, db_path=db_path)
+    log_ai_usage(1, "review_analysis", "claude-haiku-4-5-20251001", 200, 50, db_path=db_path)
+
+    rows = usage_summary(restaurant_id=1, db_path=db_path)
+    actions = {r["action"] for r in rows}
+    assert actions == {"draft_response", "review_analysis"}
+
+
+def test_usage_summary_unscoped_covers_all_restaurants(db_path):
+    log_ai_usage(1, "draft_response", "claude-sonnet-5", 1000, 200, db_path=db_path)
+    log_ai_usage(2, "draft_response", "claude-sonnet-5", 1000, 200, db_path=db_path)
+
+    rows = usage_summary(db_path=db_path)
+    assert sum(r["calls"] for r in rows) == 2

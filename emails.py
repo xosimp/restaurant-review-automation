@@ -6,7 +6,7 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 FROM_EMAIL     = os.getenv("FROM_EMAIL", "will@cavnar.ai")
 
 
-def generate_email_personalization(context: str, fallback: str) -> str:
+def generate_email_personalization(context: str, fallback: str, restaurant_id: int = None) -> str:
     """Ask Claude for one short, warm paragraph personalizing an onboarding/
     summary email using the real activity data passed in `context`. Falls
     back to static copy if the API isn't configured or the call fails —
@@ -32,6 +32,8 @@ def generate_email_personalization(context: str, fallback: str) -> str:
             max_tokens=200,
             temperature=0.6,
             messages=[{"role": "user", "content": prompt}],
+            restaurant_id=restaurant_id,
+            action="email_personalization",
         )
         text = extract_text(msg).strip()
         return text if text else fallback
@@ -513,7 +515,8 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
 
 def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = None,
                           has_labor: bool = False, has_inventory: bool = False,
-                          approved_count: int = 0, pending_count: int = 0):
+                          approved_count: int = 0, pending_count: int = 0,
+                          restaurant_id: int = None):
     """Day 7 — First week check-in with real activity data + prompt to upload CSV."""
     if not RESEND_API_KEY:
         return
@@ -566,7 +569,7 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
             f"Modules: {'Labor Optimizer, ' if has_labor else ''}{'Inventory Control' if has_inventory else ''}\n"
             "Write the one-week check-in paragraph referencing this activity naturally."
         )
-        body_paragraph = generate_email_personalization(ai_context, fallback_paragraph)
+        body_paragraph = generate_email_personalization(ai_context, fallback_paragraph, restaurant_id=restaurant_id)
 
         _resend.Emails.send({
             "from": f"Will Cavnar <{FROM_EMAIL}>",
@@ -722,7 +725,7 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
             + (f"Reviews this month: {total} total, {avg}★ average, {pos} positive, {neg} negative.\n" if total else "No new reviews this month.\n")
             + "Write the opening summary paragraph (1-2 sentences) referencing this real data naturally."
         )
-        summary_paragraph = generate_email_personalization(ai_context, fallback_paragraph)
+        summary_paragraph = generate_email_personalization(ai_context, fallback_paragraph, restaurant_id=restaurant_id)
 
         _resend.Emails.send({
             "from": f"Will Cavnar <{FROM_EMAIL}>",
@@ -803,7 +806,7 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
             f"Modules in use: {', '.join(modules) if modules else 'Review Intelligence'}.\n"
             "Write the 30-day milestone paragraph referencing this real activity — celebratory but genuine, not over the top."
         )
-        body_paragraph = generate_email_personalization(ai_context, fallback_paragraph)
+        body_paragraph = generate_email_personalization(ai_context, fallback_paragraph, restaurant_id=restaurant_id)
 
         _resend.Emails.send({
             "from": f"Will Cavnar <{FROM_EMAIL}>",
