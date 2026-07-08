@@ -5,6 +5,7 @@ can. TWILIO_* env vars are unset in this test environment, so send_sms()
 safely no-ops (prints + returns False) rather than making a real network
 call — confirmed by reading notify.send_sms's own guard."""
 import types
+from datetime import timedelta
 
 import pytest
 
@@ -13,9 +14,11 @@ import models
 from guest_marketing import (
     init_guest_marketing, get_guest_contacts, add_guest_contact_manual,
     add_guest_contact_public_optin, delete_guest_contact, unsubscribe_guest,
-    draft_campaign_message, send_campaign,
+    draft_campaign_message, send_campaign, mark_guest_visit,
+    run_review_request_followups,
 )
 from models import create_restaurant, get_restaurant, get_conn, Restaurant
+from time_utils import restaurant_now_by_id
 
 
 @pytest.fixture(autouse=True)
@@ -229,3 +232,198 @@ def test_send_campaign_appends_stop_instructions(db_path, monkeypatch):
     send_campaign(r.id, "We miss you!", db_path=db_path)
     assert "STOP" in captured["message"]
     assert "We miss you!" in captured["message"]
+
+
+# ── last_visit tracking ──────────────────────────────────────────────────────
+
+def _backdate_visit(db_path, restaurant_id, contact_id, hours_ago):
+    ts = (restaurant_now_by_id(restaurant_id, naive=True) - timedelta(hours=hours_ago)).isoformat()
+    conn = get_conn(db_path)
+    conn.execute("UPDATE guest_contacts SET last_visit=? WHERE id=?", (ts, contact_id))
+    conn.commit()
+    conn.close()
+    return ts
+
+
+def test_public_optin_sets_last_visit(db_path):
+    """The QR-code scan itself is the visit signal — no separate step needed."""
+    r = _restaurant(db_path)
+    add_guest_contact_public_optin(r.id, "555-123-4567", db_path=db_path)
+    contacts = get_guest_contacts(r.id, db_path=db_path)
+    assert contacts[0]["last_visit"] is not None
+
+
+def test_manual_add_does_not_set_last_visit(db_path):
+    r = _restaurant(db_path)
+    add_guest_contact_manual(r.id, "555-123-4567", db_path=db_path)
+    contacts = get_guest_contacts(r.id, db_path=db_path)
+    assert contacts[0]["last_visit"] is None
+
+
+def test_repeat_optin_bumps_last_visit_but_not_consent_at(db_path):
+    """A returning guest re-scanning the QR code is a fresh visit signal
+    (re-arms the review-request follow-up), but their original consent
+    timestamp shouldn't be rewritten."""
+    r = _restaurant(db_path)
+    cid = add_guest_contact_public_optin(r.id, "555-123-4567", db_path=db_path)
+    first = get_guest_contacts(r.id, db_path=db_path)[0]
+    _backdate_visit(db_path, r.id, cid, hours_ago=10)  # simulate time passing
+    add_guest_contact_public_optin(r.id, "555-123-4567", db_path=db_path)  # scans again
+    second = get_guest_contacts(r.id, db_path=db_path)[0]
+    assert second["consent_at"] == first["consent_at"]
+    assert second["last_visit"] != first["last_visit"]
+
+
+def test_mark_guest_visit_sets_last_visit(db_path):
+    r = _restaurant(db_path)
+    cid = add_guest_contact_manual(r.id, "555-123-4567", db_path=db_path)
+    mark_guest_visit(cid, r.id, db_path=db_path)
+    contacts = get_guest_contacts(r.id, db_path=db_path)
+    assert contacts[0]["last_visit"] is not None
+
+
+def test_mark_guest_visit_is_scoped_to_restaurant(db_path):
+    """Same IDOR shape as delete_guest_contact — a client must not be able to
+    touch another restaurant's contact by guessing an id."""
+    r1 = _restaurant(db_path, name="Restaurant One")
+    r2 = _restaurant(db_path, name="Restaurant Two")
+    cid = add_guest_contact_manual(r1.id, "555-123-4567", db_path=db_path)
+    mark_guest_visit(cid, r2.id, db_path=db_path)  # wrong restaurant_id
+    assert get_guest_contacts(r1.id, db_path=db_path)[0]["last_visit"] is None
+    mark_guest_visit(cid, r1.id, db_path=db_path)  # correct restaurant_id
+    assert get_guest_contacts(r1.id, db_path=db_path)[0]["last_visit"] is not None
+
+
+# ── automated post-visit review request ──────────────────────────────────────
+
+def test_review_request_followup_sends_after_delay(db_path):
+    r = _restaurant(db_path, google_place_id="ChIJtestplace")
+    cid = add_guest_contact_public_optin(r.id, "555-123-4567", name="Jane", db_path=db_path)
+    _backdate_visit(db_path, r.id, cid, hours_ago=4)
+
+    result = run_review_request_followups(delay_hours=3, db_path=db_path)
+
+    # TWILIO_* unset in this test env, so send_sms() always returns False —
+    # this exercises the eligibility/logging logic, not a real Twilio send.
+    assert result == {"sent": 0, "failed": 1, "skipped_no_place_id": 0}
+    contacts = get_guest_contacts(r.id, db_path=db_path)
+    assert contacts[0]["last_review_requested_at"] is not None
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT * FROM review_requests WHERE restaurant_id=?", (r.id,)).fetchone()
+    conn.close()
+    assert row["method"] == "sms_auto"
+    assert row["status"] == "failed"
+    assert row["customer_phone"] == "+15551234567"
+
+
+def test_review_request_followup_skips_contact_within_delay_window(db_path):
+    r = _restaurant(db_path, google_place_id="ChIJtestplace")
+    cid = add_guest_contact_public_optin(r.id, "555-123-4567", db_path=db_path)
+    _backdate_visit(db_path, r.id, cid, hours_ago=1)  # too recent for a 3hr delay
+
+    result = run_review_request_followups(delay_hours=3, db_path=db_path)
+
+    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0}
+    assert get_guest_contacts(r.id, db_path=db_path)[0]["last_review_requested_at"] is None
+
+
+def test_review_request_followup_skips_restaurant_without_place_id(db_path):
+    r = _restaurant(db_path)  # no google_place_id
+    cid = add_guest_contact_public_optin(r.id, "555-123-4567", db_path=db_path)
+    _backdate_visit(db_path, r.id, cid, hours_ago=4)
+
+    result = run_review_request_followups(delay_hours=3, db_path=db_path)
+
+    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 1}
+
+
+def test_review_request_followup_skips_unconsented_contact(db_path):
+    r = _restaurant(db_path, google_place_id="ChIJtestplace")
+    cid = add_guest_contact_manual(r.id, "555-123-4567", db_path=db_path)  # no consent
+    mark_guest_visit(cid, r.id, db_path=db_path)
+    _backdate_visit(db_path, r.id, cid, hours_ago=4)
+
+    result = run_review_request_followups(delay_hours=3, db_path=db_path)
+
+    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0}
+
+
+def test_review_request_followup_skips_unsubscribed_contact(db_path):
+    r = _restaurant(db_path, google_place_id="ChIJtestplace")
+    cid = add_guest_contact_public_optin(r.id, "555-123-4567", db_path=db_path)
+    _backdate_visit(db_path, r.id, cid, hours_ago=4)
+    unsubscribe_guest(r.id, "555-123-4567", db_path=db_path)
+
+    result = run_review_request_followups(delay_hours=3, db_path=db_path)
+
+    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0}
+
+
+def test_review_request_followup_is_idempotent(db_path):
+    """Running the hourly job twice must not double-text the same visit."""
+    r = _restaurant(db_path, google_place_id="ChIJtestplace")
+    cid = add_guest_contact_public_optin(r.id, "555-123-4567", db_path=db_path)
+    _backdate_visit(db_path, r.id, cid, hours_ago=4)
+
+    run_review_request_followups(delay_hours=3, db_path=db_path)
+    second = run_review_request_followups(delay_hours=3, db_path=db_path)
+
+    assert second == {"sent": 0, "failed": 0, "skipped_no_place_id": 0}
+    conn = get_conn(db_path)
+    count = conn.execute("SELECT COUNT(*) AS c FROM review_requests WHERE restaurant_id=?", (r.id,)).fetchone()["c"]
+    conn.close()
+    assert count == 1
+
+
+def test_review_request_followup_rearms_on_new_visit(db_path):
+    """A genuinely new visit (guest scans the join link again) must be
+    eligible for its own follow-up, even though one was already sent for
+    the earlier visit. Simulated as: the prior request sits far in the past,
+    and a fresh visit landed more recently but still past the delay — the
+    realistic timeline for "time has passed since the first text went out"."""
+    r = _restaurant(db_path, google_place_id="ChIJtestplace")
+    cid = add_guest_contact_public_optin(r.id, "555-123-4567", db_path=db_path)
+    _backdate_visit(db_path, r.id, cid, hours_ago=4)
+    run_review_request_followups(delay_hours=3, db_path=db_path)
+
+    conn = get_conn(db_path)
+    old_ts = (restaurant_now_by_id(r.id, naive=True) - timedelta(hours=48)).isoformat()
+    conn.execute("UPDATE guest_contacts SET last_review_requested_at=? WHERE id=?", (old_ts, cid))
+    conn.commit()
+    conn.close()
+    _backdate_visit(db_path, r.id, cid, hours_ago=4)  # new visit, itself now past the delay
+    run_review_request_followups(delay_hours=3, db_path=db_path)
+
+    conn = get_conn(db_path)
+    count = conn.execute("SELECT COUNT(*) AS c FROM review_requests WHERE restaurant_id=?", (r.id,)).fetchone()["c"]
+    conn.close()
+    assert count == 2
+
+
+def test_review_request_followup_respects_delay_hours_override(db_path):
+    r = _restaurant(db_path, google_place_id="ChIJtestplace")
+    cid = add_guest_contact_public_optin(r.id, "555-123-4567", db_path=db_path)
+    _backdate_visit(db_path, r.id, cid, hours_ago=2)
+
+    result = run_review_request_followups(delay_hours=1, db_path=db_path)
+
+    assert result["failed"] == 1  # would have been skipped at the default 3hr delay
+
+
+def test_review_request_followup_message_includes_review_link(db_path, monkeypatch):
+    r = _restaurant(db_path, google_place_id="ChIJtestplace")
+    cid = add_guest_contact_public_optin(r.id, "555-123-4567", name="Jane", db_path=db_path)
+    _backdate_visit(db_path, r.id, cid, hours_ago=4)
+    captured = {}
+
+    def fake_send_sms(phone, message):
+        captured["phone"] = phone
+        captured["message"] = message
+        return True
+
+    monkeypatch.setattr(guest_marketing, "send_sms", fake_send_sms)
+    run_review_request_followups(delay_hours=3, db_path=db_path)
+
+    assert "ChIJtestplace" in captured["message"]
+    assert "Jane" in captured["message"]
+    assert "STOP" in captured["message"]

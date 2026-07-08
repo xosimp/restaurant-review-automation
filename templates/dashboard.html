@@ -7539,12 +7539,17 @@ function _loadGuestContactsList() {
       var c = d.contacts[i];
       var statusLabel = c.unsubscribed ? 'Unsubscribed' : (c.consent ? 'Text-eligible' : 'No consent yet');
       var statusColor = c.unsubscribed ? 'var(--ink3)' : (c.consent ? '#2d6a4f' : '#b7791f');
+      var visitLabel = c.last_visit ? ('Last visit ' + c.last_visit.replace('T',' ').slice(0,16)) : 'No visit recorded';
       html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 0;border-bottom:1px solid var(--paper3)">'
         + '<div style="min-width:0">'
         + '<div style="font-size:12px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (c.name || c.phone) + '</div>'
         + '<div style="font-size:11px;color:var(--ink3)">' + c.phone + ' · <span style="color:' + statusColor + '">' + statusLabel + '</span></div>'
+        + '<div style="font-size:10.5px;color:var(--ink3);margin-top:1px">' + visitLabel + '</div>'
         + '</div>'
-        + '<button onclick="deleteGuestContactRow(' + c.id + ')" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:11px;font-weight:600;flex-shrink:0;font-family:\'Plus Jakarta Sans\',sans-serif">Remove</button>'
+        + '<div style="display:flex;gap:10px;flex-shrink:0;align-items:center">'
+        + '<button onclick="markGuestVisit(' + c.id + ',this)" style="background:none;border:none;cursor:pointer;color:var(--ember);font-size:11px;font-weight:600;font-family:\'Plus Jakarta Sans\',sans-serif">Mark visit</button>'
+        + '<button onclick="deleteGuestContactRow(' + c.id + ')" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:11px;font-weight:600;font-family:\'Plus Jakarta Sans\',sans-serif">Remove</button>'
+        + '</div>'
         + '</div>';
     }
     list.innerHTML = html;
@@ -7574,6 +7579,14 @@ window.deleteGuestContactRow = function(id) {
   fetch('/api/guest-contacts/' + id, {method: 'DELETE'}).then(function(r){ return r.json(); }).then(function(d){
     if (d.ok) { _loadGuestContactsList(); loadGuestContactsSummary(); }
   }).catch(function(){});
+};
+
+window.markGuestVisit = function(id, btn) {
+  var orig = btn.textContent;
+  btn.textContent = '…';
+  fetch('/api/guest-contacts/' + id + '/mark-visit', {method: 'POST'}).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) { _loadGuestContactsList(); } else { btn.textContent = orig; }
+  }).catch(function(){ btn.textContent = orig; });
 };
 
 window.generateGuestCampaign = function() {
@@ -8063,7 +8076,7 @@ document.addEventListener('click', function(e) {
       <div style="font-size:16px;font-weight:700;color:var(--ink)">Guest contacts</div>
       <button aria-label="Close" onclick="closeGuestContactsModal()" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;line-height:1;padding:0">&times;</button>
     </div>
-    <p style="font-size:11px;color:var(--ink3);line-height:1.6;margin:0 0 14px">Add a number here for your own reference — it will show in this list, but can't receive texts until that guest opts in themselves at your join link.</p>
+    <p style="font-size:11px;color:var(--ink3);line-height:1.6;margin:0 0 14px">Add a number here for your own reference — it will show in this list, but can't receive texts until that guest opts in themselves at your join link. Tap "Mark visit" after serving a consented guest and they'll automatically get a review-request text a few hours later — joining via your link already does this for you.</p>
     <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
       <input type="text" id="guest-add-name" placeholder="Name (optional)" style="flex:1;min-width:120px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
       <input type="tel" id="guest-add-phone" placeholder="Phone number" style="flex:1;min-width:140px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">

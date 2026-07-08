@@ -2420,6 +2420,16 @@ def guest_contacts_delete(contact_id, current_user):
     delete_guest_contact(contact_id, current_user["restaurant_id"])
     return jsonify(ok=True)
 
+@client_bp.route("/api/guest-contacts/<int:contact_id>/mark-visit", methods=["POST"])
+@login_required
+def guest_contacts_mark_visit(contact_id, current_user):
+    """Manual visit signal for contacts without a natural opt-in-scan moment —
+    starts the automated post-visit review-request countdown (see
+    guest_marketing.run_review_request_followups)."""
+    from guest_marketing import mark_guest_visit
+    mark_guest_visit(contact_id, current_user["restaurant_id"])
+    return jsonify(ok=True)
+
 @client_bp.route("/api/guest-campaign/draft", methods=["POST"])
 @login_required
 def guest_campaign_draft(current_user):

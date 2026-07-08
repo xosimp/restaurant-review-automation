@@ -946,6 +946,12 @@ def scheduler_loop():
                 log.info("Running inactive client check...")
                 _ops.run_job("inactive_clients", check_inactive_clients)
 
+            # Every tick (hourly) — automated post-visit review request texts.
+            # Needs hourly granularity (not a once-daily gate) since eligibility
+            # is "N hours since last_visit", checked per-restaurant local time.
+            from guest_marketing import run_review_request_followups
+            _ops.run_job("review_request_followups", run_review_request_followups)
+
             try:
                 record_scheduler_heartbeat()
                 run_health_checks()
