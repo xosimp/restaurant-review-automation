@@ -49,6 +49,7 @@ def admin(current_user):
     for u in users:
         r = get_restaurant(u["restaurant_id"])
         u["billing_status"] = r.billing_status if r else "trial"
+        u["is_demo"] = bool(r and r.is_demo)
         u["last_active_tab"] = r.last_active_tab if r else None
         u["internal_notes"] = r.internal_notes if r else None
         u["phone"] = r.owner_phone if r else None
@@ -802,6 +803,32 @@ def seed_reviews(restaurant_id, current_user):
             print(f"[seed] draft error [{r.id}]: {_e}")
 
     return jsonify(ok=True, seeded=new_count)
+
+@admin_bp.route("/admin/reseed-demo-data/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def reseed_demo_data(restaurant_id, current_user):
+    """Manually re-run the demo-data seed for a restaurant flagged is_demo.
+
+    This used to run unconditionally on every server boot for Gia Mia,
+    wiping and replacing its reviews on every deploy. That's the right
+    behavior for a restaurant that's still just a pitched demo, but there
+    was no guard stopping it from continuing to wipe real client data if
+    that restaurant ever converted to a paying client. Now it only runs
+    when explicitly triggered here, and only if is_demo is still true —
+    flip is_demo off in admin and this route (and the boot-time refresh)
+    both refuse.
+    """
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    if not restaurant.is_demo:
+        return jsonify(ok=False, error="This restaurant is not flagged is_demo — refusing to reseed real client data"), 400
+    try:
+        from hosted_dashboard import _refresh_gia_mia_reviews
+        _refresh_gia_mia_reviews(restaurant_id)
+        return jsonify(ok=True)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
 
 @admin_bp.route("/admin/fetch-reviews/<int:restaurant_id>", methods=["POST"])
 @admin_required

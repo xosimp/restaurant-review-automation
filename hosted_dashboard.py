@@ -997,6 +997,7 @@ def _do_seed_gia_mia():
                 module_reviews=1, module_labor=1,
                 module_inventory=1, module_marketing=1,
                 billing_status="trial",
+                is_demo=1,
         ))
         gia_mia_pw = os.getenv("RYAN_TEST_PASSWORD", "charthouse123")
         create_user(gia_mia_rid, "Brian", "cavnarwill@gmail.com", gia_mia_pw, is_admin=False)
@@ -1183,13 +1184,25 @@ def _seed_gia_mia_background():
             _do_seed_gia_mia()
         else:
             _ensure_gia_mia_vibe()
-        # Always refresh reviews on every deploy so real content stays current
+        # Refresh seed reviews on every deploy so demo content stays current —
+        # gated on is_demo (not just the name match) so this permanently stops
+        # touching Gia Mia's data the moment it's flipped off in admin, e.g.
+        # if/when Gia Mia converts from a pitched demo to a real paying client.
         conn2 = get_conn()
         _gia_mia_row = conn2.execute(
-            "SELECT id FROM restaurants WHERE name=?", ("Gia Mia",)
+            "SELECT id, is_demo FROM restaurants WHERE name=?", ("Gia Mia",)
         ).fetchone()
+        _gia_mia_is_demo = bool(_gia_mia_row["is_demo"]) if _gia_mia_row else False
+        # One-time backfill: restaurants created before is_demo existed default
+        # to 0. Only the seed path above ever creates a restaurant literally
+        # named "Gia Mia" with billing_status='trial', so it's safe to infer
+        # is_demo=1 here rather than losing existing demo behavior silently.
+        if _gia_mia_row and not _gia_mia_is_demo:
+            conn2.execute("UPDATE restaurants SET is_demo=1 WHERE id=?", (_gia_mia_row["id"],))
+            conn2.commit()
+            _gia_mia_is_demo = True
         conn2.close()
-        if _gia_mia_row:
+        if _gia_mia_row and _gia_mia_is_demo:
             _refresh_gia_mia_reviews(_gia_mia_row["id"])
     except Exception as _bg_gm_e:
         print(f"  Gia Mia seed background error: {_bg_gm_e}")

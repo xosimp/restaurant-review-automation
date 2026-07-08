@@ -286,6 +286,9 @@ input:focus,select:focus{border-color:var(--ember)}
               <button class="action-item" onclick="openReviewImport({{user.restaurant_id}},'{{user.restaurant_name}}','ubereats');closeMenu({{user.id}})">Import Uber Eats CSV</button>
               <button class="action-item" onclick="redraftAll({{user.restaurant_id}});closeMenu({{user.id}})">Re-draft all with AI</button>
               <button class="action-item" onclick="seedReviews({{user.restaurant_id}});closeMenu({{user.id}})">Seed sample reviews</button>
+              {% if user.is_demo %}
+              <button class="action-item" onclick="reseedDemoData({{user.restaurant_id}});closeMenu({{user.id}})">Reseed demo data (is_demo)</button>
+              {% endif %}
               <button class="action-item" onclick="openToastModal({{user.restaurant_id}},'{{user.restaurant_name}}');closeMenu({{user.id}})">🍞 Toast POS</button>
               <div class="action-divider"></div>
               {% if user.role == 'owner' %}
@@ -578,6 +581,23 @@ async function seedReviews(restaurantId) {
   } else {
     btn.textContent = 'Error'; btn.disabled = false;
   }
+}
+
+async function reseedDemoData(restaurantId) {
+  const btn = event.target;
+  btn.textContent = 'Reseeding…'; btn.disabled = true;
+  try {
+    const res = await fetch('/admin/reseed-demo-data/' + restaurantId, {method:'POST'});
+    const data = await res.json();
+    if (data.ok) {
+      toast('Demo data reseeded');
+    } else {
+      toast('Error: ' + (data.error || 'unknown'));
+    }
+  } catch(e) {
+    toast('Failed: ' + e.message);
+  }
+  btn.textContent = 'Reseed demo data (is_demo)'; btn.disabled = false;
 }
 
 async function deactivateClient(id, name) {

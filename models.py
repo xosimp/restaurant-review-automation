@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS restaurants (
     reviews_live    INTEGER DEFAULT 0,  -- 1 = pulling real reviews
     -- Admin
     billing_status  TEXT    DEFAULT 'trial',  -- trial/active/paused/churned
+    is_demo         INTEGER DEFAULT 0,  -- 1 = seed data may be wiped/reseeded automatically; never true for a real client
     internal_notes  TEXT,                      -- private notes for Will only
     -- Service tier drives module access automatically
     service_tier    TEXT    DEFAULT 'trial',  -- trial/starter_reviews/starter_labor/starter_inventory/starter_marketing/full
@@ -283,6 +284,7 @@ class Restaurant:
     last_fetched_at: Optional[str]  = None
     reviews_live: int               = 0
     billing_status: str             = "trial"
+    is_demo: int                    = 0
     two_fa_enabled: int             = 0
     two_fa_code: str                = None
     two_fa_expires: str             = None
@@ -526,6 +528,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN last_fetched_at TEXT",
         "ALTER TABLE restaurants ADD COLUMN reviews_live INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN billing_status TEXT DEFAULT 'trial'",
+        "ALTER TABLE restaurants ADD COLUMN is_demo INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN internal_notes TEXT",
         "ALTER TABLE restaurants ADD COLUMN service_tier TEXT DEFAULT 'trial'",
         "ALTER TABLE restaurants ADD COLUMN module_reviews INTEGER DEFAULT 1",
@@ -1068,14 +1071,14 @@ def create_restaurant(r: Restaurant, db_path: str = DB_PATH) -> int:
         INSERT INTO restaurants (name, owner_email, google_place_id, yelp_business_id,
             voice_notes, neighborhood, vibe, known_for, sign_off_name, never_say,
             hourly_rate, labor_target_pct, stripe_customer_id,
-            location_group, location_name, pos_system, reviews_live, billing_status,
+            location_group, location_name, pos_system, reviews_live, billing_status, is_demo,
             service_tier, module_reviews, module_labor, module_inventory, module_marketing,
             owner_name, owner_phone, digest_day, digest_enabled, created_at, timezone)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (r.name, r.owner_email, r.google_place_id, r.yelp_business_id,
           r.voice_notes, r.neighborhood, r.vibe, r.known_for,
           r.sign_off_name, r.never_say, r.hourly_rate, r.labor_target_pct,
-          r.stripe_customer_id, r.location_group, r.location_name, r.pos_system, r.reviews_live, r.billing_status,
+          r.stripe_customer_id, r.location_group, r.location_name, r.pos_system, r.reviews_live, r.billing_status, r.is_demo,
           r.service_tier,
           r.module_reviews, r.module_labor, r.module_inventory,
           r.module_marketing, r.owner_name, r.owner_phone,
@@ -1092,7 +1095,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","monthly_revenue_target","hours_notes","role_rates_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
+        "hourly_rate","labor_target_pct","monthly_revenue_target","hours_notes","role_rates_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","login_notify","timezone","onboarding_dismissed",
@@ -1166,6 +1169,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         pos_system=row["pos_system"] if "pos_system" in row.keys() else None,
         reviews_live=row["reviews_live"] if "reviews_live" in row.keys() else 0,
         billing_status=row["billing_status"] if "billing_status" in row.keys() else "trial",
+        is_demo=row["is_demo"] if "is_demo" in row.keys() and row["is_demo"] is not None else 0,
         internal_notes=row["internal_notes"] if "internal_notes" in row.keys() else None,
         service_tier=row["service_tier"] if "service_tier" in row.keys() else "trial",
         module_reviews=row["module_reviews"] if "module_reviews" in row.keys() else 1,
