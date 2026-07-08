@@ -1046,7 +1046,7 @@ def _ensure_gia_mia_vibe():
             ))
             conn.execute(
                 "UPDATE users SET email=?, username=? WHERE restaurant_id=? AND is_admin=0",
-                ("cavnarwill@gmail.com", "Brian", row["id"])
+                ("cavnarwill@gmail.com", "brian", row["id"])
             )
             conn.commit()
             print(f"  Gia Mia profile updated (email, owner, vibe, known_for) on restaurant id={row['id']}")

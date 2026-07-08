@@ -67,6 +67,21 @@ def init_auth(db_path: str = DB_PATH):
         except Exception:
             pass  # Column already exists
 
+    # Normalize any mixed-case usernames written outside create_user() (e.g.
+    # raw SQL in a seed/"ensure" script, as _ensure_gia_mia_vibe() in
+    # hosted_dashboard.py used to). get_user_by_username() always lowercases
+    # its input before querying, but the username column has no COLLATE
+    # NOCASE, so a stored mixed-case value can never match and that account
+    # can never log in again, regardless of what's typed. Idempotent — a
+    # no-op once every username is already lowercase, safe to run every boot.
+    try:
+        conn_n = sqlite3.connect(db_path)
+        conn_n.execute("UPDATE users SET username = LOWER(username) WHERE username != LOWER(username)")
+        conn_n.commit()
+        conn_n.close()
+    except Exception:
+        pass
+
 # ── User CRUD ─────────────────────────────────────────────────────────────────
 
 def create_user(restaurant_id: int, username: str, email: str,

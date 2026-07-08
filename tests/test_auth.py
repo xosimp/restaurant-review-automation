@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from flask import Flask
+from werkzeug.security import generate_password_hash
 
 import auth
 from auth import (
@@ -62,6 +63,53 @@ def test_verify_password_username_is_case_insensitive(db_path):
     rid = _restaurant(db_path)
     create_user(rid, "Alice", "alice@x.com", "correct-horse", db_path=db_path)
     assert verify_password("ALICE", "correct-horse", db_path=db_path) is not None
+
+
+# ── legacy mixed-case usernames (bypassing create_user's own lowercasing) ────
+# get_user_by_username always lowercases its input before querying, but the
+# username column has no COLLATE NOCASE — so a row written with a mixed-case
+# username via raw SQL (not create_user()) could never log in again,
+# regardless of what was typed. Found live: hosted_dashboard.py's
+# _ensure_gia_mia_vibe() did exactly this on every deploy, via a raw
+# "UPDATE users SET ... username=?" with "Brian" (now fixed to "brian").
+
+def _insert_raw_user(db_path, rid, username, email="legacy@x.com", password="pw"):
+    """Simulates a username written outside create_user() — e.g. a raw SQL
+    UPDATE/INSERT in a seed or 'ensure profile' script."""
+    conn = get_conn(db_path)
+    conn.execute(
+        "INSERT INTO users (restaurant_id, username, email, password_hash) VALUES (?,?,?,?)",
+        (rid, username, email, generate_password_hash(password))
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_legacy_mixed_case_username_cannot_login_before_normalization(db_path):
+    rid = _restaurant(db_path)
+    _insert_raw_user(db_path, rid, "Brian")
+    assert verify_password("brian", "pw", db_path=db_path) is None
+    assert verify_password("Brian", "pw", db_path=db_path) is None
+
+
+def test_init_auth_normalizes_legacy_mixed_case_usernames(db_path):
+    """Running init_auth again — as every app boot does — must repair any
+    mixed-case username written outside create_user(), so a legacy row
+    starts logging in again on the very next deploy with no manual fix."""
+    rid = _restaurant(db_path)
+    _insert_raw_user(db_path, rid, "Brian")
+
+    init_auth(db_path=db_path)  # simulates the next app boot
+
+    assert verify_password("brian", "pw", db_path=db_path) is not None
+    assert verify_password("Brian", "pw", db_path=db_path) is not None
+
+
+def test_username_normalization_does_not_disturb_already_lowercase_usernames(db_path):
+    rid = _restaurant(db_path)
+    create_user(rid, "alice", "alice@x.com", "pw", db_path=db_path)
+    init_auth(db_path=db_path)  # should be a no-op for this row
+    assert verify_password("alice", "pw", db_path=db_path) is not None
 
 
 def test_update_password_changes_what_verifies(db_path):
