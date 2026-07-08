@@ -2,7 +2,7 @@
 client_api.py — Client-facing API routes and data endpoints
 Registered as a Flask Blueprint in hosted_dashboard.py
 """
-from flask import Blueprint, request, jsonify, redirect, send_file, Response
+from flask import Blueprint, request, jsonify, redirect, send_file, Response, render_template
 import os, json, re
 from datetime import datetime
 
@@ -2389,6 +2389,103 @@ def webhook_test(current_user):
         "message": "This is a test webhook from Cavnar AI",
         "restaurant_id": current_user["restaurant_id"],
     })
+    return jsonify(ok=True)
+
+
+# ── Guest SMS lifecycle marketing ───────────────────────────────────────────
+
+@client_bp.route("/api/guest-contacts", methods=["GET"])
+@login_required
+def guest_contacts_list(current_user):
+    from guest_marketing import get_guest_contacts
+    return jsonify(ok=True, contacts=get_guest_contacts(current_user["restaurant_id"]))
+
+@client_bp.route("/api/guest-contacts", methods=["POST"])
+@login_required
+def guest_contacts_add(current_user):
+    """Owner adding a number manually — never consented (see
+    guest_marketing.add_guest_contact_manual's docstring for why)."""
+    from guest_marketing import add_guest_contact_manual
+    data = request.get_json() or {}
+    phone = (data.get("phone") or "").strip()
+    if not phone:
+        return jsonify(ok=False, error="Phone number required"), 400
+    contact_id = add_guest_contact_manual(current_user["restaurant_id"], phone, name=data.get("name"))
+    return jsonify(ok=True, id=contact_id)
+
+@client_bp.route("/api/guest-contacts/<int:contact_id>", methods=["DELETE"])
+@login_required
+def guest_contacts_delete(contact_id, current_user):
+    from guest_marketing import delete_guest_contact
+    delete_guest_contact(contact_id, current_user["restaurant_id"])
+    return jsonify(ok=True)
+
+@client_bp.route("/api/guest-campaign/draft", methods=["POST"])
+@login_required
+def guest_campaign_draft(current_user):
+    from ai_utils import ai_rate_limited
+    rid = current_user["restaurant_id"]
+    if ai_rate_limited(f"guestcampaign:{rid}", max_calls=8, window_secs=60):
+        return jsonify(ok=False, error="Too many requests — please wait a moment and try again."), 429
+    data = request.get_json() or {}
+    try:
+        from guest_marketing import draft_campaign_message
+        restaurant = get_restaurant(rid)
+        message = draft_campaign_message(restaurant, campaign_type=data.get("type", "general"), topic=data.get("topic", ""))
+        return jsonify(ok=True, message=message)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="guest_campaign_draft", context=f"restaurant_id={rid}")
+        return jsonify(ok=False, error="Couldn't draft a message right now — try again in a moment."), 500
+
+@client_bp.route("/api/guest-campaign/send", methods=["POST"])
+@login_required
+def guest_campaign_send(current_user):
+    from ai_utils import ai_rate_limited
+    rid = current_user["restaurant_id"]
+    data = request.get_json() or {}
+    message = (data.get("message") or "").strip()
+    if not message:
+        return jsonify(ok=False, error="Message required"), 400
+    if ai_rate_limited(f"guestcampaignsend:{rid}", max_calls=3, window_secs=300):
+        return jsonify(ok=False, error="Too many campaigns sent recently — please wait a few minutes."), 429
+    try:
+        from guest_marketing import send_campaign
+        result = send_campaign(rid, message)
+        return jsonify(ok=True, **result)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="guest_campaign_send", context=f"restaurant_id={rid}")
+        return jsonify(ok=False, error="Couldn't send the campaign — try again in a moment."), 500
+
+
+# ── Public guest opt-in page — no login, printed on a table tent / QR code ──
+
+@client_bp.route("/join/<int:restaurant_id>")
+def guest_optin_page(restaurant_id):
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return "Restaurant not found", 404
+    return render_template("guest_optin.html", restaurant_name=restaurant.name)
+
+@client_bp.route("/api/public/guest-optin/<int:restaurant_id>", methods=["POST"])
+def guest_optin_submit(restaurant_id):
+    from ai_utils import ai_rate_limited
+    ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr or "unknown"
+    if ai_rate_limited(f"guestoptin:{ip}", max_calls=5, window_secs=300):
+        return jsonify(ok=False, error="Too many attempts — please wait a few minutes and try again."), 429
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    data = request.get_json() or {}
+    phone = (data.get("phone") or "").strip()
+    digits = "".join(c for c in phone if c.isdigit())
+    if len(digits) < 10:
+        return jsonify(ok=False, error="Enter a valid phone number"), 400
+    if not data.get("consent"):
+        return jsonify(ok=False, error="Consent is required to join"), 400
+    from guest_marketing import add_guest_contact_public_optin
+    add_guest_contact_public_optin(restaurant_id, phone, name=data.get("name"))
     return jsonify(ok=True)
 
 

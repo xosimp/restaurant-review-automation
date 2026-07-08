@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{restaurant_name}} — Text Club</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--ink:#0e0c0a;--ink2:#3a3530;--ink3:#7a736a;--paper:#f7f4ef;--paper2:#edeae3;--paper3:#e0dbd0;--ember:#c84b2f;--r:10px}
+body{font-family:'Plus Jakarta Sans',sans-serif;background:linear-gradient(160deg,#1a1410 0%,#0e0c0a 100%);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;color:var(--ink)}
+.card{background:var(--paper);border-radius:16px;padding:36px 32px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+.logo{font-family:'Fraunces',serif;font-size:15px;color:var(--ink3);margin-bottom:4px}
+.logo span{color:var(--ember);font-style:italic}
+h1{font-family:'Fraunces',serif;font-size:22px;font-weight:600;color:var(--ink);margin:2px 0 8px}
+p.sub{font-size:13px;color:var(--ink3);line-height:1.6;margin-bottom:22px}
+label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:5px}
+input[type="text"],input[type="tel"]{width:100%;padding:11px 13px;border:1px solid var(--paper3);border-radius:8px;font-family:'Plus Jakarta Sans',sans-serif;font-size:14px;color:var(--ink);outline:none;margin-bottom:16px}
+input:focus{border-color:var(--ember)}
+.consent{display:flex;gap:10px;align-items:flex-start;margin-bottom:20px;font-size:11.5px;color:var(--ink3);line-height:1.5}
+.consent input{margin-top:3px;flex-shrink:0;accent-color:var(--ember)}
+.btn{width:100%;padding:13px;background:var(--ember);color:white;border:none;border-radius:8px;font-family:'Plus Jakarta Sans',sans-serif;font-size:14px;font-weight:700;cursor:pointer}
+.btn:hover{background:#a83d25}
+.btn:disabled{opacity:.6;cursor:default}
+#status{margin-top:14px;font-size:13px;text-align:center;display:none}
+#status.ok{color:#2d6a4f}
+#status.err{color:#c0392b}
+.fineprint{font-size:10px;color:var(--ink3);margin-top:20px;line-height:1.6;text-align:center}
+#success-view{display:none;text-align:center}
+#success-view h1{margin-bottom:10px}
+</style>
+</head>
+<body>
+{% include "_csrf_fetch.html" %}
+<div class="card">
+  <div id="form-view">
+    <div class="logo">Cavnar <span>AI</span></div>
+    <h1>{{restaurant_name}} Text Club</h1>
+    <p class="sub">Get occasional texts about specials, events, and news from {{restaurant_name}} — no spam, unsubscribe anytime.</p>
+    <form id="optin-form">
+      <label for="g-name">Name (optional)</label>
+      <input type="text" id="g-name" placeholder="Your name">
+      <label for="g-phone">Mobile number</label>
+      <input type="tel" id="g-phone" placeholder="(555) 123-4567" required>
+      <div class="consent">
+        <input type="checkbox" id="g-consent" required>
+        <label for="g-consent" style="display:inline;font-weight:400;text-transform:none;letter-spacing:0;color:var(--ink3)">
+          I agree to receive recurring marketing text messages from {{restaurant_name}} at the number provided. Consent is not a condition of purchase. Message and data rates may apply. Reply STOP to unsubscribe, HELP for help.
+        </label>
+      </div>
+      <button type="submit" class="btn" id="submit-btn">Join the text club</button>
+    </form>
+    <div id="status"></div>
+  </div>
+  <div id="success-view">
+    <h1>You're in!</h1>
+    <p class="sub">Thanks for joining — {{restaurant_name}} will text you when there's something worth sharing.</p>
+  </div>
+  <div class="fineprint">Powered by Cavnar AI · <a href="mailto:will@cavnar.ai" style="color:var(--ink3)">Contact support</a></div>
+</div>
+<script>
+document.getElementById('optin-form').addEventListener('submit', function(e) {
+  e.preventDefault();
+  var btn = document.getElementById('submit-btn');
+  var status = document.getElementById('status');
+  var phone = document.getElementById('g-phone').value.trim();
+  var name = document.getElementById('g-name').value.trim();
+  var consent = document.getElementById('g-consent').checked;
+  if (!consent) {
+    status.textContent = 'Please check the box to confirm you want to receive texts.';
+    status.className = 'err';
+    status.style.display = 'block';
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Joining…';
+  fetch(window.location.pathname.replace('/join/', '/api/public/guest-optin/'), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({phone: phone, name: name, consent: true})
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.ok) {
+      document.getElementById('form-view').style.display = 'none';
+      document.getElementById('success-view').style.display = 'block';
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Join the text club';
+      status.textContent = d.error || 'Something went wrong — try again.';
+      status.className = 'err';
+      status.style.display = 'block';
+    }
+  }).catch(function() {
+    btn.disabled = false;
+    btn.textContent = 'Join the text club';
+    status.textContent = 'Network error — try again.';
+    status.className = 'err';
+    status.style.display = 'block';
+  });
+});
+</script>
+</body>
+</html>

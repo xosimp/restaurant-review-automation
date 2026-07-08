@@ -717,6 +717,7 @@ try:
     from models import init_staff_notes as _isn, init_staff_availability as _isa
     from auth import init_auth as _init_auth
     from webhooks import init_webhooks as _iwh
+    from guest_marketing import init_guest_marketing as _igm
     _init_db()
     _init_auth()
     _isn()
@@ -725,6 +726,7 @@ try:
     _iel()
     _ioe()
     _iwh()
+    _igm()
     print("DB init OK")
 except Exception as _e:
     print(f"DB init error: {_e}")

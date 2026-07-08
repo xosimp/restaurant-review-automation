@@ -3604,6 +3604,39 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div id="wh-status" style="font-size:12px;margin-top:8px;display:none"></div>
   </div>
 
+  <!-- Guest SMS lifecycle marketing -->
+  <div class="acct-card" style="padding:18px 22px;margin-bottom:14px">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Guest text club</div>
+    <p style="font-size:12px;color:var(--ink3);line-height:1.6;margin:0 0 14px">Guests join by scanning a QR code or visiting your link below — never add someone without their own consent, since only a guest opting in themselves makes them text-eligible.</p>
+
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <code id="guest-join-link" style="flex:1;min-width:220px;font-size:11px;color:var(--ink);background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;padding:8px 10px;word-break:break-all">{{request.url_root.rstrip('/')}}/join/{{restaurant.id}}</code>
+      <button onclick="copyGuestJoinLink()" class="btn-secondary" style="font-size:11px;padding:6px 12px" id="guest-copy-btn">Copy link</button>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--paper3)">
+      <div id="guest-contacts-summary" style="font-size:12px;color:var(--ink3)">Loading&hellip;</div>
+      <button onclick="openGuestContactsModal()" style="background:none;border:none;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    </div>
+
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">Send a campaign</div>
+    <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <select id="guest-campaign-type" class="topic-input" style="flex:1;min-width:140px">
+        <option value="win_back">Win-back</option>
+        <option value="event">Event / special</option>
+        <option value="loyalty">Loyalty thank-you</option>
+        <option value="general">General</option>
+      </select>
+      <input type="text" id="guest-campaign-topic" class="topic-input" placeholder="Optional details (e.g. half-price wine Wednesdays)" style="flex:2;min-width:200px">
+      <button onclick="generateGuestCampaign()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-generate-btn">Generate</button>
+    </div>
+    <textarea id="guest-campaign-message" rows="3" placeholder="Generated message will appear here — edit before sending" maxlength="300" style="width:100%;padding:10px 12px;border:1px solid var(--paper3);border-radius:8px;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;color:var(--ink);background:var(--paper2);outline:none;resize:vertical;margin-bottom:10px;box-sizing:border-box"></textarea>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button onclick="sendGuestCampaign()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-send-btn">Send to consented guests</button>
+      <span id="guest-campaign-status" style="font-size:12px;display:none"></span>
+    </div>
+  </div>
+
   <!-- Cancel — minimal text link -->
   <div style="text-align:center;padding:4px 0 8px">
     <a href="mailto:will@cavnar.ai?subject=Cancel%20my%20Cavnar%20AI%20subscription&body=Hi%20Will%2C%0A%0AI%20would%20like%20to%20cancel%20my%20Cavnar%20AI%20subscription%20for%20{{restaurant.name}}.%0A%0APer%20the%2030-day%20notice%20policy%2C%20I%20understand%20my%20account%20will%20remain%20active%20through%20the%20end%20of%20my%20current%20billing%20period%20and%20for%2030%20days%20after%20this%20notice." style="font-size:11px;color:var(--ink3);text-decoration:none">Request cancellation</a>
@@ -7459,8 +7492,151 @@ function revokeOtherSessions(btn){
   window.switchTab = function(n, btn) {
     _origSwitchTab(n, btn);
     if (n === 'account' && !_whLoaded) { _whLoaded = true; loadWebhook(); }
+    if (n === 'account' && !_gcLoaded) { _gcLoaded = true; loadGuestContactsSummary(); }
   };
 })();
+
+// ── Guest SMS lifecycle marketing ───────────────────────────────────────────
+var _gcLoaded = false;
+function loadGuestContactsSummary() {
+  fetch('/api/guest-contacts').then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok) return;
+    var total = d.contacts.length;
+    var consented = d.contacts.filter(function(c){ return c.consent && !c.unsubscribed; }).length;
+    document.getElementById('guest-contacts-summary').textContent =
+      consented + ' text-eligible · ' + total + ' total contact' + (total === 1 ? '' : 's');
+  }).catch(function(){});
+}
+
+window.copyGuestJoinLink = function() {
+  var link = document.getElementById('guest-join-link').textContent;
+  navigator.clipboard.writeText(link).then(function(){
+    var btn = document.getElementById('guest-copy-btn');
+    var orig = btn.textContent;
+    btn.textContent = '✓ Copied';
+    setTimeout(function(){ btn.textContent = orig; }, 2000);
+  });
+};
+
+window.openGuestContactsModal = function() {
+  document.getElementById('guest-contacts-modal').style.display = 'flex';
+  _loadGuestContactsList();
+};
+window.closeGuestContactsModal = function() {
+  document.getElementById('guest-contacts-modal').style.display = 'none';
+};
+
+function _loadGuestContactsList() {
+  var list = document.getElementById('guest-contacts-list');
+  list.textContent = 'Loading…';
+  fetch('/api/guest-contacts').then(function(r){ return r.json(); }).then(function(d){
+    if (!d.ok || !d.contacts.length) {
+      list.innerHTML = '<div style="padding:12px 0;font-size:12px;color:var(--ink3)">No contacts yet.</div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < d.contacts.length; i++) {
+      var c = d.contacts[i];
+      var statusLabel = c.unsubscribed ? 'Unsubscribed' : (c.consent ? 'Text-eligible' : 'No consent yet');
+      var statusColor = c.unsubscribed ? 'var(--ink3)' : (c.consent ? '#2d6a4f' : '#b7791f');
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 0;border-bottom:1px solid var(--paper3)">'
+        + '<div style="min-width:0">'
+        + '<div style="font-size:12px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (c.name || c.phone) + '</div>'
+        + '<div style="font-size:11px;color:var(--ink3)">' + c.phone + ' · <span style="color:' + statusColor + '">' + statusLabel + '</span></div>'
+        + '</div>'
+        + '<button onclick="deleteGuestContactRow(' + c.id + ')" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:11px;font-weight:600;flex-shrink:0;font-family:\'Plus Jakarta Sans\',sans-serif">Remove</button>'
+        + '</div>';
+    }
+    list.innerHTML = html;
+  }).catch(function(){
+    list.innerHTML = '<div style="padding:12px 0;font-size:12px;color:var(--red)">Could not load contacts.</div>';
+  });
+}
+
+window.addGuestContact = function() {
+  var name = document.getElementById('guest-add-name').value.trim();
+  var phone = document.getElementById('guest-add-phone').value.trim();
+  if (!phone) { return; }
+  fetch('/api/guest-contacts', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: name, phone: phone})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) {
+      document.getElementById('guest-add-name').value = '';
+      document.getElementById('guest-add-phone').value = '';
+      _loadGuestContactsList();
+      loadGuestContactsSummary();
+    }
+  }).catch(function(){});
+};
+
+window.deleteGuestContactRow = function(id) {
+  fetch('/api/guest-contacts/' + id, {method: 'DELETE'}).then(function(r){ return r.json(); }).then(function(d){
+    if (d.ok) { _loadGuestContactsList(); loadGuestContactsSummary(); }
+  }).catch(function(){});
+};
+
+window.generateGuestCampaign = function() {
+  var btn = document.getElementById('guest-generate-btn');
+  var type = document.getElementById('guest-campaign-type').value;
+  var topic = document.getElementById('guest-campaign-topic').value.trim();
+  btn.disabled = true;
+  btn.textContent = '…';
+  fetch('/api/guest-campaign/draft', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({type: type, topic: topic})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    btn.disabled = false;
+    btn.textContent = 'Generate';
+    if (d.ok) {
+      document.getElementById('guest-campaign-message').value = d.message;
+    } else {
+      var status = document.getElementById('guest-campaign-status');
+      status.textContent = d.error || 'Could not generate a message.';
+      status.style.color = 'var(--red)';
+      status.style.display = 'inline';
+    }
+  }).catch(function(){
+    btn.disabled = false;
+    btn.textContent = 'Generate';
+  });
+};
+
+window.sendGuestCampaign = function() {
+  var message = document.getElementById('guest-campaign-message').value.trim();
+  var status = document.getElementById('guest-campaign-status');
+  if (!message) {
+    status.textContent = 'Write or generate a message first.';
+    status.style.color = 'var(--red)';
+    status.style.display = 'inline';
+    return;
+  }
+  if (!confirm('Send this text to every consented guest? This can\'t be undone.')) { return; }
+  var btn = document.getElementById('guest-send-btn');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  fetch('/api/guest-campaign/send', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({message: message})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    btn.disabled = false;
+    btn.textContent = 'Send to consented guests';
+    if (d.ok) {
+      status.textContent = 'Sent to ' + d.sent + ' of ' + d.total + ' guests.';
+      status.style.color = '#2d6a4f';
+    } else {
+      status.textContent = d.error || 'Could not send campaign.';
+      status.style.color = 'var(--red)';
+    }
+    status.style.display = 'inline';
+  }).catch(function(){
+    btn.disabled = false;
+    btn.textContent = 'Send to consented guests';
+    status.textContent = 'Network error — try again.';
+    status.style.color = 'var(--red)';
+    status.style.display = 'inline';
+  });
+};
 
 // ── Location switcher (multi-location owners) ─────────────────────────────
 window.toggleLocSwitcher = function() {
@@ -7878,6 +8054,22 @@ document.addEventListener('click', function(e) {
       <span id="alerts-save-msg" style="font-size:12px;display:none"></span>
       <button onclick="saveAlertSettings()" class="btn-primary" style="margin-left:auto;padding:8px 22px">Save alerts</button>
     </div>
+  </div>
+</div>
+
+<div id="guest-contacts-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.72);align-items:center;justify-content:center" onclick="if(event.target===this)closeGuestContactsModal()">
+  <div style="background:var(--paper);border-radius:14px;padding:28px;max-width:480px;width:94%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 16px rgba(14,12,10,.6),0 24px 64px rgba(14,12,10,.55);max-height:85vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div style="font-size:16px;font-weight:700;color:var(--ink)">Guest contacts</div>
+      <button aria-label="Close" onclick="closeGuestContactsModal()" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;line-height:1;padding:0">&times;</button>
+    </div>
+    <p style="font-size:11px;color:var(--ink3);line-height:1.6;margin:0 0 14px">Add a number here for your own reference — it will show in this list, but can't receive texts until that guest opts in themselves at your join link.</p>
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <input type="text" id="guest-add-name" placeholder="Name (optional)" style="flex:1;min-width:120px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+      <input type="tel" id="guest-add-phone" placeholder="Phone number" style="flex:1;min-width:140px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+      <button onclick="addGuestContact()" class="btn-primary" style="padding:8px 14px;font-size:12px">Add</button>
+    </div>
+    <div id="guest-contacts-list" style="display:flex;flex-direction:column;gap:2px">Loading&hellip;</div>
   </div>
 </div>
 
