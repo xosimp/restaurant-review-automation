@@ -680,6 +680,35 @@ def mkt_performance_api(current_user):
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
+@client_bp.route("/api/ask-cavnar", methods=["POST"])
+@login_required
+def ask_cavnar_api(current_user):
+    """The in-dashboard AI copilot — answers a plain-English question about
+    the restaurant's own live data (reviews/labor/food cost/marketing,
+    whichever modules are active) instead of the owner having to piece it
+    together across tabs."""
+    rid = current_user["restaurant_id"]
+    data = request.get_json() or {}
+    question = (data.get("question") or "").strip()
+    if not question:
+        return jsonify(ok=False, error="Ask a question first."), 400
+    if len(question) > 500:
+        return jsonify(ok=False, error="That question is too long — try to keep it under 500 characters."), 400
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"askcavnar:{rid}", max_calls=10, window_secs=60):
+        return jsonify(ok=False, error="Too many questions — please wait a moment and try again."), 429
+    try:
+        from ask_cavnar import ask as _ask_cavnar
+        restaurant = get_restaurant(rid)
+        if not restaurant:
+            return jsonify(ok=False, error="Restaurant not found"), 404
+        answer = _ask_cavnar(restaurant, question)
+        return jsonify(ok=True, answer=answer)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="ask_cavnar", context=f"restaurant_id={rid}")
+        return jsonify(ok=False, error="Couldn't get an answer right now — try again in a moment."), 500
+
 @client_bp.route("/api/mkt-insight")
 @login_required
 def mkt_insight_api(current_user):

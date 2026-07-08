@@ -143,7 +143,11 @@ Write ONLY the response. No preamble, no labels, no quotation marks around the r
         client,
         model=os.getenv("DRAFTER_MODEL", "claude-sonnet-5"),
         max_tokens=300,
-        temperature=0.7,
+        # claude-sonnet-5 rejects `temperature` outright ("deprecated for
+        # this model") — confirmed live via direct API call. This means
+        # every draft_response() call has been failing in production with a
+        # 400 whenever DRAFTER_MODEL isn't overridden away from the sonnet-5
+        # default, until this fix.
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="draft_response",

@@ -3615,6 +3615,84 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+<!-- Ask Cavnar — AI copilot over the restaurant's own live data -->
+<button id="ask-cavnar-fab" onclick="toggleAskCavnar()" title="Ask Cavnar" aria-label="Ask Cavnar"
+  style="position:fixed;bottom:24px;right:24px;width:52px;height:52px;border-radius:50%;background:var(--ember);border:none;box-shadow:0 4px 16px rgba(200,75,47,.4);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:998;transition:transform .15s,box-shadow .15s"
+  onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 20px rgba(200,75,47,.5)'"
+  onmouseout="this.style.transform='';this.style.boxShadow='0 4px 16px rgba(200,75,47,.4)'">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2l1.8 5.6L19 9l-5.2 1.4L12 16l-1.8-5.6L5 9l5.2-1.4L12 2z" fill="white"/></svg>
+</button>
+
+<div id="ask-cavnar-panel" style="display:none;flex-direction:column;position:fixed;bottom:88px;right:24px;width:360px;max-height:min(520px,70vh);background:var(--surface);border:1px solid var(--paper3);border-radius:16px;box-shadow:0 12px 48px rgba(0,0,0,.25);z-index:999;overflow:hidden">
+  <div style="padding:14px 16px;border-bottom:1px solid rgba(200,75,47,.3);display:flex;align-items:center;justify-content:space-between;background:#1a1410;flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:8px">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2l1.8 5.6L19 9l-5.2 1.4L12 16l-1.8-5.6L5 9l5.2-1.4L12 2z" fill="var(--ember)"/></svg>
+      <span style="font-family:'Fraunces',serif;font-size:14px;color:#f0ebe0">Ask Cavnar</span>
+    </div>
+    <button aria-label="Close" onclick="toggleAskCavnar()" style="background:none;border:none;cursor:pointer;color:#f0ebe0;font-size:15px;line-height:1;padding:0">&#x2715;</button>
+  </div>
+  <div id="ask-cavnar-messages" style="flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-height:180px">
+    <div style="font-size:12px;color:var(--ink3);line-height:1.6">Ask me anything about your reviews, labor, food cost, or marketing — I'll answer using your real numbers.</div>
+  </div>
+  <div style="padding:12px 14px;border-top:1px solid var(--paper3);display:flex;gap:8px;flex-shrink:0">
+    <input type="text" id="ask-cavnar-input" placeholder="e.g. How's my labor cost trending?" maxlength="500"
+      style="flex:1;padding:9px 12px;border:1px solid var(--paper3);border-radius:8px;font-size:12px;font-family:'Plus Jakarta Sans',sans-serif;outline:none;background:var(--paper2);color:var(--ink)"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();sendAskCavnar();}">
+    <button onclick="sendAskCavnar()" class="btn-primary" id="ask-cavnar-send-btn" style="padding:0 14px;font-size:12px">Ask</button>
+  </div>
+</div>
+
+<script>
+window.toggleAskCavnar = function() {
+  var panel = document.getElementById('ask-cavnar-panel');
+  var isOpen = panel.style.display === 'flex';
+  panel.style.display = isOpen ? 'none' : 'flex';
+  if (!isOpen) {
+    var input = document.getElementById('ask-cavnar-input');
+    if (input) input.focus();
+  }
+};
+
+function _appendAskCavnarMessage(text, isUser) {
+  var messages = document.getElementById('ask-cavnar-messages');
+  var bubble = document.createElement('div');
+  bubble.style.cssText = isUser
+    ? 'align-self:flex-end;background:var(--ember);color:white;padding:8px 12px;border-radius:12px 12px 2px 12px;font-size:12px;line-height:1.5;max-width:85%;white-space:pre-wrap'
+    : 'align-self:flex-start;background:var(--paper2);color:var(--ink);padding:8px 12px;border-radius:12px 12px 12px 2px;font-size:12px;line-height:1.5;max-width:85%;white-space:pre-wrap';
+  bubble.textContent = text;
+  messages.appendChild(bubble);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+window.sendAskCavnar = function() {
+  var input = document.getElementById('ask-cavnar-input');
+  var question = input.value.trim();
+  if (!question) return;
+  var btn = document.getElementById('ask-cavnar-send-btn');
+  _appendAskCavnarMessage(question, true);
+  input.value = '';
+  input.disabled = true;
+  btn.disabled = true;
+  btn.textContent = '…';
+  fetch('/api/ask-cavnar', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({question: question})
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    input.disabled = false;
+    btn.disabled = false;
+    btn.textContent = 'Ask';
+    input.focus();
+    _appendAskCavnarMessage(d.ok ? d.answer : (d.error || 'Something went wrong — try again.'), false);
+  }).catch(function() {
+    input.disabled = false;
+    btn.disabled = false;
+    btn.textContent = 'Ask';
+    _appendAskCavnarMessage('Network error — try again.', false);
+  });
+};
+</script>
+
 <script>
 function openEditor(id) {
   document.getElementById('editor-'+id).style.display='block';
