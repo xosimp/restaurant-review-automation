@@ -933,7 +933,7 @@ document.documentElement.classList.add('pjs-loading');
     {% if mod_labor %}<button class="tab" role="tab" id="tab-labor" onclick="switchTab('labor',this)">Labor</button>{% endif %}
     {% if mod_inventory %}<button class="tab" role="tab" id="tab-inventory" onclick="switchTab('inventory',this)">Food Cost</button>{% endif %}
     {% if mod_marketing %}<button class="tab" role="tab" id="tab-marketing" onclick="switchTab('marketing',this)">Marketing</button>{% endif %}
-    {% if restaurant.google_place_id and mod_reviews and mod_labor and mod_inventory and mod_marketing %}<button class="tab" role="tab" id="tab-competitor" onclick="switchTab('competitor',this)">Intel</button>{% endif %}
+    {% if restaurant.google_place_id and is_full_tier %}<button class="tab" role="tab" id="tab-competitor" onclick="switchTab('competitor',this)">Intel</button>{% endif %}
     <button class="tab" role="tab" id="tab-account" onclick="switchTab('account',this)" style="margin-left:auto">Account</button>
     <span id="tab-indicator"></span>
 </div>

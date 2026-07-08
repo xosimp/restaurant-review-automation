@@ -851,12 +851,10 @@ def scheduler_loop():
                 log.info("Running weekly competitor analysis...")
                 try:
                     from competitor import run_competitor_analysis
-                    from models import get_all_restaurants
+                    from models import get_all_restaurants, is_full_tier
                     for r in get_all_restaurants():
-                        # Only run for full system clients (all 4 modules)
-                        if (r.google_place_id and r.id and
-                                r.module_reviews and r.module_labor and
-                                r.module_inventory and r.module_marketing):
+                        # Only run for full-tier clients (all 4 modules)
+                        if r.google_place_id and r.id and is_full_tier(r):
                             try:
                                 run_competitor_analysis(r.id)
                             except Exception as ce:

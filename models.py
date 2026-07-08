@@ -1253,6 +1253,17 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
     )
 
 
+def is_full_tier(restaurant: Optional["Restaurant"]) -> bool:
+    """True if all 4 modules are on — the gate for Intel/competitor-analysis
+    access. This exact 4-way AND used to be copy-pasted independently in
+    scheduler.py (weekly competitor job), hosted_dashboard.py (whether to
+    load competitor_data), and dashboard.html (whether to show the Intel
+    tab) — a real drift risk if the tier rule ever changes (e.g. Intel
+    becomes its own paid add-on rather than a full-tier bonus)."""
+    return bool(restaurant and restaurant.module_reviews and restaurant.module_labor
+                and restaurant.module_inventory and restaurant.module_marketing)
+
+
 # ── Review CRUD ───────────────────────────────────────────────────────────────
 
 def save_reviews(reviews: list[Review], db_path: str = DB_PATH) -> tuple[int, list]:

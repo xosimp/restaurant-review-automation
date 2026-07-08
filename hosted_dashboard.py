@@ -15,7 +15,7 @@ from emails import send_payment_email, send_welcome_email
 from models import (init_db, get_conn, approve_response,
                     get_reviews_since, get_restaurant,
                     get_review_stats, get_reviews_data, get_top_issues,
-                    get_platform_breakdown, get_sentiment_trend)
+                    get_platform_breakdown, get_sentiment_trend, is_full_tier)
 from auth import (init_auth, verify_password, create_session,
                   get_session_user, delete_session, create_user,
                   list_users, update_password,
@@ -50,204 +50,14 @@ def _check_duplicate_routes():
         raise RuntimeError(f"DUPLICATE ROUTES DETECTED — fix before deploying: {dupes}")
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB global upload limit
 
-@app.template_filter("format_intel")
-def format_intel_filter(text):
-    """Parse structured competitor intel into formatted HTML matching labor/inventory style."""
-    import re
-    from markupsafe import Markup, escape as _esc
-    if not text:
-        return '<p style="color:var(--ink3);font-size:13px">Analysis unavailable.</p>'
+from competitor_intel_format import (
+    format_intel as _format_intel, format_intel_body as _format_intel_body,
+    extract_recs as _extract_recs,
+)
 
-    # Normalize: strip markdown, em-dashes to hyphens, ensure section headers on own lines
-    text = re.sub(r'\*+', '', text)
-    text = re.sub(r'[–—]', '-', text)
-    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING WELL):', '\nWHAT COMPETITORS ARE DOING WELL:\n', text)
-    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING POORLY):', '\nWHAT COMPETITORS ARE DOING POORLY:\n', text)
-    text = re.sub(r'(?i)Recommendations?:', '\nRecommendations:\n', text)
-
-    html_parts = []
-    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
-
-    intro_lines = []
-    section_lines = []
-    in_section = False
-    for line in lines:
-        if re.match(r"^(WHAT COMPETITORS|Recommendations?:?)", line, re.I):
-            in_section = True
-        if in_section:
-            section_lines.append(line)
-        else:
-            intro_lines.append(line)
-
-    if intro_lines:
-        html_parts.append('<p style="font-size:13px;color:var(--ink);line-height:1.7;margin-bottom:14px">' + str(_esc(" ".join(intro_lines))) + "</p>")
-
-    current_section = None
-    bullets = []
-    rec_lines = []
-
-    def flush_bullets(section_name, b_list):
-        if not b_list:
-            return ""
-        is_good = "WELL" in section_name.upper()
-        color = "#16a34a" if is_good else "#dc2626"
-        icon = "✓" if is_good else "✗"
-        out = '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:' + color + ';margin:14px 0 8px">' + section_name + "</div>"
-        for b in b_list:
-            out += (
-                '<div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start">'
-                + '<span style="flex-shrink:0;color:' + color + ';font-weight:700;font-size:13px">' + icon + "</span>"
-                + '<span style="font-size:13px;color:var(--ink);line-height:1.6">' + str(_esc(b)) + "</span></div>"
-            )
-        return out
-
-    for line in section_lines:
-        if re.match(r"WHAT COMPETITORS ARE DOING WELL", line, re.I):
-            if current_section and bullets:
-                html_parts.append(flush_bullets(current_section, bullets))
-            current_section = "What competitors are doing well"
-            bullets = []
-        elif re.match(r"WHAT COMPETITORS ARE DOING POORLY", line, re.I):
-            if current_section and bullets:
-                html_parts.append(flush_bullets(current_section, bullets))
-            current_section = "What competitors are doing poorly"
-            bullets = []
-        elif re.search(r"Recommendations?", line, re.I) and not line.startswith("-") and not re.match(r"^[0-9]", line):
-            if current_section and bullets:
-                html_parts.append(flush_bullets(current_section, bullets))
-            current_section = "recommendations"
-            bullets = []
-        elif line.startswith("-") and current_section != "recommendations":
-            b = re.sub(r'\*+', '', line.lstrip("- ")).strip()
-            if b:
-                bullets.append(b)
-        elif re.match(r"^[0-9]+[.)]\s+", line):
-            rec_lines.append(re.sub(r'\*+', '', re.sub(r"^[0-9]+[.)]\s+", "", line)).strip())
-        elif current_section == "recommendations" and line and not re.search(r"Recommendations?", line, re.I):
-            cleaned = re.sub(r'\*+', '', line).strip()
-            if cleaned:
-                rec_lines.append(cleaned)
-
-    if current_section and current_section != "recommendations" and bullets:
-        html_parts.append(flush_bullets(current_section, bullets))
-
-    if rec_lines:
-        html_parts.append('<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c84b2f;margin:14px 0 8px">Recommendations</div>')
-        for i, rec in enumerate(rec_lines, 1):
-            html_parts.append(
-                '<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">'
-                + '<span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:#c84b2f;color:white;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">' + str(i) + "</span>"
-                + '<span style="line-height:1.6;color:#b7791f;font-weight:500">' + str(_esc(rec)) + "</span></div>"
-            )
-
-    if not html_parts:
-        return '<p style="font-size:13px;color:#374151;line-height:1.7">' + str(_esc(text)) + "</p>"
-
-    return Markup("".join(html_parts))
-
-
-@app.template_filter("extract_recs")
-def extract_recs_filter(text):
-    """Parse recommendation lines from competitor insight. Returns list of strings."""
-    import re
-    if not text:
-        return []
-    text = re.sub(r'\*+', '', text)
-    text = re.sub(r'[–—]', '-', text)
-    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING WELL):', '\nWHAT COMPETITORS ARE DOING WELL:\n', text)
-    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING POORLY):', '\nWHAT COMPETITORS ARE DOING POORLY:\n', text)
-    text = re.sub(r'(?i)Recommendations?:', '\nRecommendations:\n', text)
-    recs = []
-    in_recs = False
-    for line in text.strip().split("\n"):
-        line = line.strip()
-        if not line:
-            continue
-        if re.match(r"^Recommendations?:\s*$", line, re.I):
-            in_recs = True
-            continue
-        if in_recs:
-            # Split any inline numbered items on this line before processing
-            parts = re.split(r'(?<=\S)\s+(?=\d+\.\s+[A-Z])', line)
-            for part in parts:
-                part = part.strip()
-                if not part:
-                    continue
-                part = re.sub(r'^[0-9]+[.)]\s+', '', part).strip()
-                if part and not re.match(r'^(WHAT COMPETITORS|Recommendations?)', part, re.I):
-                    recs.append(part)
-    return recs[:3]
-
-
-@app.template_filter("format_intel_body")
-def format_intel_body_filter(text):
-    """Same as format_intel but omits recommendations — only intro + well/poorly."""
-    import re
-    from markupsafe import Markup, escape as _esc
-    if not text:
-        return Markup('')
-    text = re.sub(r'\*+', '', text)
-    text = re.sub(r'[–—]', '-', text)
-    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING WELL):', '\nWHAT COMPETITORS ARE DOING WELL:\n', text)
-    text = re.sub(r'(?i)(WHAT COMPETITORS ARE DOING POORLY):', '\nWHAT COMPETITORS ARE DOING POORLY:\n', text)
-    text = re.sub(r'(?i)Recommendations?:', '\nRecommendations:\n', text)
-    html_parts = []
-    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
-    intro_lines = []
-    section_lines = []
-    in_section = False
-    for line in lines:
-        if re.match(r"^(WHAT COMPETITORS|Recommendations?:?)", line, re.I):
-            in_section = True
-        if in_section:
-            section_lines.append(line)
-        else:
-            intro_lines.append(line)
-    if intro_lines:
-        html_parts.append('<p style="font-size:13px;color:var(--ink);line-height:1.7;margin-bottom:14px">' + str(_esc(" ".join(intro_lines))) + "</p>")
-    current_section = None
-    bullets = []
-
-    def _flush(section_name, b_list):
-        if not b_list:
-            return ""
-        is_good = "WELL" in section_name.upper()
-        color = "#16a34a" if is_good else "#dc2626"
-        icon = "✓" if is_good else "✗"
-        out = '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:' + color + ';margin:14px 0 8px">' + section_name + "</div>"
-        for b in b_list:
-            out += (
-                '<div style="display:flex;gap:8px;margin-bottom:6px;align-items:flex-start">'
-                + '<span style="flex-shrink:0;color:' + color + ';font-weight:700;font-size:13px">' + icon + "</span>"
-                + '<span style="font-size:13px;color:var(--ink);line-height:1.6">' + str(_esc(b)) + "</span></div>"
-            )
-        return out
-
-    for line in section_lines:
-        if re.match(r"WHAT COMPETITORS ARE DOING WELL", line, re.I):
-            if current_section and bullets:
-                html_parts.append(_flush(current_section, bullets))
-            current_section = "What competitors are doing well"
-            bullets = []
-        elif re.match(r"WHAT COMPETITORS ARE DOING POORLY", line, re.I):
-            if current_section and bullets:
-                html_parts.append(_flush(current_section, bullets))
-            current_section = "What competitors are doing poorly"
-            bullets = []
-        elif re.search(r"Recommendations?", line, re.I) and not line.startswith("-") and not re.match(r"^[0-9]", line):
-            if current_section and bullets:
-                html_parts.append(_flush(current_section, bullets))
-            bullets = []
-            break
-        elif line.startswith("-"):
-            b = re.sub(r'\*+', '', line.lstrip("- ")).strip()
-            if b:
-                bullets.append(b)
-    if current_section and bullets:
-        html_parts.append(_flush(current_section, bullets))
-    if not html_parts:
-        return Markup('<p style="font-size:13px;color:var(--ink);line-height:1.7">' + str(_esc(text)) + "</p>")
-    return Markup("".join(html_parts))
+app.template_filter("format_intel")(_format_intel)
+app.template_filter("extract_recs")(_extract_recs)
+app.template_filter("format_intel_body")(_format_intel_body)
 
 
 def inv_banner_gradient(annual_waste, annual_recoverable):
@@ -662,9 +472,7 @@ def index(current_user):
         onboarding_steps = []
     # Load competitor intel if available
     competitor_data = None
-    if (restaurant and restaurant.google_place_id and restaurant.competitor_intel
-            and restaurant.module_reviews and restaurant.module_labor
-            and restaurant.module_inventory and restaurant.module_marketing):
+    if restaurant and restaurant.google_place_id and restaurant.competitor_intel and is_full_tier(restaurant):
         import json as _json
         try:
             competitor_data = _json.loads(restaurant.competitor_intel)
@@ -828,6 +636,7 @@ def index(current_user):
         mod_labor=int(restaurant.module_labor or 0),
         mod_inventory=int(restaurant.module_inventory or 0),
         mod_marketing=int(restaurant.module_marketing or 0),
+        is_full_tier=is_full_tier(restaurant),
         now=datetime.now().strftime("%b %d, %Y"),
         viewing_as=current_user.get("is_admin", 0),
         labor_target=float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0,
