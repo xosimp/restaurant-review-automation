@@ -1115,6 +1115,14 @@ def _build_schedule_result(restaurant_id):
     except Exception:
         pass
 
+    # Weather forecast for the schedule week — never blocks generation if
+    # geocoding/NWS is unavailable (see weather.get_forecast_for_week).
+    try:
+        from weather import get_forecast_for_week
+        weather_forecast = get_forecast_for_week(restaurant, next_week_dates)
+    except Exception:
+        weather_forecast = []
+
     result = generate_optimized_schedule(
         analysis, shifts,
         restaurant_name=restaurant.name if restaurant else "Restaurant",
@@ -1135,6 +1143,7 @@ def _build_schedule_result(restaurant_id):
         staff_availability=staff_availability or None,
         tz_name=getattr(restaurant, 'timezone', None),
         restaurant_id=restaurant_id,
+        weather_forecast=weather_forecast or None,
     )
     result["restaurant_name"] = restaurant.name if restaurant else "Restaurant"
     return result

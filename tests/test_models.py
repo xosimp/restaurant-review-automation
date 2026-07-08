@@ -1,7 +1,7 @@
 """Regression tests for the tenant-scoping (IDOR) fixes in models.py — a
 client must never be able to approve or mutate another restaurant's rows by
 guessing IDs."""
-from models import approve_response, get_conn
+from models import approve_response, get_conn, create_restaurant, get_restaurant, update_restaurant, Restaurant
 
 
 def _status(db_path, review_id):
@@ -51,3 +51,45 @@ def test_restaurant_has_two_fa_pending_field(two_restaurants):
     cols = [r["name"] for r in conn.execute("PRAGMA table_info(restaurants)").fetchall()]
     conn.close()
     assert "two_fa_pending" in cols
+
+
+def test_scheduling_fields_round_trip_through_get_restaurant(db_path):
+    """These 5 fields were in the schema, ensure_columns, and
+    update_restaurant's allowed set, but get_restaurant() never read them
+    back — settings saved via the admin scheduling form (section count,
+    daypart split, delivery %, role minimums, sched notes) silently had zero
+    effect on AI-generated schedules, since every read returned the
+    dataclass default (None) regardless of what was actually stored."""
+    rid = create_restaurant(Restaurant(name="Round Trip Cafe", owner_email="rt@x.com"), db_path=db_path)
+    update_restaurant(rid, {
+        "sched_notes": "Never schedule solo closers on Sundays.",
+        "section_count": 5,
+        "daypart_split": "lunch 30%, dinner 70%",
+        "delivery_pct": 15,
+        "role_minimums_json": '{"Server": 2, "Cook": 2}',
+    }, db_path=db_path)
+
+    r = get_restaurant(rid, db_path=db_path)
+
+    assert r.sched_notes == "Never schedule solo closers on Sundays."
+    assert r.section_count == 5
+    assert r.daypart_split == "lunch 30%, dinner 70%"
+    assert r.delivery_pct == 15
+    assert r.role_minimums_json == '{"Server": 2, "Cook": 2}'
+
+
+def test_weather_fields_round_trip_through_get_restaurant(db_path):
+    rid = create_restaurant(Restaurant(name="Weather Round Trip Co", owner_email="wrt@x.com"), db_path=db_path)
+    update_restaurant(rid, {
+        "latitude": 41.9,
+        "longitude": -88.3,
+        "weather_cache_json": '[{"temperature": 80}]',
+        "weather_cached_at": "2026-07-07T12:00:00",
+    }, db_path=db_path)
+
+    r = get_restaurant(rid, db_path=db_path)
+
+    assert r.latitude == 41.9
+    assert r.longitude == -88.3
+    assert r.weather_cache_json == '[{"temperature": 80}]'
+    assert r.weather_cached_at == "2026-07-07T12:00:00"

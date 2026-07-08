@@ -244,6 +244,10 @@ class Restaurant:
     delivery_pct: Optional[int]          = None   # % of revenue from delivery/takeout
     role_minimums_json: Optional[str]    = None   # e.g. {"Server":2,"Cook":2,"Bartender":1}
     sched_notes: Optional[str]           = None   # freeform scheduling notes from admin
+    latitude: Optional[float]            = None   # geocoded once from google_place_id, cached
+    longitude: Optional[float]           = None
+    weather_cache_json: Optional[str]    = None   # cached NWS forecast periods
+    weather_cached_at: Optional[str]     = None
     email_theme: Optional[str]           = "dark"  # 'dark' or 'light' — drives weekly digest email theme
     inventory_updated_at: Optional[str]  = None
     temp_password: Optional[str]         = None
@@ -442,6 +446,10 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "delivery_pct", "INTEGER"),
         ("restaurants", "role_minimums_json", "TEXT"),
         ("restaurants", "sched_notes", "TEXT"),
+        ("restaurants", "latitude", "REAL"),
+        ("restaurants", "longitude", "REAL"),
+        ("restaurants", "weather_cache_json", "TEXT"),
+        ("restaurants", "weather_cached_at", "TEXT"),
         ("restaurants", "email_theme", "TEXT DEFAULT 'dark'"),
         ("restaurants", "inventory_updated_at", "TEXT"),
         ("restaurants", "gbp_rating", "REAL"),
@@ -1115,6 +1123,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
         "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
+        "latitude","longitude","weather_cache_json","weather_cached_at",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
@@ -1250,6 +1259,19 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         brand_name=row["brand_name"]         if "brand_name"     in row.keys() else None,
         brand_color=row["brand_color"]       if "brand_color"    in row.keys() else None,
         brand_logo_url=row["brand_logo_url"] if "brand_logo_url" in row.keys() else None,
+        # These 5 were in the schema, ensure_columns, and update_restaurant's
+        # allowed set, but never actually read back here — settings saved via
+        # the admin scheduling form (section count, daypart split, sched
+        # notes, etc.) silently had zero effect on generated schedules.
+        section_count=row["section_count"]           if "section_count" in row.keys() else None,
+        daypart_split=row["daypart_split"]            if "daypart_split" in row.keys() else None,
+        delivery_pct=row["delivery_pct"]              if "delivery_pct" in row.keys() else None,
+        role_minimums_json=row["role_minimums_json"]  if "role_minimums_json" in row.keys() else None,
+        sched_notes=row["sched_notes"]                if "sched_notes" in row.keys() else None,
+        latitude=row["latitude"]                       if "latitude" in row.keys() else None,
+        longitude=row["longitude"]                     if "longitude" in row.keys() else None,
+        weather_cache_json=row["weather_cache_json"]   if "weather_cache_json" in row.keys() else None,
+        weather_cached_at=row["weather_cached_at"]     if "weather_cached_at" in row.keys() else None,
     )
 
 

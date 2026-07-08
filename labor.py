@@ -494,7 +494,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  sched_notes: str = None,
                                  staff_availability: list = None,
                                  tz_name: str = None,
-                                 restaurant_id: int = None) -> dict:
+                                 restaurant_id: int = None,
+                                 weather_forecast: list = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -652,6 +653,19 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             event_lines.append(f"  {ev['name']} ({ev['date_str']}) — {day_label}: staff UP vs typical, expect 20-40% higher covers")
         events_block = "\n\nUpcoming events this week (adjust staffing accordingly):\n" + "\n".join(event_lines)
 
+    # Build weather forecast block — NWS only forecasts ~7 days out, so this
+    # may cover fewer than all 7 days; that's expected, not an error.
+    _weather_block = ""
+    if weather_forecast:
+        _w_lines = []
+        for w in weather_forecast:
+            precip = f", {w['precip_pct']}% chance of rain" if w.get("precip_pct") else ""
+            _w_lines.append(f"  {w['date']} ({w['day_name']}): {w['high_f']}°F, {w['short_forecast']}{precip}")
+        _weather_block = ("\n\nWeather forecast for next week (adjust staffing for weather-driven demand — "
+                          "heavy rain/snow/extreme heat typically means fewer walk-ins and unusable patio "
+                          "seating, mild/clear days especially on weekends typically mean higher patio "
+                          "traffic):\n" + "\n".join(_w_lines))
+
     # Compute PAR hours budget — monthly_revenue_target takes priority, then YoY sum, then recent
     projected_revenue = 0.0
     if monthly_revenue_target and monthly_revenue_target > 0:
@@ -772,7 +786,7 @@ CONTEXT:
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
 - Recent labor % by day of week: {dow}
-- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_avail_block}{_sched_notes_block}
+- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{_weather_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_avail_block}{_sched_notes_block}
 
 Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
