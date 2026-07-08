@@ -40,7 +40,16 @@ CREATE TABLE IF NOT EXISTS sessions (
 """
 
 def init_auth(db_path: str = DB_PATH):
-    # Migrations
+    # Tables must exist before the ALTER migrations below can run against them —
+    # on a genuinely fresh database (a new deploy, or any test fixture) these
+    # ran in the opposite order, so every ALTER silently failed against a
+    # not-yet-existing table and CREATE TABLE IF NOT EXISTS then created users/
+    # sessions missing role, google_id, and active_restaurant_id entirely.
+    conn = sqlite3.connect(db_path)
+    conn.executescript(AUTH_SCHEMA)
+    conn.commit()
+    conn.close()
+    # Migrations — for databases created before these columns existed.
     for col_sql in [
         "ALTER TABLE sessions ADD COLUMN last_active TEXT NOT NULL DEFAULT (datetime('now'))",
         "ALTER TABLE sessions ADD COLUMN ip_address TEXT",
@@ -57,10 +66,6 @@ def init_auth(db_path: str = DB_PATH):
             conn_m.close()
         except Exception:
             pass  # Column already exists
-    conn = sqlite3.connect(db_path)
-    conn.executescript(AUTH_SCHEMA)
-    conn.commit()
-    conn.close()
 
 # ── User CRUD ─────────────────────────────────────────────────────────────────
 
@@ -196,7 +201,7 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
         return None
     conn = get_conn(db_path)
     row = conn.execute("""
-        SELECT u.*, s.last_active FROM sessions s
+        SELECT u.*, s.last_active, s.active_restaurant_id FROM sessions s
         JOIN users u ON s.user_id = u.id
         WHERE s.token=? AND s.expires_at > datetime('now') AND u.is_active=1
     """, (token,)).fetchone()
