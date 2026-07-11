@@ -526,7 +526,7 @@ async function resendPayment(restaurantId, email, billing) {
   } else {
     btn.textContent = 'Error';
     btn.disabled = false;
-    console.error(data.error);
+    toast('Error: ' + (data.error || 'unknown'));
   }
 }
 
@@ -581,6 +581,7 @@ async function seedReviews(restaurantId) {
     setTimeout(() => { btn.textContent = 'Seed reviews'; btn.disabled = false; }, 3000);
   } else {
     btn.textContent = 'Error'; btn.disabled = false;
+    toast('Error: ' + (data.error || 'unknown'));
   }
 }
 
@@ -642,8 +643,8 @@ async function deactivateClient(id, name) {
     const res = await fetch('/admin/deactivate-client/' + id, {method:'POST', headers:{'Content-Type':'application/json'}});
     const data = await res.json();
     if (data.ok) { location.reload(); }
-    else { btn.textContent = 'Error'; console.error(data); }
-  } catch(e) { btn.textContent = 'Error'; console.error(e); }
+    else { btn.textContent = 'Error'; toast('Error: ' + (data.error || 'unknown')); }
+  } catch(e) { btn.textContent = 'Error'; toast('Failed: ' + e.message); }
 }
 async function reactivateClient(id, name) {
   const btn = event.target;
@@ -653,8 +654,8 @@ async function reactivateClient(id, name) {
     const res = await fetch('/admin/reactivate-client/' + id, {method:'POST', headers:{'Content-Type':'application/json'}});
     const data = await res.json();
     if (data.ok) { location.reload(); }
-    else { btn.textContent = 'Error'; console.error(data); }
-  } catch(e) { btn.textContent = 'Error'; console.error(e); }
+    else { btn.textContent = 'Error'; toast('Error: ' + (data.error || 'unknown')); }
+  } catch(e) { btn.textContent = 'Error'; toast('Failed: ' + e.message); }
 }
 
 async function setUserRole(userId, role) {
