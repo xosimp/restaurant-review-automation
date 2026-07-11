@@ -7530,6 +7530,20 @@ window.closeGuestContactsModal = function() {
   document.getElementById('guest-contacts-modal').style.display = 'none';
 };
 
+function _fmtVisitDate(iso) {
+  // last_visit is stored as restaurant-local naive time, not UTC (see
+  // guest_marketing.py) — parse the components directly rather than
+  // building a Date object, which would reinterpret it against the
+  // browser's own timezone and shift it.
+  var m = iso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!m) return iso;
+  var year = m[1].slice(2), month = parseInt(m[2], 10), day = parseInt(m[3], 10);
+  var hour = parseInt(m[4], 10), minute = m[5];
+  var ampm = hour >= 12 ? 'PM' : 'AM';
+  var hour12 = hour % 12 || 12;
+  return month + '/' + day + '/' + year + ', ' + hour12 + ':' + minute + ' ' + ampm;
+}
+
 function _loadGuestContactsList() {
   var list = document.getElementById('guest-contacts-list');
   list.textContent = 'Loading…';
@@ -7543,7 +7557,7 @@ function _loadGuestContactsList() {
       var c = d.contacts[i];
       var statusLabel = c.unsubscribed ? 'Unsubscribed' : (c.consent ? 'Text-eligible' : 'No consent yet');
       var statusColor = c.unsubscribed ? 'var(--ink3)' : (c.consent ? '#2d6a4f' : '#b7791f');
-      var visitLabel = c.last_visit ? ('Last visit ' + c.last_visit.replace('T',' ').slice(0,16)) : 'No visit recorded';
+      var visitLabel = c.last_visit ? ('Last visit ' + _fmtVisitDate(c.last_visit)) : 'No visit recorded';
       html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 0;border-bottom:1px solid var(--paper3)">'
         + '<div style="min-width:0">'
         + '<div style="font-size:12px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + (c.name || c.phone) + '</div>'
@@ -7565,7 +7579,7 @@ function _loadGuestContactsList() {
 window.addGuestContact = function() {
   var name = document.getElementById('guest-add-name').value.trim();
   var phone = document.getElementById('guest-add-phone').value.trim();
-  if (!phone) { return; }
+  if (!name || !phone) { toast('Name and phone number are both required', 'error'); return; }
   fetch('/api/guest-contacts', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name: name, phone: phone})
@@ -7589,8 +7603,14 @@ window.markGuestVisit = function(id, btn) {
   var orig = btn.textContent;
   btn.textContent = '…';
   fetch('/api/guest-contacts/' + id + '/mark-visit', {method: 'POST'}).then(function(r){ return r.json(); }).then(function(d){
-    if (d.ok) { _loadGuestContactsList(); } else { btn.textContent = orig; }
-  }).catch(function(){ btn.textContent = orig; });
+    if (d.ok) {
+      toast('Visit marked ✓', 'success');
+      _loadGuestContactsList();
+    } else {
+      btn.textContent = orig;
+      toast(d.error || 'Could not mark visit', 'error');
+    }
+  }).catch(function(){ btn.textContent = orig; toast('Network error — try again', 'error'); });
 };
 
 window.generateGuestCampaign = function() {
@@ -8082,7 +8102,7 @@ document.addEventListener('click', function(e) {
     </div>
     <p style="font-size:11px;color:var(--ink3);line-height:1.6;margin:0 0 14px">Add a number here for your own reference — it will show in this list, but can't receive texts until that guest opts in themselves at your join link. Tap "Mark visit" after serving a consented guest and they'll automatically get a review-request text a few hours later — joining via your link already does this for you.</p>
     <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
-      <input type="text" id="guest-add-name" placeholder="Name (optional)" style="flex:1;min-width:120px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+      <input type="text" id="guest-add-name" placeholder="Name" style="flex:1;min-width:120px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
       <input type="tel" id="guest-add-phone" placeholder="Phone number" style="flex:1;min-width:140px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
       <button onclick="addGuestContact()" class="btn-primary" style="padding:8px 14px;font-size:12px">Add</button>
     </div>

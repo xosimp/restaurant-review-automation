@@ -38,8 +38,8 @@ input:focus{border-color:var(--ember)}
     <h1>{{restaurant_name}} Text Club</h1>
     <p class="sub">Get occasional texts about specials, events, and news from {{restaurant_name}} — no spam, unsubscribe anytime.</p>
     <form id="optin-form">
-      <label for="g-name">Name (optional)</label>
-      <input type="text" id="g-name" placeholder="Your name">
+      <label for="g-name">Name</label>
+      <input type="text" id="g-name" placeholder="Your name" required>
       <label for="g-phone">Mobile number</label>
       <input type="tel" id="g-phone" placeholder="(555) 123-4567" required>
       <div class="consent">
@@ -66,6 +66,12 @@ document.getElementById('optin-form').addEventListener('submit', function(e) {
   var phone = document.getElementById('g-phone').value.trim();
   var name = document.getElementById('g-name').value.trim();
   var consent = document.getElementById('g-consent').checked;
+  if (!name) {
+    status.textContent = 'Please enter your name.';
+    status.className = 'err';
+    status.style.display = 'block';
+    return;
+  }
   if (!consent) {
     status.textContent = 'Please check the box to confirm you want to receive texts.';
     status.className = 'err';

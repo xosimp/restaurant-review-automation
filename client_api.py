@@ -2422,10 +2422,13 @@ def guest_contacts_add(current_user):
     guest_marketing.add_guest_contact_manual's docstring for why)."""
     from guest_marketing import add_guest_contact_manual
     data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
     phone = (data.get("phone") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="Name required"), 400
     if not phone:
         return jsonify(ok=False, error="Phone number required"), 400
-    contact_id = add_guest_contact_manual(current_user["restaurant_id"], phone, name=data.get("name"))
+    contact_id = add_guest_contact_manual(current_user["restaurant_id"], phone, name=name)
     return jsonify(ok=True, id=contact_id)
 
 @client_bp.route("/api/guest-contacts/<int:contact_id>", methods=["DELETE"])
@@ -2503,14 +2506,17 @@ def guest_optin_submit(restaurant_id):
     if not restaurant:
         return jsonify(ok=False, error="Restaurant not found"), 404
     data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
     phone = (data.get("phone") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="Name required"), 400
     digits = "".join(c for c in phone if c.isdigit())
     if len(digits) < 10:
         return jsonify(ok=False, error="Enter a valid phone number"), 400
     if not data.get("consent"):
         return jsonify(ok=False, error="Consent is required to join"), 400
     from guest_marketing import add_guest_contact_public_optin
-    add_guest_contact_public_optin(restaurant_id, phone, name=data.get("name"))
+    add_guest_contact_public_optin(restaurant_id, phone, name=name)
     return jsonify(ok=True)
 
 
