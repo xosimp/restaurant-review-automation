@@ -500,6 +500,25 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .btn-primary{background:var(--ember);color:white;padding:0 16px;height:34px;display:inline-flex;align-items:center;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
 .btn-primary:hover{background:#a83d25;box-shadow:0 2px 8px rgba(200,75,47,.18);transform:translateY(-1px)}
 .btn-primary:active{transform:scale(.97)}
+/* Uniform AI/loading indicator — a thin bar with an ember highlight sliding
+   across it, side to side. Use this everywhere instead of "…" text or a
+   spinner for any quick (few-second) AI/async action. -on-accent variant is
+   for placing on top of an already-ember-filled button (e.g. btn-primary),
+   where the default ember-on-transparent version would have no contrast. */
+.pulse-bar-track{position:relative;height:3px;border-radius:2px;background:rgba(200,75,47,.12);overflow:hidden}
+.pulse-bar{position:absolute;top:0;height:100%;width:30%;background:linear-gradient(90deg,transparent,var(--ember),transparent);animation:pulseBarSlide 1.4s linear infinite}
+.pulse-bar-track-on-accent{position:relative;height:3px;border-radius:2px;background:rgba(255,255,255,.3);overflow:hidden}
+.pulse-bar-on-accent{position:absolute;top:0;height:100%;width:30%;background:linear-gradient(90deg,transparent,#fff,transparent);animation:pulseBarSlide 1.4s linear infinite}
+@keyframes pulseBarSlide{0%{left:-30%}100%{left:130%}}
+/* Ask Cavnar's true branded accent — btn-primary itself darkens to #923020
+   in dark mode (see the [data-theme="dark"] .btn-primary rule below), but
+   that only fires on <button> background via the button[style*=...]
+   selector; this class covers the chat bubbles (plain divs) and icon
+   fills too, so everything in the panel matches the same branded shade. */
+.ask-cavnar-accent-bg{background:#c84b2f}
+[data-theme="dark"] .ask-cavnar-accent-bg{background:#923020!important}
+.ask-cavnar-accent-fill{fill:#c84b2f}
+[data-theme="dark"] .ask-cavnar-accent-fill{fill:#923020!important}
 /* Platform-brand buttons (Post to Instagram/Facebook) — need to win over
    the dark-mode .btn-primary override below, which forces ember via
    !important; matching its specificity ([data-theme=dark] .btn-primary,
@@ -3650,9 +3669,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
 <!-- Ask Cavnar — AI copilot over the restaurant's own live data -->
 <button id="ask-cavnar-fab" onclick="toggleAskCavnar()" title="Ask Cavnar AI" aria-label="Ask Cavnar AI"
-  style="position:fixed;bottom:24px;right:24px;width:52px;height:52px;border-radius:50%;background:#c84b2f;border:none;box-shadow:0 4px 16px rgba(200,75,47,.4);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:998;transition:transform .15s,box-shadow .15s"
+  class="ask-cavnar-accent-bg"
+  style="position:fixed;bottom:24px;right:24px;width:52px;height:52px;border-radius:50%;border:none;box-shadow:0 4px 16px rgba(200,75,47,.4);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:998;transition:transform .15s,box-shadow .15s"
   onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 20px rgba(200,75,47,.5)'"
-  onmouseout="this.style.transform='';this.style.boxShadow='0 4px 16px rgba(200,75,47,.4)'">
+  onmouseout="this.style.transform='';this.style.boxShadow='0 4px 16px rgba(200,75,47,.4)'"
+  onmousedown="this.style.transform='scale(.9)'"
+  onmouseup="this.style.transform='translateY(-2px)'">
   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
     <rect x="3" y="4" width="18" height="13" rx="4" fill="white"/>
     <path d="M8.5 17l-3.5 4v-4h3.5z" fill="white"/>
@@ -3660,10 +3682,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </svg>
 </button>
 
-<div id="ask-cavnar-panel" style="display:none;flex-direction:column;position:fixed;bottom:88px;right:24px;width:360px;max-height:min(520px,70vh);background:var(--surface);border:1px solid var(--paper3);border-radius:16px;box-shadow:0 12px 48px rgba(0,0,0,.25);z-index:999;overflow:hidden">
+<div id="ask-cavnar-panel" style="display:none;flex-direction:column;position:fixed;bottom:88px;right:24px;width:360px;max-height:min(520px,70vh);background:var(--surface);border:1.5px solid var(--ember);border-radius:16px;box-shadow:0 12px 48px rgba(0,0,0,.35);z-index:999;overflow:hidden">
   <div style="padding:14px 16px;border-bottom:1px solid rgba(200,75,47,.3);display:flex;align-items:center;justify-content:space-between;background:#1a1410;flex-shrink:0">
     <div style="display:flex;align-items:center;gap:8px">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="4" fill="#c84b2f"/><path d="M8.5 17l-3.5 4v-4h3.5z" fill="#c84b2f"/><path d="M18 2l.75 2.25L21 5l-2.25.75L18 8l-.75-2.25L15 5l2.25-.75L18 2z" fill="#c84b2f" opacity=".85"/></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="4" class="ask-cavnar-accent-fill"/><path d="M8.5 17l-3.5 4v-4h3.5z" class="ask-cavnar-accent-fill"/><path d="M18 2l.75 2.25L21 5l-2.25.75L18 8l-.75-2.25L15 5l2.25-.75L18 2z" class="ask-cavnar-accent-fill" opacity=".85"/></svg>
       <span style="font-family:'Fraunces',serif;font-size:14px;color:#f0ebe0">Ask Cavnar AI</span>
     </div>
     <button aria-label="Close" onclick="toggleAskCavnar()" style="background:none;border:none;cursor:pointer;color:#f0ebe0;font-size:15px;line-height:1;padding:0">&#x2715;</button>
@@ -3693,12 +3715,24 @@ window.toggleAskCavnar = function() {
 function _appendAskCavnarMessage(text, isUser) {
   var messages = document.getElementById('ask-cavnar-messages');
   var bubble = document.createElement('div');
+  bubble.className = isUser ? 'ask-cavnar-accent-bg' : '';
   bubble.style.cssText = isUser
-    ? 'align-self:flex-end;background:#c84b2f;color:white;padding:8px 12px;border-radius:12px 12px 2px 12px;font-size:12px;line-height:1.5;max-width:85%;white-space:pre-wrap'
+    ? 'align-self:flex-end;color:white;padding:8px 12px;border-radius:12px 12px 2px 12px;font-size:12px;line-height:1.5;max-width:85%;white-space:pre-wrap'
     : 'align-self:flex-start;background:var(--paper3);color:var(--ink);padding:8px 12px;border-radius:12px 12px 12px 2px;font-size:12px;line-height:1.5;max-width:85%;white-space:pre-wrap';
   bubble.textContent = text;
   messages.appendChild(bubble);
   messages.scrollTop = messages.scrollHeight;
+  return bubble;
+}
+
+function _appendAskCavnarLoadingBubble() {
+  var messages = document.getElementById('ask-cavnar-messages');
+  var bubble = document.createElement('div');
+  bubble.style.cssText = 'align-self:flex-start;background:var(--paper3);padding:11px 14px;border-radius:12px 12px 12px 2px;width:64px';
+  bubble.innerHTML = '<div class="pulse-bar-track"><div class="pulse-bar"></div></div>';
+  messages.appendChild(bubble);
+  messages.scrollTop = messages.scrollHeight;
+  return bubble;
 }
 
 window.sendAskCavnar = function() {
@@ -3710,7 +3744,7 @@ window.sendAskCavnar = function() {
   input.value = '';
   input.disabled = true;
   btn.disabled = true;
-  btn.textContent = '…';
+  var loadingBubble = _appendAskCavnarLoadingBubble();
   fetch('/api/ask-cavnar', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -3718,13 +3752,13 @@ window.sendAskCavnar = function() {
   }).then(function(r) { return r.json(); }).then(function(d) {
     input.disabled = false;
     btn.disabled = false;
-    btn.textContent = 'Ask';
     input.focus();
+    loadingBubble.remove();
     _appendAskCavnarMessage(d.ok ? d.answer : (d.error || 'Something went wrong — try again.'), false);
   }).catch(function() {
     input.disabled = false;
     btn.disabled = false;
-    btn.textContent = 'Ask';
+    loadingBubble.remove();
     _appendAskCavnarMessage('Network error — try again.', false);
   });
 };
@@ -7618,7 +7652,7 @@ window.generateGuestCampaign = function() {
   var type = document.getElementById('guest-campaign-type').value;
   var topic = document.getElementById('guest-campaign-topic').value.trim();
   btn.disabled = true;
-  btn.textContent = '…';
+  btn.innerHTML = '<div class="pulse-bar-track-on-accent" style="width:36px"><div class="pulse-bar-on-accent"></div></div>';
   fetch('/api/guest-campaign/draft', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({type: type, topic: topic})
