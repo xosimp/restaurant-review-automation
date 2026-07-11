@@ -801,6 +801,8 @@ date,day,employee,role,shift_start,shift_end,scheduled_hours,notes
 - bullet 2
 - bullet 3
 
+No emoji anywhere in the CSV notes or summary bullets — plain professional text only.
+
 DO NOT write any explanation, reasoning, or preamble before the CSV header line. Start your response with "date,day,employee..." immediately.
 
 SCHEDULING RULES:

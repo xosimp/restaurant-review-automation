@@ -2079,6 +2079,7 @@ def get_review_stats(restaurant_id):
             SUM(sentiment='neutral')                                                    AS neutral,
             AVG(rating)                                                                 AS avg_rating,
             SUM(response_status='drafted')                                              AS drafted,
+            SUM(response_status NOT IN ('drafted','posted','approved','skipped'))        AS needs_response,
             SUM(urgency='high' AND response_status NOT IN ('posted','approved','skipped')) AS urgent,
             SUM(response_status='posted')                                               AS posted,
             SUM(response_status IN ('posted','approved'))                               AS responded,
@@ -2108,6 +2109,7 @@ def get_review_stats(restaurant_id):
     posted    = rows["posted"]    or 0
     responded = rows["responded"] or 0
     drafted   = rows["drafted"]   or 0
+    needs_response = rows["needs_response"] or 0
     skipped   = rows["skipped"]   or 0
     this_month = rows["responded_this_month"] or 0
     last_30d  = rows["last_30d"]  or 0
@@ -2134,6 +2136,7 @@ def get_review_stats(restaurant_id):
         avg_rating        = round(rows["avg_rating"] or 0, 1),
         avg_rating_30d    = avg_rating_30d,
         awaiting_approval = drafted,
+        needs_response    = needs_response,
         posted            = posted,
         responded         = responded,
         skipped           = skipped,

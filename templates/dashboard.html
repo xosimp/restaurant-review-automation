@@ -1895,7 +1895,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Upcoming event scheduling forecast -->
   {% if labor_upcoming %}
   <div class="labor-forecast-card" style="background:linear-gradient(135deg,#1a1410,#1e1814);border:1px solid #3d2e1e;border-radius:8px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:flex-start;gap:14px">
-    <div style="font-size:20px;line-height:1;margin-top:1px">📅</div>
+    <div style="margin-top:1px;flex-shrink:0"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/></svg></div>
     <div style="flex:1">
       <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember);margin-bottom:6px">Scheduling Forecast</div>
       {% for event in labor_upcoming %}
