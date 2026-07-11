@@ -2394,11 +2394,17 @@ def webhook_test(current_user):
     wh = get_webhook(current_user["restaurant_id"])
     if not wh:
         return jsonify(ok=False, error="No webhook configured")
-    _deliver(wh, "test", {
+    result = _deliver(wh, "test", {
         "message": "This is a test webhook from Cavnar AI",
         "restaurant_id": current_user["restaurant_id"],
     })
-    return jsonify(ok=True)
+    if result and result.get("ok"):
+        return jsonify(ok=True)
+    status = result.get("status") if result else 0
+    error = result.get("error") if result else None
+    if status:
+        return jsonify(ok=False, error=f"Endpoint responded with status {status} — check it's returning a 2xx.")
+    return jsonify(ok=False, error=error or "Could not reach that URL — check it's correct and publicly reachable.")
 
 
 # ── Guest SMS lifecycle marketing ───────────────────────────────────────────

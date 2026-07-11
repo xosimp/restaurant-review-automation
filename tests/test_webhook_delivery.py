@@ -57,6 +57,53 @@ def test_successful_delivery_logs_one_row(db_path, rid, monkeypatch):
     assert deliveries[0]["status"] == 200
 
 
+def test_deliver_return_value_reflects_success(db_path, rid, monkeypatch):
+    """The client_api.py /api/webhook/test route reports pass/fail to the
+    user straight from this return value — before this existed, the route
+    always reported success regardless of what actually happened, so a
+    genuinely broken endpoint still showed "Test sent" with no error."""
+    _no_sleep(monkeypatch)
+    init_webhooks(db_path=db_path)
+    save_webhook(rid, "https://example.com/hook", ["review.received"], db_path=db_path)
+    wh = get_webhook(rid, db_path=db_path)
+
+    post, calls = _fake_post(status_code=200, ok=True)
+    monkeypatch.setattr("requests.post", post)
+
+    result = _deliver(wh, "review.received", {"x": 1}, db_path=db_path)
+    assert result == {"ok": True, "status": 200, "attempts": 1, "error": None}
+
+
+def test_deliver_return_value_reflects_failure(db_path, rid, monkeypatch):
+    _no_sleep(monkeypatch)
+    init_webhooks(db_path=db_path)
+    save_webhook(rid, "https://example.com/hook", ["review.received"], db_path=db_path)
+    wh = get_webhook(rid, db_path=db_path)
+
+    post, calls = _fake_post(status_code=500, ok=False)
+    monkeypatch.setattr("requests.post", post)
+
+    result = _deliver(wh, "review.received", {"x": 1}, db_path=db_path)
+    assert result["ok"] is False
+    assert result["status"] == 500
+    assert result["attempts"] == 3  # all 3 retries exhausted
+
+
+def test_deliver_return_value_reflects_unreachable_endpoint(db_path, rid, monkeypatch):
+    _no_sleep(monkeypatch)
+    init_webhooks(db_path=db_path)
+    save_webhook(rid, "https://example.com/hook", ["review.received"], db_path=db_path)
+    wh = get_webhook(rid, db_path=db_path)
+
+    post, calls = _fake_post(raises=ConnectionError("could not connect"))
+    monkeypatch.setattr("requests.post", post)
+
+    result = _deliver(wh, "review.received", {"x": 1}, db_path=db_path)
+    assert result["ok"] is False
+    assert result["status"] == 0
+    assert "could not connect" in result["error"]
+
+
 def test_failed_delivery_retries_three_times_with_backoff(db_path, rid, monkeypatch):
     _no_sleep(monkeypatch)
     init_webhooks(db_path=db_path)

@@ -241,6 +241,7 @@ def _deliver(webhook, event_type, data, db_path=DB_PATH):
         conn.close()
     except Exception:
         pass
+    return {"ok": ok, "status": status, "attempts": attempts, "error": error}
 
 
 def fire_webhook(restaurant_id, event_type, data, db_path=DB_PATH):
