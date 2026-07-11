@@ -337,6 +337,19 @@ def test_review_request_followup_skips_restaurant_without_place_id(db_path):
     assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 1}
 
 
+def test_review_request_followup_skips_restaurant_without_marketing_module(db_path):
+    """Guest text club is a Marketing-module feature — if a client's module
+    is later turned off, the automated follow-up must stop touching their
+    guest_contacts rows too, not just the dashboard UI/API."""
+    r = _restaurant(db_path, google_place_id="ChIJtestplace", module_marketing=0)
+    cid = add_guest_contact_public_optin(r.id, "555-123-4567", db_path=db_path)
+    _backdate_visit(db_path, r.id, cid, hours_ago=4)
+
+    result = run_review_request_followups(delay_hours=3, db_path=db_path)
+
+    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0}
+
+
 def test_review_request_followup_skips_unconsented_contact(db_path):
     r = _restaurant(db_path, google_place_id="ChIJtestplace")
     cid = add_guest_contact_manual(r.id, "555-123-4567", db_path=db_path)  # no consent

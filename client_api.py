@@ -2407,11 +2407,25 @@ def webhook_test(current_user):
     return jsonify(ok=False, error=error or "Could not reach that URL — check it's correct and publicly reachable.")
 
 
-# ── Guest SMS lifecycle marketing ───────────────────────────────────────────
+# ── Guest SMS lifecycle marketing — Marketing-module clients only ───────────
+# Every other module gate in this app is UI-only (the tab/button is hidden,
+# but the API route itself doesn't check). This one actually enforces it
+# server-side too, because unlike generating marketing copy, sending a guest
+# campaign has a real per-message Twilio cost — a client without the module
+# hitting the API directly would be a real, billable abuse path, not just a
+# UI inconsistency.
+
+def _restaurant_has_marketing_module(restaurant_id):
+    r = get_restaurant(restaurant_id)
+    return bool(r and r.module_marketing)
+
+_NO_MARKETING_MODULE_ERROR = "Guest text club requires the Marketing module — contact will@cavnar.ai to add it."
 
 @client_bp.route("/api/guest-contacts", methods=["GET"])
 @login_required
 def guest_contacts_list(current_user):
+    if not _restaurant_has_marketing_module(current_user["restaurant_id"]):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
     from guest_marketing import get_guest_contacts
     return jsonify(ok=True, contacts=get_guest_contacts(current_user["restaurant_id"]))
 
@@ -2420,6 +2434,8 @@ def guest_contacts_list(current_user):
 def guest_contacts_add(current_user):
     """Owner adding a number manually — never consented (see
     guest_marketing.add_guest_contact_manual's docstring for why)."""
+    if not _restaurant_has_marketing_module(current_user["restaurant_id"]):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
     from guest_marketing import add_guest_contact_manual
     data = request.get_json() or {}
     name = (data.get("name") or "").strip()
@@ -2434,6 +2450,8 @@ def guest_contacts_add(current_user):
 @client_bp.route("/api/guest-contacts/<int:contact_id>", methods=["DELETE"])
 @login_required
 def guest_contacts_delete(contact_id, current_user):
+    if not _restaurant_has_marketing_module(current_user["restaurant_id"]):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
     from guest_marketing import delete_guest_contact
     delete_guest_contact(contact_id, current_user["restaurant_id"])
     return jsonify(ok=True)
@@ -2444,6 +2462,8 @@ def guest_contacts_mark_visit(contact_id, current_user):
     """Manual visit signal for contacts without a natural opt-in-scan moment —
     starts the automated post-visit review-request countdown (see
     guest_marketing.run_review_request_followups)."""
+    if not _restaurant_has_marketing_module(current_user["restaurant_id"]):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
     from guest_marketing import mark_guest_visit
     mark_guest_visit(contact_id, current_user["restaurant_id"])
     return jsonify(ok=True)
@@ -2451,8 +2471,10 @@ def guest_contacts_mark_visit(contact_id, current_user):
 @client_bp.route("/api/guest-campaign/draft", methods=["POST"])
 @login_required
 def guest_campaign_draft(current_user):
-    from ai_utils import ai_rate_limited
     rid = current_user["restaurant_id"]
+    if not _restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
+    from ai_utils import ai_rate_limited
     if ai_rate_limited(f"guestcampaign:{rid}", max_calls=8, window_secs=60):
         return jsonify(ok=False, error="Too many requests — please wait a moment and try again."), 429
     data = request.get_json() or {}
@@ -2469,8 +2491,10 @@ def guest_campaign_draft(current_user):
 @client_bp.route("/api/guest-campaign/send", methods=["POST"])
 @login_required
 def guest_campaign_send(current_user):
-    from ai_utils import ai_rate_limited
     rid = current_user["restaurant_id"]
+    if not _restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
+    from ai_utils import ai_rate_limited
     data = request.get_json() or {}
     message = (data.get("message") or "").strip()
     if not message:
@@ -2488,12 +2512,17 @@ def guest_campaign_send(current_user):
 
 
 # ── Public guest opt-in page — no login, printed on a table tent / QR code ──
+# Also module-gated: if a client's Marketing module is later removed, their
+# old join link/QR code (already printed, already in the wild) must stop
+# accepting new signups rather than keep working for free.
 
 @client_bp.route("/join/<int:restaurant_id>")
 def guest_optin_page(restaurant_id):
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
         return "Restaurant not found", 404
+    if not restaurant.module_marketing:
+        return "This text club isn't active right now.", 404
     return render_template("guest_optin.html", restaurant_name=restaurant.name)
 
 @client_bp.route("/api/public/guest-optin/<int:restaurant_id>", methods=["POST"])
@@ -2505,6 +2534,8 @@ def guest_optin_submit(restaurant_id):
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
         return jsonify(ok=False, error="Restaurant not found"), 404
+    if not restaurant.module_marketing:
+        return jsonify(ok=False, error="This text club isn't active right now."), 404
     data = request.get_json() or {}
     name = (data.get("name") or "").strip()
     phone = (data.get("phone") or "").strip()

@@ -2829,6 +2829,39 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div class="cal-grid" id="cal-grid" style="padding-left:4px;padding-right:4px"><div class="no-data" style="grid-column:1/-1;padding:24px;text-align:center;color:var(--ink3);font-size:13px;font-style:italic">Click "Generate week ↺" above to build your content calendar.</div></div>
   </div>
 
+  <!-- Guest SMS lifecycle marketing -->
+  <div class="acct-card" style="padding:18px 22px;margin-top:20px">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Guest text club</div>
+    <p style="font-size:12px;color:var(--ink3);line-height:1.6;margin:0 0 14px">Guests join by scanning a QR code or visiting your link below — never add someone without their own consent, since only a guest opting in themselves makes them text-eligible.</p>
+
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <code id="guest-join-link" style="flex:1;min-width:220px;font-size:11px;color:var(--ink);background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;padding:8px 10px;word-break:break-all">{{request.url_root.rstrip('/')}}/join/{{restaurant.id}}</code>
+      <button onclick="copyGuestJoinLink()" class="btn-secondary" style="font-size:11px;padding:6px 12px" id="guest-copy-btn">Copy link</button>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--paper3)">
+      <div id="guest-contacts-summary" style="font-size:12px;color:var(--ink3)">Loading&hellip;</div>
+      <button onclick="openGuestContactsModal()" style="background:none;border:none;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    </div>
+
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">Send a campaign</div>
+    <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <select id="guest-campaign-type" class="topic-input" style="flex:1;min-width:140px">
+        <option value="win_back">Win-back</option>
+        <option value="event">Event / special</option>
+        <option value="loyalty">Loyalty thank-you</option>
+        <option value="general">General</option>
+      </select>
+      <input type="text" id="guest-campaign-topic" class="topic-input" placeholder="Optional details (e.g. half-price wine Wednesdays)" style="flex:2;min-width:200px">
+      <button onclick="generateGuestCampaign()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-generate-btn">Generate</button>
+    </div>
+    <textarea id="guest-campaign-message" rows="3" placeholder="Generated message will appear here — edit before sending" maxlength="300" style="width:100%;padding:10px 12px;border:1px solid var(--paper3);border-radius:8px;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;color:var(--ink);background:var(--paper2);outline:none;resize:vertical;margin-bottom:10px;box-sizing:border-box"></textarea>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button onclick="sendGuestCampaign()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-send-btn">Send to consented guests</button>
+      <span id="guest-campaign-status" style="font-size:12px;display:none"></span>
+    </div>
+  </div>
+
   </div><!-- /mkt-tab-content -->
 
   <!-- Analytics sub-tab: real Meta post performance, unlocked now that the app is Meta-approved -->
@@ -3621,39 +3654,6 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <button onclick="deleteWebhook()" id="wh-delete-btn" style="padding:8px 14px;background:none;border:1px solid var(--red);color:var(--red);border-radius:6px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif;display:none">Remove</button>
     </div>
     <div id="wh-status" style="font-size:12px;margin-top:8px;display:none"></div>
-  </div>
-
-  <!-- Guest SMS lifecycle marketing -->
-  <div class="acct-card" style="padding:18px 22px;margin-bottom:14px">
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Guest text club</div>
-    <p style="font-size:12px;color:var(--ink3);line-height:1.6;margin:0 0 14px">Guests join by scanning a QR code or visiting your link below — never add someone without their own consent, since only a guest opting in themselves makes them text-eligible.</p>
-
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
-      <code id="guest-join-link" style="flex:1;min-width:220px;font-size:11px;color:var(--ink);background:var(--paper2);border:1px solid var(--paper3);border-radius:6px;padding:8px 10px;word-break:break-all">{{request.url_root.rstrip('/')}}/join/{{restaurant.id}}</code>
-      <button onclick="copyGuestJoinLink()" class="btn-secondary" style="font-size:11px;padding:6px 12px" id="guest-copy-btn">Copy link</button>
-    </div>
-
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--paper3)">
-      <div id="guest-contacts-summary" style="font-size:12px;color:var(--ink3)">Loading&hellip;</div>
-      <button onclick="openGuestContactsModal()" style="background:none;border:none;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-    </div>
-
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">Send a campaign</div>
-    <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-      <select id="guest-campaign-type" class="topic-input" style="flex:1;min-width:140px">
-        <option value="win_back">Win-back</option>
-        <option value="event">Event / special</option>
-        <option value="loyalty">Loyalty thank-you</option>
-        <option value="general">General</option>
-      </select>
-      <input type="text" id="guest-campaign-topic" class="topic-input" placeholder="Optional details (e.g. half-price wine Wednesdays)" style="flex:2;min-width:200px">
-      <button onclick="generateGuestCampaign()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-generate-btn">Generate</button>
-    </div>
-    <textarea id="guest-campaign-message" rows="3" placeholder="Generated message will appear here — edit before sending" maxlength="300" style="width:100%;padding:10px 12px;border:1px solid var(--paper3);border-radius:8px;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;color:var(--ink);background:var(--paper2);outline:none;resize:vertical;margin-bottom:10px;box-sizing:border-box"></textarea>
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <button onclick="sendGuestCampaign()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-send-btn">Send to consented guests</button>
-      <span id="guest-campaign-status" style="font-size:12px;display:none"></span>
-    </div>
   </div>
 
   <!-- Cancel — minimal text link -->
@@ -7530,7 +7530,7 @@ function revokeOtherSessions(btn){
   window.switchTab = function(n, btn) {
     _origSwitchTab(n, btn);
     if (n === 'account' && !_whLoaded) { _whLoaded = true; loadWebhook(); }
-    if (n === 'account' && !_gcLoaded) { _gcLoaded = true; loadGuestContactsSummary(); }
+    if (n === 'marketing' && !_gcLoaded) { _gcLoaded = true; loadGuestContactsSummary(); }
   };
 })();
 

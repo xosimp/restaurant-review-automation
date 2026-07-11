@@ -278,6 +278,7 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
         FROM guest_contacts gc
         JOIN restaurants r ON r.id = gc.restaurant_id
         WHERE gc.consent=1 AND gc.unsubscribed=0
+          AND r.module_marketing=1
           AND gc.last_visit IS NOT NULL
           AND (gc.last_review_requested_at IS NULL OR gc.last_review_requested_at < gc.last_visit)
         """
