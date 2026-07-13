@@ -151,12 +151,12 @@ html[data-theme="dark"] body{color:var(--ink)}
 [data-theme="dark"] .aiv-card[style*="background:#f5ece3"]{background:#241a10!important}
 [data-theme="dark"] .aiv-card[style*="background:#fff5f2"]{background:#2a1010!important}
 /* Marketing module */
-[data-theme="dark"] .ct-btn{background:linear-gradient(160deg,rgba(200,75,47,.16) 0%,rgba(200,75,47,.06) 100%)!important;border-color:rgba(200,75,47,.28)!important}
-[data-theme="dark"] .ct-btn:hover{background:linear-gradient(160deg,rgba(200,75,47,.24) 0%,rgba(200,75,47,.1) 100%)!important;border-color:rgba(200,75,47,.45)!important}
-[data-theme="dark"] .ct-btn.selected{background:linear-gradient(160deg,rgba(200,75,47,.34) 0%,rgba(200,75,47,.15) 100%)!important;border-color:var(--ember)!important}
+[data-theme="dark"] .ct-btn{background:var(--surface)!important;border-color:var(--paper3)!important}
+[data-theme="dark"] .ct-btn:hover{background:var(--paper2)!important;border-color:var(--ink3)!important}
+[data-theme="dark"] .ct-btn.selected{background:linear-gradient(160deg,rgba(200,75,47,.30) 0%,rgba(200,75,47,.12) 100%)!important;border-color:var(--ember)!important}
 [data-theme="dark"] .ct-label{color:var(--ink)!important}
-[data-theme="dark"] .topic-input{background:var(--surface)!important;color:var(--ink)!important;border-color:rgba(200,75,47,.28)!important}
-[data-theme="dark"] .output-box{background:linear-gradient(160deg,rgba(200,75,47,.07) 0%,var(--surface) 100%)!important;color:var(--ink2)!important;border-color:rgba(200,75,47,.28)!important}
+[data-theme="dark"] .topic-input{background:var(--surface)!important;color:var(--ink)!important;border-color:var(--paper3)!important}
+[data-theme="dark"] .output-box{background:var(--surface)!important;color:var(--ink2)!important;border-color:rgba(200,75,47,.32)!important;box-shadow:0 10px 28px rgba(200,75,47,.18),0 1px 3px rgba(0,0,0,.3)!important}
 [data-theme="dark"] .btn-secondary{background:var(--surface)!important;color:var(--ink2)!important;border-color:var(--paper3)!important}
 [data-theme="dark"] .btn-secondary:hover{background:var(--paper2)!important}
 [data-theme="dark"] #panel-marketing [style*="background:white"]{background:var(--surface)!important}
@@ -227,8 +227,14 @@ html[data-theme="dark"] body{color:var(--ink)}
    page background; dark mode keeps the original black gradient look. */
 .dark-hero-card{background:linear-gradient(160deg,var(--paper2) 0%,var(--paper3) 100%)}
 [data-theme="dark"] .dark-hero-card{background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%)!important}
-.dark-insight-card{background:linear-gradient(160deg,var(--paper2) 0%,var(--paper3) 100%);border-color:rgba(200,75,47,.22)!important}
-[data-theme="dark"] .dark-insight-card{background:linear-gradient(135deg,#1a1410 0%,#1e1a14 100%)!important;border-color:#3d2e1e!important}
+/* AI insight/brief callouts — quieted deliberately (was the same busy
+   ember gradient as every tool card around it, competing for attention it
+   doesn't need as passive commentary). Applies everywhere this class is
+   used — Reviews, Labor, Food Cost, and Marketing all share this one rule,
+   so the "AI brief" look stays consistent across every tab by construction
+   rather than needing to be matched by hand in four places. */
+.dark-insight-card{background:var(--paper2);border:1px solid var(--paper3)}
+[data-theme="dark"] .dark-insight-card{background:var(--surface)!important;border-color:var(--paper3)!important}
 .acct-hero-card{background:linear-gradient(160deg,var(--paper2) 0%,var(--paper3) 100%)}
 
 /* Text inside those cards was hardcoded to cream/white for the old
@@ -471,27 +477,43 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .day-bars{display:flex;align-items:flex-end;gap:6px;height:80px;margin:8px 0 3px}
 .day-bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center}
 .day-bar{width:100%;border-radius:3px 3px 0 0;min-height:3px}
+/* Marketing tab hierarchy — ember used to be smeared across every card
+   (type buttons, output box, calendar panel, guest club) at nearly
+   identical opacity, so nothing actually stood out. Now: neutral surfaces
+   by default, ember reserved for the things that are actually primary or
+   selected — the generator's own result (.output-box) and an active
+   selection (.ct-btn.selected) — so it reads as a real signal again. */
 .ct-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:16px}
-.ct-btn{background:linear-gradient(160deg,rgba(200,75,47,.14) 0%,rgba(200,75,47,.05) 100%);border:1px solid rgba(200,75,47,.22);border-radius:12px;padding:12px 10px;cursor:pointer;transition:all .2s;text-align:left;position:relative}
-.ct-btn:hover{border-color:rgba(200,75,47,.4);background:linear-gradient(160deg,rgba(200,75,47,.20) 0%,rgba(200,75,47,.08) 100%);transform:translateY(-1px)}
-.ct-btn.selected{border-color:var(--ember);background:linear-gradient(160deg,rgba(200,75,47,.28) 0%,rgba(200,75,47,.13) 100%);box-shadow:0 4px 14px rgba(200,75,47,.18)}
+.ct-btn{background:var(--paper2);border:1px solid var(--paper3);border-radius:12px;padding:12px 10px;cursor:pointer;transition:all .2s;text-align:left;position:relative}
+.ct-btn:hover{border-color:var(--ink3);background:var(--paper);transform:translateY(-1px);box-shadow:0 2px 8px rgba(14,12,10,.06)}
+.ct-btn.selected{border-color:var(--ember);background:linear-gradient(160deg,rgba(200,75,47,.16) 0%,rgba(200,75,47,.05) 100%);box-shadow:0 4px 14px rgba(200,75,47,.18)}
 .ct-label{font-weight:600;font-size:12px;margin-bottom:2px;color:var(--ink)}
 .ct-desc{font-size:10px;color:var(--ink3);line-height:1.4}
 .topic-row{display:flex;gap:8px;margin-bottom:12px;align-items:center}
-.topic-input{flex:1;padding:9px 14px;border:1px solid rgba(200,75,47,.22);border-radius:10px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;background:var(--paper2);outline:none;transition:border-color .15s,box-shadow .15s}
+.topic-input{flex:1;padding:9px 14px;border:1px solid var(--paper3);border-radius:10px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;background:var(--paper2);outline:none;transition:border-color .15s,box-shadow .15s}
 .topic-input:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,75,47,.12)}
-.output-box{background:linear-gradient(160deg,rgba(200,75,47,.05) 0%,var(--paper2) 100%);border:1px solid rgba(200,75,47,.2);border-radius:12px;padding:16px 18px;min-height:100px;font-size:12px;line-height:1.7;color:var(--ink2);white-space:pre-wrap;position:relative;overflow:hidden;box-shadow:0 4px 12px rgba(14,12,10,.06)}
+/* .output-box is the generator's actual result — the one thing on this tab
+   that should read as "primary." A solid surface + a colored glow shadow
+   (instead of a gradient fill) gives it real lift without adding more
+   ember-tinted surface area next to everything else. */
+.output-box{background:var(--paper);border:1px solid rgba(200,75,47,.28);border-radius:12px;padding:16px 18px;min-height:100px;font-size:12px;line-height:1.7;color:var(--ink2);white-space:pre-wrap;position:relative;overflow:hidden;box-shadow:0 10px 28px rgba(200,75,47,.12),0 1px 3px rgba(14,12,10,.05)}
 .output-box::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)}
-.acct-card{background:linear-gradient(160deg,rgba(200,75,47,.05) 0%,var(--paper2) 100%);border:1px solid rgba(200,75,47,.2);border-radius:var(--r);position:relative;overflow:hidden;box-shadow:0 4px 12px rgba(14,12,10,.08),0 1px 3px rgba(14,12,10,.05);transition:box-shadow .15s,transform .15s}
+/* Structured data/calendar panels — deliberately plain, no ember, so they
+   read as "tool" not "insight." */
+.data-panel{background:var(--paper2);border:1px solid var(--paper3);border-radius:12px;box-shadow:0 2px 8px rgba(14,12,10,.05)}
+[data-theme="dark"] .data-panel{background:var(--surface)!important;border-color:var(--paper3)!important}
+/* Settings-style cards (Guest text club, Account tab) — quieter than the
+   content-creation tools above; ember kept only as a thin identity bar. */
+.acct-card{background:var(--paper2);border:1px solid var(--paper3);border-radius:var(--r);position:relative;overflow:hidden;box-shadow:0 2px 8px rgba(14,12,10,.06);transition:box-shadow .15s,transform .15s}
 .acct-card::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)}
-.acct-card:hover{box-shadow:0 8px 22px rgba(200,75,47,.14),0 1px 3px rgba(14,12,10,.06);transform:translateY(-1px)}
-[data-theme="dark"] .acct-card{background:linear-gradient(160deg,rgba(200,75,47,.08) 0%,var(--surface) 100%)!important;border-color:rgba(200,75,47,.3)!important;box-shadow:0 4px 14px rgba(0,0,0,.35)!important}
-[data-theme="dark"] .acct-card:hover{box-shadow:0 8px 26px rgba(200,75,47,.22),0 1px 3px rgba(0,0,0,.3)!important}
+.acct-card:hover{box-shadow:0 6px 18px rgba(14,12,10,.09);transform:translateY(-1px)}
+[data-theme="dark"] .acct-card{background:var(--surface)!important;border-color:var(--paper3)!important;box-shadow:0 4px 14px rgba(0,0,0,.35)!important}
+[data-theme="dark"] .acct-card:hover{box-shadow:0 8px 22px rgba(0,0,0,.4)!important}
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:10px}
 
-/* Theme-aware — the Content Calendar panel now reuses .output-box, which
-   already switches between light/dark, so its children follow suit
-   instead of being fixed-dark. */
+/* cal-card (a day that already HAS generated content) keeps its ember tint
+   on purpose — it's a meaningful "has content" signal against cal-day's
+   plain "empty" state below, not part of the sameness problem above. */
 .cal-card{background:linear-gradient(160deg,rgba(200,75,47,.10) 0%,rgba(200,75,47,.03) 100%);border:1px solid rgba(200,75,47,.2);border-radius:10px;padding:12px;font-size:12px;display:flex;flex-direction:column;transition:transform .15s,box-shadow .15s;color:var(--ink2)}
 .cal-card:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(200,75,47,.14)}
 .cal-day{background:white;border:1px solid var(--paper3);border-radius:6px;padding:8px 6px;font-size:10px}
@@ -2815,9 +2837,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <span id="output-hint" style="display:none;font-size:10px;color:var(--ink3);margin-left:4px">✏ Edit above before posting</span>
   </div>
 
-  <div class="output-box" style="margin-top:20px;padding:16px 20px;white-space:normal">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;padding-left:4px">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:var(--ember)">Content Calendar</div>
+  <div class="data-panel" style="margin-top:20px;padding:16px 20px;white-space:normal">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-left:4px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/></svg>
+        <div style="font-size:13px;font-weight:700;color:var(--ink)">Content Calendar</div>
+      </div>
       <div style="display:flex;gap:6px">
         <button class="btn-primary" style="font-size:10px;padding:5px 10px" onclick="loadCal()">Generate week <span style="font-size:15px;margin-left:6px">↺</span></button>
         <button class="btn-primary" id="cal-download-btn" onclick="downloadCal()" style="font-size:10px;padding:5px 10px;display:none">Download CSV<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -2831,7 +2856,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
   <!-- Guest SMS lifecycle marketing -->
   <div class="acct-card" style="padding:18px 22px;margin-top:20px">
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Guest text club</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 012-2h12a2 2 0 012 2v9a2 2 0 01-2 2H9l-4 4v-4H6a2 2 0 01-2-2V5z"/></svg>
+      <div style="font-size:13px;font-weight:700;color:var(--ink)">Guest text club</div>
+    </div>
     <p style="font-size:12px;color:var(--ink3);line-height:1.6;margin:0 0 14px">Guests join by scanning a QR code or visiting your link below — never add someone without their own consent, since only a guest opting in themselves makes them text-eligible.</p>
 
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
