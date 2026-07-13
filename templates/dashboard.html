@@ -2839,6 +2839,34 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <button onclick="copyGuestJoinLink()" class="btn-secondary" style="font-size:11px;padding:6px 12px" id="guest-copy-btn">Copy link</button>
     </div>
 
+    <div style="display:flex;gap:14px;align-items:center;margin-bottom:14px;padding:12px;background:var(--paper2);border-radius:8px;flex-wrap:wrap">
+      <img src="/api/guest-qr" alt="QR code linking to the guest join page" width="72" height="72" style="border-radius:6px;background:white;padding:4px;flex-shrink:0">
+      <div style="flex:1;min-width:180px">
+        <div style="font-size:12px;color:var(--ink);font-weight:600;margin-bottom:2px">Print this where guests can scan it</div>
+        <div style="font-size:11px;color:var(--ink3);line-height:1.5">A QR code on a screen doesn't help anyone — download it and put it on a table tent, receipt, or menu insert.</div>
+      </div>
+      <a href="/api/guest-qr?download=1" download="guest-text-club-qr.png" class="btn-secondary" style="font-size:11px;padding:6px 12px;text-decoration:none;flex-shrink:0">Download QR code</a>
+    </div>
+
+    {% set _pos = (restaurant.pos_system or '')|lower %}
+    <details style="margin-bottom:16px;font-size:11.5px;color:var(--ink3)">
+      <summary style="cursor:pointer;font-weight:600;color:var(--ember);list-style:none;display:flex;align-items:center;gap:4px">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="flex-shrink:0"><path d="M5 6l3 3 3-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Add this to your receipts
+      </summary>
+      <div style="margin-top:8px;line-height:1.6;padding-left:16px">
+        {% if 'square' in _pos %}
+        You're connected to Square — Square lets you add a custom message to your receipt footer under Square Dashboard → Settings → Checkout → Receipts. Paste in something like "Join our text club →" with the link above (Square's built-in receipt editor doesn't accept an image upload for the footer, so use the text link rather than the QR image itself).
+        {% elif 'toast' in _pos %}
+        You're connected to Toast — check Toast Web under your restaurant's receipt/order settings for a custom footer message field, and paste in the join link there. If you don't see that option, Toast support can usually enable it.
+        {% elif 'clover' in _pos %}
+        You're connected to Clover — look under Clover Dashboard → Setup → Receipts for a custom message option, or search the Clover App Market for a receipt-customization app if your device doesn't have one built in.
+        {% else %}
+        Whatever POS you use, check its receipt or footer-message settings — most systems let you add a custom line of text, which is where this join link belongs. If yours doesn't support that, printing the QR code on a table tent or near the register works just as well.
+        {% endif %}
+      </div>
+    </details>
+
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--paper3)">
       <div id="guest-contacts-summary" style="font-size:12px;color:var(--ink3)">Loading&hellip;</div>
       <button onclick="openGuestContactsModal()" style="background:none;border:none;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>

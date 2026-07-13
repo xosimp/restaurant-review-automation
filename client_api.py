@@ -2511,6 +2511,26 @@ def guest_campaign_send(current_user):
         return jsonify(ok=False, error="Couldn't send the campaign — try again in a moment."), 500
 
 
+@client_bp.route("/api/guest-qr")
+@login_required
+def guest_qr_code(current_user):
+    """Downloadable PNG QR code encoding the guest join link — the actual
+    guest-facing artifact has to leave this screen (printed on a table
+    tent, receipt footer, etc.); nobody scans a laptop in the office."""
+    rid = current_user["restaurant_id"]
+    if not _restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
+    import qrcode, io
+    join_url = request.url_root.rstrip("/") + f"/join/{rid}"
+    img = qrcode.make(join_url, box_size=10, border=2)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    download = request.args.get("download") == "1"
+    return send_file(buf, mimetype="image/png", as_attachment=download,
+                      download_name="guest-text-club-qr.png" if download else None)
+
+
 # ── Public guest opt-in page — no login, printed on a table tent / QR code ──
 # Also module-gated: if a client's Marketing module is later removed, their
 # old join link/QR code (already printed, already in the wild) must stop

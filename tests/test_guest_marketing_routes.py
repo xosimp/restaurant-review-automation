@@ -13,7 +13,7 @@ import models
 from client_api import (
     client_bp, guest_contacts_list, guest_contacts_add, guest_contacts_delete,
     guest_contacts_mark_visit, guest_campaign_draft, guest_campaign_send,
-    guest_optin_page, guest_optin_submit,
+    guest_optin_page, guest_optin_submit, guest_qr_code,
 )
 from auth_routes import auth_bp
 from models import create_restaurant, Restaurant
@@ -103,6 +103,27 @@ def test_guest_campaign_send_rejects_without_marketing_module(monkeypatch, app, 
     with app.test_request_context("/api/guest-campaign/send", method="POST", json={"message": "hi"}):
         resp, status = guest_campaign_send()
     assert status == 403
+
+
+def test_guest_qr_rejects_without_marketing_module(monkeypatch, app, db_path):
+    rid = _restaurant(db_path, module_marketing=0)
+    _login_as(monkeypatch, rid)
+    with app.test_request_context("/api/guest-qr"):
+        resp, status = guest_qr_code()
+    assert status == 403
+
+
+def test_guest_qr_returns_a_real_png(monkeypatch, app, db_path):
+    """send_file's streaming response needs a real WSGI request/response
+    cycle to read back — a bare test_request_context() with a direct
+    function call raises on .get_data() (passthrough mode), so this one
+    goes through the actual test client instead."""
+    rid = _restaurant(db_path, module_marketing=1)
+    monkeypatch.setattr(auth, "get_current_user", lambda: {"id": 1, "restaurant_id": rid, "is_admin": 0})
+    client = app.test_client()
+    resp = client.get("/api/guest-qr")
+    assert resp.mimetype == "image/png"
+    assert resp.data[:8] == b"\x89PNG\r\n\x1a\n"  # real PNG magic bytes, not a placeholder
 
 
 def test_guest_contacts_list_allows_with_marketing_module(monkeypatch, app, db_path):
