@@ -498,10 +498,11 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
    ember-tinted surface area next to everything else. */
 .output-box{background:var(--paper);border:1px solid rgba(200,75,47,.28);border-radius:12px;padding:16px 18px;min-height:100px;font-size:12px;line-height:1.7;color:var(--ink2);white-space:pre-wrap;position:relative;overflow:hidden;box-shadow:0 10px 28px rgba(200,75,47,.12),0 1px 3px rgba(14,12,10,.05)}
 .output-box::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)}
-/* Structured data/calendar panels — deliberately plain, no ember, so they
-   read as "tool" not "insight." */
-.data-panel{background:var(--paper2);border:1px solid var(--paper3);border-radius:12px;box-shadow:0 2px 8px rgba(14,12,10,.05)}
-[data-theme="dark"] .data-panel{background:var(--surface)!important;border-color:var(--paper3)!important}
+/* Structured data/calendar panels — no card chrome at all (not even a
+   quiet gray box) so the Content Calendar sits directly on the page; the
+   day cards themselves carry all the visual weight. */
+.data-panel{background:none;border:none;box-shadow:none}
+[data-theme="dark"] .data-panel{background:none!important;border:none!important}
 /* Settings-style cards (Guest text club, Account tab) — quieter than the
    content-creation tools above; ember kept only as a thin identity bar. */
 .acct-card{background:var(--paper2);border:1px solid var(--paper3);border-radius:var(--r);position:relative;overflow:hidden;box-shadow:0 2px 8px rgba(14,12,10,.06);transition:box-shadow .15s,transform .15s}
@@ -509,16 +510,18 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .acct-card:hover{box-shadow:0 6px 18px rgba(14,12,10,.09);transform:translateY(-1px)}
 [data-theme="dark"] .acct-card{background:var(--surface)!important;border-color:var(--paper3)!important;box-shadow:0 4px 14px rgba(0,0,0,.35)!important}
 [data-theme="dark"] .acct-card:hover{box-shadow:0 8px 22px rgba(0,0,0,.4)!important}
-.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:10px}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-top:10px}
 
 /* cal-card (a day that already HAS generated content) keeps its ember tint
    on purpose — it's a meaningful "has content" signal against cal-day's
    plain "empty" state below, not part of the sameness problem above. */
-.cal-card{background:linear-gradient(160deg,rgba(200,75,47,.10) 0%,rgba(200,75,47,.03) 100%);border:1px solid rgba(200,75,47,.2);border-radius:10px;padding:12px;font-size:12px;display:flex;flex-direction:column;transition:transform .15s,box-shadow .15s;color:var(--ink2)}
-.cal-card:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(200,75,47,.14)}
-.cal-day{background:white;border:1px solid var(--paper3);border-radius:6px;padding:8px 6px;font-size:10px}
-.cal-day-name{font-weight:600;color:var(--ink);margin-bottom:3px}
-.cal-platform{font-size:8px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);margin-bottom:2px}
+@keyframes calCardIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+@media (prefers-reduced-motion: reduce){.cal-card{animation:none!important;opacity:1!important}}
+.cal-card{background:linear-gradient(160deg,rgba(200,75,47,.10) 0%,rgba(200,75,47,.03) 100%);border:1px solid rgba(200,75,47,.2);border-radius:14px;padding:18px 16px;font-size:13px;display:flex;flex-direction:column;min-height:190px;transition:transform .15s,box-shadow .15s;color:var(--ink2);opacity:0;animation:calCardIn .45s ease forwards}
+.cal-card:hover{transform:translateY(-3px);box-shadow:0 8px 22px rgba(200,75,47,.16)}
+.cal-day{background:white;border:1px solid var(--paper3);border-radius:8px;padding:8px 6px;font-size:10px}
+.cal-day-name{font-weight:700;font-size:14px;color:var(--ink);margin-bottom:6px}
+.cal-platform{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);margin-bottom:2px}
 .btn-primary{background:var(--ember);color:white;padding:0 16px;height:34px;display:inline-flex;align-items:center;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
 .btn-primary:hover{background:#a83d25;box-shadow:0 2px 8px rgba(200,75,47,.18);transform:translateY(-1px)}
 .btn-primary:active{transform:scale(.97)}
@@ -6271,11 +6274,11 @@ function loadCal(){
       var i=d.ideas[idx];
       var dateLabel = i.date ? '<span style="font-size:10px;color:var(--ink3);font-weight:400">'+i.date+'</span>' : '';
       var pColor = platformColors[i.platform] || 'var(--ink3)';
-      html += '<div class="cal-card">';
+      html += '<div class="cal-card" style="animation-delay:'+(idx*0.08)+'s">';
       html += '<div class="cal-day-name" style="display:flex;align-items:center;justify-content:space-between">'+i.day+dateLabel+'</div>';
-      html += '<div class="cal-platform" style="font-size:10px;font-weight:600;color:'+pColor+';margin:2px 0 4px;padding:1px 6px;background:'+pColor+'18;border-radius:10px;display:inline-block">'+( i.platform||'')+'</div>';
-      html += '<div style="font-size:12px;line-height:1.5;margin-top:4px">'+( i.angle||'')+'</div>';
-      html += '<button data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" class="btn-primary" style="margin-top:8px;padding:4px 10px;font-size:10px;width:100%">Generate<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
+      html += '<div class="cal-platform" style="font-size:11px;font-weight:600;color:'+pColor+';margin:2px 0 8px;padding:2px 8px;background:'+pColor+'18;border-radius:10px;display:inline-block">'+( i.platform||'')+'</div>';
+      html += '<div style="font-size:13px;line-height:1.55;margin-top:2px;flex:1">'+( i.angle||'')+'</div>';
+      html += '<button data-idx="'+idx+'" onclick="generateFromCalIdx(this.dataset.idx)" class="btn-primary" style="margin-top:12px;padding:6px 12px;font-size:11px;width:100%">Generate<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>';
       html += '</div>';
     }
     g.innerHTML=html;
