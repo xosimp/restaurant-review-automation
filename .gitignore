@@ -7,6 +7,16 @@ __pycache__/
 hosted_dashboard_condensed_backup.py
 hosted_dashboard_recovered.py
 .DS_Store
+
+# iOS app (ios/CavnarAI)
+ios/CavnarAI/CavnarAI.xcodeproj/
+ios/CavnarAI/Generated/
+ios/CavnarAI/build/
+ios/CavnarAI/.build/
+ios/CavnarAI/*.xcuserstate
+**/xcuserdata/
+**/*.xcscmblueprint
+**/*.xccheckout
 hosted_dashboard_condensed_backup.py
 hosted_dashboard_recovered.py
 .DS_Store
