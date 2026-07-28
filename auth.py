@@ -55,6 +55,7 @@ def init_auth(db_path: str = DB_PATH):
         "ALTER TABLE sessions ADD COLUMN ip_address TEXT",
         "ALTER TABLE sessions ADD COLUMN user_agent TEXT",
         "ALTER TABLE sessions ADD COLUMN active_restaurant_id INTEGER",
+        "ALTER TABLE sessions ADD COLUMN device_type TEXT NOT NULL DEFAULT 'web'",
         "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'client'",
         "ALTER TABLE users ADD COLUMN google_id TEXT",
     ]:
@@ -160,6 +161,7 @@ def list_users(db_path: str = DB_PATH) -> list[dict]:
 
 def create_session(user_id: int, days: int = 30,
                    ip_address: str = None, user_agent: str = None,
+                   device_type: str = "web",
                    db_path: str = DB_PATH) -> str:
     token = secrets.token_urlsafe(32)
     from datetime import timedelta
@@ -168,8 +170,8 @@ def create_session(user_id: int, days: int = 30,
     # Prune expired sessions for this user (keep active ones for multi-device support)
     conn.execute("DELETE FROM sessions WHERE user_id=? AND expires_at <= datetime('now')", (user_id,))
     conn.execute(
-        "INSERT INTO sessions (token, user_id, expires_at, ip_address, user_agent) VALUES (?,?,?,?,?)",
-        (token, user_id, expires, ip_address or "", user_agent or "")
+        "INSERT INTO sessions (token, user_id, expires_at, ip_address, user_agent, device_type) VALUES (?,?,?,?,?,?)",
+        (token, user_id, expires, ip_address or "", user_agent or "", device_type)
     )
     conn.commit()
     conn.close()
@@ -216,16 +218,21 @@ def get_session_user(token: str, db_path: str = DB_PATH) -> Optional[dict]:
         return None
     conn = get_conn(db_path)
     row = conn.execute("""
-        SELECT u.*, s.last_active, s.active_restaurant_id FROM sessions s
+        SELECT u.*, s.last_active, s.active_restaurant_id, s.device_type FROM sessions s
         JOIN users u ON s.user_id = u.id
         WHERE s.token=? AND s.expires_at > datetime('now') AND u.is_active=1
     """, (token,)).fetchone()
     if not row:
         conn.close()
         return None
-    # Check inactivity timeout
+    # Check inactivity timeout — exempt iOS sessions. The web session's
+    # 8-hour inactivity window is a reasonable "walked away from the laptop"
+    # rule, but it would log a phone out (2FA and all) every single time an
+    # owner checked the app once a day. iOS sessions rely on the 30-day hard
+    # expiry above plus the app's own Face ID lock on foreground instead.
+    is_ios_session = (row["device_type"] or "web") == "ios"
     last_active = row["last_active"] or ""
-    if last_active:
+    if last_active and not is_ios_session:
         try:
             from datetime import datetime, timedelta
             la = datetime.fromisoformat(last_active[:19])  # always naive UTC, drops any tz suffix
@@ -326,5 +333,24 @@ def admin_required(f):
                 from flask import jsonify as _jsonify_ar
                 return _jsonify_ar(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
             return redirect(url_for("auth.login"))
+        return f(*args, **kwargs, current_user=user)
+    return decorated
+
+def mobile_login_required(f):
+    """Bearer-token variant of login_required for the iOS app's /mobile/api/
+    routes. There's no cookie jar to read from on a native client, so this
+    reads Authorization: Bearer <token> instead — everything else about the
+    session (30-day expiry, owner active_restaurant_id overlay, the iOS
+    inactivity-timeout exemption above) is identical, since both decorators
+    resolve through the same get_session_user(). Always responds with JSON;
+    this blueprint has no HTML page to redirect an expired session to."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else ""
+        user = get_session_user(token) if token else None
+        if not user:
+            from flask import jsonify as _jsonify_mlr
+            return _jsonify_mlr(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
         return f(*args, **kwargs, current_user=user)
     return decorated

@@ -26,15 +26,19 @@ def _cache_get(key):
 def _cache_set(key, value):
     _insight_cache[key] = (datetime.utcnow(), value)
 
-@client_bp.route("/approve/<int:rid>", methods=["POST"])
-@login_required
-def approve(rid, current_user):
+# ── Shared handler bodies ────────────────────────────────────────────────────
+# Plain, Flask-independent helpers behind the web (client_bp) routes below.
+# Each returns (payload_dict, status_code) so both the web view (jsonify(**p),
+# status) and mobile_api.py's mobile views can call the exact same logic
+# without duplicating it.
+
+def _do_approve(rid, restaurant_id):
     # Determine response action before approving
     try:
         _ac = get_conn()
         _row = _ac.execute(
             "SELECT regenerate_count, draft_edited FROM reviews WHERE id=? AND restaurant_id=?",
-            (rid, current_user["restaurant_id"])
+            (rid, restaurant_id)
         ).fetchone()
         _ac.close()
         if _row:
@@ -45,19 +49,19 @@ def approve(rid, current_user):
             else:
                 _action = "approved_as_is"
             _ac2 = get_conn()
-            _ac2.execute("UPDATE reviews SET response_action=? WHERE id=? AND restaurant_id=?", (_action, rid, current_user["restaurant_id"]))
+            _ac2.execute("UPDATE reviews SET response_action=? WHERE id=? AND restaurant_id=?", (_action, rid, restaurant_id))
             _ac2.commit(); _ac2.close()
     except Exception as _ae:
         print(f"[approve] response_action error: {_ae}")
-    approve_response(rid, restaurant_id=current_user["restaurant_id"])
+    approve_response(rid, restaurant_id=restaurant_id)
     try:
         from models import log_event
-        log_event(current_user["restaurant_id"], "review_approved", {"review_id": rid})
+        log_event(restaurant_id, "review_approved", {"review_id": rid})
     except Exception:
         pass
     try:
         from webhooks import fire_webhook as _fw
-        _fw(current_user["restaurant_id"], "response.approved", {"review_id": rid})
+        _fw(restaurant_id, "response.approved", {"review_id": rid})
     except Exception:
         pass
     # Auto-post to Google in background thread — don't block the response
@@ -66,14 +70,14 @@ def approve(rid, current_user):
         conn = get_conn()
         row = conn.execute(
             "SELECT platform, draft_response, review_name FROM reviews WHERE id=? AND restaurant_id=?",
-            (rid, current_user["restaurant_id"])
+            (rid, restaurant_id)
         ).fetchone()
         conn.close()
         if row and row["platform"] == "google" and row["review_name"] and row["draft_response"]:
-            if is_connected(current_user["restaurant_id"]):
+            if is_connected(restaurant_id):
                 import threading as _t_gmb
                 _rid_capture = rid
-                _rest_id_capture = current_user["restaurant_id"]
+                _rest_id_capture = restaurant_id
                 _review_name = row["review_name"]
                 _draft = row["draft_response"]
                 def _post_gmb_bg():
@@ -98,10 +102,25 @@ def approve(rid, current_user):
                     except Exception as _ge:
                         print(f"[GMB] Background post error: {_ge}")
                 _t_gmb.Thread(target=_post_gmb_bg, daemon=True).start()
-                return jsonify(ok=True, auto_posted=True)
+                return {"ok": True, "auto_posted": True}, 200
     except Exception as e:
         print(f"[GMB] approve auto-post error: {e}")
-    return jsonify(ok=True, auto_posted=False)
+    return {"ok": True, "auto_posted": False}, 200
+
+
+def _do_skip(rid, restaurant_id):
+    conn = get_conn()
+    conn.execute("UPDATE reviews SET response_status='skipped' WHERE id=? AND restaurant_id=?",
+                 (rid, restaurant_id))
+    conn.commit(); conn.close()
+    return {"ok": True}, 200
+
+
+@client_bp.route("/approve/<int:rid>", methods=["POST"])
+@login_required
+def approve(rid, current_user):
+    payload, status = _do_approve(rid, current_user["restaurant_id"])
+    return jsonify(**payload), status
 
 @client_bp.route("/api/reviews/<int:rid>/delete", methods=["POST"])
 @login_required
@@ -117,11 +136,8 @@ def delete_review(rid, current_user):
 @client_bp.route("/skip/<int:rid>", methods=["POST"])
 @login_required
 def skip(rid, current_user):
-    conn = get_conn()
-    conn.execute("UPDATE reviews SET response_status='skipped' WHERE id=? AND restaurant_id=?",
-                 (rid, current_user["restaurant_id"]))
-    conn.commit(); conn.close()
-    return jsonify(ok=True)
+    payload, status = _do_skip(rid, current_user["restaurant_id"])
+    return jsonify(**payload), status
 
 def format_insight_html(text):
     import re as _re
@@ -190,15 +206,20 @@ def format_insight_html(text):
         num += 1
     return html + forecast_html
 
+def _do_review_stats(restaurant_id):
+    from models import get_review_stats as _grs
+    try:
+        stats = _grs(restaurant_id)
+        return stats, 200
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+
 @client_bp.route("/api/review-stats")
 @login_required
 def review_stats_api(current_user):
-    from models import get_review_stats as _grs
-    try:
-        stats = _grs(current_user["restaurant_id"])
-        return jsonify(**stats)
-    except Exception as e:
-        return jsonify(error=str(e)), 500
+    payload, status = _do_review_stats(current_user["restaurant_id"])
+    return jsonify(**payload), status
 
 @client_bp.route("/api/topic-heatmap")
 @login_required
@@ -680,34 +701,39 @@ def mkt_performance_api(current_user):
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
+def _do_ask_cavnar(restaurant_id, question):
+    """The AI copilot's shared body — answers a plain-English question about
+    the restaurant's own live data (reviews/labor/food cost/marketing,
+    whichever modules are active) instead of the owner having to piece it
+    together across tabs. Used by both the web panel and the mobile app."""
+    question = (question or "").strip()
+    if not question:
+        return {"ok": False, "error": "Ask a question first."}, 400
+    if len(question) > 500:
+        return {"ok": False, "error": "That question is too long — try to keep it under 500 characters."}, 400
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"askcavnar:{restaurant_id}", max_calls=10, window_secs=60):
+        return {"ok": False, "error": "Too many questions — please wait a moment and try again."}, 429
+    try:
+        from ask_cavnar import ask as _ask_cavnar
+        restaurant = get_restaurant(restaurant_id)
+        if not restaurant:
+            return {"ok": False, "error": "Restaurant not found"}, 404
+        answer = _ask_cavnar(restaurant, question)
+        return {"ok": True, "answer": answer}, 200
+    except Exception as e:
+        import ops
+        ops.capture(e, job="ask_cavnar", context=f"restaurant_id={restaurant_id}")
+        return {"ok": False, "error": "Couldn't get an answer right now — try again in a moment."}, 500
+
+
 @client_bp.route("/api/ask-cavnar", methods=["POST"])
 @login_required
 def ask_cavnar_api(current_user):
-    """The in-dashboard AI copilot — answers a plain-English question about
-    the restaurant's own live data (reviews/labor/food cost/marketing,
-    whichever modules are active) instead of the owner having to piece it
-    together across tabs."""
     rid = current_user["restaurant_id"]
     data = request.get_json() or {}
-    question = (data.get("question") or "").strip()
-    if not question:
-        return jsonify(ok=False, error="Ask a question first."), 400
-    if len(question) > 500:
-        return jsonify(ok=False, error="That question is too long — try to keep it under 500 characters."), 400
-    from ai_utils import ai_rate_limited
-    if ai_rate_limited(f"askcavnar:{rid}", max_calls=10, window_secs=60):
-        return jsonify(ok=False, error="Too many questions — please wait a moment and try again."), 429
-    try:
-        from ask_cavnar import ask as _ask_cavnar
-        restaurant = get_restaurant(rid)
-        if not restaurant:
-            return jsonify(ok=False, error="Restaurant not found"), 404
-        answer = _ask_cavnar(restaurant, question)
-        return jsonify(ok=True, answer=answer)
-    except Exception as e:
-        import ops
-        ops.capture(e, job="ask_cavnar", context=f"restaurant_id={rid}")
-        return jsonify(ok=False, error="Couldn't get an answer right now — try again in a moment."), 500
+    payload, status = _do_ask_cavnar(rid, data.get("question"))
+    return jsonify(**payload), status
 
 @client_bp.route("/api/mkt-insight")
 @login_required
@@ -916,36 +942,30 @@ def content_calendar(current_user):
     return jsonify(ideas=get_content_calendar_ideas(
         restaurant_id=current_user["restaurant_id"]))
 
-@client_bp.route("/api/regenerate-draft/<int:review_id>", methods=["POST"])
-@login_required
-def regenerate_draft(review_id, current_user):
-    """Regenerate AI draft for a review."""
+def _do_regenerate_draft(review_id, restaurant_id):
+    """Regenerate AI draft for a review — delegates to drafter.draft_response()
+    so a regenerated draft gets the same quality/model/urgency-escalation as
+    the original draft (this used to be a separate, drifted reimplementation)."""
     from models import get_conn, get_approved_examples
     from drafter import draft_response
     from ai_utils import ai_rate_limited
-    if ai_rate_limited(f"regen:{current_user['restaurant_id']}", max_calls=10, window_secs=60):
-        return jsonify(ok=False, error="Too many regenerations — please wait a moment and try again.")
+    if ai_rate_limited(f"regen:{restaurant_id}", max_calls=10, window_secs=60):
+        return {"ok": False, "error": "Too many regenerations — please wait a moment and try again."}, 200
     conn = get_conn()
     row = conn.execute("SELECT * FROM reviews WHERE id=? AND restaurant_id=?",
-                       (review_id, current_user["restaurant_id"])).fetchone()
+                       (review_id, restaurant_id)).fetchone()
     conn.close()
     if not row:
-        return jsonify(ok=False, error="Review not found")
+        return {"ok": False, "error": "Review not found"}, 200
     r = dict(row)
-    restaurant = get_restaurant(current_user["restaurant_id"])
+    restaurant = get_restaurant(restaurant_id)
     try:
-        # Delegate to drafter.draft_response() — this used to be a separate,
-        # inline reimplementation of the same prompt (on Haiku, with no retry,
-        # no temperature, and no urgency awareness) that had drifted out of
-        # sync with drafter.py's version. Sharing one implementation means a
-        # regenerated draft gets the same quality/model/urgency-escalation as
-        # the original draft.
-        examples = get_approved_examples(current_user["restaurant_id"], limit=4)
+        examples = get_approved_examples(restaurant_id, limit=4)
         new_draft = draft_response(
             review_id, r.get("rating", 3), r["text"], r.get("sentiment", "neutral"),
             restaurant.name,
             voice_notes=restaurant.voice_notes or "",
-            restaurant_id=current_user["restaurant_id"],
+            restaurant_id=restaurant_id,
             approved_examples=examples,
             sign_off=restaurant.sign_off_name or restaurant.name,
             never_say=restaurant.never_say or "",
@@ -954,36 +974,47 @@ def regenerate_draft(review_id, current_user):
         conn = get_conn()
         conn.execute(
             "UPDATE reviews SET response_status='drafted', regenerate_count=COALESCE(regenerate_count,0)+1 WHERE id=? AND restaurant_id=?",
-            (review_id, current_user["restaurant_id"])
+            (review_id, restaurant_id)
         )
         conn.commit(); conn.close()
-        return jsonify(ok=True, draft=new_draft)
+        return {"ok": True, "draft": new_draft}, 200
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return {"ok": False, "error": str(e)}, 200
 
-@client_bp.route("/api/save-draft/<int:review_id>", methods=["POST"])
-@login_required
-def save_draft(review_id, current_user):
-    """Save a manually edited draft."""
+
+def _do_save_draft(review_id, restaurant_id, draft_text):
     from models import update_draft
-    data = request.get_json()
-    draft = data.get("draft","").strip()
+    draft = (draft_text or "").strip()
     if not draft:
-        return jsonify(ok=False, error="Draft cannot be empty")
+        return {"ok": False, "error": "Draft cannot be empty"}, 200
     conn = get_conn()
     row = conn.execute("SELECT id FROM reviews WHERE id=? AND restaurant_id=?",
-                       (review_id, current_user["restaurant_id"])).fetchone()
+                       (review_id, restaurant_id)).fetchone()
     conn.close()
     if not row:
-        return jsonify(ok=False, error="Review not found")
+        return {"ok": False, "error": "Review not found"}, 200
     update_draft(review_id, draft)
     conn = get_conn()
     conn.execute(
         "UPDATE reviews SET response_status='drafted', draft_edited=1 WHERE id=? AND restaurant_id=?",
-        (review_id, current_user["restaurant_id"])
+        (review_id, restaurant_id)
     )
     conn.commit(); conn.close()
-    return jsonify(ok=True)
+    return {"ok": True}, 200
+
+
+@client_bp.route("/api/regenerate-draft/<int:review_id>", methods=["POST"])
+@login_required
+def regenerate_draft(review_id, current_user):
+    payload, status = _do_regenerate_draft(review_id, current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+@client_bp.route("/api/save-draft/<int:review_id>", methods=["POST"])
+@login_required
+def save_draft(review_id, current_user):
+    data = request.get_json()
+    payload, status = _do_save_draft(review_id, current_user["restaurant_id"], (data or {}).get("draft", ""))
+    return jsonify(**payload), status
 
 @client_bp.route("/api/labor-trend")
 @login_required
@@ -1713,20 +1744,16 @@ def client_upload_data(current_user):
 
 # ── Food cost quick count ─────────────────────────────────────────────────────
 
-@client_bp.route("/api/food-cost-quickcount", methods=["POST"])
-@login_required
-def food_cost_quickcount(current_user):
+def _do_food_cost_quickcount(restaurant_id, items):
     """Save Big-8 ingredient prices, compute week-over-week drift, return alerts."""
     import json as _json_fc
     from datetime import datetime as _dt_fc
     from models import get_client_data as _gcd, get_conn as _gcc
 
-    data = request.get_json() or {}
-    items = data.get("items", [])
     if not items or not isinstance(items, list):
-        return jsonify(ok=False, error="No items provided"), 400
+        return {"ok": False, "error": "No items provided"}, 400
 
-    rid = current_user["restaurant_id"]
+    rid = restaurant_id
     now_str = _dt_fc.now().strftime("%Y-%m-%d")
 
     # Load existing saved data
@@ -1786,22 +1813,21 @@ def food_cost_quickcount(current_user):
     conn.close()
 
     total_impact = sum(d["weekly_impact"] for d in drift if d["direction"] == "up")
-    return jsonify(ok=True, drift=drift, total_weekly_impact=round(total_impact, 2),
-                   submitted_at=now_str, prev_submitted_at=prev.get("submitted_at") if prev else None)
+    return {
+        "ok": True, "drift": drift, "total_weekly_impact": round(total_impact, 2),
+        "submitted_at": now_str, "prev_submitted_at": prev.get("submitted_at") if prev else None,
+    }, 200
 
 
-@client_bp.route("/api/food-cost/save-custom-item", methods=["POST"])
-@login_required
-def save_food_cost_custom_item(current_user):
+def _do_save_food_cost_custom_item(restaurant_id, name, unit):
     """Persist a custom ingredient name+unit to food_cost_json so it appears on next load."""
     import json as _jci
-    data = request.get_json() or {}
-    name = (data.get("name") or "").strip()
-    unit = (data.get("unit") or "").strip()
+    name = (name or "").strip()
+    unit = (unit or "").strip()
     if not name:
-        return jsonify(ok=False, error="Name required"), 400
+        return {"ok": False, "error": "Name required"}, 400
 
-    rid = current_user["restaurant_id"]
+    rid = restaurant_id
     from models import get_client_data as _gcd_ci, get_conn as _gcc_ci
     existing_raw = _gcd_ci(rid)
     fc = {}
@@ -1827,20 +1853,33 @@ def save_food_cost_custom_item(current_user):
         conn.commit()
         conn.close()
 
-    return jsonify(ok=True, name=name, unit=unit)
+    return {"ok": True, "name": name, "unit": unit}, 200
 
 
-@client_bp.route("/api/food-cost/delete-custom-item", methods=["POST"])
+@client_bp.route("/api/food-cost-quickcount", methods=["POST"])
 @login_required
-def delete_food_cost_custom_item(current_user):
+def food_cost_quickcount(current_user):
+    data = request.get_json() or {}
+    payload, status = _do_food_cost_quickcount(current_user["restaurant_id"], data.get("items", []))
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/food-cost/save-custom-item", methods=["POST"])
+@login_required
+def save_food_cost_custom_item(current_user):
+    data = request.get_json() or {}
+    payload, status = _do_save_food_cost_custom_item(current_user["restaurant_id"], data.get("name"), data.get("unit"))
+    return jsonify(**payload), status
+
+
+def _do_delete_food_cost_custom_item(restaurant_id, name):
     """Remove a saved custom ingredient by name from food_cost_json."""
     import json as _jcd
-    data = request.get_json() or {}
-    name = (data.get("name") or "").strip().lower()
+    name = (name or "").strip().lower()
     if not name:
-        return jsonify(ok=False, error="Name required"), 400
+        return {"ok": False, "error": "Name required"}, 400
 
-    rid = current_user["restaurant_id"]
+    rid = restaurant_id
     from models import get_client_data as _gcd_d, get_conn as _gcc_d
     existing_raw = _gcd_d(rid)
     fc = {}
@@ -1858,7 +1897,15 @@ def delete_food_cost_custom_item(current_user):
                  (payload, rid))
     conn.commit()
     conn.close()
-    return jsonify(ok=True)
+    return {"ok": True}, 200
+
+
+@client_bp.route("/api/food-cost/delete-custom-item", methods=["POST"])
+@login_required
+def delete_food_cost_custom_item(current_user):
+    data = request.get_json() or {}
+    payload, status = _do_delete_food_cost_custom_item(current_user["restaurant_id"], data.get("name"))
+    return jsonify(**payload), status
 
 
 # ── Review request ────────────────────────────────────────────────────────────
@@ -2571,77 +2618,97 @@ def guest_optin_submit(restaurant_id):
     return jsonify(ok=True)
 
 
-@client_bp.route("/api/switch-location", methods=["POST"])
-@login_required
-def switch_location(current_user):
+def _do_switch_location(current_user, target_id, token):
     if current_user.get("role") != "owner":
-        return jsonify(ok=False, error="Not an owner account"), 403
-    data = request.get_json()
-    target_id = int(data.get("restaurant_id", 0))
+        return {"ok": False, "error": "Not an owner account"}, 403
     if not target_id:
-        return jsonify(ok=False, error="Missing restaurant_id"), 400
+        return {"ok": False, "error": "Missing restaurant_id"}, 400
     # Validate target is in same group as base restaurant
     from models import get_restaurant, get_location_group
     base = get_restaurant(current_user["base_restaurant_id"])
     if not base or not base.location_group:
-        return jsonify(ok=False, error="No location group configured"), 400
+        return {"ok": False, "error": "No location group configured"}, 400
     group = get_location_group(base.location_group)
     valid_ids = [r["id"] for r in group]
     if target_id not in valid_ids:
-        return jsonify(ok=False, error="Location not in your group"), 403
+        return {"ok": False, "error": "Location not in your group"}, 403
     from auth import switch_active_restaurant
-    token = request.cookies.get("session_token")
     switch_active_restaurant(token, target_id)
     target = get_restaurant(target_id)
-    return jsonify(ok=True, restaurant_name=target.name, restaurant_id=target_id)
+    return {"ok": True, "restaurant_name": target.name, "restaurant_id": target_id}, 200
 
 
-@client_bp.route("/api/group-locations")
-@login_required
-def group_locations(current_user):
+def _do_group_locations(current_user):
     if current_user.get("role") != "owner":
-        return jsonify(ok=False, locations=[])
+        return {"ok": True, "locations": []}, 200
     from models import get_restaurant, get_location_group
     base = get_restaurant(current_user["base_restaurant_id"])
     if not base or not base.location_group:
-        return jsonify(ok=True, locations=[])
+        return {"ok": True, "locations": []}, 200
     group = get_location_group(base.location_group)
     active_id = current_user["restaurant_id"]
     locs = [{"id": r["id"], "name": r.get("location_name") or r["name"],
               "active": r["id"] == active_id} for r in group]
-    return jsonify(ok=True, locations=locs, group_name=base.location_group)
+    return {"ok": True, "locations": locs, "group_name": base.location_group}, 200
 
 
-@client_bp.route("/api/notifications")
-@login_required
-def get_notifications(current_user):
-    rid = current_user["restaurant_id"]
-    LABELS = {
-        "alert_1star":          "1★ review received",
-        "alert_2star":          "2★ review received",
-        "alert_5star":          "5★ review received",
-        "alert_health":         "Health/safety mention",
-        "alert_neg_spike":      "Negative review spike",
-        "alert_negative_trend": "Rating declining trend",
-        "alert_no_response":    "Unresponded review (48h)",
-        "alert_rating_threshold": "Rating below threshold",
-        "alert_labor_over":     "Labor % over target",
-    }
+# Notification/alert type → human label. Keys must match the UNPREFIXED
+# alert_type strings notify.py._log_alert() actually writes ("1star", not
+# "alert_1star") — a prior version of this dict used prefixed keys and so
+# never matched anything, silently falling back to the raw internal string.
+_NOTIFICATION_LABELS = {
+    "1star":            "1★ review received",
+    "2star":            "2★ review received",
+    "5star":            "5★ review received",
+    "health":           "Health/safety mention",
+    "neg_spike":        "Negative review spike",
+    "negative_trend":   "Rating declining trend",
+    "no_response":      "Unresponded review (48h)",
+    "rating_threshold": "Rating below threshold",
+    "labor_over":       "Labor % over target",
+}
+
+
+def _do_get_notifications(restaurant_id):
     try:
         conn = get_conn()
         rows = conn.execute(
             """SELECT alert_type, fired_at FROM alert_log
                WHERE restaurant_id=?
                ORDER BY fired_at DESC LIMIT 20""",
-            (rid,)
+            (restaurant_id,)
         ).fetchall()
         conn.close()
         items = [{"type": r["alert_type"],
-                  "label": LABELS.get(r["alert_type"], r["alert_type"]),
+                  "label": _NOTIFICATION_LABELS.get(r["alert_type"], r["alert_type"]),
                   "fired_at": r["fired_at"]} for r in rows]
-        return jsonify(ok=True, notifications=items)
+        return {"ok": True, "notifications": items}, 200
     except Exception as e:
-        return jsonify(ok=False, notifications=[])
+        return {"ok": False, "notifications": []}, 200
+
+
+@client_bp.route("/api/switch-location", methods=["POST"])
+@login_required
+def switch_location(current_user):
+    data = request.get_json() or {}
+    target_id = int(data.get("restaurant_id", 0))
+    token = request.cookies.get("session_token")
+    payload, status = _do_switch_location(current_user, target_id, token)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/group-locations")
+@login_required
+def group_locations(current_user):
+    payload, status = _do_group_locations(current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/notifications")
+@login_required
+def get_notifications(current_user):
+    payload, status = _do_get_notifications(current_user["restaurant_id"])
+    return jsonify(**payload), status
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────
