@@ -722,6 +722,7 @@ try:
     from auth import init_auth as _init_auth
     from webhooks import init_webhooks as _iwh
     from guest_marketing import init_guest_marketing as _igm
+    from push import init_push as _ipush
     _init_db()
     _init_auth()
     _isn()
@@ -731,6 +732,7 @@ try:
     _ioe()
     _iwh()
     _igm()
+    _ipush()
     print("DB init OK")
 except Exception as _e:
     print(f"DB init error: {_e}")

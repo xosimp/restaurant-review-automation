@@ -433,3 +433,34 @@ def mobile_switch_location(current_user):
 def mobile_group_locations(current_user):
     payload, status = _capi._do_group_locations(current_user)
     return jsonify(**payload), status
+
+
+# ── Push device-token registration ─────────────────────────────────────────
+
+@mobile_bp.route("/device-tokens", methods=["POST"])
+@mobile_login_required
+def mobile_register_device_token(current_user):
+    from push import register_device_token
+    data = request.get_json() or {}
+    apns_token = (data.get("apns_token") or "").strip()
+    environment = data.get("environment") or "production"
+    if not apns_token:
+        return jsonify(ok=False, error="apns_token required"), 400
+    if environment not in ("sandbox", "production"):
+        return jsonify(ok=False, error="environment must be 'sandbox' or 'production'"), 400
+    register_device_token(current_user["id"], current_user["restaurant_id"], apns_token, environment)
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/device-tokens/<apns_token>", methods=["DELETE"])
+@mobile_login_required
+def mobile_delete_device_token(apns_token, current_user):
+    from push import get_device_tokens, remove_device_token
+    # apns_tokens are long random hex strings issued by Apple, not sequential
+    # ids — effectively unguessable — but scope the delete to the caller's
+    # own restaurant anyway rather than trusting any authenticated bearer.
+    owned = any(t["apns_token"] == apns_token for t in get_device_tokens(current_user["restaurant_id"]))
+    if not owned:
+        return jsonify(ok=False, error="Device token not found"), 404
+    remove_device_token(apns_token)
+    return jsonify(ok=True)

@@ -325,16 +325,22 @@ class Restaurant:
     # Per-alert-type channel matrix
     al_health_email:      int       = 1
     al_health_sms:        int       = 0
+    al_health_push:       int       = 1
     al_1star_email:       int       = 1
     al_1star_sms:         int       = 0
+    al_1star_push:        int       = 1
     al_2star_email:       int       = 1
     al_2star_sms:         int       = 0
+    al_2star_push:        int       = 1
     al_5star_email:       int       = 0
     al_5star_sms:         int       = 0
+    al_5star_push:        int       = 1
     al_spike_email:       int       = 1
     al_spike_sms:         int       = 0
+    al_spike_push:        int       = 1
     al_unres_email:       int       = 1
     al_unres_sms:         int       = 0
+    al_unres_push:        int       = 1
     changelog_seen_at: Optional[str] = None
     alert_quiet_start: Optional[str] = None
     alert_quiet_end:   Optional[str] = None
@@ -462,16 +468,22 @@ def ensure_columns(db_path: str = DB_PATH):
         # Alert channel matrix
         ("restaurants", "al_health_email", "INTEGER DEFAULT 1"),
         ("restaurants", "al_health_sms",   "INTEGER DEFAULT 0"),
+        ("restaurants", "al_health_push",  "INTEGER DEFAULT 1"),
         ("restaurants", "al_1star_email",  "INTEGER DEFAULT 1"),
         ("restaurants", "al_1star_sms",    "INTEGER DEFAULT 0"),
+        ("restaurants", "al_1star_push",   "INTEGER DEFAULT 1"),
         ("restaurants", "al_2star_email",  "INTEGER DEFAULT 1"),
         ("restaurants", "al_2star_sms",    "INTEGER DEFAULT 0"),
+        ("restaurants", "al_2star_push",   "INTEGER DEFAULT 1"),
         ("restaurants", "al_5star_email",  "INTEGER DEFAULT 0"),
         ("restaurants", "al_5star_sms",    "INTEGER DEFAULT 0"),
+        ("restaurants", "al_5star_push",   "INTEGER DEFAULT 1"),
         ("restaurants", "al_spike_email",  "INTEGER DEFAULT 1"),
         ("restaurants", "al_spike_sms",    "INTEGER DEFAULT 0"),
+        ("restaurants", "al_spike_push",   "INTEGER DEFAULT 1"),
         ("restaurants", "al_unres_email",  "INTEGER DEFAULT 1"),
         ("restaurants", "al_unres_sms",    "INTEGER DEFAULT 0"),
+        ("restaurants", "al_unres_push",   "INTEGER DEFAULT 1"),
         # Review invite SMS
         ("review_requests", "customer_phone", "TEXT"),
         # Soft-delete
@@ -1116,9 +1128,12 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "alert_5star","alert_rating_threshold","alert_rating_floor","alert_labor_over",
         "alert_any_review","alert_resp_approved",
         "urgent_via_email","urgent_via_sms",
-        "al_health_email","al_health_sms","al_1star_email","al_1star_sms",
-        "al_2star_email","al_2star_sms","al_5star_email","al_5star_sms",
-        "al_spike_email","al_spike_sms","al_unres_email","al_unres_sms",
+        "al_health_email","al_health_sms","al_health_push",
+        "al_1star_email","al_1star_sms","al_1star_push",
+        "al_2star_email","al_2star_sms","al_2star_push",
+        "al_5star_email","al_5star_sms","al_5star_push",
+        "al_spike_email","al_spike_sms","al_spike_push",
+        "al_unres_email","al_unres_sms","al_unres_push",
         "changelog_seen_at",
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
@@ -1214,16 +1229,22 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         urgent_via_sms=row["urgent_via_sms"] if "urgent_via_sms" in row.keys() else 0,
         al_health_email=row["al_health_email"] if "al_health_email" in row.keys() else 1,
         al_health_sms=row["al_health_sms"]   if "al_health_sms"   in row.keys() else 0,
+        al_health_push=row["al_health_push"] if "al_health_push"  in row.keys() else 1,
         al_1star_email=row["al_1star_email"] if "al_1star_email" in row.keys() else 1,
         al_1star_sms=row["al_1star_sms"]     if "al_1star_sms"   in row.keys() else 0,
+        al_1star_push=row["al_1star_push"]   if "al_1star_push"  in row.keys() else 1,
         al_2star_email=row["al_2star_email"] if "al_2star_email" in row.keys() else 1,
         al_2star_sms=row["al_2star_sms"]     if "al_2star_sms"   in row.keys() else 0,
+        al_2star_push=row["al_2star_push"]   if "al_2star_push"  in row.keys() else 1,
         al_5star_email=row["al_5star_email"] if "al_5star_email" in row.keys() else 0,
         al_5star_sms=row["al_5star_sms"]     if "al_5star_sms"   in row.keys() else 0,
+        al_5star_push=row["al_5star_push"]   if "al_5star_push"  in row.keys() else 1,
         al_spike_email=row["al_spike_email"] if "al_spike_email" in row.keys() else 1,
         al_spike_sms=row["al_spike_sms"]     if "al_spike_sms"   in row.keys() else 0,
+        al_spike_push=row["al_spike_push"]   if "al_spike_push"  in row.keys() else 1,
         al_unres_email=row["al_unres_email"] if "al_unres_email" in row.keys() else 1,
         al_unres_sms=row["al_unres_sms"]     if "al_unres_sms"   in row.keys() else 0,
+        al_unres_push=row["al_unres_push"]   if "al_unres_push"  in row.keys() else 1,
         gmb_access_token=row["gmb_access_token"] if "gmb_access_token" in row.keys() else None,
         gmb_refresh_token=row["gmb_refresh_token"] if "gmb_refresh_token" in row.keys() else None,
         gmb_account_id=row["gmb_account_id"] if "gmb_account_id" in row.keys() else None,

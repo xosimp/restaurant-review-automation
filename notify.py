@@ -247,12 +247,12 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
                alert_neg_spike, alert_negative_trend, alert_no_response,
                urgent_via_sms, urgent_via_email, owner_email,
                alert_max_per_day,
-               al_health_email, al_health_sms,
-               al_1star_email,  al_1star_sms,
-               al_2star_email,  al_2star_sms,
-               al_5star_email,  al_5star_sms,
-               al_spike_email,  al_spike_sms,
-               al_unres_email,  al_unres_sms
+               al_health_email, al_health_sms, al_health_push,
+               al_1star_email,  al_1star_sms,  al_1star_push,
+               al_2star_email,  al_2star_sms,  al_2star_push,
+               al_5star_email,  al_5star_sms,  al_5star_push,
+               al_spike_email,  al_spike_sms,  al_spike_push,
+               al_unres_email,  al_unres_sms,  al_unres_push
         FROM restaurants WHERE id=?
     """, (restaurant_id,)).fetchone()
     conn.close()
@@ -260,10 +260,18 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
     if not row:
         return
 
-    # Global SMS/email on switches (must be on for any SMS/email to fire)
+    # Global SMS/email on switches (must be on for any SMS/email to fire).
+    # Push has no equivalent global switch (see blast() below) — so this
+    # early-return only short-circuits the whole function when EVERY channel,
+    # push included, is off for this restaurant; otherwise a restaurant that
+    # disabled both global SMS and email but still wants push would never
+    # even reach blast() to get it.
     global_sms   = bool(row["urgent_via_sms"])
     global_email = bool(row["urgent_via_email"])
-    if not global_sms and not global_email:
+    _push_cols = ("al_health_push", "al_1star_push", "al_2star_push",
+                  "al_5star_push", "al_spike_push", "al_unres_push")
+    any_push = any(row[c] for c in _push_cols if c in row.keys())
+    if not global_sms and not global_email and not any_push:
         return
 
     contacts    = get_alert_contacts(restaurant_id, sms_consent_only=True, db_path=db_path) if global_sms else []
@@ -303,21 +311,35 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
             return
         # Per-type channel flags (fall back to 1 so old data keeps working)
         type_map = {
-            "health":    ("al_health_sms",  "al_health_email"),
-            "1star":     ("al_1star_sms",   "al_1star_email"),
-            "2star":     ("al_2star_sms",   "al_2star_email"),
-            "5star":     ("al_5star_sms",   "al_5star_email"),
-            "neg_spike": ("al_spike_sms",   "al_spike_email"),
-            "unresponded":("al_unres_sms",  "al_unres_email"),
+            "health":    ("al_health_sms",  "al_health_email",  "al_health_push"),
+            "1star":     ("al_1star_sms",   "al_1star_email",   "al_1star_push"),
+            "2star":     ("al_2star_sms",   "al_2star_email",   "al_2star_push"),
+            "5star":     ("al_5star_sms",   "al_5star_email",   "al_5star_push"),
+            "neg_spike": ("al_spike_sms",   "al_spike_email",   "al_spike_push"),
+            "unresponded":("al_unres_sms",  "al_unres_email",   "al_unres_push"),
         }
-        sms_col, email_col = type_map.get(alert_type, ("al_health_sms", "al_health_email"))
+        sms_col, email_col, push_col = type_map.get(
+            alert_type, ("al_health_sms", "al_health_email", "al_health_push")
+        )
         via_sms   = global_sms   and bool(_col(sms_col,   0))
         via_email = global_email and bool(_col(email_col, 1))
+        # Push has no global on/off switch the way SMS/email do (urgent_via_sms/
+        # urgent_via_email exist because those channels cost money per message;
+        # push doesn't, so the per-type toggle alone is the gate) — and it's a
+        # no-op anyway if the owner never registered a device.
+        via_push  = bool(_col(push_col, 1))
         if via_sms and contacts:
             for c in contacts:
                 send_sms(c["phone"], sms_text)
         if via_email and owner_email:
             _send_alert_email(owner_email, subject, html)
+        if via_push:
+            try:
+                from push import fire_push as _fp
+                _fp(restaurant_id, alert_type, subject, sms_text,
+                    data={"alert_type": alert_type, "review_id": review_id})
+            except Exception:
+                pass
         _log_alert(restaurant_id, alert_type, review_id)
         try:
             from webhooks import fire_webhook as _fw
@@ -443,7 +465,7 @@ def check_no_response_alerts(db_path: str = DB_PATH):
     rows = conn.execute("""
         SELECT r.restaurant_id, rest.name, rest.owner_email,
                rest.urgent_via_sms, rest.urgent_via_email,
-               rest.al_unres_sms, rest.al_unres_email,
+               rest.al_unres_sms, rest.al_unres_email, rest.al_unres_push,
                COUNT(*) as overdue_count
         FROM reviews r
         JOIN restaurants rest ON rest.id = r.restaurant_id
@@ -451,7 +473,7 @@ def check_no_response_alerts(db_path: str = DB_PATH):
           AND r.response_status = 'pending'
           AND r.fetched_at <= datetime('now', '-48 hours')
           AND rest.alert_no_response = 1
-          AND (rest.urgent_via_sms = 1 OR rest.urgent_via_email = 1)
+          AND (rest.urgent_via_sms = 1 OR rest.urgent_via_email = 1 OR rest.al_unres_push = 1)
         GROUP BY r.restaurant_id
     """).fetchall()
     conn.close()
@@ -462,8 +484,10 @@ def check_no_response_alerts(db_path: str = DB_PATH):
         n           = row["overdue_count"]
         _unres_sms   = row["al_unres_sms"] if "al_unres_sms" in row.keys() else 1
         _unres_email = row["al_unres_email"] if "al_unres_email" in row.keys() else 1
+        _unres_push  = row["al_unres_push"] if "al_unres_push" in row.keys() else 1
         via_sms     = bool(row["urgent_via_sms"]) and bool(_unres_sms)
         via_email   = bool(row["urgent_via_email"]) and bool(_unres_email)
+        via_push    = bool(_unres_push)
         owner_email = row["owner_email"] or ""
 
         # 24h dedup
@@ -500,6 +524,14 @@ def check_no_response_alerts(db_path: str = DB_PATH):
 
         if via_email and owner_email:
             _send_alert_email(owner_email, f"⏰ Unresponded reviews — {name}", html)
+
+        if via_push:
+            try:
+                from push import fire_push as _fp
+                _fp(rid, "no_response", f"⏰ Unresponded reviews — {name}", sms,
+                    data={"alert_type": "no_response"})
+            except Exception:
+                pass
 
         _log_alert(rid, "no_response")
         try:
