@@ -13,8 +13,10 @@ final class DeepLinkRouter {
 
     func handleNotificationTap(alertType: String, reviewId: Int?) {
         // Every v1 push category (health/1star/2star/5star/neg_spike/
-        // no_response) is review-related — all of them land on Reviews.
-        pendingTab = .reviews
+        // no_response) is review-related — Reviews now lives inside the
+        // Modules tab (no per-module tabs anymore), so switch there and let
+        // ModulesGridView push into Reviews itself once pendingReviewID is set.
+        pendingTab = .modules
         pendingReviewID = reviewId
     }
 

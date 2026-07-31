@@ -284,7 +284,7 @@ def _do_mobile_home(current_user):
         elif key == "intel":
             kpi = _intel_home_kpi(restaurant)
 
-        modules_out.append({"key": key, "label": m["label"], "icon": key, "kpi": kpi})
+        modules_out.append({"key": key, "label": m["label"], "icon": key, "status": m["status"], "kpi": kpi})
 
     # "Needs attention" — same three checks and thresholds as the web Home
     # tab's card list (templates/dashboard.html, id="home-attention-list").

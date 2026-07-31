@@ -5,93 +5,59 @@ import Foundation
 /// owner glances at and the same "needs attention" list the web Home tab
 /// shows, not the full desktop dashboard's savings-breakdown/onboarding/
 /// marketing-agency-value machinery.
+///
+/// `modules` is a generic array (models.get_active_modules() on the
+/// backend), not a fixed set of named fields — this is what lets Home and
+/// the Modules tab render any number of modules (today: 5; tomorrow:
+/// Waitlist, Bar & Alcohol, whatever else) without an app update just to
+/// show a new module's tile.
 struct HomeSummary: Codable {
     let restaurantName: String
     let locationName: String?
     let brandColor: String?
-    let modules: ModuleFlags
-    let kpis: KPISet
+    let modules: [ModuleSummary]
     let needsAttention: [NeedsAttentionItem]
 
     enum CodingKeys: String, CodingKey {
         case restaurantName = "restaurant_name"
         case locationName = "location_name"
         case brandColor = "brand_color"
-        case modules, kpis
+        case modules
         case needsAttention = "needs_attention"
     }
 }
 
-struct ModuleFlags: Codable {
-    let reviews: Bool
-    let labor: Bool
-    let inventory: Bool
-    let marketing: Bool
-    let intel: Bool
+/// One entry in the active-modules list. `icon` is a small semantic
+/// vocabulary the backend controls (e.g. "reviews", "labor") — NOT a
+/// literal SF Symbol name; ModuleIcon.swift owns the actual symbol mapping
+/// so either side can change independently (a new backend module needs no
+/// app update to show its Home tile; a symbol tweak needs no backend
+/// redeploy).
+struct ModuleSummary: Codable, Identifiable, Hashable {
+    let key: String
+    let label: String
+    let icon: String
+    /// "available" or "coming_soon" — models.get_active_modules() on the
+    /// backend. A coming_soon module (Waitlist/Bar today) routes to
+    /// ComingSoonView instead of a real screen.
+    let status: String
+    let kpi: ModuleKPI?
+
+    var id: String { key }
+    var isAvailable: Bool { status == "available" }
 }
 
-struct KPISet: Codable {
-    let reviews: ReviewsKPI?
-    let labor: LaborKPI?
-    let foodCost: FoodCostKPI?
-    let marketing: MarketingKPI?
-
-    enum CodingKeys: String, CodingKey {
-        case reviews, labor, marketing
-        case foodCost = "food_cost"
-    }
+struct ModuleKPI: Codable, Hashable {
+    let value: String
+    let sublabel: String
 }
 
-struct ReviewsKPI: Codable {
-    let responded: Int
-    let total: Int
-    let responseRate: Double
-    let awaitingApproval: Int
-    let needsResponse: Int
-    let avgRating: Double
-
-    enum CodingKeys: String, CodingKey {
-        case responded, total
-        case responseRate = "response_rate"
-        case awaitingApproval = "awaiting_approval"
-        case needsResponse = "needs_response"
-        case avgRating = "avg_rating"
-    }
-}
-
-struct LaborKPI: Codable {
-    let overallLaborPct: Double
-    let target: Double
-    let onTrack: Bool
-    let overtimeCount: Int
-
-    enum CodingKeys: String, CodingKey {
-        case overallLaborPct = "overall_labor_pct"
-        case target
-        case onTrack = "on_track"
-        case overtimeCount = "overtime_count"
-    }
-}
-
-struct FoodCostKPI: Codable {
-    let recoverableMonthly: Int
-
-    enum CodingKeys: String, CodingKey {
-        case recoverableMonthly = "recoverable_monthly"
-    }
-}
-
-struct MarketingKPI: Codable {
-    let thisMonth: Int
-
-    enum CodingKeys: String, CodingKey {
-        case thisMonth = "this_month"
-    }
-}
-
+/// `module` names which module a tap should navigate into — a key into the
+/// Modules registry, not a literal tab name (the app has no per-module tabs
+/// anymore).
 struct NeedsAttentionItem: Codable, Identifiable {
     let type: String
-    let tab: String
+    let module: String
     let title: String
     let detail: String
 

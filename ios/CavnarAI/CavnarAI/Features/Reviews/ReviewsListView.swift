@@ -3,51 +3,55 @@ import SwiftUI
 struct ReviewsListView: View {
     @State private var viewModel = ReviewsListViewModel()
     @State private var deepLinkedReview: Review?
-    /// Set by DeepLinkRouter when a push notification is tapped — auto-opens
-    /// that review's detail screen once the list has loaded.
-    var deepLinkReviewID: Int?
+    @Environment(DeepLinkRouter.self) private var deepLinkRouter
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if viewModel.reviews.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
-                    ContentUnavailableView("No reviews", systemImage: "star.bubble")
-                } else {
-                    List(viewModel.reviews) { review in
-                        NavigationLink {
-                            ReviewDetailView(
-                                viewModel: ReviewDetailViewModel(review: review),
-                                onCompleted: { viewModel.removeFromQueue(reviewID: review.id) }
-                            )
-                        } label: {
-                            ReviewRow(review: review)
-                        }
+        // No NavigationStack of its own — this is now a pushed destination
+        // inside Home's or the Modules tab's stack, not a tab root, so it
+        // shares whichever stack pushed it in.
+        Group {
+            if viewModel.reviews.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
+                ContentUnavailableView("No reviews", systemImage: "star.bubble")
+            } else {
+                List(viewModel.reviews) { review in
+                    NavigationLink {
+                        ReviewDetailView(
+                            viewModel: ReviewDetailViewModel(review: review),
+                            onCompleted: { viewModel.removeFromQueue(reviewID: review.id) }
+                        )
+                    } label: {
+                        ReviewRow(review: review)
                     }
-                    .listStyle(.plain)
                 }
+                .listStyle(.plain)
             }
-            .background(Color.cavnarPaper)
-            .overlay {
-                if viewModel.isLoading && viewModel.reviews.isEmpty { ProgressView() }
-            }
-            .refreshable { await viewModel.load() }
-            .navigationTitle("Reviews")
-            .navigationDestination(item: $deepLinkedReview) { review in
-                ReviewDetailView(
-                    viewModel: ReviewDetailViewModel(review: review),
-                    onCompleted: { viewModel.removeFromQueue(reviewID: review.id) }
-                )
-            }
-            .task {
-                await viewModel.load()
-                openDeepLinkIfNeeded()
-            }
-            .onChange(of: deepLinkReviewID) { _, _ in openDeepLinkIfNeeded() }
+        }
+        .background(Color.cavnarPaper)
+        .overlay {
+            if viewModel.isLoading && viewModel.reviews.isEmpty { ProgressView() }
+        }
+        .refreshable { await viewModel.load() }
+        .navigationTitle("Reviews")
+        .navigationDestination(item: $deepLinkedReview) { review in
+            ReviewDetailView(
+                viewModel: ReviewDetailViewModel(review: review),
+                onCompleted: { viewModel.removeFromQueue(reviewID: review.id) }
+            )
+        }
+        .task {
+            await viewModel.load()
+            openDeepLinkIfNeeded()
         }
     }
 
+    /// Reads directly from the shared DeepLinkRouter (injected via
+    /// .environment in CavnarAIApp) rather than an init parameter — Reviews
+    /// is reached from two places now (Home's grid, the Modules tab), and a
+    /// tapped notification needs to reach it either way without RootView
+    /// having to construct this view itself.
     private func openDeepLinkIfNeeded() {
-        guard let deepLinkReviewID, let match = viewModel.reviews.first(where: { $0.id == deepLinkReviewID }) else {
+        guard let reviewID = deepLinkRouter.consumePendingReviewID(),
+              let match = viewModel.reviews.first(where: { $0.id == reviewID }) else {
             return
         }
         deepLinkedReview = match

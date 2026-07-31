@@ -5,33 +5,29 @@ import SwiftUI
 /// _do_mobile_home docstring).
 struct NeedsAttentionRow: View {
     let item: NeedsAttentionItem
-    var action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: iconName)
-                    .foregroundStyle(iconColor)
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(width: 20)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.title)
-                        .font(.cavnarBody(13, weight: 600))
-                        .foregroundStyle(Color.cavnarInk)
-                    Text(item.detail)
-                        .font(.cavnarBody(11))
-                        .foregroundStyle(Color.cavnarInk3)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.cavnarEmber)
+        HStack(spacing: 12) {
+            Image(systemName: iconName)
+                .foregroundStyle(iconColor)
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.cavnarBody(13, weight: 600))
+                    .foregroundStyle(Color.cavnarInk)
+                Text(item.detail)
+                    .font(.cavnarBody(11))
+                    .foregroundStyle(Color.cavnarInk3)
             }
-            .padding(12)
-            .background(iconColor.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.cavnarEmber)
         }
-        .buttonStyle(.plain)
+        .padding(12)
+        .background(iconColor.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private var iconName: String {

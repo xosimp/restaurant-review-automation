@@ -1,32 +1,28 @@
 import Foundation
 
-/// The app's top-level tabs — mirrors the subset of the web dashboard's tabs
-/// that make up the v1 mobile scope (Home, Reviews, Ask Cavnar, Food Cost).
-/// Labor/Marketing/Intel are desktop-first workflows deferred to v2/v3 (see
-/// the architecture plan) and have no tab here yet.
+/// The app's top-level tabs. Ask Cavnar moved to a persistent floating
+/// action button (matching the web app's own FAB pattern) instead of a tab,
+/// and Reviews/Food Cost/Labor/Marketing/Intel all live inside the Modules
+/// tab's grid rather than as separate tabs — a design that scales to any
+/// module count (see the architecture plan) instead of needing a redesign
+/// every time a module ships.
 enum AppTab: String, CaseIterable, Identifiable {
     case home
-    case reviews
-    case askCavnar
-    case foodCost
+    case modules
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .home: return "Home"
-        case .reviews: return "Reviews"
-        case .askCavnar: return "Ask Cavnar"
-        case .foodCost: return "Food Cost"
+        case .modules: return "Modules"
         }
     }
 
     var systemImage: String {
         switch self {
         case .home: return "house.fill"
-        case .reviews: return "star.bubble.fill"
-        case .askCavnar: return "sparkles"
-        case .foodCost: return "dollarsign.circle.fill"
+        case .modules: return "square.grid.2x2.fill"
         }
     }
 }

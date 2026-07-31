@@ -4,8 +4,9 @@ struct FoodCostQuickEntryView: View {
     @State private var viewModel = FoodCostQuickEntryViewModel()
 
     var body: some View {
-        NavigationStack {
-            Form {
+        // No NavigationStack of its own — pushed inside Home's or the
+        // Modules tab's stack now, not a tab root.
+        Form {
                 Section {
                     Text("Fill in this week's price per unit right after an invoice arrives.")
                         .font(.cavnarBody(12))
@@ -87,9 +88,8 @@ struct FoodCostQuickEntryView: View {
                     .foregroundStyle(Color.cavnarEmber)
                     .disabled(!viewModel.canSubmit)
                 }
-            }
-            .navigationTitle("Food Cost")
         }
+        .navigationTitle("Food Cost")
     }
 
     @ViewBuilder

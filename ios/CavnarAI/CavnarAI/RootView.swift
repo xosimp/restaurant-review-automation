@@ -5,6 +5,7 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var deepLinkRouter = DeepLinkRouter()
     @State private var selectedTab: AppTab = .home
+    @State private var showingAskCavnar = false
 
     var body: some View {
         Group {
@@ -16,6 +17,7 @@ struct RootView: View {
                 mainTabs
             }
         }
+        .environment(deepLinkRouter)
         .onAppear {
             PushManager.shared.router = deepLinkRouter
         }
@@ -31,26 +33,61 @@ struct RootView: View {
 
     private var mainTabs: some View {
         TabView(selection: $selectedTab) {
-            HomeView(onSelectTab: { selectedTab = $0 })
+            HomeView()
                 .tabItem { Label(AppTab.home.title, systemImage: AppTab.home.systemImage) }
                 .tag(AppTab.home)
 
-            ReviewsListView(deepLinkReviewID: deepLinkRouter.pendingReviewID)
-                .tabItem { Label(AppTab.reviews.title, systemImage: AppTab.reviews.systemImage) }
-                .tag(AppTab.reviews)
-
-            AskCavnarView()
-                .tabItem { Label(AppTab.askCavnar.title, systemImage: AppTab.askCavnar.systemImage) }
-                .tag(AppTab.askCavnar)
-
-            FoodCostQuickEntryView()
-                .tabItem { Label(AppTab.foodCost.title, systemImage: AppTab.foodCost.systemImage) }
-                .tag(AppTab.foodCost)
+            ModulesGridView()
+                .tabItem { Label(AppTab.modules.title, systemImage: AppTab.modules.systemImage) }
+                .tag(AppTab.modules)
         }
         .tint(Color.cavnarEmber)
         .task {
             PushManager.shared.requestAuthorizationAndRegister()
         }
+        // .overlay (not a ZStack sibling) so the FAB actually receives taps —
+        // a ZStack sibling next to TabView silently lost hit-testing to the
+        // tab content underneath it.
+        .overlay(alignment: .bottomTrailing) {
+            AskCavnarFAB { showingAskCavnar = true }
+                .padding(.trailing, 20)
+                .padding(.bottom, 70)  // clears the tab bar
+        }
+        .sheet(isPresented: $showingAskCavnar) {
+            AskCavnarView()
+        }
+    }
+}
+
+/// Persistent floating action button reachable from any tab — matches the
+/// web dashboard's own Ask Cavnar bubble (a FAB there too, not a tab), and
+/// frees a permanent tab slot as more modules ship (see the architecture plan).
+private struct AskCavnarFAB: View {
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 56, height: 56)
+                .background(Color.cavnarEmber)
+                .clipShape(Circle())
+                .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+        }
+        .buttonStyle(FABPressStyle())
+    }
+}
+
+/// A separate simultaneousGesture(DragGesture(minimumDistance: 0)) used to
+/// power the press-scale animation previously competed with the Button's own
+/// tap recognition and could swallow the tap entirely. configuration.isPressed
+/// gets the same visual feedback without a second gesture in the mix.
+private struct FABPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.9 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

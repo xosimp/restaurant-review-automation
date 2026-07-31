@@ -5,7 +5,6 @@ struct HomeView: View {
     @State private var viewModel = HomeViewModel()
     @State private var showingLocationSwitcher = false
     @State private var showingNotifications = false
-    var onSelectTab: (AppTab) -> Void
 
     var body: some View {
         NavigationStack {
@@ -13,8 +12,7 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     if let summary = viewModel.summary {
                         header(summary)
-                        KPIRow(kpis: summary.kpis, modules: summary.modules, onSelectTab: onSelectTab)
-                            .cavnarCard()
+                        HomeModuleGrid(modules: summary.modules)
                         needsAttentionSection(summary)
                     } else if viewModel.isLoading {
                         ProgressView().padding(.top, 80)
@@ -86,9 +84,15 @@ struct HomeView: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(summary.needsAttention) { item in
-                        NeedsAttentionRow(item: item) {
-                            onSelectTab(AppTab(rawValue: item.tab == "reviews" ? "reviews" : "home") ?? .home)
+                        NavigationLink {
+                            ModuleDestinationView(
+                                moduleKey: item.module,
+                                moduleLabel: item.module.capitalized
+                            )
+                        } label: {
+                            NeedsAttentionRow(item: item)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
                 .cavnarCard()
