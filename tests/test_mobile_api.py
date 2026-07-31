@@ -300,9 +300,19 @@ def test_home_returns_kpis_and_needs_attention_for_fresh_restaurant(client, db_p
     data = resp.get_json()
     assert resp.status_code == 200
     assert data["ok"] is True
-    assert data["modules"]["reviews"] is True
-    assert "reviews" in data["kpis"]
+    module_keys = [m["key"] for m in data["modules"]]
+    assert "reviews" in module_keys
     assert isinstance(data["needs_attention"], list)
+
+
+def test_home_omits_modules_the_restaurant_does_not_have(client, db_path):
+    rid = _restaurant(db_path, module_marketing=0)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/home", headers=_auth_headers(token))
+    data = resp.get_json()
+    module_keys = [m["key"] for m in data["modules"]]
+    assert "marketing" not in module_keys
+    assert "reviews" in module_keys  # default-on modules still show
 
 
 def test_home_surfaces_awaiting_approval_in_needs_attention(client, db_path):
@@ -311,9 +321,12 @@ def test_home_surfaces_awaiting_approval_in_needs_attention(client, db_path):
     token = _login(client, db_path, rid)
     resp = client.get("/mobile/api/home", headers=_auth_headers(token))
     data = resp.get_json()
-    assert data["kpis"]["reviews"]["awaiting_approval"] == 1
+    reviews_module = next(m for m in data["modules"] if m["key"] == "reviews")
+    assert reviews_module["kpi"]["value"] == "0/1"
     types = [item["type"] for item in data["needs_attention"]]
     assert "reviews_awaiting_approval" in types
+    modules_hit = [item["module"] for item in data["needs_attention"]]
+    assert "reviews" in modules_hit
 
 
 def test_reviews_endpoint_scoped_to_own_restaurant(client, db_path):
@@ -326,3 +339,127 @@ def test_reviews_endpoint_scoped_to_own_restaurant(client, db_path):
     data = resp.get_json()
     assert data["ok"] is True
     assert data["reviews"] == []  # restaurant B sees none of restaurant A's reviews
+
+
+# ── /mobile/api/labor ───────────────────────────────────────────────────────
+
+def test_labor_endpoint_requires_auth(client):
+    resp = client.get("/mobile/api/labor")
+    assert resp.status_code == 401
+
+
+def test_labor_endpoint_reflects_own_restaurants_target_only(client, db_path):
+    rid_a = _restaurant(db_path, name="Restaurant A", labor_target_pct=25.0)
+    rid_b = _restaurant(db_path, name="Restaurant B", labor_target_pct=35.0)
+    token_a = _login(client, db_path, rid_a, username="alice")
+
+    resp = client.get("/mobile/api/labor", headers=_auth_headers(token_a))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["target"] == 25.0
+    assert data["target"] != 35.0  # never leaks restaurant B's target
+
+
+def test_generate_schedule_requires_auth(client):
+    resp = client.post("/mobile/api/labor/generate-schedule")
+    assert resp.status_code == 401
+
+
+def test_schedule_status_unknown_job_returns_404(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/labor/schedule-status/not-a-real-job-id", headers=_auth_headers(token))
+    assert resp.status_code == 404
+
+
+# ── /mobile/api/marketing ────────────────────────────────────────────────────
+
+def test_marketing_endpoint_requires_auth(client):
+    resp = client.get("/mobile/api/marketing")
+    assert resp.status_code == 401
+
+
+def test_marketing_stats_scoped_to_own_restaurant(client, db_path):
+    rid_a = _restaurant(db_path, name="Restaurant A")
+    rid_b = _restaurant(db_path, name="Restaurant B")
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
+        content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
+        created_at TEXT DEFAULT (datetime('now')))""")
+    conn.execute(
+        "INSERT INTO marketing_content_log (restaurant_id, content_type, topic) VALUES (?, 'instagram_post', 'test')",
+        (rid_a,)
+    )
+    conn.commit()
+    conn.close()
+    token_b = _login(client, db_path, rid_b, username="bob")
+
+    resp = client.get("/mobile/api/marketing", headers=_auth_headers(token_b))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["stats"]["generated"] == 0  # restaurant B sees none of A's generated content
+
+
+def test_generate_content_requires_auth(client):
+    resp = client.post("/mobile/api/marketing/generate-content", json={"type": "instagram_post", "topic": "tacos"})
+    assert resp.status_code == 401
+
+
+def test_generate_content_returns_generated_text_on_success(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("ai_utils.ai_rate_limited", lambda *a, **kw: False)
+    monkeypatch.setattr("marketing.generate_content", lambda *a, **kw: "Fresh pasta, fresher vibes. 🍝")
+
+    resp = client.post(
+        "/mobile/api/marketing/generate-content", json={"type": "instagram_post", "topic": "pasta"},
+        headers=_auth_headers(token)
+    )
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert data["ok"] is True
+    assert data["content"] == "Fresh pasta, fresher vibes. 🍝"
+
+
+def test_generate_content_rate_limited_returns_429(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("ai_utils.ai_rate_limited", lambda *a, **kw: True)
+
+    resp = client.post(
+        "/mobile/api/marketing/generate-content", json={"type": "instagram_post", "topic": "pasta"},
+        headers=_auth_headers(token)
+    )
+    assert resp.status_code == 429
+    assert resp.get_json()["ok"] is False
+
+
+# ── /mobile/api/intel ─────────────────────────────────────────────────────
+
+def test_intel_endpoint_requires_auth(client):
+    resp = client.get("/mobile/api/intel")
+    assert resp.status_code == 401
+
+
+def test_intel_endpoint_reports_no_data_when_competitor_intel_empty(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/intel", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["has_data"] is False
+
+
+def test_intel_endpoint_scoped_to_own_restaurant(client, db_path):
+    rid_a = _restaurant(db_path, name="Restaurant A")
+    rid_b = _restaurant(db_path, name="Restaurant B")
+    update_restaurant(rid_a, {
+        "competitor_intel": "WHAT COMPETITORS DO WELL:\n- Fast service\n\nRecommendations:\n- Speed up service"
+    }, db_path=db_path)
+    token_b = _login(client, db_path, rid_b, username="bob")
+
+    resp = client.get("/mobile/api/intel", headers=_auth_headers(token_b))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["has_data"] is False  # restaurant B has no competitor_intel of its own

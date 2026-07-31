@@ -15,7 +15,8 @@ from emails import send_payment_email, send_welcome_email
 from models import (init_db, get_conn, approve_response,
                     get_reviews_since, get_restaurant,
                     get_review_stats, get_reviews_data, get_top_issues,
-                    get_platform_breakdown, get_sentiment_trend, is_full_tier)
+                    get_platform_breakdown, get_sentiment_trend, is_full_tier,
+                    get_active_modules)
 from auth import (init_auth, verify_password, create_session,
                   get_session_user, delete_session, create_user,
                   list_users, update_password,
@@ -641,6 +642,12 @@ def index(current_user):
         mod_inventory=int(restaurant.module_inventory or 0),
         mod_marketing=int(restaurant.module_marketing or 0),
         is_full_tier=is_full_tier(restaurant),
+        # The registry-backed single source of truth (models.get_active_modules) —
+        # not yet consumed by dashboard.html's many independent {% if mod_x %}
+        # checks (a larger, separate template refactor), but exposed here so the
+        # web layer exercises the same function the mobile API now relies on,
+        # rather than that function only ever running for mobile requests.
+        active_modules=get_active_modules(restaurant),
         now=datetime.now().strftime("%b %d, %Y"),
         viewing_as=current_user.get("is_admin", 0),
         labor_target=float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0,

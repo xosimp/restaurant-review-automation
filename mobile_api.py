@@ -30,7 +30,7 @@ from auth import (
     revoke_other_sessions, mobile_login_required, get_user_by_restaurant_id,
 )
 from auth_routes import _is_rate_limited, _record_failed_attempt, _clear_attempts, _get_client_ip
-from models import get_restaurant, update_restaurant, is_full_tier, get_conn
+from models import get_restaurant, update_restaurant, get_conn
 
 import client_api as _capi
 
@@ -203,94 +203,113 @@ def mobile_revoke_other_sessions(current_user):
 # (get_review_stats, analyse_shifts_for_restaurant, analyse_inventory) so the
 # two surfaces never disagree — just less of it, and no marketing copy.
 
+def _intel_home_kpi(restaurant):
+    """No stored numeric 'average competitor rating' exists — competitor_intel
+    is free-text AI analysis, not structured data. Rather than fabricate a
+    number, the Home tile surfaces how many recommendations are ready to
+    read (the full Intel screen does the real side-by-side comparison)."""
+    if not getattr(restaurant, "competitor_intel", None):
+        return {"value": "—", "sublabel": "no data yet"}
+    try:
+        from competitor_intel_format import parse_competitor_intel
+        parsed = parse_competitor_intel(restaurant.competitor_intel)
+        n = len(parsed.get("recommendations", []))
+        return {"value": str(n), "sublabel": f"recommendation{'' if n == 1 else 's'} ready"}
+    except Exception:
+        return {"value": "—", "sublabel": "no data yet"}
+
+
 def _do_mobile_home(current_user):
-    from models import get_review_stats
+    from models import get_review_stats, get_active_modules
     rid = current_user["restaurant_id"]
     restaurant = get_restaurant(rid)
     if not restaurant:
         return {"ok": False, "error": "Restaurant not found"}, 404
 
-    mod_reviews = bool(restaurant.module_reviews)
-    mod_labor = bool(restaurant.module_labor)
-    mod_inventory = bool(restaurant.module_inventory)
-    mod_marketing = bool(restaurant.module_marketing)
+    active_modules = get_active_modules(restaurant)
+    active_keys = {m["key"] for m in active_modules}
 
-    rstats = get_review_stats(rid) if mod_reviews else {}
-    kpis = {}
-    if mod_reviews:
-        kpis["reviews"] = {
-            "responded": rstats.get("responded", 0),
-            "total": rstats.get("total", 0),
-            "response_rate": rstats.get("response_rate", 0),
-            "awaiting_approval": rstats.get("awaiting_approval", 0),
-            "needs_response": rstats.get("needs_response", 0),
-            "avg_rating": rstats.get("avg_rating", 0),
-        }
-
+    rstats = get_review_stats(rid) if "reviews" in active_keys else {}
     labor = None
-    if mod_labor:
+    if "labor" in active_keys:
         try:
             from labor import analyse_shifts_for_restaurant
             labor = analyse_shifts_for_restaurant(rid)
         except Exception:
             labor = None
-        labor_target = float(restaurant.labor_target_pct or 30.0)
-        overall_pct = (labor or {}).get("overall_labor_pct", 0)
-        kpis["labor"] = {
-            "overall_labor_pct": round(overall_pct, 1),
-            "target": labor_target,
-            "on_track": overall_pct <= labor_target,
-            "overtime_count": sum(
-                1 for o in (labor or {}).get("overtime_risk", []) if o.get("status") == "overtime"
-            ),
-        }
 
-    if mod_inventory:
-        try:
-            from inventory import load_inventory_for_restaurant, analyse_inventory
-            _items, _live = load_inventory_for_restaurant(rid)
-            inv = analyse_inventory(_items)
-        except Exception:
-            inv = {}
-        kpis["food_cost"] = {"recoverable_monthly": int(inv.get("recoverable_monthly", 0))}
+    modules_out = []
+    for m in active_modules:
+        key = m["key"]
+        kpi = None
+        if key == "reviews":
+            kpi = {
+                "value": f"{rstats.get('responded', 0)}/{rstats.get('total', 0)}",
+                "sublabel": f"{rstats.get('response_rate', 0)}% response rate",
+            }
+        elif key == "labor":
+            labor_target = float(restaurant.labor_target_pct or 30.0)
+            overall_pct = (labor or {}).get("overall_labor_pct", 0)
+            on_track = overall_pct <= labor_target
+            kpi = {
+                "value": f"{round(overall_pct, 1)}%",
+                "sublabel": "on track" if on_track else f"over {int(labor_target)}% target",
+            }
+        elif key == "inventory":
+            try:
+                from inventory import load_inventory_for_restaurant, analyse_inventory
+                _items, _live = load_inventory_for_restaurant(rid)
+                inv = analyse_inventory(_items)
+            except Exception:
+                inv = {}
+            kpi = {
+                "value": f"${int(inv.get('recoverable_monthly', 0))}",
+                "sublabel": "recoverable / mo",
+            }
+        elif key == "marketing":
+            try:
+                conn = get_conn()
+                conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
+                    content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
+                    created_at TEXT DEFAULT (datetime('now')))""")
+                this_month = conn.execute(
+                    "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')",
+                    (rid,)
+                ).fetchone()[0] or 0
+                conn.close()
+            except Exception:
+                this_month = 0
+            kpi = {"value": str(this_month), "sublabel": "pieces this month"}
+        elif key == "intel":
+            kpi = _intel_home_kpi(restaurant)
 
-    if mod_marketing:
-        try:
-            conn = get_conn()
-            conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
-                content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
-                created_at TEXT DEFAULT (datetime('now')))""")
-            this_month = conn.execute(
-                "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')",
-                (rid,)
-            ).fetchone()[0] or 0
-            conn.close()
-        except Exception:
-            this_month = 0
-        kpis["marketing"] = {"this_month": this_month}
+        modules_out.append({"key": key, "label": m["label"], "icon": key, "kpi": kpi})
 
     # "Needs attention" — same three checks and thresholds as the web Home
     # tab's card list (templates/dashboard.html, id="home-attention-list").
+    # `module` names the module key a tap should navigate into — the mobile
+    # app no longer has one tab per module, so this is a key into the
+    # Modules grid/registry, not a literal tab name.
     needs_attention = []
-    if mod_reviews and rstats.get("awaiting_approval", 0) > 0:
+    if "reviews" in active_keys and rstats.get("awaiting_approval", 0) > 0:
         n = rstats["awaiting_approval"]
         needs_attention.append({
-            "type": "reviews_awaiting_approval", "tab": "reviews",
+            "type": "reviews_awaiting_approval", "module": "reviews",
             "title": f"{n} review{'' if n == 1 else 's'} awaiting approval",
             "detail": "AI responses drafted — publish in one click",
         })
-    if mod_labor and labor and labor.get("overtime_risk"):
+    if "labor" in active_keys and labor and labor.get("overtime_risk"):
         ot_count = sum(1 for o in labor["overtime_risk"] if o.get("status") == "overtime")
         if ot_count > 0:
             needs_attention.append({
-                "type": "labor_overtime", "tab": "labor",
+                "type": "labor_overtime", "module": "labor",
                 "title": f"{ot_count} staff member{'' if ot_count == 1 else 's'} in overtime",
                 "detail": f"Est. ${ot_count * 38}+ extra in OT wages this week",
             })
-    if mod_reviews and rstats.get("total", 0) > 0 and rstats.get("response_rate", 0) < 50:
+    if "reviews" in active_keys and rstats.get("total", 0) > 0 and rstats.get("response_rate", 0) < 50:
         needs_attention.append({
-            "type": "low_response_rate", "tab": "reviews",
+            "type": "low_response_rate", "module": "reviews",
             "title": f"Response rate at {rstats['response_rate']}%",
             "detail": "Restaurants at 80%+ get 2x more new guests",
         })
@@ -300,12 +319,7 @@ def _do_mobile_home(current_user):
         "restaurant_name": restaurant.name,
         "location_name": restaurant.location_name or None,
         "brand_color": restaurant.brand_color or None,
-        "modules": {
-            "reviews": mod_reviews, "labor": mod_labor,
-            "inventory": mod_inventory, "marketing": mod_marketing,
-            "intel": bool(restaurant.google_place_id) and is_full_tier(restaurant),
-        },
-        "kpis": kpis,
+        "modules": modules_out,
         "needs_attention": needs_attention,
     }, 200
 
@@ -464,3 +478,193 @@ def mobile_delete_device_token(apns_token, current_user):
         return jsonify(ok=False, error="Device token not found"), 404
     remove_device_token(apns_token)
     return jsonify(ok=True)
+
+
+# ── Labor ─────────────────────────────────────────────────────────────────
+
+def _do_mobile_labor(restaurant_id):
+    from labor import analyse_shifts_for_restaurant
+
+    restaurant = get_restaurant(restaurant_id)
+    target = float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0
+    try:
+        analysis = analyse_shifts_for_restaurant(restaurant_id)
+    except Exception:
+        analysis = {}
+
+    overall_pct = analysis.get("overall_labor_pct", 0)
+    overtime_risk = [
+        {
+            "employee": o.get("employee"), "hours": o.get("hours"),
+            "week": o.get("week"), "status": o.get("status"),
+        }
+        for o in analysis.get("overtime_risk", [])
+    ]
+    role_summary = sorted(
+        (
+            {
+                "role": role, "hours": d.get("hours", 0), "labor_cost": d.get("labor_cost", 0),
+                "headcount": d.get("headcount", 0), "labor_pct": d.get("labor_pct", 0),
+            }
+            for role, d in (analysis.get("role_summary") or {}).items()
+        ),
+        key=lambda r: r["labor_pct"], reverse=True,
+    )
+
+    return {
+        "ok": True,
+        "is_live": bool(analysis.get("is_live")),
+        "overall_labor_pct": overall_pct,
+        "target": target,
+        "on_track": overall_pct <= target,
+        "potential_savings": analysis.get("potential_savings", 0),
+        "overtime_risk": overtime_risk,
+        "role_summary": role_summary,
+    }, 200
+
+
+@mobile_bp.route("/labor")
+@mobile_login_required
+def mobile_labor(current_user):
+    payload, status = _do_mobile_labor(current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/labor/generate-schedule", methods=["POST"])
+@mobile_login_required
+def mobile_generate_schedule(current_user):
+    """Reuses client_api.py's existing background-job machinery
+    (_run_schedule_job / _schedule_jobs) rather than building a second job
+    system — the same async-generate-then-poll pattern the web Labor tab
+    already relies on."""
+    import threading
+    import uuid
+    from ai_utils import ai_rate_limited
+
+    rid = current_user["restaurant_id"]
+    if ai_rate_limited(f"schedule:{rid}", max_calls=3, window_secs=60):
+        return jsonify(ok=False, error="Too many schedule generations — please wait a moment and try again."), 429
+    job_id = str(uuid.uuid4())
+    _capi._schedule_jobs[job_id] = {"status": "pending", "result": None}
+    t = threading.Thread(target=_capi._run_schedule_job, args=(job_id, rid), daemon=True)
+    t.start()
+    return jsonify(ok=True, job_id=job_id)
+
+
+@mobile_bp.route("/labor/schedule-status/<job_id>")
+@mobile_login_required
+def mobile_schedule_status(job_id, current_user):
+    """Mirrors client_api.py's schedule_status() route body, reading the
+    same shared _schedule_jobs dict — unlike the web route this one does
+    require auth (mobile_login_required), a small deliberate hardening over
+    the web version's job-id-is-unguessable-so-no-login-needed approach,
+    since bearer auth costs nothing extra to check here."""
+    job = _capi._schedule_jobs.get(job_id)
+    if not job:
+        return jsonify(ok=False, status="error", error="Job not found"), 404
+    if job["status"] == "pending":
+        return jsonify(ok=True, status="pending")
+    try:
+        result = dict(job["result"])
+        result["status"] = job["status"]
+        _capi._schedule_jobs.pop(job_id, None)
+        return jsonify(**result)
+    except Exception as e:
+        return jsonify(ok=False, status="error", error=str(e)), 500
+
+
+# ── Marketing ─────────────────────────────────────────────────────────────
+
+def _do_mobile_marketing_stats(restaurant_id):
+    try:
+        conn = get_conn()
+        conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
+            content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
+            created_at TEXT DEFAULT (datetime('now')))""")
+        generated = conn.execute(
+            "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=?", (restaurant_id,)
+        ).fetchone()[0] or 0
+        published = conn.execute(
+            "SELECT COUNT(DISTINCT topic) FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL",
+            (restaurant_id,)
+        ).fetchone()[0] or 0
+        this_month = conn.execute(
+            "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','start of month')",
+            (restaurant_id,)
+        ).fetchone()[0] or 0
+        conn.close()
+        return {"generated": generated, "published": published, "this_month": this_month}
+    except Exception:
+        return {"generated": 0, "published": 0, "this_month": 0}
+
+
+def _do_mobile_marketing(restaurant_id):
+    from marketing import get_content_calendar_ideas
+    stats = _do_mobile_marketing_stats(restaurant_id)
+    try:
+        calendar = get_content_calendar_ideas(restaurant_id=restaurant_id)
+    except Exception:
+        calendar = []
+    return {"ok": True, "stats": stats, "calendar": calendar}, 200
+
+
+@mobile_bp.route("/marketing")
+@mobile_login_required
+def mobile_marketing(current_user):
+    payload, status = _do_mobile_marketing(current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
+def _do_mobile_generate_content(restaurant_id, content_type, topic):
+    from marketing import generate_content
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"gencontent:{restaurant_id}", max_calls=8, window_secs=60):
+        return {"ok": False, "error": "Too many requests — please wait a moment and try again."}, 429
+    try:
+        result = generate_content(content_type or "instagram_post", topic or "", restaurant_id=restaurant_id)
+        return {"ok": True, "content": result}, 200
+    except Exception as e:
+        return {"ok": False, "error": str(e)}, 500
+
+
+@mobile_bp.route("/marketing/generate-content", methods=["POST"])
+@mobile_login_required
+def mobile_generate_content(current_user):
+    data = request.get_json() or {}
+    payload, status = _do_mobile_generate_content(
+        current_user["restaurant_id"], data.get("type"), data.get("topic")
+    )
+    return jsonify(**payload), status
+
+
+# ── Intel ─────────────────────────────────────────────────────────────────
+
+def _do_mobile_intel(restaurant_id):
+    """Read-only — refreshing competitor intel is a long-running, desktop-
+    triggered operation (see ai-visibility/competitor refresh in
+    client_api.py); mobile just reads whatever that last produced."""
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant:
+        return {"ok": False, "error": "Restaurant not found"}, 404
+    if not getattr(restaurant, "competitor_intel", None):
+        return {"ok": True, "has_data": False, "intro": None, "recommendations": [], "sections": []}, 200
+    try:
+        from competitor_intel_format import parse_competitor_intel
+        parsed = parse_competitor_intel(restaurant.competitor_intel)
+        return {
+            "ok": True,
+            "has_data": True,
+            "intro": parsed.get("intro"),
+            "recommendations": parsed.get("recommendations", []),
+            "sections": [{"name": name, "bullets": bullets} for name, bullets in parsed.get("sections", [])],
+        }, 200
+    except Exception as e:
+        return {"ok": False, "error": str(e)}, 500
+
+
+@mobile_bp.route("/intel")
+@mobile_login_required
+def mobile_intel(current_user):
+    payload, status = _do_mobile_intel(current_user["restaurant_id"])
+    return jsonify(**payload), status

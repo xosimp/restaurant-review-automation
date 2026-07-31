@@ -1307,6 +1307,54 @@ def is_full_tier(restaurant: Optional["Restaurant"]) -> bool:
                 and restaurant.module_inventory and restaurant.module_marketing)
 
 
+# The one place "what modules exist and what's this restaurant entitled to"
+# is defined. Before this, hosted_dashboard.py's index(), mobile_api.py's
+# _do_mobile_home(), and dashboard.html's Jinja each independently re-derived
+# the same booleans by hand — a client-count-scaling problem as much as a
+# DRY one, since every new module meant hunting down and updating three
+# separate places. `column` entries that don't exist yet on `restaurants`
+# (waitlist/bar — sold on the pricing page, not built) are simply treated as
+# off, the same tolerant `"col" in row.keys()` pattern used everywhere else
+# in this file — so these entries can sit in the registry, inert, until a
+# real column and feature ship, with zero risk to restaurants that predate it.
+_MODULE_REGISTRY = [
+    {"key": "reviews",   "label": "Reviews",     "column": "module_reviews"},
+    {"key": "labor",     "label": "Labor",       "column": "module_labor"},
+    {"key": "inventory", "label": "Food Cost",   "column": "module_inventory"},
+    {"key": "marketing", "label": "Marketing",   "column": "module_marketing"},
+    # No DB column — derived, exactly per is_full_tier()'s docstring above.
+    {"key": "intel",     "label": "Intel",       "derived": lambda r: bool(getattr(r, "google_place_id", None)) and is_full_tier(r)},
+    # Sold on pricing.html, not implemented anywhere yet — reserved so the
+    # mobile "coming soon" placeholder mechanism has somewhere to point once
+    # a module_waitlist/module_bar column and real feature exist.
+    {"key": "waitlist",  "label": "Waitlist",      "column": "module_waitlist",  "status": "coming_soon"},
+    {"key": "bar",       "label": "Bar & Alcohol", "column": "module_bar",       "status": "coming_soon"},
+]
+
+
+def get_active_modules(restaurant: Optional["Restaurant"]) -> list[dict]:
+    """Returns only the modules this restaurant actually has, in registry
+    order, each as {"key", "label", "status"} — status is "available" unless
+    the registry entry says otherwise. Callers (web index(), mobile_api's
+    home endpoint) should use this instead of checking restaurant.module_*
+    booleans by hand."""
+    if not restaurant:
+        return []
+    active = []
+    for entry in _MODULE_REGISTRY:
+        if "derived" in entry:
+            is_on = entry["derived"](restaurant)
+        else:
+            is_on = bool(getattr(restaurant, entry["column"], 0))
+        if is_on:
+            active.append({
+                "key": entry["key"],
+                "label": entry["label"],
+                "status": entry.get("status", "available"),
+            })
+    return active
+
+
 # ── Review CRUD ───────────────────────────────────────────────────────────────
 
 def save_reviews(reviews: list[Review], db_path: str = DB_PATH) -> tuple[int, list]:
