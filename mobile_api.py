@@ -668,3 +668,316 @@ def _do_mobile_intel(restaurant_id):
 def mobile_intel(current_user):
     payload, status = _do_mobile_intel(current_user["restaurant_id"])
     return jsonify(**payload), status
+
+
+# ── Account / Settings ──────────────────────────────────────────────────────
+# The web dashboard's Account tab in one place: profile, security, POS/social
+# connection status, alert contacts, billing. Connecting a POS/social account
+# is an OAuth redirect flow that belongs on desktop (see dashboard.html's
+# gmbConnect/igConnect/openToastClientModal etc.) — mobile only reads
+# connection status here; the "connect" action, if ever added, would open
+# the same web OAuth URL in a system browser rather than reimplement OAuth.
+
+def _session_label(session):
+    if session.get("device_type") == "ios":
+        return "iPhone (Cavnar AI app)"
+    ua = session.get("user_agent") or ""
+    if "iPhone" in ua:
+        return "iPhone (browser)"
+    if "iPad" in ua:
+        return "iPad (browser)"
+    if "Android" in ua:
+        return "Android"
+    if "Macintosh" in ua:
+        return "Mac"
+    if "Windows" in ua:
+        return "Windows"
+    return "Web browser"
+
+
+def _do_mobile_account(current_user):
+    from notify import get_alert_contacts
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return {"ok": False, "error": "Restaurant not found"}, 404
+
+    profile = {
+        "restaurant_name": restaurant.name,
+        "location_name": restaurant.location_name or None,
+        "owner_name": restaurant.owner_name or None,
+        "owner_email": restaurant.owner_email or None,
+        "owner_phone": restaurant.owner_phone or None,
+        "neighborhood": restaurant.neighborhood or None,
+        "vibe": restaurant.vibe or None,
+        "known_for": restaurant.known_for or None,
+        "voice_notes": restaurant.voice_notes or None,
+        "never_say": restaurant.never_say or None,
+        "menu_notes": restaurant.menu_notes or None,
+    }
+    account = {
+        "username": current_user["username"],
+        "email": current_user["email"],
+        "two_fa_enabled": bool(restaurant.two_fa_enabled),
+        "login_notify": bool(getattr(restaurant, "login_notify", 0)),
+    }
+    connections = {
+        "google_business": {
+            "connected": bool(getattr(restaurant, "gmb_refresh_token", None)),
+        },
+        "instagram": {
+            "connected": bool(getattr(restaurant, "ig_token", None)),
+        },
+        "toast": {
+            "connected": bool(getattr(restaurant, "toast_restaurant_guid", None)),
+            "last_synced": getattr(restaurant, "toast_last_synced", None),
+        },
+        "square": {
+            "connected": bool(getattr(restaurant, "square_location_id", None)),
+            "last_synced": getattr(restaurant, "square_last_synced", None),
+        },
+        "clover": {
+            "connected": bool(getattr(restaurant, "clover_merchant_id", None)),
+            "last_synced": getattr(restaurant, "clover_last_synced", None),
+        },
+    }
+    alerts = {
+        "contacts": get_alert_contacts(rid),
+        "settings": {
+            "alert_1star": bool(getattr(restaurant, "alert_1star", 0)),
+            "alert_2star": bool(getattr(restaurant, "alert_2star", 0)),
+            "alert_health": bool(getattr(restaurant, "alert_health", 0)),
+            "alert_neg_spike": bool(getattr(restaurant, "alert_neg_spike", 0)),
+            "alert_negative_trend": bool(getattr(restaurant, "alert_negative_trend", 0)),
+            "alert_no_response": bool(getattr(restaurant, "alert_no_response", 0)),
+            "alert_5star": bool(getattr(restaurant, "alert_5star", 0)),
+            "alert_labor_over": bool(getattr(restaurant, "alert_labor_over", 0)),
+            "urgent_via_sms": bool(getattr(restaurant, "urgent_via_sms", 0)),
+            "urgent_via_email": bool(getattr(restaurant, "urgent_via_email", 0)),
+            "digest_enabled": bool(getattr(restaurant, "digest_enabled", 1)),
+            "digest_day": getattr(restaurant, "digest_day", "monday"),
+        },
+    }
+    return {
+        "ok": True,
+        "profile": profile,
+        "account": account,
+        "connections": connections,
+        "alerts": alerts,
+    }, 200
+
+
+@mobile_bp.route("/account")
+@mobile_login_required
+def mobile_account(current_user):
+    payload, status = _do_mobile_account(current_user)
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/account/sessions")
+@mobile_login_required
+def mobile_account_sessions(current_user):
+    from auth import get_sessions_for_user
+    sessions = get_sessions_for_user(current_user["id"], current_token=_bearer_token())
+    for s in sessions:
+        s["label"] = _session_label(s)
+    return jsonify(ok=True, sessions=sessions)
+
+
+@mobile_bp.route("/account/change-password", methods=["POST"])
+@mobile_login_required
+def mobile_change_password(current_user):
+    from auth import update_password
+    data = request.get_json() or {}
+    user = verify_password(current_user["username"], data.get("current", ""))
+    if not user:
+        return jsonify(ok=False, error="Current password is incorrect"), 400
+    new_pw = data.get("new_password", "")
+    if len(new_pw) < 8:
+        return jsonify(ok=False, error="Password must be at least 8 characters"), 400
+    update_password(current_user["id"], new_pw)
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/2fa/send-test", methods=["POST"])
+@mobile_login_required
+def mobile_send_2fa_test(current_user):
+    import random as _random
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    email = restaurant.owner_email or ""
+    if not email or "@" not in email:
+        return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email."), 400
+    code = str(_random.randint(100000, 999999))
+    expires = (datetime.now() + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+    update_restaurant(rid, {"two_fa_code": code, "two_fa_expires": expires})
+    try:
+        from emails import send_2fa_code
+        send_2fa_code(email, restaurant.name or "your restaurant", code, restaurant.owner_name)
+    except Exception as e:
+        return jsonify(ok=False, error=f"Failed to send email: {str(e)[:60]}"), 500
+    masked = email[:2] + "***@" + email.split("@")[-1]
+    return jsonify(ok=True, masked=masked)
+
+
+@mobile_bp.route("/account/2fa/verify", methods=["POST"])
+@mobile_login_required
+def mobile_verify_2fa_setup(current_user):
+    rid = current_user["restaurant_id"]
+    data = request.get_json() or {}
+    code = (data.get("code") or "").strip()
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return jsonify(ok=False, error="Not found"), 404
+    if restaurant.two_fa_code != code:
+        return jsonify(ok=False, error="Incorrect code. Try again."), 400
+    expired = True
+    exp_str = (restaurant.two_fa_expires or "").strip()
+    for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M"]:
+        try:
+            expires = datetime.strptime(exp_str, fmt)
+            expired = datetime.now() > expires
+            break
+        except Exception:
+            continue
+    if expired:
+        return jsonify(ok=False, error="Code expired. Try again."), 400
+    update_restaurant(rid, {"two_fa_enabled": 1, "two_fa_code": "", "two_fa_expires": ""})
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/2fa/disable", methods=["POST"])
+@mobile_login_required
+def mobile_disable_2fa(current_user):
+    update_restaurant(current_user["restaurant_id"], {"two_fa_enabled": 0})
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/login-notify", methods=["POST"])
+@mobile_login_required
+def mobile_toggle_login_notify(current_user):
+    data = request.get_json() or {}
+    update_restaurant(current_user["restaurant_id"], {"login_notify": int(bool(data.get("enabled")))})
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/alert-settings", methods=["POST"])
+@mobile_login_required
+def mobile_save_alert_settings(current_user):
+    from notify import get_alert_contacts, add_alert_contact, delete_alert_contact
+    data = request.get_json() or {}
+    rid = current_user["restaurant_id"]
+
+    # SMS requires real, server-verified consent — same rule as the web
+    # endpoint (client_api.save_alert_settings): the client's checkbox is a
+    # UX nicety, not enforcement, since anyone can call this API directly.
+    sms_requested = bool(data.get("urgent_via_sms"))
+    sms_consented = bool(data.get("sms_consent"))
+    sms_on = sms_requested and sms_consented
+
+    new_contacts = (data.get("contacts") or [])[:2]
+    existing = get_alert_contacts(rid)
+    for ec in existing:
+        delete_alert_contact(ec["id"])
+    for nc in new_contacts:
+        phone = _capi._normalize_phone(nc.get("phone") or "")
+        name = (nc.get("name") or "").strip()
+        if phone:
+            add_alert_contact(rid, name, phone, sms_consent=sms_on)
+
+    update_restaurant(rid, {
+        "alert_1star": int(bool(data.get("alert_1star"))),
+        "alert_2star": int(bool(data.get("alert_2star"))),
+        "alert_health": int(bool(data.get("alert_health"))),
+        "alert_neg_spike": int(bool(data.get("alert_neg_spike"))),
+        "alert_negative_trend": int(bool(data.get("alert_negative_trend"))),
+        "alert_no_response": int(bool(data.get("alert_no_response"))),
+        "alert_5star": int(bool(data.get("alert_5star"))),
+        "alert_labor_over": int(bool(data.get("alert_labor_over"))),
+        "urgent_via_sms": int(sms_on),
+        "urgent_via_email": int(bool(data.get("urgent_via_email"))),
+        "digest_enabled": int(bool(data.get("digest_enabled"))),
+        "digest_day": data.get("digest_day", "monday"),
+    })
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/digest-day", methods=["POST"])
+@mobile_login_required
+def mobile_update_digest_day(current_user):
+    data = request.get_json() or {}
+    day = (data.get("day") or "monday").lower()
+    valid = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    if day not in valid:
+        return jsonify(ok=False, error="Invalid day"), 400
+    update_restaurant(current_user["restaurant_id"], {
+        "digest_day": day,
+        "digest_enabled": int(data.get("enabled", 1)),
+    })
+    return jsonify(ok=True)
+
+
+def _do_mobile_billing(restaurant_id):
+    import os as _os
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant or not getattr(restaurant, "stripe_customer_id", None):
+        return {"ok": False, "reason": "no_customer"}, 200
+
+    stripe_key = _os.getenv("STRIPE_SECRET_KEY", "")
+    if not stripe_key:
+        return {"ok": False, "reason": "no_key"}, 200
+
+    try:
+        import stripe as _stripe
+        _stripe.api_key = stripe_key
+        subs = _stripe.Subscription.list(customer=restaurant.stripe_customer_id, status="active", limit=5)
+        if not subs.data:
+            subs = _stripe.Subscription.list(customer=restaurant.stripe_customer_id, status="trialing", limit=5)
+        if not subs.data:
+            return {"ok": True, "status": "inactive", "message": "No active subscription found"}, 200
+
+        sub = subs.data[0]
+        next_date = datetime.fromtimestamp(sub.current_period_end).strftime("%-m/%-d/%Y")
+        amount = sum(i.price.unit_amount for i in sub["items"].data) / 100
+
+        pm_desc = "Card on file"
+        try:
+            customer = _stripe.Customer.retrieve(
+                restaurant.stripe_customer_id,
+                expand=["invoice_settings.default_payment_method"],
+            )
+            pm = customer.invoice_settings.default_payment_method
+            if pm and pm.card:
+                pm_desc = f"{pm.card.brand.title()} ending {pm.card.last4}"
+        except Exception:
+            pass
+
+        try:
+            portal = _stripe.billing_portal.Session.create(
+                customer=restaurant.stripe_customer_id,
+                return_url="https://dashboard.cavnar.ai",
+            )
+            portal_url = portal.url
+        except Exception:
+            portal_url = None
+
+        return {
+            "ok": True,
+            "status": sub.status,
+            "next_date": next_date,
+            "amount": f"${amount:,.0f}/mo",
+            "payment_method": pm_desc,
+            "portal_url": portal_url,
+            "trial_end": datetime.fromtimestamp(sub.trial_end).strftime("%-m/%-d/%Y") if sub.trial_end else None,
+        }, 200
+    except Exception as e:
+        return {"ok": False, "reason": "stripe_error", "error": str(e)}, 200
+
+
+@mobile_bp.route("/account/billing")
+@mobile_login_required
+def mobile_billing(current_user):
+    payload, status = _do_mobile_billing(current_user["restaurant_id"])
+    return jsonify(**payload), status

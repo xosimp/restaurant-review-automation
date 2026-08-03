@@ -9,6 +9,7 @@ import auth_routes
 import client_api
 import mobile_api
 import models
+import notify
 from auth import create_user, init_auth, set_user_role
 from auth_routes import _login_attempts
 from mobile_api import mobile_bp
@@ -22,7 +23,7 @@ def _redirect_db(monkeypatch, db_path):
     comment for the same gotcha."""
     real_get_conn = models.get_conn
     redirect = lambda *a, **k: real_get_conn(db_path)
-    for mod in (models, auth, auth_routes, client_api, mobile_api):
+    for mod in (models, auth, auth_routes, client_api, mobile_api, notify):
         monkeypatch.setattr(mod, "get_conn", redirect)
 
 
@@ -463,3 +464,277 @@ def test_intel_endpoint_scoped_to_own_restaurant(client, db_path):
     data = resp.get_json()
     assert data["ok"] is True
     assert data["has_data"] is False  # restaurant B has no competitor_intel of its own
+
+
+# ── /mobile/api/account ───────────────────────────────────────────────────
+
+def test_account_endpoint_requires_auth(client):
+    resp = client.get("/mobile/api/account")
+    assert resp.status_code == 401
+
+
+def test_account_endpoint_returns_profile_and_connections(client, db_path):
+    rid = _restaurant(db_path, owner_name="Gia Mia", neighborhood="River North")
+    token = _login(client, db_path, rid)
+    update_restaurant(rid, {"gmb_refresh_token": "tok123", "two_fa_enabled": 1}, db_path=db_path)
+
+    resp = client.get("/mobile/api/account", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["profile"]["owner_name"] == "Gia Mia"
+    assert data["profile"]["neighborhood"] == "River North"
+    assert data["account"]["two_fa_enabled"] is True
+    assert data["connections"]["google_business"]["connected"] is True
+    assert data["connections"]["instagram"]["connected"] is False
+
+
+def test_account_endpoint_scoped_to_own_restaurant(client, db_path):
+    rid_a = _restaurant(db_path, name="Restaurant A", owner_name="Owner A")
+    rid_b = _restaurant(db_path, name="Restaurant B", owner_name="Owner B")
+    token_b = _login(client, db_path, rid_b, username="bob")
+
+    resp = client.get("/mobile/api/account", headers=_auth_headers(token_b))
+    data = resp.get_json()
+    assert data["profile"]["owner_name"] == "Owner B"
+
+
+# ── /mobile/api/account/sessions ──────────────────────────────────────────
+
+def test_account_sessions_requires_auth(client):
+    resp = client.get("/mobile/api/account/sessions")
+    assert resp.status_code == 401
+
+
+def test_account_sessions_marks_current_session_and_device_type(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.get("/mobile/api/account/sessions", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert len(data["sessions"]) == 1
+    assert data["sessions"][0]["is_current"] is True
+    assert data["sessions"][0]["device_type"] == "ios"
+    assert data["sessions"][0]["label"] == "iPhone (Cavnar AI app)"
+
+
+# ── /mobile/api/account/change-password ───────────────────────────────────
+
+def test_change_password_requires_auth(client):
+    resp = client.post("/mobile/api/account/change-password", json={})
+    assert resp.status_code == 401
+
+
+def test_change_password_rejects_wrong_current_password(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.post(
+        "/mobile/api/account/change-password",
+        json={"current": "wrong-password", "new_password": "brandnewpass123"},
+        headers=_auth_headers(token),
+    )
+    data = resp.get_json()
+    assert resp.status_code == 400
+    assert data["ok"] is False
+
+
+def test_change_password_rejects_short_new_password(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.post(
+        "/mobile/api/account/change-password",
+        json={"current": "correct-horse", "new_password": "short"},
+        headers=_auth_headers(token),
+    )
+    assert resp.status_code == 400
+
+
+def test_change_password_succeeds_and_new_password_works_next_login(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.post(
+        "/mobile/api/account/change-password",
+        json={"current": "correct-horse", "new_password": "brandnewpass123"},
+        headers=_auth_headers(token),
+    )
+    assert resp.get_json()["ok"] is True
+
+    resp2 = client.post("/mobile/api/login", json={"username": "alice", "password": "brandnewpass123"})
+    assert resp2.get_json()["ok"] is True
+
+
+# ── /mobile/api/account/2fa ────────────────────────────────────────────────
+
+def test_2fa_send_test_requires_owner_email(client, db_path):
+    rid = _restaurant(db_path)
+    update_restaurant(rid, {"owner_email": ""}, db_path=db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.post("/mobile/api/account/2fa/send-test", headers=_auth_headers(token))
+    assert resp.status_code == 400
+
+
+def test_2fa_send_test_and_verify_enables_2fa(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    update_restaurant(rid, {"owner_email": "owner@x.com"}, db_path=db_path)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("emails.send_2fa_code", lambda *a, **kw: None)
+
+    resp = client.post("/mobile/api/account/2fa/send-test", headers=_auth_headers(token))
+    assert resp.get_json()["ok"] is True
+
+    code = _stored_2fa_code(db_path, rid)
+    resp2 = client.post(
+        "/mobile/api/account/2fa/verify", json={"code": code}, headers=_auth_headers(token)
+    )
+    assert resp2.get_json()["ok"] is True
+
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT two_fa_enabled FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert row["two_fa_enabled"] == 1
+
+
+def test_2fa_verify_rejects_wrong_code(client, db_path):
+    rid = _restaurant(db_path)
+    update_restaurant(rid, {"two_fa_code": "111111", "two_fa_expires": "2099-01-01 00:00:00"}, db_path=db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.post(
+        "/mobile/api/account/2fa/verify", json={"code": "999999"}, headers=_auth_headers(token)
+    )
+    assert resp.status_code == 400
+
+
+def test_2fa_disable_turns_off_2fa(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    update_restaurant(rid, {"two_fa_enabled": 1}, db_path=db_path)
+
+    resp = client.post("/mobile/api/account/2fa/disable", headers=_auth_headers(token))
+    assert resp.get_json()["ok"] is True
+
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT two_fa_enabled FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert row["two_fa_enabled"] == 0
+
+
+# ── /mobile/api/account/login-notify ──────────────────────────────────────
+
+def test_toggle_login_notify(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.post(
+        "/mobile/api/account/login-notify", json={"enabled": True}, headers=_auth_headers(token)
+    )
+    assert resp.get_json()["ok"] is True
+
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT login_notify FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert row["login_notify"] == 1
+
+
+# ── /mobile/api/account/alert-settings ────────────────────────────────────
+
+def test_save_alert_settings_requires_auth(client):
+    resp = client.post("/mobile/api/account/alert-settings", json={})
+    assert resp.status_code == 401
+
+
+def test_save_alert_settings_updates_flags_and_replaces_contacts(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.post(
+        "/mobile/api/account/alert-settings",
+        json={
+            "alert_1star": True,
+            "alert_labor_over": True,
+            "digest_day": "friday",
+            "digest_enabled": True,
+            "contacts": [{"name": "Will", "phone": "312-555-0100"}],
+        },
+        headers=_auth_headers(token),
+    )
+    assert resp.get_json()["ok"] is True
+
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT alert_1star, alert_labor_over, digest_day FROM restaurants WHERE id=?", (rid,)
+    ).fetchone()
+    conn.close()
+    assert row["alert_1star"] == 1
+    assert row["alert_labor_over"] == 1
+    assert row["digest_day"] == "friday"
+
+    from notify import get_alert_contacts
+    contacts = get_alert_contacts(rid, db_path=db_path)
+    assert len(contacts) == 1
+    assert contacts[0]["name"] == "Will"
+
+
+def test_save_alert_settings_downgrades_sms_without_consent(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.post(
+        "/mobile/api/account/alert-settings",
+        json={"urgent_via_sms": True, "sms_consent": False},
+        headers=_auth_headers(token),
+    )
+    assert resp.get_json()["ok"] is True
+
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT urgent_via_sms FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert row["urgent_via_sms"] == 0
+
+
+# ── /mobile/api/account/digest-day ─────────────────────────────────────────
+
+def test_update_digest_day_rejects_invalid_day(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.post(
+        "/mobile/api/account/digest-day", json={"day": "someday"}, headers=_auth_headers(token)
+    )
+    assert resp.status_code == 400
+
+
+def test_update_digest_day_succeeds(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.post(
+        "/mobile/api/account/digest-day", json={"day": "sunday"}, headers=_auth_headers(token)
+    )
+    assert resp.get_json()["ok"] is True
+
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT digest_day FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert row["digest_day"] == "sunday"
+
+
+# ── /mobile/api/account/billing ────────────────────────────────────────────
+
+def test_billing_requires_auth(client):
+    resp = client.get("/mobile/api/account/billing")
+    assert resp.status_code == 401
+
+
+def test_billing_reports_no_customer_when_unset(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.get("/mobile/api/account/billing", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert data["reason"] == "no_customer"

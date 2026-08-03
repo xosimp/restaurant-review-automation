@@ -183,7 +183,7 @@ def get_sessions_for_user(user_id: int, current_token: str = None,
     """Return all active sessions for a user, marking which is current."""
     conn = get_conn(db_path)
     rows = conn.execute("""
-        SELECT token, created_at, last_active, ip_address, user_agent
+        SELECT token, created_at, last_active, ip_address, user_agent, device_type
         FROM sessions
         WHERE user_id=? AND expires_at > datetime('now')
         ORDER BY last_active DESC
@@ -198,6 +198,7 @@ def get_sessions_for_user(user_id: int, current_token: str = None,
             "last_active": row["last_active"],
             "ip_address": row["ip_address"] or "",
             "user_agent": row["user_agent"] or "",
+            "device_type": row["device_type"] or "web",
         })
     return result
 
