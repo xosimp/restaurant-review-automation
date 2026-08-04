@@ -373,6 +373,52 @@ def test_schedule_status_unknown_job_returns_404(client, db_path):
     assert resp.status_code == 404
 
 
+# ── /mobile/api/labor/trend, /gap, /insight ────────────────────────────────
+
+def test_labor_trend_requires_auth(client):
+    resp = client.get("/mobile/api/labor/trend")
+    assert resp.status_code == 401
+
+
+def test_labor_trend_returns_empty_weeks_for_fresh_restaurant(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/labor/trend", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["weeks"] == []
+
+
+def test_labor_gap_requires_auth(client):
+    resp = client.get("/mobile/api/labor/gap")
+    assert resp.status_code == 401
+
+
+def test_labor_gap_returns_ok(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/labor/gap", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert "over_target" in data
+
+
+def test_labor_insight_requires_auth(client):
+    resp = client.get("/mobile/api/labor/insight")
+    assert resp.status_code == 401
+
+
+def test_labor_insight_returns_cached_value(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("client_api._cache_get", lambda key: "Cached labor insight.")
+
+    resp = client.get("/mobile/api/labor/insight", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["insight"] == "Cached labor insight."
+
+
 # ── /mobile/api/marketing ────────────────────────────────────────────────────
 
 def test_marketing_endpoint_requires_auth(client):

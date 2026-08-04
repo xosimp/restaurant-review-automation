@@ -648,6 +648,74 @@ def mobile_labor(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/labor/trend")
+@mobile_login_required
+def mobile_labor_trend(current_user):
+    """Mirrors client_api.py's labor-trend — same 8-week labor-% history the
+    web Labor tab's Analytics sub-tab charts."""
+    from models import get_labor_history
+    from datetime import datetime as _dt
+    try:
+        history = get_labor_history(current_user["restaurant_id"], limit=8)
+        weeks = []
+        for h in history[::-1]:  # oldest first = left to right
+            try:
+                start = _dt.strptime(h["period_start"], "%Y-%m-%d")
+                label = start.strftime("%-m/%-d")
+            except Exception:
+                label = h.get("period_start", "")[:5]
+            weeks.append({
+                "label": label,
+                "pct": round(h["labor_pct"], 1),
+                "labor": h["total_labor"],
+                "sales": h["total_sales"],
+            })
+        return jsonify(ok=True, weeks=weeks)
+    except Exception as e:
+        return jsonify(ok=False, weeks=[], error=str(e)), 500
+
+
+@mobile_bp.route("/labor/gap")
+@mobile_login_required
+def mobile_labor_gap(current_user):
+    from labor import analyse_shifts_for_restaurant, calculate_monthly_gap
+    try:
+        analysis = analyse_shifts_for_restaurant(current_user["restaurant_id"])
+        gap = calculate_monthly_gap(analysis)
+        return jsonify(ok=True, **gap)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e), over_target=False, monthly_gap=0,
+                       current_pct=0, target_pct=30), 500
+
+
+@mobile_bp.route("/labor/insight")
+@mobile_login_required
+def mobile_labor_insight(current_user):
+    """Same AI insight the web Labor tab shows, but returned as raw text
+    instead of client_api.py's format_insight_html() output — the mobile
+    client renders its own plain-text layout rather than parsing HTML."""
+    from labor import analyse_shifts_for_restaurant, get_claude_insights
+    from models import get_restaurant, get_staff_notes
+    rid = current_user["restaurant_id"]
+    cached = _capi._cache_get("mobile-labor-insight:" + str(rid))
+    if cached:
+        return jsonify(ok=True, insight=cached)
+    try:
+        restaurant = get_restaurant(rid)
+        name = restaurant.name if restaurant else "your restaurant"
+        owner = restaurant.owner_name if restaurant and restaurant.owner_name else None
+        analysis = analyse_shifts_for_restaurant(rid)
+        staff_notes = get_staff_notes(rid)
+        insight = get_claude_insights(
+            analysis, restaurant_name=name, owner_name=owner, restaurant_id=rid,
+            staff_notes=staff_notes if staff_notes else None,
+        )
+        _capi._cache_set("mobile-labor-insight:" + str(rid), insight)
+        return jsonify(ok=True, insight=insight)
+    except Exception as e:
+        return jsonify(ok=False, insight="Analysis unavailable — check back shortly.", error=str(e)), 500
+
+
 @mobile_bp.route("/labor/generate-schedule", methods=["POST"])
 @mobile_login_required
 def mobile_generate_schedule(current_user):
