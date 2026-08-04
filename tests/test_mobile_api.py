@@ -738,3 +738,196 @@ def test_billing_reports_no_customer_when_unset(client, db_path):
     data = resp.get_json()
     assert data["ok"] is False
     assert data["reason"] == "no_customer"
+
+
+# ── /mobile/api/reviews/<id>/delete ────────────────────────────────────────
+
+def test_delete_review_requires_auth(client):
+    resp = client.post("/mobile/api/reviews/1/delete")
+    assert resp.status_code == 401
+
+
+def test_delete_review_marks_deleted_at_and_scoped_to_own_restaurant(client, db_path):
+    rid_a = _restaurant(db_path, name="Restaurant A")
+    rid_b = _restaurant(db_path, name="Restaurant B")
+    review_id = _add_review(db_path, rid_a)
+    token_b = _login(client, db_path, rid_b, username="bob")
+
+    # Restaurant B can't delete Restaurant A's review — scoped UPDATE is a no-op.
+    resp = client.post(f"/mobile/api/reviews/{review_id}/delete", headers=_auth_headers(token_b))
+    assert resp.get_json()["ok"] is True
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT deleted_at FROM reviews WHERE id=?", (review_id,)).fetchone()
+    conn.close()
+    assert row["deleted_at"] is None
+
+    token_a = _login(client, db_path, rid_a, username="alice")
+    resp2 = client.post(f"/mobile/api/reviews/{review_id}/delete", headers=_auth_headers(token_a))
+    assert resp2.get_json()["ok"] is True
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT deleted_at FROM reviews WHERE id=?", (review_id,)).fetchone()
+    conn.close()
+    assert row["deleted_at"] is not None
+
+
+# ── /mobile/api/reviews/response-performance, topic-heatmap, sentiment-trend
+
+def test_response_performance_requires_auth(client):
+    resp = client.get("/mobile/api/reviews/response-performance")
+    assert resp.status_code == 401
+
+
+def test_response_performance_returns_ok(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/reviews/response-performance", headers=_auth_headers(token))
+    assert resp.get_json()["ok"] is True
+
+
+def test_topic_heatmap_requires_auth(client):
+    resp = client.get("/mobile/api/reviews/topic-heatmap")
+    assert resp.status_code == 401
+
+
+def test_topic_heatmap_returns_ok(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/reviews/topic-heatmap", headers=_auth_headers(token))
+    assert resp.get_json()["ok"] is True
+
+
+def test_sentiment_trend_requires_auth(client):
+    resp = client.get("/mobile/api/reviews/sentiment-trend")
+    assert resp.status_code == 401
+
+
+def test_sentiment_trend_returns_ok(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/reviews/sentiment-trend", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["weeks"] == []
+
+
+def test_review_insight_requires_auth(client):
+    resp = client.get("/mobile/api/reviews/insight")
+    assert resp.status_code == 401
+
+
+def test_review_insight_returns_cached_value(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("client_api._cache_get", lambda key: "Cached insight text.")
+
+    resp = client.get("/mobile/api/reviews/insight", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["insight"] == "Cached insight text."
+
+
+# ── /mobile/api/templates ──────────────────────────────────────────────────
+
+def test_list_templates_requires_auth(client):
+    resp = client.get("/mobile/api/templates")
+    assert resp.status_code == 401
+
+
+def test_create_list_delete_template_roundtrip(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.post(
+        "/mobile/api/templates",
+        json={"title": "Thanks!", "body": "Thanks for the kind words!", "category": "positive"},
+        headers=_auth_headers(token),
+    )
+    data = resp.get_json()
+    assert data["ok"] is True
+    tid = data["id"]
+
+    resp2 = client.get("/mobile/api/templates", headers=_auth_headers(token))
+    templates = resp2.get_json()["templates"]
+    assert len(templates) == 1
+    assert templates[0]["title"] == "Thanks!"
+
+    resp3 = client.post(f"/mobile/api/templates/{tid}/use", headers=_auth_headers(token))
+    assert resp3.get_json()["ok"] is True
+
+    resp4 = client.delete(f"/mobile/api/templates/{tid}", headers=_auth_headers(token))
+    assert resp4.get_json()["ok"] is True
+    resp5 = client.get("/mobile/api/templates", headers=_auth_headers(token))
+    assert resp5.get_json()["templates"] == []
+
+
+def test_create_template_rejects_missing_title(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post(
+        "/mobile/api/templates", json={"title": "", "body": "Body"}, headers=_auth_headers(token)
+    )
+    assert resp.status_code == 400
+
+
+def test_templates_scoped_to_own_restaurant(client, db_path):
+    rid_a = _restaurant(db_path, name="Restaurant A")
+    rid_b = _restaurant(db_path, name="Restaurant B")
+    token_a = _login(client, db_path, rid_a, username="alice")
+    token_b = _login(client, db_path, rid_b, username="bob")
+
+    client.post(
+        "/mobile/api/templates", json={"title": "A's template", "body": "Body"},
+        headers=_auth_headers(token_a),
+    )
+    resp = client.get("/mobile/api/templates", headers=_auth_headers(token_b))
+    assert resp.get_json()["templates"] == []
+
+
+# ── /mobile/api/send-review-request ────────────────────────────────────────
+
+def test_send_review_request_requires_auth(client):
+    resp = client.post("/mobile/api/send-review-request", json={})
+    assert resp.status_code == 401
+
+
+def test_send_review_request_requires_email_or_phone(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post(
+        "/mobile/api/send-review-request", json={"name": "Jamie"}, headers=_auth_headers(token)
+    )
+    assert resp.status_code == 400
+
+
+def test_send_review_request_sms_only_logs_request(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("notify.send_sms", lambda *a, **kw: True)
+
+    resp = client.post(
+        "/mobile/api/send-review-request",
+        json={"name": "Jamie", "phone": "312-555-0100"},
+        headers=_auth_headers(token),
+    )
+    assert resp.get_json()["ok"] is True
+
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT customer_phone, method FROM review_requests WHERE restaurant_id=?", (rid,)
+    ).fetchone()
+    conn.close()
+    assert row["method"] == "sms"
+
+
+def test_review_request_stats_requires_auth(client):
+    resp = client.get("/mobile/api/review-request-stats")
+    assert resp.status_code == 401
+
+
+def test_review_request_stats_returns_zero_for_fresh_restaurant(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/review-request-stats", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["total_sent"] == 0

@@ -386,6 +386,124 @@ def mobile_review_stats(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/reviews/<int:review_id>/delete", methods=["POST"])
+@mobile_login_required
+def mobile_delete_review(review_id, current_user):
+    payload, status = _capi._do_delete_review(review_id, current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
+# ── Reviews Analytics ────────────────────────────────────────────────────
+# Mirrors the web Reviews tab's Analytics sub-tab (dashboard.html's
+# rv-panel-analytics): response performance, rate-vs-benchmark (computed
+# client-side from review-stats, already available), topic sentiment
+# heatmap, 8-week sentiment trend, and the AI one-line insight.
+
+@mobile_bp.route("/reviews/response-performance")
+@mobile_login_required
+def mobile_response_performance(current_user):
+    from models import get_response_performance
+    days = int(request.args.get("days", 90))
+    if days not in (30, 60, 90, 180):
+        days = 90
+    try:
+        data = get_response_performance(current_user["restaurant_id"], days=days)
+        return jsonify(ok=True, data=data)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+
+@mobile_bp.route("/reviews/topic-heatmap")
+@mobile_login_required
+def mobile_topic_heatmap(current_user):
+    from models import get_topic_heatmap
+    days = int(request.args.get("days", 90))
+    if days not in (30, 60, 90, 180):
+        days = 90
+    try:
+        data = get_topic_heatmap(current_user["restaurant_id"], days=days)
+        return jsonify(ok=True, data=data)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+
+@mobile_bp.route("/reviews/sentiment-trend")
+@mobile_login_required
+def mobile_sentiment_trend(current_user):
+    from models import get_sentiment_trend
+    try:
+        data = get_sentiment_trend(current_user["restaurant_id"], weeks=8)
+        return jsonify(ok=True, weeks=data)
+    except Exception as e:
+        return jsonify(ok=False, weeks=[], error=str(e)), 500
+
+
+@mobile_bp.route("/reviews/insight")
+@mobile_login_required
+def mobile_review_insight(current_user):
+    payload, status = _capi._do_review_insight(current_user["restaurant_id"])
+    return jsonify(ok=True, **payload), status
+
+
+# ── Response templates ───────────────────────────────────────────────────
+
+@mobile_bp.route("/templates")
+@mobile_login_required
+def mobile_list_templates(current_user):
+    from models import get_response_templates
+    return jsonify(ok=True, templates=get_response_templates(current_user["restaurant_id"]))
+
+
+@mobile_bp.route("/templates", methods=["POST"])
+@mobile_login_required
+def mobile_create_template(current_user):
+    from models import create_response_template
+    data = request.get_json() or {}
+    title = (data.get("title") or "").strip()
+    body = (data.get("body") or "").strip()
+    if not title or not body:
+        return jsonify(ok=False, error="Title and body required"), 400
+    if len(title) > 120:
+        return jsonify(ok=False, error="Title too long (120 chars max)"), 400
+    category = data.get("category", "general")
+    if category not in ("general", "positive", "negative", "neutral"):
+        category = "general"
+    tid = create_response_template(current_user["restaurant_id"], title, body, category)
+    return jsonify(ok=True, id=tid)
+
+
+@mobile_bp.route("/templates/<int:tid>", methods=["DELETE"])
+@mobile_login_required
+def mobile_delete_template(tid, current_user):
+    from models import delete_response_template
+    delete_response_template(tid, current_user["restaurant_id"])
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/templates/<int:tid>/use", methods=["POST"])
+@mobile_login_required
+def mobile_use_template(tid, current_user):
+    from models import increment_template_use
+    increment_template_use(tid, restaurant_id=current_user["restaurant_id"])
+    return jsonify(ok=True)
+
+
+# ── Send review request ──────────────────────────────────────────────────
+
+@mobile_bp.route("/send-review-request", methods=["POST"])
+@mobile_login_required
+def mobile_send_review_request(current_user):
+    payload, status = _capi._do_send_review_request(current_user["restaurant_id"], request.get_json() or {})
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/review-request-stats")
+@mobile_login_required
+def mobile_review_request_stats(current_user):
+    from models import get_review_request_stats
+    return jsonify(ok=True, **get_review_request_stats(current_user["restaurant_id"]))
+
+
 # ── Notifications ─────────────────────────────────────────────────────────
 
 @mobile_bp.route("/notifications")

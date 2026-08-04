@@ -122,16 +122,21 @@ def approve(rid, current_user):
     payload, status = _do_approve(rid, current_user["restaurant_id"])
     return jsonify(**payload), status
 
-@client_bp.route("/api/reviews/<int:rid>/delete", methods=["POST"])
-@login_required
-def delete_review(rid, current_user):
+def _do_delete_review(rid, restaurant_id):
     conn = get_conn()
     conn.execute(
         "UPDATE reviews SET deleted_at=datetime('now') WHERE id=? AND restaurant_id=?",
-        (rid, current_user["restaurant_id"])
+        (rid, restaurant_id)
     )
     conn.commit(); conn.close()
-    return jsonify(ok=True)
+    return {"ok": True}, 200
+
+
+@client_bp.route("/api/reviews/<int:rid>/delete", methods=["POST"])
+@login_required
+def delete_review(rid, current_user):
+    payload, status = _do_delete_review(rid, current_user["restaurant_id"])
+    return jsonify(**payload), status
 
 @client_bp.route("/skip/<int:rid>", methods=["POST"])
 @login_required
@@ -407,17 +412,22 @@ def sentiment_trend_api(current_user):
 @client_bp.route("/api/review-insight")
 @login_required
 def review_insight_api(current_user):
-    rid = current_user["restaurant_id"]
+    insight, status = _do_review_insight(current_user["restaurant_id"])
+    return jsonify(**insight), status
+
+
+def _do_review_insight(rid):
+    """Shared by the web route above and mobile_api.py's own /reviews/insight —
+    one AI-prompt implementation behind both surfaces, same cache."""
     cached = _cache_get("review-insight:" + str(rid))
     if cached:
-        return jsonify(insight=cached)
+        return {"insight": cached}, 200
     try:
         import os, json, anthropic as _anth
         from models import get_restaurant, get_review_stats, get_top_issues
         from zoneinfo import ZoneInfo as _ZI_ri
         from datetime import datetime as _dt_ri, timedelta as _td_ri
         _client_ri = _anth.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY",""))
-        rid = current_user["restaurant_id"]
         restaurant = get_restaurant(rid)
         rstats = get_review_stats(rid)
         top_issues = get_top_issues(rid, days=90, limit=5)
@@ -551,14 +561,14 @@ def review_insight_api(current_user):
         insight = _re_ri.sub(r'\*\*(.+?)\*\*', lambda m: m.group(1), insight)
         insight = _re_ri.sub(r'\*(.+?)\*',   lambda m: m.group(1), insight)
         _cache_set("review-insight:" + str(rid), insight)
-        return jsonify(insight=insight)
+        return {"insight": insight}, 200
     except Exception as _re:
         import traceback
         print(f"[review-insight ERROR] {_re}\n{traceback.format_exc()}")
         stale = _insight_cache.get("review-insight:" + str(rid))
         if stale:
-            return jsonify(insight=stale[1])
-        return jsonify(insight="Analysis unavailable — check back shortly.", error=str(_re)), 500
+            return {"insight": stale[1]}, 200
+        return {"insight": "Analysis unavailable — check back shortly.", "error": str(_re)}, 500
 
 @client_bp.route("/api/recent-topics")
 @login_required
@@ -1913,20 +1923,24 @@ def delete_food_cost_custom_item(current_user):
 @client_bp.route("/api/send-review-request", methods=["POST"])
 @login_required
 def send_review_request(current_user):
+    payload, status = _do_send_review_request(current_user["restaurant_id"], request.get_json() or {})
+    return jsonify(**payload), status
+
+
+def _do_send_review_request(rid, data):
+    """Shared by the web route above and mobile_api.py's own send-review-request."""
     try:
-        data          = request.get_json() or {}
         customer_name  = (data.get("name") or "").strip()
         customer_email = (data.get("email") or "").strip().lower()
         customer_phone = (data.get("phone") or "").strip()
         if not customer_email and not customer_phone:
-            return jsonify(ok=False, error="Email or phone required"), 400
+            return {"ok": False, "error": "Email or phone required"}, 400
         if customer_email and "@" not in customer_email:
-            return jsonify(ok=False, error="Valid email address required"), 400
+            return {"ok": False, "error": "Valid email address required"}, 400
 
-        rid        = current_user["restaurant_id"]
         restaurant = get_restaurant(rid)
         if not restaurant:
-            return jsonify(ok=False, error="Restaurant not found"), 404
+            return {"ok": False, "error": "Restaurant not found"}, 404
 
         # Build Google review link
         place_id    = restaurant.google_place_id or ""
@@ -1944,7 +1958,7 @@ def send_review_request(current_user):
             )
             sent_sms = _send_sms(customer_phone, sms_text)
             if not sent_sms and not customer_email:
-                return jsonify(ok=False, error="SMS delivery failed — check Twilio config"), 500
+                return {"ok": False, "error": "SMS delivery failed — check Twilio config"}, 500
 
         # Send via Resend if email provided
         if not customer_email:
@@ -1957,12 +1971,12 @@ def send_review_request(current_user):
             )
             conn.commit()
             conn.close()
-            return jsonify(ok=True)
+            return {"ok": True}, 200
 
         import resend as _resend
         _resend.api_key = os.getenv("RESEND_API_KEY", "")
         if not _resend.api_key:
-            return jsonify(ok=False, error="Email not configured"), 500
+            return {"ok": False, "error": "Email not configured"}, 500
 
         html_body = f"""
         <div style="font-family:'DM Sans',Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f7f4ef">
@@ -2009,10 +2023,10 @@ def send_review_request(current_user):
         conn.commit()
         conn.close()
 
-        return jsonify(ok=True)
+        return {"ok": True}, 200
 
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
+        return {"ok": False, "error": str(e)}, 500
 
 
 @client_bp.route("/api/review-request-stats")
