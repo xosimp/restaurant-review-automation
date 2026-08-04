@@ -40,6 +40,10 @@ struct RootView: View {
             ModulesGridView()
                 .tabItem { Label(AppTab.modules.title, systemImage: AppTab.modules.systemImage) }
                 .tag(AppTab.modules)
+
+            AccountView()
+                .tabItem { Label(AppTab.account.title, systemImage: AppTab.account.systemImage) }
+                .tag(AppTab.account)
         }
         .tint(Color.cavnarEmber)
         .task {

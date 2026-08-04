@@ -9,6 +9,7 @@ import Foundation
 enum AppTab: String, CaseIterable, Identifiable {
     case home
     case modules
+    case account
 
     var id: String { rawValue }
 
@@ -16,6 +17,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "Home"
         case .modules: return "Modules"
+        case .account: return "Account"
         }
     }
 
@@ -23,6 +25,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "house.fill"
         case .modules: return "square.grid.2x2.fill"
+        case .account: return "person.crop.circle"
         }
     }
 }
