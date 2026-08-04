@@ -1,29 +1,52 @@
 import SwiftUI
 
+private enum IntelSubTab: String, CaseIterable, Identifiable {
+    case competitors = "Competitors"
+    case aiVisibility = "AI Visibility"
+    var id: String { rawValue }
+}
+
 struct IntelView: View {
     @State private var viewModel = IntelViewModel()
+    @State private var aiVisibilityViewModel = AIVisibilityViewModel()
+    @State private var subTab: IntelSubTab = .competitors
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if let summary = viewModel.summary {
-                    if !summary.hasData {
-                        emptyState
-                    } else {
-                        content(summary)
-                    }
-                } else if viewModel.isLoading {
-                    ProgressView().padding(.top, 60)
-                } else if let error = viewModel.errorMessage {
-                    VStack(spacing: 8) {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                        Button("Retry") { Task { await viewModel.load() } }
-                    }
-                    .padding(.top, 60)
-                    .frame(maxWidth: .infinity)
+        VStack(spacing: 0) {
+            Picker("", selection: $subTab) {
+                ForEach(IntelSubTab.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
                 }
             }
-            .padding(20)
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if subTab == .competitors {
+                        if let summary = viewModel.summary {
+                            if !summary.hasData {
+                                emptyState
+                            } else {
+                                content(summary)
+                            }
+                        } else if viewModel.isLoading {
+                            ProgressView().padding(.top, 60)
+                        } else if let error = viewModel.errorMessage {
+                            VStack(spacing: 8) {
+                                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                                Button("Retry") { Task { await viewModel.load() } }
+                            }
+                            .padding(.top, 60)
+                            .frame(maxWidth: .infinity)
+                        }
+                    } else {
+                        AIVisibilitySection(viewModel: aiVisibilityViewModel)
+                    }
+                }
+                .padding(20)
+            }
         }
         .background(Color.cavnarPaper)
         .refreshable { await viewModel.load() }

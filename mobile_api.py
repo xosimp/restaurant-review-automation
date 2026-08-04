@@ -1090,6 +1090,18 @@ def mobile_intel(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/intel/ai-visibility")
+@mobile_login_required
+def mobile_ai_visibility(current_user):
+    """Mirrors the web Intel tab's AI Visibility sub-tab: how often the
+    restaurant appears in real Perplexity answers to "where should I eat"
+    style queries, plus a 10-item GBP/profile completeness checklist. Shares
+    the same 3-call/60s rate limit as the web route since each call fires
+    real, billable Perplexity queries."""
+    payload, status = _capi._do_ai_visibility(current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
 # ── Account / Settings ──────────────────────────────────────────────────────
 # The web dashboard's Account tab in one place: profile, security, POS/social
 # connection status, alert contacts, billing. Connecting a POS/social account

@@ -728,6 +728,34 @@ def test_intel_endpoint_scoped_to_own_restaurant(client, db_path):
     assert data["has_data"] is False  # restaurant B has no competitor_intel of its own
 
 
+# ── /mobile/api/intel/ai-visibility ─────────────────────────────────────────
+
+def test_ai_visibility_requires_auth(client):
+    resp = client.get("/mobile/api/intel/ai-visibility")
+    assert resp.status_code == 401
+
+
+def test_ai_visibility_reports_not_found_for_missing_restaurant(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("client_api.get_restaurant", lambda *a, **kw: None)
+
+    resp = client.get("/mobile/api/intel/ai-visibility", headers=_auth_headers(token))
+    assert resp.status_code == 404
+    assert resp.get_json()["ok"] is False
+
+
+def test_ai_visibility_rate_limited(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("ai_utils.ai_rate_limited", lambda *a, **kw: True)
+
+    resp = client.get("/mobile/api/intel/ai-visibility", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert "too many" in data["error"].lower()
+
+
 # ── /mobile/api/account ───────────────────────────────────────────────────
 
 def test_account_endpoint_requires_auth(client):

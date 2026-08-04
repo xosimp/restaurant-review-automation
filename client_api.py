@@ -2131,19 +2131,25 @@ def gbp_listing_update(current_user):
 @client_bp.route("/api/ai-visibility")
 @login_required
 def ai_visibility(current_user):
-    try:
-        return _ai_visibility_inner(current_user)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 200
+    payload, status = _do_ai_visibility(current_user["restaurant_id"])
+    return jsonify(**payload), status
 
-def _ai_visibility_inner(current_user):
-    rid = current_user["restaurant_id"]
+
+def _do_ai_visibility(rid):
+    """Shared by the web route above and mobile_api.py's own ai-visibility."""
+    try:
+        return _do_ai_visibility_inner(rid)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}, 200
+
+
+def _do_ai_visibility_inner(rid):
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"aivis:{rid}", max_calls=3, window_secs=60):
-        return jsonify(ok=False, error="Too many visibility checks — please wait a moment and try again.")
+        return {"ok": False, "error": "Too many visibility checks — please wait a moment and try again."}, 200
     r = get_restaurant(rid)
     if not r:
-        return jsonify(ok=False, error="Restaurant not found"), 404
+        return {"ok": False, "error": "Restaurant not found"}, 404
 
     name        = r.name or ""
     neighborhood = r.neighborhood or ""
@@ -2375,18 +2381,18 @@ def _ai_visibility_inner(current_user):
 
     ai_score = round((appeared_count / len(queries)) * 100) if queries else 0
 
-    return jsonify(
-        ok=True,
-        restaurant_name=name,
-        neighborhood=neighborhood,
-        queries=query_results,
-        appeared_count=appeared_count,
-        total_queries=len(queries),
-        ai_score=ai_score,
-        gbp_score=gbp_score,
-        checklist=checklist,
-        gbp_connected=gbp_connected,
-    )
+    return {
+        "ok": True,
+        "restaurant_name": name,
+        "neighborhood": neighborhood,
+        "queries": query_results,
+        "appeared_count": appeared_count,
+        "total_queries": len(queries),
+        "ai_score": ai_score,
+        "gbp_score": gbp_score,
+        "checklist": checklist,
+        "gbp_connected": gbp_connected,
+    }, 200
 
 
 @client_bp.route("/api/webhook", methods=["GET"])
