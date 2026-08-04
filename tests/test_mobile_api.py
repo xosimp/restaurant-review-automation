@@ -10,6 +10,7 @@ import client_api
 import mobile_api
 import models
 import notify
+import guest_marketing
 from auth import create_user, init_auth, set_user_role
 from auth_routes import _login_attempts
 from mobile_api import mobile_bp
@@ -23,7 +24,7 @@ def _redirect_db(monkeypatch, db_path):
     comment for the same gotcha."""
     real_get_conn = models.get_conn
     redirect = lambda *a, **k: real_get_conn(db_path)
-    for mod in (models, auth, auth_routes, client_api, mobile_api, notify):
+    for mod in (models, auth, auth_routes, client_api, mobile_api, notify, guest_marketing):
         monkeypatch.setattr(mod, "get_conn", redirect)
 
 
@@ -503,6 +504,131 @@ def test_generate_content_rate_limited_returns_429(client, db_path, monkeypatch)
     )
     assert resp.status_code == 429
     assert resp.get_json()["ok"] is False
+
+
+# ── /mobile/api/guest-contacts + guest-campaign ────────────────────────────
+
+def test_guest_contacts_requires_auth(client):
+    resp = client.get("/mobile/api/guest-contacts")
+    assert resp.status_code == 401
+
+
+def test_guest_contacts_requires_marketing_module(client, db_path):
+    rid = _restaurant(db_path, module_marketing=0)  # module_marketing defaults ON — turn it off
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/guest-contacts", headers=_auth_headers(token))
+    assert resp.status_code == 403
+
+
+def test_guest_contacts_add_list_delete_roundtrip(client, db_path):
+    from guest_marketing import init_guest_marketing
+    init_guest_marketing(db_path)
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+
+    resp = client.post(
+        "/mobile/api/guest-contacts", json={"name": "Jamie", "phone": "312-555-0100"},
+        headers=_auth_headers(token),
+    )
+    data = resp.get_json()
+    assert data["ok"] is True
+    contact_id = data["id"]
+
+    resp2 = client.get("/mobile/api/guest-contacts", headers=_auth_headers(token))
+    contacts = resp2.get_json()["contacts"]
+    assert len(contacts) == 1
+    assert contacts[0]["name"] == "Jamie"
+
+    resp3 = client.post(
+        f"/mobile/api/guest-contacts/{contact_id}/mark-visit", headers=_auth_headers(token)
+    )
+    assert resp3.get_json()["ok"] is True
+
+    resp4 = client.delete(f"/mobile/api/guest-contacts/{contact_id}", headers=_auth_headers(token))
+    assert resp4.get_json()["ok"] is True
+    resp5 = client.get("/mobile/api/guest-contacts", headers=_auth_headers(token))
+    assert resp5.get_json()["contacts"] == []
+
+
+def test_guest_contacts_add_requires_name_and_phone(client, db_path):
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    resp = client.post(
+        "/mobile/api/guest-contacts", json={"name": "", "phone": ""}, headers=_auth_headers(token)
+    )
+    assert resp.status_code == 400
+
+
+def test_guest_contacts_scoped_to_own_restaurant(client, db_path):
+    from guest_marketing import init_guest_marketing
+    init_guest_marketing(db_path)
+    rid_a = _restaurant(db_path, name="Restaurant A", module_marketing=1)
+    rid_b = _restaurant(db_path, name="Restaurant B", module_marketing=1)
+    token_a = _login(client, db_path, rid_a, username="alice")
+    token_b = _login(client, db_path, rid_b, username="bob")
+
+    client.post(
+        "/mobile/api/guest-contacts", json={"name": "A's guest", "phone": "312-555-0101"},
+        headers=_auth_headers(token_a),
+    )
+    resp = client.get("/mobile/api/guest-contacts", headers=_auth_headers(token_b))
+    assert resp.get_json()["contacts"] == []
+
+
+def test_guest_campaign_draft_requires_marketing_module(client, db_path):
+    rid = _restaurant(db_path, module_marketing=0)
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/guest-campaign/draft", json={}, headers=_auth_headers(token))
+    assert resp.status_code == 403
+
+
+def test_guest_campaign_draft_returns_message(client, db_path, monkeypatch):
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("guest_marketing.draft_campaign_message", lambda *a, **kw: "Come back soon!")
+
+    resp = client.post(
+        "/mobile/api/guest-campaign/draft", json={"type": "general"}, headers=_auth_headers(token)
+    )
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["message"] == "Come back soon!"
+
+
+def test_guest_campaign_send_requires_message(client, db_path):
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/guest-campaign/send", json={}, headers=_auth_headers(token))
+    assert resp.status_code == 400
+
+
+def test_guest_campaign_send_returns_ok(client, db_path, monkeypatch):
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("guest_marketing.send_campaign", lambda *a, **kw: {"sent": 0})
+
+    resp = client.post(
+        "/mobile/api/guest-campaign/send", json={"message": "Hi there"}, headers=_auth_headers(token)
+    )
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["sent"] == 0
+
+
+def test_guest_join_link_requires_marketing_module(client, db_path):
+    rid = _restaurant(db_path, module_marketing=0)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/guest-join-link", headers=_auth_headers(token))
+    assert resp.status_code == 403
+
+
+def test_guest_join_link_includes_restaurant_id(client, db_path):
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/guest-join-link", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert f"/join/{rid}" in data["join_url"]
 
 
 # ── /mobile/api/intel ─────────────────────────────────────────────────────

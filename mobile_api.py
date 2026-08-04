@@ -859,6 +859,114 @@ def mobile_generate_content(current_user):
     return jsonify(**payload), status
 
 
+# ── Guest Text Club ───────────────────────────────────────────────────────
+# Mirrors the web Marketing tab's Guest Text Club section (guest contacts,
+# SMS campaign draft/send, join link). Gated on the same marketing-module
+# check client_api.py's own routes use, via the same helpers.
+
+@mobile_bp.route("/guest-contacts")
+@mobile_login_required
+def mobile_guest_contacts(current_user):
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    from guest_marketing import get_guest_contacts
+    return jsonify(ok=True, contacts=get_guest_contacts(rid))
+
+
+@mobile_bp.route("/guest-contacts", methods=["POST"])
+@mobile_login_required
+def mobile_add_guest_contact(current_user):
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    from guest_marketing import add_guest_contact_manual
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="Name required"), 400
+    if not phone:
+        return jsonify(ok=False, error="Phone number required"), 400
+    contact_id = add_guest_contact_manual(rid, phone, name=name)
+    return jsonify(ok=True, id=contact_id)
+
+
+@mobile_bp.route("/guest-contacts/<int:contact_id>", methods=["DELETE"])
+@mobile_login_required
+def mobile_delete_guest_contact(contact_id, current_user):
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    from guest_marketing import delete_guest_contact
+    delete_guest_contact(contact_id, rid)
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/guest-contacts/<int:contact_id>/mark-visit", methods=["POST"])
+@mobile_login_required
+def mobile_mark_guest_visit(contact_id, current_user):
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    from guest_marketing import mark_guest_visit
+    mark_guest_visit(contact_id, rid)
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/guest-campaign/draft", methods=["POST"])
+@mobile_login_required
+def mobile_guest_campaign_draft(current_user):
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"guestcampaign:{rid}", max_calls=8, window_secs=60):
+        return jsonify(ok=False, error="Too many requests — please wait a moment and try again."), 429
+    data = request.get_json() or {}
+    try:
+        from guest_marketing import draft_campaign_message
+        restaurant = get_restaurant(rid)
+        message = draft_campaign_message(restaurant, campaign_type=data.get("type", "general"), topic=data.get("topic", ""))
+        return jsonify(ok=True, message=message)
+    except Exception as e:
+        return jsonify(ok=False, error="Couldn't draft a message right now — try again in a moment."), 500
+
+
+@mobile_bp.route("/guest-campaign/send", methods=["POST"])
+@mobile_login_required
+def mobile_guest_campaign_send(current_user):
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    from ai_utils import ai_rate_limited
+    data = request.get_json() or {}
+    message = (data.get("message") or "").strip()
+    if not message:
+        return jsonify(ok=False, error="Message required"), 400
+    if ai_rate_limited(f"guestcampaignsend:{rid}", max_calls=3, window_secs=300):
+        return jsonify(ok=False, error="Too many campaigns sent recently — please wait a few minutes."), 429
+    try:
+        from guest_marketing import send_campaign
+        result = send_campaign(rid, message)
+        return jsonify(ok=True, **result)
+    except Exception as e:
+        return jsonify(ok=False, error="Couldn't send the campaign — try again in a moment."), 500
+
+
+@mobile_bp.route("/guest-join-link")
+@mobile_login_required
+def mobile_guest_join_link(current_user):
+    """The web's /api/guest-qr renders a downloadable PNG — mobile just
+    returns the join URL and lets the app render its own QR code (CoreImage
+    has a QR filter built in) rather than round-tripping an image."""
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    join_url = request.url_root.rstrip("/") + f"/join/{rid}"
+    return jsonify(ok=True, join_url=join_url)
+
+
 # ── Intel ─────────────────────────────────────────────────────────────────
 
 def _do_mobile_intel(restaurant_id):
