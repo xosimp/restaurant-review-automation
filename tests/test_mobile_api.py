@@ -728,6 +728,53 @@ def test_intel_endpoint_scoped_to_own_restaurant(client, db_path):
     assert data["has_data"] is False  # restaurant B has no competitor_intel of its own
 
 
+# ── /mobile/api/changelog ────────────────────────────────────────────────────
+
+def test_changelog_requires_auth(client):
+    resp = client.get("/mobile/api/changelog")
+    assert resp.status_code == 401
+
+
+def test_changelog_returns_entries_and_marks_seen(client, db_path):
+    from models import save_changelog_entry
+    save_changelog_entry("New feature", "Some body text", db_path=db_path)
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.get("/mobile/api/changelog", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert len(data["entries"]) == 1
+
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT changelog_seen_at FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert row["changelog_seen_at"] is not None
+
+
+def test_changelog_unread_count_requires_auth(client):
+    resp = client.get("/mobile/api/changelog/unread-count")
+    assert resp.status_code == 401
+
+
+def test_changelog_unread_count_reflects_new_entries_since_last_seen(client, db_path):
+    from models import save_changelog_entry
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    # Seen timestamp is set explicitly in the past (rather than via the route,
+    # which stamps "now") so the new entry's published_at is unambiguously
+    # after it — sqlite's datetime('now') only has 1-second resolution, so
+    # stamping both within the same test run is a real flakiness risk.
+    update_restaurant(rid, {"changelog_seen_at": "2000-01-01T00:00:00"}, db_path=db_path)
+    resp1 = client.get("/mobile/api/changelog/unread-count", headers=_auth_headers(token))
+    assert resp1.get_json()["count"] == 0
+
+    save_changelog_entry("Another feature", "Body", db_path=db_path)
+    resp2 = client.get("/mobile/api/changelog/unread-count", headers=_auth_headers(token))
+    assert resp2.get_json()["count"] == 1
+
+
 # ── /mobile/api/intel/ai-visibility ─────────────────────────────────────────
 
 def test_ai_visibility_requires_auth(client):

@@ -513,6 +513,32 @@ def mobile_notifications(current_user):
     return jsonify(**payload), status
 
 
+# ── Changelog ─────────────────────────────────────────────────────────────
+
+@mobile_bp.route("/changelog")
+@mobile_login_required
+def mobile_changelog(current_user):
+    from models import get_changelog
+    import datetime as _dt
+    entries = get_changelog()
+    # Mark as seen — same stamp-on-read behavior as the web route, so the
+    # unread badge clears once the owner has actually opened the list.
+    update_restaurant(current_user["restaurant_id"], {
+        "changelog_seen_at": _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    })
+    return jsonify(ok=True, entries=entries)
+
+
+@mobile_bp.route("/changelog/unread-count")
+@mobile_login_required
+def mobile_changelog_unread_count(current_user):
+    from models import get_changelog
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    since = restaurant.changelog_seen_at if restaurant else None
+    unread = get_changelog(since=since) if since else get_changelog()
+    return jsonify(ok=True, count=len(unread))
+
+
 # ── Ask Cavnar ────────────────────────────────────────────────────────────
 
 @mobile_bp.route("/ask-cavnar", methods=["POST"])
