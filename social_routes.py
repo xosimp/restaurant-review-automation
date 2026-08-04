@@ -134,20 +134,28 @@ def instagram_callback():
 @login_required
 def post_to_instagram(current_user):
     """Post a caption to Instagram. Client must have connected their account."""
-    import requests as _req
-    data       = request.get_json()
-    caption    = data.get("caption","").strip()
-    image_url  = data.get("image_url","").strip()  # optional
+    data = request.get_json() or {}
+    payload, status = _do_post_to_instagram(
+        current_user["restaurant_id"], data.get("caption", ""), data.get("image_url", ""), data.get("topic", "")
+    )
+    return jsonify(**payload), status
 
-    restaurant = get_restaurant(current_user["restaurant_id"])
+
+def _do_post_to_instagram(restaurant_id, caption, image_url, topic):
+    """Shared by the web route above and mobile_api.py's own post-to-instagram."""
+    import requests as _req
+    caption = (caption or "").strip()
+    image_url = (image_url or "").strip()
+
+    restaurant = get_restaurant(restaurant_id)
     if not restaurant or not restaurant.ig_token or not restaurant.ig_user_id:
-        return jsonify(ok=False, error="Instagram not connected — click Connect Instagram first")
+        return {"ok": False, "error": "Instagram not connected — click Connect Instagram first"}, 200
 
     ig_user_id = restaurant.ig_user_id
     token      = restaurant.ig_token
 
     if not image_url:
-        return jsonify(ok=False, error="Instagram requires an image. Paste a public image URL into the Image URL field before posting.")
+        return {"ok": False, "error": "Instagram requires an image. Paste a public image URL into the Image URL field before posting."}, 200
 
     r1 = _req.post(graph_url(f"{ig_user_id}/media"), data={
         "image_url":    image_url,
@@ -158,7 +166,7 @@ def post_to_instagram(current_user):
     if r1.status_code != 200:
         err = r1.json().get("error",{}).get("message","Unknown error")
         print(f"IG media create failed: {r1.text}")
-        return jsonify(ok=False, error=err)
+        return {"ok": False, "error": err}, 200
 
     creation_id = r1.json().get("id")
 
@@ -181,20 +189,17 @@ def post_to_instagram(current_user):
 
     if r2.status_code != 200:
         err = r2.json().get("error",{}).get("message","Publish failed")
-        return jsonify(ok=False, error=err)
+        return {"ok": False, "error": err}, 200
 
     post_id = r2.json().get("id")
     # Save post_id for engagement tracking
     try:
         from marketing import log_content as _lc
-        _data = request.get_json() or {}
-        _topic = _data.get("topic", "")
-        if _topic and post_id:
-            _lc(current_user["restaurant_id"], "instagram_post", _topic,
-                post_id=post_id, post_platform="instagram")
+        if topic and post_id:
+            _lc(restaurant_id, "instagram_post", topic, post_id=post_id, post_platform="instagram")
     except Exception as _e:
         print(f"[insights] failed to log post_id: {_e}")
-    return jsonify(ok=True, post_id=post_id)
+    return {"ok": True, "post_id": post_id}, 200
 
 @social_bp.route("/api/instagram-status")
 @login_required
@@ -382,12 +387,20 @@ def post_insights(current_user):
 @login_required
 def post_to_facebook(current_user):
     """Post to Facebook Page."""
+    data = request.get_json() or {}
+    payload, status = _do_post_to_facebook(
+        current_user["restaurant_id"], data.get("caption", ""), data.get("topic", "")
+    )
+    return jsonify(**payload), status
+
+
+def _do_post_to_facebook(restaurant_id, caption, topic):
+    """Shared by the web route above and mobile_api.py's own post-to-facebook."""
     import requests as _req
-    data       = request.get_json()
-    caption    = data.get("caption","").strip()
-    restaurant = get_restaurant(current_user["restaurant_id"])
+    caption = (caption or "").strip()
+    restaurant = get_restaurant(restaurant_id)
     if not restaurant or not restaurant.fb_page_token or not restaurant.fb_page_id:
-        return jsonify(ok=False, error="Facebook not connected — click Connect Instagram & Facebook first")
+        return {"ok": False, "error": "Facebook not connected — click Connect Instagram & Facebook first"}, 200
     r = _req.post(graph_url(f"{restaurant.fb_page_id}/feed"), data={
         "message":      caption,
         "access_token": restaurant.fb_page_token,
@@ -395,17 +408,15 @@ def post_to_facebook(current_user):
     if r.status_code != 200:
         err = r.json().get("error",{}).get("message","Unknown error")
         print(f"FB post failed: {r.text}")
-        return jsonify(ok=False, error=err)
+        return {"ok": False, "error": err}, 200
     post_id = r.json().get("id")
     try:
         from marketing import log_content as _lc_fb
-        _topic_fb = data.get("topic", "")
-        if _topic_fb and post_id:
-            _lc_fb(current_user["restaurant_id"], "facebook_post", _topic_fb,
-                   post_id=post_id, post_platform="facebook")
+        if topic and post_id:
+            _lc_fb(restaurant_id, "facebook_post", topic, post_id=post_id, post_platform="facebook")
     except Exception as _e_fb:
         print(f"[insights] failed to log fb post_id: {_e_fb}")
-    return jsonify(ok=True, post_id=post_id)
+    return {"ok": True, "post_id": post_id}, 200
 
 
 @social_bp.route("/api/meta-review-test")

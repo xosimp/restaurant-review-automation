@@ -506,6 +506,73 @@ def test_generate_content_rate_limited_returns_429(client, db_path, monkeypatch)
     assert resp.get_json()["ok"] is False
 
 
+# ── /mobile/api/marketing/performance, insight, post-to-* ──────────────────
+
+def test_marketing_performance_requires_auth(client):
+    resp = client.get("/mobile/api/marketing/performance")
+    assert resp.status_code == 401
+
+
+def test_marketing_performance_returns_ok_for_fresh_restaurant(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/marketing/performance", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["published"] == 0
+    assert data["has_data"] is False
+
+
+def test_marketing_insight_requires_auth(client):
+    resp = client.get("/mobile/api/marketing/insight")
+    assert resp.status_code == 401
+
+
+def test_marketing_insight_returns_cached_value(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("client_api._cache_get", lambda key: "Cached marketing brief.")
+
+    resp = client.get("/mobile/api/marketing/insight", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["insight"] == "Cached marketing brief."
+
+
+def test_post_to_instagram_requires_auth(client):
+    resp = client.post("/mobile/api/marketing/post-to-instagram", json={})
+    assert resp.status_code == 401
+
+
+def test_post_to_instagram_reports_not_connected(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post(
+        "/mobile/api/marketing/post-to-instagram",
+        json={"caption": "Hello", "image_url": "https://example.com/x.jpg"},
+        headers=_auth_headers(token),
+    )
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert "not connected" in data["error"].lower()
+
+
+def test_post_to_facebook_requires_auth(client):
+    resp = client.post("/mobile/api/marketing/post-to-facebook", json={})
+    assert resp.status_code == 401
+
+
+def test_post_to_facebook_reports_not_connected(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post(
+        "/mobile/api/marketing/post-to-facebook", json={"caption": "Hello"}, headers=_auth_headers(token)
+    )
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert "not connected" in data["error"].lower()
+
+
 # ── /mobile/api/guest-contacts + guest-campaign ────────────────────────────
 
 def test_guest_contacts_requires_auth(client):

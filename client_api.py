@@ -748,10 +748,18 @@ def ask_cavnar_api(current_user):
 @client_bp.route("/api/mkt-insight")
 @login_required
 def mkt_insight_api(current_user):
-    rid = current_user["restaurant_id"]
-    cached = _cache_get("mkt-insight:" + str(rid))
+    insight, status = _do_mkt_insight(current_user["restaurant_id"])
+    return jsonify(**insight), status
+
+
+def _do_mkt_insight(rid, raw=False):
+    """Shared by the web route above and mobile_api.py. raw=True skips
+    format_insight_html() and the web cache key, for a client that renders
+    its own plain-text layout instead of parsing HTML."""
+    cache_key = ("mobile-" if raw else "") + "mkt-insight:" + str(rid)
+    cached = _cache_get(cache_key)
     if cached:
-        return jsonify(insight=cached)
+        return {"insight": cached}, 200
     try:
         from marketing import get_profile_for_restaurant, get_recent_content, get_upcoming_holidays, generate_content
         from models import get_restaurant
@@ -870,16 +878,16 @@ Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No co
             action="marketing_insight",
         )
         insight = extract_text(msg).strip()
-        formatted = format_insight_html(insight)
-        _cache_set("mkt-insight:" + str(rid), formatted)
-        return jsonify(insight=formatted)
+        result = insight if raw else format_insight_html(insight)
+        _cache_set(cache_key, result)
+        return {"insight": result}, 200
     except Exception as e:
         import traceback; traceback.print_exc()
         print(f"[MktInsight] ERROR: {str(e)}")
-        stale = _insight_cache.get("mkt-insight:" + str(rid))
+        stale = _insight_cache.get(cache_key)
         if stale:
-            return jsonify(insight=stale[1])
-        return jsonify(insight="Marketing brief unavailable — check back shortly.")
+            return {"insight": stale[1]}, 200
+        return {"insight": "Marketing brief unavailable — check back shortly."}, 500
 
 @client_bp.route("/api/labor-insight")
 @login_required

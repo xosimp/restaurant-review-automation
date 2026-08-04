@@ -954,6 +954,97 @@ def mobile_guest_campaign_send(current_user):
         return jsonify(ok=False, error="Couldn't send the campaign — try again in a moment."), 500
 
 
+@mobile_bp.route("/marketing/performance")
+@mobile_login_required
+def mobile_marketing_performance(current_user):
+    """Mirrors client_api.py's mkt-performance — summarizes real Meta post
+    metrics already stored by refresh_post_metrics(), never calls Meta
+    itself."""
+    rid = current_user["restaurant_id"]
+    try:
+        conn = get_conn()
+        conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
+            content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
+            created_at TEXT DEFAULT (datetime('now')))""")
+        for col in ("reach", "impressions", "engaged", "likes", "comments", "shares"):
+            try:
+                conn.execute(f"ALTER TABLE marketing_content_log ADD COLUMN {col} INTEGER DEFAULT 0")
+            except Exception:
+                pass
+        conn.commit()
+
+        published = conn.execute(
+            "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL",
+            (rid,)
+        ).fetchone()[0] or 0
+
+        totals = conn.execute("""
+            SELECT COALESCE(SUM(reach),0) as reach, COALESCE(SUM(impressions),0) as impressions,
+                   COALESCE(SUM(likes),0) as likes, COALESCE(SUM(comments),0) as comments,
+                   COALESCE(SUM(shares),0) as shares
+            FROM marketing_content_log WHERE restaurant_id=? AND post_id IS NOT NULL
+        """, (rid,)).fetchone()
+
+        rows = conn.execute("""
+            SELECT topic, post_platform, reach, impressions, likes, comments, shares
+            FROM marketing_content_log
+            WHERE restaurant_id=? AND post_id IS NOT NULL
+              AND (reach > 0 OR impressions > 0 OR likes > 0 OR comments > 0)
+        """, (rid,)).fetchall()
+        conn.close()
+
+        top_post = None
+        if rows:
+            best = max(rows, key=lambda r: (r["reach"] or 0) + (r["impressions"] or 0))
+            top_post = {
+                "topic": best["topic"], "platform": best["post_platform"],
+                "reach": best["reach"] or 0, "likes": best["likes"] or 0,
+                "comments": best["comments"] or 0, "shares": best["shares"] or 0,
+            }
+
+        total_engagement = (totals["likes"] or 0) + (totals["comments"] or 0) + (totals["shares"] or 0)
+        return jsonify(
+            ok=True,
+            published=published,
+            has_data=bool(rows),
+            total_reach=(totals["reach"] or 0) + (totals["impressions"] or 0),
+            total_engagement=total_engagement,
+            top_post=top_post,
+        )
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+
+@mobile_bp.route("/marketing/insight")
+@mobile_login_required
+def mobile_marketing_insight(current_user):
+    payload, status = _capi._do_mkt_insight(current_user["restaurant_id"], raw=True)
+    return jsonify(ok=True, **payload), status
+
+
+@mobile_bp.route("/marketing/post-to-instagram", methods=["POST"])
+@mobile_login_required
+def mobile_post_to_instagram(current_user):
+    from social_routes import _do_post_to_instagram
+    data = request.get_json() or {}
+    payload, status = _do_post_to_instagram(
+        current_user["restaurant_id"], data.get("caption", ""), data.get("image_url", ""), data.get("topic", "")
+    )
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/marketing/post-to-facebook", methods=["POST"])
+@mobile_login_required
+def mobile_post_to_facebook(current_user):
+    from social_routes import _do_post_to_facebook
+    data = request.get_json() or {}
+    payload, status = _do_post_to_facebook(
+        current_user["restaurant_id"], data.get("caption", ""), data.get("topic", "")
+    )
+    return jsonify(**payload), status
+
+
 @mobile_bp.route("/guest-join-link")
 @mobile_login_required
 def mobile_guest_join_link(current_user):
