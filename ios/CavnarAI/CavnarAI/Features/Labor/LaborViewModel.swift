@@ -47,6 +47,26 @@ struct LaborStats: Decodable {
     }
 }
 
+struct ScheduleRow: Decodable, Identifiable {
+    let date: String?
+    let day: String?
+    let employee: String?
+    let role: String?
+    let shiftStart: String?
+    let shiftEnd: String?
+    let scheduledHours: String?
+    let notes: String?
+
+    var id: String { "\(date ?? "")-\(employee ?? "")-\(shiftStart ?? "")" }
+
+    enum CodingKeys: String, CodingKey {
+        case date, day, employee, role, notes
+        case shiftStart = "shift_start"
+        case shiftEnd = "shift_end"
+        case scheduledHours = "scheduled_hours"
+    }
+}
+
 struct GeneratedSchedule: Decodable {
     let ok: Bool
     let status: String?
@@ -55,6 +75,8 @@ struct GeneratedSchedule: Decodable {
     let weekDays: [String]?
     let hoursScheduled: Double?
     let laborTarget: Double?
+    let previewRows: [ScheduleRow]?
+    let scheduleCsv: String?
     let error: String?
 
     enum CodingKeys: String, CodingKey {
@@ -63,6 +85,8 @@ struct GeneratedSchedule: Decodable {
         case weekDays = "week_days"
         case hoursScheduled = "hours_scheduled"
         case laborTarget = "labor_target"
+        case previewRows = "preview_rows"
+        case scheduleCsv = "schedule_csv"
     }
 }
 
