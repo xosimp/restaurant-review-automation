@@ -1,34 +1,69 @@
 import SwiftUI
 
+private enum MarketingSubTab: String, CaseIterable, Identifiable {
+    case content = "Content"
+    case analytics = "Analytics"
+    var id: String { rawValue }
+}
+
 struct MarketingView: View {
     @State private var viewModel = MarketingViewModel()
+    @State private var analyticsViewModel = MarketingAnalyticsViewModel()
+    @State private var subTab: MarketingSubTab = .content
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if let stats = viewModel.stats {
-                    statsCard(stats)
-                    generatorSection
-                    if !viewModel.calendar.isEmpty {
-                        calendarSection
-                    }
-                } else if viewModel.isLoading {
-                    ProgressView().padding(.top, 60)
-                } else if let error = viewModel.errorMessage {
-                    VStack(spacing: 8) {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                        Button("Retry") { Task { await viewModel.load() } }
-                    }
-                    .padding(.top, 60)
-                    .frame(maxWidth: .infinity)
+        VStack(spacing: 0) {
+            Picker("", selection: $subTab) {
+                ForEach(MarketingSubTab.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
                 }
             }
-            .padding(20)
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if subTab == .content {
+                        if let stats = viewModel.stats {
+                            statsCard(stats)
+                            NavigationLink {
+                                GuestTextClubView()
+                            } label: {
+                                HStack {
+                                    Text("Guest Text Club").font(.cavnarBody(13, weight: 600))
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                }
+                                .foregroundStyle(Color.cavnarInk)
+                                .cavnarCard()
+                            }
+                            generatorSection
+                            if !viewModel.calendar.isEmpty {
+                                calendarSection
+                            }
+                        } else if viewModel.isLoading {
+                            ProgressView().padding(.top, 60)
+                        } else if let error = viewModel.errorMessage {
+                            VStack(spacing: 8) {
+                                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                                Button("Retry") { Task { await viewModel.load() } }
+                            }
+                            .padding(.top, 60)
+                            .frame(maxWidth: .infinity)
+                        }
+                    } else {
+                        MarketingAnalyticsSection(viewModel: analyticsViewModel)
+                    }
+                }
+                .padding(20)
+            }
         }
         .background(Color.cavnarPaper)
         .refreshable { await viewModel.load() }
         .navigationTitle("Marketing")
         .task { await viewModel.load() }
+        .task { await analyticsViewModel.load() }
     }
 
     @ViewBuilder
@@ -94,6 +129,38 @@ struct MarketingView: View {
                     .background(Color.cavnarPaper)
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.cavnarEmber.opacity(0.3), lineWidth: 1))
                     .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                if viewModel.selectedType == "instagram_post" {
+                    TextField("Image URL (required for Instagram)", text: $viewModel.imageURL)
+                        .cavnarTextFieldStyle()
+                }
+
+                HStack(spacing: 10) {
+                    Button {
+                        Task { await viewModel.postToInstagram() }
+                    } label: {
+                        Text("Post to Instagram")
+                    }
+                    .buttonStyle(CavnarPrimaryButtonStyle())
+                    .disabled(viewModel.isPosting)
+
+                    Button {
+                        Task { await viewModel.postToFacebook() }
+                    } label: {
+                        Text("Post to Facebook")
+                    }
+                    .buttonStyle(CavnarPrimaryButtonStyle())
+                    .disabled(viewModel.isPosting)
+                }
+
+                if let posted = viewModel.postedPlatform {
+                    Label("Posted to \(posted)", systemImage: "checkmark.circle.fill")
+                        .font(.cavnarBody(12, weight: 600))
+                        .foregroundStyle(Color.cavnarGreen)
+                }
+                if let error = viewModel.postError {
+                    Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                }
             }
         }
         .cavnarCard()

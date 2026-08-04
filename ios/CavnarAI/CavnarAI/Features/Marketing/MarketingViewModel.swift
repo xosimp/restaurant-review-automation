@@ -41,6 +41,12 @@ final class MarketingViewModel {
     var generatedContent: String?
     var generateError: String?
 
+    // Social posting
+    var imageURL = ""
+    var isPosting = false
+    var postError: String?
+    var postedPlatform: String?
+
     let contentTypes = [
         ("instagram_post", "Instagram Post"),
         ("weekly_email", "Weekly Email"),
@@ -106,6 +112,73 @@ final class MarketingViewModel {
             generateError = error.message
         } catch {
             generateError = "Couldn't generate content."
+        }
+    }
+
+    private struct PostBody: Encodable {
+        let caption: String
+        let imageUrl: String?
+        let topic: String
+
+        enum CodingKeys: String, CodingKey {
+            case caption
+            case imageUrl = "image_url"
+            case topic
+        }
+    }
+
+    private struct PostResponse: Decodable {
+        let ok: Bool
+        let postId: String?
+        let error: String?
+
+        enum CodingKeys: String, CodingKey {
+            case ok, error
+            case postId = "post_id"
+        }
+    }
+
+    func postToInstagram() async {
+        guard let caption = generatedContent else { return }
+        isPosting = true
+        postError = nil
+        defer { isPosting = false }
+        do {
+            let response: PostResponse = try await client.send(
+                "/mobile/api/marketing/post-to-instagram", method: .post,
+                body: PostBody(caption: caption, imageUrl: imageURL, topic: topic)
+            )
+            if response.ok {
+                postedPlatform = "Instagram"
+            } else {
+                postError = response.error ?? "Couldn't post to Instagram."
+            }
+        } catch let error as APIClient.APIError {
+            postError = error.message
+        } catch {
+            postError = "Couldn't post to Instagram."
+        }
+    }
+
+    func postToFacebook() async {
+        guard let caption = generatedContent else { return }
+        isPosting = true
+        postError = nil
+        defer { isPosting = false }
+        do {
+            let response: PostResponse = try await client.send(
+                "/mobile/api/marketing/post-to-facebook", method: .post,
+                body: PostBody(caption: caption, imageUrl: nil, topic: topic)
+            )
+            if response.ok {
+                postedPlatform = "Facebook"
+            } else {
+                postError = response.error ?? "Couldn't post to Facebook."
+            }
+        } catch let error as APIClient.APIError {
+            postError = error.message
+        } catch {
+            postError = "Couldn't post to Facebook."
         }
     }
 }
