@@ -3,6 +3,7 @@ import SwiftUI
 struct ReviewDetailView: View {
     @State private var viewModel: ReviewDetailViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var showingTemplates = false
     var onCompleted: () -> Void
 
     init(viewModel: ReviewDetailViewModel, onCompleted: @escaping () -> Void) {
@@ -36,6 +37,15 @@ struct ReviewDetailView: View {
                 dismiss()
             }
         }
+        .task {
+            await viewModel.loadTemplates()
+        }
+        .sheet(isPresented: $showingTemplates) {
+            TemplatePickerSheet(templates: viewModel.templates) { template in
+                viewModel.applyTemplate(template)
+                showingTemplates = false
+            }
+        }
     }
 
     private var header: some View {
@@ -64,6 +74,14 @@ struct ReviewDetailView: View {
                     .font(.cavnarBody(12, weight: 700))
                     .foregroundStyle(Color.cavnarInk3)
                 Spacer()
+                if !viewModel.templates.isEmpty {
+                    Button {
+                        showingTemplates = true
+                    } label: {
+                        Label("Templates", systemImage: "doc.on.doc")
+                            .font(.cavnarBody(12, weight: 600))
+                    }
+                }
                 Button {
                     Task { await viewModel.regenerateDraft() }
                 } label: {
@@ -110,6 +128,33 @@ struct ReviewDetailView: View {
             }
             .buttonStyle(CavnarPrimaryButtonStyle())
             .disabled(viewModel.isSubmitting || viewModel.editedDraft.isEmpty)
+        }
+    }
+}
+
+private struct TemplatePickerSheet: View {
+    let templates: [ResponseTemplate]
+    let onSelect: (ResponseTemplate) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List(templates) { template in
+                Button {
+                    onSelect(template)
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(template.title).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text(template.body).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3).lineLimit(2)
+                    }
+                }
+            }
+            .navigationTitle("Response Templates")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
         }
     }
 }

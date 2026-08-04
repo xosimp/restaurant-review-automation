@@ -12,6 +12,8 @@ final class ReviewDetailViewModel {
     /// to pop back to the list.
     var didComplete = false
 
+    var templates: [ResponseTemplate] = []
+
     private let client: APIClient
     private var saveDraftTask: Task<Void, Never>?
 
@@ -19,6 +21,30 @@ final class ReviewDetailViewModel {
         self.review = review
         self.editedDraft = review.draftResponse ?? ""
         self.client = client
+    }
+
+    private struct TemplatesResponse: Decodable {
+        let ok: Bool
+        let templates: [ResponseTemplate]
+    }
+
+    func loadTemplates() async {
+        do {
+            let response: TemplatesResponse = try await client.send("/mobile/api/templates")
+            templates = response.templates
+        } catch {
+            // Non-fatal — the draft editor still works without saved templates.
+        }
+    }
+
+    func applyTemplate(_ template: ResponseTemplate) {
+        editedDraft = template.body
+        scheduleDraftSave()
+        Task {
+            let _: APIClient.EmptyResponse? = try? await client.send(
+                "/mobile/api/templates/\(template.id)/use", method: .post
+            )
+        }
     }
 
     /// Debounced so typing doesn't fire a save request per keystroke — waits

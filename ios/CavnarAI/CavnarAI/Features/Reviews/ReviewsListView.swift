@@ -1,14 +1,72 @@
 import SwiftUI
 
+private enum ReviewsSubTab: String, CaseIterable, Identifiable {
+    case inbox = "Inbox"
+    case analytics = "Analytics"
+    var id: String { rawValue }
+}
+
 struct ReviewsListView: View {
     @State private var viewModel = ReviewsListViewModel()
+    @State private var analyticsViewModel = ReviewsAnalyticsViewModel()
     @State private var deepLinkedReview: Review?
+    @State private var subTab: ReviewsSubTab = .inbox
+    @State private var showingSendRequest = false
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
 
     var body: some View {
         // No NavigationStack of its own — this is now a pushed destination
         // inside Home's or the Modules tab's stack, not a tab root, so it
         // shares whichever stack pushed it in.
+        VStack(spacing: 0) {
+            Picker("", selection: $subTab) {
+                ForEach(ReviewsSubTab.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+
+            Group {
+                if subTab == .inbox {
+                    inboxContent
+                } else {
+                    ReviewsAnalyticsSection(viewModel: analyticsViewModel)
+                }
+            }
+        }
+        .background(Color.cavnarPaper)
+        .navigationTitle("Reviews")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showingSendRequest = true
+                } label: {
+                    Image(systemName: "envelope.badge")
+                }
+            }
+        }
+        .sheet(isPresented: $showingSendRequest) {
+            SendReviewRequestSheet()
+        }
+        .navigationDestination(item: $deepLinkedReview) { review in
+            ReviewDetailView(
+                viewModel: ReviewDetailViewModel(review: review),
+                onCompleted: { viewModel.removeFromQueue(reviewID: review.id) }
+            )
+        }
+        .task {
+            await viewModel.load()
+            openDeepLinkIfNeeded()
+        }
+        .task {
+            await analyticsViewModel.load()
+        }
+    }
+
+    @ViewBuilder
+    private var inboxContent: some View {
         Group {
             if viewModel.reviews.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
                 ContentUnavailableView("No reviews", systemImage: "star.bubble")
@@ -26,22 +84,10 @@ struct ReviewsListView: View {
                 .listStyle(.plain)
             }
         }
-        .background(Color.cavnarPaper)
         .overlay {
             if viewModel.isLoading && viewModel.reviews.isEmpty { ProgressView() }
         }
         .refreshable { await viewModel.load() }
-        .navigationTitle("Reviews")
-        .navigationDestination(item: $deepLinkedReview) { review in
-            ReviewDetailView(
-                viewModel: ReviewDetailViewModel(review: review),
-                onCompleted: { viewModel.removeFromQueue(reviewID: review.id) }
-            )
-        }
-        .task {
-            await viewModel.load()
-            openDeepLinkIfNeeded()
-        }
     }
 
     /// Reads directly from the shared DeepLinkRouter (injected via
