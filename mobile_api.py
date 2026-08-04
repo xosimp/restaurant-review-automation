@@ -549,6 +549,41 @@ def mobile_delete_food_cost_custom_item(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/food-cost/analytics")
+@mobile_login_required
+def mobile_food_cost_analytics(current_user):
+    """Mirrors the web Food Cost tab's Analytics sub-tab: AI insight plus the
+    same waste_items/overstock breakdowns dashboard.html bakes into its donut
+    charts at render time — both already computed by analyse_inventory(),
+    just not previously exposed as JSON."""
+    from inventory import load_inventory_for_restaurant, analyse_inventory, get_claude_insights
+    rid = current_user["restaurant_id"]
+    try:
+        restaurant = get_restaurant(rid)
+        items, _is_live = load_inventory_for_restaurant(rid)
+        analysis = analyse_inventory(items)
+        cached = _capi._cache_get("mobile-inv-insight:" + str(rid))
+        if cached:
+            insight = cached
+        else:
+            insight = get_claude_insights(
+                analysis, owner_name=restaurant.owner_name if restaurant else None,
+                restaurant_name=restaurant.name if restaurant else None,
+                restaurant_id=rid, items=items,
+            )
+            _capi._cache_set("mobile-inv-insight:" + str(rid), insight)
+        return jsonify(
+            ok=True,
+            insight=insight,
+            waste_items=analysis.get("waste_items", []),
+            overstock=analysis.get("overstock", []),
+            recoverable_monthly=analysis.get("recoverable_monthly", 0),
+        )
+    except Exception as e:
+        return jsonify(ok=False, error=str(e), insight="Analysis unavailable — check back shortly.",
+                       waste_items=[], overstock=[]), 500
+
+
 # ── Restaurant switcher ───────────────────────────────────────────────────
 
 @mobile_bp.route("/switch-location", methods=["POST"])

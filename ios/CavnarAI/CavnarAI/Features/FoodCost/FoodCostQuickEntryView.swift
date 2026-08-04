@@ -1,11 +1,42 @@
 import SwiftUI
 
+private enum FoodCostSubTab: String, CaseIterable, Identifiable {
+    case tracker = "Tracker"
+    case analytics = "Analytics"
+    var id: String { rawValue }
+}
+
 struct FoodCostQuickEntryView: View {
     @State private var viewModel = FoodCostQuickEntryViewModel()
+    @State private var analyticsViewModel = FoodCostAnalyticsViewModel()
+    @State private var subTab: FoodCostSubTab = .tracker
 
     var body: some View {
         // No NavigationStack of its own — pushed inside Home's or the
         // Modules tab's stack now, not a tab root.
+        VStack(spacing: 0) {
+            Picker("", selection: $subTab) {
+                ForEach(FoodCostSubTab.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+
+            if subTab == .tracker {
+                tracker
+            } else {
+                FoodCostAnalyticsSection(viewModel: analyticsViewModel)
+            }
+        }
+        .navigationTitle("Food Cost")
+        .task {
+            await analyticsViewModel.load()
+        }
+    }
+
+    private var tracker: some View {
         Form {
                 Section {
                     Text("Fill in this week's price per unit right after an invoice arrives.")
@@ -89,7 +120,6 @@ struct FoodCostQuickEntryView: View {
                     .disabled(!viewModel.canSubmit)
                 }
         }
-        .navigationTitle("Food Cost")
     }
 
     @ViewBuilder

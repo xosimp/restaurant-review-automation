@@ -262,6 +262,29 @@ def test_food_cost_quickcount_scoped_to_own_restaurant(client, db_path):
     assert row_b is None
 
 
+# ── /mobile/api/food-cost/analytics ────────────────────────────────────────
+
+def test_food_cost_analytics_requires_auth(client):
+    resp = client.get("/mobile/api/food-cost/analytics")
+    assert resp.status_code == 401
+
+
+def test_food_cost_analytics_returns_ok_for_fresh_restaurant(client, db_path, monkeypatch):
+    # A restaurant with no real inventory uploads still gets sample-fallback
+    # data from load_inventory_for_restaurant (same convention labor/reviews
+    # already use) — this just checks the response shape, not real content.
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("inventory.get_claude_insights", lambda *a, **kw: "Waste is under control.")
+
+    resp = client.get("/mobile/api/food-cost/analytics", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert isinstance(data["waste_items"], list)
+    assert isinstance(data["overstock"], list)
+    assert data["insight"] == "Waste is under control."
+
+
 # ── switch-location owner/group checks ─────────────────────────────────────
 
 def test_switch_location_rejects_non_owner(client, db_path):
