@@ -659,9 +659,49 @@ def index(current_user):
         labor_upcoming=_labor_upcoming,
         food_cost_data=_food_cost_data)
 
+@app.errorhandler(403)
+def forbidden(e):
+    """A bare abort(403) anywhere in the app (e.g. status_routes._require_admin)
+    otherwise falls through to Flask's default HTML error page, which breaks
+    JSON-only callers — the iOS app in particular has no HTML to parse and
+    just shows a generic "Something went wrong (403)" with no real reason.
+    Mobile routes always get real JSON; other routes keep an HTML page."""
+    from flask import Response
+    if request.path.startswith("/mobile/api/"):
+        return jsonify(ok=False, error="You don't have permission to do that."), 403
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Access Denied — Cavnar AI</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body{margin:0;background:#f7f4ef;font-family:'DM Sans',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}
+    .wrap{max-width:420px;padding:40px 24px}
+    .logo{font-family:'DM Serif Display',serif;font-size:28px;color:#0e0c0a;margin-bottom:32px}
+    .logo span{color:#c84b2f;font-style:italic}
+    h1{font-family:'DM Serif Display',serif;font-size:64px;color:#0e0c0a;margin:0 0 8px;line-height:1}
+    p{font-size:15px;color:#7a736a;line-height:1.6;margin:0 0 24px}
+    a.btn{display:inline-block;background:#c84b2f;color:white;padding:10px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="logo">Cavnar <span>AI</span></div>
+    <h1>403</h1>
+    <p>You don't have permission to view this page.</p>
+    <a href="/login" class="btn">Back to dashboard</a>
+  </div>
+</body>
+</html>"""
+    return Response(html, status=403, mimetype="text/html")
+
 @app.errorhandler(404)
 def page_not_found(e):
     from flask import Response
+    if request.path.startswith("/mobile/api/"):
+        return jsonify(ok=False, error="That endpoint doesn't exist. Please update the app."), 404
     html = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -693,6 +733,8 @@ def page_not_found(e):
 @app.errorhandler(500)
 def server_error(e):
     from flask import Response
+    if request.path.startswith("/mobile/api/"):
+        return jsonify(ok=False, error="Something went wrong on our end. It's been logged — please try again."), 500
     html = """<!DOCTYPE html>
 <html lang="en">
 <head>

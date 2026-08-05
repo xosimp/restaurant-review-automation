@@ -176,6 +176,16 @@ def mobile_verify_2fa():
     return jsonify(ok=True, token=token, device_token=device_token, user=_public_user(user))
 
 
+@mobile_bp.route("/me")
+@mobile_login_required
+def mobile_me(current_user):
+    """Resolves a bearer token to its User — used after Google Sign-In,
+    where the token arrives via a cavnarai:// deep link rather than the
+    /login response body, so the app has no `user` object yet to complete
+    the session with."""
+    return jsonify(ok=True, user=_public_user(current_user))
+
+
 @mobile_bp.route("/logout", methods=["POST"])
 @mobile_login_required
 def mobile_logout(current_user):

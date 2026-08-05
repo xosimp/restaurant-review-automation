@@ -703,7 +703,10 @@ def gmb_callback(current_user):
 
 @auth_bp.route("/auth/google-sso")
 def google_sso_start():
-    """Kick off Google Sign-In OAuth flow for dashboard login."""
+    """Kick off Google Sign-In OAuth flow for dashboard login. ?mobile=1
+    (the iOS app, via ASWebAuthenticationSession) is remembered in a
+    short-lived cookie so the callback knows to hand back a bearer token
+    over a custom URL scheme instead of setting a web session cookie."""
     import secrets, urllib.parse
     state = secrets.token_hex(16)
     base_url = os.getenv("BASE_URL", "https://dashboard.cavnar.ai")
@@ -718,6 +721,8 @@ def google_sso_start():
     })
     resp = make_response(redirect("https://accounts.google.com/o/oauth2/v2/auth?" + params))
     resp.set_cookie("g_sso_state", state, httponly=True, samesite="Lax", max_age=300)
+    if request.args.get("mobile") == "1":
+        resp.set_cookie("g_sso_mobile", "1", httponly=True, samesite="Lax", max_age=300)
     return resp
 
 
@@ -727,15 +732,39 @@ def google_sso_callback():
     import requests as _req, urllib.parse
     from auth import create_session, get_conn as _gc
 
+    is_mobile = request.cookies.get("g_sso_mobile") == "1"
+
+    def _finish(token=None, error=None):
+        """Web gets its existing cookie-session redirect; the iOS app (which
+        has no cookie jar and speaks bearer tokens) gets the same outcome
+        via a cavnarai:// deep link instead."""
+        if is_mobile:
+            query = {}
+            if token:
+                query["token"] = token
+            if error:
+                query["error"] = error
+            resp = make_response(redirect("cavnarai://auth-callback?" + urllib.parse.urlencode(query)))
+            resp.delete_cookie("g_sso_state")
+            resp.delete_cookie("g_sso_mobile")
+            return resp
+        if error:
+            return redirect(f"/login?error={error}")
+        resp = make_response(redirect("/"))
+        resp.set_cookie("session_token", token, httponly=True, samesite="Lax",
+                        secure=True, max_age=30*24*3600)
+        resp.delete_cookie("g_sso_state")
+        return resp
+
     error = request.args.get("error")
     if error:
-        return redirect("/login?error=google_denied")
+        return _finish(error="google_denied")
 
     # CSRF check
     state_param  = request.args.get("state", "")
     state_cookie = request.cookies.get("g_sso_state", "")
     if not state_param or state_param != state_cookie:
-        return redirect("/login?error=state_mismatch")
+        return _finish(error="state_mismatch")
 
     code     = request.args.get("code", "")
     base_url = os.getenv("BASE_URL", "https://dashboard.cavnar.ai")
@@ -749,24 +778,24 @@ def google_sso_callback():
         "grant_type":    "authorization_code",
     }, timeout=10)
     if not token_resp.ok:
-        return redirect("/login?error=google_token_failed")
+        return _finish(error="google_token_failed")
 
     access_token = token_resp.json().get("access_token")
     if not access_token:
-        return redirect("/login?error=no_access_token")
+        return _finish(error="no_access_token")
 
     # Get user info
     info_resp = _req.get("https://www.googleapis.com/oauth2/v2/userinfo",
                           headers={"Authorization": "Bearer " + access_token}, timeout=10)
     if not info_resp.ok:
-        return redirect("/login?error=userinfo_failed")
+        return _finish(error="userinfo_failed")
 
     info     = info_resp.json()
     email    = (info.get("email") or "").lower().strip()
     google_id = info.get("id", "")
 
     if not email:
-        return redirect("/login?error=no_email")
+        return _finish(error="no_email")
 
     # Match against users table — try google_id column first, fall back to email only
     conn = _gc()
@@ -791,20 +820,16 @@ def google_sso_callback():
     conn.close()
 
     if not row:
-        return redirect("/login?error=no_account")
+        return _finish(error="no_account")
 
     user = dict(row)
     from auth import create_session, update_last_login
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
     ua = request.headers.get("User-Agent", "")
-    token = create_session(user["id"], ip_address=ip, user_agent=ua)
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios" if is_mobile else "web")
     update_last_login(user["id"])
 
-    resp = make_response(redirect("/"))
-    resp.set_cookie("session_token", token, httponly=True, samesite="Lax",
-                    secure=True, max_age=30*24*3600)
-    resp.delete_cookie("g_sso_state")
-    return resp
+    return _finish(token=token)
 
 
 @auth_bp.route("/auth/google/disconnect", methods=["POST"])

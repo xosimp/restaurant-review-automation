@@ -120,6 +120,24 @@ def test_login_wrong_password_rejected(client, db_path):
     assert resp.get_json()["ok"] is False
 
 
+# ── /me ───────────────────────────────────────────────────────────────────
+
+def test_me_resolves_bearer_token_to_user(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid, username="alice")
+    resp = client.get("/mobile/api/me", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert data["ok"] is True
+    assert data["user"]["username"] == "alice"
+    assert "password_hash" not in data["user"]
+
+
+def test_me_rejects_missing_token(client, db_path):
+    resp = client.get("/mobile/api/me")
+    assert resp.status_code == 401
+
+
 def test_login_rate_limited_after_max_failed_attempts(client, db_path):
     rid = _restaurant(db_path)
     create_user(rid, "alice", "alice@x.com", "correct-horse", db_path=db_path)
