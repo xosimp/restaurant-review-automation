@@ -49,6 +49,7 @@ struct AccountView: View {
         connectionsSection(summary.connections)
         alertsSection(summary.alerts)
         billingSection
+        changelogSection
         signOutSection
     }
 
@@ -297,6 +298,35 @@ struct AccountView: View {
             }
             .cavnarCard()
         }
+    }
+
+    // MARK: - Changelog
+
+    @State private var changelogBadge = ChangelogBadgeViewModel()
+
+    @ViewBuilder
+    private var changelogSection: some View {
+        NavigationLink {
+            ChangelogView()
+        } label: {
+            HStack {
+                Text("What's New").font(.cavnarBody(13, weight: 600))
+                Spacer()
+                if changelogBadge.unreadCount > 0 {
+                    Text("\(changelogBadge.unreadCount)")
+                        .font(.cavnarBody(10, weight: 700))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.cavnarEmber)
+                        .clipShape(Capsule())
+                }
+                Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(Color.cavnarInk3)
+            }
+        }
+        .foregroundStyle(Color.cavnarInk)
+        .cavnarCard()
+        .task { await changelogBadge.refresh() }
     }
 
     // MARK: - Sign out
