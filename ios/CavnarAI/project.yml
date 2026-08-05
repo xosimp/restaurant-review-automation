@@ -40,6 +40,8 @@ targets:
       path: Generated/CavnarAI.entitlements
       properties:
         aps-environment: development
+        com.apple.developer.applesignin:
+          - Default
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.cavnar.CavnarAI

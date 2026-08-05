@@ -58,8 +58,8 @@ struct LoginView: View {
                         GoogleSignInButton(isLoading: viewModel.isLoading) {
                             Task { await viewModel.signInWithGoogle() }
                         }
-                        AppleSignInStubButton {
-                            viewModel.errorMessage = "Sign in with Apple is coming soon."
+                        AppleSignInButton(isLoading: viewModel.isLoading) {
+                            Task { await viewModel.signInWithApple() }
                         }
                     }
 
@@ -127,10 +127,8 @@ private struct GoogleSignInButton: View {
     }
 }
 
-/// Not yet wired to a real flow — Sign In with Apple needs the capability
-/// enabled on the Apple Developer portal first (see LoginViewModel's
-/// signInWithGoogle for the pattern this will follow once that's done).
-private struct AppleSignInStubButton: View {
+private struct AppleSignInButton: View {
+    var isLoading: Bool
     var action: () -> Void
 
     var body: some View {
@@ -149,5 +147,7 @@ private struct AppleSignInStubButton: View {
                     .strokeBorder(Color.cavnarPaper3, lineWidth: 1)
             )
         }
+        .disabled(isLoading)
+        .opacity(isLoading ? 0.6 : 1)
     }
 }

@@ -13,6 +13,7 @@ final class LoginViewModel {
 
     private let sessionStore: SessionStore
     private let googleSignIn = GoogleSignInCoordinator()
+    private let appleSignIn = AppleSignInCoordinator()
 
     init(sessionStore: SessionStore) {
         self.sessionStore = sessionStore
@@ -63,6 +64,28 @@ final class LoginViewModel {
             errorMessage = error.message
         } catch {
             errorMessage = "Couldn't sign in with Google. Try again."
+        }
+    }
+
+    func signInWithApple() async {
+        guard !isLoading else { return }
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        do {
+            let identityToken = try await appleSignIn.signIn()
+            try await sessionStore.loginWithApple(identityToken: identityToken)
+        } catch let appleError as AppleSignInError {
+            switch appleError {
+            case .cancelled:
+                break // User backed out of Apple's sheet — not an error worth a banner.
+            case .missingToken, .other:
+                errorMessage = "Couldn't sign in with Apple. Try again."
+            }
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+        } catch {
+            errorMessage = "Couldn't sign in with Apple. Try again."
         }
     }
 }

@@ -142,6 +142,28 @@ final class SessionStore {
         }
     }
 
+    private struct AppleSignInBody: Encodable {
+        let identityToken: String
+        enum CodingKeys: String, CodingKey { case identityToken = "identity_token" }
+    }
+
+    private struct AppleSignInResponse: Decodable {
+        let ok: Bool
+        let token: String
+        let user: User
+    }
+
+    /// Unlike Google's flow, /mobile/api/apple-signin hands back {token,
+    /// user} in one response — no separate /me round-trip needed, since
+    /// there's no redirect/deep-link step for a native sign-in to lose that
+    /// context across.
+    func loginWithApple(identityToken: String) async throws {
+        let response: AppleSignInResponse = try await client.send(
+            "/mobile/api/apple-signin", method: .post, body: AppleSignInBody(identityToken: identityToken)
+        )
+        try await completeLogin(token: response.token, user: response.user)
+    }
+
     private func completeLogin(token: String, user: User) async throws {
         Keychain.set(token, for: Keychain.Key.sessionToken)
         await client.setToken(token)
