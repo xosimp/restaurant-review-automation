@@ -38,7 +38,7 @@ struct FoodCostAnalyticsSection: View {
                     Text(item.item).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
                     Spacer()
                     Text("\(String(format: "%.0f", item.wastePct))%")
-                        .font(.cavnarBody(11))
+                        .font(.cavnarNumber(11))
                         .foregroundStyle(Color.cavnarRed)
                     Text("$\(String(format: "%.0f", item.wasteCost))")
                         .font(.cavnarNumber(12, weight: 600))
@@ -60,7 +60,7 @@ struct FoodCostAnalyticsSection: View {
                     Spacer()
                     if let stock = item.currentStock, let par = item.parLevel {
                         Text("\(Int(stock)) / \(Int(par)) par")
-                            .font(.cavnarBody(11))
+                            .font(.cavnarNumber(11))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                     Text("$\(String(format: "%.0f", item.overstockCost))")

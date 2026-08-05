@@ -57,6 +57,7 @@ struct NotificationsListView: View {
                         }
                     }
                     .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                 }
             }
             .background(Color.cavnarPaper)

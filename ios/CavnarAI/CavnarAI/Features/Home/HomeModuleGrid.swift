@@ -15,6 +15,7 @@ struct KPITile: View {
             Text(module.kpi?.value ?? "—")
                 .font(.cavnarNumber(26, weight: 500))
                 .foregroundStyle(Color.cavnarInk)
+                .cavnarNumberGlow()
             Text(module.label)
                 .font(.cavnarBody(10, weight: 700))
                 .tracking(1.0)
@@ -29,8 +30,7 @@ struct KPITile: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
-        .background(Color.cavnarPaper2)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .cavnarStatCell()
     }
 }
 

@@ -27,7 +27,7 @@ struct NeedsAttentionRow: View {
         }
         .padding(12)
         .background(iconColor.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 
     private var iconName: String {

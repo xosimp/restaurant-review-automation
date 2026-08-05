@@ -51,7 +51,7 @@ struct AIVisibilitySection: View {
 
     private func scoreTile(value: String, label: String) -> some View {
         VStack(spacing: 4) {
-            Text(value).font(.cavnarNumber(22, weight: 500)).foregroundStyle(Color.cavnarInk)
+            Text(value).font(.cavnarNumber(22, weight: 500)).foregroundStyle(Color.cavnarInk).cavnarNumberGlow()
             Text(label).font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity)

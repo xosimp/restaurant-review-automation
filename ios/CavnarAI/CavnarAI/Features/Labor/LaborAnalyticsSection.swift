@@ -34,11 +34,15 @@ struct LaborAnalyticsSection: View {
                 Text("$\(Int(gap.monthlyGap))")
                     .font(.cavnarNumber(24, weight: 600))
                     .foregroundStyle(gap.overTarget ? Color.cavnarRed : Color.cavnarInk)
+                    .cavnarNumberGlow(gap.overTarget ? .cavnarRed : .cavnarEmber)
                 Text(gap.overTarget ? "over target this month" : "under target this month")
                     .font(.cavnarBody(12))
                     .foregroundStyle(Color.cavnarInk3)
             }
-            Text("\(String(format: "%.1f", gap.currentPct))% current vs \(String(format: "%.0f", gap.targetPct))% target")
+            (Text("\(String(format: "%.1f", gap.currentPct))%").font(.cavnarNumber(12))
+                + Text(" current vs ")
+                + Text("\(String(format: "%.0f", gap.targetPct))%").font(.cavnarNumber(12))
+                + Text(" target"))
                 .font(.cavnarBody(12))
                 .foregroundStyle(Color.cavnarInk3)
         }
@@ -58,7 +62,7 @@ struct LaborAnalyticsSection: View {
                         .foregroundStyle(Color.cavnarInk)
                     Spacer()
                     Text("$\(Int(week.labor)) / $\(Int(week.sales))")
-                        .font(.cavnarBody(11))
+                        .font(.cavnarNumber(11))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }

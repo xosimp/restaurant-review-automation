@@ -30,7 +30,7 @@ struct MarketingAnalyticsSection: View {
                             Text("Top post").font(.cavnarBody(11, weight: 700)).foregroundStyle(Color.cavnarInk3)
                             Text(top.topic ?? "").font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
                             Text("\(top.reach) reach · \(top.likes) likes · \(top.comments) comments")
-                                .font(.cavnarBody(11))
+                                .font(.cavnarNumber(11))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                         .cavnarCard()
@@ -46,7 +46,7 @@ struct MarketingAnalyticsSection: View {
 
     private func statTile(value: String, label: String) -> some View {
         VStack(spacing: 4) {
-            Text(value).font(.cavnarNumber(20, weight: 500)).foregroundStyle(Color.cavnarInk)
+            Text(value).font(.cavnarNumber(20, weight: 500)).foregroundStyle(Color.cavnarInk).cavnarNumberGlow()
             Text(label).font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity)

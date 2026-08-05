@@ -30,6 +30,7 @@ struct FoodCostQuickEntryView: View {
                 FoodCostAnalyticsSection(viewModel: analyticsViewModel)
             }
         }
+        .background(Color.cavnarPaper)
         .navigationTitle("Food Cost")
         .task {
             await analyticsViewModel.load()
@@ -60,7 +61,7 @@ struct FoodCostQuickEntryView: View {
                             HStack {
                                 HStack(spacing: 4) {
                                     Text("$")
-                                        .font(.cavnarBody(13))
+                                        .font(.cavnarNumber(13))
                                         .foregroundStyle(Color.cavnarInk3)
                                     TextField("price/unit", text: $item.priceText)
                                         .keyboardType(.decimalPad)
@@ -120,6 +121,7 @@ struct FoodCostQuickEntryView: View {
                     .disabled(!viewModel.canSubmit)
                 }
         }
+        .scrollContentBackground(.hidden)
     }
 
     @ViewBuilder
@@ -140,7 +142,7 @@ struct FoodCostQuickEntryView: View {
                 }
             }
             if let total = viewModel.totalWeeklyImpact, total > 0 {
-                Text("Est. +$\(Int(total))/week from price increases")
+                (Text("Est. ") + Text("+$\(Int(total))/week").font(.cavnarNumber(12, weight: 600)) + Text(" from price increases"))
                     .font(.cavnarBody(12, weight: 600))
                     .foregroundStyle(Color.cavnarAmber)
             }

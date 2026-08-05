@@ -95,7 +95,7 @@ struct ReviewDetailView: View {
                 .frame(minHeight: 120)
                 .padding(10)
                 .background(Color.cavnarPaper2)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                 .onChange(of: viewModel.editedDraft) { _, _ in
                     viewModel.scheduleDraftSave()
                 }
@@ -114,7 +114,7 @@ struct ReviewDetailView: View {
             }
             .foregroundStyle(Color.cavnarInk3)
             .background(Color.cavnarPaper2)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
             .disabled(viewModel.isSubmitting)
 
             Button {
@@ -149,6 +149,8 @@ private struct TemplatePickerSheet: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.cavnarPaper)
             .navigationTitle("Response Templates")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

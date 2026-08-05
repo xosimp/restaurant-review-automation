@@ -80,7 +80,7 @@ struct MarketingView: View {
 
     private func statTile(value: String, label: String) -> some View {
         VStack(spacing: 4) {
-            Text(value).font(.cavnarNumber(22, weight: 500)).foregroundStyle(Color.cavnarInk)
+            Text(value).font(.cavnarNumber(22, weight: 500)).foregroundStyle(Color.cavnarInk).cavnarNumberGlow()
             Text(label).font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity)
@@ -127,8 +127,8 @@ struct MarketingView: View {
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.cavnarPaper)
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.cavnarEmber.opacity(0.3), lineWidth: 1))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control).stroke(Color.cavnarEmber.opacity(0.3), lineWidth: 1))
+                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
 
                 if viewModel.selectedType == "instagram_post" {
                     TextField("Image URL (required for Instagram)", text: $viewModel.imageURL)
@@ -190,7 +190,7 @@ struct MarketingView: View {
                     }
                     .padding(12)
                     .background(Color.cavnarPaper2)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                 }
             }
         }

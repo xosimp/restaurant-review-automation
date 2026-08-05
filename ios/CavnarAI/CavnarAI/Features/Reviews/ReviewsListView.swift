@@ -82,6 +82,7 @@ struct ReviewsListView: View {
                     }
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
         }
         .overlay {

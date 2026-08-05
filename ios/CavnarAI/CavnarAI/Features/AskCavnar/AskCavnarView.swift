@@ -42,7 +42,7 @@ struct AskCavnarView: View {
                         .focused($inputFocused)
                         .padding(10)
                         .background(Color.cavnarPaper2)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                     Button {
                         Task { await viewModel.submit() }
                     } label: {
@@ -71,7 +71,7 @@ private struct ChatBubble: View {
                 .foregroundStyle(message.isUser ? .white : Color.cavnarInk)
                 .padding(12)
                 .background(message.isUser ? Color.cavnarEmber : Color.cavnarPaper2)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
             if !message.isUser { Spacer(minLength: 40) }
         }
     }
@@ -83,7 +83,7 @@ private struct LoadingBubble: View {
             ProgressView()
                 .padding(12)
                 .background(Color.cavnarPaper2)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
             Spacer(minLength: 40)
         }
     }

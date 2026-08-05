@@ -18,6 +18,9 @@ struct RootView: View {
             }
         }
         .environment(deepLinkRouter)
+        // Mobile is dark-only by design — the light/dark toggle stays a
+        // desktop-only feature (see the web dashboard's theme switcher).
+        .preferredColorScheme(.dark)
         .onAppear {
             PushManager.shared.router = deepLinkRouter
         }
@@ -46,6 +49,11 @@ struct RootView: View {
                 .tag(AppTab.account)
         }
         .tint(Color.cavnarEmber)
+        // True-black tab bar chrome, distinct from the warm near-black
+        // content background — mirrors the web dashboard's own two-tier
+        // black system (pure #000 nav chrome vs #1a1714 content).
+        .toolbarBackground(Color.cavnarChrome, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
         .task {
             PushManager.shared.requestAuthorizationAndRegister()
         }

@@ -115,8 +115,7 @@ private struct ModuleTile: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
-        .background(Color.cavnarPaper2)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding(.vertical, 8)
+        .cavnarCard()
     }
 }

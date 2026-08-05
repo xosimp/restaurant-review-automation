@@ -69,7 +69,7 @@ struct GuestTextClubView: View {
                     .frame(minHeight: 80)
                     .padding(8)
                     .background(Color.cavnarPaper2)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
 
                 Button {
                     Task { await viewModel.sendCampaign() }
@@ -100,7 +100,7 @@ struct GuestTextClubView: View {
     private var contactsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Guest contacts (\(viewModel.contacts.count))")
+                (Text("Guest contacts (") + Text("\(viewModel.contacts.count)").font(.cavnarNumber(13, weight: 700)) + Text(")"))
                     .font(.cavnarBody(13, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Spacer()

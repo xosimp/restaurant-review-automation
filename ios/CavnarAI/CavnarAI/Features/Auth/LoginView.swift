@@ -18,7 +18,12 @@ struct LoginView: View {
                     VStack(spacing: 6) {
                         Text("Cavnar AI")
                             .font(.cavnarHeadline(36))
-                            .foregroundStyle(Color.cavnarInk)
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [Color.cavnarInk, Color.cavnarEmber],
+                                    startPoint: .topLeading, endPoint: .bottomTrailing
+                                )
+                            )
                         Text("Sign in to your restaurant")
                             .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk3)

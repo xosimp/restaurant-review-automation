@@ -28,6 +28,13 @@ extension Color {
 
     static let cavnarSurface = Color("Surface")
 
+    /// True black — reserved for nav/tab-bar chrome specifically (matches the
+    /// web dashboard's own two-tier black system: content backgrounds use the
+    /// warm near-black cavnarPaper, while header/nav chrome is forced to pure
+    /// #000). Don't use this for content surfaces — use cavnarPaper/Paper2/
+    /// Paper3 for those.
+    static let cavnarChrome = Color("Chrome")
+
     /// Per-tenant white-label accent (restaurant.brand_color, read from the
     /// /mobile/api/home payload) — falls back to the default ember when a
     /// restaurant hasn't set one. Use this instead of .cavnarEmber for any

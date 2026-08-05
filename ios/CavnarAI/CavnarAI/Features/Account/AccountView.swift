@@ -59,11 +59,13 @@ struct AccountView: View {
             .foregroundStyle(Color.cavnarInk3)
     }
 
-    private func row(_ label: String, _ value: String) -> some View {
+    private func row(_ label: String, _ value: String, isNumber: Bool = false) -> some View {
         HStack {
             Text(label).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
             Spacer()
-            Text(value).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
+            Text(value)
+                .font(isNumber ? .cavnarNumber(13, weight: 600) : .cavnarBody(13, weight: 600))
+                .foregroundStyle(Color.cavnarInk)
         }
     }
 
@@ -281,7 +283,7 @@ struct AccountView: View {
                 if let billing = viewModel.billing {
                     if billing.ok, billing.status != "inactive" {
                         row("Next charge", billing.nextDate ?? "—")
-                        row("Amount", billing.amount ?? "—")
+                        row("Amount", billing.amount ?? "—", isNumber: true)
                         row("Payment method", billing.paymentMethod ?? "—")
                         if let urlString = billing.portalURL, let url = URL(string: urlString) {
                             Link("Manage payment method", destination: url)
@@ -314,7 +316,7 @@ struct AccountView: View {
                 Spacer()
                 if changelogBadge.unreadCount > 0 {
                     Text("\(changelogBadge.unreadCount)")
-                        .font(.cavnarBody(10, weight: 700))
+                        .font(.cavnarNumber(10, weight: 700))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -386,6 +388,7 @@ private struct TwoFactorSetupSheet: View {
                     Text("Code sent to \(masked)").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
                     TextField("6-digit code", text: $code)
                         .keyboardType(.numberPad)
+                        .font(.cavnarNumber(16))
                     Button("Verify and enable") {
                         Task {
                             if await viewModel.verify2FA(code: code) { dismiss() }

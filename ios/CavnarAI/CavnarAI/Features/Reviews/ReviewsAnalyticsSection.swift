@@ -37,7 +37,9 @@ struct ReviewsAnalyticsSection: View {
 
     private func performanceCard(_ performance: ResponsePerformance) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Response performance — last \(performance.days)d")
+            (Text("Response performance — last ")
+                + Text("\(performance.days)").font(.cavnarNumber(11, weight: 700))
+                + Text("d"))
                 .font(.cavnarBody(11, weight: 700))
                 .foregroundStyle(Color.cavnarInk3)
             HStack {
@@ -54,6 +56,7 @@ struct ReviewsAnalyticsSection: View {
             Text("\(value)")
                 .font(.cavnarNumber(20, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
+                .cavnarNumberGlow()
             Text(label)
                 .font(.cavnarBody(10))
                 .foregroundStyle(Color.cavnarInk3)
@@ -72,13 +75,13 @@ struct ReviewsAnalyticsSection: View {
                     trendIcon(entry.trend)
                     Spacer()
                     Text("\(entry.pctPositive)% pos")
-                        .font(.cavnarBody(11))
+                        .font(.cavnarNumber(11))
                         .foregroundStyle(Color.cavnarGreen)
                     Text("\(entry.pctNegative)% neg")
-                        .font(.cavnarBody(11))
+                        .font(.cavnarNumber(11))
                         .foregroundStyle(Color.cavnarRed)
                     Text("(\(entry.count))")
-                        .font(.cavnarBody(11))
+                        .font(.cavnarNumber(11))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
@@ -103,7 +106,8 @@ struct ReviewsAnalyticsSection: View {
             ForEach(viewModel.sentimentWeeks) { week in
                 HStack {
                     Text(week.label).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3).frame(width: 40, alignment: .leading)
-                    Text("\(week.total) reviews").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk)
+                    (Text("\(week.total)").font(.cavnarNumber(12, weight: 600)) + Text(" reviews").font(.cavnarBody(12)))
+                        .foregroundStyle(Color.cavnarInk)
                     Spacer()
                     Text(String(format: "%.1f★", week.avgRating))
                         .font(.cavnarNumber(12, weight: 600))
