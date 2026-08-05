@@ -159,6 +159,8 @@ private struct AddGuestContactSheet: View {
                 }
                 .disabled(name.isEmpty || phone.isEmpty)
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.cavnarPaper)
             .navigationTitle("Add Guest")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

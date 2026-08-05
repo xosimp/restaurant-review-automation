@@ -16,14 +16,9 @@ struct LoginView: View {
                     Spacer()
 
                     VStack(spacing: 6) {
-                        Text("Cavnar AI")
+                        (Text("Cavnar ").foregroundStyle(Color.cavnarInk)
+                            + Text("AI").foregroundStyle(Color.cavnarEmber2).italic())
                             .font(.cavnarHeadline(36))
-                            .foregroundStyle(
-                                LinearGradient(
-                                    colors: [Color.cavnarInk, Color.cavnarEmber],
-                                    startPoint: .topLeading, endPoint: .bottomTrailing
-                                )
-                            )
                         Text("Sign in to your restaurant")
                             .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk3)
@@ -57,6 +52,17 @@ struct LoginView: View {
                     .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !viewModel.canSubmit))
                     .disabled(!viewModel.canSubmit)
 
+                    orDivider
+
+                    VStack(spacing: 10) {
+                        GoogleSignInButton(isLoading: viewModel.isLoading) {
+                            Task { await viewModel.signInWithGoogle() }
+                        }
+                        AppleSignInStubButton {
+                            viewModel.errorMessage = "Sign in with Apple is coming soon."
+                        }
+                    }
+
                     Spacer()
                     Spacer()
                 }
@@ -80,6 +86,68 @@ struct LoginView: View {
                     )
                 }
             }
+        }
+    }
+
+    private var orDivider: some View {
+        HStack(spacing: 12) {
+            Rectangle().fill(Color.cavnarPaper3).frame(height: 1)
+            Text("or")
+                .font(.cavnarBody(12, weight: 600))
+                .foregroundStyle(Color.cavnarInk3)
+            Rectangle().fill(Color.cavnarPaper3).frame(height: 1)
+        }
+    }
+}
+
+/// Google's brand guidelines call for their own logo mark on a plain white
+/// pill regardless of the host app's theme — matches the treatment the web
+/// login page already uses for the same button.
+private struct GoogleSignInButton: View {
+    var isLoading: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Text("G")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Color.cavnarEmber)
+                Text("Sign in with Google")
+                    .font(.cavnarBody(14, weight: 600))
+                    .foregroundStyle(.black)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(.white)
+            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+        }
+        .disabled(isLoading)
+        .opacity(isLoading ? 0.6 : 1)
+    }
+}
+
+/// Not yet wired to a real flow — Sign In with Apple needs the capability
+/// enabled on the Apple Developer portal first (see LoginViewModel's
+/// signInWithGoogle for the pattern this will follow once that's done).
+private struct AppleSignInStubButton: View {
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: "apple.logo")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("Sign in with Apple")
+                    .font(.cavnarBody(14, weight: 600))
+            }
+            .foregroundStyle(Color.cavnarInk)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .overlay(
+                RoundedRectangle(cornerRadius: CavnarRadius.control)
+                    .strokeBorder(Color.cavnarPaper3, lineWidth: 1)
+            )
         }
     }
 }

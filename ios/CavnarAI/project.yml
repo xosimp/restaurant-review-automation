@@ -32,6 +32,10 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        CFBundleURLTypes:
+          - CFBundleURLName: ai.cavnar.CavnarAI.auth
+            CFBundleURLSchemes:
+              - cavnarai
     entitlements:
       path: Generated/CavnarAI.entitlements
       properties:

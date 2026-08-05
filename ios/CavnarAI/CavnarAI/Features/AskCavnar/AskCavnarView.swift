@@ -68,7 +68,7 @@ private struct ChatBubble: View {
             if message.isUser { Spacer(minLength: 40) }
             Text(message.text)
                 .font(.cavnarBody(14))
-                .foregroundStyle(message.isUser ? .white : Color.cavnarInk)
+                .foregroundStyle(Color.cavnarInk)
                 .padding(12)
                 .background(message.isUser ? Color.cavnarEmber : Color.cavnarPaper2)
                 .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))

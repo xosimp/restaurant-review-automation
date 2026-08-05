@@ -317,7 +317,7 @@ struct AccountView: View {
                 if changelogBadge.unreadCount > 0 {
                     Text("\(changelogBadge.unreadCount)")
                         .font(.cavnarNumber(10, weight: 700))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.cavnarInk)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.cavnarEmber)
@@ -366,6 +366,8 @@ private struct ChangePasswordSheet: View {
                 }
                 .disabled(viewModel.isChangingPassword || current.isEmpty || newPassword.count < 8)
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.cavnarPaper)
             .navigationTitle("Change Password")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -405,6 +407,8 @@ private struct TwoFactorSetupSheet: View {
                     Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.cavnarPaper)
             .navigationTitle("Enable 2FA")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

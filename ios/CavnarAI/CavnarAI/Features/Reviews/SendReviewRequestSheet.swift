@@ -84,6 +84,8 @@ struct SendReviewRequestSheet: View {
                     .disabled(viewModel.isSending || (email.isEmpty && phone.isEmpty))
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.cavnarPaper)
             .navigationTitle("Request a Review")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

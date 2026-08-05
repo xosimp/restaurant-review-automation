@@ -121,6 +121,27 @@ final class SessionStore {
         try await completeLogin(token: response.token, user: response.user)
     }
 
+    private struct MeResponse: Decodable {
+        let ok: Bool
+        let user: User
+    }
+
+    /// The Google Sign-In flow hands back a bearer token via a cavnarai://
+    /// deep link, not the /login response body, so there's no `user` object
+    /// yet — resolve it via /mobile/api/me before finishing the session the
+    /// same way password login does.
+    func completeGoogleLogin(token: String) async throws {
+        let previousToken = self.token
+        await client.setToken(token)
+        do {
+            let response: MeResponse = try await client.send("/mobile/api/me")
+            try await completeLogin(token: token, user: response.user)
+        } catch {
+            await client.setToken(previousToken)
+            throw error
+        }
+    }
+
     private func completeLogin(token: String, user: User) async throws {
         Keychain.set(token, for: Keychain.Key.sessionToken)
         await client.setToken(token)
