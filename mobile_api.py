@@ -20,6 +20,7 @@ call, so there's one implementation behind both the dashboard and the app.
 """
 import base64
 import hmac
+import os
 import random
 from datetime import datetime, timedelta
 
@@ -28,6 +29,7 @@ from flask import Blueprint, request, jsonify
 from auth import (
     verify_password, create_session, delete_session,
     revoke_other_sessions, mobile_login_required, get_user_by_restaurant_id,
+    update_last_login,
 )
 from auth_routes import _is_rate_limited, _record_failed_attempt, _clear_attempts, _get_client_ip
 from models import get_restaurant, update_restaurant, get_conn
@@ -60,6 +62,79 @@ def _send_login_notification(user, ip, user_agent):
             send_login_notification(rest.owner_email, rest.name or "", ip, user_agent)
     except Exception as e:
         print(f"[LoginNotify-mobile] {e}")
+
+
+_APPLE_JWKS_URL = "https://appleid.apple.com/auth/keys"
+_apple_jwk_client = None
+
+
+def _verify_apple_identity_token(identity_token, bundle_id):
+    """Verifies the JWT ASAuthorizationController hands the app against
+    Apple's own public signing keys — no shared secret involved, unlike
+    Google's OAuth code exchange. Raises on any failure (bad signature,
+    wrong audience/issuer, expired); callers turn that into a 401."""
+    import jwt as _pyjwt
+    global _apple_jwk_client
+    if _apple_jwk_client is None:
+        _apple_jwk_client = _pyjwt.PyJWKClient(_APPLE_JWKS_URL)
+    signing_key = _apple_jwk_client.get_signing_key_from_jwt(identity_token)
+    return _pyjwt.decode(
+        identity_token,
+        signing_key.key,
+        algorithms=["RS256"],
+        audience=bundle_id,
+        issuer="https://appleid.apple.com",
+    )
+
+
+@mobile_bp.route("/apple-signin", methods=["POST"])
+def mobile_apple_signin():
+    """Native Sign In with Apple — unlike Google's web-redirect OAuth flow,
+    ASAuthorizationController hands the app a signed identity token directly
+    on-device, so there's no callback/deep-link involved: the app just POSTs
+    the token here. Matches by apple_user_id (Apple's stable per-app user
+    identifier) first, falling back to email — Apple only includes the
+    user's email on their very first-ever Sign In with Apple for this app,
+    so apple_user_id is the only reliable match on every login after that."""
+    data = request.get_json() or {}
+    identity_token = data.get("identity_token") or ""
+    if not identity_token:
+        return jsonify(ok=False, error="Missing Apple identity token"), 400
+
+    bundle_id = os.getenv("APNS_BUNDLE_ID", "ai.cavnar.CavnarAI")
+    try:
+        payload = _verify_apple_identity_token(identity_token, bundle_id)
+    except Exception:
+        return jsonify(ok=False, error="Couldn't verify Sign in with Apple. Try again."), 401
+
+    apple_user_id = payload.get("sub", "")
+    email = (payload.get("email") or "").lower().strip()
+    if not apple_user_id:
+        return jsonify(ok=False, error="Apple didn't return a valid identity."), 401
+
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM users WHERE apple_user_id=? AND is_active=1 LIMIT 1", (apple_user_id,)
+    ).fetchone()
+    if not row and email:
+        row = conn.execute(
+            "SELECT * FROM users WHERE LOWER(email)=? AND is_active=1 LIMIT 1", (email,)
+        ).fetchone()
+    if row and not row["apple_user_id"]:
+        conn.execute("UPDATE users SET apple_user_id=? WHERE id=?", (apple_user_id, row["id"]))
+        conn.commit()
+    conn.close()
+
+    if not row:
+        return jsonify(ok=False, error="No account found for that Apple ID. Contact will@cavnar.ai."), 401
+
+    user = dict(row)
+    ip = _get_client_ip()
+    ua = request.headers.get("User-Agent", "Cavnar-iOS")
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios")
+    update_last_login(user["id"])
+    _send_login_notification(user, ip, ua)
+    return jsonify(ok=True, token=token, user=_public_user(user))
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────

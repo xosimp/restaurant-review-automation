@@ -464,6 +464,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("labor_daily_history", "total_hours", "REAL"),
         ("users", "role", "TEXT DEFAULT 'client'"),
         ("users", "google_id", "TEXT"),
+        ("users", "apple_user_id", "TEXT"),
         ("sessions", "active_restaurant_id", "INTEGER"),
         # Alert channel matrix
         ("restaurants", "al_health_email", "INTEGER DEFAULT 1"),

@@ -133,6 +133,71 @@ def test_me_resolves_bearer_token_to_user(client, db_path):
     assert "password_hash" not in data["user"]
 
 
+# ── /apple-signin ────────────────────────────────────────────────────────
+
+def test_apple_signin_matches_by_email_and_backfills_apple_user_id(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    create_user(rid, "alice", "alice@x.com", "correct-horse", db_path=db_path)
+    monkeypatch.setattr(
+        "mobile_api._verify_apple_identity_token",
+        lambda token, bundle_id: {"sub": "apple-stable-id-1", "email": "alice@x.com"},
+    )
+    resp = client.post("/mobile/api/apple-signin", json={"identity_token": "fake"})
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert data["ok"] is True
+    assert data["user"]["username"] == "alice"
+
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT apple_user_id FROM users WHERE username='alice'").fetchone()
+    conn.close()
+    assert row["apple_user_id"] == "apple-stable-id-1"
+
+
+def test_apple_signin_matches_by_apple_user_id_without_email(client, db_path, monkeypatch):
+    """Apple only sends the email on a user's very first Sign In with Apple
+    ever — every login after that must still work from apple_user_id alone."""
+    rid = _restaurant(db_path)
+    create_user(rid, "alice", "alice@x.com", "correct-horse", db_path=db_path)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE users SET apple_user_id=? WHERE username='alice'", ("apple-stable-id-1",))
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(
+        "mobile_api._verify_apple_identity_token",
+        lambda token, bundle_id: {"sub": "apple-stable-id-1"},
+    )
+    resp = client.post("/mobile/api/apple-signin", json={"identity_token": "fake"})
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert data["user"]["username"] == "alice"
+
+
+def test_apple_signin_no_matching_account_returns_401(client, db_path, monkeypatch):
+    monkeypatch.setattr(
+        "mobile_api._verify_apple_identity_token",
+        lambda token, bundle_id: {"sub": "apple-stable-id-unknown", "email": "nobody@x.com"},
+    )
+    resp = client.post("/mobile/api/apple-signin", json={"identity_token": "fake"})
+    assert resp.status_code == 401
+    assert resp.get_json()["ok"] is False
+
+
+def test_apple_signin_verification_failure_returns_401(client, db_path, monkeypatch):
+    def _raise(token, bundle_id):
+        raise ValueError("bad signature")
+    monkeypatch.setattr("mobile_api._verify_apple_identity_token", _raise)
+    resp = client.post("/mobile/api/apple-signin", json={"identity_token": "fake"})
+    assert resp.status_code == 401
+    assert resp.get_json()["ok"] is False
+
+
+def test_apple_signin_missing_token_returns_400(client, db_path):
+    resp = client.post("/mobile/api/apple-signin", json={})
+    assert resp.status_code == 400
+
+
 def test_me_rejects_missing_token(client, db_path):
     resp = client.get("/mobile/api/me")
     assert resp.status_code == 401
