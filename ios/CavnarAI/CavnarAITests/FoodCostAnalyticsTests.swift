@@ -5,6 +5,9 @@ final class FoodCostAnalyticsTests: XCTestCase {
     func testDecodesFoodCostAnalytics() throws {
         let json = """
         {"ok": true, "insight": "Waste is trending down.",
+         "insight_intro": "Waste is trending down.",
+         "insight_recommendations": ["Cut romaine par by 10%."],
+         "insight_forecast": "Should keep improving next week.",
          "waste_items": [{"item": "Lettuce", "waste_cost": 12.5, "waste_pct": 22.0,
                            "waste_last_week": 4.0, "unit": "lb"}],
          "overstock": [{"item": "Chicken", "overstock_cost": 40.0,
@@ -17,5 +20,8 @@ final class FoodCostAnalyticsTests: XCTestCase {
         XCTAssertEqual(analytics.wasteItems.first?.item, "Lettuce")
         XCTAssertEqual(analytics.overstock.first?.overstockCost, 40.0)
         XCTAssertEqual(analytics.recoverableMonthly, 300.0)
+        XCTAssertEqual(analytics.insight?.intro, "Waste is trending down.")
+        XCTAssertEqual(analytics.insight?.recommendations, ["Cut romaine par by 10%."])
+        XCTAssertEqual(analytics.insight?.forecast, "Should keep improving next week.")
     }
 }

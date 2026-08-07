@@ -29,13 +29,6 @@ final class ModulesGridViewModel {
     }
 }
 
-/// A lightweight, Hashable stand-in for "push to this module's screen" —
-/// used for the deep-link-driven programmatic push below, kept separate
-/// from ModuleSummary (which carries KPI data this doesn't need).
-private struct ModuleRoute: Hashable {
-    let key: String
-    let label: String
-}
 
 /// Every module the client is entitled to, one tile each — scales to any
 /// count with no per-module-count layout code (1 module = 1 tile, 6 = a
@@ -53,13 +46,20 @@ struct ModulesGridView: View {
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
                             ForEach(viewModel.modules) { module in
-                                NavigationLink {
-                                    ModuleDestinationView(moduleKey: module.key, moduleLabel: module.label)
+                                // A Button driving the path directly, not a
+                                // NavigationLink — the haptic fires from a
+                                // deterministic action closure instead of a
+                                // simultaneousGesture racing NavigationLink's
+                                // own tap handling (that combo was the
+                                // source of reported delayed/duplicate
+                                // haptics on rapid back-and-forth taps).
+                                Button {
+                                    Haptic.light()
+                                    path.append(ModuleRoute(key: module.key, label: module.label))
                                 } label: {
                                     ModuleTile(module: module)
                                 }
                                 .buttonStyle(.plain)
-                                .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
                             }
                         }
                         .padding(20)

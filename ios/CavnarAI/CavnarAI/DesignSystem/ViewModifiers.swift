@@ -43,8 +43,13 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-            .onChange(of: configuration.isPressed) { _, isPressed in
-                if isPressed && !isDisabled { Haptic.light() }
+            // .sensoryFeedback instead of manually firing a generator off
+            // onChange(of: isPressed) — the manual version raced SwiftUI's
+            // own gesture recognition on fast/rapid taps (reported as
+            // missing or delayed feedback); this is Apple's own dedicated,
+            // race-resistant mechanism for tying haptics to a value change.
+            .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in
+                new && !isDisabled
             }
     }
 }

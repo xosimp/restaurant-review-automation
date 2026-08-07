@@ -5,14 +5,18 @@ struct HomeView: View {
     @State private var viewModel = HomeViewModel()
     @State private var showingLocationSwitcher = false
     @State private var showingNotifications = false
+    @State private var path = NavigationPath()
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if let summary = viewModel.summary {
                         header(summary)
-                        HomeModuleGrid(modules: summary.modules)
+                        HomeModuleGrid(modules: summary.modules) { module in
+                            Haptic.light()
+                            path.append(ModuleRoute(key: module.key, label: module.label))
+                        }
                         needsAttentionSection(summary)
                     } else if viewModel.isLoading {
                         ProgressView().padding(.top, 80)
@@ -26,6 +30,9 @@ struct HomeView: View {
                     }
                 }
                 .padding(20)
+            }
+            .navigationDestination(for: ModuleRoute.self) { route in
+                ModuleDestinationView(moduleKey: route.key, moduleLabel: route.label)
             }
             .background(Color.cavnarPaper)
             .refreshable { await viewModel.load() }
@@ -85,11 +92,9 @@ struct HomeView: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(summary.needsAttention) { item in
-                        NavigationLink {
-                            ModuleDestinationView(
-                                moduleKey: item.module,
-                                moduleLabel: item.module.capitalized
-                            )
+                        Button {
+                            Haptic.light()
+                            path.append(ModuleRoute(key: item.module, label: item.module.capitalized))
                         } label: {
                             NeedsAttentionRow(item: item)
                         }

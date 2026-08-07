@@ -38,14 +38,24 @@ struct OverstockItem: Decodable, Identifiable {
 
 struct FoodCostAnalytics: Decodable {
     let ok: Bool
-    let insight: String?
+    let insightIntro: String?
+    let insightRecommendations: [String]
+    let insightForecast: String?
     let wasteItems: [WasteItem]
     let overstock: [OverstockItem]
     let recoverableMonthly: Double?
 
     enum CodingKeys: String, CodingKey {
-        case ok, insight, overstock
+        case ok, overstock
+        case insightIntro = "insight_intro"
+        case insightRecommendations = "insight_recommendations"
+        case insightForecast = "insight_forecast"
         case wasteItems = "waste_items"
         case recoverableMonthly = "recoverable_monthly"
+    }
+
+    var insight: AIInsight? {
+        guard let insightIntro else { return nil }
+        return AIInsight(intro: insightIntro, recommendations: insightRecommendations, forecast: insightForecast)
     }
 }

@@ -31,7 +31,8 @@ struct LaborGap: Decodable {
 final class LaborAnalyticsViewModel {
     var trend: [LaborTrendWeek] = []
     var gap: LaborGap?
-    var insight: String?
+    var insight: AIInsight?
+    var isLoadingInsight = false
     var isLoading = false
 
     private let client: APIClient
@@ -45,21 +46,18 @@ final class LaborAnalyticsViewModel {
         let weeks: [LaborTrendWeek]
     }
 
-    private struct InsightResponse: Decodable {
-        let ok: Bool
-        let insight: String?
-    }
-
     func load() async {
         isLoading = true
+        isLoadingInsight = true
         defer { isLoading = false }
 
         async let trendResult: TrendResponse? = try? client.send("/mobile/api/labor/trend")
         async let gapResult: LaborGap? = try? client.send("/mobile/api/labor/gap")
-        async let insightResult: InsightResponse? = try? client.send("/mobile/api/labor/insight")
+        async let insightResult: AIInsight? = try? client.send("/mobile/api/labor/insight")
 
         trend = await trendResult?.weeks ?? []
         gap = await gapResult
-        insight = await insightResult?.insight
+        insight = await insightResult
+        isLoadingInsight = false
     }
 }

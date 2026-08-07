@@ -340,6 +340,7 @@ struct AccountView: View {
     @ViewBuilder
     private var signOutSection: some View {
         Button("Sign Out", role: .destructive) {
+            Haptic.light()
             Task { await sessionStore.logout() }
         }
         .font(.cavnarBody(14, weight: 700))

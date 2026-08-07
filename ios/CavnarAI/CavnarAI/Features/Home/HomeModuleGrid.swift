@@ -42,17 +42,21 @@ struct KPITile: View {
 /// navigates straight into that module's screen.
 struct HomeModuleGrid: View {
     let modules: [ModuleSummary]
+    var onSelect: (ModuleSummary) -> Void
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
             ForEach(modules) { module in
-                NavigationLink {
-                    ModuleDestinationView(moduleKey: module.key, moduleLabel: module.label)
+                // A Button calling back into the parent's NavigationPath,
+                // not a NavigationLink — keeps the haptic on a deterministic
+                // action closure instead of a simultaneousGesture racing
+                // NavigationLink's own tap handling.
+                Button {
+                    onSelect(module)
                 } label: {
                     KPITile(module: module)
                 }
                 .buttonStyle(.plain)
-                .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
             }
         }
     }

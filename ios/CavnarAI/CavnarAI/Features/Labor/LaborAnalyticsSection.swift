@@ -5,22 +5,19 @@ struct LaborAnalyticsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            if viewModel.isLoading && viewModel.gap == nil {
-                ProgressView().padding(.top, 60).frame(maxWidth: .infinity)
-            } else {
-                if let insight = viewModel.insight {
-                    Text(insight)
-                        .font(.cavnarBody(13))
-                        .foregroundStyle(Color.cavnarInk)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .cavnarCard()
-                }
-                if let gap = viewModel.gap {
-                    gapCard(gap)
-                }
-                if !viewModel.trend.isEmpty {
-                    trendCard
-                }
+            AIConsultantView(
+                title: "Cavnar AI Labor Consultant",
+                insight: viewModel.insight,
+                isLoading: viewModel.isLoadingInsight
+            )
+
+            if let gap = viewModel.gap {
+                gapCard(gap)
+            } else if viewModel.isLoading {
+                ProgressView().frame(maxWidth: .infinity).padding(.vertical, 20)
+            }
+            if !viewModel.trend.isEmpty {
+                trendCard
             }
         }
     }

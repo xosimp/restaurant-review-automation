@@ -6,22 +6,21 @@ struct FoodCostAnalyticsSection: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                if viewModel.isLoading && viewModel.analytics == nil {
-                    ProgressView().padding(.top, 60).frame(maxWidth: .infinity)
-                } else if let analytics = viewModel.analytics {
-                    if let insight = analytics.insight {
-                        Text(insight)
-                            .font(.cavnarBody(13))
-                            .foregroundStyle(Color.cavnarInk)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .cavnarCard()
-                    }
+                AIConsultantView(
+                    title: "Cavnar AI Food Cost Analysis",
+                    insight: viewModel.analytics?.insight,
+                    isLoading: viewModel.isLoading
+                )
+
+                if let analytics = viewModel.analytics {
                     if !analytics.wasteItems.isEmpty {
                         wasteCard(analytics.wasteItems)
                     }
                     if !analytics.overstock.isEmpty {
                         overstockCard(analytics.overstock)
                     }
+                } else if viewModel.isLoading {
+                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 20)
                 }
             }
             .padding(20)

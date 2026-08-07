@@ -5,16 +5,15 @@ struct MarketingAnalyticsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            AIConsultantView(
+                title: "Cavnar AI Marketing Brief",
+                insight: viewModel.insight,
+                isLoading: viewModel.isLoadingInsight
+            )
+
             if viewModel.isLoading && viewModel.performance == nil {
-                ProgressView().padding(.top, 60).frame(maxWidth: .infinity)
+                ProgressView().frame(maxWidth: .infinity).padding(.vertical, 20)
             } else {
-                if let insight = viewModel.insight {
-                    Text(insight)
-                        .font(.cavnarBody(13))
-                        .foregroundStyle(Color.cavnarInk)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .cavnarCard()
-                }
                 if let perf = viewModel.performance, perf.hasData {
                     HStack(spacing: 0) {
                         statTile(value: "\(perf.totalReach)", label: "Total reach")

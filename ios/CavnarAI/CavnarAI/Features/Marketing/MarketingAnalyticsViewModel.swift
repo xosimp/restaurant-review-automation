@@ -31,7 +31,8 @@ struct MarketingPerformance: Decodable {
 @MainActor
 final class MarketingAnalyticsViewModel {
     var performance: MarketingPerformance?
-    var insight: String?
+    var insight: AIInsight?
+    var isLoadingInsight = false
     var isLoading = false
 
     private let client: APIClient
@@ -40,19 +41,16 @@ final class MarketingAnalyticsViewModel {
         self.client = client
     }
 
-    private struct InsightResponse: Decodable {
-        let ok: Bool
-        let insight: String?
-    }
-
     func load() async {
         isLoading = true
+        isLoadingInsight = true
         defer { isLoading = false }
 
         async let performanceResult: MarketingPerformance? = try? client.send("/mobile/api/marketing/performance")
-        async let insightResult: InsightResponse? = try? client.send("/mobile/api/marketing/insight")
+        async let insightResult: AIInsight? = try? client.send("/mobile/api/marketing/insight")
 
         performance = await performanceResult
-        insight = await insightResult?.insight
+        insight = await insightResult
+        isLoadingInsight = false
     }
 }
