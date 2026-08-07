@@ -21,6 +21,7 @@ struct LaborView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
             .padding(.top, 8)
+            .onChange(of: subTab) { _, _ in Haptic.light() }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {

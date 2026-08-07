@@ -32,6 +32,9 @@ struct RootView: View {
         .onChange(of: deepLinkRouter.pendingTab) { _, tab in
             if let tab { selectedTab = tab }
         }
+        .onChange(of: selectedTab) { _, _ in
+            Haptic.light()
+        }
     }
 
     private var mainTabs: some View {
@@ -61,7 +64,10 @@ struct RootView: View {
         // a ZStack sibling next to TabView silently lost hit-testing to the
         // tab content underneath it.
         .overlay(alignment: .bottomTrailing) {
-            AskCavnarFAB { showingAskCavnar = true }
+            AskCavnarFAB {
+                Haptic.light()
+                showingAskCavnar = true
+            }
                 .padding(.trailing, 20)
                 .padding(.bottom, 70)  // clears the tab bar
         }

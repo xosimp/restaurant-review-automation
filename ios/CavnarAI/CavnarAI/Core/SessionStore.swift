@@ -215,9 +215,15 @@ final class SessionStore {
                 .deviceOwnerAuthentication,
                 localizedReason: "Unlock to view your restaurant's dashboard"
             )
-            if success { isLocked = false }
+            if success {
+                isLocked = false
+                Haptic.success()
+            } else {
+                Haptic.error()
+            }
             return success
         } catch {
+            Haptic.error()
             return false
         }
     }

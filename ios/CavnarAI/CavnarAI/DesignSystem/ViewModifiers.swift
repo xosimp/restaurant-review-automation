@@ -43,6 +43,9 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, isPressed in
+                if isPressed && !isDisabled { Haptic.light() }
+            }
     }
 }
 

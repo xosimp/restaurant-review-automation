@@ -171,6 +171,8 @@ final class LaborViewModel {
                 isGeneratingSchedule = false
                 if !result.ok {
                     scheduleError = result.error ?? "Schedule generation failed."
+                } else {
+                    Haptic.success()
                 }
                 return
             } catch let error as APIClient.APIError {

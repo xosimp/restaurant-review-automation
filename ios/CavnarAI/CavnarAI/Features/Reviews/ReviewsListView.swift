@@ -27,6 +27,7 @@ struct ReviewsListView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
+            .onChange(of: subTab) { _, _ in Haptic.light() }
 
             Group {
                 if subTab == .inbox {

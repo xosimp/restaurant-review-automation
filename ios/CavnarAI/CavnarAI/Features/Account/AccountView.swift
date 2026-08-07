@@ -131,7 +131,10 @@ struct AccountView: View {
 
                 Toggle(isOn: Binding(
                     get: { account.loginNotify },
-                    set: { newValue in Task { await viewModel.toggleLoginNotify(newValue) } }
+                    set: { newValue in
+                        Haptic.selection()
+                        Task { await viewModel.toggleLoginNotify(newValue) }
+                    }
                 )) {
                     Text("Sign-in notifications").font(.cavnarBody(13))
                 }
@@ -260,6 +263,7 @@ struct AccountView: View {
             Text(label).font(.cavnarBody(13))
         }
         .tint(Color.cavnarEmber)
+        .onChange(of: binding.wrappedValue) { _, _ in Haptic.selection() }
     }
 
     private func bindingFor(_ keyPath: WritableKeyPath<AlertSettings, Bool>, _ alerts: AccountAlerts) -> Binding<Bool> {

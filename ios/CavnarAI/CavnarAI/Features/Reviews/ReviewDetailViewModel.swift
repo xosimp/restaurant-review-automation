@@ -82,6 +82,7 @@ final class ReviewDetailViewModel {
             let _: ApproveResponse = try await client.send(
                 "/mobile/api/reviews/\(review.id)/approve", method: .post
             )
+            Haptic.success()
             didComplete = true
         } catch let error as APIClient.APIError {
             errorMessage = error.message

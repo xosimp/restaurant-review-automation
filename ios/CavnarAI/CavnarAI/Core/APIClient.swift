@@ -75,10 +75,12 @@ actor APIClient {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            await Haptic.error()
             throw APIError(message: "Couldn't reach the server — check your connection and try again.")
         }
 
         guard let http = response as? HTTPURLResponse else {
+            await Haptic.error()
             throw APIError(message: "No response from server")
         }
 
@@ -88,17 +90,20 @@ actor APIClient {
                 onSessionExpired?()
                 throw SessionExpiredError()
             }
+            await Haptic.error()
             throw APIError(message: envelope?.error ?? "Your session expired — please log in again.")
         }
 
         if http.statusCode >= 400 {
             let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data)
+            await Haptic.error()
             throw APIError(message: envelope?.error ?? "Something went wrong (\(http.statusCode)).")
         }
 
         do {
             return try JSONDecoder.cavnar.decode(Response.self, from: data)
         } catch {
+            await Haptic.error()
             throw APIError(message: "Couldn't understand the server's response.")
         }
     }

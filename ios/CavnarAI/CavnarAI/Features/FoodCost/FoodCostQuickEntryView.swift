@@ -23,6 +23,7 @@ struct FoodCostQuickEntryView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
+            .onChange(of: subTab) { _, _ in Haptic.light() }
 
             if subTab == .tracker {
                 tracker
@@ -82,6 +83,7 @@ struct FoodCostQuickEntryView: View {
                         .padding(.vertical, 4)
                     }
                     .onDelete { indices in
+                        Haptic.selection()
                         viewModel.items.remove(atOffsets: indices)
                     }
 

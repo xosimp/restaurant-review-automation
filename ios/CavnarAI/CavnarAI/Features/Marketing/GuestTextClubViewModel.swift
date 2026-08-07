@@ -155,6 +155,7 @@ final class GuestTextClubViewModel {
                 "/mobile/api/guest-campaign/send", method: .post, body: SendBody(message: draftMessage)
             )
             if response.ok {
+                Haptic.success()
                 didSend = true
             } else {
                 campaignError = response.error ?? "Couldn't send the campaign."

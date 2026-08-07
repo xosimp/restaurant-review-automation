@@ -128,6 +128,7 @@ struct GuestTextClubView: View {
                             Text("Consented").font(.cavnarBody(10, weight: 700)).foregroundStyle(Color.cavnarGreen)
                         }
                         Button {
+                            Haptic.selection()
                             Task { await viewModel.deleteContact(contact) }
                         } label: {
                             Image(systemName: "trash").foregroundStyle(Color.cavnarRed)
