@@ -144,26 +144,23 @@ def skip(rid, current_user):
     payload, status = _do_skip(rid, current_user["restaurant_id"])
     return jsonify(**payload), status
 
-def format_insight_html(text):
+def parse_insight_sections(text):
+    """Splits free-form AI consultant prose into (intro, recommendations,
+    forecast) — the one place this parsing happens, shared by
+    format_insight_html() (web, renders as HTML) and the mobile insight
+    routes (return the same three fields as JSON for native rendering)."""
     import re as _re
     if not text:
-        return 'Analysis unavailable.'
-    # Pull out a trailing "FORECAST: ..." line before any other parsing, so it
-    # renders as its own callout regardless of which branch below handles the
-    # rest of the text (intro+recommendations, or plain paragraph).
-    forecast_html = ''
+        return "Analysis unavailable.", [], None
+
+    # Pull out a trailing "FORECAST: ..." line before any other parsing, so
+    # it's identified regardless of which branch below handles the rest.
+    forecast = None
     fmatch = _re.search(r'(?im)^\s*forecast:\s*(.+)$', text)
     if fmatch:
-        forecast_text = fmatch.group(1).strip()
+        forecast = fmatch.group(1).strip() or None
         text = (text[:fmatch.start()] + text[fmatch.end():]).strip()
-        if forecast_text:
-            forecast_html = (
-                '<div style="margin-top:10px;padding:10px 12px;background:rgba(200,75,47,.08);'
-                'border-left:2px solid var(--ember);border-radius:0 6px 6px 0">'
-                '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;'
-                'color:var(--ember);margin-bottom:4px">\U0001f52e Forecast</div>'
-                '<div style="font-style:italic;line-height:1.6">' + forecast_text + '</div></div>'
-            )
+
     # Try splitting on explicit Recommendations: heading first
     parts = _re.split(r'(?i)recommendations?:', text, maxsplit=1)
     if len(parts) == 2:
@@ -192,18 +189,45 @@ def format_insight_html(text):
             else:
                 para_lines.append(line)
         if not rec_lines:
-            return '<p style="margin:0;line-height:1.7">' + text + '</p>' + forecast_html
+            # No structured recommendations found — hand back the whole
+            # (forecast-stripped) text untouched, preserving original line
+            # breaks for callers that care (the web's pre-wrap rendering).
+            return text, [], forecast
         intro = ' '.join(para_lines).strip()
         recs = rec_lines
+
+    clean_recs = []
+    for rec in recs:
+        clean = _re.sub(r'^[\d.\-)]+\s*', '', rec).strip()
+        if clean:
+            clean_recs.append(clean)
+    return intro, clean_recs, forecast
+
+
+def format_insight_html(text):
+    if not text:
+        return 'Analysis unavailable.'
+    intro, recs, forecast = parse_insight_sections(text)
+
+    forecast_html = ''
+    if forecast:
+        forecast_html = (
+            '<div style="margin-top:10px;padding:10px 12px;background:rgba(200,75,47,.08);'
+            'border-left:2px solid var(--ember);border-radius:0 6px 6px 0">'
+            '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;'
+            'color:var(--ember);margin-bottom:4px">\U0001f52e Forecast</div>'
+            '<div style="font-style:italic;line-height:1.6">' + forecast + '</div></div>'
+        )
+
+    if not recs:
+        return '<p style="margin:0;line-height:1.7">' + intro + '</p>' + forecast_html
+
     html = ''
     if intro:
         html += '<p style="margin:0 0 10px 0;line-height:1.7">' + intro + '</p>'
     html += '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c84b2f;margin-bottom:8px">Recommendations</div>'
     num = 1
-    for rec in recs:
-        clean = _re.sub(r'^[\d.\-)]+\s*', '', rec).strip()
-        if not clean:
-            continue
+    for clean in recs:
         html += ('<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">'
             '<span style="flex-shrink:0;width:20px;height:20px;border-radius:50%;background:#c84b2f;color:white;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">'
             + str(num) +

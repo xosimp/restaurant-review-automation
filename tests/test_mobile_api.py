@@ -526,6 +526,28 @@ def test_labor_insight_returns_cached_value(client, db_path, monkeypatch):
     assert data["insight"] == "Cached labor insight."
 
 
+def test_labor_insight_returns_structured_fields_for_ios_rendering(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    cached = (
+        "Labor is running high this week.\n\n"
+        "Recommendations:\n"
+        "1. Trim Sunday's closing shift.\n"
+        "2. Add a busser Saturday lunch.\n\n"
+        "FORECAST: Should settle back to target next week."
+    )
+    monkeypatch.setattr("client_api._cache_get", lambda key: cached)
+
+    resp = client.get("/mobile/api/labor/insight", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["insight_intro"] == "Labor is running high this week."
+    assert data["insight_recommendations"] == [
+        "Trim Sunday's closing shift.",
+        "Add a busser Saturday lunch.",
+    ]
+    assert data["insight_forecast"] == "Should settle back to target next week."
+
+
 # ── /mobile/api/marketing ────────────────────────────────────────────────────
 
 def test_marketing_endpoint_requires_auth(client):

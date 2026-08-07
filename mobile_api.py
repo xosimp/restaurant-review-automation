@@ -686,12 +686,15 @@ def mobile_food_cost_analytics(current_user):
         return jsonify(
             ok=True,
             insight=insight,
+            **_insight_json(insight),
             waste_items=analysis.get("waste_items", []),
             overstock=analysis.get("overstock", []),
             recoverable_monthly=analysis.get("recoverable_monthly", 0),
         )
     except Exception as e:
         return jsonify(ok=False, error=str(e), insight="Analysis unavailable — check back shortly.",
+                       insight_intro="Analysis unavailable — check back shortly.",
+                       insight_recommendations=[], insight_forecast=None,
                        waste_items=[], overstock=[]), 500
 
 
@@ -834,18 +837,27 @@ def mobile_labor_gap(current_user):
                        current_pct=0, target_pct=30), 500
 
 
+def _insight_json(insight_text):
+    """Structured {intro, recommendations, forecast} fields for a raw AI
+    insight string — the same parsing client_api.format_insight_html() uses
+    to build the web's HTML, just handed back as JSON so the iOS app can
+    render its own native equivalent instead of a plain text blob."""
+    intro, recs, forecast = _capi.parse_insight_sections(insight_text)
+    return {"insight_intro": intro, "insight_recommendations": recs, "insight_forecast": forecast}
+
+
 @mobile_bp.route("/labor/insight")
 @mobile_login_required
 def mobile_labor_insight(current_user):
-    """Same AI insight the web Labor tab shows, but returned as raw text
-    instead of client_api.py's format_insight_html() output — the mobile
-    client renders its own plain-text layout rather than parsing HTML."""
+    """Same AI insight the web Labor tab shows, structured into
+    intro/recommendations/forecast fields so the app can render the same
+    numbered-circle layout the web dashboard uses."""
     from labor import analyse_shifts_for_restaurant, get_claude_insights
     from models import get_restaurant, get_staff_notes
     rid = current_user["restaurant_id"]
     cached = _capi._cache_get("mobile-labor-insight:" + str(rid))
     if cached:
-        return jsonify(ok=True, insight=cached)
+        return jsonify(ok=True, insight=cached, **_insight_json(cached))
     try:
         restaurant = get_restaurant(rid)
         name = restaurant.name if restaurant else "your restaurant"
@@ -857,9 +869,11 @@ def mobile_labor_insight(current_user):
             staff_notes=staff_notes if staff_notes else None,
         )
         _capi._cache_set("mobile-labor-insight:" + str(rid), insight)
-        return jsonify(ok=True, insight=insight)
+        return jsonify(ok=True, insight=insight, **_insight_json(insight))
     except Exception as e:
-        return jsonify(ok=False, insight="Analysis unavailable — check back shortly.", error=str(e)), 500
+        return jsonify(ok=False, insight="Analysis unavailable — check back shortly.",
+                       insight_intro="Analysis unavailable — check back shortly.",
+                       insight_recommendations=[], insight_forecast=None, error=str(e)), 500
 
 
 @mobile_bp.route("/labor/generate-schedule", methods=["POST"])
@@ -1131,7 +1145,8 @@ def mobile_marketing_performance(current_user):
 @mobile_login_required
 def mobile_marketing_insight(current_user):
     payload, status = _capi._do_mkt_insight(current_user["restaurant_id"], raw=True)
-    return jsonify(ok=True, **payload), status
+    extra = _insight_json(payload.get("insight", "")) if payload.get("insight") else {}
+    return jsonify(ok=True, **payload, **extra), status
 
 
 @mobile_bp.route("/marketing/post-to-instagram", methods=["POST"])
