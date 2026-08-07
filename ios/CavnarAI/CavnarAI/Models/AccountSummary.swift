@@ -31,7 +31,7 @@ struct AccountInfo: Decodable {
     let username: String
     let email: String
     let twoFAEnabled: Bool
-    let loginNotify: Bool
+    var loginNotify: Bool
 
     enum CodingKeys: String, CodingKey {
         case username, email
@@ -113,7 +113,7 @@ struct AccountAlerts: Decodable {
 struct AccountSummary: Decodable {
     let ok: Bool
     let profile: AccountProfile
-    let account: AccountInfo
+    var account: AccountInfo
     let connections: AccountConnections
     let alerts: AccountAlerts
 }

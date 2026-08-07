@@ -59,6 +59,7 @@ struct ModulesGridView: View {
                                     ModuleTile(module: module)
                                 }
                                 .buttonStyle(.plain)
+                                .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
                             }
                         }
                         .padding(20)

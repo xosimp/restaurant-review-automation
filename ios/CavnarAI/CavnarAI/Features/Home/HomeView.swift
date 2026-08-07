@@ -33,6 +33,7 @@ struct HomeView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
+                        Haptic.light()
                         showingNotifications = true
                     } label: {
                         Image(systemName: "bell")

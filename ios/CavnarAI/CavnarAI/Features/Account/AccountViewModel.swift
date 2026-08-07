@@ -175,6 +175,11 @@ final class AccountViewModel {
             _ = try await client.send(
                 "/mobile/api/account/login-notify", method: .post, body: ToggleBody(enabled: enabled)
             ) as APIClient.EmptyResponse
+            // The server saved fine — update local state directly rather than
+            // a full reload, so the toggle doesn't snap back to its stale
+            // pre-tap value while waiting on a round-trip that already
+            // succeeded.
+            summary?.account.loginNotify = enabled
         } catch {
             await load()  // resync UI state with server if the toggle silently failed
         }

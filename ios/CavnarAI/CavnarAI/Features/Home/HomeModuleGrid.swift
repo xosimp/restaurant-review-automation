@@ -52,6 +52,7 @@ struct HomeModuleGrid: View {
                     KPITile(module: module)
                 }
                 .buttonStyle(.plain)
+                .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
             }
         }
     }
