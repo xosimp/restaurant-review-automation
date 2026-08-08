@@ -8,10 +8,8 @@ struct KPITile: View {
     let module: ModuleSummary
 
     var body: some View {
-        VStack(spacing: 6) {
-            Image(systemName: ModuleIcon.symbolName(for: module.icon))
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Color.cavnarEmber)
+        VStack(spacing: 8) {
+            GlowBadge(systemImage: ModuleIcon.symbolName(for: module.icon), size: 40)
             Text(module.kpi?.value ?? "—")
                 .font(.cavnarNumber(26, weight: 500))
                 .foregroundStyle(Color.cavnarInk)

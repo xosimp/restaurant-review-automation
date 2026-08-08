@@ -102,9 +102,7 @@ private struct ModuleTile: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: ModuleIcon.symbolName(for: module.icon))
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(Color.cavnarEmber)
+            GlowBadge(systemImage: ModuleIcon.symbolName(for: module.icon), size: 48)
             Text(module.label)
                 .font(.cavnarBody(13, weight: 600))
                 .foregroundStyle(Color.cavnarInk)

@@ -85,12 +85,7 @@ private struct AskCavnarFAB: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 56, height: 56)
-                .background(Color.cavnarEmber)
-                .clipShape(Circle())
+            GlowBadge(systemImage: "sparkles", size: 60)
                 .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
         }
         .buttonStyle(FABPressStyle())
