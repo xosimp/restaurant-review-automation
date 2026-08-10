@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// One consistent corner-radius scale for every rounded element in the app —
 /// buttons, fields, cards, and sheets all pull from here instead of each
@@ -236,12 +237,35 @@ extension View {
 /// circle behind it on iOS 26 that .buttonStyle(.plain) can't fully strip
 /// (confirmed by trial), but navigation actually working takes priority
 /// over that cosmetic imperfection.
+/// `.navigationBarBackButtonHidden(true)` also disables
+/// `UINavigationController`'s interactive edge-swipe-to-pop gesture as a
+/// side effect (and can leave the leading edge in a state where the first
+/// tap on our own back button only "arms" it instead of firing) — this
+/// silently re-enables that gesture recognizer with a fresh default
+/// delegate underneath our custom button, so hiding the system back button
+/// for the ember-chevron restyle doesn't cost us swipe-back or reliable
+/// single-tap.
+private struct InteractivePopGestureEnabler: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> UIViewController {
+        let controller = UIViewController()
+        DispatchQueue.main.async {
+            guard let nav = controller.navigationController else { return }
+            nav.interactivePopGestureRecognizer?.isEnabled = true
+            nav.interactivePopGestureRecognizer?.delegate = nil
+        }
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+}
+
 private struct CavnarEmberBackButton: ViewModifier {
     @Environment(\.dismiss) private var dismiss
 
     func body(content: Content) -> some View {
         content
             .navigationBarBackButtonHidden(true)
+            .background(InteractivePopGestureEnabler().frame(width: 0, height: 0))
             .toolbar {
                 ToolbarItem(placement: .navigation) {
                     Button {

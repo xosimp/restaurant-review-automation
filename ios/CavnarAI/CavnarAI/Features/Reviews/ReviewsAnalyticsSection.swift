@@ -4,6 +4,8 @@ import Charts
 struct ReviewsAnalyticsSection: View {
     let viewModel: ReviewsAnalyticsViewModel
 
+    @State private var selectedWeek: SentimentWeek?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -258,18 +260,50 @@ struct ReviewsAnalyticsSection: View {
 
     // MARK: - Sentiment trend chart
 
-    // Same visual language as the web dashboard's own Labor % chart —
-    // gradient-toned marks, a clean axis, and a color legend — applied here
-    // as a 100%-composition stacked bar per week (positive/neutral/negative
-    // review counts) rather than a value-vs-target bar, since that's what
-    // this data actually is. Multiple BarMarks sharing the same x category,
-    // split out by .foregroundStyle(by:), is Swift Charts' standard stacked-
-    // bar pattern — it stacks automatically, no manual layout math.
     private var overallAvgRating: Double {
         let totalReviews = viewModel.sentimentWeeks.reduce(0) { $0 + $1.total }
         guard totalReviews > 0 else { return 0 }
         let weightedSum = viewModel.sentimentWeeks.reduce(0.0) { $0 + $1.avgRating * Double($1.total) }
         return weightedSum / Double(totalReviews)
+    }
+
+    /// One continuous bar per week (bottom→top: positive, neutral,
+    /// negative) rather than three stacked BarMarks — a single gradient can
+    /// blend smoothly across each segment boundary, where three flat-color
+    /// marks would always meet at a hard edge. `blend` is the half-width of
+    /// that soft transition band; stops are clamped to stay non-decreasing
+    /// so a zero-count segment (e.g. no negative reviews that week) just
+    /// collapses its band instead of producing an invalid gradient.
+    private func barGradient(for week: SentimentWeek) -> LinearGradient {
+        let total = Double(week.total)
+        guard total > 0 else {
+            return LinearGradient(colors: [Color.cavnarPaper3], startPoint: .bottom, endPoint: .top)
+        }
+        let blend = 0.06
+        let boundary1 = Double(week.positive) / total
+        let boundary2 = Double(week.positive + week.neutral) / total
+
+        var stops: [Gradient.Stop] = [
+            .init(color: .cavnarGreen, location: 0),
+            .init(color: .cavnarGreen, location: max(0, boundary1 - blend)),
+            .init(color: .cavnarAmber, location: min(1, boundary1 + blend)),
+            .init(color: .cavnarAmber, location: max(0, boundary2 - blend)),
+            .init(color: .cavnarRed, location: min(1, boundary2 + blend)),
+            .init(color: .cavnarRed, location: 1),
+        ]
+        for i in 1..<stops.count where stops[i].location < stops[i - 1].location {
+            stops[i].location = stops[i - 1].location
+        }
+        return LinearGradient(gradient: Gradient(stops: stops), startPoint: .bottom, endPoint: .top)
+    }
+
+    @ChartContentBuilder
+    private func trendBars() -> some ChartContent {
+        ForEach(viewModel.sentimentWeeks) { week in
+            BarMark(x: .value("Week", week.label), y: .value("Reviews", week.total))
+                .foregroundStyle(barGradient(for: week))
+                .cornerRadius(3)
+        }
     }
 
     private var trendChartCard: some View {
@@ -284,49 +318,44 @@ struct ReviewsAnalyticsSection: View {
                     .foregroundStyle(Color.cavnarAmber)
             }
 
-            Chart {
-                ForEach(viewModel.sentimentWeeks) { week in
-                    BarMark(x: .value("Week", week.label), y: .value("Reviews", week.positive))
-                        .foregroundStyle(by: .value("Sentiment", "Positive"))
-                        .cornerRadius(2)
-                    BarMark(x: .value("Week", week.label), y: .value("Reviews", week.neutral))
-                        .foregroundStyle(by: .value("Sentiment", "Neutral"))
-                        .cornerRadius(2)
-                    BarMark(x: .value("Week", week.label), y: .value("Reviews", week.negative))
-                        .foregroundStyle(by: .value("Sentiment", "Negative"))
-                        .cornerRadius(2)
-                }
-            }
-            // .gradient (not a flat Color) is what puts the same top-to-
-            // bottom shine on each bar segment as the web dashboard's Labor
-            // % chart, instead of a flat fill; the two .shadow calls below
-            // add the ember backlight so the whole plot lifts off the page
-            // the same way .cavnarNumberGlow lifts stat numbers.
-            .chartForegroundStyleScale([
-                "Positive": Color.cavnarGreen.gradient,
-                "Neutral": Color.cavnarAmber.gradient,
-                "Negative": Color.cavnarRed.gradient,
-            ])
-            .chartLegend(.hidden)
-            .chartYAxis {
-                AxisMarks(position: .leading) { value in
-                    AxisGridLine().foregroundStyle(Color.cavnarPaper3.opacity(0.4))
-                    AxisValueLabel {
-                        if let v = value.as(Int.self) {
-                            Text("\(v)").font(.cavnarBody(9)).foregroundStyle(Color.cavnarInk3)
+            // Chart marks aren't Views, so they can't take .shadow() — a
+            // blurred, non-interactive duplicate of the same bars sitting
+            // directly behind the crisp chart gives each bar its own soft
+            // glow silhouette instead of one flat halo behind the whole
+            // plot rectangle.
+            ZStack {
+                Chart { trendBars() }
+                    .chartXAxis(.hidden)
+                    .chartYAxis(.hidden)
+                    .opacity(0.6)
+                    .blur(radius: 5)
+                    .allowsHitTesting(false)
+
+                Chart { trendBars() }
+                    .chartLegend(.hidden)
+                    .chartYAxis {
+                        AxisMarks(position: .leading) { value in
+                            AxisGridLine().foregroundStyle(Color.cavnarPaper3.opacity(0.4))
+                            AxisValueLabel {
+                                if let v = value.as(Int.self) {
+                                    Text("\(v)").font(.cavnarBody(9)).foregroundStyle(Color.cavnarInk3)
+                                }
+                            }
                         }
                     }
-                }
+                    .chartXAxis {
+                        AxisMarks { _ in
+                            AxisValueLabel()
+                                .font(.cavnarBody(9))
+                                .foregroundStyle(Color.cavnarInk3)
+                        }
+                    }
+                    .chartOverlay { proxy in
+                        GeometryReader { geo in
+                            weekSelectionOverlay(proxy: proxy, geo: geo)
+                        }
+                    }
             }
-            .chartXAxis {
-                AxisMarks { _ in
-                    AxisValueLabel()
-                        .font(.cavnarBody(9))
-                        .foregroundStyle(Color.cavnarInk3)
-                }
-            }
-            .shadow(color: .black.opacity(0.35), radius: 4, x: 0, y: 3)
-            .shadow(color: .cavnarEmber.opacity(0.30), radius: 16, x: 0, y: 0)
             .frame(height: 190)
 
             HStack(spacing: 16) {
@@ -336,6 +365,64 @@ struct ReviewsAnalyticsSection: View {
             }
         }
         .cavnarCard()
+    }
+
+    /// Press-and-hold-to-inspect, the touch equivalent of a desktop hover
+    /// tooltip: drag (with zero minimum distance, so a plain touch-down
+    /// already counts) picks the nearest week under the finger and shows
+    /// its exact pos/neutral/negative split; lifting the finger dismisses it.
+    @ViewBuilder
+    private func weekSelectionOverlay(proxy: ChartProxy, geo: GeometryProxy) -> some View {
+        if let selectedWeek, let plotFrame = proxy.plotFrame {
+            let frame = geo[plotFrame]
+            if let xPosition = proxy.position(forX: selectedWeek.label) {
+                let clampedX = min(max(xPosition + frame.origin.x, frame.minX + 60), frame.maxX - 60)
+                weekTooltip(selectedWeek)
+                    .position(x: clampedX, y: frame.minY + 30)
+            }
+        }
+        Rectangle()
+            .fill(Color.clear)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        guard let plotFrame = proxy.plotFrame else { return }
+                        let originX = geo[plotFrame].origin.x
+                        guard let label: String = proxy.value(atX: value.location.x - originX) else { return }
+                        selectedWeek = viewModel.sentimentWeeks.first { $0.label == label }
+                    }
+                    .onEnded { _ in selectedWeek = nil }
+            )
+    }
+
+    private func weekTooltip(_ week: SentimentWeek) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(week.label)
+                .font(.cavnarBody(10, weight: 700))
+                .foregroundStyle(Color.cavnarInk3)
+            HStack(spacing: 10) {
+                tooltipStat(week.positive, color: .cavnarGreen)
+                tooltipStat(week.neutral, color: .cavnarAmber)
+                tooltipStat(week.negative, color: .cavnarRed)
+            }
+        }
+        .padding(10)
+        .background(Color.cavnarPaper2.opacity(0.95))
+        .overlay(
+            RoundedRectangle(cornerRadius: CavnarRadius.control)
+                .strokeBorder(Color.cavnarPaper3.opacity(0.6), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+        .shadow(color: .black.opacity(0.4), radius: 8, x: 0, y: 4)
+        .fixedSize()
+    }
+
+    private func tooltipStat(_ value: Int, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text("\(value)").font(.cavnarNumber(11, weight: 700)).foregroundStyle(Color.cavnarInk)
+        }
     }
 
     private func legendItem(color: Color, label: String) -> some View {
