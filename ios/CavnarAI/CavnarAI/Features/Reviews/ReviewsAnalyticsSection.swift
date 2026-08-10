@@ -270,27 +270,36 @@ struct ReviewsAnalyticsSection: View {
     /// One continuous bar per week (bottom→top: positive, neutral,
     /// negative) rather than three stacked BarMarks — a single gradient can
     /// blend smoothly across each segment boundary, where three flat-color
-    /// marks would always meet at a hard edge. `blend` is the half-width of
-    /// that soft transition band; stops are clamped to stay non-decreasing
-    /// so a zero-count segment (e.g. no negative reviews that week) just
-    /// collapses its band instead of producing an invalid gradient.
+    /// marks would always meet at a hard edge. Zero-count segments are
+    /// dropped BEFORE building stops (not just clamped after) — a week
+    /// that's 100% positive gets a single solid-green gradient with no
+    /// amber/red stop at all, and a positive+negative week with no neutral
+    /// gets one direct green→red blend instead of two collapsed,
+    /// cancel-each-other-out transitions that rendered as a hard edge.
     private func barGradient(for week: SentimentWeek) -> LinearGradient {
         let total = Double(week.total)
-        guard total > 0 else {
+        let segments = [
+            (color: Color.cavnarGreen, count: week.positive),
+            (color: Color.cavnarAmber, count: week.neutral),
+            (color: Color.cavnarRed, count: week.negative),
+        ].filter { $0.count > 0 }
+
+        guard total > 0, !segments.isEmpty else {
             return LinearGradient(colors: [Color.cavnarPaper3], startPoint: .bottom, endPoint: .top)
         }
-        let blend = 0.06
-        let boundary1 = Double(week.positive) / total
-        let boundary2 = Double(week.positive + week.neutral) / total
+        guard segments.count > 1 else {
+            return LinearGradient(colors: [segments[0].color], startPoint: .bottom, endPoint: .top)
+        }
 
-        var stops: [Gradient.Stop] = [
-            .init(color: .cavnarGreen, location: 0),
-            .init(color: .cavnarGreen, location: max(0, boundary1 - blend)),
-            .init(color: .cavnarAmber, location: min(1, boundary1 + blend)),
-            .init(color: .cavnarAmber, location: max(0, boundary2 - blend)),
-            .init(color: .cavnarRed, location: min(1, boundary2 + blend)),
-            .init(color: .cavnarRed, location: 1),
-        ]
+        let blend = 0.06
+        var stops: [Gradient.Stop] = [.init(color: segments[0].color, location: 0)]
+        var cumulative = 0.0
+        for i in 0..<segments.count - 1 {
+            cumulative += Double(segments[i].count) / total
+            stops.append(.init(color: segments[i].color, location: max(0, cumulative - blend)))
+            stops.append(.init(color: segments[i + 1].color, location: min(1, cumulative + blend)))
+        }
+        stops.append(.init(color: segments.last!.color, location: 1))
         for i in 1..<stops.count where stops[i].location < stops[i - 1].location {
             stops[i].location = stops[i - 1].location
         }
@@ -322,13 +331,29 @@ struct ReviewsAnalyticsSection: View {
             // blurred, non-interactive duplicate of the same bars sitting
             // directly behind the crisp chart gives each bar its own soft
             // glow silhouette instead of one flat halo behind the whole
-            // plot rectangle.
+            // plot rectangle. The glow copy keeps the SAME AxisMarks
+            // structure as the crisp chart (not .chartXAxis(.hidden)) so
+            // both charts reserve identical plot-area height — .hidden()
+            // shrinks the axis-label gutter to zero on that copy alone,
+            // which let its (taller) blurred bars spill past where the
+            // crisp chart's own date labels sit. Clear foreground colors
+            // make the duplicate labels invisible without changing layout.
             ZStack {
                 Chart { trendBars() }
-                    .chartXAxis(.hidden)
-                    .chartYAxis(.hidden)
-                    .opacity(0.6)
-                    .blur(radius: 5)
+                    .chartLegend(.hidden)
+                    .chartYAxis {
+                        AxisMarks(position: .leading) { _ in
+                            AxisGridLine().foregroundStyle(.clear)
+                            AxisValueLabel { Text(" ").font(.cavnarBody(9)) }
+                        }
+                    }
+                    .chartXAxis {
+                        AxisMarks { _ in
+                            AxisValueLabel().font(.cavnarBody(9)).foregroundStyle(.clear)
+                        }
+                    }
+                    .opacity(0.5)
+                    .blur(radius: 2.5)
                     .allowsHitTesting(false)
 
                 Chart { trendBars() }
@@ -350,6 +375,7 @@ struct ReviewsAnalyticsSection: View {
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                     }
+                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
                     .chartOverlay { proxy in
                         GeometryReader { geo in
                             weekSelectionOverlay(proxy: proxy, geo: geo)
