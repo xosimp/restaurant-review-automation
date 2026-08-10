@@ -37,6 +37,11 @@ final class ModulesGridViewModel {
 struct ModulesGridView: View {
     @State private var viewModel = ModulesGridViewModel()
     @State private var path = NavigationPath()
+    // See HomeView's identical navigate(to:)/navHapticTrigger/lastNavigationAt
+    // for why tile taps go through a debounced helper instead of appending
+    // to path directly from the Button's action closure.
+    @State private var navHapticTrigger = 0
+    @State private var lastNavigationAt = Date.distantPast
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
 
     var body: some View {
@@ -54,8 +59,7 @@ struct ModulesGridView: View {
                                 // source of reported delayed/duplicate
                                 // haptics on rapid back-and-forth taps).
                                 Button {
-                                    Haptic.light()
-                                    path.append(ModuleRoute(key: module.key, label: module.label))
+                                    navigate(to: ModuleRoute(key: module.key, label: module.label))
                                 } label: {
                                     ModuleTile(module: module)
                                 }
@@ -76,6 +80,7 @@ struct ModulesGridView: View {
             .navigationDestination(for: ModuleRoute.self) { route in
                 ModuleDestinationView(moduleKey: route.key, moduleLabel: route.label)
             }
+            .sensoryFeedback(.impact(weight: .light), trigger: navHapticTrigger)
             .background(Color.cavnarPaper)
             .refreshable { await viewModel.load() }
             .navigationTitle("Modules")
@@ -94,6 +99,16 @@ struct ModulesGridView: View {
     private func pushToReviewsIfDeepLinked() {
         guard deepLinkRouter.pendingReviewID != nil else { return }
         path.append(ModuleRoute(key: "reviews", label: "Reviews"))
+    }
+
+    // See HomeView.navigate(to:) for why this is debounced rather than
+    // appending to path directly from the tile's action closure.
+    private func navigate(to route: ModuleRoute) {
+        let now = Date()
+        guard now.timeIntervalSince(lastNavigationAt) > 0.35 else { return }
+        lastNavigationAt = now
+        navHapticTrigger += 1
+        path.append(route)
     }
 }
 

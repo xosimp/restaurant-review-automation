@@ -32,11 +32,15 @@ struct RootView: View {
         .onChange(of: deepLinkRouter.pendingTab) { _, tab in
             if let tab { selectedTab = tab }
         }
-        .onChange(of: selectedTab) { _, _ in
-            Haptic.light()
-        }
     }
 
+    // .sensoryFeedback(trigger:) instead of .onChange(of: selectedTab) {
+    // Haptic.light() } — the onChange version produced inconsistent results
+    // (silent on some tabs, doubled on others). .sensoryFeedback is Apple's
+    // own trigger-driven, race/duplicate-resistant mechanism (see
+    // CavnarPrimaryButtonStyle for the same fix applied to button presses),
+    // and .selection (not .impact) matches the system's own tab/segmented-
+    // control haptic convention for a discrete-choice change.
     private var mainTabs: some View {
         TabView(selection: $selectedTab) {
             HomeView()
@@ -51,6 +55,7 @@ struct RootView: View {
                 .tabItem { Label(AppTab.account.title, systemImage: AppTab.account.systemImage) }
                 .tag(AppTab.account)
         }
+        .sensoryFeedback(.selection, trigger: selectedTab)
         .tint(Color.cavnarEmber)
         // True-black tab bar chrome, distinct from the warm near-black
         // content background — mirrors the web dashboard's own two-tier
@@ -80,13 +85,25 @@ struct RootView: View {
 /// Persistent floating action button reachable from any tab — matches the
 /// web dashboard's own Ask Cavnar bubble (a FAB there too, not a tab), and
 /// frees a permanent tab slot as more modules ship (see the architecture plan).
+/// A labeled glass pill rather than a large icon-only circle — the earlier
+/// 60pt circle was heavy enough to sit on top of content underneath it.
 private struct AskCavnarFAB: View {
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            GlowBadge(systemImage: "sparkles", size: 60)
-                .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+            HStack(spacing: 8) {
+                GlowBadge(systemImage: "sparkles", size: 30)
+                Text("Ask Cavnar AI")
+                    .font(.cavnarBody(13, weight: 700))
+                    .foregroundStyle(Color.cavnarInk)
+            }
+            .padding(.leading, 6)
+            .padding(.trailing, 14)
+            .padding(.vertical, 6)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.cavnarEmber.opacity(0.35), lineWidth: 1))
+            .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
         }
         .buttonStyle(FABPressStyle())
     }

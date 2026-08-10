@@ -13,15 +13,9 @@ struct IntelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $subTab) {
-                ForEach(IntelSubTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .onChange(of: subTab) { _, _ in Haptic.light() }
+            CavnarSegmentedControl(selection: $subTab, options: IntelSubTab.allCases) { $0.rawValue }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -49,9 +43,12 @@ struct IntelView: View {
                 .padding(20)
             }
         }
-        .background(Color.cavnarPaper)
+        .cavnarModuleBackground()
         .refreshable { await viewModel.load() }
         .navigationTitle("Intel")
+        .navigationBarTitleDisplayMode(.inline)
+        .cavnarEmberTitle("Intel")
+        .cavnarEmberBackButton()
         .task { await viewModel.load() }
     }
 

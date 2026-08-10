@@ -80,6 +80,28 @@ final class PushManager: NSObject, UNUserNotificationCenterDelegate {
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(
         _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        // Global nav-bar title color — every screen's navigationTitle (the
+        // three tab roots, plus every pushed detail screen) otherwise
+        // renders through UIKit's default dark-mode label color, which is
+        // literal white. The app-wide rule is cream everywhere text would
+        // otherwise read as white (see Color+Cavnar's "Ink" — the same
+        // cream every other label/headline already uses), and SwiftUI's
+        // .navigationTitle has no direct color modifier, so this is set
+        // once via UINavigationBar's appearance proxy instead of per-screen.
+        let creamColor = UIColor(named: "Ink") ?? .white
+        let appearance = UINavigationBarAppearance()
+        appearance.titleTextAttributes = [.foregroundColor: creamColor]
+        appearance.largeTitleTextAttributes = [.foregroundColor: creamColor]
+        UINavigationBar.appearance().standardAppearance = appearance
+        UINavigationBar.appearance().scrollEdgeAppearance = appearance
+        UINavigationBar.appearance().compactAppearance = appearance
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
         Task { @MainActor in PushManager.shared.didRegister(deviceToken: deviceToken) }

@@ -24,9 +24,9 @@ struct GlowBadge: View {
                 .resizable()
                 .frame(width: size, height: size)
                 .foregroundStyle(badgeGradient)
-                .blur(radius: size * 0.32)
+                .blur(radius: size * 0.22)
                 .blendMode(.plusLighter)
-                .opacity(0.85)
+                .opacity(0.45)
 
             // Crisp badge shape.
             Image(systemName: "seal.fill")
@@ -44,8 +44,9 @@ struct GlowBadge: View {
             Circle()
                 .fill(badgeGradient)
                 .frame(width: size * 0.42, height: size * 0.42)
-                .blur(radius: size * 0.1)
+                .blur(radius: size * 0.07)
                 .blendMode(.hardLight)
+                .opacity(0.7)
 
             // The icon itself.
             Image(systemName: systemImage)

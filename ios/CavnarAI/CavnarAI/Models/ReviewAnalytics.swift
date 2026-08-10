@@ -1,5 +1,20 @@
 import Foundation
 
+struct PlatformBreakdown: Decodable, Identifiable {
+    let platform: String
+    let total: Int
+    let avgRating: Double
+    let positive: Int
+    let negative: Int
+
+    var id: String { platform }
+
+    enum CodingKeys: String, CodingKey {
+        case platform, total, positive, negative
+        case avgRating = "avg_rating"
+    }
+}
+
 struct ResponsePerformance: Decodable {
     let total: Int
     let days: Int

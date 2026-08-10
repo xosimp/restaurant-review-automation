@@ -78,6 +78,26 @@ schemes:
         CavnarAITests: [test]
     run:
       config: Debug
+      # Local-dev backend override — checked into project.yml (not set by
+      # hand in Xcode's scheme editor) specifically because `xcodegen
+      # generate` rebuilds the .xcscheme from this file on every run and
+      # silently drops anything not declared here. Update the IP if the
+      # Mac's LAN address changes; still overridable by hand in Xcode for a
+      # one-off run (that override just won't survive the next regenerate).
+      # Port 5000, not 5050, is macOS's own AirPlay Receiver (ControlCenter
+      # process) — it silently answers with a blank 403 Forbidden for any
+      # non-AirPlay request instead of a "connection refused", which reads
+      # exactly like a real API error. Keep the local dev server on 5050.
+      #
+      # Pointed at the ngrok tunnel, not the home LAN IP, while testing off
+      # the home network (e.g. Panera) — a LAN IP is only reachable from
+      # devices on that same physical network, so it's not a "wrong IP"
+      # problem away from home, it's a different-network problem. The
+      # tunnel is a real public HTTPS URL, reachable from anywhere. Swap
+      # back to the LAN IP for local-only testing once back on home wifi
+      # (ngrok's free-tier URL also isn't stable across restarts).
+      environmentVariables:
+        CAVNAR_API_BASE_URL: "https://4f87-208-44-38-158.ngrok-free.app"
     test:
       config: Debug
       targets:

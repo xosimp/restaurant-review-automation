@@ -54,6 +54,57 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
     }
 }
 
+/// Same glass treatment as CavnarSegmentedControl's segments — real Liquid
+/// Glass (`.glassEffect`) on iOS 26, Material+ember fallback below it — so
+/// paired actions like Skip/Approve read as part of the same visual family
+/// as the tab switcher instead of introducing a third button language.
+/// isProminent picks which segment state to mirror: the tinted "selected"
+/// look for the primary action, the plain "unselected" glass for secondary.
+struct CavnarGlassButtonStyle: ButtonStyle {
+    var isProminent: Bool = true
+    var isDisabled: Bool = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let content = configuration.label
+            .font(.cavnarBody(15, weight: 600))
+            .foregroundStyle(isProminent ? Color.cavnarInk : Color.cavnarInk2)
+            .frame(maxWidth: .infinity)
+            .padding(14)
+
+        Group {
+            if #available(iOS 26.0, *) {
+                content.glassEffect(
+                    isProminent ? .regular.tint(Color.cavnarEmber.opacity(0.85)).interactive()
+                                : .regular.interactive(),
+                    in: RoundedRectangle(cornerRadius: CavnarRadius.control)
+                )
+            } else {
+                content
+                    .background {
+                        RoundedRectangle(cornerRadius: CavnarRadius.control).fill(.ultraThinMaterial)
+                        RoundedRectangle(cornerRadius: CavnarRadius.control)
+                            .fill(Color.cavnarEmber.opacity(isProminent ? 0.55 : 0.08))
+                        if isProminent {
+                            RoundedRectangle(cornerRadius: CavnarRadius.control).fill(
+                                LinearGradient(
+                                    colors: [Color.white.opacity(0.10), Color.white.opacity(0)],
+                                    startPoint: .top, endPoint: .center
+                                )
+                            )
+                        }
+                    }
+                    .shadow(color: .black.opacity(isProminent ? 0.2 : 0), radius: 3, y: 1)
+            }
+        }
+        .opacity(isDisabled ? 0.4 : 1)
+        .scaleEffect(configuration.isPressed ? 0.98 : 1)
+        .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+        .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in
+            new && !isDisabled
+        }
+    }
+}
+
 /// Deliberately light — a faint tint fill plus a hairline border communicates
 /// grouping without the flat, blocky "everything is a solid box" look. Mirrors
 /// how Raycast/Apple's HIG signal elevation in dark mode: a subtle border
@@ -109,18 +160,18 @@ struct CavnarStatCellStyle: ViewModifier {
             .padding(16)
             .background(
                 LinearGradient(
-                    colors: [tint.opacity(0.16), tint.opacity(0.04)],
+                    colors: [tint.opacity(0.26), tint.opacity(0.07)],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 )
             )
             .overlay(alignment: .top) {
                 Rectangle()
-                    .fill(tint.opacity(0.4))
+                    .fill(tint.opacity(0.55))
                     .frame(height: 1)
             }
             .overlay(
                 RoundedRectangle(cornerRadius: CavnarRadius.card)
-                    .strokeBorder(tint.opacity(0.25), lineWidth: 1)
+                    .strokeBorder(tint.opacity(0.35), lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
@@ -138,5 +189,92 @@ extension View {
 extension View {
     func cavnarGlassBackground(_ material: Material = .ultraThinMaterial) -> some View {
         background(material, in: RoundedRectangle(cornerRadius: CavnarRadius.sheet))
+    }
+}
+
+/// A dark branded-ember wash from the very top of the screen, fading into
+/// the flat jet-black content background — applied only to the module
+/// screens (Reviews/Labor/Food Cost/Marketing/Intel), not Home/Modules/
+/// Account, to give each module a bit of distinct identity without
+/// touching the app's global black baseline. .ignoresSafeArea() so the
+/// gradient actually starts behind the status bar/nav bar, not below it.
+
+/// A circle with a fully transparent fill and only an ember stroke — no
+/// material, no tint fill, nothing opaque — so the module gradient bleeds
+/// straight through the ring where the system's own chrome allows it.
+struct CavnarOutlineCircle: View {
+    var body: some View {
+        Circle()
+            .fill(Color.clear)
+            .overlay(Circle().strokeBorder(Color.cavnarEmber.opacity(0.45), lineWidth: 1))
+    }
+}
+
+/// Ember-colored centered nav title, overriding the app-wide cream title
+/// color (set globally via UINavigationBarAppearance in AppDelegate) —
+/// SwiftUI's .navigationTitle has no per-screen color modifier, so this
+/// swaps in a styled principal toolbar item instead.
+extension View {
+    func cavnarEmberTitle(_ title: String) -> some View {
+        toolbar {
+            ToolbarItem(placement: .principal) {
+                Text(title)
+                    .font(.cavnarBody(17, weight: 700))
+                    .foregroundStyle(Color.cavnarEmber)
+            }
+        }
+    }
+}
+
+/// Ember-colored back chevron via a real ToolbarItem — NOT via hiding the
+/// system nav bar. A `.toolbar(.hidden, for: .navigationBar)` + custom
+/// safeAreaInset header was tried here and broke real navigation (both the
+/// button and the interactive swipe-back gesture stopped working — hiding
+/// the bar that way disconnects UINavigationController's pop gesture from
+/// the view, a known UIKit/SwiftUI interaction, not just a visual change).
+/// Reverted to this: the back button still shows a faint system-drawn
+/// circle behind it on iOS 26 that .buttonStyle(.plain) can't fully strip
+/// (confirmed by trial), but navigation actually working takes priority
+/// over that cosmetic imperfection.
+private struct CavnarEmberBackButton: ViewModifier {
+    @Environment(\.dismiss) private var dismiss
+
+    func body(content: Content) -> some View {
+        content
+            .navigationBarBackButtonHidden(true)
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(Color.cavnarEmber)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+    }
+}
+
+extension View {
+    func cavnarEmberBackButton() -> some View {
+        modifier(CavnarEmberBackButton())
+    }
+}
+
+extension View {
+    func cavnarModuleBackground() -> some View {
+        background(
+            ZStack(alignment: .top) {
+                Color.cavnarPaper
+                LinearGradient(
+                    colors: [Color.cavnarEmber.opacity(0.38), Color.cavnarEmber.opacity(0)],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .frame(height: 340)
+            }
+            .ignoresSafeArea()
+        )
     }
 }

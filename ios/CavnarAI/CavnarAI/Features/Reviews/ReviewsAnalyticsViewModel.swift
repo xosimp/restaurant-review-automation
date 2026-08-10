@@ -4,6 +4,7 @@ import Observation
 @Observable
 @MainActor
 final class ReviewsAnalyticsViewModel {
+    var platforms: [PlatformBreakdown] = []
     var performance: ResponsePerformance?
     var heatmap: [TopicHeatmapEntry] = []
     var sentimentWeeks: [SentimentWeek] = []
@@ -38,6 +39,9 @@ final class ReviewsAnalyticsViewModel {
         errorMessage = nil
         defer { isLoading = false }
 
+        async let platformsResult: DataResponse<[PlatformBreakdown]>? = try? client.send(
+            "/mobile/api/reviews/platform-breakdown"
+        )
         async let performanceResult: DataResponse<ResponsePerformance>? = try? client.send(
             "/mobile/api/reviews/response-performance"
         )
@@ -47,6 +51,7 @@ final class ReviewsAnalyticsViewModel {
         async let weeksResult: WeeksResponse? = try? client.send("/mobile/api/reviews/sentiment-trend")
         async let insightResult: InsightResponse? = try? client.send("/mobile/api/reviews/insight")
 
+        platforms = await platformsResult?.data ?? []
         performance = await performanceResult?.data
         heatmap = await heatmapResult?.data ?? []
         sentimentWeeks = await weeksResult?.weeks ?? []

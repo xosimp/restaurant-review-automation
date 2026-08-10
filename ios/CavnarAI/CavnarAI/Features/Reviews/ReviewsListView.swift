@@ -19,15 +19,9 @@ struct ReviewsListView: View {
         // inside Home's or the Modules tab's stack, not a tab root, so it
         // shares whichever stack pushed it in.
         VStack(spacing: 0) {
-            Picker("", selection: $subTab) {
-                ForEach(ReviewsSubTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .onChange(of: subTab) { _, _ in Haptic.light() }
+            CavnarSegmentedControl(selection: $subTab, options: ReviewsSubTab.allCases) { $0.rawValue }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
 
             Group {
                 if subTab == .inbox {
@@ -37,15 +31,21 @@ struct ReviewsListView: View {
                 }
             }
         }
-        .background(Color.cavnarPaper)
+        .cavnarModuleBackground()
         .navigationTitle("Reviews")
+        .navigationBarTitleDisplayMode(.inline)
+        .cavnarEmberTitle("Reviews")
+        .cavnarEmberBackButton()
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
                     showingSendRequest = true
                 } label: {
                     Image(systemName: "envelope.badge")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(Color.cavnarEmber)
                 }
+                .buttonStyle(.plain)
             }
         }
         .sheet(isPresented: $showingSendRequest) {
@@ -54,7 +54,7 @@ struct ReviewsListView: View {
         .navigationDestination(item: $deepLinkedReview) { review in
             ReviewDetailView(
                 viewModel: ReviewDetailViewModel(review: review),
-                onCompleted: { viewModel.removeFromQueue(reviewID: review.id) }
+                onCompleted: { status in viewModel.markCompleted(reviewID: review.id, status: status) }
             )
         }
         .task {
@@ -76,11 +76,19 @@ struct ReviewsListView: View {
                     NavigationLink {
                         ReviewDetailView(
                             viewModel: ReviewDetailViewModel(review: review),
-                            onCompleted: { viewModel.removeFromQueue(reviewID: review.id) }
+                            onCompleted: { status in viewModel.markCompleted(reviewID: review.id, status: status) }
                         )
                     } label: {
                         ReviewRow(review: review)
                     }
+                    // List rows keep an opaque background of their own even
+                    // with .scrollContentBackground(.hidden) below (that only
+                    // clears the list's overall canvas) — every other module
+                    // uses a ScrollView with translucent glass cards, which
+                    // is why only Reviews had a hard cutoff against the top
+                    // gradient instead of blending into it.
+                    .listRowBackground(Color.clear)
+                    .listRowSeparatorTint(Color.cavnarPaper3)
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
@@ -118,6 +126,11 @@ private struct ReviewRow: View {
                         .font(.cavnarBody(13, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                     StatusPill(status: review.responseStatus)
+                    if let date = review.formattedDate {
+                        Text(date)
+                            .font(.cavnarBody(11))
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
                     if review.isUrgent {
                         Image(systemName: "exclamationmark.circle.fill")
                             .foregroundStyle(Color.cavnarRed)

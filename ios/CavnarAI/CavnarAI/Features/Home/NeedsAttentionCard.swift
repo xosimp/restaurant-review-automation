@@ -21,13 +21,9 @@ struct NeedsAttentionRow: View {
                     .foregroundStyle(Color.cavnarInk3)
             }
             Spacer()
-            Image(systemName: "chevron.right")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Color.cavnarEmber)
+            GlassChevronButton()
         }
-        .padding(12)
-        .background(iconColor.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+        .cavnarGlassCard(tint: iconColor)
     }
 
     private var iconName: String {

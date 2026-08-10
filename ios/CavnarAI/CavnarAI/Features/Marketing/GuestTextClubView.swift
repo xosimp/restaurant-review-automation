@@ -41,12 +41,16 @@ struct GuestTextClubView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Send a campaign").font(.cavnarBody(13, weight: 700)).foregroundStyle(Color.cavnarInk)
 
-            Picker("Type", selection: $viewModel.campaignType) {
-                Text("General").tag("general")
-                Text("Promo").tag("promo")
-                Text("Event").tag("event")
+            CavnarSegmentedControl(
+                selection: $viewModel.campaignType,
+                options: ["general", "promo", "event"]
+            ) { type in
+                switch type {
+                case "promo": return "Promo"
+                case "event": return "Event"
+                default: return "General"
+                }
             }
-            .pickerStyle(.segmented)
 
             TextField("Topic (optional)", text: $viewModel.campaignTopic)
                 .cavnarTextFieldStyle()

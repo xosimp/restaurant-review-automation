@@ -449,6 +449,20 @@ def mobile_skip_review(review_id, current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/reviews/<int:review_id>/undo", methods=["POST"])
+@mobile_login_required
+def mobile_undo_review(review_id, current_user):
+    payload, status = _capi._do_undo(review_id, current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/reviews/<int:review_id>/retract", methods=["POST"])
+@mobile_login_required
+def mobile_retract_review(review_id, current_user):
+    payload, status = _capi._do_retract(review_id, current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
 @mobile_bp.route("/reviews/<int:review_id>/regenerate-draft", methods=["POST"])
 @mobile_login_required
 def mobile_regenerate_draft(review_id, current_user):
@@ -493,6 +507,17 @@ def mobile_response_performance(current_user):
         days = 90
     try:
         data = get_response_performance(current_user["restaurant_id"], days=days)
+        return jsonify(ok=True, data=data)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+
+@mobile_bp.route("/reviews/platform-breakdown")
+@mobile_login_required
+def mobile_platform_breakdown(current_user):
+    from models import get_platform_breakdown
+    try:
+        data = get_platform_breakdown(current_user["restaurant_id"])
         return jsonify(ok=True, data=data)
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500

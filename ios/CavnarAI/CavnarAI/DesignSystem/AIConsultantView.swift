@@ -97,7 +97,7 @@ private struct InsightContent: View {
 
             if let forecast = insight.forecast, !forecast.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("🔮 Forecast")
+                    Label("Forecast", systemImage: "sparkles")
                         .font(.cavnarBody(10, weight: 700))
                         .tracking(0.9)
                         .textCase(.uppercase)

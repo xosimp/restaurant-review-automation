@@ -129,10 +129,16 @@ struct AccountView: View {
                     .foregroundStyle(Color.cavnarEmber)
                 }
 
+                // No manual Haptic.selection() here — Toggle is backed by
+                // UISwitch, which already fires its own automatic system
+                // haptic on every flip. Adding our own stacked a second
+                // buzz on top of it; with 8 toggles on this one screen (this
+                // one plus the 7 alertToggle rows below) that's what read as
+                // "rapid fire double/triple" specifically on Account, since
+                // Home/Modules have no toggles at all to trigger it.
                 Toggle(isOn: Binding(
                     get: { account.loginNotify },
                     set: { newValue in
-                        Haptic.selection()
                         Task { await viewModel.toggleLoginNotify(newValue) }
                     }
                 )) {
@@ -259,11 +265,12 @@ struct AccountView: View {
     }
 
     private func alertToggle(_ label: String, _ binding: Binding<Bool>) -> some View {
+        // See the loginNotify Toggle above — Toggle already has its own
+        // native haptic; no manual call needed here either.
         Toggle(isOn: binding) {
             Text(label).font(.cavnarBody(13))
         }
         .tint(Color.cavnarEmber)
-        .onChange(of: binding.wrappedValue) { _, _ in Haptic.selection() }
     }
 
     private func bindingFor(_ keyPath: WritableKeyPath<AlertSettings, Bool>, _ alerts: AccountAlerts) -> Binding<Bool> {

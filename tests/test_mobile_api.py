@@ -315,6 +315,133 @@ def test_approve_does_not_affect_another_restaurants_review(client, db_path):
     assert row["response_status"] == "drafted"  # unchanged: restaurant B couldn't touch A's review
 
 
+def test_undo_reverts_a_skipped_review_to_drafted(client, db_path):
+    rid = _restaurant(db_path)
+    review_id = _add_review(db_path, rid)
+    token = _login(client, db_path, rid)
+    client.post(f"/mobile/api/reviews/{review_id}/skip", headers=_auth_headers(token))
+
+    resp = client.post(f"/mobile/api/reviews/{review_id}/undo", headers=_auth_headers(token))
+    assert resp.get_json()["ok"] is True
+
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT response_status FROM reviews WHERE id=?", (review_id,)).fetchone()
+    conn.close()
+    assert row["response_status"] == "drafted"
+
+
+def test_undo_reverts_an_unposted_approval_to_drafted(client, db_path):
+    # is_connected() is False in this test DB (no GMB token configured), so
+    # approve() here lands on response_status='approved', auto_posted=False —
+    # exactly the "approved but never actually posted" case undo should cover.
+    rid = _restaurant(db_path)
+    review_id = _add_review(db_path, rid)
+    token = _login(client, db_path, rid)
+    approve_resp = client.post(f"/mobile/api/reviews/{review_id}/approve", headers=_auth_headers(token))
+    assert approve_resp.get_json()["auto_posted"] is False
+
+    resp = client.post(f"/mobile/api/reviews/{review_id}/undo", headers=_auth_headers(token))
+    assert resp.get_json()["ok"] is True
+
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT response_status FROM reviews WHERE id=?", (review_id,)).fetchone()
+    conn.close()
+    assert row["response_status"] == "drafted"
+
+
+def test_undo_rejects_a_posted_review(client, db_path):
+    rid = _restaurant(db_path)
+    review_id = _add_review(db_path, rid)
+    token = _login(client, db_path, rid)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE reviews SET response_status='posted' WHERE id=?", (review_id,))
+    conn.commit(); conn.close()
+
+    resp = client.post(f"/mobile/api/reviews/{review_id}/undo", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is False
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT response_status FROM reviews WHERE id=?", (review_id,)).fetchone()
+    conn.close()
+    assert row["response_status"] == "posted"  # untouched
+
+
+def test_undo_does_not_affect_another_restaurants_review(client, db_path):
+    rid_a = _restaurant(db_path, name="Restaurant A")
+    rid_b = _restaurant(db_path, name="Restaurant B")
+    review_id = _add_review(db_path, rid_a)
+    client_id_conn = get_conn(db_path)
+    client_id_conn.execute("UPDATE reviews SET response_status='skipped' WHERE id=?", (review_id,))
+    client_id_conn.commit(); client_id_conn.close()
+    token_b = _login(client, db_path, rid_b, username="bob")
+
+    resp = client.post(f"/mobile/api/reviews/{review_id}/undo", headers=_auth_headers(token_b))
+    assert resp.get_json()["ok"] is False  # scoped query finds nothing for restaurant B
+
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT response_status FROM reviews WHERE id=?", (review_id,)).fetchone()
+    conn.close()
+    assert row["response_status"] == "skipped"  # unchanged: restaurant B couldn't touch A's review
+
+
+def test_retract_rejects_a_review_that_was_never_posted(client, db_path):
+    rid = _restaurant(db_path)
+    review_id = _add_review(db_path, rid)
+    token = _login(client, db_path, rid)
+
+    resp = client.post(f"/mobile/api/reviews/{review_id}/retract", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is False
+
+
+def test_retract_deletes_the_live_reply_then_reverts_to_drafted(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    review_id = _add_review(db_path, rid)
+    conn = get_conn(db_path)
+    conn.execute(
+        "UPDATE reviews SET response_status='posted', review_name=? WHERE id=?",
+        ("accounts/1/locations/2/reviews/3", review_id)
+    )
+    conn.commit(); conn.close()
+    token = _login(client, db_path, rid)
+
+    import gmb
+    monkeypatch.setattr(gmb, "delete_reply", lambda restaurant_id, review_name: {"ok": True})
+
+    resp = client.post(f"/mobile/api/reviews/{review_id}/retract", headers=_auth_headers(token))
+    assert resp.get_json()["ok"] is True
+
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT response_status FROM reviews WHERE id=?", (review_id,)).fetchone()
+    conn.close()
+    assert row["response_status"] == "drafted"
+
+
+def test_retract_surfaces_the_google_api_error_and_leaves_status_unchanged(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    review_id = _add_review(db_path, rid)
+    conn = get_conn(db_path)
+    conn.execute(
+        "UPDATE reviews SET response_status='posted', review_name=? WHERE id=?",
+        ("accounts/1/locations/2/reviews/3", review_id)
+    )
+    conn.commit(); conn.close()
+    token = _login(client, db_path, rid)
+
+    import gmb
+    monkeypatch.setattr(gmb, "delete_reply", lambda restaurant_id, review_name: {"ok": False, "error": "token expired"})
+
+    resp = client.post(f"/mobile/api/reviews/{review_id}/retract", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert data["error"] == "token expired"
+
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT response_status FROM reviews WHERE id=?", (review_id,)).fetchone()
+    conn.close()
+    assert row["response_status"] == "posted"  # unchanged — the delete never actually succeeded
+
+
 def test_save_draft_rejects_cross_tenant_review(client, db_path):
     rid_a = _restaurant(db_path, name="Restaurant A")
     rid_b = _restaurant(db_path, name="Restaurant B")
@@ -1213,6 +1340,20 @@ def test_delete_review_marks_deleted_at_and_scoped_to_own_restaurant(client, db_
 
 
 # ── /mobile/api/reviews/response-performance, topic-heatmap, sentiment-trend
+
+def test_platform_breakdown_requires_auth(client):
+    resp = client.get("/mobile/api/reviews/platform-breakdown")
+    assert resp.status_code == 401
+
+
+def test_platform_breakdown_returns_ok(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/reviews/platform-breakdown", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["data"] == []
+
 
 def test_response_performance_requires_auth(client):
     resp = client.get("/mobile/api/reviews/response-performance")

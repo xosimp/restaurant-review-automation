@@ -13,15 +13,9 @@ struct LaborView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $subTab) {
-                ForEach(LaborSubTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .onChange(of: subTab) { _, _ in Haptic.light() }
+            CavnarSegmentedControl(selection: $subTab, options: LaborSubTab.allCases) { $0.rawValue }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -52,42 +46,44 @@ struct LaborView: View {
                 .padding(20)
             }
         }
-        .background(Color.cavnarPaper)
+        .cavnarModuleBackground()
         .refreshable { await viewModel.load() }
         .navigationTitle("Labor")
+        .navigationBarTitleDisplayMode(.inline)
+        .cavnarEmberTitle("Labor")
+        .cavnarEmberBackButton()
         .task { await viewModel.load() }
         .task { await analyticsViewModel.load() }
     }
 
     @ViewBuilder
     private func overviewCard(_ stats: LaborStats) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
+        let tone: CavnarTone = stats.onTrack ? .good : .bad
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Labor cost", systemImage: "person.2.fill")
+                    .font(.cavnarBody(11, weight: 700))
+                    .foregroundStyle(Color.cavnarInk3)
+                Spacer()
+                TonePill(text: stats.onTrack ? "On track" : "Over target", tone: tone)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(String(format: "%.1f%%", stats.overallLaborPct))
                     .font(.cavnarNumber(32, weight: 500))
                     .foregroundStyle(Color.cavnarInk)
                     .cavnarNumberGlow()
-                Text("of sales")
-                    .font(.cavnarBody(12))
+                (Text("/ ") + Text("\(Int(stats.target))%").font(.cavnarNumber(14, weight: 600)) + Text(" target"))
+                    .font(.cavnarBody(13))
                     .foregroundStyle(Color.cavnarInk3)
-                Spacer()
-                Text(stats.onTrack ? "On track" : "Over target")
-                    .font(.cavnarBody(11, weight: 700))
-                    .foregroundStyle(stats.onTrack ? Color.cavnarGreen : Color.cavnarRed)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(stats.onTrack ? Color.cavnarGreenBg : Color.cavnarRedBg)
-                    .clipShape(Capsule())
             }
-            (Text("Target: ") + Text("\(Int(stats.target))%").font(.cavnarNumber(12)))
-                .font(.cavnarBody(12))
-                .foregroundStyle(Color.cavnarInk3)
+            StatProgressBar(progress: stats.overallLaborPct / max(stats.target, 1), tone: tone)
             if stats.potentialSavings > 0 {
                 (Text("Est. ") + Text("$\(Int(stats.potentialSavings))").font(.cavnarNumber(12, weight: 600)) + Text(" in optimized-scheduling savings available"))
                     .font(.cavnarBody(12, weight: 600))
                     .foregroundStyle(Color.cavnarAmber)
             }
         }
-        .cavnarCard()
+        .cavnarGlassCard(tint: tone.foreground)
     }
 
     @ViewBuilder

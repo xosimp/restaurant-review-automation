@@ -116,6 +116,70 @@ def _do_skip(rid, restaurant_id):
     return {"ok": True}, 200
 
 
+def _do_undo(rid, restaurant_id):
+    """Reverts a skip, or an approval that never actually got auto-posted,
+    back to the actionable 'drafted' state — neither has any external
+    footprint, so there's nothing to unwind besides our own status column.
+    A 'posted' review has to go through _do_retract instead, since that one
+    has a real, live side effect on Google that a plain status flip can't
+    touch."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT response_status FROM reviews WHERE id=? AND restaurant_id=?",
+        (rid, restaurant_id)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return {"ok": False, "error": "Review not found"}, 404
+    if row["response_status"] not in ("skipped", "approved"):
+        return {"ok": False, "error": "Only a skipped review, or an approved review that hasn't posted, can be undone this way."}, 400
+    from models import revert_to_drafted, log_event
+    revert_to_drafted(rid, restaurant_id)
+    try:
+        log_event(restaurant_id, "review_undo", {"review_id": rid})
+    except Exception:
+        pass
+    return {"ok": True}, 200
+
+
+def _do_retract(rid, restaurant_id):
+    """Undoes an auto-posted approval by actually deleting the live reply
+    from Google via the Business Profile API, then reverting our own status
+    back to 'drafted' once that succeeds — a genuine retraction, not a
+    cosmetic status change, since the reply was really visible to the
+    public until this ran."""
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT platform, response_status, review_name FROM reviews WHERE id=? AND restaurant_id=?",
+        (rid, restaurant_id)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return {"ok": False, "error": "Review not found"}, 404
+    if row["response_status"] != "posted":
+        return {"ok": False, "error": "This review hasn't been posted, so there's nothing to retract."}, 400
+    if row["platform"] != "google" or not row["review_name"]:
+        return {"ok": False, "error": "Retracting is only supported for auto-posted Google replies."}, 400
+
+    from gmb import delete_reply
+    result = delete_reply(restaurant_id, row["review_name"])
+    if not result["ok"]:
+        return {"ok": False, "error": result["error"]}, 502
+
+    from models import revert_to_drafted, log_event
+    revert_to_drafted(rid, restaurant_id)
+    try:
+        log_event(restaurant_id, "review_retracted", {"review_id": rid})
+    except Exception:
+        pass
+    try:
+        from webhooks import fire_webhook as _fw
+        _fw(restaurant_id, "response.retracted", {"review_id": rid})
+    except Exception:
+        pass
+    return {"ok": True}, 200
+
+
 @client_bp.route("/approve/<int:rid>", methods=["POST"])
 @login_required
 def approve(rid, current_user):
@@ -142,6 +206,20 @@ def delete_review(rid, current_user):
 @login_required
 def skip(rid, current_user):
     payload, status = _do_skip(rid, current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
+@client_bp.route("/undo/<int:rid>", methods=["POST"])
+@login_required
+def undo(rid, current_user):
+    payload, status = _do_undo(rid, current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
+@client_bp.route("/retract/<int:rid>", methods=["POST"])
+@login_required
+def retract(rid, current_user):
+    payload, status = _do_retract(rid, current_user["restaurant_id"])
     return jsonify(**payload), status
 
 def parse_insight_sections(text):

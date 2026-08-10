@@ -1483,6 +1483,22 @@ def mark_posted(review_id: int, db_path: str = DB_PATH):
     conn.close()
 
 
+def revert_to_drafted(review_id: int, restaurant_id: int, db_path: str = DB_PATH):
+    """Puts a review back in the actionable 'drafted' queue — undoes a skip,
+    undoes a not-yet-posted approval, or completes a retract (once the live
+    Google reply has actually been deleted). Callers are responsible for
+    checking the review's current status is appropriate before calling this;
+    it doesn't gate on status itself so the same helper serves all three."""
+    conn = get_conn(db_path)
+    conn.execute("""
+        UPDATE reviews
+        SET response_status='drafted', approved_at=NULL, posted_at=NULL
+        WHERE id=? AND restaurant_id=?
+    """, (review_id, restaurant_id))
+    conn.commit()
+    conn.close()
+
+
 # ── Reporting ─────────────────────────────────────────────────────────────────
 
 def save_weekly_report(report: WeeklyReport, db_path: str = DB_PATH) -> int:

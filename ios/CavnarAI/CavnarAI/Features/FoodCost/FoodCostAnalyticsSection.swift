@@ -45,7 +45,7 @@ struct FoodCostAnalyticsSection: View {
                 }
             }
         }
-        .cavnarCard()
+        .cavnarGlassCard()
     }
 
     private func overstockCard(_ items: [OverstockItem]) -> some View {
@@ -68,6 +68,6 @@ struct FoodCostAnalyticsSection: View {
                 }
             }
         }
-        .cavnarCard()
+        .cavnarGlassCard()
     }
 }

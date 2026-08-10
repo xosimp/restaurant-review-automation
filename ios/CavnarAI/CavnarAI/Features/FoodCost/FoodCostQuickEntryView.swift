@@ -15,15 +15,9 @@ struct FoodCostQuickEntryView: View {
         // No NavigationStack of its own — pushed inside Home's or the
         // Modules tab's stack now, not a tab root.
         VStack(spacing: 0) {
-            Picker("", selection: $subTab) {
-                ForEach(FoodCostSubTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .onChange(of: subTab) { _, _ in Haptic.light() }
+            CavnarSegmentedControl(selection: $subTab, options: FoodCostSubTab.allCases) { $0.rawValue }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
 
             if subTab == .tracker {
                 tracker
@@ -31,8 +25,11 @@ struct FoodCostQuickEntryView: View {
                 FoodCostAnalyticsSection(viewModel: analyticsViewModel)
             }
         }
-        .background(Color.cavnarPaper)
+        .cavnarModuleBackground()
         .navigationTitle("Food Cost")
+        .navigationBarTitleDisplayMode(.inline)
+        .cavnarEmberTitle("Food Cost")
+        .cavnarEmberBackButton()
         .task {
             await analyticsViewModel.load()
         }

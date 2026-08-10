@@ -22,7 +22,7 @@ struct MarketingAnalyticsSection: View {
                         Divider()
                         statTile(value: "\(perf.published)", label: "Published")
                     }
-                    .cavnarCard()
+                    .cavnarGlassCard()
 
                     if let top = perf.topPost {
                         VStack(alignment: .leading, spacing: 6) {

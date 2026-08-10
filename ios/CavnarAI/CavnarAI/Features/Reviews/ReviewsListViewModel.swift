@@ -36,13 +36,11 @@ final class ReviewsListViewModel {
     }
 
     /// Called after a detail screen completes an approve/skip so the list
-    /// reflects it without a full reload.
-    func removeFromQueue(reviewID: Int) {
-        reviews.removeAll { $0.id == reviewID }
-    }
-
-    func replaceReview(_ updated: Review) {
-        guard let index = reviews.firstIndex(where: { $0.id == updated.id }) else { return }
-        reviews[index] = updated
+    /// reflects the new status in place — load() fetches every review
+    /// (filter=all), not just an actionable queue, so a completed review
+    /// should stay visible with its updated status pill, not disappear.
+    func markCompleted(reviewID: Int, status: String) {
+        guard let index = reviews.firstIndex(where: { $0.id == reviewID }) else { return }
+        reviews[index] = reviews[index].withStatus(status)
     }
 }

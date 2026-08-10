@@ -209,6 +209,37 @@ def post_reply(restaurant_id: int, review_name: str, reply_text: str) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+def delete_reply(restaurant_id: int, review_name: str) -> dict:
+    """
+    Retract a previously-posted reply via the Business Profile API's
+    deleteReply endpoint — the counterpart to post_reply(). Used to undo an
+    auto-posted approval: once this succeeds, the reply is actually gone
+    from the business's live Google listing, not just marked differently
+    on our side.
+    Returns {"ok": True} or {"ok": False, "error": "..."}
+    """
+    if not review_name:
+        return {"ok": False, "error": "No review name on file for this review"}
+
+    access_token = get_valid_token(restaurant_id)
+    if not access_token:
+        return {"ok": False, "error": "Google Business not connected"}
+
+    try:
+        url  = f"https://mybusinessreviews.googleapis.com/v1/{review_name}/reply"
+        resp = requests.delete(
+            url,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10,
+        )
+        if resp.status_code in (200, 204):
+            return {"ok": True}
+        else:
+            return {"ok": False, "error": f"API error {resp.status_code}: {resp.text[:200]}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def fetch_location_rating(restaurant_id: int, access_token: str, location_id: str) -> dict:
     """
     Fetch the official GBP overall rating + review count from the location's metadata.
