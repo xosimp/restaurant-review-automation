@@ -1,18 +1,20 @@
 import SwiftUI
 
-/// Pushed from a topic-sentiment card in ReviewsAnalyticsSection — reuses
-/// ReviewsListViewModel/ReviewRow rather than a bespoke list, just scoped to
-/// one topic-heatmap category via the /mobile/api/reviews?category= filter.
-struct TopicReviewsView: View {
-    let category: String
-    let label: String
+/// Pushed from a topic-sentiment card or a platform card in
+/// ReviewsAnalyticsSection — reuses ReviewsListViewModel/ReviewRow rather
+/// than a bespoke list, just scoped to one topic-heatmap category and/or
+/// one platform via the /mobile/api/reviews?category=&platform= filters.
+struct FilteredReviewsView: View {
+    let title: String
+    var category: String?
+    var platform: String?
 
     @State private var viewModel = ReviewsListViewModel()
 
     var body: some View {
         Group {
             if viewModel.reviews.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
-                ContentUnavailableView("No \(label) reviews", systemImage: "star.bubble")
+                ContentUnavailableView("No \(title) reviews", systemImage: "star.bubble")
             } else {
                 List(viewModel.reviews) { review in
                     NavigationLink {
@@ -33,12 +35,12 @@ struct TopicReviewsView: View {
         .overlay {
             if viewModel.isLoading && viewModel.reviews.isEmpty { ProgressView() }
         }
-        .refreshable { await viewModel.load(category: category) }
+        .refreshable { await viewModel.load(category: category, platform: platform) }
         .cavnarModuleBackground()
-        .navigationTitle(label)
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .cavnarEmberTitle(label)
+        .cavnarEmberTitle(title)
         .cavnarEmberBackButton()
-        .task { await viewModel.load(category: category) }
+        .task { await viewModel.load(category: category, platform: platform) }
     }
 }

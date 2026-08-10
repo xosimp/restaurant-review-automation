@@ -1,6 +1,6 @@
 import Foundation
 
-struct PlatformBreakdown: Decodable, Identifiable {
+struct PlatformBreakdown: Decodable, Identifiable, Hashable {
     let platform: String
     let total: Int
     let avgRating: Double

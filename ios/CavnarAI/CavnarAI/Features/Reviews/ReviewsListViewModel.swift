@@ -20,15 +20,17 @@ final class ReviewsListViewModel {
     }
 
     /// category filters to reviews tagged with that topic-heatmap category
-    /// (see TopicHeatmapEntry.category) — nil/omitted keeps the normal
+    /// (see TopicHeatmapEntry.category); platform filters to one review
+    /// platform (e.g. "google"/"yelp"). Both nil/omitted keeps the normal
     /// unfiltered inbox behavior.
-    func load(category: String? = nil) async {
+    func load(category: String? = nil, platform: String? = nil) async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
         do {
             var query = ["filter": "all"]
             if let category { query["category"] = category }
+            if let platform { query["platform"] = platform }
             let response: ReviewsResponse = try await client.send("/mobile/api/reviews", query: query)
             reviews = response.reviews
         } catch let error as APIClient.APIError {

@@ -593,6 +593,25 @@ def test_reviews_category_filter_returns_only_matching_reviews(client, db_path):
     assert [r["id"] for r in data["reviews"]] == [id_service]
 
 
+def test_reviews_platform_filter_returns_only_matching_reviews(client, db_path):
+    rid = _restaurant(db_path)
+    id_google = _add_review(db_path, rid, external_id="rev-google")
+    conn = get_conn(db_path)
+    save_reviews([Review(restaurant_id=rid, platform="yelp", external_id="rev-yelp",
+                          author="Bob", rating=4, text="Pretty good.")], db_path=db_path)
+    conn.execute("UPDATE reviews SET processed=1 WHERE restaurant_id=? AND external_id='rev-yelp'", (rid,))
+    conn.commit()
+    conn.close()
+    token = _login(client, db_path, rid)
+
+    resp = client.get("/mobile/api/reviews", query_string={"platform": "yelp"}, headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert len(data["reviews"]) == 1
+    assert data["reviews"][0]["platform"] == "yelp"
+    assert id_google not in [r["id"] for r in data["reviews"]]
+
+
 # ── /mobile/api/labor ───────────────────────────────────────────────────────
 
 def test_labor_endpoint_requires_auth(client):

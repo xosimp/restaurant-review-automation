@@ -129,6 +129,58 @@ extension View {
     }
 }
 
+/// House loading-state convention — a sliding ember highlight sweeping
+/// across a dim base bar, instead of a spinner or "...". Sized by its
+/// parent (GeometryReader fills whatever width/height it's given), so drop
+/// it into any layout as a stand-in for the content that isn't back yet.
+struct CavnarSkeletonBar: View {
+    var height: CGFloat = 12
+    var widthFraction: CGFloat = 1.0
+
+    @State private var slide = false
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Color.cavnarEmber.opacity(0.12)
+                LinearGradient(
+                    colors: [.clear, Color.cavnarEmber.opacity(0.65), .clear],
+                    startPoint: .leading, endPoint: .trailing
+                )
+                .frame(width: geo.size.width * widthFraction * 0.5)
+                .offset(x: slide ? geo.size.width * widthFraction : -geo.size.width * widthFraction * 0.5)
+            }
+            .frame(width: geo.size.width * widthFraction, height: height)
+            .clipShape(RoundedRectangle(cornerRadius: max(3, height / 3)))
+        }
+        .frame(height: height)
+        .onAppear {
+            withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
+                slide = true
+            }
+        }
+    }
+}
+
+/// A stack of CavnarSkeletonBar lines with varying widths, mimicking a
+/// paragraph of text still loading (used for the draft box, AI insight
+/// rows, etc.) — each line slides independently since they all
+/// .onAppear-trigger their own animation.
+struct CavnarSkeletonLines: View {
+    var widths: [CGFloat] = [1.0, 0.86, 0.55]
+    var lineHeight: CGFloat = 12
+    var spacing: CGFloat = 10
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: spacing) {
+            ForEach(widths.indices, id: \.self) { i in
+                CavnarSkeletonBar(height: lineHeight, widthFraction: widths[i])
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 /// Subtle emboss + colored glow on stat numbers — ports the web dashboard's
 /// dark-mode .stat-glow-*/.rv-stat-n text-shadow treatment (a soft dark
 /// shadow for depth, plus a faint tinted glow) so numbers read as slightly

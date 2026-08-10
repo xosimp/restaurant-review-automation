@@ -2423,7 +2423,7 @@ def get_topic_heatmap(restaurant_id: int, days: int = 90) -> list:
     return results
 
 
-def get_reviews_data(restaurant_id, filter_by="all", search="", category=None):
+def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, platform=None):
     conn = get_conn()
     where  = ["processed=1", "restaurant_id=?", "deleted_at IS NULL"]
     params = [restaurant_id]
@@ -2443,6 +2443,9 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None):
         # without needing SQLite's json_each.
         where.append("categories LIKE ?")
         params.append(f'%"{category}"%')
+    if platform:
+        where.append("platform=?")
+        params.append(platform)
     rows = conn.execute(
         f"""SELECT * FROM reviews WHERE {' AND '.join(where)}
         ORDER BY CASE urgency WHEN 'high' THEN 0 ELSE 1 END,

@@ -5,32 +5,139 @@ struct ReviewsAnalyticsSection: View {
     let viewModel: ReviewsAnalyticsViewModel
 
     @State private var selectedWeek: SentimentWeek?
+    @State private var selectedPlatform: PlatformBreakdown?
 
+    // Each section shows its own skeleton while it's individually still in
+    // flight rather than gating the whole page behind one spinner — the 5
+    // requests in ReviewsAnalyticsViewModel.load() run concurrently but are
+    // awaited (and so become non-nil) in a fixed order, so e.g. the AI
+    // insight — the slowest, since it's an LLM call, unlike the plain SQL
+    // aggregates behind the other sections — used to visibly "pop in" a
+    // couple seconds after everything else had already rendered.
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                if viewModel.isLoading && viewModel.performance == nil {
-                    ProgressView().padding(.top, 60).frame(maxWidth: .infinity)
-                } else {
-                    if let insight = viewModel.insight {
-                        insightCard(insight)
-                    }
-                    if !viewModel.platforms.isEmpty {
-                        platformSection
-                    }
-                    if let performance = viewModel.performance {
-                        performanceCard(performance)
-                    }
-                    if !viewModel.heatmap.isEmpty {
-                        topicGrid
-                    }
-                    if !viewModel.sentimentWeeks.isEmpty {
-                        trendChartCard
-                    }
+                if let performance = viewModel.performance {
+                    performanceCard(performance)
+                } else if viewModel.isLoading {
+                    performanceSkeleton
+                }
+
+                if let insight = viewModel.insight {
+                    insightCard(insight)
+                } else if viewModel.isLoading {
+                    insightSkeleton
+                }
+
+                if !viewModel.platforms.isEmpty {
+                    platformSection
+                } else if viewModel.isLoading {
+                    platformSkeleton
+                }
+
+                if !viewModel.heatmap.isEmpty {
+                    topicGrid
+                } else if viewModel.isLoading {
+                    topicGridSkeleton
+                }
+
+                if !viewModel.sentimentWeeks.isEmpty {
+                    trendChartCard
+                } else if viewModel.isLoading {
+                    trendChartSkeleton
                 }
             }
             .padding(20)
         }
+        .navigationDestination(item: $selectedPlatform) { platform in
+            FilteredReviewsView(title: platform.platform.capitalized, platform: platform.platform)
+        }
+    }
+
+    // MARK: - Loading skeletons
+
+    private var performanceSkeleton: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            CavnarSkeletonBar(height: 11, widthFraction: 0.5)
+            HStack {
+                ForEach(0..<3, id: \.self) { _ in
+                    VStack(spacing: 6) {
+                        CavnarSkeletonBar(height: 20, widthFraction: 0.5)
+                        CavnarSkeletonBar(height: 10, widthFraction: 0.8)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        }
+    }
+
+    private var insightSkeleton: some View {
+        let widths: [CGFloat] = [0.92, 0.78, 0.85, 0.62]
+        return VStack(alignment: .leading, spacing: 0) {
+            ForEach(widths.indices, id: \.self) { index in
+                HStack(alignment: .top, spacing: 12) {
+                    Circle().fill(Color.cavnarEmber.opacity(0.15)).frame(width: 20, height: 20)
+                    CavnarSkeletonBar(height: 12, widthFraction: widths[index])
+                }
+                .padding(.vertical, 12)
+                if index < widths.count - 1 {
+                    Rectangle().fill(Color.cavnarPaper3.opacity(0.25)).frame(height: 1)
+                }
+            }
+        }
+    }
+
+    private var platformSkeleton: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            CavnarSkeletonBar(height: 11, widthFraction: 0.3)
+            HStack(spacing: 12) {
+                ForEach(0..<2, id: \.self) { _ in
+                    VStack(alignment: .leading, spacing: 10) {
+                        CavnarSkeletonBar(height: 11, widthFraction: 0.5)
+                        CavnarSkeletonBar(height: 10, widthFraction: 0.6)
+                        CavnarSkeletonBar(height: 26, widthFraction: 0.4)
+                        CavnarSkeletonBar(height: 11, widthFraction: 0.7)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .cavnarGlassCard()
+                }
+            }
+        }
+    }
+
+    private var topicGridSkeleton: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            CavnarSkeletonBar(height: 11, widthFraction: 0.35)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
+                ForEach(0..<4, id: \.self) { _ in
+                    VStack(alignment: .leading, spacing: 8) {
+                        CavnarSkeletonBar(height: 12, widthFraction: 0.6)
+                        CavnarSkeletonBar(height: 20, widthFraction: 0.3)
+                        CavnarSkeletonBar(height: 6, widthFraction: 1.0)
+                    }
+                    .padding(12)
+                    .background(Color.cavnarPaper2.opacity(0.6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: CavnarRadius.control)
+                            .strokeBorder(Color.cavnarPaper3.opacity(0.5), lineWidth: 1)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                }
+            }
+        }
+    }
+
+    private var trendChartSkeleton: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            CavnarSkeletonBar(height: 11, widthFraction: 0.45)
+            CavnarSkeletonBar(height: 190, widthFraction: 1.0)
+            HStack(spacing: 16) {
+                CavnarSkeletonBar(height: 9, widthFraction: 0.15)
+                CavnarSkeletonBar(height: 9, widthFraction: 0.15)
+                CavnarSkeletonBar(height: 9, widthFraction: 0.15)
+            }
+        }
+        .cavnarCard()
     }
 
     // MARK: - AI insight (emoji lines → branded icon rows)
@@ -103,6 +210,8 @@ struct ReviewsAnalyticsSection: View {
             HStack(spacing: 12) {
                 ForEach(viewModel.platforms) { platform in
                     platformCard(platform)
+                        .contentShape(Rectangle())
+                        .onTapGesture { selectedPlatform = platform }
                 }
             }
         }
@@ -155,11 +264,21 @@ struct ReviewsAnalyticsSection: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .cavnarGlossyCard()
+        // .cavnarGlassCard(), not .cavnarGlossyCard() — the latter is real
+        // interactive Liquid Glass on iOS 26 (.glassEffect(...interactive()))
+        // and, wrapped inside this card's NavigationLink, was swallowing the
+        // tap before it ever reached the link: tapping did nothing at all,
+        // not even after a second tap. .cavnarGlassCard() is the same
+        // ember-tinted-gradient family with no glass gesture recognizer of
+        // its own, so the NavigationLink's tap goes through normally.
+        .cavnarGlassCard()
     }
 
     // MARK: - Response performance
 
+    // Free-floating like the insight lines below it — no card background,
+    // it's the first thing on the page and doesn't need its own container
+    // to read as a distinct section.
     private func performanceCard(_ performance: ResponsePerformance) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             (Text("Response performance — last ")
@@ -173,7 +292,6 @@ struct ReviewsAnalyticsSection: View {
                 statTile("Regenerated", performance.regenerated)
             }
         }
-        .cavnarGlossyCard()
     }
 
     private func statTile(_ label: String, _ value: Int) -> some View {
@@ -199,7 +317,7 @@ struct ReviewsAnalyticsSection: View {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
                 ForEach(viewModel.heatmap.filter { $0.count > 0 }) { entry in
                     NavigationLink {
-                        TopicReviewsView(category: entry.category, label: entry.label)
+                        FilteredReviewsView(title: entry.label, category: entry.category)
                     } label: {
                         topicCard(entry)
                     }
@@ -330,21 +448,27 @@ struct ReviewsAnalyticsSection: View {
             // Chart marks aren't Views, so they can't take .shadow() — a
             // blurred, non-interactive duplicate of the same bars sitting
             // directly behind the crisp chart gives each bar its own soft
-            // glow silhouette instead of one flat halo behind the whole
-            // plot rectangle. The glow copy keeps the SAME AxisMarks
-            // structure as the crisp chart (not .chartXAxis(.hidden)) so
-            // both charts reserve identical plot-area height — .hidden()
-            // shrinks the axis-label gutter to zero on that copy alone,
-            // which let its (taller) blurred bars spill past where the
-            // crisp chart's own date labels sit. Clear foreground colors
-            // make the duplicate labels invisible without changing layout.
+            // border glow instead of one flat halo behind the whole plot
+            // rectangle. The glow copy mirrors the crisp chart's AXIS
+            // CONTENT exactly (same "60"/"40"/... value text, same font),
+            // just with a clear foreground, rather than a fixed placeholder
+            // — a leading-position y-axis reserves gutter width equal to
+            // its widest rendered label, so a differently-sized placeholder
+            // (or .hidden(), which reserves none) shifts that whole chart's
+            // plot area left/right relative to the crisp one, throwing the
+            // bars out of alignment. A small blur radius keeps the glow
+            // hugging the bar edges instead of spreading into a wide blob.
             ZStack {
                 Chart { trendBars() }
                     .chartLegend(.hidden)
                     .chartYAxis {
-                        AxisMarks(position: .leading) { _ in
+                        AxisMarks(position: .leading) { value in
                             AxisGridLine().foregroundStyle(.clear)
-                            AxisValueLabel { Text(" ").font(.cavnarBody(9)) }
+                            AxisValueLabel {
+                                if let v = value.as(Int.self) {
+                                    Text("\(v)").font(.cavnarBody(9)).foregroundStyle(.clear)
+                                }
+                            }
                         }
                     }
                     .chartXAxis {
@@ -352,8 +476,8 @@ struct ReviewsAnalyticsSection: View {
                             AxisValueLabel().font(.cavnarBody(9)).foregroundStyle(.clear)
                         }
                     }
-                    .opacity(0.5)
-                    .blur(radius: 2.5)
+                    .opacity(0.6)
+                    .blur(radius: 1.6)
                     .allowsHitTesting(false)
 
                 Chart { trendBars() }

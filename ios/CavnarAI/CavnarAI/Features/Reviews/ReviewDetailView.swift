@@ -137,7 +137,7 @@ struct ReviewDetailView: View {
                 }
             }
             if viewModel.isLoadingInitialDraft {
-                DraftSkeleton()
+                CavnarSkeletonLines(widths: [1.0, 0.86, 0.55], lineHeight: 12, spacing: 10)
                     .frame(minHeight: 130)
                     .padding(14)
                     .background(Color.cavnarEmber.opacity(0.20))
@@ -270,38 +270,6 @@ struct ReviewDetailView: View {
 /// bar for any quick async load, not a spinner or blank space. Three
 /// paragraph-shaped lines, each with its own sweeping ember shimmer,
 /// standing in for the text that's about to arrive.
-private struct DraftSkeleton: View {
-    @State private var slide = false
-    private let widths: [CGFloat] = [1.0, 0.86, 0.55]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(widths.indices, id: \.self) { i in
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Color.cavnarEmber.opacity(0.12)
-                        LinearGradient(
-                            colors: [.clear, Color.cavnarEmber.opacity(0.65), .clear],
-                            startPoint: .leading, endPoint: .trailing
-                        )
-                        .frame(width: geo.size.width * widths[i] * 0.5)
-                        .offset(x: slide ? geo.size.width * widths[i] : -geo.size.width * widths[i] * 0.5)
-                    }
-                    .frame(width: geo.size.width * widths[i], height: 12)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                }
-                .frame(height: 12)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .onAppear {
-            withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
-                slide = true
-            }
-        }
-    }
-}
-
 private struct TemplatePickerSheet: View {
     let templates: [ResponseTemplate]
     let onSelect: (ResponseTemplate) -> Void
