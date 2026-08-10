@@ -2423,7 +2423,7 @@ def get_topic_heatmap(restaurant_id: int, days: int = 90) -> list:
     return results
 
 
-def get_reviews_data(restaurant_id, filter_by="all", search=""):
+def get_reviews_data(restaurant_id, filter_by="all", search="", category=None):
     conn = get_conn()
     where  = ["processed=1", "restaurant_id=?", "deleted_at IS NULL"]
     params = [restaurant_id]
@@ -2436,6 +2436,13 @@ def get_reviews_data(restaurant_id, filter_by="all", search=""):
     if search:
         where.append("(author LIKE ? OR text LIKE ?)")
         params.extend([f"%{search}%", f"%{search}%"])
+    if category:
+        # categories is a JSON array column (see get_topic_heatmap) — every
+        # entry is one of the fixed keys in that function's _LABELS map, so
+        # a quoted-substring LIKE reliably matches "the tag is present"
+        # without needing SQLite's json_each.
+        where.append("categories LIKE ?")
+        params.append(f'%"{category}"%')
     rows = conn.execute(
         f"""SELECT * FROM reviews WHERE {' AND '.join(where)}
         ORDER BY CASE urgency WHEN 'high' THEN 0 ELSE 1 END,

@@ -418,9 +418,9 @@ def mobile_home(current_user):
 
 # ── Reviews ───────────────────────────────────────────────────────────────
 
-def _do_mobile_reviews(restaurant_id, filter_by="all", search=""):
+def _do_mobile_reviews(restaurant_id, filter_by="all", search="", category=None):
     from models import get_reviews_data
-    reviews = get_reviews_data(restaurant_id, filter_by, search)
+    reviews = get_reviews_data(restaurant_id, filter_by, search, category=category)
     return {"ok": True, "reviews": reviews}, 200
 
 
@@ -431,6 +431,7 @@ def mobile_reviews(current_user):
         current_user["restaurant_id"],
         request.args.get("filter", "all"),
         request.args.get("search", ""),
+        request.args.get("category") or None,
     )
     return jsonify(**payload), status
 

@@ -114,7 +114,7 @@ struct ReviewsListView: View {
     }
 }
 
-private struct ReviewRow: View {
+struct ReviewRow: View {
     let review: Review
 
     var body: some View {

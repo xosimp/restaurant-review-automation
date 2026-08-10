@@ -19,12 +19,17 @@ final class ReviewsListViewModel {
         let reviews: [Review]
     }
 
-    func load() async {
+    /// category filters to reviews tagged with that topic-heatmap category
+    /// (see TopicHeatmapEntry.category) — nil/omitted keeps the normal
+    /// unfiltered inbox behavior.
+    func load(category: String? = nil) async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
         do {
-            let response: ReviewsResponse = try await client.send("/mobile/api/reviews", query: ["filter": "all"])
+            var query = ["filter": "all"]
+            if let category { query["category"] = category }
+            let response: ReviewsResponse = try await client.send("/mobile/api/reviews", query: query)
             reviews = response.reviews
         } catch let error as APIClient.APIError {
             errorMessage = error.message

@@ -576,6 +576,23 @@ def test_reviews_endpoint_scoped_to_own_restaurant(client, db_path):
     assert data["reviews"] == []  # restaurant B sees none of restaurant A's reviews
 
 
+def test_reviews_category_filter_returns_only_matching_reviews(client, db_path):
+    rid = _restaurant(db_path)
+    id_service = _add_review(db_path, rid, external_id="rev-service")
+    id_food = _add_review(db_path, rid, external_id="rev-food")
+    conn = get_conn(db_path)
+    conn.execute("UPDATE reviews SET categories=? WHERE id=?", ('["service"]', id_service))
+    conn.execute("UPDATE reviews SET categories=? WHERE id=?", ('["food_quality"]', id_food))
+    conn.commit()
+    conn.close()
+    token = _login(client, db_path, rid)
+
+    resp = client.get("/mobile/api/reviews", query_string={"category": "service"}, headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert [r["id"] for r in data["reviews"]] == [id_service]
+
+
 # ── /mobile/api/labor ───────────────────────────────────────────────────────
 
 def test_labor_endpoint_requires_auth(client):

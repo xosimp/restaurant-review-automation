@@ -46,23 +46,37 @@ struct ReviewsAnalyticsSection: View {
         ("🔮", "sparkles"),
     ]
 
+    // No card/gradient container here on purpose — the page already has
+    // plenty of boxed sections below. These four lines float directly on
+    // the module background; a dark lift-shadow plus a faint ember glow
+    // (the same two-shadow technique as .cavnarNumberGlow) keeps the icon
+    // and text reading as raised/lit rather than flat against the wash,
+    // with hairline dividers standing in for a container edge.
     private func insightCard(_ insight: String) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            ForEach(Array(insightLines(insight).enumerated()), id: \.offset) { _, line in
-                HStack(alignment: .top, spacing: 10) {
+        let lines = insightLines(insight)
+        return VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                HStack(alignment: .top, spacing: 12) {
                     Image(systemName: line.icon)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Color.cavnarEmber)
-                        .frame(width: 18, alignment: .center)
+                        .frame(width: 20, alignment: .center)
+                        .shadow(color: .cavnarEmber.opacity(0.55), radius: 5, x: 0, y: 0)
                     Text(line.text)
-                        .font(.cavnarBody(13))
+                        .font(.cavnarBody(14, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                         .lineSpacing(4)
+                        .shadow(color: .black.opacity(0.45), radius: 3, x: 0, y: 1)
+                }
+                .padding(.vertical, 12)
+                if index < lines.count - 1 {
+                    Rectangle()
+                        .fill(Color.cavnarPaper3.opacity(0.25))
+                        .frame(height: 1)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .cavnarGlassCard()
     }
 
     private func insightLines(_ raw: String) -> [(icon: String, text: String)] {
@@ -182,7 +196,12 @@ struct ReviewsAnalyticsSection: View {
                 .foregroundStyle(Color.cavnarInk3)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
                 ForEach(viewModel.heatmap.filter { $0.count > 0 }) { entry in
-                    topicCard(entry)
+                    NavigationLink {
+                        TopicReviewsView(category: entry.category, label: entry.label)
+                    } label: {
+                        topicCard(entry)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -269,16 +288,24 @@ struct ReviewsAnalyticsSection: View {
                 ForEach(viewModel.sentimentWeeks) { week in
                     BarMark(x: .value("Week", week.label), y: .value("Reviews", week.positive))
                         .foregroundStyle(by: .value("Sentiment", "Positive"))
+                        .cornerRadius(2)
                     BarMark(x: .value("Week", week.label), y: .value("Reviews", week.neutral))
                         .foregroundStyle(by: .value("Sentiment", "Neutral"))
+                        .cornerRadius(2)
                     BarMark(x: .value("Week", week.label), y: .value("Reviews", week.negative))
                         .foregroundStyle(by: .value("Sentiment", "Negative"))
+                        .cornerRadius(2)
                 }
             }
+            // .gradient (not a flat Color) is what puts the same top-to-
+            // bottom shine on each bar segment as the web dashboard's Labor
+            // % chart, instead of a flat fill; the two .shadow calls below
+            // add the ember backlight so the whole plot lifts off the page
+            // the same way .cavnarNumberGlow lifts stat numbers.
             .chartForegroundStyleScale([
-                "Positive": Color.cavnarGreen,
-                "Neutral": Color.cavnarAmber,
-                "Negative": Color.cavnarRed,
+                "Positive": Color.cavnarGreen.gradient,
+                "Neutral": Color.cavnarAmber.gradient,
+                "Negative": Color.cavnarRed.gradient,
             ])
             .chartLegend(.hidden)
             .chartYAxis {
@@ -298,6 +325,8 @@ struct ReviewsAnalyticsSection: View {
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
+            .shadow(color: .black.opacity(0.35), radius: 4, x: 0, y: 3)
+            .shadow(color: .cavnarEmber.opacity(0.30), radius: 16, x: 0, y: 0)
             .frame(height: 190)
 
             HStack(spacing: 16) {
