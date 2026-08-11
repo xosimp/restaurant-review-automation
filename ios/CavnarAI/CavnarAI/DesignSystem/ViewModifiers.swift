@@ -69,7 +69,7 @@ struct CavnarSecondaryButtonStyle: ButtonStyle {
             .font(.cavnarBody(16, weight: 600))
             .frame(maxWidth: .infinity)
             .padding(14)
-            .foregroundStyle(isDisabled ? Color.cavnarEmber2.opacity(0.4) : Color.cavnarEmber2)
+            .foregroundStyle(isDisabled ? Color.cavnarEmber.opacity(0.4) : Color.cavnarEmber)
             .overlay(
                 RoundedRectangle(cornerRadius: CavnarRadius.control)
                     .strokeBorder(isDisabled ? Color.cavnarEmber.opacity(0.35) : Color.cavnarEmber, lineWidth: 1.5)

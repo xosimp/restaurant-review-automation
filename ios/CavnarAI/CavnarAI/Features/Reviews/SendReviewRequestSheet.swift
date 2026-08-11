@@ -112,12 +112,6 @@ struct SendReviewRequestSheet: View {
             .navigationTitle("Request a Review")
             .navigationBarTitleDisplayMode(.inline)
             .cavnarEmberTitle("Request a Review")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundStyle(Color.cavnarEmber2)
-                }
-            }
         }
     }
 }

@@ -191,12 +191,6 @@ private struct AddGuestContactSheet: View {
             .navigationTitle("Add Guest")
             .navigationBarTitleDisplayMode(.inline)
             .cavnarEmberTitle("Add Guest")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundStyle(Color.cavnarEmber2)
-                }
-            }
         }
     }
 }

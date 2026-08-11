@@ -410,12 +410,6 @@ private struct ChangePasswordSheet: View {
             .navigationTitle("Change Password")
             .navigationBarTitleDisplayMode(.inline)
             .cavnarEmberTitle("Change Password")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundStyle(Color.cavnarEmber2)
-                }
-            }
         }
     }
 }
@@ -497,12 +491,6 @@ private struct TwoFactorSetupSheet: View {
             .navigationTitle("Enable 2FA")
             .navigationBarTitleDisplayMode(.inline)
             .cavnarEmberTitle("Enable 2FA")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundStyle(Color.cavnarEmber2)
-                }
-            }
         }
     }
 }

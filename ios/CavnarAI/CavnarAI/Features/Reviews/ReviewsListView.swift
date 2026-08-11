@@ -190,6 +190,8 @@ struct StatusPill: View {
         switch status {
         case "posted": return .cavnarGreenBg
         case "approved": return .cavnarBlueBg
+        case "drafted": return .cavnarAmberBg
+        case "skipped": return .cavnarPaper3
         default: return .cavnarEmber.opacity(0.1)
         }
     }
@@ -198,6 +200,8 @@ struct StatusPill: View {
         switch status {
         case "posted": return .cavnarGreen
         case "approved": return .cavnarBlue
+        case "drafted": return .cavnarAmber
+        case "skipped": return .cavnarInk3
         default: return .cavnarEmber
         }
     }
