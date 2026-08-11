@@ -6,8 +6,9 @@ import SwiftUI
 /// elements, driven by @keyframes rayA–E/ptclL/R/SL/SR). Not a literal
 /// port — SwiftUI has no equivalent to CSS's multi-stage keyframe timing —
 /// but the same ambient effect: a handful of softly rotating/pulsing ember
-/// beams behind slowly drifting, fading embers, using only the app's own
-/// Ember/Ember2 colors.
+/// light beams behind slowly drifting, fading embers, fading to solid black
+/// at the bottom edge so it blends into the rest of the page instead of
+/// ending on a hard line.
 struct HomeHeroBackground: View {
     @State private var animate = false
 
@@ -28,13 +29,13 @@ struct HomeHeroBackground: View {
     }
 
     private let rays: [Ray] = [
-        Ray(x: 0.08, width: 46, baseAngle: -30, swing: 10, duration: 6.5, delay: 0.0),
-        Ray(x: 0.22, width: 34, baseAngle: -16, swing: 8, duration: 8.0, delay: 0.6),
-        Ray(x: 0.37, width: 58, baseAngle: -6, swing: 12, duration: 5.5, delay: 0.3),
-        Ray(x: 0.52, width: 40, baseAngle: 4, swing: 9, duration: 7.2, delay: 0.9),
-        Ray(x: 0.66, width: 64, baseAngle: 14, swing: 11, duration: 6.0, delay: 0.2),
-        Ray(x: 0.80, width: 38, baseAngle: 24, swing: 8, duration: 7.6, delay: 0.7),
-        Ray(x: 0.92, width: 32, baseAngle: -14, swing: 7, duration: 8.4, delay: 0.4),
+        Ray(x: 0.08, width: 50, baseAngle: -30, swing: 10, duration: 6.5, delay: 0.0),
+        Ray(x: 0.22, width: 36, baseAngle: -16, swing: 8, duration: 8.0, delay: 0.6),
+        Ray(x: 0.37, width: 62, baseAngle: -6, swing: 12, duration: 5.5, delay: 0.3),
+        Ray(x: 0.52, width: 42, baseAngle: 4, swing: 9, duration: 7.2, delay: 0.9),
+        Ray(x: 0.66, width: 68, baseAngle: 14, swing: 11, duration: 6.0, delay: 0.2),
+        Ray(x: 0.80, width: 40, baseAngle: 24, swing: 8, duration: 7.6, delay: 0.7),
+        Ray(x: 0.92, width: 34, baseAngle: -14, swing: 7, duration: 8.4, delay: 0.4),
     ]
 
     private let particles: [Particle] = [
@@ -57,17 +58,29 @@ struct HomeHeroBackground: View {
             ZStack {
                 ForEach(rays.indices, id: \.self) { i in
                     let ray = rays[i]
-                    Capsule()
+                    // An Ellipse, not a Capsule — a capsule's flat rounded
+                    // caps still read as a rectangle once you're staring at
+                    // it; an ellipse actually tapers to a point at both
+                    // ends. The .blur() is what turns that taper into a
+                    // soft diffuse beam instead of a shape with a visible
+                    // (if rounded) edge — real light rays don't have edges.
+                    Ellipse()
                         .fill(
                             LinearGradient(
-                                colors: [.clear, Color.cavnarEmber.opacity(0.26), .clear],
+                                colors: [
+                                    .clear,
+                                    Color.cavnarEmber.opacity(0.65),
+                                    Color.cavnarEmber2.opacity(0.45),
+                                    .clear,
+                                ],
                                 startPoint: .top, endPoint: .bottom
                             )
                         )
-                        .frame(width: ray.width, height: geo.size.height * 1.5)
+                        .frame(width: ray.width, height: geo.size.height * 1.7)
+                        .blur(radius: ray.width * 0.55)
                         .rotationEffect(.degrees(animate ? ray.baseAngle + ray.swing : ray.baseAngle - ray.swing))
-                        .opacity(animate ? 0.85 : 0.25)
-                        .position(x: geo.size.width * ray.x, y: geo.size.height * 0.1)
+                        .opacity(animate ? 1.0 : 0.4)
+                        .position(x: geo.size.width * ray.x, y: geo.size.height * 0.15)
                         .animation(
                             .easeInOut(duration: ray.duration).repeatForever(autoreverses: true).delay(ray.delay),
                             value: animate
@@ -85,6 +98,17 @@ struct HomeHeroBackground: View {
                             value: animate
                         )
                 }
+                // Fade to solid black toward the bottom edge — without this
+                // the rays/particles just stop dead at the hero's own frame
+                // boundary, a hard line against the plain black page below.
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .clear, location: 0.62),
+                        .init(color: Color.cavnarPaper, location: 1.0),
+                    ],
+                    startPoint: .top, endPoint: .bottom
+                )
             }
         }
         .allowsHitTesting(false)

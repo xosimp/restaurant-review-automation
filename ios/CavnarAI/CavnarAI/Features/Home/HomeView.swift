@@ -45,7 +45,12 @@ struct HomeView: View {
             .sensoryFeedback(.impact(weight: .light), trigger: navHapticTrigger)
             .background(Color.cavnarPaper)
             .refreshable { await viewModel.load() }
-            .navigationTitle("Home")
+            // No title text — "Home" was redundant with the hero's own
+            // greeting right below it. Still .inline (not omitted) so the
+            // bell/building toolbar icons keep a compact bar instead of
+            // reserving large-title space for nothing.
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -89,30 +94,38 @@ struct HomeView: View {
     // ember, then a subtitle line — each stage fading/typing in after the
     // previous finishes, over the animated ember background.
     private func hero(_ summary: HomeSummary) -> some View {
-        VStack(spacing: 10) {
-            Text(todayDateString)
-                .font(.cavnarBody(11, weight: 700))
-                .tracking(2)
-                .textCase(.uppercase)
-                .foregroundStyle(Color.cavnarEmber)
+        VStack(spacing: 0) {
+            Spacer(minLength: 24)
+            VStack(spacing: 10) {
+                Text(todayDateString)
+                    .font(.cavnarBody(11, weight: 700))
+                    .tracking(2)
+                    .textCase(.uppercase)
+                    .foregroundStyle(Color.cavnarEmber)
+                    .opacity(showDate ? 1 : 0)
+
+                HeroHeadlineText(
+                    name: greetingName(summary),
+                    rest: "— your restaurant is running on AI."
+                ) {
+                    withAnimation(.easeOut(duration: 0.35)) { showSubtitle = true }
+                }
                 .opacity(showDate ? 1 : 0)
 
-            HeroHeadlineText(
-                name: greetingName(summary),
-                rest: "— your restaurant is running on AI."
-            ) {
-                withAnimation(.easeOut(duration: 0.35)) { showSubtitle = true }
+                if showSubtitle {
+                    subtitleText(summary)
+                        .transition(.opacity)
+                }
             }
-            .opacity(showDate ? 1 : 0)
-
-            if showSubtitle {
-                subtitleText(summary)
-                    .transition(.opacity)
-            }
+            Spacer(minLength: 24)
         }
+        // Tall enough that Needs Attention below lands near the bottom of
+        // the first screenful instead of directly under the greeting — the
+        // animated background fades to black well before this frame ends,
+        // so it reads as one long wash rather than a boxed hero banner.
+        .frame(minHeight: 560)
         .frame(maxWidth: .infinity)
         .multilineTextAlignment(.center)
-        .padding(.vertical, 28)
         .padding(.horizontal, 20)
         .background(HomeHeroBackground())
         .onAppear {
