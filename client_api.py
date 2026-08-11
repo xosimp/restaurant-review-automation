@@ -2043,6 +2043,7 @@ def _do_send_review_request(rid, data):
         customer_name  = (data.get("name") or "").strip()
         customer_email = (data.get("email") or "").strip().lower()
         customer_phone = (data.get("phone") or "").strip()
+        guest_note     = (data.get("message") or "").strip()[:200]
         if not customer_email and not customer_phone:
             return {"ok": False, "error": "Email or phone required"}, 400
         if customer_email and "@" not in customer_email:
@@ -2064,7 +2065,8 @@ def _do_send_review_request(rid, data):
             from notify import send_sms as _send_sms
             sms_text = (
                 f"Hi {first_name}, thanks for dining at {rest_name}! "
-                f"We'd love your feedback — leave us a Google review: {review_url}"
+                + (f"{guest_note} " if guest_note else "")
+                + f"We'd love your feedback — leave us a Google review: {review_url}"
             )
             sent_sms = _send_sms(customer_phone, sms_text)
             if not sent_sms and not customer_email:
@@ -2088,6 +2090,13 @@ def _do_send_review_request(rid, data):
         if not _resend.api_key:
             return {"ok": False, "error": "Email not configured"}, 500
 
+        import html as _html_escape
+        note_block = (
+            f'<p style="font-size:15px;color:#3a3530;line-height:1.6;margin:0 0 24px;'
+            f'padding:14px 16px;background:#f7f4ef;border-left:3px solid #c84b2f;border-radius:4px">'
+            f'{_html_escape.escape(guest_note)}</p>'
+            if guest_note else ""
+        )
         html_body = f"""
         <div style="font-family:'DM Sans',Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f7f4ef">
           <div style="background:white;border-radius:12px;padding:32px;border:1px solid #e0dbd0">
@@ -2103,6 +2112,7 @@ def _do_send_review_request(rid, data):
             <p style="font-size:15px;color:#3a3530;line-height:1.6;margin:0 0 24px">
               Thank you for dining with us at <strong>{rest_name}</strong>. We hope you had a great experience — we'd love to hear your thoughts.
             </p>
+            {note_block}
             <a href="{review_url}" style="display:inline-block;background:#c84b2f;color:white;text-decoration:none;padding:12px 28px;border-radius:8px;font-size:14px;font-weight:600;letter-spacing:.3px">
               Leave a Google review →
             </a>

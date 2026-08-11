@@ -137,7 +137,7 @@ struct ReviewDetailView: View {
                 }
             }
             if viewModel.isLoadingInitialDraft {
-                CavnarSkeletonLines(widths: [1.0, 0.86, 0.55], lineHeight: 12, spacing: 10)
+                CavnarSkeletonLines(widths: [1.0, 0.95, 0.9, 0.97, 0.8, 0.88, 0.5], lineHeight: 12, spacing: 10)
                     .frame(minHeight: 130)
                     .padding(14)
                     .background(Color.cavnarEmber.opacity(0.20))

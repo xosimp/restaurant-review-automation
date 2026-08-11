@@ -281,7 +281,7 @@ struct ReviewsAnalyticsSection: View {
     // to read as a distinct section.
     private func performanceCard(_ performance: ResponsePerformance) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            (Text("Response performance — last ")
+            (Text("Last ")
                 + Text("\(performance.days)").font(.cavnarNumber(11, weight: 700))
                 + Text("d"))
                 .font(.cavnarBody(11, weight: 700))

@@ -1538,6 +1538,24 @@ def test_send_review_request_sms_only_logs_request(client, db_path, monkeypatch)
     assert row["method"] == "sms"
 
 
+def test_send_review_request_includes_guest_note_in_sms(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    sent = {}
+    monkeypatch.setattr(
+        "notify.send_sms",
+        lambda phone, text: sent.update(phone=phone, text=text) or True
+    )
+
+    resp = client.post(
+        "/mobile/api/send-review-request",
+        json={"name": "Jamie", "phone": "312-555-0100", "message": "Loved having you for the anniversary!"},
+        headers=_auth_headers(token),
+    )
+    assert resp.get_json()["ok"] is True
+    assert "Loved having you for the anniversary!" in sent["text"]
+
+
 def test_review_request_stats_requires_auth(client):
     resp = client.get("/mobile/api/review-request-stats")
     assert resp.status_code == 401
