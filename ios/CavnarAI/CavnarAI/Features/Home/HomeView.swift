@@ -10,19 +10,28 @@ struct HomeView: View {
     // directly in the action closure, paired with .sensoryFeedback below.
     @State private var navHapticTrigger = 0
     @State private var lastNavigationAt = Date.distantPast
+    @State private var showDate = false
+    @State private var showSubtitle = false
 
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 0) {
                     if let summary = viewModel.summary {
-                        header(summary)
-                        HomeModuleGrid(modules: summary.modules) { module in
-                            navigate(to: ModuleRoute(key: module.key, label: module.label))
+                        // Full-bleed, unpadded — the animated ember background
+                        // behind the greeting needs to run edge to edge, not
+                        // sit inside the 20pt content margin the rest of the
+                        // page uses.
+                        hero(summary)
+                        VStack(alignment: .leading, spacing: 20) {
+                            HomeModuleGrid(modules: summary.modules) { module in
+                                navigate(to: ModuleRoute(key: module.key, label: module.label))
+                            }
+                            needsAttentionSection(summary)
                         }
-                        needsAttentionSection(summary)
+                        .padding(20)
                     } else if viewModel.isLoading {
-                        ProgressView().padding(.top, 80)
+                        ProgressView().padding(.top, 80).frame(maxWidth: .infinity)
                     } else if let error = viewModel.errorMessage {
                         VStack(spacing: 8) {
                             Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
@@ -32,7 +41,6 @@ struct HomeView: View {
                         .frame(maxWidth: .infinity)
                     }
                 }
-                .padding(20)
             }
             .navigationDestination(for: ModuleRoute.self) { route in
                 ModuleDestinationView(moduleKey: route.key, moduleLabel: route.label)
@@ -78,18 +86,69 @@ struct HomeView: View {
         }
     }
 
-    @ViewBuilder
-    private func header(_ summary: HomeSummary) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(summary.restaurantName)
-                .font(.cavnarHeadline(24))
-                .foregroundStyle(Color.cavnarInk)
-            if let locationName = summary.locationName {
-                Text(locationName)
-                    .font(.cavnarBody(13))
-                    .foregroundStyle(Color.cavnarInk3)
+    // Mirrors the web dashboard's Home hero (templates/dashboard.html,
+    // #home-tw-headline/#home-tw-date/#home-tw-sub): an ember date eyebrow,
+    // then "{name} — your restaurant is running on AI." with the name in
+    // ember, then a subtitle line — each stage fading/typing in after the
+    // previous finishes, over the animated ember background.
+    private func hero(_ summary: HomeSummary) -> some View {
+        VStack(spacing: 10) {
+            Text(todayDateString)
+                .font(.cavnarBody(11, weight: 700))
+                .tracking(2)
+                .textCase(.uppercase)
+                .foregroundStyle(Color.cavnarEmber)
+                .opacity(showDate ? 1 : 0)
+
+            HeroHeadlineText(
+                name: greetingName(summary),
+                rest: "— your restaurant is running on AI."
+            ) {
+                withAnimation(.easeOut(duration: 0.35)) { showSubtitle = true }
+            }
+            .opacity(showDate ? 1 : 0)
+
+            if showSubtitle {
+                subtitleText(summary)
+                    .transition(.opacity)
             }
         }
+        .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
+        .padding(.vertical, 28)
+        .padding(.horizontal, 20)
+        .background(HomeHeroBackground())
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.3).delay(0.2)) { showDate = true }
+        }
+    }
+
+    private func greetingName(_ summary: HomeSummary) -> String {
+        guard let username = summary.username, !username.isEmpty else { return "Welcome back" }
+        return username.prefix(1).uppercased() + username.dropFirst()
+    }
+
+    private var todayDateString: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy"
+        formatter.locale = Locale(identifier: "en_US")
+        return formatter.string(from: Date()).uppercased()
+    }
+
+    private func subtitleText(_ summary: HomeSummary) -> some View {
+        var text = Text(summary.restaurantName).foregroundStyle(Color.cavnarInk3)
+        if let locationName = summary.locationName, !locationName.isEmpty {
+            text = text + Text(" — \(locationName)").foregroundStyle(Color.cavnarInk3)
+        }
+        if summary.reviewsAwaitingApproval > 0 {
+            let n = summary.reviewsAwaitingApproval
+            text = text
+                + Text("   ·   ").foregroundStyle(Color.cavnarInk3)
+                + Text("\(n) review\(n == 1 ? "" : "s") awaiting approval")
+                    .foregroundStyle(Color.cavnarEmber)
+                    .fontWeight(.semibold)
+        }
+        return text.font(.cavnarBody(13))
     }
 
     @ViewBuilder
@@ -133,5 +192,46 @@ struct HomeView: View {
         lastNavigationAt = now
         navHapticTrigger += 1
         path.append(route)
+    }
+}
+
+/// Word-by-word reveal for the hero greeting, same pacing as TypewriterText,
+/// but split across two differently-colored halves ("{name}" in ember, the
+/// rest in ink) — TypewriterText itself is single-color, so this is a
+/// dedicated one-off for the one place in the app that needs two-tone reveal
+/// plus a completion callback to chain the subtitle's own fade-in after it.
+private struct HeroHeadlineText: View {
+    let name: String
+    let rest: String
+    var onComplete: (() -> Void)?
+
+    @State private var visibleWordCount = 0
+
+    private var nameWords: [String] { name.split(separator: " ").map(String.init) }
+    private var restWords: [String] { rest.split(separator: " ").map(String.init) }
+    private var allWords: [String] { nameWords + restWords }
+
+    var body: some View {
+        allWords.prefix(visibleWordCount).enumerated()
+            .reduce(Text("")) { partial, item in
+                let (index, word) = item
+                let piece = Text((index > 0 ? " " : "") + word)
+                    .foregroundStyle(index < nameWords.count ? Color.cavnarEmber : Color.cavnarInk)
+                return partial + piece
+            }
+            .font(.cavnarHeadline(26))
+            .lineSpacing(3)
+            .task(id: "\(name)|\(rest)") {
+                visibleWordCount = 0
+                let total = allWords.count
+                guard total > 0 else { onComplete?(); return }
+                let delayNanos = UInt64(min(max(1400.0 / Double(total), 16), 55) * 1_000_000)
+                for i in 1...total {
+                    try? await Task.sleep(nanoseconds: delayNanos)
+                    if Task.isCancelled { return }
+                    visibleWordCount = i
+                }
+                onComplete?()
+            }
     }
 }

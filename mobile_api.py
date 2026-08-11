@@ -401,9 +401,11 @@ def _do_mobile_home(current_user):
 
     return {
         "ok": True,
+        "username": current_user.get("username"),
         "restaurant_name": restaurant.name,
         "location_name": restaurant.location_name or None,
         "brand_color": restaurant.brand_color or None,
+        "reviews_awaiting_approval": rstats.get("awaiting_approval", 0),
         "modules": modules_out,
         "needs_attention": needs_attention,
     }, 200

@@ -562,6 +562,15 @@ def test_home_surfaces_awaiting_approval_in_needs_attention(client, db_path):
     assert "reviews_awaiting_approval" in types
     modules_hit = [item["module"] for item in data["needs_attention"]]
     assert "reviews" in modules_hit
+    assert data["reviews_awaiting_approval"] == 1
+
+
+def test_home_returns_the_signed_in_username_for_the_hero_greeting(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid, username="jamie")
+    resp = client.get("/mobile/api/home", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["username"] == "jamie"
 
 
 def test_reviews_endpoint_scoped_to_own_restaurant(client, db_path):

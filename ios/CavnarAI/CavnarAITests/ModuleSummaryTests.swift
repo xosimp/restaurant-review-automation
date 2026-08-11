@@ -29,7 +29,8 @@ final class ModuleSummaryTests: XCTestCase {
 
     func testHomeSummaryDecodesGenericModulesArrayOfAnyLength() throws {
         let json = """
-        {"restaurant_name": "Test Co", "location_name": null, "brand_color": null,
+        {"username": "jamie", "restaurant_name": "Test Co", "location_name": null, "brand_color": null,
+         "reviews_awaiting_approval": 0,
          "modules": [
            {"key": "reviews", "label": "Reviews", "icon": "reviews", "status": "available", "kpi": null},
            {"key": "labor", "label": "Labor", "icon": "labor", "status": "available", "kpi": null},

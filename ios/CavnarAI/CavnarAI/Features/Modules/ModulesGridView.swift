@@ -49,22 +49,11 @@ struct ModulesGridView: View {
             Group {
                 if !viewModel.modules.isEmpty {
                     ScrollView {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
-                            ForEach(viewModel.modules) { module in
-                                // A Button driving the path directly, not a
-                                // NavigationLink — the haptic fires from a
-                                // deterministic action closure instead of a
-                                // simultaneousGesture racing NavigationLink's
-                                // own tap handling (that combo was the
-                                // source of reported delayed/duplicate
-                                // haptics on rapid back-and-forth taps).
-                                Button {
-                                    navigate(to: ModuleRoute(key: module.key, label: module.label))
-                                } label: {
-                                    ModuleTile(module: module)
-                                }
-                                .buttonStyle(.plain)
-                            }
+                        // Same KPITile/HomeModuleGrid used on Home — one
+                        // consistent "orange square" module tile style
+                        // across both tabs instead of two different looks.
+                        HomeModuleGrid(modules: viewModel.modules) { module in
+                            navigate(to: ModuleRoute(key: module.key, label: module.label))
                         }
                         .padding(20)
                     }
@@ -109,27 +98,5 @@ struct ModulesGridView: View {
         lastNavigationAt = now
         navHapticTrigger += 1
         path.append(route)
-    }
-}
-
-private struct ModuleTile: View {
-    let module: ModuleSummary
-
-    var body: some View {
-        VStack(spacing: 10) {
-            GlowBadge(systemImage: ModuleIcon.symbolName(for: module.icon), size: 48)
-            Text(module.label)
-                .font(.cavnarBody(13, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
-            if !module.isAvailable {
-                Text("Coming soon")
-                    .font(.cavnarBody(9, weight: 700))
-                    .textCase(.uppercase)
-                    .foregroundStyle(Color.cavnarInk3)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .cavnarCard()
     }
 }

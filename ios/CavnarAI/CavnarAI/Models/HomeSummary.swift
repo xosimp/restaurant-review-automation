@@ -12,16 +12,20 @@ import Foundation
 /// Waitlist, Bar & Alcohol, whatever else) without an app update just to
 /// show a new module's tile.
 struct HomeSummary: Codable {
+    let username: String?
     let restaurantName: String
     let locationName: String?
     let brandColor: String?
+    let reviewsAwaitingApproval: Int
     let modules: [ModuleSummary]
     let needsAttention: [NeedsAttentionItem]
 
     enum CodingKeys: String, CodingKey {
+        case username
         case restaurantName = "restaurant_name"
         case locationName = "location_name"
         case brandColor = "brand_color"
+        case reviewsAwaitingApproval = "reviews_awaiting_approval"
         case modules
         case needsAttention = "needs_attention"
     }
