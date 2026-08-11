@@ -24,9 +24,6 @@ struct HomeView: View {
                         // page uses.
                         hero(summary)
                         VStack(alignment: .leading, spacing: 20) {
-                            HomeModuleGrid(modules: summary.modules) { module in
-                                navigate(to: ModuleRoute(key: module.key, label: module.label))
-                            }
                             needsAttentionSection(summary)
                         }
                         .padding(20)
