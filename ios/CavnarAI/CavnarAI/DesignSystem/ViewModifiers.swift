@@ -55,6 +55,34 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
     }
 }
 
+/// Outlined counterpart to CavnarPrimaryButtonStyle — same ember family,
+/// unfilled, for a secondary action sitting next to (or under) a primary
+/// one, e.g. Cancel under Send. Deliberately a plain border/fill, not
+/// .glassEffect(...interactive()) — see platformCard's fix in Reviews
+/// Analytics for why an interactive-glass secondary action next to a plain
+/// gesture-driven primary one is worth avoiding here.
+struct CavnarSecondaryButtonStyle: ButtonStyle {
+    var isDisabled: Bool = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.cavnarBody(16, weight: 600))
+            .frame(maxWidth: .infinity)
+            .padding(14)
+            .foregroundStyle(isDisabled ? Color.cavnarEmber2.opacity(0.4) : Color.cavnarEmber2)
+            .overlay(
+                RoundedRectangle(cornerRadius: CavnarRadius.control)
+                    .strokeBorder(isDisabled ? Color.cavnarEmber.opacity(0.35) : Color.cavnarEmber, lineWidth: 1.5)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in
+                new && !isDisabled
+            }
+    }
+}
+
 /// Same glass treatment as CavnarSegmentedControl's segments — real Liquid
 /// Glass (`.glassEffect`) on iOS 26, Material+ember fallback below it — so
 /// paired actions like Skip/Approve read as part of the same visual family

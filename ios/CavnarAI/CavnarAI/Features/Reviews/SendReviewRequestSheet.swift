@@ -18,6 +18,7 @@ private final class SendReviewRequestViewModel {
         let name: String
         let email: String
         let phone: String
+        let message: String
     }
 
     private struct Response: Decodable {
@@ -25,14 +26,14 @@ private final class SendReviewRequestViewModel {
         let error: String?
     }
 
-    func send(name: String, email: String, phone: String) async {
+    func send(name: String, email: String, phone: String, message: String) async {
         isSending = true
         errorMessage = nil
         defer { isSending = false }
         do {
             let response: Response = try await client.send(
                 "/mobile/api/send-review-request", method: .post,
-                body: Body(name: name, email: email, phone: phone)
+                body: Body(name: name, email: email, phone: phone, message: message)
             )
             if response.ok {
                 didSend = true
@@ -53,43 +54,68 @@ struct SendReviewRequestSheet: View {
     @State private var name = ""
     @State private var email = ""
     @State private var phone = ""
+    @State private var message = ""
+
+    private var canSend: Bool {
+        !viewModel.isSending && !(email.isEmpty && phone.isEmpty)
+    }
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Guest details") {
-                    TextField("Name", text: $name)
-                    TextField("Email", text: $email)
-                        .keyboardType(.emailAddress)
-                        .autocapitalization(.none)
-                    TextField("Phone", text: $phone)
-                        .keyboardType(.phonePad)
-                }
-                if let error = viewModel.errorMessage {
-                    Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
-                }
-                Section {
-                    Button {
-                        Task {
-                            await viewModel.send(name: name, email: email, phone: phone)
-                            if viewModel.didSend { dismiss() }
-                        }
-                    } label: {
-                        if viewModel.isSending {
-                            HStack { Spacer(); ProgressView(); Spacer() }
-                        } else {
-                            Text("Send review request")
-                        }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    CavnarFloatingField(icon: "person", placeholder: "Guest name", text: $name, textContentType: .name)
+                    CavnarFloatingField(
+                        icon: "envelope", placeholder: "Email", text: $email,
+                        keyboardType: .emailAddress, textContentType: .emailAddress, autocapitalization: .never
+                    )
+                    CavnarFloatingField(icon: "phone", placeholder: "Phone (optional)", text: $phone, keyboardType: .phonePad)
+
+                    CavnarFloatingTextArea(
+                        caption: "Note to guest — optional",
+                        placeholder: "e.g. Thanks for celebrating your anniversary with us!",
+                        text: $message
+                    )
+                    Text("Sent along with the review link. Leave it blank to use the default message.")
+                        .font(.cavnarBody(11))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .padding(.top, -14)
+
+                    if let error = viewModel.errorMessage {
+                        Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
                     }
-                    .disabled(viewModel.isSending || (email.isEmpty && phone.isEmpty))
+
+                    VStack(spacing: 10) {
+                        Button {
+                            Task {
+                                await viewModel.send(name: name, email: email, phone: phone, message: message)
+                                if viewModel.didSend { dismiss() }
+                            }
+                        } label: {
+                            if viewModel.isSending {
+                                ProgressView().tint(Color.cavnarInk)
+                            } else {
+                                Text("Send review request")
+                            }
+                        }
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSend))
+                        .disabled(!canSend)
+
+                        Button("Cancel") { dismiss() }
+                            .buttonStyle(CavnarSecondaryButtonStyle())
+                    }
+                    .padding(.top, 6)
                 }
+                .padding(20)
             }
-            .scrollContentBackground(.hidden)
             .background(Color.cavnarPaper)
             .navigationTitle("Request a Review")
+            .navigationBarTitleDisplayMode(.inline)
+            .cavnarEmberTitle("Request a Review")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .foregroundStyle(Color.cavnarEmber2)
                 }
             }
         }

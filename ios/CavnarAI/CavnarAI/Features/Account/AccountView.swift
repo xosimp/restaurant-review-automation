@@ -362,28 +362,58 @@ private struct ChangePasswordSheet: View {
     @State private var current = ""
     @State private var newPassword = ""
 
+    private var canSubmit: Bool {
+        !viewModel.isChangingPassword && !current.isEmpty && newPassword.count >= 8
+    }
+
     var body: some View {
         NavigationStack {
-            Form {
-                SecureField("Current password", text: $current)
-                SecureField("New password", text: $newPassword)
-                if let error = viewModel.changePasswordError {
-                    Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
-                }
-                Button("Change password") {
-                    Task {
-                        await viewModel.changePassword(current: current, newPassword: newPassword)
-                        if viewModel.changePasswordSucceeded { dismiss() }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    CavnarFloatingField(
+                        icon: "lock", placeholder: "Current password", text: $current,
+                        isSecure: true, textContentType: .password
+                    )
+                    CavnarFloatingField(
+                        icon: "lock.fill", placeholder: "New password (8+ characters)", text: $newPassword,
+                        isSecure: true, textContentType: .newPassword
+                    )
+
+                    if let error = viewModel.changePasswordError {
+                        Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
                     }
+
+                    VStack(spacing: 10) {
+                        Button {
+                            Task {
+                                await viewModel.changePassword(current: current, newPassword: newPassword)
+                                if viewModel.changePasswordSucceeded { dismiss() }
+                            }
+                        } label: {
+                            if viewModel.isChangingPassword {
+                                ProgressView().tint(Color.cavnarInk)
+                            } else {
+                                Text("Change password")
+                            }
+                        }
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSubmit))
+                        .disabled(!canSubmit)
+
+                        Button("Cancel") { dismiss() }
+                            .buttonStyle(CavnarSecondaryButtonStyle())
+                    }
+                    .padding(.top, 6)
                 }
-                .disabled(viewModel.isChangingPassword || current.isEmpty || newPassword.count < 8)
+                .padding(20)
             }
-            .scrollContentBackground(.hidden)
             .background(Color.cavnarPaper)
             .navigationTitle("Change Password")
+            .navigationBarTitleDisplayMode(.inline)
+            .cavnarEmberTitle("Change Password")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .foregroundStyle(Color.cavnarEmber2)
                 }
             }
         }
@@ -397,34 +427,80 @@ private struct TwoFactorSetupSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                if let masked = viewModel.twoFATestMasked {
-                    Text("Code sent to \(masked)").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
-                    TextField("6-digit code", text: $code)
-                        .keyboardType(.numberPad)
-                        .font(.cavnarNumber(16))
-                    Button("Verify and enable") {
-                        Task {
-                            if await viewModel.verify2FA(code: code) { dismiss() }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    if let masked = viewModel.twoFATestMasked {
+                        Text("Code sent to \(masked)")
+                            .font(.cavnarBody(12))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .padding(.top, -14)
+
+                        CavnarFloatingField(
+                            icon: "lock.shield", placeholder: "6-digit code", text: $code,
+                            keyboardType: .numberPad
+                        )
+
+                        if let error = viewModel.twoFAError {
+                            Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
                         }
+
+                        VStack(spacing: 10) {
+                            Button {
+                                Task {
+                                    if await viewModel.verify2FA(code: code) { dismiss() }
+                                }
+                            } label: {
+                                if viewModel.is2FABusy {
+                                    ProgressView().tint(Color.cavnarInk)
+                                } else {
+                                    Text("Verify and enable")
+                                }
+                            }
+                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy || code.count != 6))
+                            .disabled(viewModel.is2FABusy || code.count != 6)
+
+                            Button("Cancel") { dismiss() }
+                                .buttonStyle(CavnarSecondaryButtonStyle())
+                        }
+                        .padding(.top, 6)
+                    } else {
+                        Text("We'll text a 6-digit code to the phone number on file to confirm two-factor sign-in works before turning it on.")
+                            .font(.cavnarBody(13))
+                            .foregroundStyle(Color.cavnarInk3)
+
+                        if let error = viewModel.twoFAError {
+                            Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                        }
+
+                        VStack(spacing: 10) {
+                            Button {
+                                Task { await viewModel.send2FATest() }
+                            } label: {
+                                if viewModel.is2FABusy {
+                                    ProgressView().tint(Color.cavnarInk)
+                                } else {
+                                    Text("Send test code")
+                                }
+                            }
+                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy))
+                            .disabled(viewModel.is2FABusy)
+
+                            Button("Cancel") { dismiss() }
+                                .buttonStyle(CavnarSecondaryButtonStyle())
+                        }
+                        .padding(.top, 6)
                     }
-                    .disabled(viewModel.is2FABusy || code.count != 6)
-                } else {
-                    Button("Send test code") {
-                        Task { await viewModel.send2FATest() }
-                    }
-                    .disabled(viewModel.is2FABusy)
                 }
-                if let error = viewModel.twoFAError {
-                    Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
-                }
+                .padding(20)
             }
-            .scrollContentBackground(.hidden)
             .background(Color.cavnarPaper)
             .navigationTitle("Enable 2FA")
+            .navigationBarTitleDisplayMode(.inline)
+            .cavnarEmberTitle("Enable 2FA")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .foregroundStyle(Color.cavnarEmber2)
                 }
             }
         }

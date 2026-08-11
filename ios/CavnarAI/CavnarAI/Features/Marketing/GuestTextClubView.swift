@@ -151,25 +151,50 @@ private struct AddGuestContactSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var phone = ""
+    @State private var isAdding = false
+
+    private var canAdd: Bool { !isAdding && !name.isEmpty && !phone.isEmpty }
 
     var body: some View {
         NavigationStack {
-            Form {
-                TextField("Name", text: $name)
-                TextField("Phone", text: $phone).keyboardType(.phonePad)
-                Button("Add") {
-                    Task {
-                        if await viewModel.addContact(name: name, phone: phone) { dismiss() }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    CavnarFloatingField(icon: "person", placeholder: "Guest name", text: $name, textContentType: .name)
+                    CavnarFloatingField(icon: "phone", placeholder: "Phone", text: $phone, keyboardType: .phonePad)
+
+                    VStack(spacing: 10) {
+                        Button {
+                            Task {
+                                isAdding = true
+                                let added = await viewModel.addContact(name: name, phone: phone)
+                                isAdding = false
+                                if added { dismiss() }
+                            }
+                        } label: {
+                            if isAdding {
+                                ProgressView().tint(Color.cavnarInk)
+                            } else {
+                                Text("Add guest")
+                            }
+                        }
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canAdd))
+                        .disabled(!canAdd)
+
+                        Button("Cancel") { dismiss() }
+                            .buttonStyle(CavnarSecondaryButtonStyle())
                     }
+                    .padding(.top, 6)
                 }
-                .disabled(name.isEmpty || phone.isEmpty)
+                .padding(20)
             }
-            .scrollContentBackground(.hidden)
             .background(Color.cavnarPaper)
             .navigationTitle("Add Guest")
+            .navigationBarTitleDisplayMode(.inline)
+            .cavnarEmberTitle("Add Guest")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .foregroundStyle(Color.cavnarEmber2)
                 }
             }
         }
