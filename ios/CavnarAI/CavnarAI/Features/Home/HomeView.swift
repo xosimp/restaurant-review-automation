@@ -145,18 +145,13 @@ struct HomeView: View {
         return formatter.string(from: Date()).uppercased()
     }
 
+    // No "N reviews awaiting approval" chip here anymore — Needs Attention
+    // right below the hero already says the same thing, so surfacing it
+    // twice just read as redundant.
     private func subtitleText(_ summary: HomeSummary) -> some View {
         var text = Text(summary.restaurantName).foregroundStyle(Color.cavnarInk3)
         if let locationName = summary.locationName, !locationName.isEmpty {
             text = text + Text(" — \(locationName)").foregroundStyle(Color.cavnarInk3)
-        }
-        if summary.reviewsAwaitingApproval > 0 {
-            let n = summary.reviewsAwaitingApproval
-            text = text
-                + Text("   ·   ").foregroundStyle(Color.cavnarInk3)
-                + Text("\(n) review\(n == 1 ? "" : "s") awaiting approval")
-                    .foregroundStyle(Color.cavnarEmber)
-                    .fontWeight(.semibold)
         }
         return text.font(.cavnarBody(13))
     }
@@ -235,7 +230,12 @@ private struct HeroHeadlineText: View {
                 visibleWordCount = 0
                 let total = allWords.count
                 guard total > 0 else { onComplete?(); return }
-                let delayNanos = UInt64(min(max(1400.0 / Double(total), 16), 55) * 1_000_000)
+                // A flat, deliberately slow pace, not TypewriterText's
+                // total-duration/clamp formula — for this short a headline
+                // (7-8 words) that formula's 55ms-per-word ceiling collapsed
+                // the whole reveal to under half a second, which read as
+                // barely any effect at all rather than a greeting typing in.
+                let delayNanos: UInt64 = 150_000_000
                 for i in 1...total {
                     try? await Task.sleep(nanoseconds: delayNanos)
                     if Task.isCancelled { return }

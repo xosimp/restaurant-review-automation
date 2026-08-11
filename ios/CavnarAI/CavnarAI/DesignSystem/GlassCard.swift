@@ -28,13 +28,17 @@ struct CavnarGlassCardStyle: ViewModifier {
                 )
             )
             .background(Color.cavnarPaper2.opacity(0.35))
-            // Ember border, not a neutral white hairline — matches
-            // CavnarGlossyCardStyle so cards in the same flow (e.g.
-            // Reviews' insight card above its performance card) read as one
-            // consistent premium-glass family.
+            // Border follows the card's own tint (a lighter shade of it, via
+            // the same .opacity(0.5) treatment everywhere else in this
+            // file), not a neutral white hairline — matches
+            // CavnarGlossyCardStyle's default-ember look for untinted
+            // cards, but a card that passes e.g. .cavnarRed for a
+            // labor-overtime warning gets a red border to match, not a
+            // universally-orange one that doesn't match what the card is
+            // actually saying.
             .overlay(
                 RoundedRectangle(cornerRadius: CavnarRadius.card)
-                    .strokeBorder(Color.cavnarEmber.opacity(0.5), lineWidth: 1.2)
+                    .strokeBorder(tint.opacity(0.5), lineWidth: 1.2)
             )
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
