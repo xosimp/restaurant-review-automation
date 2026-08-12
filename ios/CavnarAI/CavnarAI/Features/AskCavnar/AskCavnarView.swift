@@ -57,6 +57,7 @@ struct AskCavnarView: View {
             .background(Color.cavnarPaper)
             .navigationTitle("Ask Cavnar AI")
         }
+        .cavnarSheetTopRim()
     }
 }
 

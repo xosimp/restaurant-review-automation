@@ -65,5 +65,6 @@ struct NotificationsListView: View {
             .navigationTitle("Notifications")
             .task { await viewModel.load() }
         }
+        .cavnarSheetTopRim()
     }
 }
