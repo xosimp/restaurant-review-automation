@@ -9,6 +9,12 @@ import SwiftUI
 struct GlowBadge: View {
     var systemImage: String
     var size: CGFloat = 56
+    // Rotates only the scalloped "seal" star shape below — the white plate
+    // and icon on top stay fixed, like a medallion spinning under a static
+    // emblem. Defaults to no rotation so every existing call site (Home KPI
+    // tiles, Modules grid) is unaffected; the Ask Cavnar FAB is the one
+    // place that drives this to make the badge read as "alive."
+    var rotation: Angle = .zero
 
     private var badgeGradient: RadialGradient {
         RadialGradient(
@@ -27,6 +33,7 @@ struct GlowBadge: View {
                 .blur(radius: size * 0.22)
                 .blendMode(.plusLighter)
                 .opacity(0.45)
+                .rotationEffect(rotation)
 
             // Crisp badge shape.
             Image(systemName: "seal.fill")
@@ -34,6 +41,7 @@ struct GlowBadge: View {
                 .frame(width: size, height: size)
                 .foregroundStyle(badgeGradient)
                 .blendMode(.plusLighter)
+                .rotationEffect(rotation)
 
             // White inset plate the icon sits on, for contrast/pop.
             Circle()

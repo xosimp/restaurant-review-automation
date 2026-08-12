@@ -30,6 +30,16 @@ struct RootView: View {
         // Mobile is dark-only by design — the light/dark toggle stays a
         // desktop-only feature (see the web dashboard's theme switcher).
         .preferredColorScheme(.dark)
+        // Single app-wide source for tint — covers button/control tint AND
+        // text field cursor color (a TextField's blinking caret follows the
+        // environment's tint, not a color you set on the field itself).
+        // Applied at the very root, above the Login/Locked/mainTabs branch,
+        // so it's inherited by every screen and every .sheet presented from
+        // any of them — previously only some screens set this locally
+        // (MarketingView, AccountView, TwoFactorView), which is why cursors
+        // elsewhere (like Ask Cavnar's compose field) still showed the
+        // system's default blue.
+        .tint(Color.cavnarEmber)
         .onAppear {
             PushManager.shared.router = deepLinkRouter
         }
@@ -65,7 +75,6 @@ struct RootView: View {
                 .tag(AppTab.account)
         }
         .sensoryFeedback(.selection, trigger: selectedTab)
-        .tint(Color.cavnarEmber)
         // True-black tab bar chrome, distinct from the warm near-black
         // content background — mirrors the web dashboard's own two-tier
         // black system (pure #000 nav chrome vs #1a1714 content).
@@ -172,11 +181,17 @@ private struct AskCavnarFAB: View {
                         .blur(radius: 10)
                         .opacity(collapsed ? (ambientGlow ? 0.55 : 0.2) : 0)
 
-                    GlowBadge(systemImage: "sparkles", size: 30)
+                    // Only the badge's outer star rotates (GlowBadge's own
+                    // `rotation:` param) — the sparkles icon on top of it
+                    // stays fixed, per the ask that just the orange star
+                    // spin, not the whole badge including its icon.
+                    GlowBadge(
+                        systemImage: "sparkles", size: 30,
                         // Intro's one-time spin, then the ambient loop keeps
                         // turning from wherever that left off — both are
                         // full 360s so the handoff between them never jumps.
-                        .rotationEffect(.degrees((iconSpun ? 360 : 0) + (ambientRotation ? 360 : 0)))
+                        rotation: .degrees((iconSpun ? 360 : 0) + (ambientRotation ? 360 : 0))
+                    )
                 }
                 if !collapsed {
                     Text("Ask Cavnar AI")
