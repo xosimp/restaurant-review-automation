@@ -56,6 +56,20 @@ struct HomeHeroBackground: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
+                // Warm top-anchored wash, the same brand-ember energy as the
+                // module tiles' gradient — sits behind everything else in
+                // this ZStack so the rays/particles still drift clearly on
+                // top of it, giving the page a lit-from-above glow instead
+                // of the rays floating over flat black. Fades out by the
+                // upper third; the ForEach below's own bottom-fade handles
+                // the rest of the descent into solid black.
+                LinearGradient(
+                    colors: [Color.cavnarEmber.opacity(0.32), Color.cavnarEmber.opacity(0.10), .clear],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .frame(height: geo.size.height * 0.55)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
                 ForEach(rays.indices, id: \.self) { i in
                     let ray = rays[i]
                     // An Ellipse, not a Capsule — a capsule's flat rounded

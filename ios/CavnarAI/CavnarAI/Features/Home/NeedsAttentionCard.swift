@@ -2,17 +2,26 @@ import SwiftUI
 
 /// One row in the Home tab's "needs attention" list — same three checks and
 /// copy as the web dashboard's home-attention-list (see mobile_api.py's
-/// _do_mobile_home docstring).
+/// _do_mobile_home docstring). Every row shares one quiet, uniform surface
+/// and a single ember accent regardless of alert type — a red/amber/ember
+/// mix per row read as chaotic rather than "at a glance severity," and a
+/// bold gradient-and-border card per row read closer to a game achievement
+/// toast than a premium restaurant dashboard. The icon glyph still varies
+/// by type (still useful at a glance), just not its color.
 struct NeedsAttentionRow: View {
     let item: NeedsAttentionItem
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: iconName)
-                .foregroundStyle(iconColor)
-                .font(.system(size: 16, weight: .semibold))
-                .frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(Color.cavnarEmber.opacity(0.14))
+                    .frame(width: 34, height: 34)
+                Image(systemName: iconName)
+                    .foregroundStyle(Color.cavnarEmber)
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            VStack(alignment: .leading, spacing: 3) {
                 Text(item.title)
                     .font(.cavnarBody(13, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
@@ -23,7 +32,14 @@ struct NeedsAttentionRow: View {
             Spacer()
             GlassChevronButton()
         }
-        .cavnarGlassCard(tint: iconColor)
+        .padding(.vertical, 14)
+        .padding(.horizontal, 16)
+        .background(Color.cavnarPaper2.opacity(0.4))
+        .overlay(
+            RoundedRectangle(cornerRadius: CavnarRadius.card)
+                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
 
     private var iconName: String {
@@ -32,14 +48,6 @@ struct NeedsAttentionRow: View {
         case "labor_overtime": return "exclamationmark.triangle.fill"
         case "low_response_rate": return "chart.bar.fill"
         default: return "bell.fill"
-        }
-    }
-
-    private var iconColor: Color {
-        switch item.type {
-        case "labor_overtime": return .cavnarRed
-        case "low_response_rate": return .cavnarAmber
-        default: return .cavnarEmber
         }
     }
 }

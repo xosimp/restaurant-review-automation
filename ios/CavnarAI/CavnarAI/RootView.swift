@@ -62,7 +62,7 @@ struct RootView: View {
     // control haptic convention for a discrete-choice change.
     private var mainTabs: some View {
         TabView(selection: $selectedTab) {
-            HomeView(heroAppeared: introAppeared)
+            HomeView(heroAppeared: introAppeared, onHeroAppear: startIntroSequence)
                 .tabItem { Label(AppTab.home.title, systemImage: AppTab.home.systemImage) }
                 .tag(AppTab.home)
 
@@ -83,8 +83,14 @@ struct RootView: View {
         .task {
             PushManager.shared.requestAuthorizationAndRegister()
         }
+        // Fallback only — the real trigger is HomeView's onHeroAppear
+        // (fires the moment Home's data has actually loaded and the hero is
+        // on screen). Without this, a failed/very slow Home load would
+        // leave the FAB invisible for the rest of the session with no way
+        // to reach Ask Cavnar at all.
         .task {
-            await playIntroSequenceIfNeeded()
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            startIntroSequence()
         }
         // .overlay (not a ZStack sibling) so the FAB actually receives taps —
         // a ZStack sibling next to TabView silently lost hit-testing to the
@@ -107,18 +113,20 @@ struct RootView: View {
         }
     }
 
-    /// Plays exactly once per sign-in — gated on SessionStore.hasShownHomeIntro
-    /// (reset on logout, see SessionStore.clearLocalSession), read here
-    /// rather than from inside HomeView or AskCavnarFAB themselves, since
-    /// this is the one place both of those views' triggers come from.
-    /// Sequence: hero + FAB fade/rise in together (same withAnimation call
-    /// drives both, so they're pixel-synced) → a short pop → the FAB's icon
-    /// spins once → the FAB collapses down to an icon-only button, since a
-    /// permanently full-width "Ask Cavnar AI" pill was sitting over tap
-    /// targets on the rest of the screen. Re-running this .task (e.g. after
-    /// the Face ID lock screen dismisses) is safe: the guard below just
-    /// snaps everything to its already-settled final state with no replay.
-    private func playIntroSequenceIfNeeded() async {
+    /// Single entry point for the landing intro — called from HomeView's
+    /// onHeroAppear (the real trigger: fires once Home's data has actually
+    /// loaded and the hero is genuinely on screen) and from the fallback
+    /// timeout .task above, whichever comes first. Guarded on
+    /// SessionStore.hasShownHomeIntro (reset on logout, see
+    /// SessionStore.clearLocalSession) so only the very first call this
+    /// sign-in animates anything — a second call in the same session (the
+    /// fallback firing after onHeroAppear already did, or a remount after
+    /// the Face ID lock screen) just snaps everything straight to its
+    /// settled state instead of replaying. This is also why the guard lives
+    /// on the SessionStore flag rather than a RootView-local one: a local
+    /// flag wouldn't reset on logout, and a client who signs out and back
+    /// in should get the intro again.
+    private func startIntroSequence() {
         guard !sessionStore.hasShownHomeIntro else {
             introAppeared = true
             fabIconSpun = true
@@ -126,7 +134,16 @@ struct RootView: View {
             return
         }
         sessionStore.hasShownHomeIntro = true
+        Task { await playIntroSequence() }
+    }
 
+    /// Hero + FAB fade/rise in together (one withAnimation call drives
+    /// both, so they're pixel-synced) → a short pop → the FAB's icon spins
+    /// once → the FAB collapses down to an icon-only button, since a
+    /// permanently full-width "Ask Cavnar AI" pill was sitting over tap
+    /// targets on the rest of the screen. Only ever reached once per
+    /// sign-in — see startIntroSequence()'s guard above.
+    private func playIntroSequence() async {
         withAnimation(.easeOut(duration: 0.7).delay(0.15)) {
             introAppeared = true
         }
@@ -148,7 +165,7 @@ struct RootView: View {
 /// web dashboard's own Ask Cavnar bubble (a FAB there too, not a tab), and
 /// frees a permanent tab slot as more modules ship (see the architecture plan).
 /// Lands as a labeled glass pill on the client's first landing this
-/// session (see RootView.playIntroSequenceIfNeeded), then pops, spins its
+/// session (see RootView.startIntroSequence), then pops, spins its
 /// icon once, and collapses to an icon-only circle for the rest of the
 /// session — the permanently-labeled pill was wide enough to sit over tap
 /// targets on the screen behind it.

@@ -10,13 +10,21 @@ struct HomeView: View {
     // directly in the action closure, paired with .sensoryFeedback below.
     @State private var navHapticTrigger = 0
     @State private var lastNavigationAt = Date.distantPast
-    // Drives the hero's one-time landing reveal (opacity + upward offset).
+    // Drives the hero's one-time landing reveal (opacity + upward offset),
+    // and the same flip staggers the Needs Attention rows in below it.
     // Owned and animated by RootView, not here — the Ask Cavnar FAB (a
     // sibling in a different subtree, overlaid on the whole TabView) needs
     // to fade in on the exact same withAnimation call for the two to land
     // in perfect sync, which isn't possible if each view times its own
     // onAppear independently. See RootView.playIntroSequenceIfNeeded.
     var heroAppeared: Bool
+    // Fires once hero(_:) actually mounts — i.e. once `summary` has loaded
+    // and the hero is genuinely on screen — so RootView can start the
+    // shared fade-in transaction at that moment instead of on a fixed timer
+    // that races the network call. On a slow load, a timer-only trigger
+    // could flip `heroAppeared` to true before the hero view even existed,
+    // so it would mount already-revealed with nothing to animate from.
+    var onHeroAppear: () -> Void = {}
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -125,6 +133,7 @@ struct HomeView: View {
         .multilineTextAlignment(.center)
         .padding(.horizontal, 20)
         .background(HomeHeroBackground())
+        .onAppear { onHeroAppear() }
     }
 
     private func heroHeadline(_ summary: HomeSummary) -> some View {
@@ -157,27 +166,35 @@ struct HomeView: View {
         return text.font(.cavnarBody(13))
     }
 
+    // No "Needs attention" header and no enclosing gray .cavnarCard() around
+    // the list anymore — each row now carries its own light, uniform
+    // surface (see NeedsAttentionRow), so a boxy outer container plus a
+    // label restating what the rows themselves already make obvious just
+    // added visual noise. Rows fade + rise in one at a time off the same
+    // `heroAppeared` flip the hero uses (via .animation(value:) with a
+    // per-index delay), rather than a separate trigger, so they inherit its
+    // "animate once per sign-in, otherwise appear instantly" behavior for
+    // free.
     @ViewBuilder
     private func needsAttentionSection(_ summary: HomeSummary) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Needs attention")
-                .font(.cavnarBody(13, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
-
-            if summary.needsAttention.isEmpty {
-                AllClearRow().cavnarCard()
-            } else {
-                VStack(spacing: 8) {
-                    ForEach(summary.needsAttention) { item in
-                        Button {
-                            navigate(to: ModuleRoute(key: item.module, label: item.module.capitalized))
-                        } label: {
-                            NeedsAttentionRow(item: item)
-                        }
-                        .buttonStyle(.plain)
+        if summary.needsAttention.isEmpty {
+            AllClearRow()
+                .opacity(heroAppeared ? 1 : 0)
+                .offset(y: heroAppeared ? 0 : 20)
+                .animation(.easeOut(duration: 0.5).delay(0.1), value: heroAppeared)
+        } else {
+            VStack(spacing: 10) {
+                ForEach(Array(summary.needsAttention.enumerated()), id: \.element.id) { index, item in
+                    Button {
+                        navigate(to: ModuleRoute(key: item.module, label: item.module.capitalized))
+                    } label: {
+                        NeedsAttentionRow(item: item)
                     }
+                    .buttonStyle(.plain)
+                    .opacity(heroAppeared ? 1 : 0)
+                    .offset(y: heroAppeared ? 0 : 20)
+                    .animation(.easeOut(duration: 0.5).delay(0.1 + Double(index) * 0.12), value: heroAppeared)
                 }
-                .cavnarCard()
             }
         }
     }
