@@ -33,35 +33,55 @@ struct HomeView: View {
     // don't move by the same math for the same input number.
     private static let heroContentDownShift: CGFloat = 40
 
+    // How tall the animated background itself is — independent of the hero
+    // content's own layout. Previously the background was applied via
+    // .background() on the hero's content VStack, nested inside the
+    // ScrollView; a background modifier on a view INSIDE a ScrollView is
+    // clipped to that view's own bounds; no ignoresSafeArea() on it can
+    // escape that clipping and reach the status bar/nav bar above the
+    // scroll view. That's why the nav bar strip stayed solid black no
+    // matter what was tried on the background itself — the fix has to move
+    // the background OUT of the scrollable content and into its own layer
+    // behind the whole screen (see body below), which is the standard
+    // SwiftUI pattern for a hero background that bleeds behind a
+    // translucent nav bar.
+    private static let heroBackgroundHeight: CGFloat = 600
+
     var body: some View {
         NavigationStack(path: $path) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if let summary = viewModel.summary {
-                        // Full-bleed, unpadded — the animated ember background
-                        // behind the greeting needs to run edge to edge, not
-                        // sit inside the 20pt content margin the rest of the
-                        // page uses.
-                        hero(summary)
-                        VStack(alignment: .leading, spacing: 20) {
-                            needsAttentionSection(summary)
+            ZStack(alignment: .top) {
+                HomeHeroBackground()
+                    .frame(height: Self.heroBackgroundHeight)
+                    .ignoresSafeArea(edges: .top)
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if let summary = viewModel.summary {
+                            // Full-bleed, unpadded — the greeting sits on
+                            // top of the background layer above, not inside
+                            // the 20pt content margin the rest of the page
+                            // uses.
+                            hero(summary)
+                            VStack(alignment: .leading, spacing: 20) {
+                                needsAttentionSection(summary)
+                            }
+                            // Same downward shift as the hero content above —
+                            // both were "properly spaced but too high up," so
+                            // they move down together by the same amount rather
+                            // than changing the spacing between them.
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 20)
+                            .padding(.top, 20 + Self.heroContentDownShift)
+                        } else if viewModel.isLoading {
+                            ProgressView().padding(.top, 80).frame(maxWidth: .infinity)
+                        } else if let error = viewModel.errorMessage {
+                            VStack(spacing: 8) {
+                                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                                Button("Retry") { Task { await viewModel.load() } }
+                            }
+                            .padding(.top, 80)
+                            .frame(maxWidth: .infinity)
                         }
-                        // Same downward shift as the hero content above —
-                        // both were "properly spaced but too high up," so
-                        // they move down together by the same amount rather
-                        // than changing the spacing between them.
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 20)
-                        .padding(.top, 20 + Self.heroContentDownShift)
-                    } else if viewModel.isLoading {
-                        ProgressView().padding(.top, 80).frame(maxWidth: .infinity)
-                    } else if let error = viewModel.errorMessage {
-                        VStack(spacing: 8) {
-                            Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                            Button("Retry") { Task { await viewModel.load() } }
-                        }
-                        .padding(.top, 80)
-                        .frame(maxWidth: .infinity)
                     }
                 }
             }
@@ -69,6 +89,8 @@ struct HomeView: View {
                 ModuleDestinationView(moduleKey: route.key, moduleLabel: route.label)
             }
             .sensoryFeedback(.impact(weight: .light), trigger: navHapticTrigger)
+            // The base color behind everything — where the background
+            // layer's own bottom fade ends, and for any content below it.
             .background(Color.cavnarPaper)
             .refreshable { await viewModel.load() }
             // No title text — "Home" was redundant with the hero's own
@@ -79,12 +101,9 @@ struct HomeView: View {
             .navigationBarTitleDisplayMode(.inline)
             // The system's default translucent nav bar material was dimming
             // and blurring the hero gradient wherever it sat behind the
-            // status bar/toolbar row, producing a visible seam at the bar's
-            // bottom edge (vivid gradient below it, muted gradient behind
-            // it). Hiding that material lets the hero's own background show
-            // through unobstructed, so the gradient actually reads as
-            // extending all the way to the top instead of stopping at a
-            // hard line.
+            // status bar/toolbar row. Hiding that material lets the
+            // background layer show through unobstructed behind the bell/
+            // building icons instead of a flat bar sitting over it.
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -175,14 +194,14 @@ struct HomeView: View {
             .offset(y: heroAppeared ? 0 : 26)
             Spacer(minLength: 16)
         }
-        // Short enough that Needs Attention lands well above the fold — the
-        // animated background still fades to black before this frame ends,
-        // so it reads as one wash rather than a boxed hero banner.
-        .frame(minHeight: 340)
+        // Slightly shorter than the background layer behind it (600pt, see
+        // heroBackgroundHeight) so Needs Attention starts just as the
+        // animated background's own fade-to-black finishes, not while it's
+        // still visibly transitioning.
+        .frame(minHeight: Self.heroBackgroundHeight - 40)
         .frame(maxWidth: .infinity)
         .multilineTextAlignment(.center)
         .padding(.horizontal, 20)
-        .background(HomeHeroBackground())
         .onAppear { onHeroAppear() }
     }
 
