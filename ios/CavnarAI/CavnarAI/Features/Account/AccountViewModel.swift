@@ -49,7 +49,13 @@ final class AccountViewModel {
 
     func loadSessions() async {
         do {
-            let response: SessionsResponse = try await client.send("/mobile/api/account/sessions")
+            // hapticOnError: false — this is a background enrichment call
+            // the user never sees fail (no error message shown either),
+            // so buzzing the same "you failed to log in" pattern for it
+            // was pure noise, not signal.
+            let response: SessionsResponse = try await client.send(
+                "/mobile/api/account/sessions", hapticOnError: false
+            )
             sessions = response.sessions
         } catch {
             // Non-fatal — the rest of the Account screen still works without this.
@@ -58,7 +64,11 @@ final class AccountViewModel {
 
     func loadBilling() async {
         do {
-            billing = try await client.send("/mobile/api/account/billing")
+            // hapticOnError: false — see loadSessions() above. A restaurant
+            // with no active subscription hits this constantly and that's
+            // an expected, normal state (the UI just shows "No active
+            // subscription"), not a failure worth an error buzz.
+            billing = try await client.send("/mobile/api/account/billing", hapticOnError: false)
         } catch {
             billing = nil
         }

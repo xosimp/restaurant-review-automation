@@ -239,20 +239,24 @@ struct CavnarStatCellStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(16)
+            // Only real usage today is the Modules tab's tiles — the
+            // original 0.26→0.07 wash read as barely-there against a near-
+            // black page, closer to a plain dark card than a branded orange
+            // one. Bumped for real presence at a glance.
             .background(
                 LinearGradient(
-                    colors: [tint.opacity(0.26), tint.opacity(0.07)],
+                    colors: [tint.opacity(0.42), tint.opacity(0.16)],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 )
             )
             .overlay(alignment: .top) {
                 Rectangle()
-                    .fill(tint.opacity(0.55))
+                    .fill(tint.opacity(0.7))
                     .frame(height: 1)
             }
             .overlay(
                 RoundedRectangle(cornerRadius: CavnarRadius.card)
-                    .strokeBorder(tint.opacity(0.35), lineWidth: 1)
+                    .strokeBorder(tint.opacity(0.55), lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }

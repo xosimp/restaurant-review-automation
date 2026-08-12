@@ -46,7 +46,13 @@ final class ReviewDetailViewModel {
 
     func loadTemplates() async {
         do {
-            let response: TemplatesResponse = try await client.send("/mobile/api/templates")
+            // hapticOnError: false — same reasoning as Account's
+            // loadBilling/loadSessions: a silent, non-fatal background load
+            // with no visible error shouldn't buzz the same pattern as a
+            // failed login.
+            let response: TemplatesResponse = try await client.send(
+                "/mobile/api/templates", hapticOnError: false
+            )
             templates = response.templates
         } catch {
             // Non-fatal — the draft editor still works without saved templates.

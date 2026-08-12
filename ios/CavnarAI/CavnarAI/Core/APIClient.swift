@@ -52,7 +52,19 @@ actor APIClient {
         _ path: String,
         method: HTTPMethod = .get,
         body: (any Encodable)? = nil,
-        query: [String: String] = [:]
+        query: [String: String] = [:],
+        // Defaults on for the common case (a failure the caller surfaces to
+        // the user should feel like a failure). Callers whose own catch
+        // block already treats the error as silent/non-fatal — a secondary
+        // background load like Account's billing/sessions fetch, or Review
+        // template loading — pass false, since buzzing the exact same
+        // "you failed to log in" pattern for a background enrichment call
+        // the user never sees fail is misleading, not informative. Was
+        // previously unconditional here, which is what made Account (whose
+        // .task fires two of these silent loads back to back) feel like it
+        // had a distinct "double error" haptic that Home/Modules never
+        // triggered.
+        hapticOnError: Bool = true
     ) async throws -> Response {
         var url = baseURL.appendingPathComponent(path)
         if !query.isEmpty, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
@@ -75,12 +87,12 @@ actor APIClient {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
-            await Haptic.error()
+            if hapticOnError { await Haptic.error() }
             throw APIError(message: "Couldn't reach the server — check your connection and try again.")
         }
 
         guard let http = response as? HTTPURLResponse else {
-            await Haptic.error()
+            if hapticOnError { await Haptic.error() }
             throw APIError(message: "No response from server")
         }
 
@@ -90,20 +102,20 @@ actor APIClient {
                 onSessionExpired?()
                 throw SessionExpiredError()
             }
-            await Haptic.error()
+            if hapticOnError { await Haptic.error() }
             throw APIError(message: envelope?.error ?? "Your session expired — please log in again.")
         }
 
         if http.statusCode >= 400 {
             let envelope = try? JSONDecoder.cavnar.decode(ErrorEnvelope.self, from: data)
-            await Haptic.error()
+            if hapticOnError { await Haptic.error() }
             throw APIError(message: envelope?.error ?? "Something went wrong (\(http.statusCode)).")
         }
 
         do {
             return try JSONDecoder.cavnar.decode(Response.self, from: data)
         } catch {
-            await Haptic.error()
+            if hapticOnError { await Haptic.error() }
             throw APIError(message: "Couldn't understand the server's response.")
         }
     }
