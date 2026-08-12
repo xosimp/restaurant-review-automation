@@ -6,6 +6,15 @@ struct RootView: View {
     @State private var deepLinkRouter = DeepLinkRouter()
     @State private var selectedTab: AppTab = .home
     @State private var showingAskCavnar = false
+    // Single shared flip that drives BOTH Home's hero fade-in and the FAB's
+    // — owned up here (not by HomeView, which lives in a separate subtree
+    // from the FAB overlay) so one withAnimation call moves both at once
+    // instead of two separately-timed onAppear checks that could drift out
+    // of sync. The three that follow are the FAB's own post-fade stages.
+    @State private var introAppeared = false
+    @State private var fabPopped = false
+    @State private var fabIconSpun = false
+    @State private var fabCollapsed = false
 
     var body: some View {
         Group {
@@ -43,7 +52,7 @@ struct RootView: View {
     // control haptic convention for a discrete-choice change.
     private var mainTabs: some View {
         TabView(selection: $selectedTab) {
-            HomeView()
+            HomeView(heroAppeared: introAppeared)
                 .tabItem { Label(AppTab.home.title, systemImage: AppTab.home.systemImage) }
                 .tag(AppTab.home)
 
@@ -65,11 +74,19 @@ struct RootView: View {
         .task {
             PushManager.shared.requestAuthorizationAndRegister()
         }
+        .task {
+            await playIntroSequenceIfNeeded()
+        }
         // .overlay (not a ZStack sibling) so the FAB actually receives taps —
         // a ZStack sibling next to TabView silently lost hit-testing to the
         // tab content underneath it.
         .overlay(alignment: .bottomTrailing) {
-            AskCavnarFAB {
+            AskCavnarFAB(
+                appeared: introAppeared,
+                popped: fabPopped,
+                iconSpun: fabIconSpun,
+                collapsed: fabCollapsed
+            ) {
                 Haptic.light()
                 showingAskCavnar = true
             }
@@ -80,32 +97,85 @@ struct RootView: View {
             AskCavnarView()
         }
     }
+
+    /// Plays exactly once per sign-in — gated on SessionStore.hasShownHomeIntro
+    /// (reset on logout, see SessionStore.clearLocalSession), read here
+    /// rather than from inside HomeView or AskCavnarFAB themselves, since
+    /// this is the one place both of those views' triggers come from.
+    /// Sequence: hero + FAB fade/rise in together (same withAnimation call
+    /// drives both, so they're pixel-synced) → a short pop → the FAB's icon
+    /// spins once → the FAB collapses down to an icon-only button, since a
+    /// permanently full-width "Ask Cavnar AI" pill was sitting over tap
+    /// targets on the rest of the screen. Re-running this .task (e.g. after
+    /// the Face ID lock screen dismisses) is safe: the guard below just
+    /// snaps everything to its already-settled final state with no replay.
+    private func playIntroSequenceIfNeeded() async {
+        guard !sessionStore.hasShownHomeIntro else {
+            introAppeared = true
+            fabIconSpun = true
+            fabCollapsed = true
+            return
+        }
+        sessionStore.hasShownHomeIntro = true
+
+        withAnimation(.easeOut(duration: 0.7).delay(0.15)) {
+            introAppeared = true
+        }
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+
+        withAnimation(.easeOut(duration: 0.18)) { fabPopped = true }
+        withAnimation(.easeInOut(duration: 0.5)) { fabIconSpun = true }
+        try? await Task.sleep(nanoseconds: 180_000_000)
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) { fabPopped = false }
+        try? await Task.sleep(nanoseconds: 420_000_000)
+
+        withAnimation(.easeInOut(duration: 0.4)) {
+            fabCollapsed = true
+        }
+    }
 }
 
 /// Persistent floating action button reachable from any tab — matches the
 /// web dashboard's own Ask Cavnar bubble (a FAB there too, not a tab), and
 /// frees a permanent tab slot as more modules ship (see the architecture plan).
-/// A labeled glass pill rather than a large icon-only circle — the earlier
-/// 60pt circle was heavy enough to sit on top of content underneath it.
+/// Lands as a labeled glass pill on the client's first landing this
+/// session (see RootView.playIntroSequenceIfNeeded), then pops, spins its
+/// icon once, and collapses to an icon-only circle for the rest of the
+/// session — the permanently-labeled pill was wide enough to sit over tap
+/// targets on the screen behind it.
 private struct AskCavnarFAB: View {
+    var appeared: Bool
+    var popped: Bool
+    var iconSpun: Bool
+    var collapsed: Bool
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: collapsed ? 0 : 8) {
                 GlowBadge(systemImage: "sparkles", size: 30)
-                Text("Ask Cavnar AI")
-                    .font(.cavnarBody(13, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
+                    .rotationEffect(.degrees(iconSpun ? 360 : 0))
+                if !collapsed {
+                    Text("Ask Cavnar AI")
+                        .font(.cavnarBody(13, weight: 700))
+                        .foregroundStyle(Color.cavnarInk)
+                        .fixedSize()
+                        .transition(.opacity.combined(with: .scale(scale: 0.01, anchor: .leading)))
+                }
             }
             .padding(.leading, 6)
-            .padding(.trailing, 14)
+            .padding(.trailing, collapsed ? 6 : 14)
             .padding(.vertical, 6)
             .background(.ultraThinMaterial, in: Capsule())
             .overlay(Capsule().strokeBorder(Color.cavnarEmber.opacity(0.35), lineWidth: 1))
             .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
         }
         .buttonStyle(FABPressStyle())
+        // Same opacity/offset curve as HomeView's hero, driven by the same
+        // `introAppeared` flip from RootView, so the two reveal in lockstep.
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 26)
+        .scaleEffect(popped ? 1.15 : 1.0)
     }
 }
 

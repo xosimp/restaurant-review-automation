@@ -11,9 +11,12 @@ struct HomeView: View {
     @State private var navHapticTrigger = 0
     @State private var lastNavigationAt = Date.distantPast
     // Drives the hero's one-time landing reveal (opacity + upward offset).
-    // Gated by sessionStore.hasShownHomeIntro rather than just this local
-    // flag — see hero(_:)'s onAppear for why.
-    @State private var heroAppeared = false
+    // Owned and animated by RootView, not here — the Ask Cavnar FAB (a
+    // sibling in a different subtree, overlaid on the whole TabView) needs
+    // to fade in on the exact same withAnimation call for the two to land
+    // in perfect sync, which isn't possible if each view times its own
+    // onAppear independently. See RootView.playIntroSequenceIfNeeded.
+    var heroAppeared: Bool
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -122,21 +125,6 @@ struct HomeView: View {
         .multilineTextAlignment(.center)
         .padding(.horizontal, 20)
         .background(HomeHeroBackground())
-        .onAppear {
-            // Plays once per sign-in: SessionStore.hasShownHomeIntro (not
-            // this view's own @State) is the source of truth, since it
-            // survives whatever recreates HomeView when the client switches
-            // tabs — a plain local flag would just replay the reveal every
-            // time they come back to Home.
-            guard !sessionStore.hasShownHomeIntro else {
-                heroAppeared = true
-                return
-            }
-            sessionStore.hasShownHomeIntro = true
-            withAnimation(.easeOut(duration: 0.7).delay(0.15)) {
-                heroAppeared = true
-            }
-        }
     }
 
     private func heroHeadline(_ summary: HomeSummary) -> some View {
