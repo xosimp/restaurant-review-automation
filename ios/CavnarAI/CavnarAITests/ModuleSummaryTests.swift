@@ -36,7 +36,9 @@ final class ModuleSummaryTests: XCTestCase {
            {"key": "labor", "label": "Labor", "icon": "labor", "status": "available", "kpi": null},
            {"key": "marketing", "label": "Marketing", "icon": "marketing", "status": "available", "kpi": null}
          ],
-         "needs_attention": []}
+         "needs_attention": [],
+         "total_value_delivered": 0,
+         "value_history": []}
         """
         let summary = try JSONDecoder.cavnar.decode(HomeSummary.self, from: Data(json.utf8))
         XCTAssertEqual(summary.modules.count, 3)

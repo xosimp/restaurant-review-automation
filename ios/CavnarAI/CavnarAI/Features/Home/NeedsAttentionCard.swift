@@ -1,45 +1,75 @@
 import SwiftUI
 
-/// One row in the Home tab's "needs attention" list — same three checks and
-/// copy as the web dashboard's home-attention-list (see mobile_api.py's
-/// _do_mobile_home docstring). Every row shares one quiet, uniform surface
-/// and a single ember accent regardless of alert type — a red/amber/ember
-/// mix per row read as chaotic rather than "at a glance severity," and a
-/// bold gradient-and-border card per row read closer to a game achievement
-/// toast than a premium restaurant dashboard. The icon glyph still varies
-/// by type (still useful at a glance), just not its color.
-struct NeedsAttentionRow: View {
+/// Needs Attention as a horizontal-swipe carousel of self-contained floating
+/// cards — replaces the old vertical row-list entirely. Chosen over a
+/// drifted-stack alternative because it frees up the vertical space the new
+/// value chart above it needs, and reads as genuinely separate objects
+/// rather than rows in a form (approved mockup, "Option A").
+struct NeedsAttentionCarousel: View {
+    let items: [NeedsAttentionItem]
+    let onTap: (NeedsAttentionItem) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(items) { item in
+                    Button {
+                        onTap(item)
+                    } label: {
+                        NeedsAttentionFloatCard(item: item)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 2)
+        }
+    }
+}
+
+/// One card in the carousel. Every card shares the same uniform ember wash
+/// regardless of alert type — a per-type color mix read as chaotic rather
+/// than "at a glance severity" (same call already made for the old row
+/// design, still true here). Only the icon glyph varies by type.
+struct NeedsAttentionFloatCard: View {
     let item: NeedsAttentionItem
 
     var body: some View {
-        HStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             ZStack {
                 Circle()
-                    .fill(Color.cavnarEmber.opacity(0.14))
+                    .fill(Color.cavnarEmber.opacity(0.18))
                     .frame(width: 34, height: 34)
                 Image(systemName: iconName)
-                    .foregroundStyle(Color.cavnarEmber)
                     .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.cavnarEmber2)
             }
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
-                    .font(.cavnarBody(13, weight: 600))
+                    .font(.cavnarBody(12.5, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(item.detail)
-                    .font(.cavnarBody(11))
+                    .font(.cavnarBody(10.5))
                     .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
-            GlassChevronButton()
         }
-        .padding(.vertical, 14)
-        .padding(.horizontal, 16)
-        .background(Color.cavnarPaper2.opacity(0.4))
-        .overlay(
-            RoundedRectangle(cornerRadius: CavnarRadius.card)
-                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+        .padding(.vertical, 16)
+        .padding(.horizontal, 14)
+        .frame(width: 168, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [Color.cavnarEmber.opacity(0.16), Color.cavnarEmber.opacity(0.04)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
         )
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .strokeBorder(Color.cavnarEmber.opacity(0.22), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .shadow(color: Color.cavnarEmber.opacity(0.35), radius: 15, x: 0, y: 10)
     }
 
     private var iconName: String {

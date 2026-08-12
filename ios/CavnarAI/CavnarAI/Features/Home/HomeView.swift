@@ -63,6 +63,7 @@ struct HomeView: View {
                             // uses.
                             hero(summary)
                             VStack(alignment: .leading, spacing: 20) {
+                                valueChartSection(summary)
                                 needsAttentionSection(summary)
                             }
                             // Independent of heroContentDownShift now — that
@@ -254,36 +255,38 @@ struct HomeView: View {
         return text.font(.cavnarBody(13))
     }
 
+    // The value chart's own eyebrow/number/delta/sparkline carry no card
+    // chrome of their own (see ValueChartCard) — just fades + rises in with
+    // the same `heroAppeared` flip everything else below the hero uses.
+    private func valueChartSection(_ summary: HomeSummary) -> some View {
+        ValueChartCard(totalValue: summary.totalValueDelivered, history: summary.valueHistory)
+            .opacity(heroAppeared ? 1 : 0)
+            .offset(y: heroAppeared ? 0 : 20)
+            .animation(.easeOut(duration: 0.5).delay(0.1), value: heroAppeared)
+    }
+
     // No "Needs attention" header and no enclosing gray .cavnarCard() around
-    // the list anymore — each row now carries its own light, uniform
-    // surface (see NeedsAttentionRow), so a boxy outer container plus a
-    // label restating what the rows themselves already make obvious just
-    // added visual noise. Rows fade + rise in one at a time off the same
-    // `heroAppeared` flip the hero uses (via .animation(value:) with a
-    // per-index delay), rather than a separate trigger, so they inherit its
-    // "animate once per sign-in, otherwise appear instantly" behavior for
-    // free.
+    // the carousel anymore — each card carries its own light, uniform
+    // surface (see NeedsAttentionFloatCard), so a boxy outer container plus
+    // a label restating what the cards themselves already make obvious just
+    // added visual noise. The whole carousel fades + rises in as one unit
+    // off the same `heroAppeared` flip the hero uses — a horizontal-scroll
+    // row doesn't read as a top-to-bottom sequence the way the old vertical
+    // list did, so a per-card stagger no longer made sense.
     @ViewBuilder
     private func needsAttentionSection(_ summary: HomeSummary) -> some View {
         if summary.needsAttention.isEmpty {
             AllClearRow()
                 .opacity(heroAppeared ? 1 : 0)
                 .offset(y: heroAppeared ? 0 : 20)
-                .animation(.easeOut(duration: 0.5).delay(0.1), value: heroAppeared)
+                .animation(.easeOut(duration: 0.5).delay(0.3), value: heroAppeared)
         } else {
-            VStack(spacing: 10) {
-                ForEach(Array(summary.needsAttention.enumerated()), id: \.element.id) { index, item in
-                    Button {
-                        navigate(to: ModuleRoute(key: item.module, label: item.module.capitalized))
-                    } label: {
-                        NeedsAttentionRow(item: item)
-                    }
-                    .buttonStyle(.plain)
-                    .opacity(heroAppeared ? 1 : 0)
-                    .offset(y: heroAppeared ? 0 : 20)
-                    .animation(.easeOut(duration: 0.55).delay(0.15 + Double(index) * 0.22), value: heroAppeared)
-                }
+            NeedsAttentionCarousel(items: summary.needsAttention) { item in
+                navigate(to: ModuleRoute(key: item.module, label: item.module.capitalized))
             }
+            .opacity(heroAppeared ? 1 : 0)
+            .offset(y: heroAppeared ? 0 : 20)
+            .animation(.easeOut(duration: 0.55).delay(0.3), value: heroAppeared)
         }
     }
 

@@ -19,6 +19,8 @@ struct HomeSummary: Codable {
     let reviewsAwaitingApproval: Int
     let modules: [ModuleSummary]
     let needsAttention: [NeedsAttentionItem]
+    let totalValueDelivered: Int
+    let valueHistory: [ValueSnapshot]
 
     enum CodingKeys: String, CodingKey {
         case username
@@ -28,7 +30,16 @@ struct HomeSummary: Codable {
         case reviewsAwaitingApproval = "reviews_awaiting_approval"
         case modules
         case needsAttention = "needs_attention"
+        case totalValueDelivered = "total_value_delivered"
+        case valueHistory = "value_history"
     }
+}
+
+/// One day's "Total value delivered" figure — see value_delivered.py's
+/// record_value_snapshot(). Ascending by date, oldest first.
+struct ValueSnapshot: Codable, Hashable {
+    let date: String
+    let value: Int
 }
 
 /// One entry in the active-modules list. `icon` is a small semantic
