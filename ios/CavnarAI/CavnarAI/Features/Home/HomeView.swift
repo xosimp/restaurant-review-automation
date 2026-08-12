@@ -185,7 +185,14 @@ struct HomeView: View {
                     .font(.cavnarBody(11, weight: 700))
                     .tracking(2)
                     .textCase(.uppercase)
-                    .foregroundStyle(Color.cavnarEmber)
+                    // cavnarEmber (deep, dark-mode brand orange) was reading
+                    // as roughly the same tone as the aurora blooms sitting
+                    // right behind it — cavnarEmber2 (the lighter peach
+                    // token) plus a real drop shadow gives it a defined edge
+                    // regardless of exactly which part of the moving
+                    // background happens to be behind it at any moment.
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 1)
 
                 heroHeadline(summary)
 
@@ -211,10 +218,17 @@ struct HomeView: View {
     }
 
     private func heroHeadline(_ summary: HomeSummary) -> some View {
-        (Text(greetingName(summary)).foregroundStyle(Color.cavnarEmber)
+        // cavnarEmber2 instead of cavnarEmber for the name, same reasoning
+        // as the date eyebrow above — plus a shadow on the whole line
+        // (Text concatenation only carries font/color per segment, not
+        // per-segment view modifiers like .shadow, so it applies to both
+        // halves; harmless on the already-high-contrast cream half, and
+        // exactly what the ember half needed).
+        (Text(greetingName(summary)).foregroundStyle(Color.cavnarEmber2)
             + Text(" — your restaurant is running on AI.").foregroundStyle(Color.cavnarInk))
             .font(.cavnarHeadline(26))
             .lineSpacing(3)
+            .shadow(color: .black.opacity(0.45), radius: 4, x: 0, y: 2)
     }
 
     private func greetingName(_ summary: HomeSummary) -> String {

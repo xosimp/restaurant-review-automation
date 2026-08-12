@@ -74,7 +74,12 @@ struct HomeModuleGrid: View {
 /// feature yet" for every client. Reuses .cavnarStatCell's exact card
 /// language (gradient wash, top highlight, border) with a gray tint
 /// instead of ember, so it reads as clearly distinct from an active module
-/// tile without needing a whole separate visual style.
+/// tile without needing a whole separate visual style. Mirrors KPITile's
+/// exact 4-row structure (icon → big number line → label → sublabel), not
+/// just a similar-looking 3-row version — a real tile is never actually
+/// shorter than this since its number line always renders (falling back to
+/// "—" only if kpi itself is nil), so matching that same row made these
+/// tiles visibly shorter than the real ones before.
 struct ComingSoonModuleTile: View {
     let module: ModuleSummary
 
@@ -83,6 +88,9 @@ struct ComingSoonModuleTile: View {
             GlowBadge(systemImage: ModuleIcon.symbolName(for: module.icon), size: 40)
                 .opacity(0.45)
                 .grayscale(0.7)
+            Text("—")
+                .font(.cavnarNumber(26, weight: 500))
+                .foregroundStyle(Color.cavnarInk3)
             Text(module.label)
                 .font(.cavnarBody(10, weight: 700))
                 .tracking(1.0)
@@ -90,8 +98,9 @@ struct ComingSoonModuleTile: View {
                 .foregroundStyle(Color.cavnarInk3)
                 .multilineTextAlignment(.center)
             Text("Coming Soon")
-                .font(.cavnarBody(10, weight: 600))
+                .font(.cavnarBody(10))
                 .foregroundStyle(Color.cavnarInk3.opacity(0.75))
+                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
