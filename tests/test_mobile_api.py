@@ -1052,6 +1052,63 @@ def test_changelog_unread_count_reflects_new_entries_since_last_seen(client, db_
     assert resp2.get_json()["count"] == 1
 
 
+# ── /mobile/api/notifications ────────────────────────────────────────────
+
+def test_notifications_returns_module_and_review_id_and_marks_seen(client, db_path):
+    rid = _restaurant(db_path)
+    conn = get_conn(db_path)
+    conn.execute(
+        "INSERT INTO alert_log (restaurant_id, alert_type, review_id) VALUES (?,?,?)",
+        (rid, "1star", 42),
+    )
+    conn.execute(
+        "INSERT INTO alert_log (restaurant_id, alert_type) VALUES (?,?)",
+        (rid, "labor_over"),
+    )
+    conn.commit()
+    conn.close()
+    token = _login(client, db_path, rid)
+
+    resp = client.get("/mobile/api/notifications", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    by_type = {item["type"]: item for item in data["notifications"]}
+    assert by_type["1star"]["review_id"] == 42
+    assert by_type["1star"]["module"] == "reviews"
+    assert by_type["labor_over"]["review_id"] is None
+    assert by_type["labor_over"]["module"] == "labor"
+
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT notifications_seen_at FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert row["notifications_seen_at"] is not None
+
+
+def test_notifications_unread_count_requires_auth(client):
+    resp = client.get("/mobile/api/notifications/unread-count")
+    assert resp.status_code == 401
+
+
+def test_notifications_unread_count_reflects_new_alerts_since_last_seen(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    # Explicit past timestamp, not the route's own "now" stamp — sqlite's
+    # datetime('now') only has 1-second resolution, so stamping both the
+    # seen-at and the new alert_log row within the same test run risks a
+    # tie (see the analogous changelog test above).
+    update_restaurant(rid, {"notifications_seen_at": "2000-01-01T00:00:00"}, db_path=db_path)
+    resp1 = client.get("/mobile/api/notifications/unread-count", headers=_auth_headers(token))
+    assert resp1.get_json()["count"] == 0
+
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO alert_log (restaurant_id, alert_type) VALUES (?,?)", (rid, "5star"))
+    conn.commit()
+    conn.close()
+    resp2 = client.get("/mobile/api/notifications/unread-count", headers=_auth_headers(token))
+    assert resp2.get_json()["count"] == 1
+
+
 # ── /mobile/api/intel/ai-visibility ─────────────────────────────────────────
 
 def test_ai_visibility_requires_auth(client):

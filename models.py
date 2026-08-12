@@ -342,6 +342,7 @@ class Restaurant:
     al_unres_sms:         int       = 0
     al_unres_push:        int       = 1
     changelog_seen_at: Optional[str] = None
+    notifications_seen_at: Optional[str] = None
     alert_quiet_start: Optional[str] = None
     alert_quiet_end:   Optional[str] = None
     alert_max_per_day: int           = 0
@@ -491,6 +492,8 @@ def ensure_columns(db_path: str = DB_PATH):
         ("reviews", "deleted_at", "TEXT"),
         # Changelog seen state
         ("restaurants", "changelog_seen_at", "TEXT"),
+        # Notifications (alert_log) seen state — same stamp-on-read pattern
+        ("restaurants", "notifications_seen_at", "TEXT"),
         # Alert DND / throttle
         ("restaurants", "alert_quiet_start", "TEXT"),
         ("restaurants", "alert_quiet_end",   "TEXT"),
@@ -1135,7 +1138,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "al_5star_email","al_5star_sms","al_5star_push",
         "al_spike_email","al_spike_sms","al_spike_push",
         "al_unres_email","al_unres_sms","al_unres_push",
-        "changelog_seen_at",
+        "changelog_seen_at","notifications_seen_at",
         "alert_quiet_start","alert_quiet_end","alert_max_per_day",
         "brand_name","brand_color","brand_logo_url",
         "section_count","daypart_split","delivery_pct","role_minimums_json","sched_notes","email_theme",
@@ -1275,6 +1278,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         digest_enabled=row["digest_enabled"] if "digest_enabled" in row.keys() else 1,
         last_fetched_at=row["last_fetched_at"] if "last_fetched_at" in row.keys() else None,
         changelog_seen_at=row["changelog_seen_at"] if "changelog_seen_at" in row.keys() else None,
+        notifications_seen_at=row["notifications_seen_at"] if "notifications_seen_at" in row.keys() else None,
         alert_quiet_start=row["alert_quiet_start"] if "alert_quiet_start" in row.keys() else None,
         alert_quiet_end=row["alert_quiet_end"]     if "alert_quiet_end"   in row.keys() else None,
         alert_max_per_day=row["alert_max_per_day"] if "alert_max_per_day" in row.keys() else 0,

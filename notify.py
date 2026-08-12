@@ -575,7 +575,20 @@ def check_daily_alerts(db_path: str = DB_PATH):
                     send_sms(c["phone"], sms_text)
             if via_email and owner_email:
                 _send_alert_email(owner_email, subject, html)
-            _log_alert(rid, alert_type)
+            # These three alert types predate push and never had their own
+            # al_*_push toggle columns added (unlike health/1star/2star/5star/
+            # spike/unresponded, which each have one) — rather than fire
+            # silently push-less forever, push here the same way blast()
+            # does: no per-channel gate, since push has no owner cost the
+            # way SMS/email do and the restaurant already opted into this
+            # alert type via alert_negative_trend/alert_rating_threshold/
+            # alert_labor_over above. A no-op if no device is registered.
+            try:
+                from push import fire_push as _fp
+                _fp(rid, alert_type, subject, sms_text, data={"alert_type": alert_type})
+            except Exception:
+                pass
+            _log_alert(rid, alert_type, db_path=db_path)
             try:
                 from webhooks import fire_webhook as _fw
                 _fw(rid, "alert.fired", {"alert_type": alert_type}, db_path)
@@ -585,11 +598,17 @@ def check_daily_alerts(db_path: str = DB_PATH):
                 pass
 
         def _already_alerted(alert_type):
+            # A 7-day window, not 24h — this job runs once a day, so a
+            # persisting condition (rating still under the floor, labor
+            # still over target) with a 24h dedup would re-fire on every
+            # single run, sending the same alert daily until the owner
+            # fixes it. A week between repeats for the SAME unresolved
+            # issue is still timely without becoming daily noise.
             c2 = get_conn(db_path)
             row = c2.execute("""
                 SELECT id FROM alert_log
                 WHERE restaurant_id=? AND alert_type=?
-                AND fired_at >= datetime('now', '-24 hours')
+                AND fired_at >= datetime('now', '-7 days')
             """, (rid, alert_type)).fetchone()
             c2.close()
             return row is not None

@@ -623,8 +623,35 @@ def mobile_review_request_stats(current_user):
 @mobile_bp.route("/notifications")
 @mobile_login_required
 def mobile_notifications(current_user):
+    import datetime as _dt
     payload, status = _capi._do_get_notifications(current_user["restaurant_id"])
+    # Mark as seen — same stamp-on-read behavior as Changelog (see
+    # mobile_changelog below), so the bell's unread badge clears once the
+    # client has actually opened the list, not before.
+    update_restaurant(current_user["restaurant_id"], {
+        "notifications_seen_at": _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    })
     return jsonify(**payload), status
+
+
+@mobile_bp.route("/notifications/unread-count")
+@mobile_login_required
+def mobile_notifications_unread_count(current_user):
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    since = restaurant.notifications_seen_at if restaurant else None
+    conn = get_conn()
+    if since:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM alert_log WHERE restaurant_id=? AND fired_at > ?",
+            (rid, since)
+        ).fetchone()[0]
+    else:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM alert_log WHERE restaurant_id=?", (rid,)
+        ).fetchone()[0]
+    conn.close()
+    return jsonify(ok=True, count=count)
 
 
 # ── Changelog ─────────────────────────────────────────────────────────────

@@ -2808,12 +2808,23 @@ _NOTIFICATION_LABELS = {
     "labor_over":       "Labor % over target",
 }
 
+# Which module a notification's "view" action should open — every alert
+# type is review/rating-driven except labor_over. Review-specific types
+# also carry a review_id (see the SELECT below) so the client can jump
+# straight to that review instead of just the Reviews tab in general.
+_NOTIFICATION_MODULE = {
+    "1star": "reviews", "2star": "reviews", "5star": "reviews", "health": "reviews",
+    "neg_spike": "reviews", "no_response": "reviews",
+    "negative_trend": "reviews", "rating_threshold": "reviews",
+    "labor_over": "labor",
+}
+
 
 def _do_get_notifications(restaurant_id):
     try:
         conn = get_conn()
         rows = conn.execute(
-            """SELECT alert_type, fired_at FROM alert_log
+            """SELECT alert_type, review_id, fired_at FROM alert_log
                WHERE restaurant_id=?
                ORDER BY fired_at DESC LIMIT 20""",
             (restaurant_id,)
@@ -2821,10 +2832,12 @@ def _do_get_notifications(restaurant_id):
         conn.close()
         items = [{"type": r["alert_type"],
                   "label": _NOTIFICATION_LABELS.get(r["alert_type"], r["alert_type"]),
-                  "fired_at": r["fired_at"]} for r in rows]
+                  "fired_at": r["fired_at"],
+                  "review_id": r["review_id"],
+                  "module": _NOTIFICATION_MODULE.get(r["alert_type"], "reviews")} for r in rows]
         return {"ok": True, "notifications": items}, 200
     except Exception as e:
-        return {"ok": False, "notifications": []}, 200
+        return {"ok": False, "notifications": [], "error": "Couldn't load notifications right now."}, 200
 
 
 @client_bp.route("/api/switch-location", methods=["POST"])

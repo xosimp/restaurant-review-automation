@@ -5,6 +5,7 @@ struct HomeView: View {
     @State private var viewModel = HomeViewModel()
     @State private var showingLocationSwitcher = false
     @State private var showingNotifications = false
+    @State private var notificationsBadge = NotificationsBadgeViewModel()
     @State private var path = NavigationPath()
     // Ticked on every accepted tile/row tap instead of calling Haptic.light()
     // directly in the action closure, paired with .sensoryFeedback below.
@@ -26,10 +27,11 @@ struct HomeView: View {
     // so it would mount already-revealed with nothing to animate from.
     var onHeroAppear: () -> Void = {}
 
-    // Shared by hero(_:)'s top padding and the Needs Attention wrapper's top
-    // padding — both sat too high on the page at the same effective height,
-    // so both move down by this same amount rather than drifting apart.
-    private static let heroContentDownShift: CGFloat = 28
+    // How far down the Needs Attention wrapper's top padding shifts (see
+    // its call site) — the hero uses its own derived shift below, since a
+    // VStack's top padding and two Spacers redistributing leftover height
+    // don't move by the same math for the same input number.
+    private static let heroContentDownShift: CGFloat = 40
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -75,13 +77,30 @@ struct HomeView: View {
             // reserving large-title space for nothing.
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
+            // The system's default translucent nav bar material was dimming
+            // and blurring the hero gradient wherever it sat behind the
+            // status bar/toolbar row, producing a visible seam at the bar's
+            // bottom edge (vivid gradient below it, muted gradient behind
+            // it). Hiding that material lets the hero's own background show
+            // through unobstructed, so the gradient actually reads as
+            // extending all the way to the top instead of stopping at a
+            // hard line.
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Haptic.light()
                         showingNotifications = true
                     } label: {
-                        Image(systemName: "bell")
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: "bell")
+                            if notificationsBadge.unreadCount > 0 {
+                                Circle()
+                                    .fill(Color.cavnarEmber)
+                                    .frame(width: 8, height: 8)
+                                    .offset(x: 5, y: -3)
+                            }
+                        }
                     }
                     // .plain strips the default toolbar-button chrome that
                     // was stacking its own automatic tap feedback on top of
@@ -108,7 +127,16 @@ struct HomeView: View {
             .sheet(isPresented: $showingNotifications) {
                 NotificationsListView()
             }
+            // Opening the sheet marks alert_log seen server-side (see
+            // NotificationsListViewModel.load()), so refreshing again right
+            // as it's dismissed is what actually clears the bell's dot.
+            .onChange(of: showingNotifications) { wasShowing, isShowing in
+                if wasShowing && !isShowing {
+                    Task { await notificationsBadge.refresh() }
+                }
+            }
             .task { await viewModel.load() }
+            .task { await notificationsBadge.refresh() }
         }
     }
 
@@ -120,12 +148,18 @@ struct HomeView: View {
     // word by word.
     private func hero(_ summary: HomeSummary) -> some View {
         VStack(spacing: 0) {
-            // A fixed top padding, not a second symmetric Spacer — two
-            // equal-minLength Spacers split all the hero's leftover height
-            // evenly between them regardless of their minLength, which
-            // vertically centered this block instead of actually moving it
-            // down; a fixed offset from the top is the only way to control
-            // exactly how far down it sits.
+            // Two Spacers with EQUAL minLength (as this was originally)
+            // vertically center the content block — SwiftUI splits whatever
+            // height is left over between them evenly, regardless of their
+            // minLength, so a fixed top padding instead of a matched pair
+            // doesn't "start lower," it just drops the min floor and lets
+            // the content float up toward the top. To move the block down
+            // FROM that centered position by an exact amount without
+            // fighting that redistribution, only the top Spacer's minLength
+            // grows, and by DOUBLE the desired shift — half of any increase
+            // here gets redistributed back to the bottom Spacer, so growing
+            // it by 2x nets exactly +1x at the content's actual position.
+            Spacer(minLength: 16 + Self.heroContentDownShift * 2)
             VStack(spacing: 10) {
                 Text(todayDateString)
                     .font(.cavnarBody(11, weight: 700))
@@ -137,7 +171,6 @@ struct HomeView: View {
 
                 subtitleText(summary)
             }
-            .padding(.top, 16 + Self.heroContentDownShift)
             .opacity(heroAppeared ? 1 : 0)
             .offset(y: heroAppeared ? 0 : 26)
             Spacer(minLength: 16)

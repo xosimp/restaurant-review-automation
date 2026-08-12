@@ -77,6 +77,56 @@ def test_fire_review_alerts_no_push_when_everything_off(db_path, monkeypatch):
     assert calls == []
 
 
+def test_check_daily_alerts_fires_push_for_labor_over(db_path, monkeypatch):
+    from models import save_labor_snapshot
+    rid = _restaurant(db_path)
+    update_restaurant(rid, {
+        "urgent_via_sms": 0, "urgent_via_email": 1, "owner_email": "p@x.com",
+        "alert_labor_over": 1, "labor_target_pct": 30.0,
+    }, db_path=db_path)
+    save_labor_snapshot(rid, "2026-01-01", "2026-01-07", 35.0, 3500, 10000, db_path=db_path)
+
+    calls = []
+    monkeypatch.setattr("push.fire_push", lambda *a, **kw: calls.append(a))
+    notify.check_daily_alerts(db_path=db_path)
+
+    assert len(calls) == 1
+    assert calls[0][1] == "labor_over"  # fire_push(restaurant_id, alert_type, ...)
+
+
+def test_check_daily_alerts_does_not_refire_within_7_days(db_path, monkeypatch):
+    """A persisting condition (rating still under the floor, labor still over
+    target) shouldn't re-alert every single day just because the scheduler
+    runs daily — the old 24h dedup window sat right at the job's own cadence,
+    so it never actually suppressed a same-day-tomorrow repeat."""
+    from models import save_labor_snapshot
+    rid = _restaurant(db_path)
+    update_restaurant(rid, {
+        "urgent_via_sms": 0, "urgent_via_email": 1, "owner_email": "p@x.com",
+        "alert_labor_over": 1, "labor_target_pct": 30.0,
+    }, db_path=db_path)
+    save_labor_snapshot(rid, "2026-01-01", "2026-01-07", 35.0, 3500, 10000, db_path=db_path)
+
+    calls = []
+    monkeypatch.setattr("push.fire_push", lambda *a, **kw: calls.append(a))
+    notify.check_daily_alerts(db_path=db_path)
+    assert len(calls) == 1
+
+    # Simulate "tomorrow's" scheduler run — the condition hasn't changed.
+    notify.check_daily_alerts(db_path=db_path)
+    assert len(calls) == 1  # still just the one call — no same-week repeat
+
+    conn = get_conn(db_path)
+    conn.execute(
+        "UPDATE alert_log SET fired_at=datetime('now','-8 days') WHERE restaurant_id=? AND alert_type='labor_over'",
+        (rid,),
+    )
+    conn.commit()
+    conn.close()
+    notify.check_daily_alerts(db_path=db_path)
+    assert len(calls) == 2  # a week later, the still-unresolved condition alerts again
+
+
 def test_check_no_response_alerts_fires_push_with_sms_and_email_off(db_path, monkeypatch):
     rid = _restaurant(db_path)
     update_restaurant(rid, {"urgent_via_sms": 0, "urgent_via_email": 0, "alert_no_response": 1}, db_path=db_path)

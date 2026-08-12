@@ -75,19 +75,24 @@ struct ModulesGridView: View {
             .navigationTitle("Modules")
             .task {
                 await viewModel.load()
-                pushToReviewsIfDeepLinked()
+                pushToPendingModuleIfDeepLinked()
             }
-            .onChange(of: deepLinkRouter.pendingReviewID) { _, _ in pushToReviewsIfDeepLinked() }
+            .onChange(of: deepLinkRouter.pendingModuleKey) { _, _ in pushToPendingModuleIfDeepLinked() }
         }
     }
 
-    /// A tapped push notification always points at a review (v1's only push
-    /// categories are review-related) — push straight to the Reviews module
-    /// screen, which then opens the specific review itself via its own
-    /// DeepLinkRouter-reading logic (see ReviewsListView).
-    private func pushToReviewsIfDeepLinked() {
-        guard deepLinkRouter.pendingReviewID != nil else { return }
-        path.append(ModuleRoute(key: "reviews", label: "Reviews"))
+    /// A tapped push notification or in-app Notifications row sets
+    /// pendingModuleKey (see DeepLinkRouter) — push straight to that module
+    /// screen, which then opens the specific review itself (if any) via its
+    /// own DeepLinkRouter-reading logic (see ReviewsListView).
+    private func pushToPendingModuleIfDeepLinked() {
+        // Consumed (not just read) right here — unlike pendingReviewID,
+        // nothing downstream needs pendingModuleKey after this point, so
+        // leaving it set would push a duplicate ModuleRoute the next time
+        // this view reappears or .task reruns.
+        guard let moduleKey = deepLinkRouter.consumePendingModuleKey() else { return }
+        let label = viewModel.modules.first(where: { $0.key == moduleKey })?.label ?? moduleKey.capitalized
+        path.append(ModuleRoute(key: moduleKey, label: label))
     }
 
     // See HomeView.navigate(to:) for why this is debounced rather than
