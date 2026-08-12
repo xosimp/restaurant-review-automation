@@ -40,6 +40,11 @@ struct KPITile: View {
 /// navigates straight into that module's screen.
 struct HomeModuleGrid: View {
     let modules: [ModuleSummary]
+    // Always-shown, non-interactive placeholders for modules that aren't a
+    // real, backend-gated feature yet (Waitlist & Reservations, Bar &
+    // Alcohol) — every client sees these regardless of what's actually
+    // active for their account, unlike `modules` above.
+    var comingSoon: [ModuleSummary] = []
     var onSelect: (ModuleSummary) -> Void
 
     var body: some View {
@@ -56,6 +61,40 @@ struct HomeModuleGrid: View {
                 }
                 .buttonStyle(.plain)
             }
+            ForEach(comingSoon) { module in
+                ComingSoonModuleTile(module: module)
+            }
         }
+    }
+}
+
+/// A muted, non-interactive placeholder tile — no Button wrapper at all
+/// (not just a disabled one), since these aren't a "not yet enabled for
+/// you" upsell tied to entitlement, they're "doesn't exist as a real
+/// feature yet" for every client. Reuses .cavnarStatCell's exact card
+/// language (gradient wash, top highlight, border) with a gray tint
+/// instead of ember, so it reads as clearly distinct from an active module
+/// tile without needing a whole separate visual style.
+struct ComingSoonModuleTile: View {
+    let module: ModuleSummary
+
+    var body: some View {
+        VStack(spacing: 8) {
+            GlowBadge(systemImage: ModuleIcon.symbolName(for: module.icon), size: 40)
+                .opacity(0.45)
+                .grayscale(0.7)
+            Text(module.label)
+                .font(.cavnarBody(10, weight: 700))
+                .tracking(1.0)
+                .textCase(.uppercase)
+                .foregroundStyle(Color.cavnarInk3)
+                .multilineTextAlignment(.center)
+            Text("Coming Soon")
+                .font(.cavnarBody(10, weight: 600))
+                .foregroundStyle(Color.cavnarInk3.opacity(0.75))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .cavnarStatCell(tint: Color.cavnarInk3)
     }
 }

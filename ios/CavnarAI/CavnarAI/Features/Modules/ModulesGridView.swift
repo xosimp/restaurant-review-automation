@@ -44,25 +44,41 @@ struct ModulesGridView: View {
     @State private var lastNavigationAt = Date.distantPast
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
 
+    // Static, not backend-driven — these aren't real, shipping features
+    // gated by entitlement the way the modules above are, so every client
+    // sees them regardless of what /mobile/api/home actually returns for
+    // their account. Non-interactive (see ComingSoonModuleTile — no Button
+    // wrapper at all), so there's nothing to route to on tap.
+    private let comingSoonModules: [ModuleSummary] = [
+        ModuleSummary(key: "waitlist", label: "Waitlist & Reservations", icon: "waitlist", status: "coming_soon", kpi: nil),
+        ModuleSummary(key: "bar", label: "Bar & Alcohol", icon: "bar", status: "coming_soon", kpi: nil),
+    ]
+
     var body: some View {
         NavigationStack(path: $path) {
             Group {
-                if !viewModel.modules.isEmpty {
+                // Loading/error only take priority while there's nothing
+                // else to show yet — once the real fetch has settled
+                // (success OR failure), the grid always renders, since
+                // comingSoonModules alone guarantees it's never actually
+                // empty (a client with zero active real modules used to
+                // hit a blank screen here).
+                if viewModel.isLoading && viewModel.modules.isEmpty && viewModel.errorMessage == nil {
+                    ProgressView()
+                } else if let error = viewModel.errorMessage, viewModel.modules.isEmpty {
+                    VStack(spacing: 8) {
+                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                        Button("Retry") { Task { await viewModel.load() } }
+                    }
+                } else {
                     ScrollView {
                         // Same KPITile/HomeModuleGrid used on Home — one
                         // consistent "orange square" module tile style
                         // across both tabs instead of two different looks.
-                        HomeModuleGrid(modules: viewModel.modules) { module in
+                        HomeModuleGrid(modules: viewModel.modules, comingSoon: comingSoonModules) { module in
                             navigate(to: ModuleRoute(key: module.key, label: module.label))
                         }
                         .padding(20)
-                    }
-                } else if viewModel.isLoading {
-                    ProgressView()
-                } else if let error = viewModel.errorMessage {
-                    VStack(spacing: 8) {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                        Button("Retry") { Task { await viewModel.load() } }
                     }
                 }
             }

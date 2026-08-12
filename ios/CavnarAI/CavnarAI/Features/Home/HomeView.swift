@@ -65,13 +65,14 @@ struct HomeView: View {
                             VStack(alignment: .leading, spacing: 20) {
                                 needsAttentionSection(summary)
                             }
-                            // Same downward shift as the hero content above —
-                            // both were "properly spaced but too high up," so
-                            // they move down together by the same amount rather
-                            // than changing the spacing between them.
+                            // Independent of heroContentDownShift now — that
+                            // constant governs the greeting text's own
+                            // position inside the tall hero, which stayed
+                            // put; this is just Needs Attention's own small
+                            // top margin below where hero(_:) ends.
                             .padding(.horizontal, 20)
                             .padding(.bottom, 20)
-                            .padding(.top, 20 + Self.heroContentDownShift)
+                            .padding(.top, 20)
                         } else if viewModel.isLoading {
                             ProgressView().padding(.top, 80).frame(maxWidth: .infinity)
                         } else if let error = viewModel.errorMessage {
@@ -194,11 +195,15 @@ struct HomeView: View {
             .offset(y: heroAppeared ? 0 : 26)
             Spacer(minLength: 16)
         }
-        // Slightly shorter than the background layer behind it (600pt, see
-        // heroBackgroundHeight) so Needs Attention starts just as the
-        // animated background's own fade-to-black finishes, not while it's
-        // still visibly transitioning.
-        .frame(minHeight: Self.heroBackgroundHeight - 40)
+        // Deliberately shorter than the 600pt background behind it — this
+        // governs where Needs Attention starts, and at heroBackgroundHeight
+        // - 40 it started low enough to overlap the Ask Cavnar FAB (a fixed
+        // bottom-trailing overlay, not part of the scroll content) on the
+        // initial screenful. Needs Attention now starts while the
+        // background's own fade is still gently tailing off rather than
+        // waiting for it to fully finish — the rows have their own surface
+        // already, so reading over a soft fading glow is fine.
+        .frame(minHeight: 380)
         .frame(maxWidth: .infinity)
         .multilineTextAlignment(.center)
         .padding(.horizontal, 20)
