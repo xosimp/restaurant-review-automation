@@ -70,7 +70,11 @@ struct ModulesGridView: View {
                 ModuleDestinationView(moduleKey: route.key, moduleLabel: route.label)
             }
             .sensoryFeedback(.impact(weight: .light), trigger: navHapticTrigger)
-            .background(Color.cavnarPaper)
+            // Same ember-to-black wash every module screen (Reviews, Labor,
+            // etc.) already has behind its tiles, instead of flat black —
+            // this is the grid that leads into those screens, so it reads
+            // as one continuous look rather than a plain tab standing apart.
+            .cavnarModuleBackground()
             .refreshable { await viewModel.load() }
             .navigationTitle("Modules")
             .task {

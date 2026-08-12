@@ -31,7 +31,9 @@ struct AccountView: View {
                 }
                 .padding(20)
             }
-            .background(Color.cavnarPaper)
+            // Same wash the Modules tab and every module screen use, so
+            // Account doesn't stand apart as the one plain-black tab.
+            .cavnarModuleBackground()
             .refreshable { await viewModel.load() }
             .navigationTitle("Account")
             .task {
@@ -411,6 +413,7 @@ private struct ChangePasswordSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .cavnarEmberTitle("Change Password")
         }
+        .cavnarSheetTopRim()
     }
 }
 
@@ -492,5 +495,6 @@ private struct TwoFactorSetupSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .cavnarEmberTitle("Enable 2FA")
         }
+        .cavnarSheetTopRim()
     }
 }

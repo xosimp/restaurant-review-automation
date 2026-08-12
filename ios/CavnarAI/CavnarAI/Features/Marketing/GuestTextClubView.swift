@@ -192,5 +192,6 @@ private struct AddGuestContactSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .cavnarEmberTitle("Add Guest")
         }
+        .cavnarSheetTopRim()
     }
 }

@@ -296,5 +296,6 @@ private struct TemplatePickerSheet: View {
                 }
             }
         }
+        .cavnarSheetTopRim()
     }
 }

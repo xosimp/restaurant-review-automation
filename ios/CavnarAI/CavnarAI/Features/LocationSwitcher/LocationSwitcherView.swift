@@ -54,5 +54,6 @@ struct LocationSwitcherView: View {
             }
             .task { await viewModel.load() }
         }
+        .cavnarSheetTopRim()
     }
 }

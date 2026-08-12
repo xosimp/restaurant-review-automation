@@ -113,5 +113,6 @@ struct SendReviewRequestSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .cavnarEmberTitle("Request a Review")
         }
+        .cavnarSheetTopRim()
     }
 }
