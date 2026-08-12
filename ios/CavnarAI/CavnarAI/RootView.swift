@@ -121,15 +121,15 @@ struct RootView: View {
         withAnimation(.easeOut(duration: 0.7).delay(0.15)) {
             introAppeared = true
         }
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        try? await Task.sleep(nanoseconds: 1_300_000_000)
 
-        withAnimation(.easeOut(duration: 0.18)) { fabPopped = true }
-        withAnimation(.easeInOut(duration: 0.5)) { fabIconSpun = true }
-        try? await Task.sleep(nanoseconds: 180_000_000)
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) { fabPopped = false }
-        try? await Task.sleep(nanoseconds: 420_000_000)
+        withAnimation(.easeOut(duration: 0.32)) { fabPopped = true }
+        withAnimation(.easeInOut(duration: 0.9)) { fabIconSpun = true }
+        try? await Task.sleep(nanoseconds: 320_000_000)
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.55)) { fabPopped = false }
+        try? await Task.sleep(nanoseconds: 650_000_000)
 
-        withAnimation(.easeInOut(duration: 0.4)) {
+        withAnimation(.easeInOut(duration: 0.6)) {
             fabCollapsed = true
         }
     }
@@ -150,11 +150,34 @@ private struct AskCavnarFAB: View {
     var collapsed: Bool
     var action: () -> Void
 
+    // Ambient "alive" loop for the collapsed icon-only state — a slow
+    // continuous spin plus a breathing glow pulse, so it reads as an always-
+    // listening presence instead of a static leftover icon. Self-contained
+    // here rather than driven from RootView since it's purely cosmetic and
+    // has no one-time/session-scoped requirement the way the intro does.
+    @State private var ambientRotation = false
+    @State private var ambientGlow = false
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: collapsed ? 0 : 8) {
-                GlowBadge(systemImage: "sparkles", size: 30)
-                    .rotationEffect(.degrees(iconSpun ? 360 : 0))
+                ZStack {
+                    // Soft halo behind the icon, pulsing — only visible once
+                    // collapsed (opacity rides the same pulse either way,
+                    // but it's negligible while the material pill is still
+                    // covering it).
+                    Circle()
+                        .fill(Color.cavnarEmber)
+                        .frame(width: 30, height: 30)
+                        .blur(radius: 10)
+                        .opacity(collapsed ? (ambientGlow ? 0.55 : 0.2) : 0)
+
+                    GlowBadge(systemImage: "sparkles", size: 30)
+                        // Intro's one-time spin, then the ambient loop keeps
+                        // turning from wherever that left off — both are
+                        // full 360s so the handoff between them never jumps.
+                        .rotationEffect(.degrees((iconSpun ? 360 : 0) + (ambientRotation ? 360 : 0)))
+                }
                 if !collapsed {
                     Text("Ask Cavnar AI")
                         .font(.cavnarBody(13, weight: 700))
@@ -166,9 +189,18 @@ private struct AskCavnarFAB: View {
             .padding(.leading, 6)
             .padding(.trailing, collapsed ? 6 : 14)
             .padding(.vertical, 6)
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(Color.cavnarEmber.opacity(0.35), lineWidth: 1))
-            .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+            // Faded out (not removed) as `collapsed` flips, in the same
+            // container as the text above — keeps the pill's shrink and the
+            // chrome's fade as one continuous collapse instead of a jump
+            // cut, ending with nothing left behind the icon but its own
+            // built-in glow, per the "just the icon itself" ask.
+            .background(Capsule().fill(.ultraThinMaterial).opacity(collapsed ? 0 : 1))
+            .overlay(
+                Capsule()
+                    .strokeBorder(Color.cavnarEmber.opacity(0.35), lineWidth: 1)
+                    .opacity(collapsed ? 0 : 1)
+            )
+            .shadow(color: .black.opacity(collapsed ? 0 : 0.25), radius: 8, y: 4)
         }
         .buttonStyle(FABPressStyle())
         // Same opacity/offset curve as HomeView's hero, driven by the same
@@ -176,6 +208,15 @@ private struct AskCavnarFAB: View {
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : 26)
         .scaleEffect(popped ? 1.15 : 1.0)
+        .task(id: collapsed) {
+            guard collapsed else { return }
+            withAnimation(.linear(duration: 16).repeatForever(autoreverses: false)) {
+                ambientRotation = true
+            }
+            withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
+                ambientGlow = true
+            }
+        }
     }
 }
 
