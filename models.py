@@ -673,6 +673,21 @@ def init_db(db_path: str = DB_PATH):
             fired_at      TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_alert_log_restaurant ON alert_log(restaurant_id, fired_at)",
+        # One row per restaurant per day — the mobile Home tab's "Total value
+        # delivered" sparkline needs real history to plot, and the figure
+        # itself is computed fresh on every request rather than stored
+        # anywhere, so there was nothing to chart from. Populated
+        # opportunistically (upsert-on-conflict) from the first Home-tab
+        # load of each day — see value_delivered.py — rather than a
+        # separate scheduled job.
+        """CREATE TABLE IF NOT EXISTS value_snapshots (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            snapshot_date TEXT NOT NULL,
+            total_value   INTEGER NOT NULL,
+            UNIQUE(restaurant_id, snapshot_date)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_value_snapshots_restaurant ON value_snapshots(restaurant_id, snapshot_date)",
         "ALTER TABLE restaurants ADD COLUMN alert_1star INTEGER DEFAULT 1",
         "ALTER TABLE restaurants ADD COLUMN alert_2star INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN alert_health INTEGER DEFAULT 1",

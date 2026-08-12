@@ -399,6 +399,18 @@ def _do_mobile_home(current_user):
             "detail": "Restaurants at 80%+ get 2x more new guests",
         })
 
+    # Total value delivered — the Home tab's chart card. Snapshot recorded
+    # opportunistically right here (upsert-on-conflict, so a second load
+    # the same day is a no-op) rather than via a separate scheduled job —
+    # see value_delivered.py.
+    from value_delivered import compute_total_value_delivered, record_value_snapshot, get_value_history
+    total_value = compute_total_value_delivered(rid)
+    try:
+        record_value_snapshot(rid, total_value)
+    except Exception:
+        pass  # the chart just has one fewer data point — never worth failing Home over
+    value_history = get_value_history(rid)
+
     return {
         "ok": True,
         "username": current_user.get("username"),
@@ -408,6 +420,8 @@ def _do_mobile_home(current_user):
         "reviews_awaiting_approval": rstats.get("awaiting_approval", 0),
         "modules": modules_out,
         "needs_attention": needs_attention,
+        "total_value_delivered": total_value,
+        "value_history": value_history,
     }, 200
 
 

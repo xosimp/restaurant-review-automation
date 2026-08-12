@@ -11,6 +11,7 @@ import mobile_api
 import models
 import notify
 import guest_marketing
+import value_delivered
 from auth import create_user, init_auth, set_user_role
 from auth_routes import _login_attempts
 from mobile_api import mobile_bp
@@ -24,7 +25,7 @@ def _redirect_db(monkeypatch, db_path):
     comment for the same gotcha."""
     real_get_conn = models.get_conn
     redirect = lambda *a, **k: real_get_conn(db_path)
-    for mod in (models, auth, auth_routes, client_api, mobile_api, notify, guest_marketing):
+    for mod in (models, auth, auth_routes, client_api, mobile_api, notify, guest_marketing, value_delivered):
         monkeypatch.setattr(mod, "get_conn", redirect)
 
 
@@ -571,6 +572,37 @@ def test_home_returns_the_signed_in_username_for_the_hero_greeting(client, db_pa
     resp = client.get("/mobile/api/home", headers=_auth_headers(token))
     data = resp.get_json()
     assert data["username"] == "jamie"
+
+
+def test_home_includes_total_value_delivered_and_records_a_snapshot(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/home", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert isinstance(data["total_value_delivered"], int)
+    assert isinstance(data["value_history"], list)
+
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT total_value FROM value_snapshots WHERE restaurant_id=? AND snapshot_date = date('now')", (rid,)
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row["total_value"] == data["total_value_delivered"]
+
+
+def test_home_value_snapshot_upserts_not_duplicates_same_day(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    client.get("/mobile/api/home", headers=_auth_headers(token))
+    client.get("/mobile/api/home", headers=_auth_headers(token))
+
+    conn = get_conn(db_path)
+    count = conn.execute(
+        "SELECT COUNT(*) FROM value_snapshots WHERE restaurant_id=? AND snapshot_date = date('now')", (rid,)
+    ).fetchone()[0]
+    conn.close()
+    assert count == 1
 
 
 def test_reviews_endpoint_scoped_to_own_restaurant(client, db_path):
