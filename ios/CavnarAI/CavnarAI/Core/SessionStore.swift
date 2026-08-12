@@ -19,6 +19,12 @@ final class SessionStore {
     private(set) var token: String?
     var isLocked: Bool = false
     var lastError: String?
+    // Set once Home's landing-hero animation has played this session — Home
+    // checks this instead of its own local @State so the fade-in reveals
+    // exactly once per sign-in rather than replaying every time the client
+    // switches back to the Home tab. Reset on logout so the next sign-in
+    // (same app process or not) gets its own landing moment.
+    var hasShownHomeIntro = false
 
     var isAuthenticated: Bool { token != nil }
 
@@ -188,6 +194,7 @@ final class SessionStore {
         token = nil
         currentUser = nil
         isLocked = false
+        hasShownHomeIntro = false
     }
 
     // MARK: - Face ID re-entry lock

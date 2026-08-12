@@ -10,8 +10,10 @@ struct HomeView: View {
     // directly in the action closure, paired with .sensoryFeedback below.
     @State private var navHapticTrigger = 0
     @State private var lastNavigationAt = Date.distantPast
-    @State private var showDate = false
-    @State private var showSubtitle = false
+    // Drives the hero's one-time landing reveal (opacity + upward offset).
+    // Gated by sessionStore.hasShownHomeIntro rather than just this local
+    // flag — see hero(_:)'s onAppear for why.
+    @State private var heroAppeared = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -90,47 +92,58 @@ struct HomeView: View {
 
     // Mirrors the web dashboard's Home hero (templates/dashboard.html,
     // #home-tw-headline/#home-tw-date/#home-tw-sub): an ember date eyebrow,
-    // then "{name} — your restaurant is running on AI." with the name in
-    // ember, then a subtitle line — each stage fading/typing in after the
-    // previous finishes, over the animated ember background.
+    // "{name} — your restaurant is running on AI." with the name in ember,
+    // then a subtitle line — all rendered together and revealed as one
+    // block, rising up from below and fading in, rather than typed out
+    // word by word.
     private func hero(_ summary: HomeSummary) -> some View {
         VStack(spacing: 0) {
-            Spacer(minLength: 24)
+            Spacer(minLength: 16)
             VStack(spacing: 10) {
                 Text(todayDateString)
                     .font(.cavnarBody(11, weight: 700))
                     .tracking(2)
                     .textCase(.uppercase)
                     .foregroundStyle(Color.cavnarEmber)
-                    .opacity(showDate ? 1 : 0)
 
-                HeroHeadlineText(
-                    name: greetingName(summary),
-                    rest: "— your restaurant is running on AI."
-                ) {
-                    withAnimation(.easeOut(duration: 0.35)) { showSubtitle = true }
-                }
-                .opacity(showDate ? 1 : 0)
+                heroHeadline(summary)
 
-                if showSubtitle {
-                    subtitleText(summary)
-                        .transition(.opacity)
-                }
+                subtitleText(summary)
             }
-            Spacer(minLength: 24)
+            .opacity(heroAppeared ? 1 : 0)
+            .offset(y: heroAppeared ? 0 : 26)
+            Spacer(minLength: 16)
         }
-        // Tall enough that Needs Attention below lands near the bottom of
-        // the first screenful instead of directly under the greeting — the
-        // animated background fades to black well before this frame ends,
-        // so it reads as one long wash rather than a boxed hero banner.
-        .frame(minHeight: 560)
+        // Short enough that Needs Attention lands well above the fold — the
+        // animated background still fades to black before this frame ends,
+        // so it reads as one wash rather than a boxed hero banner.
+        .frame(minHeight: 340)
         .frame(maxWidth: .infinity)
         .multilineTextAlignment(.center)
         .padding(.horizontal, 20)
         .background(HomeHeroBackground())
         .onAppear {
-            withAnimation(.easeOut(duration: 0.3).delay(0.2)) { showDate = true }
+            // Plays once per sign-in: SessionStore.hasShownHomeIntro (not
+            // this view's own @State) is the source of truth, since it
+            // survives whatever recreates HomeView when the client switches
+            // tabs — a plain local flag would just replay the reveal every
+            // time they come back to Home.
+            guard !sessionStore.hasShownHomeIntro else {
+                heroAppeared = true
+                return
+            }
+            sessionStore.hasShownHomeIntro = true
+            withAnimation(.easeOut(duration: 0.7).delay(0.15)) {
+                heroAppeared = true
+            }
         }
+    }
+
+    private func heroHeadline(_ summary: HomeSummary) -> some View {
+        (Text(greetingName(summary)).foregroundStyle(Color.cavnarEmber)
+            + Text(" — your restaurant is running on AI.").foregroundStyle(Color.cavnarInk))
+            .font(.cavnarHeadline(26))
+            .lineSpacing(3)
     }
 
     private func greetingName(_ summary: HomeSummary) -> String {
@@ -197,51 +210,5 @@ struct HomeView: View {
         lastNavigationAt = now
         navHapticTrigger += 1
         path.append(route)
-    }
-}
-
-/// Word-by-word reveal for the hero greeting, same pacing as TypewriterText,
-/// but split across two differently-colored halves ("{name}" in ember, the
-/// rest in ink) — TypewriterText itself is single-color, so this is a
-/// dedicated one-off for the one place in the app that needs two-tone reveal
-/// plus a completion callback to chain the subtitle's own fade-in after it.
-private struct HeroHeadlineText: View {
-    let name: String
-    let rest: String
-    var onComplete: (() -> Void)?
-
-    @State private var visibleWordCount = 0
-
-    private var nameWords: [String] { name.split(separator: " ").map(String.init) }
-    private var restWords: [String] { rest.split(separator: " ").map(String.init) }
-    private var allWords: [String] { nameWords + restWords }
-
-    var body: some View {
-        allWords.prefix(visibleWordCount).enumerated()
-            .reduce(Text("")) { partial, item in
-                let (index, word) = item
-                let piece = Text((index > 0 ? " " : "") + word)
-                    .foregroundStyle(index < nameWords.count ? Color.cavnarEmber : Color.cavnarInk)
-                return partial + piece
-            }
-            .font(.cavnarHeadline(26))
-            .lineSpacing(3)
-            .task(id: "\(name)|\(rest)") {
-                visibleWordCount = 0
-                let total = allWords.count
-                guard total > 0 else { onComplete?(); return }
-                // A flat, deliberately slow pace, not TypewriterText's
-                // total-duration/clamp formula — for this short a headline
-                // (7-8 words) that formula's 55ms-per-word ceiling collapsed
-                // the whole reveal to under half a second, which read as
-                // barely any effect at all rather than a greeting typing in.
-                let delayNanos: UInt64 = 150_000_000
-                for i in 1...total {
-                    try? await Task.sleep(nanoseconds: delayNanos)
-                    if Task.isCancelled { return }
-                    visibleWordCount = i
-                }
-                onComplete?()
-            }
     }
 }
