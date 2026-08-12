@@ -26,6 +26,11 @@ struct HomeView: View {
     // so it would mount already-revealed with nothing to animate from.
     var onHeroAppear: () -> Void = {}
 
+    // Shared by hero(_:)'s top padding and the Needs Attention wrapper's top
+    // padding — both sat too high on the page at the same effective height,
+    // so both move down by this same amount rather than drifting apart.
+    private static let heroContentDownShift: CGFloat = 28
+
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
@@ -39,7 +44,13 @@ struct HomeView: View {
                         VStack(alignment: .leading, spacing: 20) {
                             needsAttentionSection(summary)
                         }
-                        .padding(20)
+                        // Same downward shift as the hero content above —
+                        // both were "properly spaced but too high up," so
+                        // they move down together by the same amount rather
+                        // than changing the spacing between them.
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 20)
+                        .padding(.top, 20 + Self.heroContentDownShift)
                     } else if viewModel.isLoading {
                         ProgressView().padding(.top, 80).frame(maxWidth: .infinity)
                     } else if let error = viewModel.errorMessage {
@@ -109,7 +120,12 @@ struct HomeView: View {
     // word by word.
     private func hero(_ summary: HomeSummary) -> some View {
         VStack(spacing: 0) {
-            Spacer(minLength: 16)
+            // A fixed top padding, not a second symmetric Spacer — two
+            // equal-minLength Spacers split all the hero's leftover height
+            // evenly between them regardless of their minLength, which
+            // vertically centered this block instead of actually moving it
+            // down; a fixed offset from the top is the only way to control
+            // exactly how far down it sits.
             VStack(spacing: 10) {
                 Text(todayDateString)
                     .font(.cavnarBody(11, weight: 700))
@@ -121,6 +137,7 @@ struct HomeView: View {
 
                 subtitleText(summary)
             }
+            .padding(.top, 16 + Self.heroContentDownShift)
             .opacity(heroAppeared ? 1 : 0)
             .offset(y: heroAppeared ? 0 : 26)
             Spacer(minLength: 16)
@@ -193,7 +210,7 @@ struct HomeView: View {
                     .buttonStyle(.plain)
                     .opacity(heroAppeared ? 1 : 0)
                     .offset(y: heroAppeared ? 0 : 20)
-                    .animation(.easeOut(duration: 0.5).delay(0.1 + Double(index) * 0.12), value: heroAppeared)
+                    .animation(.easeOut(duration: 0.55).delay(0.15 + Double(index) * 0.22), value: heroAppeared)
                 }
             }
         }

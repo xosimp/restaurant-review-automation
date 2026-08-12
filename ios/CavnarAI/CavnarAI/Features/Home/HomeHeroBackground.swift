@@ -60,15 +60,22 @@ struct HomeHeroBackground: View {
                 // module tiles' gradient — sits behind everything else in
                 // this ZStack so the rays/particles still drift clearly on
                 // top of it, giving the page a lit-from-above glow instead
-                // of the rays floating over flat black. Fades out by the
-                // upper third; the ForEach below's own bottom-fade handles
-                // the rest of the descent into solid black.
+                // of the rays floating over flat black. One continuous taper
+                // across the FULL height (not a separately-framed band) —
+                // capping it at a sub-height produced a visible seam where
+                // the tint stopped dead against the plain black below it.
+                // The tail overlaps the existing bottom-fade's own start
+                // (0.62) so the two blend into each other instead of
+                // leaving a gap where neither contributes any color.
                 LinearGradient(
-                    colors: [Color.cavnarEmber.opacity(0.32), Color.cavnarEmber.opacity(0.10), .clear],
+                    stops: [
+                        .init(color: Color.cavnarEmber.opacity(0.38), location: 0),
+                        .init(color: Color.cavnarEmber.opacity(0.16), location: 0.35),
+                        .init(color: Color.cavnarEmber.opacity(0.04), location: 0.62),
+                        .init(color: .clear, location: 0.85),
+                    ],
                     startPoint: .top, endPoint: .bottom
                 )
-                .frame(height: geo.size.height * 0.55)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
                 ForEach(rays.indices, id: \.self) { i in
                     let ray = rays[i]
