@@ -28,9 +28,9 @@ struct HomeHeroBackground: View {
     // not a made-up third shade — reused at different positions/opacities
     // for depth instead.
     private let blooms: [Bloom] = [
-        Bloom(relX: 0.28, relY: 0.22, relRadius: 0.55, color: .cavnarEmber, baseOpacity: 0.50, speed: 0.00016, phase: 0),
-        Bloom(relX: 0.75, relY: 0.30, relRadius: 0.50, color: .cavnarEmber2, baseOpacity: 0.38, speed: 0.00012, phase: 2),
-        Bloom(relX: 0.50, relY: 0.55, relRadius: 0.62, color: .cavnarEmber, baseOpacity: 0.42, speed: 0.00010, phase: 4),
+        Bloom(relX: 0.28, relY: 0.22, relRadius: 0.55, color: .cavnarEmber, baseOpacity: 0.50, speed: 0.00028, phase: 0),
+        Bloom(relX: 0.75, relY: 0.30, relRadius: 0.50, color: .cavnarEmber2, baseOpacity: 0.38, speed: 0.00022, phase: 2),
+        Bloom(relX: 0.50, relY: 0.55, relRadius: 0.62, color: .cavnarEmber, baseOpacity: 0.42, speed: 0.00018, phase: 4),
     ]
 
     var body: some View {
@@ -42,8 +42,13 @@ struct HomeHeroBackground: View {
                 context.drawLayer { layer in
                     layer.addFilter(.blur(radius: 42))
                     for bloom in blooms {
-                        let dx = sin(t * bloom.speed + bloom.phase) * size.width * 0.12
-                        let dy = cos(t * bloom.speed * 0.8 + bloom.phase) * size.height * 0.06
+                        // Roughly 2x the amplitude and speed of the first
+                        // pass — at the old values the drift was real but
+                        // essentially imperceptible against blooms this
+                        // soft-edged; this is enough to notice without
+                        // reading as an obvious sweep.
+                        let dx = sin(t * bloom.speed + bloom.phase) * size.width * 0.22
+                        let dy = cos(t * bloom.speed * 0.8 + bloom.phase) * size.height * 0.12
                         let cx = bloom.relX * size.width + dx
                         let cy = bloom.relY * size.height + dy
                         let r = bloom.relRadius * size.width
@@ -61,13 +66,14 @@ struct HomeHeroBackground: View {
             }
         }
         .overlay(
-            // Fade to solid black toward the bottom edge, so the blooms
-            // blend into the plain black page below instead of the canvas
-            // ending on a hard boundary.
+            // Fade to solid black toward the bottom edge — pushed from 0.55
+            // to 0.78 so the aurora colors carry much further down the hero
+            // before the transition starts, instead of visibly running out
+            // partway down.
             LinearGradient(
                 stops: [
                     .init(color: .clear, location: 0),
-                    .init(color: .clear, location: 0.55),
+                    .init(color: .clear, location: 0.78),
                     .init(color: Color.cavnarPaper, location: 1.0),
                 ],
                 startPoint: .top, endPoint: .bottom
@@ -80,6 +86,12 @@ struct HomeHeroBackground: View {
                 .blendMode(.overlay)
         )
         .allowsHitTesting(false)
+        // Lets the canvas paint all the way up behind the status bar and
+        // nav bar (where the bell icon sits) instead of stopping at the
+        // normal content safe area — without this, that whole top strip
+        // just shows the plain black page background behind it, regardless
+        // of the nav bar's own material being hidden.
+        .ignoresSafeArea(edges: .top)
     }
 }
 
