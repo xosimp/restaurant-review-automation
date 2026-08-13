@@ -35,9 +35,16 @@ struct AskCavnarView: View {
                     // there was no way to put the keyboard away short of the
                     // system home indicator once it was up.
                     .scrollDismissesKeyboard(.interactively)
+                    // anchor: .center (not .bottom) — a new bubble landing
+                    // flush against the bottom edge, right on top of the
+                    // input bar, read as abrupt/cramped. Centering it in
+                    // the visible area instead gives it some breathing
+                    // room on both sides, the same settle-into-view feel
+                    // most chat apps use rather than a hard snap to the
+                    // very bottom.
                     .onChange(of: viewModel.messages.count) { _, _ in
                         if let last = viewModel.messages.last {
-                            withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                            withAnimation { proxy.scrollTo(last.id, anchor: .center) }
                         }
                     }
                 }
@@ -218,11 +225,11 @@ private struct ChatBubble: View {
                         .font(.cavnarBody(14))
                         .lineSpacing(5)
                         .foregroundStyle(.white)
-                        // Same fix as TypewriterText: without this, a short
-                        // message like "Yes" was rendering in a bubble
-                        // stretched to the full 270pt max width instead of
-                        // hugging its actual content — real bug, reported
-                        // live from a screenshot.
+                        // Without this, a Text inside a width-constrained
+                        // parent can report an inflated ideal width upward
+                        // instead of its true (wrapped) content size — this
+                        // forces it to always report the real size a short
+                        // message like "Yes" actually needs.
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     // Word-by-word reveal — same "AI is composing" language
@@ -231,9 +238,17 @@ private struct ChatBubble: View {
                     TypewriterText(fullText: message.text, font: .cavnarBody(14), color: Color.cavnarInk, lineSpacing: 5)
                 }
             }
+            .fixedSize(horizontal: false, vertical: true)
+            // The width cap has to land HERE — on the content, before
+            // padding/background/clipShape are layered on — not on the
+            // padded/backgrounded view as a final step. Capping after
+            // padding still let a short message like "Yes" report the full
+            // 270pt as its size instead of shrinking to content; capping
+            // the content first and letting padding/background just wrap
+            // around whatever size that produces is what actually hugs it.
+            .frame(maxWidth: 240, alignment: .leading)
             .padding(.horizontal, 15)
             .padding(.vertical, 12)
-            .frame(maxWidth: 270, alignment: .leading)
             .background(bubbleBackground)
             .clipShape(chatBubbleShape(isUser: message.isUser))
             .overlay(
