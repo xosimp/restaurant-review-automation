@@ -6,6 +6,11 @@ struct HomeView: View {
     @State private var showingLocationSwitcher = false
     @State private var showingNotifications = false
     @State private var notificationsBadge = NotificationsBadgeViewModel()
+    // Owned here (not by NotificationsListView) so the fetch can start the
+    // instant the bell is tapped, and so a second open in the same session
+    // shows the already-loaded list immediately instead of resetting to a
+    // fresh loading state — see NotificationsListView's own doc comment.
+    @State private var notificationsList = NotificationsListViewModel()
     @State private var path = NavigationPath()
     // Ticked on every accepted tile/row tap instead of calling Haptic.light()
     // directly in the action closure, paired with .sensoryFeedback below.
@@ -136,6 +141,13 @@ struct HomeView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Haptic.light()
+                        // Kicked off here, before the sheet even starts
+                        // presenting, rather than waiting for
+                        // NotificationsListView's own appearance — gives the
+                        // request a head start on the sheet's own slide-up
+                        // animation so the list is often already in hand by
+                        // the time the sheet finishes appearing.
+                        Task { await notificationsList.load() }
                         showingNotifications = true
                     } label: {
                         ZStack(alignment: .topTrailing) {
@@ -171,7 +183,7 @@ struct HomeView: View {
                 LocationSwitcherView { Task { await viewModel.load() } }
             }
             .sheet(isPresented: $showingNotifications) {
-                NotificationsListView()
+                NotificationsListView(viewModel: notificationsList)
             }
             // Opening the sheet marks alert_log seen server-side (see
             // NotificationsListViewModel.load()), so refreshing again right

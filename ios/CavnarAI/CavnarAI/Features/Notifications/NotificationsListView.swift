@@ -75,8 +75,18 @@ final class NotificationsBadgeViewModel {
 /// Pull-based recent-alerts history (alert_log) — distinct from the push
 /// notifications APNs delivers; this is "what's happened lately," always
 /// available even before push permission is granted.
+///
+/// Takes its view model from the caller (HomeView owns one for the whole
+/// session) rather than creating its own — that's what lets the fetch start
+/// the moment the bell icon is tapped, before the sheet even begins its
+/// slide-up animation, instead of only starting once this view's own .task
+/// fires after the sheet has already finished presenting. Without that
+/// head start, the skeleton loading state was visible for a beat on every
+/// single open even though the request itself is fast, since a fresh
+/// per-sheet view model always starts at isLoading == false / notifications
+/// == [] regardless of how quickly the network responds.
 struct NotificationsListView: View {
-    @State private var viewModel = NotificationsListViewModel()
+    let viewModel: NotificationsListViewModel
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
     @Environment(\.dismiss) private var dismiss
 
@@ -133,7 +143,6 @@ struct NotificationsListView: View {
             .background(Color.cavnarPaper)
             .refreshable { await viewModel.load() }
             .navigationTitle("Notifications")
-            .task { await viewModel.load() }
         }
         .cavnarSheetTopRim()
     }
