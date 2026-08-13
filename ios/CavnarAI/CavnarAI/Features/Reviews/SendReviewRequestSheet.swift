@@ -108,7 +108,7 @@ struct SendReviewRequestSheet: View {
                 }
                 .padding(20)
             }
-            .background(Color.cavnarPaper)
+            .cavnarModuleBackground()
             .navigationTitle("Request a Review")
             .navigationBarTitleDisplayMode(.inline)
             .cavnarEmberTitle("Request a Review")

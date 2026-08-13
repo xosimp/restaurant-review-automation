@@ -162,7 +162,7 @@ struct NotificationsListView: View {
             // gets the same full-bleed background regardless of how little
             // content it has.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(Color.cavnarPaper)
+            .cavnarModuleBackground()
             .refreshable { await viewModel.load() }
             .navigationTitle("Notifications")
         }

@@ -47,18 +47,6 @@ struct AskCavnarView: View {
             .cavnarModuleBackground()
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden, for: .navigationBar)
-            // A second, always-visible way to dismiss — belt-and-suspenders
-            // alongside the interactive scroll dismiss above, for a tap
-            // rather than a drag. Keyboard-placement toolbar items are
-            // independent of the (hidden) navigation-bar toolbar above.
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { inputFocused = false }
-                        .font(.cavnarBody(14, weight: 600))
-                        .foregroundStyle(Color.cavnarEmber)
-                }
-            }
         }
         .cavnarSheetTopRim()
     }
@@ -75,7 +63,21 @@ struct AskCavnarView: View {
                     .foregroundStyle(Color.cavnarInk3)
             }
             Spacer()
+            // Moved here from a .keyboard-placement toolbar item — that
+            // accessory row floats directly above the system keyboard, the
+            // exact same strip of screen the custom input bar's own send
+            // button sits in just above the keyboard's safe-area inset, so
+            // the two visibly overlapped. A fixed top-right button has no
+            // such collision, and only appears while there's actually a
+            // keyboard up to dismiss.
+            if inputFocused {
+                Button("Done") { inputFocused = false }
+                    .font(.cavnarBody(14, weight: 600))
+                    .foregroundStyle(Color.cavnarEmber)
+                    .transition(.opacity)
+            }
         }
+        .animation(.easeOut(duration: 0.15), value: inputFocused)
         .padding(.horizontal, 20)
         .padding(.top, 18)
         .padding(.bottom, 14)
@@ -133,7 +135,7 @@ struct AskCavnarView: View {
 
     private var inputBar: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            TextField("Ask Cavnar…", text: $viewModel.question, axis: .vertical)
+            TextField("How can I help?", text: $viewModel.question, axis: .vertical)
                 .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk)
                 .focused($inputFocused)

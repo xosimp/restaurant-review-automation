@@ -187,7 +187,7 @@ private struct AddGuestContactSheet: View {
                 }
                 .padding(20)
             }
-            .background(Color.cavnarPaper)
+            .cavnarModuleBackground()
             .navigationTitle("Add Guest")
             .navigationBarTitleDisplayMode(.inline)
             .cavnarEmberTitle("Add Guest")

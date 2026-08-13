@@ -288,7 +288,7 @@ private struct TemplatePickerSheet: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Color.cavnarPaper)
+            .cavnarModuleBackground()
             .navigationTitle("Response Templates")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

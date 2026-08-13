@@ -325,11 +325,13 @@ extension View {
 }
 
 /// A dark branded-ember wash from the very top of the screen, fading into
-/// the flat jet-black content background — applied only to the module
-/// screens (Reviews/Labor/Food Cost/Marketing/Intel), not Home/Modules/
-/// Account, to give each module a bit of distinct identity without
-/// touching the app's global black baseline. .ignoresSafeArea() so the
-/// gradient actually starts behind the status bar/nav bar, not below it.
+/// the flat jet-black content background — originally the module screens
+/// only (Reviews/Labor/Food Cost/Marketing/Intel), now also every modal
+/// .sheet() in the app (Ask Cavnar, Notifications, Location Switcher,
+/// Templates, Change Password, 2FA Setup, Add Guest, Send Review Request),
+/// carrying the same premium feel established for Ask Cavnar's redesign
+/// across every other modal instead of leaving them flat. .ignoresSafeArea()
+/// so the gradient actually starts behind the status bar/nav bar, not below it.
 
 /// A circle with a fully transparent fill and only an ember stroke — no
 /// material, no tint fill, nothing opaque — so the module gradient bleeds

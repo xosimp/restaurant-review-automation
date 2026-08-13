@@ -38,7 +38,7 @@ struct LocationSwitcherView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(Color.cavnarPaper)
+            .cavnarModuleBackground()
             .overlay {
                 if viewModel.isLoading { ProgressView() }
                 else if viewModel.locations.isEmpty && viewModel.errorMessage == nil {
