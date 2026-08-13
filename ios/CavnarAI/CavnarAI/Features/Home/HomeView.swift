@@ -69,16 +69,21 @@ struct HomeView: View {
                             // uses.
                             hero(summary)
                             // spacing: 0 with an explicit .padding(.bottom,
-                            // 26) on just the carousel below (instead of a
+                            // 38) on just the carousel below (instead of a
                             // uniform VStack spacing) — this is what lets
                             // the carousel move closer to the greeting
                             // without dragging the chart up with it: the
                             // carousel's own top offset shrinks by the same
-                            // 6pt the gap below it grows, so the chart's
-                            // absolute position on the page never moves.
+                            // amount the gap below it grows, so the chart's
+                            // absolute position on the page never moves. A
+                            // negative top padding here is intentional — it
+                            // pulls the carousel up past where zero would
+                            // sit, tight against the hero's own bottom
+                            // margin, since the previous +2 was too small a
+                            // move to actually read as "closer."
                             VStack(alignment: .leading, spacing: 0) {
                                 needsAttentionSection(summary)
-                                    .padding(.bottom, 26)
+                                    .padding(.bottom, 38)
                                 valueChartSection(summary)
                             }
                             // Independent of heroContentDownShift now — that
@@ -93,7 +98,7 @@ struct HomeView: View {
                             // load.
                             .padding(.horizontal, 20)
                             .padding(.bottom, 120)
-                            .padding(.top, 2)
+                            .padding(.top, -10)
                         } else if viewModel.isLoading {
                             ProgressView().padding(.top, 80).frame(maxWidth: .infinity)
                         } else if let error = viewModel.errorMessage {

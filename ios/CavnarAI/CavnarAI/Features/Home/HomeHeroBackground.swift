@@ -66,24 +66,43 @@ struct HomeHeroBackground: View {
             }
         }
         .overlay(
-            // Fade to solid black toward the bottom edge — pushed from 0.55
-            // to 0.78 so the aurora colors carry much further down the hero
-            // before the transition starts, instead of visibly running out
-            // partway down.
+            // Fade to solid black toward the bottom edge. Widened from a
+            // 0.78->1.0 ramp (22% of the frame) to 0.55->1.0 (45%) — at the
+            // narrower ramp the last stretch went from visible aurora glow
+            // to fully opaque cavnarPaper over too short a distance for the
+            // shorter (460pt, down from 600) frame this sits in now, which
+            // read as a hard seam right where the frame ends rather than a
+            // gradual fade — see heroBackgroundHeight's own doc comment.
             LinearGradient(
                 stops: [
                     .init(color: .clear, location: 0),
-                    .init(color: .clear, location: 0.78),
+                    .init(color: .clear, location: 0.55),
                     .init(color: Color.cavnarPaper, location: 1.0),
                 ],
                 startPoint: .top, endPoint: .bottom
             )
         )
         .overlay(
+            // Masked with the same fade band as the color overlay above —
+            // grain lives only inside this view's own bounds, so without
+            // this it would otherwise cut off abruptly right at the frame's
+            // bottom edge (grain texture above the line, none below), which
+            // read as its own small seam even once the color fade itself
+            // was smooth.
             Image(uiImage: CavnarGrainTexture.image)
                 .resizable(resizingMode: .tile)
                 .opacity(0.05)
                 .blendMode(.overlay)
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .white, location: 0),
+                            .init(color: .white, location: 0.55),
+                            .init(color: .clear, location: 1.0),
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
         )
         .allowsHitTesting(false)
         // Lets the canvas paint all the way up behind the status bar and
