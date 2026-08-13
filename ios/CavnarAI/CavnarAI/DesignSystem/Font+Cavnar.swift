@@ -36,31 +36,54 @@ extension Font {
 
     /// Plus Jakarta Sans — UI chrome (labels, buttons, body text).
     static func cavnarBody(_ size: CGFloat, weight: CGFloat = 400) -> Font {
-        variableFont(family: "Plus Jakarta Sans", weight: weight, size: size)
+        Font(cavnarUIFont(family: "Plus Jakarta Sans", weight: weight, size: size))
     }
 
     /// Space Grotesk — numbers and stats (KPI tiles, dollar figures).
     static func cavnarNumber(_ size: CGFloat, weight: CGFloat = 500) -> Font {
-        variableFont(family: "Space Grotesk", weight: weight, size: size)
+        Font(cavnarUIFont(family: "Space Grotesk", weight: weight, size: size))
     }
 }
 
 /// Selects a specific weight out of a variable font by setting its `wght`
-/// variation axis directly, then wraps the result as a SwiftUI Font.
-/// UIFontDescriptor.AttributeName has no typed `.variation` case — the
-/// variation-axis dictionary is a CoreText-level attribute
-/// (kCTFontVariationAttribute), toll-free bridged onto UIFontDescriptor's
-/// underlying CTFontDescriptor, which is why this reaches into CoreText's
-/// raw attribute key rather than a UIKit-native one.
-private func variableFont(family: String, weight: CGFloat, size: CGFloat) -> Font {
+/// variation axis directly. UIFontDescriptor.AttributeName has no typed
+/// `.variation` case — the variation-axis dictionary is a CoreText-level
+/// attribute (kCTFontVariationAttribute), toll-free bridged onto
+/// UIFontDescriptor's underlying CTFontDescriptor, which is why this reaches
+/// into CoreText's raw attribute key rather than a UIKit-native one.
+///
+/// Returns the raw UIFont (not wrapped as a SwiftUI Font) and is not
+/// private — UIKit-level text measurement (NSString.boundingRect, see
+/// `cavnarMeasuredTextWidth` below) needs to measure against the exact same
+/// font instance `.cavnarBody`/`.cavnarNumber` render with, not an
+/// approximation of it.
+func cavnarUIFont(family: String, weight: CGFloat, size: CGFloat) -> UIFont {
     let wghtAxis = fourCharCode("wght")
     let variationKey = kCTFontVariationAttribute as String
     let descriptor = UIFontDescriptor(fontAttributes: [
         .family: family,
         UIFontDescriptor.AttributeName(rawValue: variationKey): [wghtAxis: weight],
     ])
-    let uiFont = UIFont(descriptor: descriptor, size: size)
-    return Font(uiFont)
+    return UIFont(descriptor: descriptor, size: size)
+}
+
+/// The real rendered width `text` needs at `font` when wrapped within
+/// `maxWidth`, via UIKit's NSString.boundingRect — used to size a chat
+/// bubble to its actual content instead of relying on SwiftUI's own
+/// frame(maxWidth:)/fixedSize content-hugging, which across three separate
+/// attempts did not reliably shrink AskCavnarView's ChatBubble below its cap
+/// for short content ("Yes" kept rendering at the full max width regardless
+/// of fixedSize/frame-ordering changes). Measuring actual glyph metrics
+/// sidesteps that implicit-layout ambiguity entirely.
+func cavnarMeasuredTextWidth(_ text: String, font: UIFont, maxWidth: CGFloat) -> CGFloat {
+    guard !text.isEmpty else { return 0 }
+    let bounds = (text as NSString).boundingRect(
+        with: CGSize(width: maxWidth, height: .greatestFiniteMagnitude),
+        options: [.usesLineFragmentOrigin, .usesFontLeading],
+        attributes: [.font: font],
+        context: nil
+    )
+    return ceil(bounds.width)
 }
 
 private func fourCharCode(_ tag: String) -> Int {

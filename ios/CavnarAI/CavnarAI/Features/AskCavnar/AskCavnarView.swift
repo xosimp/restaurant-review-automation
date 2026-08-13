@@ -1,4 +1,9 @@
 import SwiftUI
+import UIKit
+
+/// Scroll target used while Cavnar's answer is typing out — see the
+/// comment at its scrollTo call site in AskCavnarView.body.
+private let chatScrollBottomID = "chat-scroll-bottom"
 
 struct AskCavnarView: View {
     @State private var viewModel = AskCavnarViewModel()
@@ -39,13 +44,29 @@ struct AskCavnarView: View {
                                     // stack/fight itself at this frequency;
                                     // a plain immediate scrollTo here reads
                                     // as smooth continuous tracking instead.
-                                    proxy.scrollTo(message.id, anchor: .bottom)
+                                    // Targets the trailing spacer below
+                                    // (chatScrollBottomID), not the bubble's
+                                    // own id — scrolling straight to the
+                                    // bubble put its bottom edge flush
+                                    // against the input bar/keyboard with no
+                                    // breathing room; anchoring on the
+                                    // spacer that follows it reserves a
+                                    // consistent gap instead, for as long as
+                                    // this stays the last thing in the list.
+                                    proxy.scrollTo(chatScrollBottomID, anchor: .bottom)
                                 }
                                 .id(message.id)
                             }
                             if viewModel.isLoading {
                                 LoadingBubble()
                             }
+                            // Scroll target for the in-progress reveal above
+                            // — see its comment. Not part of the message
+                            // list itself, just reserved space the scroll
+                            // view can settle into.
+                            Color.clear
+                                .frame(height: 8)
+                                .id(chatScrollBottomID)
                         }
                         .padding(16)
                     }
@@ -224,19 +245,32 @@ private struct ChatBubble: View {
     let message: ChatMessage
     var onReveal: (() -> Void)? = nil
 
+    // Bubble's outer cap, minus its own horizontal padding (15pt each
+    // side) — the width actually available to the text itself.
+    private static let maxBubbleWidth: CGFloat = 260
+    private static let maxTextWidth: CGFloat = maxBubbleWidth - 30
+    private static let textFont = cavnarUIFont(family: "Plus Jakarta Sans", weight: 400, size: 14)
+
+    // Fourth attempt at the bubble-hugging bug. The first three all relied
+    // on SwiftUI's own implicit sizing (fixedSize, frame(maxWidth:)
+    // ordering, Spacer removal) inside this exact nested hierarchy
+    // (HStack > VStack > padding > frame(maxWidth:) > background/clipShape)
+    // and none of them held — "Yes" kept rendering at the full maxWidth
+    // regardless. Rather than guess at a fourth variation on the same
+    // technique, this sidesteps SwiftUI's content-hugging negotiation
+    // entirely: cavnarMeasuredTextWidth measures the real rendered width via
+    // UIKit's NSString.boundingRect, and that exact number is applied
+    // directly to the Text/TypewriterText below via frame(width:) — not
+    // frame(maxWidth:). There's no longer a "hug vs cap" decision for
+    // SwiftUI to get wrong; the width is just a known value. The VStack
+    // then sizes itself to the max of its two children (the "CAVNAR AI"
+    // label and this exactly-sized text), which is unambiguous, ordinary
+    // VStack behavior.
+    private var userTextWidth: CGFloat {
+        cavnarMeasuredTextWidth(message.text, font: Self.textFont, maxWidth: Self.maxTextWidth)
+    }
+
     var body: some View {
-        // Third attempt at the bubble-hugging bug, and a structurally
-        // different one: the first two kept a Spacer(minLength:) inside
-        // this HStack to push the bubble to one edge, and adjusted
-        // fixedSize/frame ordering around it — neither held, which means
-        // the Spacer-vs-bounded-sibling flex negotiation itself was the
-        // problem, not the ordering around it. This version removes the
-        // Spacer entirely: the HStack now contains ONLY the badge (for AI)
-        // and the bubble, sized to its own natural content with no
-        // competing flexible sibling, and gets POSITIONED at one edge by
-        // wrapping it in frame(maxWidth: .infinity, alignment:) instead —
-        // the exact same "let this row size itself, then place it" pattern
-        // already used throughout the rest of the app.
         HStack(alignment: .top, spacing: 8) {
             if !message.isUser {
                 GlowBadge(systemImage: "sparkles", size: 28)
@@ -255,19 +289,21 @@ private struct ChatBubble: View {
                         .font(.cavnarBody(14))
                         .lineSpacing(5)
                         .foregroundStyle(.white)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: userTextWidth, alignment: .leading)
                 } else {
                     // Word-by-word reveal — same "AI is composing" language
                     // as AIConsultantView's insight boxes elsewhere in the
                     // app, instead of the answer just snapping in instantly.
                     TypewriterText(
                         fullText: message.text, font: .cavnarBody(14), color: Color.cavnarInk, lineSpacing: 5,
+                        maxWidth: Self.maxTextWidth, measuringFont: Self.textFont,
                         onReveal: onReveal
                     )
                 }
             }
             .padding(.horizontal, 15)
             .padding(.vertical, 12)
-            .frame(maxWidth: 260, alignment: .leading)
             .background(bubbleBackground)
             .clipShape(chatBubbleShape(isUser: message.isUser))
             .overlay(
