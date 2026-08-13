@@ -263,5 +263,10 @@ def test_ask_truncates_overly_long_questions(db_path, monkeypatch):
     monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create_with_retry)
     ask(r, "a" * 2000)
     prompt = captured["messages"][0]["content"]
-    # 500-char cap on the question itself, embedded inside a longer prompt
-    assert prompt.count("a") <= 600
+    # 500-char cap on the question itself, embedded inside a longer prompt —
+    # checked as the exact quoted run of "a"s rather than a total letter
+    # count across the whole prompt, since the surrounding instructional
+    # text (which also contains the letter "a") isn't part of what's being
+    # capped here and its own length shouldn't affect this assertion.
+    assert ("a" * 500) in prompt
+    assert ("a" * 501) not in prompt

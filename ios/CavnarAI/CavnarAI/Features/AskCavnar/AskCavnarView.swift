@@ -11,7 +11,7 @@ struct AskCavnarView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 18) {
                             if viewModel.messages.isEmpty {
-                                Text("Ask a quick question about your reviews, labor, food cost, or marketing.")
+                                Text("Ask me anything — your numbers, or general advice on running the place. I'll pull in your real data whenever it's relevant.")
                                     .font(.cavnarBody(13))
                                     .foregroundStyle(Color.cavnarInk3)
                                     .padding(.top, 40)

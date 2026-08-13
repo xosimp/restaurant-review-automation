@@ -1,14 +1,19 @@
 """
 ask_cavnar.py — the in-dashboard AI copilot: answers a plain-English
-question about a restaurant's own data by gathering a snapshot of its
-current stats across whichever modules are active, then asking Claude to
-answer strictly from that snapshot.
+question by gathering a snapshot of the restaurant's current stats across
+whichever modules are active, then asking Claude to answer it.
 
-Not a general-purpose chatbot — a narrow "explain what my own numbers
-mean" tool. The context assembled here is the only "memory" the model
-gets, so it can't invent a number for a module the client doesn't have,
-and it's told explicitly to say so rather than guess when the data isn't
-in the snapshot.
+Two modes, chosen by Claude per-question rather than hard-coded here:
+questions about the restaurant's OWN numbers are answered strictly from
+the data snapshot (never invent a figure that isn't there — say so and
+suggest what to check instead), while general restaurant-consultant
+questions (marketing ideas, staffing strategy, menu pricing, industry
+benchmarks, or just conversation) draw on Claude's own expertise the same
+way any other AI assistant would, optionally grounded in the real
+snapshot data when it's relevant. The snapshot is still the model's only
+source of truth for this restaurant's actual figures — that half of the
+rule never loosens — but it's no longer the model's only allowed source
+of information overall.
 """
 import os
 import anthropic
@@ -193,7 +198,13 @@ def build_context(restaurant):
     return "\n".join(parts) if parts else "No data available yet for this restaurant."
 
 
-ASK_CAVNAR_PROMPT = """You are Cavnar AI, a restaurant intelligence consultant. Answer the owner's question using ONLY the data below — never invent a number that isn't here. If the data needed to answer isn't in the snapshot, say so plainly and suggest what to check instead (e.g. "upload your shifts CSV" if labor data is missing), rather than guessing.
+ASK_CAVNAR_PROMPT = """You are Cavnar AI, an AI-powered restaurant intelligence consultant embedded in {restaurant_name}'s dashboard. You have two modes, and most questions call for a blend of both:
+
+1. QUESTIONS ABOUT THIS RESTAURANT'S OWN NUMBERS (reviews, labor, food cost, marketing, competitors): answer strictly from the DATA SNAPSHOT below. Never invent a figure that isn't there. If what's needed isn't in the snapshot, say so plainly and suggest what to check instead (e.g. "upload your shifts CSV" if labor data is missing) rather than guessing.
+
+2. EVERYTHING ELSE — restaurant industry advice, marketing ideas, menu strategy, staffing/scheduling best practices, general business questions, or just conversation: answer using your own knowledge and expertise as an experienced restaurant consultant, same as you would in any other context. Weave in this restaurant's real data from the snapshot when it's genuinely relevant, but don't limit yourself to only what's in the snapshot for these — you're free to think and advise.
+
+Use judgment about which mode (or blend) a question calls for — "how do I get my labor cost down" wants both this restaurant's real labor % AND general scheduling advice, for example.
 
 Restaurant: {restaurant_name}
 
@@ -202,7 +213,7 @@ CURRENT DATA SNAPSHOT:
 
 Owner's question: "{question}"
 
-Answer in 2-4 sentences, warm and direct, like a trusted advisor. Always use $ signs before dollar amounts. No markdown, no bullet points, no headers — plain conversational text only."""
+Answer in 2-5 sentences, warm and direct, like a trusted advisor sitting across the table — not a corporate assistant. Always use $ signs before dollar amounts when citing this restaurant's real numbers. No markdown, no bullet points, no headers — plain conversational text only."""
 
 
 def ask(restaurant, question):
@@ -219,7 +230,10 @@ def ask(restaurant, question):
     message = create_with_retry(
         _client,
         model=os.getenv("ASK_CAVNAR_MODEL", "claude-sonnet-5"),
-        max_tokens=350,
+        # Bumped from 350 — general-advice answers (mode 2 in the prompt
+        # above) run a bit longer than a terse data readout even capped at
+        # 5 sentences, and 350 was clipping some of them mid-thought.
+        max_tokens=450,
         # claude-sonnet-5 rejects `temperature` outright ("deprecated for
         # this model") — confirmed live via direct API call. Omitted rather
         # than set, since this model doesn't accept it at all.
