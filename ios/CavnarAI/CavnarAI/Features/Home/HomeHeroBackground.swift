@@ -1,5 +1,7 @@
 import SwiftUI
 import UIKit
+import CoreImage
+import CoreImage.CIFilterBuiltins
 
 /// "Ember Aurora" — replaces the old rotating-light-ray + drifting-particle
 /// system entirely. Three large, heavily-blurred gradient blooms drift and
@@ -91,8 +93,15 @@ struct HomeHeroBackground: View {
             // was smooth.
             Image(uiImage: CavnarGrainTexture.image)
                 .resizable(resizingMode: .tile)
-                .opacity(0.05)
-                .blendMode(.overlay)
+                // .overlay blend boosts contrast in proportion to how far a
+                // pixel is from mid-gray — exactly what makes noise pop
+                // hardest over the vivid, saturated bloom colors, which is
+                // the opposite of subtle there. .softLight gives the same
+                // "keeps a flat gradient from banding" texture without that
+                // contrast boost, so dropped opacity a bit further too now
+                // that the blur above already softened the noise itself.
+                .opacity(0.035)
+                .blendMode(.softLight)
                 .mask(
                     LinearGradient(
                         stops: [
@@ -122,7 +131,13 @@ private enum CavnarGrainTexture {
     static let image: UIImage = {
         let side = 64
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side))
-        return renderer.image { ctx in
+        // Full-contrast, per-pixel random noise (0...1 white values, no
+        // correlation between neighbors) is harsh digital static, not the
+        // soft film-grain dither the css-tricks "grainy gradients" technique
+        // this was modeled on actually uses — that technique blurs its noise
+        // slightly first. Skipping that blur step is what made this read as
+        // sharp speckling over the blooms instead of a gentle texture.
+        let raw = renderer.image { ctx in
             let cg = ctx.cgContext
             for y in 0..<side {
                 for x in 0..<side {
@@ -132,5 +147,21 @@ private enum CavnarGrainTexture {
                 }
             }
         }
+        return blurred(raw, radius: 1.4) ?? raw
     }()
+
+    private static func blurred(_ image: UIImage, radius: Double) -> UIImage? {
+        guard let ciImage = CIImage(image: image) else { return nil }
+        let filter = CIFilter.gaussianBlur()
+        filter.inputImage = ciImage
+        filter.radius = Float(radius)
+        guard let output = filter.outputImage else { return nil }
+        // Crop back to the original extent — CIGaussianBlur expands the
+        // image's bounds as it spreads samples outward, and tiling an
+        // uncropped result would leave a soft transparent fringe at each
+        // tile's edge instead of seamless repetition.
+        let context = CIContext()
+        guard let cgImage = context.createCGImage(output, from: ciImage.extent) else { return nil }
+        return UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
+    }
 }
