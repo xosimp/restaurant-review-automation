@@ -225,10 +225,20 @@ private struct ChatBubble: View {
     var onReveal: (() -> Void)? = nil
 
     var body: some View {
+        // Third attempt at the bubble-hugging bug, and a structurally
+        // different one: the first two kept a Spacer(minLength:) inside
+        // this HStack to push the bubble to one edge, and adjusted
+        // fixedSize/frame ordering around it — neither held, which means
+        // the Spacer-vs-bounded-sibling flex negotiation itself was the
+        // problem, not the ordering around it. This version removes the
+        // Spacer entirely: the HStack now contains ONLY the badge (for AI)
+        // and the bubble, sized to its own natural content with no
+        // competing flexible sibling, and gets POSITIONED at one edge by
+        // wrapping it in frame(maxWidth: .infinity, alignment:) instead —
+        // the exact same "let this row size itself, then place it" pattern
+        // already used throughout the rest of the app.
         HStack(alignment: .top, spacing: 8) {
-            if message.isUser {
-                Spacer(minLength: 40)
-            } else {
+            if !message.isUser {
                 GlowBadge(systemImage: "sparkles", size: 28)
                     .padding(.top, 2)
             }
@@ -245,12 +255,6 @@ private struct ChatBubble: View {
                         .font(.cavnarBody(14))
                         .lineSpacing(5)
                         .foregroundStyle(.white)
-                        // Without this, a Text inside a width-constrained
-                        // parent can report an inflated ideal width upward
-                        // instead of its true (wrapped) content size — this
-                        // forces it to always report the real size a short
-                        // message like "Yes" actually needs.
-                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     // Word-by-word reveal — same "AI is composing" language
                     // as AIConsultantView's insight boxes elsewhere in the
@@ -261,17 +265,9 @@ private struct ChatBubble: View {
                     )
                 }
             }
-            .fixedSize(horizontal: false, vertical: true)
-            // The width cap has to land HERE — on the content, before
-            // padding/background/clipShape are layered on — not on the
-            // padded/backgrounded view as a final step. Capping after
-            // padding still let a short message like "Yes" report the full
-            // 270pt as its size instead of shrinking to content; capping
-            // the content first and letting padding/background just wrap
-            // around whatever size that produces is what actually hugs it.
-            .frame(maxWidth: 240, alignment: .leading)
             .padding(.horizontal, 15)
             .padding(.vertical, 12)
+            .frame(maxWidth: 260, alignment: .leading)
             .background(bubbleBackground)
             .clipShape(chatBubbleShape(isUser: message.isUser))
             .overlay(
@@ -279,11 +275,8 @@ private struct ChatBubble: View {
                     .strokeBorder(message.isUser ? Color.white.opacity(0.15) : Color.white.opacity(0.06), lineWidth: 1)
             )
             .shadow(color: message.isUser ? Color.cavnarEmber.opacity(0.22) : Color.black.opacity(0.25), radius: 10, x: 0, y: 4)
-
-            if !message.isUser {
-                Spacer(minLength: 40)
-            }
         }
+        .frame(maxWidth: .infinity, alignment: message.isUser ? .trailing : .leading)
     }
 
     private var bubbleBackground: AnyShapeStyle {
@@ -318,7 +311,9 @@ private struct LoadingBubble: View {
                 chatBubbleShape(isUser: false)
                     .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
             )
-            Spacer(minLength: 40)
         }
+        // Same edge-positioning approach as ChatBubble, for consistency —
+        // see its comment for why this replaced a trailing Spacer.
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
