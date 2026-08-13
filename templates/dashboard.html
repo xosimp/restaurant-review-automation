@@ -3761,6 +3761,13 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 </div>
 
 <script>
+// The backend has no memory of its own between calls (each is a stateless
+// Claude request) — this array IS the conversation's memory, sent back as
+// "history" on every subsequent question so a short follow-up like "yes"
+// resolves against what was actually being discussed. Same fix as the iOS
+// app's AskCavnarViewModel.messages, for identical behavior on both.
+var _askCavnarHistory = [];
+
 window.toggleAskCavnar = function() {
   var panel = document.getElementById('ask-cavnar-panel');
   var isOpen = panel.style.display === 'flex';
@@ -3799,6 +3806,10 @@ window.sendAskCavnar = function() {
   var question = input.value.trim();
   if (!question) return;
   var btn = document.getElementById('ask-cavnar-send-btn');
+  // Captured BEFORE this question is added to history below, so it's
+  // exactly the prior back-and-forth — the backend appends "question"
+  // itself as the final turn (see ask_cavnar.py's "history" contract).
+  var historyToSend = _askCavnarHistory.slice();
   _appendAskCavnarMessage(question, true);
   input.value = '';
   input.disabled = true;
@@ -3807,13 +3818,18 @@ window.sendAskCavnar = function() {
   fetch('/api/ask-cavnar', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({question: question})
+    body: JSON.stringify({question: question, history: historyToSend})
   }).then(function(r) { return r.json(); }).then(function(d) {
     input.disabled = false;
     btn.disabled = false;
     input.focus();
     loadingBubble.remove();
-    _appendAskCavnarMessage(d.ok ? d.answer : (d.error || 'Something went wrong — try again.'), false);
+    var answer = d.ok ? d.answer : (d.error || 'Something went wrong — try again.');
+    _appendAskCavnarMessage(answer, false);
+    if (d.ok) {
+      _askCavnarHistory.push({role: 'user', content: question});
+      _askCavnarHistory.push({role: 'assistant', content: answer});
+    }
   }).catch(function() {
     input.disabled = false;
     btn.disabled = false;

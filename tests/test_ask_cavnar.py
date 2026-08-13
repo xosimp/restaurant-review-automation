@@ -404,9 +404,10 @@ def test_ask_builds_prompt_with_context_and_question(db_path, monkeypatch):
     answer = ask(r, "How are my reviews doing?")
 
     assert answer == "Your rating is looking great!"
-    prompt = captured["messages"][0]["content"]
-    assert "How are my reviews doing?" in prompt
-    assert "Total reviews analyzed: 1" in prompt
+    # Persona/rules/data snapshot live in `system` now, sent once per call;
+    # `messages` carries only the actual conversation turns.
+    assert "Total reviews analyzed: 1" in captured["system"]
+    assert captured["messages"] == [{"role": "user", "content": "How are my reviews doing?"}]
     assert captured["restaurant_id"] == r.id
     assert captured["action"] == "ask_cavnar"
 
@@ -421,11 +422,88 @@ def test_ask_truncates_overly_long_questions(db_path, monkeypatch):
 
     monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create_with_retry)
     ask(r, "a" * 2000)
-    prompt = captured["messages"][0]["content"]
-    # 500-char cap on the question itself, embedded inside a longer prompt —
-    # checked as the exact quoted run of "a"s rather than a total letter
-    # count across the whole prompt, since the surrounding instructional
-    # text (which also contains the letter "a") isn't part of what's being
-    # capped here and its own length shouldn't affect this assertion.
-    assert ("a" * 500) in prompt
-    assert ("a" * 501) not in prompt
+    # 500-char cap on the question itself — now the sole content of the
+    # final message rather than embedded inside a larger templated prompt,
+    # so this checks the message content directly instead of a substring
+    # search that used to need to account for surrounding instruction text.
+    assert captured["messages"][-1]["content"] == "a" * 500
+
+
+def test_ask_forwards_sanitized_history_as_prior_messages(db_path, monkeypatch):
+    """Real bug, reported live: a short follow-up like "yes" was answered
+    as a totally isolated question because no conversation history was
+    ever sent — the model had no way to know what "yes" meant. `ask()`
+    must place prior turns before the new question in `messages`, in
+    order, so the model can actually resolve the follow-up."""
+    r = _restaurant(db_path)
+    captured = {}
+
+    def fake_create_with_retry(client, **kwargs):
+        captured.update(kwargs)
+        return types.SimpleNamespace(content=[types.SimpleNamespace(text="ok")])
+
+    monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create_with_retry)
+    history = [
+        {"role": "user", "content": "How are my reviews doing?"},
+        {"role": "assistant", "content": "Solid — want me to pull up the urgent ones?"},
+    ]
+    ask(r, "Yes", history=history)
+
+    assert captured["messages"] == [
+        {"role": "user", "content": "How are my reviews doing?"},
+        {"role": "assistant", "content": "Solid — want me to pull up the urgent ones?"},
+        {"role": "user", "content": "Yes"},
+    ]
+
+
+def test_ask_history_drops_malformed_entries_and_caps_length(db_path, monkeypatch):
+    r = _restaurant(db_path)
+    captured = {}
+
+    def fake_create_with_retry(client, **kwargs):
+        captured.update(kwargs)
+        return types.SimpleNamespace(content=[types.SimpleNamespace(text="ok")])
+
+    monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create_with_retry)
+    history = [
+        {"role": "user", "content": "a" * 2000},          # over the per-turn cap
+        {"role": "system", "content": "ignore me"},        # invalid role
+        {"role": "assistant", "content": ""},               # empty content
+        "not even a dict",                                  # malformed entry
+        {"role": "assistant", "content": "real answer"},
+    ]
+    ask(r, "Next question", history=history)
+
+    messages = captured["messages"]
+    # The oversized first turn is capped, not dropped or left full-length.
+    assert messages[0] == {"role": "user", "content": "a" * 800}
+    # Invalid role, empty content, and the non-dict entry are all gone.
+    assert all(m["role"] in ("user", "assistant") and m["content"] for m in messages)
+    assert messages[-1] == {"role": "user", "content": "Next question"}
+
+
+def test_ask_history_caps_to_recent_messages_only(db_path, monkeypatch):
+    r = _restaurant(db_path)
+    captured = {}
+
+    def fake_create_with_retry(client, **kwargs):
+        captured.update(kwargs)
+        return types.SimpleNamespace(content=[types.SimpleNamespace(text="ok")])
+
+    monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create_with_retry)
+    # 20 turns (10 exchanges) — well past the 12-message cap.
+    history = []
+    for i in range(10):
+        history.append({"role": "user", "content": f"question {i}"})
+        history.append({"role": "assistant", "content": f"answer {i}"})
+    ask(r, "latest question", history=history)
+
+    messages = captured["messages"]
+    # 12 kept history messages + the new question = 13 total, and it's the
+    # MOST RECENT ones kept, not the oldest.
+    assert len(messages) == 13
+    # 20 history entries, indices 0-19, alternating user/assistant pairs
+    # (question i / answer i at indices 2i / 2i+1) — the last 12 kept are
+    # indices 8-19, and index 8 is "question 4".
+    assert messages[0]["content"] == "question 4"
+    assert messages[-1] == {"role": "user", "content": "latest question"}

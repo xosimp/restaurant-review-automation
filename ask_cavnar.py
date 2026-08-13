@@ -334,7 +334,15 @@ def build_context(restaurant):
     return "\n".join(parts)
 
 
-ASK_CAVNAR_PROMPT = """You are Cavnar AI, an AI-powered restaurant intelligence consultant embedded in {restaurant_name}'s dashboard. You have two modes, and most questions call for a blend of both:
+# System prompt (persona/rules/data snapshot) is sent once per call via the
+# `system` parameter, refreshed with current data every time — separate
+# from `messages`, which now carries the actual back-and-forth so the model
+# can see what it's replying to. Previously the whole thing (rules + data +
+# question) was one giant "user" message with no history at all, so a
+# follow-up like "yes" arrived as a fresh, context-free question every
+# time — real bug, reported live: the model had no way to know what "yes"
+# was even responding to.
+ASK_CAVNAR_SYSTEM_PROMPT = """You are Cavnar AI, an AI-powered restaurant intelligence consultant embedded in {restaurant_name}'s dashboard, having an ongoing conversation with the owner. You have two modes, and most questions call for a blend of both:
 
 1. QUESTIONS ABOUT THIS RESTAURANT'S OWN NUMBERS (reviews, labor, food cost, marketing, competitors): answer strictly from the DATA SNAPSHOT below. Never invent a figure that isn't there. If what's needed isn't in the snapshot, say so plainly and suggest what to check instead (e.g. "upload your shifts CSV" if labor data is missing) rather than guessing.
 
@@ -351,22 +359,58 @@ Restaurant: {restaurant_name}
 CURRENT DATA SNAPSHOT:
 {context}
 
-Owner's question: "{question}"
+This is a real, ongoing conversation — the message history below is genuine back-and-forth with this same owner, not a series of disconnected one-off questions. Read it the way a person would: if the latest message is a short reply like "yes," "the second one," or "how about labor instead," resolve it against what YOU just said or asked in your own previous message, and answer accordingly. Never ask the owner to repeat context that's already sitting right there in the conversation.
 
 Answer in 2-3 sentences by default — this renders as a narrow mobile chat bubble, not a report, so keep sentences themselves short too, not just the count. Only go to 4 sentences when the question is genuinely multi-part and actually needs it. If there's more worth saying than that, say the most useful part now and offer to go deeper, rather than saying everything at once. Warm and direct, like a trusted advisor sitting across the table — not a corporate assistant. Always use $ signs before dollar amounts when citing this restaurant's real numbers. No markdown, no bullet points, no headers — plain conversational text only."""
 
+# Bounds how much prior conversation gets sent (and paid for) on every
+# single call — 12 messages is 6 full exchanges, plenty for a short-term
+# "what were we just talking about" memory without letting an old, long
+# session balloon every subsequent request's cost indefinitely.
+_MAX_HISTORY_MESSAGES = 12
+_MAX_HISTORY_TURN_LENGTH = 800
 
-def ask(restaurant, question):
-    """Ask Cavnar a question about `restaurant`'s own data. Returns the
-    plain-text answer. Callers are responsible for rate-limiting (see
-    ai_utils.ai_rate_limited) before calling this — it always makes a real
-    Claude call."""
+
+def _sanitize_history(history):
+    """Defensively rebuilds the conversation history rather than trusting
+    the client's payload outright: drops anything without a valid
+    user/assistant role or non-empty content, caps each turn's length,
+    collapses any accidental same-role repeats (the Messages API requires
+    strict alternation starting with "user"), and keeps only the most
+    recent _MAX_HISTORY_MESSAGES entries."""
+    cleaned = []
+    for turn in (history or []):
+        if not isinstance(turn, dict):
+            continue
+        role = turn.get("role")
+        content = (turn.get("content") or "").strip()[:_MAX_HISTORY_TURN_LENGTH]
+        if role not in ("user", "assistant") or not content:
+            continue
+        if cleaned and cleaned[-1]["role"] == role:
+            cleaned[-1] = {"role": role, "content": content}  # keep the newer one
+        else:
+            cleaned.append({"role": role, "content": content})
+    # Cap FIRST, then re-check the "starts with user" rule against the
+    # capped result — checking before the cap would only guarantee the
+    # FULL list started with "user," not the truncated tail actually sent,
+    # which could land on "assistant" first if the cap boundary fell there.
+    cleaned = cleaned[-_MAX_HISTORY_MESSAGES:]
+    if cleaned and cleaned[0]["role"] != "user":
+        cleaned = cleaned[1:]
+    return cleaned
+
+
+def ask(restaurant, question, history=None):
+    """Ask Cavnar a question about `restaurant`'s own data. `history` is the
+    prior back-and-forth in THIS chat session as
+    [{"role": "user"|"assistant", "content": str}, ...], oldest first, NOT
+    including `question` itself — the caller's own message list up to (but
+    not including) the new question. Returns the plain-text answer.
+    Callers are responsible for rate-limiting (see ai_utils.ai_rate_limited)
+    before calling this — it always makes a real Claude call."""
     context = build_context(restaurant)
-    prompt = ASK_CAVNAR_PROMPT.format(
-        restaurant_name=restaurant.name,
-        context=context,
-        question=question.strip()[:500],
-    )
+    system_prompt = ASK_CAVNAR_SYSTEM_PROMPT.format(restaurant_name=restaurant.name, context=context)
+    messages = _sanitize_history(history) + [{"role": "user", "content": question.strip()[:500]}]
     message = create_with_retry(
         _client,
         model=os.getenv("ASK_CAVNAR_MODEL", "claude-sonnet-5"),
@@ -380,7 +424,8 @@ def ask(restaurant, question):
         # claude-sonnet-5 rejects `temperature` outright ("deprecated for
         # this model") — confirmed live via direct API call. Omitted rather
         # than set, since this model doesn't accept it at all.
-        messages=[{"role": "user", "content": prompt}],
+        system=system_prompt,
+        messages=messages,
         restaurant_id=restaurant.id,
         action="ask_cavnar",
     )

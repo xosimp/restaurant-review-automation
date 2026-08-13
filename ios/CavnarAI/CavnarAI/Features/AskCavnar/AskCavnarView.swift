@@ -218,6 +218,12 @@ private struct ChatBubble: View {
                         .font(.cavnarBody(14))
                         .lineSpacing(5)
                         .foregroundStyle(.white)
+                        // Same fix as TypewriterText: without this, a short
+                        // message like "Yes" was rendering in a bubble
+                        // stretched to the full 270pt max width instead of
+                        // hugging its actual content — real bug, reported
+                        // live from a screenshot.
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     // Word-by-word reveal — same "AI is composing" language
                     // as AIConsultantView's insight boxes elsewhere in the

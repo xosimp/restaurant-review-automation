@@ -813,11 +813,16 @@ def mkt_performance_api(current_user):
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
-def _do_ask_cavnar(restaurant_id, question):
+def _do_ask_cavnar(restaurant_id, question, history=None):
     """The AI copilot's shared body — answers a plain-English question about
     the restaurant's own live data (reviews/labor/food cost/marketing,
     whichever modules are active) instead of the owner having to piece it
-    together across tabs. Used by both the web panel and the mobile app."""
+    together across tabs. Used by both the web panel and the mobile app.
+
+    `history` is the caller's own prior message list for this chat session
+    (list of {"role", "content"} dicts, oldest first, NOT including
+    `question`) — ask_cavnar.ask() sanitizes/caps it itself, so this is a
+    thin passthrough, not a second place that needs to re-validate it."""
     question = (question or "").strip()
     if not question:
         return {"ok": False, "error": "Ask a question first."}, 400
@@ -831,7 +836,7 @@ def _do_ask_cavnar(restaurant_id, question):
         restaurant = get_restaurant(restaurant_id)
         if not restaurant:
             return {"ok": False, "error": "Restaurant not found"}, 404
-        answer = _ask_cavnar(restaurant, question)
+        answer = _ask_cavnar(restaurant, question, history=history)
         return {"ok": True, "answer": answer}, 200
     except Exception as e:
         import ops
@@ -844,7 +849,7 @@ def _do_ask_cavnar(restaurant_id, question):
 def ask_cavnar_api(current_user):
     rid = current_user["restaurant_id"]
     data = request.get_json() or {}
-    payload, status = _do_ask_cavnar(rid, data.get("question"))
+    payload, status = _do_ask_cavnar(rid, data.get("question"), history=data.get("history"))
     return jsonify(**payload), status
 
 @client_bp.route("/api/mkt-insight")

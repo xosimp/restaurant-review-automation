@@ -22,6 +22,15 @@ struct TypewriterText: View {
             .font(font)
             .foregroundStyle(color)
             .lineSpacing(lineSpacing)
+            // Without this, a Text sitting inside a width-constrained
+            // container (like a chat bubble's `.frame(maxWidth:)`) can
+            // report an inflated ideal width to its parent instead of its
+            // true (wrapped) content size — the parent then sizes itself
+            // to that inflated proposal rather than shrinking to fit a
+            // short string. This forces Text to always report its real
+            // wrapped size: it can still grow taller (multi-line), just
+            // never wider than its content actually needs.
+            .fixedSize(horizontal: false, vertical: true)
             .task(id: fullText) {
                 visibleWordCount = 0
                 let total = words.count

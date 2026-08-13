@@ -700,7 +700,9 @@ def mobile_changelog_unread_count(current_user):
 @mobile_login_required
 def mobile_ask_cavnar(current_user):
     data = request.get_json() or {}
-    payload, status = _capi._do_ask_cavnar(current_user["restaurant_id"], data.get("question"))
+    payload, status = _capi._do_ask_cavnar(
+        current_user["restaurant_id"], data.get("question"), history=data.get("history")
+    )
     return jsonify(**payload), status
 
 
