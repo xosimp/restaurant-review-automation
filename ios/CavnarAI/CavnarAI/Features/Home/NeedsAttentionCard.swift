@@ -20,46 +20,78 @@ struct NeedsAttentionCarousel: View {
     @State private var centeredID: String?
 
     var body: some View {
-        GeometryReader { geo in
-            let sidePadding = max((geo.size.width - cardWidth) / 2, 0)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 20) {
-                    ForEach(items) { item in
-                        Button {
-                            onTap(item)
-                        } label: {
-                            NeedsAttentionFloatCard(item: item)
+        VStack(spacing: 4) {
+            GeometryReader { geo in
+                let sidePadding = max((geo.size.width - cardWidth) / 2, 0)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 20) {
+                        ForEach(items) { item in
+                            Button {
+                                // A tap on a side card brings it to center
+                                // first rather than jumping straight to its
+                                // destination — matches how a physical stack
+                                // of cards works (you pull the one you want
+                                // to the front before opening it). Only a
+                                // tap on the ALREADY-centered card navigates.
+                                if centeredID == item.id {
+                                    onTap(item)
+                                } else {
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                        centeredID = item.id
+                                    }
+                                }
+                            } label: {
+                                NeedsAttentionFloatCard(item: item)
+                            }
+                            .buttonStyle(.plain)
+                            // .scrollTransition's "identity" phase lands exactly
+                            // when an item is centered in the visible scroll
+                            // area — paired with .viewAligned snapping below, so
+                            // the card the user swiped to is always the one at
+                            // full scale/sharp, and every other card sits at the
+                            // smaller, blurred "off to the side" state.
+                            .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                                content
+                                    .scaleEffect(phase.isIdentity ? 1 : 0.82)
+                                    .blur(radius: phase.isIdentity ? 0 : 5)
+                                    .opacity(phase.isIdentity ? 1 : 0.55)
+                            }
+                            .id(item.id)
                         }
-                        .buttonStyle(.plain)
-                        // .scrollTransition's "identity" phase lands exactly
-                        // when an item is centered in the visible scroll
-                        // area — paired with .viewAligned snapping below, so
-                        // the card the user swiped to is always the one at
-                        // full scale/sharp, and every other card sits at the
-                        // smaller, blurred "off to the side" state.
-                        .scrollTransition(.interactive, axis: .horizontal) { content, phase in
-                            content
-                                .scaleEffect(phase.isIdentity ? 1 : 0.82)
-                                .blur(radius: phase.isIdentity ? 0 : 5)
-                                .opacity(phase.isIdentity ? 1 : 0.55)
-                        }
-                        .id(item.id)
                     }
+                    .scrollTargetLayout()
+                    .padding(.horizontal, sidePadding)
+                    .padding(.vertical, 24)
                 }
-                .scrollTargetLayout()
-                .padding(.horizontal, sidePadding)
-                .padding(.vertical, 24)
+                // .always (not the default .automatic) forces exactly one
+                // card to change per swipe gesture no matter how short the
+                // drag is — .automatic was sizing its "how far is a full
+                // page" threshold off the container's full width rather
+                // than one card's width, which is what made it take a
+                // nearly edge-to-edge drag to register a new card at all.
+                .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
+                .scrollPosition(id: $centeredID)
+                // Fires every time a different card locks into center —
+                // guarded only against the very first layout pass (nil ->
+                // its id) so it doesn't buzz before the user has swiped or
+                // tapped anything.
+                .sensoryFeedback(.selection, trigger: centeredID) { old, new in
+                    old != nil && new != nil && old != new
+                }
             }
-            .scrollTargetBehavior(.viewAligned)
-            .scrollPosition(id: $centeredID)
-            // Fires once per card that locks into center — guarded so the
-            // very first card (nil -> its id, on initial layout) doesn't
-            // buzz before the user has actually swiped anything.
-            .sensoryFeedback(.selection, trigger: centeredID) { old, new in
-                old != nil && new != nil
+            .frame(height: 220)
+
+            if items.count > 1 {
+                HStack(spacing: 4) {
+                    Text("SWIPE")
+                        .font(.cavnarBody(9, weight: 700))
+                        .tracking(1.5)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 10, weight: .bold))
+                }
+                .foregroundStyle(Color.cavnarEmber2.opacity(0.75))
             }
         }
-        .frame(height: 220)
     }
 }
 

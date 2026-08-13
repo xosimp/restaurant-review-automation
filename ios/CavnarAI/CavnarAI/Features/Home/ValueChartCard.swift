@@ -10,7 +10,17 @@ struct ValueChartCard: View {
     let totalValue: Int
     let history: [ValueSnapshot]
 
-    private var hasRealTrend: Bool { history.count >= 2 }
+    // Real trend needs both enough points AND actual variation between
+    // them — two identical snapshots (nothing changed day over day, common
+    // for a brand-new restaurant) technically satisfy "count >= 2" but plot
+    // as a flat line at the bottom of the canvas with none of the fill/
+    // glow/curve that makes the chart read as a chart. Either case falls
+    // back to the same illustrative curve below.
+    private var hasRealTrend: Bool {
+        guard history.count >= 2 else { return false }
+        let values = history.map(\.value)
+        return (values.max() ?? 0) != (values.min() ?? 0)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -44,15 +54,27 @@ struct ValueChartCard: View {
             .padding(.bottom, 10)
 
             // With no real trend yet, the chart still draws — just from a
-            // representative sample curve instead of sitting blank — so a
-            // brand-new restaurant sees what the chart becomes rather than
-            // an empty box. The caption right under it is what keeps that
-            // honest: it's clearly labeled as an example, not this
-            // restaurant's own numbers.
-            SparklineCanvas(values: hasRealTrend ? history.map { Double($0.value) } : Self.sampleTrend)
-                .frame(height: 120)
+            // representative sample curve with its own illustrative axis
+            // numbers, instead of sitting blank or (worse) a flat line with
+            // no context — so a brand-new restaurant sees what the chart
+            // becomes rather than an empty box.
+            SparklineCanvas(
+                values: hasRealTrend ? history.map { Double($0.value) } : Self.sampleTrend,
+                axisLabels: hasRealTrend ? nil : Self.sampleAxisLabels
+            )
+            .frame(height: 120)
 
             if !hasRealTrend {
+                HStack {
+                    Text(Self.sampleAxisLabels.xLeft)
+                    Spacer()
+                    Text(Self.sampleAxisLabels.xRight)
+                }
+                .font(.cavnarBody(9, weight: 600))
+                .tracking(0.5)
+                .foregroundStyle(Color.cavnarInk3.opacity(0.7))
+                .padding(.top, 2)
+
                 Text("Example — shows the trend a typical restaurant sees over time")
                     .font(.cavnarBody(10))
                     .foregroundStyle(Color.cavnarInk3.opacity(0.8))
@@ -62,7 +84,7 @@ struct ValueChartCard: View {
     }
 
     private var deltaInfo: (isPositive: Bool, text: String)? {
-        guard history.count >= 2, let first = history.first?.value else { return nil }
+        guard hasRealTrend, let first = history.first?.value else { return nil }
         let delta = totalValue - first
         let isPositive = delta >= 0
         let dollarText = Self.currencyText(abs(delta))
@@ -90,16 +112,33 @@ struct ValueChartCard: View {
         0.10, 0.11, 0.11, 0.22, 0.20, 0.30, 0.31, 0.30, 0.42, 0.48,
         0.47, 0.55, 0.60, 0.58, 0.66, 0.70, 0.74, 0.80, 0.86, 0.90, 1.0,
     ]
+
+    // Representative low/high dollar figures for a typical restaurant's
+    // Total Value Delivered over a 30-day window — gives the illustrative
+    // curve real axis numbers instead of an unlabeled line, without
+    // implying either figure is this restaurant's own data (see the
+    // "Example" caption, always shown alongside).
+    private static let sampleAxisLabels = SparklineCanvas.AxisLabels(
+        yTop: "$4.8K", yBottom: "$800", xLeft: "30 DAYS AGO", xRight: "TODAY"
+    )
 }
 
 /// The sparkline itself — a progressive left-to-right line reveal on first
 /// appearance (mirrors the mockup's requestAnimationFrame draw-in), then
 /// settles into a single static Canvas draw so it isn't re-rendering every
-/// frame forever afterward. Takes plain normalized-or-not plot values rather
-/// than ValueSnapshot directly, so the same drawing code serves both real
+/// frame forever afterward. Takes plain plot values rather than
+/// ValueSnapshot directly, so the same drawing code serves both real
 /// history and the synthetic sample curve.
 private struct SparklineCanvas: View {
+    struct AxisLabels {
+        let yTop: String
+        let yBottom: String
+        let xLeft: String
+        let xRight: String
+    }
+
     let values: [Double]
+    var axisLabels: AxisLabels? = nil
 
     @State private var startDate = Date()
     @State private var isRevealed = false
@@ -169,5 +208,22 @@ private struct SparklineCanvas: View {
         )
         let dotRect = CGRect(x: last.x - 3, y: last.y - 3, width: 6, height: 6)
         context.fill(Path(ellipseIn: dotRect), with: .color(Color.cavnarInk))
+
+        // Only the Y-axis (dollar) labels draw inside the canvas, in its
+        // top-left/bottom-left corners — the X-axis (date-range) labels
+        // render as a plain SwiftUI row below the chart instead (see
+        // ValueChartCard.body) since bottom-left is already spoken for here.
+        if let axisLabels, progress >= 1 {
+            let labelFont = Font.cavnarBody(9, weight: 600)
+            let labelColor = Color.cavnarInk3.opacity(0.8)
+            context.draw(
+                Text(axisLabels.yTop).font(labelFont).foregroundStyle(labelColor),
+                at: CGPoint(x: 2, y: 2), anchor: .topLeading
+            )
+            context.draw(
+                Text(axisLabels.yBottom).font(labelFont).foregroundStyle(labelColor),
+                at: CGPoint(x: 2, y: size.height - 2), anchor: .bottomLeading
+            )
+        }
     }
 }
