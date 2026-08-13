@@ -353,7 +353,7 @@ CURRENT DATA SNAPSHOT:
 
 Owner's question: "{question}"
 
-Answer in 2-5 sentences, warm and direct, like a trusted advisor sitting across the table — not a corporate assistant. Always use $ signs before dollar amounts when citing this restaurant's real numbers. No markdown, no bullet points, no headers — plain conversational text only."""
+Answer in 2-3 sentences by default — this renders as a narrow mobile chat bubble, not a report, so keep sentences themselves short too, not just the count. Only go to 4 sentences when the question is genuinely multi-part and actually needs it. If there's more worth saying than that, say the most useful part now and offer to go deeper, rather than saying everything at once. Warm and direct, like a trusted advisor sitting across the table — not a corporate assistant. Always use $ signs before dollar amounts when citing this restaurant's real numbers. No markdown, no bullet points, no headers — plain conversational text only."""
 
 
 def ask(restaurant, question):
@@ -370,10 +370,13 @@ def ask(restaurant, question):
     message = create_with_retry(
         _client,
         model=os.getenv("ASK_CAVNAR_MODEL", "claude-sonnet-5"),
-        # Bumped from 350 — general-advice answers (mode 2 in the prompt
-        # above) run a bit longer than a terse data readout even capped at
-        # 5 sentences, and 350 was clipping some of them mid-thought.
-        max_tokens=450,
+        # Brought back down from 450 now that the prompt targets 2-3
+        # sentences (occasionally 4) instead of 2-5 — this is a safety
+        # ceiling against a rare run-on answer, not the actual length
+        # target, so it stays a bit above what 3-4 tight sentences with a
+        # couple of dollar figures actually needs rather than risking a
+        # mid-sentence cutoff.
+        max_tokens=320,
         # claude-sonnet-5 rejects `temperature` outright ("deprecated for
         # this model") — confirmed live via direct API call. Omitted rather
         # than set, since this model doesn't accept it at all.
