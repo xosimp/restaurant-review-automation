@@ -10,6 +10,8 @@ struct ValueChartCard: View {
     let totalValue: Int
     let history: [ValueSnapshot]
 
+    private var hasRealTrend: Bool { history.count >= 2 }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("TOTAL VALUE DELIVERED")
@@ -32,7 +34,8 @@ struct ValueChartCard: View {
                 } else {
                     // No baseline yet to compare against (first day using the
                     // app) — an empty delta line would look broken, and a
-                    // fabricated one would be lying with a chart.
+                    // fabricated one would be lying about this restaurant's
+                    // own numbers.
                     Text("Tracking starts today")
                         .foregroundStyle(Color.cavnarInk3)
                 }
@@ -40,8 +43,21 @@ struct ValueChartCard: View {
             .font(.cavnarBody(12, weight: 600))
             .padding(.bottom, 10)
 
-            SparklineCanvas(history: history)
+            // With no real trend yet, the chart still draws — just from a
+            // representative sample curve instead of sitting blank — so a
+            // brand-new restaurant sees what the chart becomes rather than
+            // an empty box. The caption right under it is what keeps that
+            // honest: it's clearly labeled as an example, not this
+            // restaurant's own numbers.
+            SparklineCanvas(values: hasRealTrend ? history.map { Double($0.value) } : Self.sampleTrend)
                 .frame(height: 120)
+
+            if !hasRealTrend {
+                Text("Example — shows the trend a typical restaurant sees over time")
+                    .font(.cavnarBody(10))
+                    .foregroundStyle(Color.cavnarInk3.opacity(0.8))
+                    .padding(.top, 4)
+            }
         }
     }
 
@@ -64,23 +80,33 @@ struct ValueChartCard: View {
         let digits = formatter.string(from: NSNumber(value: value)) ?? "\(value)"
         return "$\(digits)"
     }
+
+    // A mostly-up, occasional-dip cumulative curve — the shape real usage
+    // tends to produce — normalized 0-1 so SparklineCanvas can plot it the
+    // same way it plots real dollar history. Purely illustrative: never
+    // shown next to a real dollar figure implying it IS this restaurant's
+    // data (see the "Example" caption above).
+    private static let sampleTrend: [Double] = [
+        0.10, 0.11, 0.11, 0.22, 0.20, 0.30, 0.31, 0.30, 0.42, 0.48,
+        0.47, 0.55, 0.60, 0.58, 0.66, 0.70, 0.74, 0.80, 0.86, 0.90, 1.0,
+    ]
 }
 
 /// The sparkline itself — a progressive left-to-right line reveal on first
 /// appearance (mirrors the mockup's requestAnimationFrame draw-in), then
 /// settles into a single static Canvas draw so it isn't re-rendering every
-/// frame forever afterward.
+/// frame forever afterward. Takes plain normalized-or-not plot values rather
+/// than ValueSnapshot directly, so the same drawing code serves both real
+/// history and the synthetic sample curve.
 private struct SparklineCanvas: View {
-    let history: [ValueSnapshot]
+    let values: [Double]
 
     @State private var startDate = Date()
     @State private var isRevealed = false
 
     var body: some View {
         Group {
-            if history.count < 2 {
-                buildingTrendPlaceholder
-            } else if isRevealed {
+            if isRevealed {
                 Canvas { context, size in draw(context: context, size: size, progress: 1) }
             } else {
                 TimelineView(.animation) { timeline in
@@ -97,19 +123,7 @@ private struct SparklineCanvas: View {
         }
     }
 
-    private var buildingTrendPlaceholder: some View {
-        VStack {
-            Spacer()
-            Text("Trend builds as you use the app")
-                .font(.cavnarBody(11))
-                .foregroundStyle(Color.cavnarInk3)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
-    }
-
     private func draw(context: GraphicsContext, size: CGSize, progress: Double) {
-        let values = history.map { Double($0.value) }
         guard let minV = values.min(), let maxV = values.max() else { return }
         let range = max(maxV - minV, 1)
         let pad: CGFloat = 6

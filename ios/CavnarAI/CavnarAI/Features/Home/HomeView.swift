@@ -30,8 +30,11 @@ struct HomeView: View {
     // How far down the Needs Attention wrapper's top padding shifts (see
     // its call site) — the hero uses its own derived shift below, since a
     // VStack's top padding and two Spacers redistributing leftover height
-    // don't move by the same math for the same input number.
-    private static let heroContentDownShift: CGFloat = 40
+    // don't move by the same math for the same input number. Pulled way
+    // down from 40 — the greeting, chart, and carousel all sit inside/below
+    // this same hero frame, so a small shift here is what lifts the whole
+    // page up.
+    private static let heroContentDownShift: CGFloat = 8
 
     // How tall the animated background itself is — independent of the hero
     // content's own layout. Previously the background was applied via
@@ -44,8 +47,11 @@ struct HomeView: View {
     // the background OUT of the scrollable content and into its own layer
     // behind the whole screen (see body below), which is the standard
     // SwiftUI pattern for a hero background that bleeds behind a
-    // translucent nav bar.
-    private static let heroBackgroundHeight: CGFloat = 600
+    // translucent nav bar. Shrunk in proportion with the hero content frame
+    // below so its fade still tails off roughly where the content ends,
+    // instead of leaving a stretch of vivid, un-faded aurora behind the
+    // (now higher-up) chart and carousel.
+    private static let heroBackgroundHeight: CGFloat = 460
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -70,9 +76,15 @@ struct HomeView: View {
                             // constant governs the greeting text's own
                             // position inside the tall hero, which stayed
                             // put; this is just Needs Attention's own small
-                            // top margin below where hero(_:) ends.
+                            // top margin below where hero(_:) ends. Bottom
+                            // padding bumped well past the FAB's own
+                            // reserved band (70pt above the tab bar, plus its
+                            // own ~50pt footprint) so the carousel's row —
+                            // whose focused card visually scales up beyond
+                            // its laid-out bounds — never sits directly
+                            // behind the fixed FAB circle on first load.
                             .padding(.horizontal, 20)
-                            .padding(.bottom, 20)
+                            .padding(.bottom, 120)
                             .padding(.top, 20)
                         } else if viewModel.isLoading {
                             ProgressView().padding(.top, 80).frame(maxWidth: .infinity)
@@ -203,15 +215,11 @@ struct HomeView: View {
             .offset(y: heroAppeared ? 0 : 26)
             Spacer(minLength: 16)
         }
-        // Deliberately shorter than the 600pt background behind it — this
-        // governs where Needs Attention starts, and at heroBackgroundHeight
-        // - 40 it started low enough to overlap the Ask Cavnar FAB (a fixed
-        // bottom-trailing overlay, not part of the scroll content) on the
-        // initial screenful. Needs Attention now starts while the
-        // background's own fade is still gently tailing off rather than
-        // waiting for it to fully finish — the rows have their own surface
-        // already, so reading over a soft fading glow is fine.
-        .frame(minHeight: 380)
+        // Deliberately shorter than the background behind it — this governs
+        // where the value chart starts. Shrunk from 380 so the greeting,
+        // chart, and carousel all sit noticeably higher on the page instead
+        // of leaving a tall stretch of empty hero space above them.
+        .frame(minHeight: 260)
         .frame(maxWidth: .infinity)
         .multilineTextAlignment(.center)
         .padding(.horizontal, 20)

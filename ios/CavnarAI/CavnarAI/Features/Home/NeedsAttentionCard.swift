@@ -1,29 +1,65 @@
 import SwiftUI
 
-/// Needs Attention as a horizontal-swipe carousel of self-contained floating
-/// cards — replaces the old vertical row-list entirely. Chosen over a
-/// drifted-stack alternative because it frees up the vertical space the new
-/// value chart above it needs, and reads as genuinely separate objects
-/// rather than rows in a form (approved mockup, "Option A").
+/// Needs Attention as a center-focused paging carousel of self-contained
+/// floating cards — replaces the old vertical row-list entirely. Only the
+/// centered card is sharp and full-size; its neighbors sit smaller, blurred,
+/// and dimmed to either side, and swiping to a new card snaps it to center
+/// with a small "locked in" haptic — the same cover-flow feel as Apple
+/// Music's Now Playing or the App Store's featured cards. GeometryReader
+/// supplies the side inset needed so the first and last cards can actually
+/// reach dead center rather than stopping at the scroll view's edge; the
+/// side inset plus .scrollTargetBehavior(.viewAligned) below is what makes
+/// each swipe settle on one card centered rather than landing wherever
+/// momentum happens to stop.
 struct NeedsAttentionCarousel: View {
     let items: [NeedsAttentionItem]
     let onTap: (NeedsAttentionItem) -> Void
 
+    private let cardWidth: CGFloat = 168
+
+    @State private var centeredID: String?
+
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(items) { item in
-                    Button {
-                        onTap(item)
-                    } label: {
-                        NeedsAttentionFloatCard(item: item)
+        GeometryReader { geo in
+            let sidePadding = max((geo.size.width - cardWidth) / 2, 0)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 20) {
+                    ForEach(items) { item in
+                        Button {
+                            onTap(item)
+                        } label: {
+                            NeedsAttentionFloatCard(item: item)
+                        }
+                        .buttonStyle(.plain)
+                        // .scrollTransition's "identity" phase lands exactly
+                        // when an item is centered in the visible scroll
+                        // area — paired with .viewAligned snapping below, so
+                        // the card the user swiped to is always the one at
+                        // full scale/sharp, and every other card sits at the
+                        // smaller, blurred "off to the side" state.
+                        .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                            content
+                                .scaleEffect(phase.isIdentity ? 1 : 0.82)
+                                .blur(radius: phase.isIdentity ? 0 : 5)
+                                .opacity(phase.isIdentity ? 1 : 0.55)
+                        }
+                        .id(item.id)
                     }
-                    .buttonStyle(.plain)
                 }
+                .scrollTargetLayout()
+                .padding(.horizontal, sidePadding)
+                .padding(.vertical, 24)
             }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 2)
+            .scrollTargetBehavior(.viewAligned)
+            .scrollPosition(id: $centeredID)
+            // Fires once per card that locks into center — guarded so the
+            // very first card (nil -> its id, on initial layout) doesn't
+            // buzz before the user has actually swiped anything.
+            .sensoryFeedback(.selection, trigger: centeredID) { old, new in
+                old != nil && new != nil
+            }
         }
+        .frame(height: 220)
     }
 }
 
