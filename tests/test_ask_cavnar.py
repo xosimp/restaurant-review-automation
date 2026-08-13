@@ -106,7 +106,7 @@ def test_today_section_respects_skip_holidays_preference(db_path, monkeypatch):
     assert "New Year's Eve" in ctx
 
 
-def test_today_section_includes_restaurant_profile_when_set(db_path):
+def test_profile_section_includes_identity_when_set(db_path):
     from models import update_restaurant
     r = _restaurant(db_path)
     update_restaurant(r.id, {
@@ -119,6 +119,101 @@ def test_today_section_includes_restaurant_profile_when_set(db_path):
     assert "River North, Chicago" in ctx
     assert "upscale but unpretentious Italian" in ctx
     assert "known for handmade pasta and a killer wine list" in ctx
+
+
+def test_profile_section_includes_hours_menu_and_google_rating_when_set(db_path):
+    from models import update_restaurant
+    r = _restaurant(db_path)
+    update_restaurant(r.id, {
+        "hours_notes": "Mon-Thu 11-9, Fri-Sat 11-10, closed Sundays",
+        "menu_notes": "Seasonal Italian, wood-fired pizza focus",
+        "menu_url": "https://giamia.example.com/menu",
+        "gbp_rating": 4.6,
+        "gbp_review_count": 312,
+    }, db_path=db_path)
+    r = get_restaurant(r.id, db_path=db_path)
+    ctx = build_context(r)
+    assert "Mon-Thu 11-9, Fri-Sat 11-10, closed Sundays" in ctx
+    assert "Seasonal Italian, wood-fired pizza focus" in ctx
+    assert "https://giamia.example.com/menu" in ctx
+    assert "4.6" in ctx and "312 reviews" in ctx
+
+
+def test_profile_section_caps_oversized_freeform_hours_notes(db_path):
+    """Real bug, found live: a restaurant's hours_notes turned out to be a
+    2,854-character labor-scheduling rulebook (staff arrival times, closer
+    rules, floor layout...) rather than a short hours summary — nothing in
+    the schema stops an admin from putting arbitrarily long text in any of
+    these freeform fields, so the whole context snapshot would silently
+    balloon (and bury the actually-relevant facts) whenever that happens.
+    280-char cap keeps this bounded regardless of what's actually stored."""
+    from models import update_restaurant
+    r = _restaurant(db_path)
+    huge = "Open 11am daily. " + ("STAFF ARRIVAL TIMES: bussers 8am. " * 100)
+    update_restaurant(r.id, {"hours_notes": huge}, db_path=db_path)
+    r = get_restaurant(r.id, db_path=db_path)
+    ctx = build_context(r)
+    assert huge not in ctx
+    assert "Open 11am daily." in ctx
+    assert len(ctx) < len(huge)
+
+
+def test_profile_section_includes_revenue_target_and_delivery_mix_when_set(db_path):
+    from models import update_restaurant
+    r = _restaurant(db_path)
+    update_restaurant(r.id, {"monthly_revenue_target": 185000.0, "delivery_pct": 22}, db_path=db_path)
+    r = get_restaurant(r.id, db_path=db_path)
+    ctx = build_context(r)
+    assert "$185,000" in ctx
+    assert "22%" in ctx
+
+
+def test_profile_section_shows_plan_label_and_connections(db_path):
+    from models import update_restaurant
+    r = _restaurant(db_path, service_tier="full")
+    update_restaurant(r.id, {"gmb_refresh_token": "fake-token-value"}, db_path=db_path)
+    r = get_restaurant(r.id, db_path=db_path)
+    ctx = build_context(r)
+    assert "Full System" in ctx
+    assert "Google Business Profile" in ctx
+    # The actual token value must never reach the model prompt.
+    assert "fake-token-value" not in ctx
+
+
+def test_profile_section_shows_no_connections_when_none_set(db_path):
+    r = _restaurant(db_path)
+    ctx = build_context(r)
+    assert "Connected integrations: none yet" in ctx
+
+
+def test_profile_section_never_leaks_credentials_or_account_security_fields(db_path):
+    """Every credential/token/account-security field on the Restaurant
+    dataclass, set to an obviously-fake but distinctive value, must never
+    appear in the context handed to the model — this is the one test that
+    would catch a future field accidentally getting added to the prompt."""
+    from models import update_restaurant
+    r = _restaurant(db_path)
+    secrets = {
+        "stripe_customer_id": "cus_SECRETVALUE1",
+        "docusign_envelope_id": "env-SECRETVALUE2",
+        "temp_password": "SECRETPASSWORD3",
+        "two_fa_code": "SECRET4CODE",
+        "ig_token": "ig-SECRETVALUE5",
+        "gmb_refresh_token": "gmb-SECRETVALUE6",
+        "gmb_access_token": "gmb-access-SECRETVALUE7",
+        "fb_page_token": "fb-SECRETVALUE8",
+        "toast_client_secret": "toast-SECRETVALUE9",
+        "toast_access_token": "toast-access-SECRETVALUE10",
+        "square_access_token": "square-SECRETVALUE11",
+        "clover_api_token": "clover-SECRETVALUE12",
+        "owner_phone": "555-000-9999",
+        "internal_notes": "SECRET internal admin note",
+    }
+    update_restaurant(r.id, secrets, db_path=db_path)
+    r = get_restaurant(r.id, db_path=db_path)
+    ctx = build_context(r)
+    for value in secrets.values():
+        assert value not in ctx
 
 
 def test_reviews_module_with_no_reviews_says_so(db_path):

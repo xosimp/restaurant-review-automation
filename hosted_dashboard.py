@@ -16,7 +16,7 @@ from models import (init_db, get_conn, approve_response,
                     get_reviews_since, get_restaurant,
                     get_review_stats, get_reviews_data, get_top_issues,
                     get_platform_breakdown, get_sentiment_trend, is_full_tier,
-                    get_active_modules)
+                    get_active_modules, TIER_LABELS)
 from auth import (init_auth, verify_password, create_session,
                   get_session_user, delete_session, create_user,
                   list_users, update_password,
@@ -211,15 +211,6 @@ def admin_required(f):
 
 # ── Data helpers ──────────────────────────────────────────────────────────────
 
-
-TIER_LABELS = {
-    "trial":             "Trial",
-    "starter_reviews":   "Starter Module — Review Intelligence",
-    "starter_labor":     "Starter Module — Labor Optimizer",
-    "starter_inventory": "Starter Module — Inventory Control",
-    "starter_marketing": "Starter Module — Marketing Autopilot",
-    "full":              "Full System",
-}
 
 TIER_PRICES = {
     "trial":             {"setup": None,     "retainer": None},

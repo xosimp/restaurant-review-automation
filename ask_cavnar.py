@@ -26,19 +26,37 @@ def _fmt(v, default="n/a"):
     return default if v is None else v
 
 
+def _cap(text, limit=280):
+    """Defensively bounds any freeform admin-entered text field before it
+    goes into the prompt. Found live: Gia Mia's hours_notes turned out to
+    be a 2,854-character labor-scheduling rulebook (staff arrival times,
+    closer rules, floor layout, minimum staffing floors...) repurposed
+    from what the field name suggests — real, useful content for the
+    LABOR schedule generator it was written for, but far more than a
+    general question deserves to pay for in every single Ask Cavnar call
+    regardless of relevance. Nothing stops an admin from putting something
+    similarly long in vibe/known_for/menu_notes/daypart_split either, so
+    this applies uniformly rather than only patching the one field that
+    happened to get caught."""
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "…"
+
+
 def _identity_context(restaurant):
     """Today's real date (in the restaurant's own timezone, not the
-    server's), upcoming dining-relevant holidays, and basic restaurant
-    identity — the one section that's always included regardless of which
-    modules are active. Without this, a question like "what upcoming
-    holidays should I focus on" had no anchor date at all: the model has no
-    live clock of its own, so it would (correctly, from its own
-    perspective) say it can't check dates. reused get_upcoming_holidays()
-    from marketing.py rather than re-deriving a second holiday calendar —
-    it already computes real calendar dates (including movable ones like
-    Mother's Day/Thanksgiving) and already respects this restaurant's own
-    skip_holidays preference, the same list marketing content generation
-    and labor's holiday-aware forecasting both already rely on."""
+    server's) and upcoming dining-relevant holidays — the one section
+    that's always included regardless of which modules are active.
+    Without this, a question like "what upcoming holidays should I focus
+    on" had no anchor date at all: the model has no live clock of its own,
+    so it would (correctly, from its own perspective) say it can't check
+    dates. Reused get_upcoming_holidays() from marketing.py rather than
+    re-deriving a second holiday calendar — it already computes real
+    calendar dates (including movable ones like Mother's Day/Thanksgiving)
+    and already respects this restaurant's own skip_holidays preference,
+    the same list marketing content generation and labor's holiday-aware
+    forecasting both already rely on."""
     from time_utils import restaurant_now
     from marketing import get_upcoming_holidays
 
@@ -56,15 +74,84 @@ def _identity_context(restaurant):
     except Exception:
         pass
 
+    return "\n".join(lines) + "\n"
+
+
+def _profile_context(restaurant):
+    """Everything else admin has on file about this restaurant that an
+    owner's own question might reasonably need — identity/vibe, hours,
+    menu, Google's own published rating (distinct from the review-analysis
+    numbers in REVIEWS below), revenue target, delivery mix, which plan is
+    active, which platforms are connected, and how long they've been a
+    client. Every line is conditional on the field actually being set — an
+    unset field is omitted, not described as empty, same principle the
+    module sections below already follow.
+
+    Deliberately excludes anything that's a credential, access token,
+    internal admin/ops note, or account-security setting (2FA, login
+    notify, Stripe/DocuSign ids, temp passwords, etc.) — those aren't
+    "restaurant data" an owner would ask their own copilot about, and
+    several are outright secrets that must never reach a model prompt.
+    Connection status is surfaced the same way the Account/Settings screen
+    does it (see mobile_api.py's connections summary): a plain boolean
+    derived from whether a token/id is present, never the token itself."""
+    lines = ["RESTAURANT PROFILE"]
+
     profile_bits = []
     if restaurant.neighborhood:
-        profile_bits.append(restaurant.neighborhood)
+        profile_bits.append(_cap(restaurant.neighborhood, 80))
     if restaurant.vibe:
-        profile_bits.append(restaurant.vibe)
+        profile_bits.append(_cap(restaurant.vibe))
     if restaurant.known_for:
-        profile_bits.append(f"known for {restaurant.known_for}")
+        profile_bits.append(f"known for {_cap(restaurant.known_for)}")
     if profile_bits:
         lines.append(f"- About this restaurant: {'; '.join(profile_bits)}")
+
+    if restaurant.hours_notes:
+        lines.append(f"- Hours: {_cap(restaurant.hours_notes)}")
+
+    menu_bits = [b for b in (_cap(restaurant.menu_notes), restaurant.menu_url) if b]
+    if menu_bits:
+        lines.append(f"- Menu: {' — '.join(menu_bits)}")
+
+    if restaurant.gbp_rating is not None:
+        count = f" from {restaurant.gbp_review_count} reviews" if restaurant.gbp_review_count else ""
+        lines.append(
+            f"- Google's published rating: {restaurant.gbp_rating}★{count} "
+            "(Google's own aggregate — separate from the review-response tracking in REVIEWS)"
+        )
+
+    if restaurant.monthly_revenue_target:
+        lines.append(f"- Monthly revenue target: ${restaurant.monthly_revenue_target:,.0f}")
+
+    if restaurant.delivery_pct is not None:
+        lines.append(f"- Delivery/takeout share of revenue: {restaurant.delivery_pct}%")
+
+    if restaurant.daypart_split:
+        lines.append(f"- Daypart split: {_cap(restaurant.daypart_split, 120)}")
+
+    try:
+        from models import TIER_LABELS
+        tier_label = TIER_LABELS.get(restaurant.service_tier, restaurant.service_tier)
+    except Exception:
+        tier_label = restaurant.service_tier
+    lines.append(f"- Plan: {tier_label}")
+
+    connected = []
+    if getattr(restaurant, "gmb_refresh_token", None):
+        connected.append("Google Business Profile")
+    if getattr(restaurant, "ig_token", None):
+        connected.append("Instagram")
+    if getattr(restaurant, "toast_restaurant_guid", None):
+        connected.append("Toast POS")
+    if getattr(restaurant, "square_location_id", None):
+        connected.append("Square POS")
+    if getattr(restaurant, "clover_merchant_id", None):
+        connected.append("Clover POS")
+    lines.append(f"- Connected integrations: {', '.join(connected) if connected else 'none yet'}")
+
+    if restaurant.created_at:
+        lines.append(f"- Client since: {restaurant.created_at[:10]}")
 
     return "\n".join(lines) + "\n"
 
@@ -218,13 +305,14 @@ _CONTEXT_BUILDERS = (
 
 
 def build_context(restaurant):
-    """Plain-text snapshot: an always-present TODAY/identity section (date,
-    upcoming holidays, restaurant profile — see _identity_context) followed
-    by whichever modules `restaurant` has active. A module the client
-    doesn't have is simply omitted, not described as empty — that keeps the
-    model from being asked to reason about data that was never going to
-    exist for this client."""
-    parts = [_identity_context(restaurant)]
+    """Plain-text snapshot: two always-present sections (TODAY — date and
+    upcoming holidays, see _identity_context; RESTAURANT PROFILE — hours,
+    menu, Google rating, revenue target, connections, plan, etc., see
+    _profile_context) followed by whichever modules `restaurant` has
+    active. A module the client doesn't have is simply omitted, not
+    described as empty — that keeps the model from being asked to reason
+    about data that was never going to exist for this client."""
+    parts = [_identity_context(restaurant), _profile_context(restaurant)]
     for attr, builder in _CONTEXT_BUILDERS:
         if not getattr(restaurant, attr, 0):
             continue
@@ -255,6 +343,8 @@ ASK_CAVNAR_PROMPT = """You are Cavnar AI, an AI-powered restaurant intelligence 
 Use judgment about which mode (or blend) a question calls for — "how do I get my labor cost down" wants both this restaurant's real labor % AND general scheduling advice, for example.
 
 The DATA SNAPSHOT below always opens with a TODAY section — this restaurant's real current date (in its own local timezone) and its real upcoming holidays for the next 30 days. Always use that section directly for any date, day-of-week, "how many days until," or "what's coming up" question — you have real, live information here, not a training cutoff. Never say you don't have access to a calendar or can't check dates; you can, right there in TODAY.
+
+Right after that is a RESTAURANT PROFILE section — hours, menu, Google's own published rating, revenue target, delivery mix, which plan they're on, which platforms are connected, and how long they've been a client, whenever admin has that on file. Use it the same way: it's real information about this specific restaurant, not something to say you don't have access to.
 
 Restaurant: {restaurant_name}
 

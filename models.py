@@ -6,6 +6,21 @@ from typing import Optional
 
 DB_PATH = "reviews.db"
 
+# Restaurant.service_tier's human-readable display names — lives here
+# rather than in hosted_dashboard.py (where it originated) so anything
+# needing just this small static lookup (e.g. ask_cavnar.py's context
+# builder) can import it without pulling in the full Flask app module,
+# which has real import-time side effects (background seed jobs, route
+# registration) unsafe to trigger from a plain data helper.
+TIER_LABELS = {
+    "trial":             "Trial",
+    "starter_reviews":   "Starter Module — Review Intelligence",
+    "starter_labor":     "Starter Module — Labor Optimizer",
+    "starter_inventory": "Starter Module — Inventory Control",
+    "starter_marketing": "Starter Module — Marketing Autopilot",
+    "full":              "Full System",
+}
+
 
 # ── Schema ────────────────────────────────────────────────────────────────────
 
