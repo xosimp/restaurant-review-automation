@@ -141,14 +141,25 @@ struct HomeView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Haptic.light()
-                        // Kicked off here, before the sheet even starts
-                        // presenting, rather than waiting for
-                        // NotificationsListView's own appearance — gives the
-                        // request a head start on the sheet's own slide-up
-                        // animation so the list is often already in hand by
-                        // the time the sheet finishes appearing.
-                        Task { await notificationsList.load() }
-                        showingNotifications = true
+                        Task {
+                            // The FIRST open this session waits for the real
+                            // fetch to land before the sheet ever appears —
+                            // no other app flashes a loading skeleton for
+                            // something this lightweight, it just shows the
+                            // list, so neither should this. Every open after
+                            // that presents instantly against the already-
+                            // cached list (still real content, just from a
+                            // few minutes ago) and refreshes it silently in
+                            // the background rather than making the tap wait
+                            // on a network round-trip every single time.
+                            if notificationsList.hasLoadedOnce {
+                                showingNotifications = true
+                                Task { await notificationsList.load() }
+                            } else {
+                                await notificationsList.load()
+                                showingNotifications = true
+                            }
+                        }
                     } label: {
                         ZStack(alignment: .topTrailing) {
                             Image(systemName: "bell")

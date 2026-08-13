@@ -7,6 +7,12 @@ final class NotificationsListViewModel {
     var notifications: [NotificationItem] = []
     var isLoading = false
     var errorMessage: String?
+    // Distinct from notifications.isEmpty — an inbox with genuinely zero
+    // alerts is still "loaded." This is what HomeView checks to decide
+    // whether the bell tap needs to wait for the fetch before presenting
+    // the sheet (first open) or can present immediately against whatever's
+    // already cached (every open after that).
+    var hasLoadedOnce = false
 
     private let client: APIClient
 
@@ -23,7 +29,10 @@ final class NotificationsListViewModel {
     func load() async {
         isLoading = true
         errorMessage = nil
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            hasLoadedOnce = true
+        }
         do {
             let response: Response = try await client.send("/mobile/api/notifications")
             // The backend always answers with HTTP 200, even on internal
@@ -77,14 +86,14 @@ final class NotificationsBadgeViewModel {
 /// available even before push permission is granted.
 ///
 /// Takes its view model from the caller (HomeView owns one for the whole
-/// session) rather than creating its own — that's what lets the fetch start
-/// the moment the bell icon is tapped, before the sheet even begins its
-/// slide-up animation, instead of only starting once this view's own .task
-/// fires after the sheet has already finished presenting. Without that
-/// head start, the skeleton loading state was visible for a beat on every
-/// single open even though the request itself is fast, since a fresh
-/// per-sheet view model always starts at isLoading == false / notifications
-/// == [] regardless of how quickly the network responds.
+/// session) rather than creating its own. HomeView awaits the FIRST load
+/// before ever presenting this sheet at all — see its bell button — so by
+/// the time this view exists on screen, real content (or a genuine error/
+/// empty state) is already sitting in the view model. The loading-skeleton
+/// branch below is a fallback for the refresh-an-empty-inbox edge case,
+/// not something a normal tap-to-open should ever actually show: no other
+/// app flashes a skeleton for something this lightweight, it just shows the
+/// list.
 struct NotificationsListView: View {
     let viewModel: NotificationsListViewModel
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
