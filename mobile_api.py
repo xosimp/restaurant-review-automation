@@ -409,7 +409,7 @@ def _do_mobile_home(current_user):
         record_value_snapshot(rid, total_value)
     except Exception:
         pass  # the chart just has one fewer data point — never worth failing Home over
-    value_history = get_value_history(rid)
+    value_history = get_value_history(rid, days=365)
 
     return {
         "ok": True,

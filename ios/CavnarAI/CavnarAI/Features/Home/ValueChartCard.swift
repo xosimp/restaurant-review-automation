@@ -1,24 +1,38 @@
 import SwiftUI
 
 /// Robinhood/finance-app-style hero stat: eyebrow label, big Space Grotesk
-/// number, a colored delta line, and a Canvas-drawn sparkline with a glowing
-/// endpoint — matches the approved mockup 1:1, in the app's ember palette
-/// instead of gold. Deliberately unboxed (no .cavnarCard() wrapper), sitting
-/// flush on the page like the reference screenshot rather than looking like
-/// another KPI tile.
+/// number, a colored delta line, a Canvas-drawn sparkline with a glowing
+/// endpoint, and time-range pills underneath — matches the approved mockup,
+/// in the app's ember palette instead of gold. Deliberately unboxed (no
+/// .cavnarCard() wrapper), sitting flush on the page like the reference
+/// screenshot rather than looking like another KPI tile.
 struct ValueChartCard: View {
     let totalValue: Int
     let history: [ValueSnapshot]
 
+    @State private var selectedRange: ChartRange = .oneMonth
+
+    // The big number counts up from 0 on the very first appearance only —
+    // a flat instant number read as "just a stat," counting up reads as
+    // "watch how much this is." hasCountedUp guards against replaying that
+    // on every pull-to-refresh; a later change to totalValue just snaps the
+    // displayed figure straight to the new value instead.
+    @State private var animatedTotal: Double = 0
+    @State private var hasCountedUp = false
+
+    private var rangeHistory: [ValueSnapshot] {
+        Self.filter(history, to: selectedRange)
+    }
+
     // Real trend needs both enough points AND actual variation between
     // them — two identical snapshots (nothing changed day over day, common
     // for a brand-new restaurant) technically satisfy "count >= 2" but plot
-    // as a flat line at the bottom of the canvas with none of the fill/
-    // glow/curve that makes the chart read as a chart. Either case falls
-    // back to the same illustrative curve below.
+    // as a flat line with none of the fill/glow/curve that makes the chart
+    // read as a chart. Either case falls back to the same illustrative
+    // curve below.
     private var hasRealTrend: Bool {
-        guard history.count >= 2 else { return false }
-        let values = history.map(\.value)
+        guard rangeHistory.count >= 2 else { return false }
+        let values = rangeHistory.map(\.value)
         return (values.max() ?? 0) != (values.min() ?? 0)
     }
 
@@ -29,10 +43,24 @@ struct ValueChartCard: View {
                 .tracking(1.5)
                 .foregroundStyle(Color.cavnarEmber2)
 
-            Text(Self.currencyText(totalValue))
+            AnimatableNumberText(value: animatedTotal, format: Self.currencyText)
                 .font(.cavnarNumber(38, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
-                .cavnarNumberGlow(.cavnarEmber)
+                .foregroundStyle(Color.cavnarGreen)
+                .cavnarNumberGlow(.cavnarGreen)
+                .onAppear {
+                    guard !hasCountedUp else { return }
+                    hasCountedUp = true
+                    // Fast enough not to feel like a stall, slow enough that
+                    // the client actually watches the number climb rather
+                    // than just glancing at a static figure.
+                    withAnimation(.easeOut(duration: 1.6)) {
+                        animatedTotal = Double(totalValue)
+                    }
+                }
+                .onChange(of: totalValue) { _, newValue in
+                    guard hasCountedUp else { return }
+                    animatedTotal = Double(newValue)
+                }
 
             Group {
                 if let delta = deltaInfo {
@@ -54,45 +82,60 @@ struct ValueChartCard: View {
             .padding(.bottom, 10)
 
             // With no real trend yet, the chart still draws — just from a
-            // representative sample curve with its own illustrative axis
-            // numbers, instead of sitting blank or (worse) a flat line with
-            // no context — so a brand-new restaurant sees what the chart
-            // becomes rather than an empty box.
+            // representative sample curve — instead of sitting blank or
+            // (worse) a flat line with no context, so a brand-new
+            // restaurant sees what the chart becomes rather than an empty
+            // box.
             SparklineCanvas(
-                values: hasRealTrend ? history.map { Double($0.value) } : Self.sampleTrend,
+                values: hasRealTrend ? rangeHistory.map { Double($0.value) } : Self.sampleTrend,
                 axisLabels: hasRealTrend ? nil : Self.sampleAxisLabels
             )
+            .id(selectedRange)
             .frame(height: 120)
 
             if !hasRealTrend {
-                HStack {
-                    Text(Self.sampleAxisLabels.xLeft)
-                    Spacer()
-                    Text(Self.sampleAxisLabels.xRight)
-                }
-                .font(.cavnarBody(9, weight: 600))
-                .tracking(0.5)
-                .foregroundStyle(Color.cavnarInk3.opacity(0.7))
-                .padding(.top, 2)
-
                 Text("Example — shows the trend a typical restaurant sees over time")
                     .font(.cavnarBody(10))
                     .foregroundStyle(Color.cavnarInk3.opacity(0.8))
                     .padding(.top, 4)
             }
+
+            rangePills
         }
     }
 
+    private var rangePills: some View {
+        HStack(spacing: 6) {
+            ForEach(ChartRange.allCases) { range in
+                Button {
+                    Haptic.light()
+                    selectedRange = range
+                } label: {
+                    Text(range.rawValue)
+                        .font(.cavnarBody(11, weight: 700))
+                        .foregroundStyle(range == selectedRange ? Color.cavnarEmber2 : Color.cavnarInk3)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule().fill(range == selectedRange ? Color.cavnarEmber.opacity(0.16) : .clear)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.top, 6)
+    }
+
     private var deltaInfo: (isPositive: Bool, text: String)? {
-        guard hasRealTrend, let first = history.first?.value else { return nil }
+        guard hasRealTrend, let first = rangeHistory.first?.value else { return nil }
         let delta = totalValue - first
         let isPositive = delta >= 0
         let dollarText = Self.currencyText(abs(delta))
         if first != 0 {
             let pct = abs(Double(delta) / Double(first) * 100)
-            return (isPositive, "\(dollarText) (\(String(format: "%.1f", pct))%) this month")
+            return (isPositive, "\(dollarText) (\(String(format: "%.1f", pct))%) \(selectedRange.periodLabel)")
         }
-        return (isPositive, "\(dollarText) this month")
+        return (isPositive, "\(dollarText) \(selectedRange.periodLabel)")
     }
 
     private static func currencyText(_ value: Int) -> String {
@@ -101,6 +144,23 @@ struct ValueChartCard: View {
         formatter.groupingSeparator = ","
         let digits = formatter.string(from: NSNumber(value: value)) ?? "\(value)"
         return "$\(digits)"
+    }
+
+    private static let snapshotDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        return formatter
+    }()
+
+    private static func filter(_ history: [ValueSnapshot], to range: ChartRange) -> [ValueSnapshot] {
+        guard let days = range.days else { return history }
+        guard let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) else { return history }
+        return history.filter { snapshot in
+            guard let date = snapshotDateFormatter.date(from: snapshot.date) else { return true }
+            return date >= cutoff
+        }
     }
 
     // A mostly-up, occasional-dip cumulative curve — the shape real usage
@@ -114,13 +174,58 @@ struct ValueChartCard: View {
     ]
 
     // Representative low/high dollar figures for a typical restaurant's
-    // Total Value Delivered over a 30-day window — gives the illustrative
-    // curve real axis numbers instead of an unlabeled line, without
-    // implying either figure is this restaurant's own data (see the
-    // "Example" caption, always shown alongside).
-    private static let sampleAxisLabels = SparklineCanvas.AxisLabels(
-        yTop: "$4.8K", yBottom: "$800", xLeft: "30 DAYS AGO", xRight: "TODAY"
-    )
+    // Total Value Delivered — gives the illustrative curve real axis
+    // numbers instead of an unlabeled line, without implying either figure
+    // is this restaurant's own data (see the "Example" caption alongside).
+    private static let sampleAxisLabels = SparklineCanvas.AxisLabels(yTop: "$4.8K", yBottom: "$800")
+}
+
+/// 1M/3M/6M/1Y/ALL — filters the already-fetched value_history client-side
+/// rather than a network call per tap, since the backend already returns up
+/// to a year of daily snapshots in one response (see mobile_api.py's
+/// _do_mobile_home).
+enum ChartRange: String, CaseIterable, Identifiable {
+    case oneMonth = "1M", threeMonths = "3M", sixMonths = "6M", oneYear = "1Y", all = "ALL"
+
+    var id: String { rawValue }
+
+    var days: Int? {
+        switch self {
+        case .oneMonth: return 30
+        case .threeMonths: return 90
+        case .sixMonths: return 180
+        case .oneYear: return 365
+        case .all: return nil
+        }
+    }
+
+    var periodLabel: String {
+        switch self {
+        case .oneMonth: return "this month"
+        case .threeMonths: return "over 3 months"
+        case .sixMonths: return "over 6 months"
+        case .oneYear: return "this year"
+        case .all: return "all time"
+        }
+    }
+}
+
+/// Interpolates its own numeric value across an implicit animation and
+/// re-formats it every intermediate frame — this is what makes the big
+/// dollar figure visibly count up rather than just cross-fading between two
+/// static strings.
+private struct AnimatableNumberText: View, Animatable {
+    var value: Double
+    var format: (Int) -> String
+
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+
+    var body: some View {
+        Text(format(Int(value.rounded())))
+    }
 }
 
 /// The sparkline itself — a progressive left-to-right line reveal on first
@@ -133,8 +238,6 @@ private struct SparklineCanvas: View {
     struct AxisLabels {
         let yTop: String
         let yBottom: String
-        let xLeft: String
-        let xRight: String
     }
 
     let values: [Double]
@@ -187,7 +290,9 @@ private struct SparklineCanvas: View {
         context.fill(
             fillPath,
             with: .linearGradient(
-                Gradient(colors: [Color.cavnarEmber.opacity(0.28), Color.cavnarEmber.opacity(0)]),
+                // Bumped up from 0.28 — the wash under the line was barely
+                // visible against the page background at that opacity.
+                Gradient(colors: [Color.cavnarEmber.opacity(0.5), Color.cavnarEmber.opacity(0.02)]),
                 startPoint: CGPoint(x: 0, y: 0),
                 endPoint: CGPoint(x: 0, y: size.height)
             )
@@ -209,10 +314,6 @@ private struct SparklineCanvas: View {
         let dotRect = CGRect(x: last.x - 3, y: last.y - 3, width: 6, height: 6)
         context.fill(Path(ellipseIn: dotRect), with: .color(Color.cavnarInk))
 
-        // Only the Y-axis (dollar) labels draw inside the canvas, in its
-        // top-left/bottom-left corners — the X-axis (date-range) labels
-        // render as a plain SwiftUI row below the chart instead (see
-        // ValueChartCard.body) since bottom-left is already spoken for here.
         if let axisLabels, progress >= 1 {
             let labelFont = Font.cavnarBody(9, weight: 600)
             let labelColor = Color.cavnarInk3.opacity(0.8)

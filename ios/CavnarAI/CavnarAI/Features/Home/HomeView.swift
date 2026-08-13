@@ -69,8 +69,8 @@ struct HomeView: View {
                             // uses.
                             hero(summary)
                             VStack(alignment: .leading, spacing: 20) {
-                                valueChartSection(summary)
                                 needsAttentionSection(summary)
+                                valueChartSection(summary)
                             }
                             // Independent of heroContentDownShift now — that
                             // constant governs the greeting text's own
@@ -270,7 +270,7 @@ struct HomeView: View {
         ValueChartCard(totalValue: summary.totalValueDelivered, history: summary.valueHistory)
             .opacity(heroAppeared ? 1 : 0)
             .offset(y: heroAppeared ? 0 : 20)
-            .animation(.easeOut(duration: 0.5).delay(0.1), value: heroAppeared)
+            .animation(.easeOut(duration: 0.5).delay(0.3), value: heroAppeared)
     }
 
     // No "Needs attention" header and no enclosing gray .cavnarCard() around
@@ -287,14 +287,14 @@ struct HomeView: View {
             AllClearRow()
                 .opacity(heroAppeared ? 1 : 0)
                 .offset(y: heroAppeared ? 0 : 20)
-                .animation(.easeOut(duration: 0.5).delay(0.3), value: heroAppeared)
+                .animation(.easeOut(duration: 0.5).delay(0.1), value: heroAppeared)
         } else {
             NeedsAttentionCarousel(items: summary.needsAttention) { item in
                 navigate(to: ModuleRoute(key: item.module, label: item.module.capitalized))
             }
             .opacity(heroAppeared ? 1 : 0)
             .offset(y: heroAppeared ? 0 : 20)
-            .animation(.easeOut(duration: 0.55).delay(0.3), value: heroAppeared)
+            .animation(.easeOut(duration: 0.55).delay(0.1), value: heroAppeared)
         }
     }
 
