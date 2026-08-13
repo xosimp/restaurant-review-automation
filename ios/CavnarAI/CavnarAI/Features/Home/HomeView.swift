@@ -68,26 +68,32 @@ struct HomeView: View {
                             // the 20pt content margin the rest of the page
                             // uses.
                             hero(summary)
-                            VStack(alignment: .leading, spacing: 20) {
+                            // spacing: 0 with an explicit .padding(.bottom,
+                            // 26) on just the carousel below (instead of a
+                            // uniform VStack spacing) — this is what lets
+                            // the carousel move closer to the greeting
+                            // without dragging the chart up with it: the
+                            // carousel's own top offset shrinks by the same
+                            // 6pt the gap below it grows, so the chart's
+                            // absolute position on the page never moves.
+                            VStack(alignment: .leading, spacing: 0) {
                                 needsAttentionSection(summary)
+                                    .padding(.bottom, 26)
                                 valueChartSection(summary)
                             }
                             // Independent of heroContentDownShift now — that
                             // constant governs the greeting text's own
                             // position inside the tall hero, which stayed
                             // put; this is just Needs Attention's own small
-                            // top margin below where hero(_:) ends — pulled
-                            // in from 20 so the carousel sits roughly
-                            // centered in the gap between the greeting above
-                            // it and the value chart below it, rather than
-                            // sitting closer to the chart. Bottom padding
-                            // bumped well past the FAB's own reserved band
-                            // (70pt above the tab bar, plus its own ~50pt
-                            // footprint) so the chart never sits directly
-                            // behind the fixed FAB circle on first load.
+                            // top margin below where hero(_:) ends. Bottom
+                            // padding bumped well past the FAB's own
+                            // reserved band (70pt above the tab bar, plus its
+                            // own ~50pt footprint) so the chart never sits
+                            // directly behind the fixed FAB circle on first
+                            // load.
                             .padding(.horizontal, 20)
                             .padding(.bottom, 120)
-                            .padding(.top, 8)
+                            .padding(.top, 2)
                         } else if viewModel.isLoading {
                             ProgressView().padding(.top, 80).frame(maxWidth: .infinity)
                         } else if let error = viewModel.errorMessage {
