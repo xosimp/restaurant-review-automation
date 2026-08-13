@@ -52,9 +52,73 @@ def _restaurant(db_path, **modules):
     return get_restaurant(rid, db_path=db_path)
 
 
-def test_no_modules_active_returns_placeholder(db_path):
+def test_no_modules_active_still_includes_today_section(db_path):
+    """Date/holiday/identity context isn't module-gated — a restaurant with
+    zero active modules should still get a real TODAY section instead of
+    the old bare "no data" placeholder, which made even "what's today's
+    date" unanswerable."""
     r = _restaurant(db_path)
-    assert build_context(r) == "No data available yet for this restaurant."
+    ctx = build_context(r)
+    assert "TODAY" in ctx
+    assert "Today's date:" in ctx
+    assert "REVIEWS" not in ctx
+    assert "LABOR" not in ctx
+
+
+def test_today_section_reflects_restaurant_timezone(db_path):
+    from models import update_restaurant
+    from time_utils import restaurant_now
+    r = _restaurant(db_path)
+    update_restaurant(r.id, {"timezone": "America/Los_Angeles"}, db_path=db_path)
+    r = get_restaurant(r.id, db_path=db_path)
+    ctx = build_context(r)
+    expected = restaurant_now(r, naive=True).strftime("%A, %B %d, %Y")
+    assert f"Today's date: {expected}" in ctx
+
+
+def test_today_section_lists_upcoming_holiday(db_path, monkeypatch):
+    import ask_cavnar
+    from datetime import datetime
+    r = _restaurant(db_path)
+    # Anchor "today" to a fixed date with a known upcoming holiday so this
+    # doesn't depend on when the test suite happens to run.
+    monkeypatch.setattr(
+        "time_utils.restaurant_now",
+        lambda *a, **k: datetime(2026, 12, 20),
+    )
+    ctx = ask_cavnar.build_context(r)
+    assert "Christmas Day" in ctx
+
+
+def test_today_section_respects_skip_holidays_preference(db_path, monkeypatch):
+    from models import update_restaurant
+    from datetime import datetime
+    r = _restaurant(db_path)
+    update_restaurant(r.id, {"skip_holidays": "Christmas Day"}, db_path=db_path)
+    r = get_restaurant(r.id, db_path=db_path)
+    monkeypatch.setattr(
+        "time_utils.restaurant_now",
+        lambda *a, **k: datetime(2026, 12, 20),
+    )
+    ctx = build_context(r)
+    assert "Christmas Day" not in ctx
+    # New Year's Eve is also within 30 days of Dec 20 and wasn't skipped
+    assert "New Year's Eve" in ctx
+
+
+def test_today_section_includes_restaurant_profile_when_set(db_path):
+    from models import update_restaurant
+    r = _restaurant(db_path)
+    update_restaurant(r.id, {
+        "neighborhood": "River North, Chicago",
+        "vibe": "upscale but unpretentious Italian",
+        "known_for": "handmade pasta and a killer wine list",
+    }, db_path=db_path)
+    r = get_restaurant(r.id, db_path=db_path)
+    ctx = build_context(r)
+    assert "River North, Chicago" in ctx
+    assert "upscale but unpretentious Italian" in ctx
+    assert "known for handmade pasta and a killer wine list" in ctx
 
 
 def test_reviews_module_with_no_reviews_says_so(db_path):

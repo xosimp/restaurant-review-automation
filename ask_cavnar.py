@@ -26,6 +26,49 @@ def _fmt(v, default="n/a"):
     return default if v is None else v
 
 
+def _identity_context(restaurant):
+    """Today's real date (in the restaurant's own timezone, not the
+    server's), upcoming dining-relevant holidays, and basic restaurant
+    identity — the one section that's always included regardless of which
+    modules are active. Without this, a question like "what upcoming
+    holidays should I focus on" had no anchor date at all: the model has no
+    live clock of its own, so it would (correctly, from its own
+    perspective) say it can't check dates. reused get_upcoming_holidays()
+    from marketing.py rather than re-deriving a second holiday calendar —
+    it already computes real calendar dates (including movable ones like
+    Mother's Day/Thanksgiving) and already respects this restaurant's own
+    skip_holidays preference, the same list marketing content generation
+    and labor's holiday-aware forecasting both already rely on."""
+    from time_utils import restaurant_now
+    from marketing import get_upcoming_holidays
+
+    now = restaurant_now(restaurant, naive=True)
+    lines = ["TODAY", f"- Today's date: {now.strftime('%A, %B %d, %Y')}"]
+
+    try:
+        upcoming = get_upcoming_holidays(now)
+        skip = [h.strip().lower() for h in (restaurant.skip_holidays or "").split(",") if h.strip()]
+        if skip and upcoming:
+            upcoming = ", ".join(
+                h for h in upcoming.split(", ") if not any(s in h.lower() for s in skip)
+            )
+        lines.append(f"- Upcoming holidays/events (next 30 days): {upcoming if upcoming else 'none in the next 30 days'}")
+    except Exception:
+        pass
+
+    profile_bits = []
+    if restaurant.neighborhood:
+        profile_bits.append(restaurant.neighborhood)
+    if restaurant.vibe:
+        profile_bits.append(restaurant.vibe)
+    if restaurant.known_for:
+        profile_bits.append(f"known for {restaurant.known_for}")
+    if profile_bits:
+        lines.append(f"- About this restaurant: {'; '.join(profile_bits)}")
+
+    return "\n".join(lines) + "\n"
+
+
 def _reviews_context(restaurant_id):
     from models import get_review_stats
     s = get_review_stats(restaurant_id)
@@ -175,11 +218,13 @@ _CONTEXT_BUILDERS = (
 
 
 def build_context(restaurant):
-    """Plain-text snapshot of whichever modules `restaurant` has active.
-    A module the client doesn't have is simply omitted, not described as
-    empty — that keeps the model from being asked to reason about data
-    that was never going to exist for this client."""
-    parts = []
+    """Plain-text snapshot: an always-present TODAY/identity section (date,
+    upcoming holidays, restaurant profile — see _identity_context) followed
+    by whichever modules `restaurant` has active. A module the client
+    doesn't have is simply omitted, not described as empty — that keeps the
+    model from being asked to reason about data that was never going to
+    exist for this client."""
+    parts = [_identity_context(restaurant)]
     for attr, builder in _CONTEXT_BUILDERS:
         if not getattr(restaurant, attr, 0):
             continue
@@ -195,7 +240,10 @@ def build_context(restaurant):
             parts.append(_intel_context(restaurant.id))
     except Exception:
         pass
-    return "\n".join(parts) if parts else "No data available yet for this restaurant."
+    # parts always has at least the TODAY section now, so this never falls
+    # back to a bare placeholder the way it used to for a restaurant with
+    # zero active modules — date/holiday/identity info isn't module-gated.
+    return "\n".join(parts)
 
 
 ASK_CAVNAR_PROMPT = """You are Cavnar AI, an AI-powered restaurant intelligence consultant embedded in {restaurant_name}'s dashboard. You have two modes, and most questions call for a blend of both:
@@ -205,6 +253,8 @@ ASK_CAVNAR_PROMPT = """You are Cavnar AI, an AI-powered restaurant intelligence 
 2. EVERYTHING ELSE — restaurant industry advice, marketing ideas, menu strategy, staffing/scheduling best practices, general business questions, or just conversation: answer using your own knowledge and expertise as an experienced restaurant consultant, same as you would in any other context. Weave in this restaurant's real data from the snapshot when it's genuinely relevant, but don't limit yourself to only what's in the snapshot for these — you're free to think and advise.
 
 Use judgment about which mode (or blend) a question calls for — "how do I get my labor cost down" wants both this restaurant's real labor % AND general scheduling advice, for example.
+
+The DATA SNAPSHOT below always opens with a TODAY section — this restaurant's real current date (in its own local timezone) and its real upcoming holidays for the next 30 days. Always use that section directly for any date, day-of-week, "how many days until," or "what's coming up" question — you have real, live information here, not a training cutoff. Never say you don't have access to a calendar or can't check dates; you can, right there in TODAY.
 
 Restaurant: {restaurant_name}
 
