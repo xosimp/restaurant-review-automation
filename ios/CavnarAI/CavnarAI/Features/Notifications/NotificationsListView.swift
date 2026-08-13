@@ -140,6 +140,19 @@ struct NotificationsListView: View {
                     .scrollContentBackground(.hidden)
                 }
             }
+            // Without this, the Group (and the .background it carries)
+            // only sizes itself to whichever branch's own intrinsic
+            // content height — the loading skeleton and error states are
+            // both just a short VStack, not something that naturally fills
+            // the screen the way List does. That let the sheet's own
+            // default background show through above and below a small
+            // island of cavnarPaper wherever the skeleton/error content
+            // happened to land — the "gray top and bottom, black band with
+            // skeleton bars floating in the middle" look. Forcing the
+            // Group itself to fill the available space means every branch
+            // gets the same full-bleed background regardless of how little
+            // content it has.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Color.cavnarPaper)
             .refreshable { await viewModel.load() }
             .navigationTitle("Notifications")
