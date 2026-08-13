@@ -12,6 +12,13 @@ struct TypewriterText: View {
     var font: Font
     var color: Color
     var lineSpacing: CGFloat = 4
+    // Fires after every word becomes visible — lets a caller whose layout
+    // grows as this reveals (a chat bubble that needs to stay scrolled into
+    // view as it types out, for instance) react to that growth as it
+    // happens, not just once when the full text first arrives. nil by
+    // default so every existing call site (AIConsultantView's insight
+    // boxes) is unaffected.
+    var onReveal: (() -> Void)? = nil
 
     @State private var visibleWordCount = 0
 
@@ -40,6 +47,7 @@ struct TypewriterText: View {
                     try? await Task.sleep(nanoseconds: delayNanos)
                     if Task.isCancelled { return }
                     visibleWordCount = i
+                    onReveal?()
                 }
             }
     }

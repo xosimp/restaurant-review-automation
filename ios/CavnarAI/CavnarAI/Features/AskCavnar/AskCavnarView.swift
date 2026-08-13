@@ -22,7 +22,26 @@ struct AskCavnarView: View {
                                 emptyState
                             }
                             ForEach(viewModel.messages) { message in
-                                ChatBubble(message: message).id(message.id)
+                                ChatBubble(message: message) {
+                                    // Fires on every word TypewriterText
+                                    // reveals — the bubble grows taller
+                                    // over that ~1.4s window entirely on
+                                    // the client side (the message's full
+                                    // text already arrived; onChange(of:
+                                    // messages.count) below only fires
+                                    // once, at that arrival). Without this,
+                                    // nothing re-scrolled as the reveal
+                                    // grew the bubble, so a long answer's
+                                    // tail ended up hidden behind the
+                                    // keyboard with no way to follow it.
+                                    // No withAnimation — an animated scroll
+                                    // re-triggered on every word would
+                                    // stack/fight itself at this frequency;
+                                    // a plain immediate scrollTo here reads
+                                    // as smooth continuous tracking instead.
+                                    proxy.scrollTo(message.id, anchor: .bottom)
+                                }
+                                .id(message.id)
                             }
                             if viewModel.isLoading {
                                 LoadingBubble()
@@ -203,6 +222,7 @@ private func chatBubbleShape(isUser: Bool) -> UnevenRoundedRectangle {
 
 private struct ChatBubble: View {
     let message: ChatMessage
+    var onReveal: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -235,7 +255,10 @@ private struct ChatBubble: View {
                     // Word-by-word reveal — same "AI is composing" language
                     // as AIConsultantView's insight boxes elsewhere in the
                     // app, instead of the answer just snapping in instantly.
-                    TypewriterText(fullText: message.text, font: .cavnarBody(14), color: Color.cavnarInk, lineSpacing: 5)
+                    TypewriterText(
+                        fullText: message.text, font: .cavnarBody(14), color: Color.cavnarInk, lineSpacing: 5,
+                        onReveal: onReveal
+                    )
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
