@@ -19,8 +19,22 @@ struct NeedsAttentionCarousel: View {
 
     @State private var centeredID: String?
 
+    // With 3+ cards, starting centered on the SECOND one means the very
+    // first frame already shows a real card peeking on both sides — the
+    // clearest possible signal that this swipes both directions, not just
+    // right. With only 1-2 cards there's no card that could ever have a
+    // left neighbor, so it starts on the first one same as before (an
+    // explicit memberwise init is what lets this depend on `items` at
+    // construction time, before the view's first layout pass, rather than
+    // visibly jumping there after an .onAppear).
+    init(items: [NeedsAttentionItem], onTap: @escaping (NeedsAttentionItem) -> Void) {
+        self.items = items
+        self.onTap = onTap
+        _centeredID = State(initialValue: items.count >= 3 ? items[1].id : nil)
+    }
+
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 2) {
             GeometryReader { geo in
                 let sidePadding = max((geo.size.width - cardWidth) / 2, 0)
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -61,7 +75,7 @@ struct NeedsAttentionCarousel: View {
                     }
                     .scrollTargetLayout()
                     .padding(.horizontal, sidePadding)
-                    .padding(.vertical, 24)
+                    .padding(.vertical, 14)
                 }
                 // .always (not the default .automatic) forces exactly one
                 // card to change per swipe gesture no matter how short the
@@ -79,7 +93,7 @@ struct NeedsAttentionCarousel: View {
                     old != nil && new != nil && old != new
                 }
             }
-            .frame(height: 220)
+            .frame(height: 190)
 
             if items.count > 1 {
                 HStack(spacing: 4) {
