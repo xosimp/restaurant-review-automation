@@ -314,7 +314,13 @@ final class LaborViewModel {
         return lastDate < cutoff
     }
 
-    private func cacheSchedule(_ schedule: GeneratedSchedule) {
+    // Not private — the round-trip test exercises this directly (not just
+    // the raw Codable layer) to prove the actual method sequence the app
+    // runs (configureCaching → generate → cacheSchedule → fresh instance →
+    // configureCaching) works end to end, since a prior test that only
+    // validated encode/decode in isolation didn't catch whatever's still
+    // making the real generated schedule fail to survive a relaunch.
+    func cacheSchedule(_ schedule: GeneratedSchedule) {
         guard let restaurantId, let data = try? Self.cacheEncoder.encode(schedule) else { return }
         UserDefaults.standard.set(data, forKey: Self.scheduleCacheKey(restaurantId))
     }

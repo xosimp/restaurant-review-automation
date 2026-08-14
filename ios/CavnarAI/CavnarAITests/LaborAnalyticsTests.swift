@@ -119,4 +119,42 @@ final class LaborAnalyticsTests: XCTestCase {
         XCTAssertEqual(decoded.staffConstraints?["Jamie"], "No Sundays")
         XCTAssertEqual(decoded.hoursBudget, 118.0)
     }
+
+    /// The previous round-trip test only proved Codable/UserDefaults work
+    /// in isolation — it didn't prove the actual LaborViewModel methods,
+    /// called in the actual sequence the app uses, work end to end. This
+    /// exercises exactly that sequence: configureCaching (app open) →
+    /// cacheSchedule (a schedule finishes generating) → a brand new
+    /// LaborViewModel instance (simulating whatever tears the real one
+    /// down) → configureCaching again (app reopens) → assert the schedule
+    /// comes back. Reported still missing after the encode/decode fix, so
+    /// if this test passes too, the bug isn't in this Swift code at all —
+    /// it's in when/whether these methods actually get invoked at runtime,
+    /// which no unit test can observe.
+    @MainActor
+    func testScheduleSurvivesAcrossFreshViewModelInstancesLikeARealRelaunch() throws {
+        let restaurantId = 987_654_321  // unlikely to collide with real data
+        let key = "labor.cachedSchedule.\(restaurantId)"
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+
+        let farFuture = Calendar.current.date(byAdding: .day, value: 10, to: Date())!
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let json = """
+        {"ok": true, "status": "done", "hours_scheduled": 500.0,
+         "week_dates": ["\(formatter.string(from: farFuture))"]}
+        """
+        let schedule = try JSONDecoder.cavnar.decode(GeneratedSchedule.self, from: Data(json.utf8))
+
+        let firstLaunch = LaborViewModel()
+        firstLaunch.configureCaching(restaurantId: restaurantId)
+        firstLaunch.cacheSchedule(schedule)
+
+        let secondLaunch = LaborViewModel()
+        secondLaunch.configureCaching(restaurantId: restaurantId)
+
+        XCTAssertNotNil(secondLaunch.scheduleResult, "a fresh LaborViewModel should restore the cached schedule on configureCaching")
+        XCTAssertEqual(secondLaunch.scheduleResult?.hoursScheduled, 500.0)
+    }
 }

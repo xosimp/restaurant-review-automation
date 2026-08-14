@@ -8,6 +8,7 @@ private enum LaborSubTab: String, CaseIterable, Identifiable {
 
 struct LaborView: View {
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(\.scenePhase) private var scenePhase
     @State private var viewModel = LaborViewModel()
     @State private var analyticsViewModel = LaborAnalyticsViewModel()
     @State private var subTab: LaborSubTab = .overview
@@ -109,6 +110,21 @@ struct LaborView: View {
         }
         .task { await analyticsViewModel.load() }
         .task { await viewModel.loadAvailability() }
+        // Belt-and-suspenders alongside the .task-time restore above: tied
+        // directly to scenePhase (the same signal RootView's own Face ID
+        // lock keys off — confirmed swiping away and immediately back
+        // still round-trips through .background) rather than depending on
+        // whether SwiftUI actually re-runs .task for this specific
+        // TabView/if-else hierarchy on a quick foreground return, which a
+        // reported-still-missing schedule after the .task fix suggests
+        // isn't reliably happening the way the .task fix assumed. This
+        // costs nothing when scheduleResult is already populated —
+        // configureCaching only ever sets it from a valid cache entry, it
+        // never clears an existing value.
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active, let restaurantId = sessionStore.currentUser?.restaurantId else { return }
+            viewModel.configureCaching(restaurantId: restaurantId)
+        }
     }
 
     @ViewBuilder
