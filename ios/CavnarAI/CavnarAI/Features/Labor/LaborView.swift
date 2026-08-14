@@ -174,6 +174,13 @@ struct LaborView: View {
             .popover(isPresented: $showDataInfo, arrowEdge: .bottom) {
                 dataFreshnessPopoverContent(info)
                     .presentationCompactAdaptation(.popover)
+                    // The content's own .background() doesn't get clipped to
+                    // the popover's actual (rounded) presentation shape, so
+                    // its square corners peeked out past — or fell short
+                    // of — the system's rounded chrome, reading as a
+                    // mismatched border. presentationBackground draws at the
+                    // right layer, clipped to the real shape.
+                    .presentationBackground(Color.cavnarPaper2)
             }
         }
     }
@@ -194,10 +201,18 @@ struct LaborView: View {
             }
             .font(.cavnarBody(12))
             .foregroundStyle(Color.cavnarInk2)
+            // Without this the popover sized itself to the text's
+            // unconstrained ideal (single-line) width first and only then
+            // applied the frame below, clipping everything past ~7-8 words
+            // instead of wrapping. This forces wrap-not-clip within
+            // whatever width it's actually given.
+            .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
-        .frame(maxWidth: 260, alignment: .leading)
-        .background(Color.cavnarPaper2)
+        // A fixed width (not maxWidth) gives the popover's own auto-sizing
+        // an unambiguous number to lay out against, rather than an upper
+        // bound it could compute around inconsistently.
+        .frame(width: 240, alignment: .leading)
     }
 
     private static let availabilityID = "labor-availability"
@@ -429,35 +444,37 @@ struct LaborView: View {
         .id(Self.understaffedID)
     }
 
+    /// Wrapped in a dropdown (starting open, since it just finished
+    /// generating) instead of always-rendered — a full schedule with its
+    /// summary and day-by-day table has no way to be hidden afterward
+    /// otherwise, and stays pinned at that height for the rest of the
+    /// session.
     @ViewBuilder
     private func scheduleResultSection(_ result: GeneratedSchedule) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                if let hours = result.hoursScheduled {
-                    (Text(String(format: "%.1f", hours)).font(.cavnarNumber(13, weight: 600)) + Text(" hours scheduled"))
-                        .font(.cavnarBody(13, weight: 600))
-                        .foregroundStyle(Color.cavnarInk)
-                }
-                Spacer()
-                if let csv = result.scheduleCsv {
-                    ShareLink(item: csv, preview: SharePreview("Schedule.csv")) {
-                        Image(systemName: "square.and.arrow.up")
+        CavnarDropdown(
+            title: "Generated schedule",
+            subtitle: result.hoursScheduled.map { "\(String(format: "%.1f", $0)) hours scheduled" },
+            tone: .good,
+            startExpanded: true
+        ) {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(result.summary ?? [], id: \.self) { line in
+                        Text("• \(line)")
+                            .font(.cavnarBody(12))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .lineSpacing(5)
+                    }
+                    if let budget = result.hoursBudget, budget > 0, let scheduled = result.hoursScheduled {
+                        parHoursBanner(budget: budget, scheduled: scheduled, dollars: result.laborBudgetDollars)
                     }
                 }
-            }
-            ForEach(result.summary ?? [], id: \.self) { line in
-                Text("• \(line)")
-                    .font(.cavnarBody(12))
-                    .foregroundStyle(Color.cavnarInk2)
-            }
-            if let budget = result.hoursBudget, budget > 0, let scheduled = result.hoursScheduled {
-                parHoursBanner(budget: budget, scheduled: scheduled, dollars: result.laborBudgetDollars)
-            }
-        }
-        .cavnarCard()
+                .cavnarCard()
 
-        if let rows = result.previewRows, !rows.isEmpty {
-            fullScheduleTable(rows)
+                if let rows = result.previewRows, !rows.isEmpty {
+                    fullScheduleTable(rows, csv: result.scheduleCsv)
+                }
+            }
         }
     }
 
@@ -491,15 +508,28 @@ struct LaborView: View {
     /// find "Monday" once and read straight down its staff, rather than
     /// re-reading the same day label six times in a row.
     @ViewBuilder
-    private func fullScheduleTable(_ rows: [ScheduleRow]) -> some View {
+    private func fullScheduleTable(_ rows: [ScheduleRow], csv: String?) -> some View {
         let grouped = Dictionary(grouping: rows, by: { $0.day ?? "—" })
         let orderedDays = Self.scheduleDayOrder.filter { grouped[$0] != nil }
             + grouped.keys.filter { !Self.scheduleDayOrder.contains($0) }.sorted()
 
         VStack(alignment: .leading, spacing: 16) {
-            Text("Full schedule")
-                .font(.cavnarBody(12, weight: 700))
-                .foregroundStyle(Color.cavnarInk3)
+            HStack {
+                Text("Full schedule")
+                    .font(.cavnarBody(12, weight: 700))
+                    .foregroundStyle(Color.cavnarInk3)
+                Spacer()
+                // Moved here from the summary card above — sitting next to
+                // the table it actually exports reads far more directly
+                // than floating next to an unrelated "hours scheduled" line.
+                if let csv {
+                    ShareLink(item: csv, preview: SharePreview("Schedule.csv")) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.cavnarEmber)
+                    }
+                }
+            }
             ForEach(orderedDays, id: \.self) { day in
                 scheduleDayGroup(day: day, rows: grouped[day] ?? [])
             }
@@ -653,7 +683,7 @@ private struct ScheduleLoadingText: View {
 
     private static let messages = [
         "Reviewing your sales & shift history…",
-        "Usually takes 20–30 seconds…",
+        "Usually takes 25–35 seconds…",
         "Balancing coverage across the week…",
         "Checking for overtime risk…",
         "Weighing upcoming events & weather…",
@@ -663,17 +693,51 @@ private struct ScheduleLoadingText: View {
     @State private var index = 0
 
     var body: some View {
-        Text(Self.messages[index])
-            .font(.cavnarBody(13, weight: 700))
-            .foregroundStyle(color)
-            .contentTransition(.opacity)
+        ShimmerText(text: Self.messages[index], font: .cavnarBody(13, weight: 700), color: color)
             .task {
                 while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(2.4))
+                    try? await Task.sleep(for: .seconds(3.5))
                     if Task.isCancelled { return }
                     withAnimation(.easeInOut(duration: 0.4)) {
                         index = (index + 1) % Self.messages.count
                     }
+                }
+            }
+    }
+}
+
+/// A bright band sweeping left-to-right across the text, masked to its own
+/// glyph shape — the same "reading a file" shimmer pattern common in AI
+/// tools, reusing the sliding-gradient technique CavnarSkeletonBar already
+/// establishes for loading states elsewhere in the app, just masked to
+/// text instead of filling a bar.
+private struct ShimmerText: View {
+    let text: String
+    let font: Font
+    let color: Color
+
+    @State private var slide = false
+
+    var body: some View {
+        Text(text)
+            .font(font)
+            .foregroundStyle(color.opacity(0.4))
+            .contentTransition(.opacity)
+            .overlay(
+                GeometryReader { geo in
+                    LinearGradient(
+                        colors: [.clear, color, .clear],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                    .frame(width: geo.size.width * 0.6)
+                    .offset(x: slide ? geo.size.width : -geo.size.width * 0.6)
+                }
+                .mask(Text(text).font(font))
+                .allowsHitTesting(false)
+            )
+            .onAppear {
+                withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
+                    slide = true
                 }
             }
     }

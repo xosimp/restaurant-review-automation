@@ -77,8 +77,15 @@ struct RoleDonutChart: View {
                                 .font(.cavnarBody(12, weight: 600))
                                 .foregroundStyle(Color.cavnarInk)
                                 .lineLimit(1)
-                            Text("\(formattedHours(role.hours))h · \(role.headcount) staff · $\(formattedComma(role.laborCost))")
-                                .font(.cavnarBody(9))
+                            // Digits in Space Grotesk (cavnarNumber), same
+                            // as every other numeric value in the app —
+                            // this line was plain body text throughout,
+                            // including the hours/headcount/cost figures.
+                            (Text(formattedHours(role.hours)).font(.cavnarNumber(9))
+                                + Text("h · ").font(.cavnarBody(9))
+                                + Text("\(role.headcount)").font(.cavnarNumber(9))
+                                + Text(" staff · $").font(.cavnarBody(9))
+                                + Text(formattedComma(role.laborCost)).font(.cavnarNumber(9)))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                         Spacer(minLength: 4)
