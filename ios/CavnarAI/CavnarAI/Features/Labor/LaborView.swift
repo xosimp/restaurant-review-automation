@@ -301,6 +301,10 @@ struct LaborView: View {
     @ViewBuilder
     private func overtimeDropdown(_ entries: [LaborOvertimeEntry], proxy: ScrollViewProxy) -> some View {
         let atRisk = entries.filter { $0.status == "overtime" && !($0.otAllowed ?? false) }.count
+        // Backend returns these in whatever order Python's dict iteration
+        // happened to produce (first-seen-in-the-CSV order), which reads as
+        // random — sorted lowest-to-highest hours here instead.
+        let sorted = entries.sorted { ($0.hours ?? 0) < ($1.hours ?? 0) }
         CavnarDropdown(
             title: "Overtime risk",
             subtitle: "\(entries.count) \(entries.count == 1 ? "person" : "people") flagged this period",
@@ -309,7 +313,7 @@ struct LaborView: View {
             onExpand: { scrollToReveal(Self.overtimeID, proxy: proxy) }
         ) {
             VStack(spacing: 8) {
-                ForEach(entries) { entry in
+                ForEach(sorted) { entry in
                     overtimeRow(entry)
                 }
             }
@@ -459,11 +463,22 @@ struct LaborView: View {
         ) {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 12) {
-                    ForEach(result.summary ?? [], id: \.self) { line in
-                        Text("• \(line)")
-                            .font(.cavnarBody(12))
-                            .foregroundStyle(Color.cavnarInk2)
-                            .lineSpacing(5)
+                    if let summary = result.summary, !summary.isEmpty {
+                        // Same heading + color the web schedule-preview panel
+                        // uses for this exact block, so a client without
+                        // context for a bare bullet list knows what it's
+                        // looking at: the AI's own reasoning for this
+                        // specific week's shifts, not generic tips.
+                        Text("WHAT CHANGED & WHY")
+                            .font(.cavnarBody(10, weight: 700))
+                            .tracking(1.2)
+                            .foregroundStyle(Color.cavnarGreen)
+                        ForEach(summary, id: \.self) { line in
+                            Text("• \(line)")
+                                .font(.cavnarBody(12))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .lineSpacing(5)
+                        }
                     }
                     if let budget = result.hoursBudget, budget > 0, let scheduled = result.hoursScheduled {
                         parHoursBanner(budget: budget, scheduled: scheduled, dollars: result.laborBudgetDollars)
@@ -507,11 +522,19 @@ struct LaborView: View {
     /// the day name under every single row — a client scanning this can
     /// find "Monday" once and read straight down its staff, rather than
     /// re-reading the same day label six times in a row.
+    ///
+    /// Only real weekday values get that branded-day treatment — anything
+    /// else in the "day" field (an employee name, a role, etc.) means the
+    /// AI's generated CSV row had its columns shifted for that one line,
+    /// which previously rendered as its own orange day pill with a single
+    /// name under it and no way to tell it apart from a legitimate day.
+    /// Routed into a separate flagged group instead.
     @ViewBuilder
     private func fullScheduleTable(_ rows: [ScheduleRow], csv: String?) -> some View {
-        let grouped = Dictionary(grouping: rows, by: { $0.day ?? "—" })
+        let recognized = rows.filter { Self.scheduleDayOrder.contains($0.day ?? "") }
+        let unrecognized = rows.filter { !Self.scheduleDayOrder.contains($0.day ?? "") }
+        let grouped = Dictionary(grouping: recognized, by: { $0.day ?? "—" })
         let orderedDays = Self.scheduleDayOrder.filter { grouped[$0] != nil }
-            + grouped.keys.filter { !Self.scheduleDayOrder.contains($0) }.sorted()
 
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -533,7 +556,50 @@ struct LaborView: View {
             ForEach(orderedDays, id: \.self) { day in
                 scheduleDayGroup(day: day, rows: grouped[day] ?? [])
             }
+            if !unrecognized.isEmpty {
+                needsReviewGroup(unrecognized)
+            }
         }
+    }
+
+    private func needsReviewGroup(_ rows: [ScheduleRow]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.cavnarAmber)
+                Text("NEEDS REVIEW")
+                    .font(.cavnarBody(11, weight: 700))
+                    .tracking(1)
+                    .foregroundStyle(Color.cavnarAmber)
+            }
+            Text("These rows didn't come back with a normal weekday — double-check them before publishing.")
+                .font(.cavnarBody(10))
+                .foregroundStyle(Color.cavnarInk3)
+            VStack(spacing: 6) {
+                ForEach(rows) { row in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(row.employee ?? row.day ?? "Unknown")
+                                .font(.cavnarBody(12, weight: 600))
+                                .foregroundStyle(Color.cavnarInk)
+                            Text("day: \(row.day ?? "—")  ·  role: \(row.role ?? "—")")
+                                .font(.cavnarBody(10))
+                                .foregroundStyle(Color.cavnarInk3)
+                        }
+                        Spacer()
+                        Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
+                            .font(.cavnarNumber(11))
+                            .foregroundStyle(Color.cavnarInk2)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .cavnarCard()
+        }
+        .padding(10)
+        .background(Color.cavnarAmber.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 
     private func scheduleDayGroup(day: String, rows: [ScheduleRow]) -> some View {
@@ -711,34 +777,46 @@ private struct ScheduleLoadingText: View {
 /// tools, reusing the sliding-gradient technique CavnarSkeletonBar already
 /// establishes for loading states elsewhere in the app, just masked to
 /// text instead of filling a bar.
+///
+/// Driven by TimelineView (real wall-clock time) rather than a toggled
+/// @State + withAnimation(.repeatForever) — the first version used the
+/// latter and the sweep only ever ran on the very first message: the
+/// parent's own withAnimation(...) { index += 1 } for the cross-fade
+/// between messages is an ambient transaction that gets applied to
+/// whatever animatable properties re-render inside it, and it silently
+/// overrode/replaced the repeat-forever animation on this view's offset
+/// with that one-shot transition every time the text changed. Computing
+/// the sweep position directly from timeline.date sidesteps SwiftUI's
+/// animation/transaction system entirely, so no ambient animation from a
+/// parent update can interrupt it.
 private struct ShimmerText: View {
     let text: String
     let font: Font
     let color: Color
 
-    @State private var slide = false
+    private static let period: Double = 1.6
 
     var body: some View {
-        Text(text)
-            .font(font)
-            .foregroundStyle(color.opacity(0.4))
-            .contentTransition(.opacity)
-            .overlay(
-                GeometryReader { geo in
-                    LinearGradient(
-                        colors: [.clear, color, .clear],
-                        startPoint: .leading, endPoint: .trailing
-                    )
-                    .frame(width: geo.size.width * 0.6)
-                    .offset(x: slide ? geo.size.width : -geo.size.width * 0.6)
-                }
-                .mask(Text(text).font(font))
-                .allowsHitTesting(false)
-            )
-            .onAppear {
-                withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
-                    slide = true
-                }
-            }
+        TimelineView(.animation) { timeline in
+            let elapsed = timeline.date.timeIntervalSinceReferenceDate
+            let phase = (elapsed.truncatingRemainder(dividingBy: Self.period)) / Self.period
+
+            Text(text)
+                .font(font)
+                .foregroundStyle(color.opacity(0.4))
+                .contentTransition(.opacity)
+                .overlay(
+                    GeometryReader { geo in
+                        LinearGradient(
+                            colors: [.clear, color, .clear],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                        .frame(width: geo.size.width * 0.6)
+                        .offset(x: -geo.size.width * 0.6 + phase * geo.size.width * 1.6)
+                    }
+                    .mask(Text(text).font(font))
+                    .allowsHitTesting(false)
+                )
+        }
     }
 }
