@@ -9,7 +9,7 @@ import SwiftUI
 /// tool touched occasionally, not a daily-glance metric like the sections
 /// above it.
 struct AvailabilityManagerSection: View {
-    let viewModel: LaborViewModel
+    @Bindable var viewModel: LaborViewModel
     var onExpand: (() -> Void)? = nil
 
     @State private var name = ""
@@ -20,6 +20,7 @@ struct AvailabilityManagerSection: View {
         CavnarDropdown(
             title: "Employee availability",
             subtitle: viewModel.availability.isEmpty ? "Set who's available which days" : "\(viewModel.availability.count) on file",
+            isExpanded: $viewModel.availabilityExpanded,
             onExpand: onExpand
         ) {
             VStack(alignment: .leading, spacing: 14) {

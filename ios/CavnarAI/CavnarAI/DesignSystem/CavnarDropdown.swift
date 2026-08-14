@@ -4,41 +4,35 @@ import SwiftUI
 /// count badge + chevron) that expands/collapses its own content, instead
 /// of a list dumped flat onto the page that forces endless scrolling past
 /// it to reach anything below. Chevron rotates 180° on toggle; content
-/// fades/slides in rather than snapping open, matching the app's existing
+/// fades in rather than snapping open, matching the app's existing
 /// .easeOut micro-animation convention (segmented control, Done button).
+///
+/// Takes its expanded state as a `Binding` rather than owning it as local
+/// `@State` — a caller sitting inside an `if/else` branch (like the
+/// Overview/Analytics switch in LaborView) has its whole subtree torn down
+/// and rebuilt on every switch, which would silently reset any local
+/// `@State` back to its initial value on return. Backing it with a binding
+/// into a view model that lives outside that branch lets the user's actual
+/// open/closed choice survive the switch.
 struct CavnarDropdown<Content: View>: View {
     let title: String
     var subtitle: String? = nil
     var badge: Int? = nil
     var tone: CavnarTone = .neutral
+    @Binding var isExpanded: Bool
     // Fires right as this transitions closed→open — lets a parent whose
     // ScrollView doesn't otherwise know the page just grew (a section
     // expanding below the fold) bring the newly-opened content into view,
     // instead of leaving the user to scroll and find it themselves.
     var onExpand: (() -> Void)? = nil
-    @State private var isExpanded: Bool
     @ViewBuilder let content: () -> Content
-
-    init(
-        title: String, subtitle: String? = nil, badge: Int? = nil, tone: CavnarTone = .neutral,
-        startExpanded: Bool = false, onExpand: (() -> Void)? = nil,
-        @ViewBuilder content: @escaping () -> Content
-    ) {
-        self.title = title
-        self.subtitle = subtitle
-        self.badge = badge
-        self.tone = tone
-        self.onExpand = onExpand
-        self._isExpanded = State(initialValue: startExpanded)
-        self.content = content
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 Haptic.selection()
                 let opening = !isExpanded
-                withAnimation(.easeOut(duration: 0.22)) { isExpanded.toggle() }
+                withAnimation(.easeOut(duration: 0.3)) { isExpanded.toggle() }
                 if opening { onExpand?() }
             } label: {
                 HStack(spacing: 10) {
@@ -77,18 +71,16 @@ struct CavnarDropdown<Content: View>: View {
             if isExpanded {
                 content()
                     .padding(.top, 10)
-                    // Plain opacity only — no .move(edge:), which animated
-                    // the content in from the top of its transition's
-                    // coordinate space (effectively the top of the
-                    // ScrollView) while the VStack around it was
-                    // simultaneously reflowing to make room, so it visibly
-                    // slid down the page and rendered behind sibling
-                    // content mid-flight. The VStack's own height-change
-                    // animation (already wrapped in withAnimation above)
-                    // provides the "opens downward" motion on its own —
-                    // this only needed a fade, not a second directional
-                    // transition fighting it.
-                    .transition(.opacity)
+                    // Opacity + a slight in-place scale (anchored to the
+                    // top, not a directional move) — a move(edge:) was
+                    // tried here previously and animated content in from
+                    // the top of the ScrollView's coordinate space while
+                    // the VStack around it reflowed simultaneously, so it
+                    // visibly slid down the page behind sibling content.
+                    // Scale-from-98%-in-place has no such offset to fight,
+                    // just reads as the content settling into place as it
+                    // fades — smoother than a flat opacity-only cut too.
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
     }

@@ -7,6 +7,7 @@ private enum LaborSubTab: String, CaseIterable, Identifiable {
 }
 
 struct LaborView: View {
+    @Environment(SessionStore.self) private var sessionStore
     @State private var viewModel = LaborViewModel()
     @State private var analyticsViewModel = LaborAnalyticsViewModel()
     @State private var subTab: LaborSubTab = .overview
@@ -27,6 +28,17 @@ struct LaborView: View {
                                 if !stats.laborUpcoming.isEmpty {
                                     upcomingEventsCard(stats.laborUpcoming)
                                 }
+                                // Below the AI consultant (was between it and
+                                // the hero card) — the consultant reads as
+                                // ongoing situational advice, while a
+                                // generated schedule is a distinct, heavier
+                                // artifact that sitting right under the hero
+                                // banner made read as part of it.
+                                AIConsultantView(
+                                    title: "Cavnar AI Labor Consultant",
+                                    insight: analyticsViewModel.insight,
+                                    isLoading: analyticsViewModel.isLoadingInsight
+                                )
                                 if let result = viewModel.scheduleResult, result.ok {
                                     scheduleResultSection(result)
                                 }
@@ -35,17 +47,6 @@ struct LaborView: View {
                                         .font(.cavnarBody(12))
                                         .foregroundStyle(Color.cavnarRed)
                                 }
-                                // Same placement as the web Labor tab's Schedule
-                                // panel — this used to live on the Analytics
-                                // sub-tab, which put restaurant-level "why are my
-                                // numbers what they are" advice one tap away from
-                                // the actual schedule-generation workflow it's
-                                // usually informing.
-                                AIConsultantView(
-                                    title: "Cavnar AI Labor Consultant",
-                                    insight: analyticsViewModel.insight,
-                                    isLoading: analyticsViewModel.isLoadingInsight
-                                )
                                 // By role sits directly above the other three
                                 // dropdowns (Overtime/Overstaffed/Understaffed)
                                 // so all four read as one connected group —
@@ -94,7 +95,18 @@ struct LaborView: View {
         .navigationBarTitleDisplayMode(.inline)
         .cavnarEmberTitle("Labor")
         .cavnarEmberBackButton()
-        .task { await viewModel.load() }
+        .task {
+            // Loaded synchronously from disk before either network call —
+            // shows the last known schedule/insight immediately on a fresh
+            // launch instead of an empty tab while the real fetch is still
+            // in flight, and stops a relaunch from silently discarding a
+            // schedule that was only ever held in memory.
+            if let restaurantId = sessionStore.currentUser?.restaurantId {
+                viewModel.configureCaching(restaurantId: restaurantId)
+                analyticsViewModel.configureCaching(restaurantId: restaurantId)
+            }
+            await viewModel.load()
+        }
         .task { await analyticsViewModel.load() }
         .task { await viewModel.loadAvailability() }
     }
@@ -310,6 +322,7 @@ struct LaborView: View {
             subtitle: "\(entries.count) \(entries.count == 1 ? "person" : "people") flagged this period",
             badge: atRisk > 0 ? atRisk : nil,
             tone: .bad,
+            isExpanded: $viewModel.overtimeExpanded,
             onExpand: { scrollToReveal(Self.overtimeID, proxy: proxy) }
         ) {
             VStack(spacing: 8) {
@@ -385,6 +398,7 @@ struct LaborView: View {
         CavnarDropdown(
             title: "Overstaffed days", subtitle: "where the money is going",
             badge: days.count, tone: .bad,
+            isExpanded: $viewModel.overstaffedExpanded,
             onExpand: { scrollToReveal(Self.overstaffedID, proxy: proxy) }
         ) {
             VStack(spacing: 8) {
@@ -417,6 +431,7 @@ struct LaborView: View {
         CavnarDropdown(
             title: "Understaffed days", subtitle: "possible missed revenue",
             badge: days.count, tone: .warning,
+            isExpanded: $viewModel.understaffedExpanded,
             onExpand: { scrollToReveal(Self.understaffedID, proxy: proxy) }
         ) {
             VStack(alignment: .leading, spacing: 8) {
@@ -448,18 +463,19 @@ struct LaborView: View {
         .id(Self.understaffedID)
     }
 
-    /// Wrapped in a dropdown (starting open, since it just finished
-    /// generating) instead of always-rendered — a full schedule with its
-    /// summary and day-by-day table has no way to be hidden afterward
-    /// otherwise, and stays pinned at that height for the rest of the
-    /// session.
+    /// Wrapped in a dropdown (starting open on a freshly-generated result,
+    /// but otherwise following whatever the user last left it at — see
+    /// LaborViewModel.scheduleResultExpanded) instead of always-rendered —
+    /// a full schedule with its summary and day-by-day table has no way to
+    /// be hidden afterward otherwise, and stays pinned at that height for
+    /// the rest of the session.
     @ViewBuilder
     private func scheduleResultSection(_ result: GeneratedSchedule) -> some View {
         CavnarDropdown(
             title: "Generated schedule",
-            subtitle: result.hoursScheduled.map { "\(String(format: "%.1f", $0)) hours scheduled" },
+            subtitle: scheduleSubtitle(result),
             tone: .good,
-            startExpanded: true
+            isExpanded: $viewModel.scheduleResultExpanded
         ) {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 12) {
@@ -491,6 +507,22 @@ struct LaborView: View {
                 }
             }
         }
+    }
+
+    /// Date range first, so a client sees at a glance which week this is
+    /// for, then hours scheduled — reuses the same ISO/display formatters
+    /// the freshness popover already parses shift-data dates with.
+    private func scheduleSubtitle(_ result: GeneratedSchedule) -> String? {
+        var parts: [String] = []
+        if let first = result.weekDates?.first, let last = result.weekDates?.last,
+           let startDate = Self.isoDayFormatter.date(from: first),
+           let endDate = Self.isoDayFormatter.date(from: last) {
+            parts.append("\(Self.displayDayFormatter.string(from: startDate)) – \(Self.displayDayFormatter.string(from: endDate))")
+        }
+        if let hours = result.hoursScheduled {
+            parts.append("\(String(format: "%.1f", hours))h scheduled")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "  ·  ")
     }
 
     private func parHoursBanner(budget: Double, scheduled: Double, dollars: Double?) -> some View {

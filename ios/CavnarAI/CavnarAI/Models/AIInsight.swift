@@ -4,7 +4,7 @@ import Foundation
 /// intro/Recommendations/Forecast layout (see client_api.py's
 /// parse_insight_sections) instead of a raw text blob, so the app can
 /// render the same numbered-circle recommendation cards natively.
-struct AIInsight: Decodable, Equatable {
+struct AIInsight: Codable, Equatable {
     let intro: String
     let recommendations: [String]
     let forecast: String?

@@ -162,7 +162,7 @@ struct LaborStats: Decodable {
     }
 }
 
-struct ScheduleRow: Decodable, Identifiable {
+struct ScheduleRow: Codable, Identifiable {
     let date: String?
     let day: String?
     let employee: String?
@@ -182,7 +182,7 @@ struct ScheduleRow: Decodable, Identifiable {
     }
 }
 
-struct GeneratedSchedule: Decodable {
+struct GeneratedSchedule: Codable {
     let ok: Bool
     let status: String?
     let summary: [String]?
@@ -232,10 +232,61 @@ final class LaborViewModel {
     var isSavingAvailability = false
     var availabilityError: String?
 
+    // Expand/collapse state for the Overview tab's dropdown sections,
+    // lifted up here (rather than left as each CavnarDropdown's own
+    // internal @State) specifically because Overview/Analytics is an
+    // if/else branch in LaborView — switching to Analytics and back tears
+    // down and rebuilds the whole Overview branch, which would otherwise
+    // reset every dropdown's local @State back to its startExpanded
+    // default on every return trip. This view model instance sits outside
+    // that branch and survives it, so the user's actual open/closed choice
+    // sticks across tab switches instead of the schedule result silently
+    // re-expanding (or an intentionally-opened section silently
+    // re-collapsing) every time.
+    var scheduleResultExpanded = true
+    var overtimeExpanded = false
+    var overstaffedExpanded = false
+    var understaffedExpanded = false
+    var availabilityExpanded = false
+
     private let client: APIClient
+    private var restaurantId: Int?
 
     init(client: APIClient = .shared) {
         self.client = client
+    }
+
+    /// Loads whatever schedule was last generated and cached on this device
+    /// for this restaurant, if any — called before the network load() so a
+    /// relaunch shows the last real result immediately instead of an empty
+    /// Overview tab, rather than losing it the moment the process restarts
+    /// (previously in-memory only).
+    func configureCaching(restaurantId: Int) {
+        self.restaurantId = restaurantId
+        guard let data = UserDefaults.standard.data(forKey: Self.scheduleCacheKey(restaurantId)),
+              let cached = try? JSONDecoder.cavnar.decode(GeneratedSchedule.self, from: data),
+              !Self.isStale(cached) else { return }
+        scheduleResult = cached
+    }
+
+    private static func scheduleCacheKey(_ restaurantId: Int) -> String { "labor.cachedSchedule.\(restaurantId)" }
+
+    /// A cached schedule for a week that's already ended isn't useful to
+    /// resurrect — it'd read as "here's next week's plan" for a week that's
+    /// now in the past.
+    private static func isStale(_ schedule: GeneratedSchedule) -> Bool {
+        guard let lastDateString = schedule.weekDates?.last else { return false }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        guard let lastDate = formatter.date(from: lastDateString) else { return false }
+        return lastDate < Calendar.current.startOfDay(for: Date())
+    }
+
+    private func cacheSchedule(_ schedule: GeneratedSchedule) {
+        guard let restaurantId, let data = try? JSONEncoder.cavnar.encode(schedule) else { return }
+        UserDefaults.standard.set(data, forKey: Self.scheduleCacheKey(restaurantId))
     }
 
     func load() async {
@@ -391,6 +442,8 @@ final class LaborViewModel {
                     scheduleError = result.error ?? "Schedule generation failed."
                 } else {
                     Haptic.success()
+                    scheduleResultExpanded = true
+                    cacheSchedule(result)
                 }
                 return
             } catch let error as APIClient.APIError {
