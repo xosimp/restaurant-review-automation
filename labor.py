@@ -599,9 +599,15 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             _hc_lines.append(f"  {_dn}: {', '.join(_parts)}")
     _headcount_block = ""
     if _hc_lines:
-        _headcount_block = ("\n\nTYPICAL HEADCOUNT PER DAY — CRITICAL: these are the actual staff counts this restaurant runs. "
-                            "Do NOT exceed these numbers per role per day without a specific reason (event, YoY spike). "
-                            "Going over means you are scheduling people that weren't scheduled historically:\n"
+        _headcount_block = ("\n\nTYPICAL HEADCOUNT PER DAY — your starting point for who/how many per role per "
+                            "day. Use these as the baseline. A reason to go over is an event, a YoY spike, OR "
+                            "the PAR HOURS TARGET below being significantly out of reach at this headcount — see "
+                            "that section's reconciliation rule. If you do scale up for that reason, do it "
+                            "proportionally across roles (not by piling extra hours onto one role) and say so "
+                            "plainly in your summary, e.g. \"Added ~1 server/day vs. the on-file staffing "
+                            "pattern — that pattern looked short for this week's revenue target.\" Don't invent "
+                            "a reason that isn't true; if the historical numbers already support the target, "
+                            "stay within them:\n"
                             + "\n".join(_hc_lines))
 
     # Next Monday as schedule start — in the restaurant's local week, not ours
@@ -775,8 +781,18 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     par_block = (f"\n\nPAR HOURS TARGET — schedule is verified against actual column totals:\n"
                  f"  Projected revenue: ${projected_revenue:,.0f} | Labor target: {labor_target}% = ${labor_budget_dollars:,.0f}\n"
                  f"  Blended rate: ${hourly_rate}/hr → target {hours_budget}h total (±10h acceptable)\n"
-                 f"  PRIORITY ORDER: 1) TYPICAL HEADCOUNT per day, 2) per-day YoY targets, 3) total hours target.\n"
-                 f"  If on track for the week, use YoY daily targets to hit PAR — add later shifts or extend closers before adding openers.{_daily_targets}")
+                 f"  RECONCILIATION — this target is a real revenue-driven budget, not a suggestion. If TYPICAL "
+                 f"HEADCOUNT and the per-day YoY targets together land you within about 15% of {hours_budget}h, "
+                 f"use them as-is. If they would leave you MORE than 15% under budget, that gap means the "
+                 f"historical staffing data doesn't reflect what this restaurant can now afford — close most of "
+                 f"the gap by scaling headcount up proportionally across roles (shift-length extensions alone "
+                 f"have an obvious ceiling and usually can't close a gap that size), and state the gap and your "
+                 f"adjustment explicitly in the summary. Never land silently far under budget with no "
+                 f"explanation — if you can't close the gap, say why in the summary instead of leaving it "
+                 f"unaddressed.\n"
+                 f"  Priority once the gap above is satisfied: 1) per-day YoY targets, 2) TYPICAL HEADCOUNT "
+                 f"pattern, 3) total hours target — a large gap to the hours target overrides a strict headcount "
+                 f"cap, it does not get silently ignored.{_daily_targets}")
 
     prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.
 
@@ -810,7 +826,7 @@ SCHEDULING RULES:
 - Base each day's staffing on the YoY same-day data when available — that is your primary projection
 - For holiday weeks, match staffing to last year's holiday labor hours, not recent averages
 - No employee over 40h for the week
-- Weekly hours target is {hours_budget}h (±10h). Use shift length and later start times to reach the target before adding headcount. Never schedule extra people purely to fill hours.
+- Weekly hours target is {hours_budget}h (±10h). Prefer shift length and later start times to close small gaps. If historical headcount plus reasonable shift lengths would still leave you more than ~15% under this target, add headcount proportionally across roles instead of leaving the gap unaddressed (see PAR HOURS TARGET reconciliation above) — but never add headcount for a gap that shift-length adjustments could already close.
 
 ROLE STAGGER RULE (universal — applies to every restaurant):
 - Never schedule two employees in the same role at the exact same start time. The first person opens; additional staff stagger in based on volume. Only add headcount when YoY data or a flagged event justifies it.
