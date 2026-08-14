@@ -821,21 +821,65 @@ def mobile_delete_device_token(apns_token, current_user):
 
 # ── Labor ─────────────────────────────────────────────────────────────────
 
+def _staff_constraints_index(restaurant_id):
+    """Fuzzy name → constraint-note lookup (full name, first name, first+
+    last-initial, with/without trailing period) — same indexing
+    hosted_dashboard.py's web Labor tab builds, so "OT allowed" detection
+    matches exactly between web and mobile regardless of how a name is
+    spelled in the shifts CSV vs. the staff note."""
+    from models import get_staff_notes
+    index = {}
+    try:
+        for n in (get_staff_notes(restaurant_id) or []):
+            name = (n.get("employee_name") or "").lower().strip().rstrip(".")
+            if not name:
+                continue
+            index[name] = n.get("notes")
+            parts = name.split()
+            if parts:
+                index[parts[0]] = n.get("notes")
+            if len(parts) >= 2:
+                index[parts[0] + " " + parts[1].rstrip(".")] = n.get("notes")
+                index[parts[0] + " " + parts[1].rstrip(".") + "."] = n.get("notes")
+    except Exception:
+        pass
+    return index
+
+
+def _has_ot_allowance(employee, constraints_index):
+    key = (employee or "").lower().strip().rstrip(".")
+    note = constraints_index.get(key) or constraints_index.get(key.split(" ")[0], "")
+    note_l = (note or "").lower()
+    return bool(note) and (
+        "overtime" in note_l or "extra hours" in note_l
+        or " ot " in (" " + note_l + " ") or note_l.startswith("ot ") or note_l.endswith(" ot")
+    )
+
+
 def _do_mobile_labor(restaurant_id):
     from labor import analyse_shifts_for_restaurant
 
     restaurant = get_restaurant(restaurant_id)
     target = float(restaurant.labor_target_pct or 30.0) if restaurant else 30.0
+    hourly_rate = float(restaurant.hourly_rate or 26.0) if restaurant else 26.0
     try:
         analysis = analyse_shifts_for_restaurant(restaurant_id)
     except Exception:
         analysis = {}
 
     overall_pct = analysis.get("overall_labor_pct", 0)
+
+    constraints_index = _staff_constraints_index(restaurant_id)
+    employee_hours = {
+        emp: round(d.get("actual", 0), 1)
+        for emp, d in (analysis.get("employee_hours") or {}).items()
+    }
     overtime_risk = [
         {
             "employee": o.get("employee"), "hours": o.get("hours"),
             "week": o.get("week"), "status": o.get("status"),
+            "total_hours": employee_hours.get(o.get("employee"), o.get("hours", 0)),
+            "ot_allowed": _has_ot_allowance(o.get("employee"), constraints_index),
         }
         for o in analysis.get("overtime_risk", [])
     ]
@@ -850,15 +894,83 @@ def _do_mobile_labor(restaurant_id):
         key=lambda r: r["labor_pct"], reverse=True,
     )
 
+    # Overtime premium — 0.5x blended rate on hours over 40/week, same
+    # formula hosted_dashboard.py's web dashboard uses for its "overtime
+    # premium" savings tile.
+    ot_premium = 0.0
+    for o in analysis.get("overtime_risk", []):
+        if o.get("status") == "overtime":
+            ot_premium += max(0, o.get("hours", 0) - 40) * hourly_rate * 0.5
+
+    date_range = analysis.get("date_range") or {}
+    period_days = 14
+    try:
+        if date_range.get("start") and date_range.get("end"):
+            _start = datetime.strptime(date_range["start"], "%Y-%m-%d")
+            _end = datetime.strptime(date_range["end"], "%Y-%m-%d")
+            period_days = max((_end - _start).days + 1, 1)
+    except Exception:
+        pass
+    total_sales = analysis.get("total_sales", 0)
+    monthly_sales_est = (total_sales / period_days * 30) if period_days else 0
+    potential_savings = analysis.get("potential_savings", 0)
+    labor_monthly = round(potential_savings * 4.33)
+    labor_vs_industry_monthly = max(0, round((0.32 - overall_pct / 100) * monthly_sales_est))
+
+    savings_breakdown = {
+        "labor_monthly": labor_monthly,
+        "labor_annual": labor_monthly * 12,
+        "labor_overtime": round(ot_premium),
+        "labor_vs_industry_monthly": labor_vs_industry_monthly,
+        "labor_vs_industry_annual": labor_vs_industry_monthly * 12,
+    }
+
+    # Upcoming holiday/event scheduling forecast — same 21-day window and
+    # holiday-string parsing client_api.py's schedule builder and
+    # hosted_dashboard.py's web Labor tab both already use.
+    labor_upcoming = []
+    try:
+        import re
+        from marketing import get_upcoming_holidays
+        from time_utils import restaurant_now
+        now = restaurant_now(restaurant, naive=True)
+        hol_str = get_upcoming_holidays(now)
+        if hol_str:
+            for chunk in hol_str.split(", "):
+                m = re.search(r'\((\w+ \d+)\)$', chunk)
+                if not m:
+                    continue
+                try:
+                    hdate = datetime.strptime(m.group(1) + " " + str(now.year), "%b %d %Y")
+                    if hdate < now:
+                        hdate = hdate.replace(year=now.year + 1)
+                    days_away = (hdate - now).days
+                    if 0 <= days_away <= 21:
+                        labor_upcoming.append({
+                            "name": chunk[:chunk.rfind("(")].strip(),
+                            "date_str": hdate.strftime("%B %-d"),
+                            "days_away": days_away,
+                        })
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
     return {
         "ok": True,
         "is_live": bool(analysis.get("is_live")),
         "overall_labor_pct": overall_pct,
         "target": target,
         "on_track": overall_pct <= target,
-        "potential_savings": analysis.get("potential_savings", 0),
+        "potential_savings": potential_savings,
         "overtime_risk": overtime_risk,
         "role_summary": role_summary,
+        "date_range": date_range,
+        "overstaffed_days": analysis.get("overstaffed_days") or [],
+        "understaffed_days": analysis.get("understaffed_days") or [],
+        "dow_summary": analysis.get("dow_summary") or {},
+        "savings_breakdown": savings_breakdown,
+        "labor_upcoming": labor_upcoming,
     }, 200
 
 
@@ -989,6 +1101,61 @@ def mobile_schedule_status(job_id, current_user):
         return jsonify(**result)
     except Exception as e:
         return jsonify(ok=False, status="error", error=str(e)), 500
+
+
+@mobile_bp.route("/labor/availability")
+@mobile_login_required
+def mobile_labor_availability(current_user):
+    """Client-scoped counterpart to admin_routes.py's /admin/staff-
+    availability/<id> — same models.py CRUD, gated by the restaurant's own
+    mobile session instead of internal admin auth. Feeds the same AI
+    scheduler input client_api.py's _build_schedule_result() already reads
+    (staff_availability=...), so entries saved here are respected by the
+    next "Generate schedule" run with no extra wiring."""
+    from models import get_staff_availability, init_staff_availability
+    import json as _json
+    init_staff_availability()
+    rows = get_staff_availability(current_user["restaurant_id"]) or []
+    entries = [
+        {
+            "employee_name": r.get("employee_name"),
+            "available_days": _json.loads(r.get("available_days") or "[]"),
+            "unavailable_days": _json.loads(r.get("unavailable_days") or "[]") if r.get("unavailable_days") else [],
+            "notes": r.get("notes"),
+        }
+        for r in rows
+    ]
+    return jsonify(ok=True, availability=entries)
+
+
+@mobile_bp.route("/labor/availability", methods=["POST"])
+@mobile_login_required
+def mobile_labor_availability_save(current_user):
+    from models import save_staff_availability, init_staff_availability
+    data = request.get_json(silent=True) or {}
+    name = (data.get("employee_name") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="Employee name is required."), 400
+    init_staff_availability()
+    save_staff_availability(
+        current_user["restaurant_id"], name,
+        available_days=data.get("available_days") or [],
+        unavailable_days=data.get("unavailable_days") or [],
+        notes=(data.get("notes") or "").strip() or None,
+    )
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/labor/availability/delete", methods=["POST"])
+@mobile_login_required
+def mobile_labor_availability_delete(current_user):
+    from models import delete_staff_availability
+    data = request.get_json(silent=True) or {}
+    name = (data.get("employee_name") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="Employee name is required."), 400
+    delete_staff_availability(current_user["restaurant_id"], name)
+    return jsonify(ok=True)
 
 
 # ── Marketing ─────────────────────────────────────────────────────────────

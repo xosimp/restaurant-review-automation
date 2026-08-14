@@ -10,27 +10,10 @@ struct LaborTrendWeek: Decodable, Identifiable {
     var id: String { label }
 }
 
-struct LaborGap: Decodable {
-    let ok: Bool
-    let overTarget: Bool
-    let monthlyGap: Double
-    let currentPct: Double
-    let targetPct: Double
-
-    enum CodingKeys: String, CodingKey {
-        case ok
-        case overTarget = "over_target"
-        case monthlyGap = "monthly_gap"
-        case currentPct = "current_pct"
-        case targetPct = "target_pct"
-    }
-}
-
 @Observable
 @MainActor
 final class LaborAnalyticsViewModel {
     var trend: [LaborTrendWeek] = []
-    var gap: LaborGap?
     var insight: AIInsight?
     var isLoadingInsight = false
     var isLoading = false
@@ -51,12 +34,16 @@ final class LaborAnalyticsViewModel {
         isLoadingInsight = true
         defer { isLoading = false }
 
+        // /labor/gap was dropped from here — its single "monthly gap" figure
+        // is now fully subsumed by the richer savings_breakdown tiles
+        // (LaborStats, fetched by LaborViewModel) the Analytics tab renders
+        // instead; showing both was two overlapping "here's your overspend"
+        // widgets side by side. The route itself is untouched — nothing
+        // else currently depends on removing it too.
         async let trendResult: TrendResponse? = try? client.send("/mobile/api/labor/trend")
-        async let gapResult: LaborGap? = try? client.send("/mobile/api/labor/gap")
         async let insightResult: AIInsight? = try? client.send("/mobile/api/labor/insight")
 
         trend = await trendResult?.weeks ?? []
-        gap = await gapResult
         insight = await insightResult
         isLoadingInsight = false
     }

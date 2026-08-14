@@ -21,14 +21,42 @@ struct LaborView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     if subTab == .overview {
                         if let stats = viewModel.stats {
-                            overviewCard(stats)
+                            heroCard(stats)
+                            if !stats.laborUpcoming.isEmpty {
+                                upcomingEventsCard(stats.laborUpcoming)
+                            }
+                            if let result = viewModel.scheduleResult, result.ok {
+                                scheduleResultSection(result)
+                            }
+                            if let error = viewModel.scheduleError {
+                                Text(error)
+                                    .font(.cavnarBody(12))
+                                    .foregroundStyle(Color.cavnarRed)
+                            }
+                            // Same placement as the web Labor tab's Schedule
+                            // panel — this used to live on the Analytics
+                            // sub-tab, which put restaurant-level "why are my
+                            // numbers what they are" advice one tap away from
+                            // the actual schedule-generation workflow it's
+                            // usually informing.
+                            AIConsultantView(
+                                title: "Cavnar AI Labor Consultant",
+                                insight: analyticsViewModel.insight,
+                                isLoading: analyticsViewModel.isLoadingInsight
+                            )
                             if !stats.overtimeRisk.isEmpty {
-                                overtimeSection(stats.overtimeRisk)
+                                overtimeDropdown(stats.overtimeRisk)
                             }
                             if !stats.roleSummary.isEmpty {
                                 roleSection(stats.roleSummary)
                             }
-                            scheduleSection
+                            if !stats.overstaffedDays.isEmpty {
+                                overstaffedDropdown(stats.overstaffedDays)
+                            }
+                            if !stats.understaffedDays.isEmpty {
+                                understaffedDropdown(stats.understaffedDays)
+                            }
+                            AvailabilityManagerSection(viewModel: viewModel)
                         } else if viewModel.isLoading {
                             ProgressView().padding(.top, 60)
                         } else if let error = viewModel.errorMessage {
@@ -40,24 +68,28 @@ struct LaborView: View {
                             .frame(maxWidth: .infinity)
                         }
                     } else {
-                        LaborAnalyticsSection(viewModel: analyticsViewModel)
+                        LaborAnalyticsSection(viewModel: analyticsViewModel, laborStats: viewModel.stats)
                     }
                 }
                 .padding(20)
             }
         }
         .cavnarModuleBackground()
-        .refreshable { await viewModel.load() }
+        .refreshable {
+            await viewModel.load()
+            await viewModel.loadAvailability()
+        }
         .navigationTitle("Labor")
         .navigationBarTitleDisplayMode(.inline)
         .cavnarEmberTitle("Labor")
         .cavnarEmberBackButton()
         .task { await viewModel.load() }
         .task { await analyticsViewModel.load() }
+        .task { await viewModel.loadAvailability() }
     }
 
     @ViewBuilder
-    private func overviewCard(_ stats: LaborStats) -> some View {
+    private func heroCard(_ stats: LaborStats) -> some View {
         let tone: CavnarTone = stats.onTrack ? .good : .bad
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -82,38 +114,174 @@ struct LaborView: View {
                     .font(.cavnarBody(12, weight: 600))
                     .foregroundStyle(Color.cavnarAmber)
             }
+            dataFreshnessNote(stats)
+
+            ScheduleGenerateButton(
+                isGenerating: viewModel.isGeneratingSchedule,
+                action: { Task { await viewModel.generateSchedule() } }
+            )
+            .padding(.top, 2)
         }
         .cavnarGlassCard(tint: tone.foreground)
     }
 
+    /// Directly resolves the "why does this say Jun 1 in August" question —
+    /// the week-bucketing math behind Overtime risk's date labels was
+    /// already correct (real Monday-of-week from real shift dates); what
+    /// was missing was ever telling the user WHICH week that data is
+    /// actually from, so a real-but-months-old CSV upload (Gia Mia's actual
+    /// case — a live shifts_csv covering Jun 1–14 with nothing uploaded
+    /// since) silently looked like a stale/broken date instead of what it
+    /// is: real historical data that's overdue for a refresh.
     @ViewBuilder
-    private func overtimeSection(_ entries: [LaborOvertimeEntry]) -> some View {
+    private func dataFreshnessNote(_ stats: LaborStats) -> some View {
+        if let start = stats.dateRange.start, let end = stats.dateRange.end,
+           let startDate = Self.isoDayFormatter.date(from: start),
+           let endDate = Self.isoDayFormatter.date(from: end) {
+            let daysOld = Calendar.current.dateComponents([.day], from: endDate, to: Date()).day ?? 0
+            let rangeText = "\(Self.displayDayFormatter.string(from: startDate)) – \(Self.displayDayFormatter.string(from: endDate))"
+            let stale = stats.isLive && daysOld > 21
+            HStack(alignment: .top, spacing: 5) {
+                Image(systemName: stats.isLive ? (stale ? "exclamationmark.triangle.fill" : "clock") : "sparkles")
+                    .font(.system(size: 10, weight: .semibold))
+                Group {
+                    if !stats.isLive {
+                        Text("Showing sample data for illustration — upload your shifts CSV in Account for real numbers.")
+                    } else if stale {
+                        Text("Shift data is from \(rangeText) — \(daysOld) days old. Upload a fresher CSV for current numbers.")
+                    } else {
+                        Text("Based on shift data from \(rangeText).")
+                    }
+                }
+            }
+            .font(.cavnarBody(10, weight: 600))
+            .foregroundStyle(stale ? Color.cavnarAmber : Color.cavnarInk3)
+        }
+    }
+
+    private static let isoDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.calendar = Calendar(identifier: .gregorian)
+        f.timeZone = TimeZone(identifier: "UTC")
+        return f
+    }()
+
+    private static let displayDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d"
+        return f
+    }()
+
+    @ViewBuilder
+    private func upcomingEventsCard(_ events: [LaborUpcomingEvent]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Overtime risk")
-                .font(.cavnarBody(13, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
-            VStack(spacing: 8) {
-                ForEach(entries) { entry in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.employee ?? "Unknown")
-                                .font(.cavnarBody(13, weight: 600))
+            HStack(spacing: 6) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.cavnarEmber)
+                Text("Scheduling forecast")
+                    .font(.cavnarBody(11, weight: 700))
+                    .tracking(0.8)
+                    .foregroundStyle(Color.cavnarEmber)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(events) { event in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(event.name)
+                                .font(.cavnarBody(13, weight: 700))
                                 .foregroundStyle(Color.cavnarInk)
-                            Text(entry.week ?? "")
+                            Text(daysAwayLabel(event.daysAway))
                                 .font(.cavnarBody(11))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
-                        Spacer()
-                        Text("\(entry.hours.map { String(format: "%.1f", $0) } ?? "—")h")
-                            .font(.cavnarNumber(14, weight: 600))
-                            .foregroundStyle(entry.status == "overtime" ? Color.cavnarRed : Color.cavnarAmber)
+                        Text(forecastCopy(daysAway: event.daysAway))
+                            .font(.cavnarBody(11))
+                            .foregroundStyle(Color.cavnarInk2)
                     }
-                    .padding(10)
-                    .background((entry.status == "overtime" ? Color.cavnarRed : Color.cavnarAmber).opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                 }
             }
         }
+        .cavnarCard()
+    }
+
+    private func daysAwayLabel(_ days: Int) -> String {
+        if days == 0 { return "today" }
+        if days == 1 { return "tomorrow" }
+        return "\(days) days away"
+    }
+
+    private func forecastCopy(daysAway: Int) -> String {
+        if daysAway <= 3 {
+            return "Expect elevated covers — confirm full kitchen and floor coverage."
+        } else if daysAway <= 7 {
+            return "Check this week's schedule now — add 1–2 staff if you're typically at capacity."
+        } else {
+            return "Flag for your next schedule build."
+        }
+    }
+
+    @ViewBuilder
+    private func overtimeDropdown(_ entries: [LaborOvertimeEntry]) -> some View {
+        let atRisk = entries.filter { $0.status == "overtime" && !($0.otAllowed ?? false) }.count
+        CavnarDropdown(
+            title: "Overtime risk",
+            subtitle: "\(entries.count) \(entries.count == 1 ? "person" : "people") flagged this period",
+            badge: atRisk > 0 ? atRisk : nil,
+            tone: .bad
+        ) {
+            VStack(spacing: 8) {
+                ForEach(entries) { entry in
+                    overtimeRow(entry)
+                }
+            }
+        }
+    }
+
+    private func overtimeRow(_ entry: LaborOvertimeEntry) -> some View {
+        let allowed = entry.otAllowed ?? false
+        let isOvertime = entry.status == "overtime"
+        let rowTone: Color = allowed ? Color.cavnarGreen : (isOvertime ? Color.cavnarRed : Color.cavnarAmber)
+        return HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(entry.employee ?? "Unknown")
+                        .font(.cavnarBody(13, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                    if allowed {
+                        Text("CONSTRAINT")
+                            .font(.cavnarBody(8, weight: 700))
+                            .tracking(0.4)
+                            .foregroundStyle(Color.cavnarGreen)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.cavnarGreenBg)
+                            .clipShape(Capsule())
+                    }
+                }
+                HStack(spacing: 4) {
+                    Text("Week of \(entry.week ?? "—")")
+                    if let total = entry.totalHours {
+                        Text("· \(String(format: "%.1f", total))h total")
+                    }
+                }
+                .font(.cavnarBody(11))
+                .foregroundStyle(Color.cavnarInk3)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(entry.hours.map { String(format: "%.1f", $0) } ?? "—")h")
+                    .font(.cavnarNumber(14, weight: 600))
+                    .foregroundStyle(rowTone)
+                Text(allowed ? "OT allowed" : (isOvertime ? "Review pay" : "Approaching 40h"))
+                    .font(.cavnarBody(9, weight: 700))
+                    .foregroundStyle(rowTone)
+            }
+        }
+        .padding(10)
+        .background(rowTone.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 
     @ViewBuilder
@@ -122,84 +290,128 @@ struct LaborView: View {
             Text("By role")
                 .font(.cavnarBody(13, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
-            VStack(spacing: 8) {
-                ForEach(roles) { role in
-                    HStack {
-                        Text(role.role)
-                            .font(.cavnarBody(13, weight: 600))
-                            .foregroundStyle(Color.cavnarInk)
-                        Spacer()
-                        (Text("\(role.headcount)").font(.cavnarNumber(11)) + Text(" staff"))
-                            .font(.cavnarBody(11))
-                            .foregroundStyle(Color.cavnarInk3)
-                        Text(String(format: "%.1f%%", role.laborPct))
-                            .font(.cavnarNumber(13, weight: 600))
-                            .foregroundStyle(Color.cavnarInk)
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-            .cavnarCard()
+            RoleDonutChart(roles: roles)
+                .cavnarCard()
         }
     }
 
     @ViewBuilder
-    private var scheduleSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("AI schedule")
-                .font(.cavnarBody(13, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
-
-            Button {
-                Task { await viewModel.generateSchedule() }
-            } label: {
-                if viewModel.isGeneratingSchedule {
-                    HStack(spacing: 8) {
-                        ProgressView().tint(.white)
-                        Text("Generating…")
-                    }
-                    .frame(maxWidth: .infinity)
-                } else {
-                    Text("Generate next week's schedule")
-                }
-            }
-            .buttonStyle(CavnarPrimaryButtonStyle())
-            .disabled(viewModel.isGeneratingSchedule)
-
-            if let error = viewModel.scheduleError {
-                Text(error)
-                    .font(.cavnarBody(12))
-                    .foregroundStyle(Color.cavnarRed)
-            }
-
-            if let result = viewModel.scheduleResult, result.ok {
-                VStack(alignment: .leading, spacing: 6) {
+    private func overstaffedDropdown(_ days: [LaborOverstaffedDay]) -> some View {
+        CavnarDropdown(
+            title: "Overstaffed days", subtitle: "where the money is going",
+            badge: days.count, tone: .bad
+        ) {
+            VStack(spacing: 8) {
+                ForEach(Array(days.prefix(10))) { day in
                     HStack {
-                        if let hours = result.hoursScheduled {
-                            (Text(String(format: "%.1f", hours)).font(.cavnarNumber(13, weight: 600)) + Text(" hours scheduled"))
-                                .font(.cavnarBody(13, weight: 600))
-                                .foregroundStyle(Color.cavnarInk)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(day.day).font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            Text(day.date).font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
                         }
                         Spacer()
-                        if let csv = result.scheduleCsv {
-                            ShareLink(item: csv, preview: SharePreview("Schedule.csv")) {
-                                Image(systemName: "square.and.arrow.up")
-                            }
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text("$\(Int(day.sales))").font(.cavnarNumber(12, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            Text("\(String(format: "%.1f", day.laborPct))% labor").font(.cavnarBody(10, weight: 600)).foregroundStyle(Color.cavnarRed)
                         }
                     }
-                    ForEach(result.summary ?? [], id: \.self) { line in
-                        Text("• \(line)")
-                            .font(.cavnarBody(12))
-                            .foregroundStyle(Color.cavnarInk2)
-                    }
+                    .padding(10)
+                    .background(Color.cavnarRed.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                 }
-                .cavnarCard()
-
-                if let rows = result.previewRows, !rows.isEmpty {
-                    fullScheduleTable(rows)
+                if days.count > 10 {
+                    Text("+ \(days.count - 10) more").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func understaffedDropdown(_ days: [LaborUnderstaffedDay]) -> some View {
+        CavnarDropdown(
+            title: "Understaffed days", subtitle: "possible missed revenue",
+            badge: days.count, tone: .warning
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(days.prefix(10))) { day in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(day.day).font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            Text(day.date).font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text("$\(Int(day.sales))").font(.cavnarNumber(12, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            Text("\(String(format: "%.1f", day.laborPct))% labor").font(.cavnarBody(10, weight: 600)).foregroundStyle(Color.cavnarAmber)
+                        }
+                    }
+                    .padding(10)
+                    .background(Color.cavnarAmber.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                }
+                if days.count > 10 {
+                    Text("+ \(days.count - 10) more").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                }
+                Text("💡 Consider adding 1–2 staff on \(days.prefix(3).map(\.day).joined(separator: ", "))\(days.count > 3 ? " and more" : ".")")
+                    .font(.cavnarBody(11))
+                    .foregroundStyle(Color.cavnarAmber)
+                    .padding(.top, 2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func scheduleResultSection(_ result: GeneratedSchedule) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                if let hours = result.hoursScheduled {
+                    (Text(String(format: "%.1f", hours)).font(.cavnarNumber(13, weight: 600)) + Text(" hours scheduled"))
+                        .font(.cavnarBody(13, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                }
+                Spacer()
+                if let csv = result.scheduleCsv {
+                    ShareLink(item: csv, preview: SharePreview("Schedule.csv")) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+            }
+            ForEach(result.summary ?? [], id: \.self) { line in
+                Text("• \(line)")
+                    .font(.cavnarBody(12))
+                    .foregroundStyle(Color.cavnarInk2)
+            }
+            if let budget = result.hoursBudget, budget > 0, let scheduled = result.hoursScheduled {
+                parHoursBanner(budget: budget, scheduled: scheduled, dollars: result.laborBudgetDollars)
+            }
+        }
+        .cavnarCard()
+
+        if let rows = result.previewRows, !rows.isEmpty {
+            fullScheduleTable(rows)
+        }
+    }
+
+    private func parHoursBanner(budget: Double, scheduled: Double, dollars: Double?) -> some View {
+        let diff = scheduled - budget
+        let withinRange = abs(diff) <= max(budget * 0.05, 1)
+        return HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("PAR HOURS CHECK")
+                    .font(.cavnarBody(9, weight: 700))
+                    .tracking(1)
+                    .foregroundStyle(Color.cavnarGreen)
+                Text("Budgeted \(String(format: "%.0f", budget))h\(dollars.map { " ($\(Int($0)))" } ?? "") for the week")
+                    .font(.cavnarBody(11))
+                    .foregroundStyle(Color.cavnarInk2)
+            }
+            Spacer()
+            Text(withinRange ? "On budget" : (diff > 0 ? "+\(String(format: "%.0f", diff))h over" : "\(String(format: "%.0f", diff))h under"))
+                .font(.cavnarBody(11, weight: 700))
+                .foregroundStyle(withinRange ? Color.cavnarGreen : Color.cavnarAmber)
+        }
+        .padding(10)
+        .background(Color.cavnarGreen.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 
     @ViewBuilder
@@ -225,5 +437,71 @@ struct LaborView: View {
             }
             .cavnarCard()
         }
+    }
+}
+
+/// The AI schedule generator is Gia Mia's single most-used feature —
+/// deliberately styled as the standout action on the page (gradient fill,
+/// icon badge, glow shadow, subtitle) rather than a plain text button, and
+/// placed inside the hero card near the top instead of at the bottom of a
+/// long scroll.
+private struct ScheduleGenerateButton: View {
+    let isGenerating: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            Haptic.light()
+            action()
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(Color.white.opacity(0.18))
+                    if isGenerating {
+                        ProgressView().tint(.white)
+                    } else {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .frame(width: 34, height: 34)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(isGenerating ? "Generating your schedule…" : "Generate next week's schedule")
+                        .font(.cavnarBody(15, weight: 700))
+                        .foregroundStyle(.white)
+                    if !isGenerating {
+                        Text("AI-optimized from your sales & shift history")
+                            .font(.cavnarBody(10, weight: 500))
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
+                }
+
+                Spacer(minLength: 4)
+
+                if !isGenerating {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(
+                LinearGradient(colors: [Color.cavnarEmber2, Color.cavnarEmber], startPoint: .topLeading, endPoint: .bottomTrailing)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: CavnarRadius.control)
+                    .strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+            .shadow(color: Color.cavnarEmber.opacity(0.45), radius: 14, x: 0, y: 6)
+        }
+        .buttonStyle(.plain)
+        .disabled(isGenerating)
+        .scaleEffect(isGenerating ? 0.99 : 1)
+        .animation(.easeOut(duration: 0.15), value: isGenerating)
+        .sensoryFeedback(.impact(weight: .medium), trigger: isGenerating) { old, new in !old && new }
     }
 }

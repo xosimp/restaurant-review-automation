@@ -684,6 +684,123 @@ def test_schedule_status_unknown_job_returns_404(client, db_path):
     assert resp.status_code == 404
 
 
+def test_labor_endpoint_includes_new_analytics_fields(client, db_path):
+    """Overview/Analytics tab parity fields — date_range, overstaffed/
+    understaffed day lists, dow_summary (By Day chart), savings_breakdown
+    (savings tiles), labor_upcoming (holiday forecast card) — all forwarded
+    from analyse_shifts_for_restaurant()'s existing output instead of being
+    silently dropped like before."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.get("/mobile/api/labor", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["date_range"]["start"] and data["date_range"]["end"]
+    assert isinstance(data["overstaffed_days"], list)
+    assert isinstance(data["understaffed_days"], list)
+    assert isinstance(data["dow_summary"], dict) and data["dow_summary"]
+    assert isinstance(data["labor_upcoming"], list)
+    breakdown = data["savings_breakdown"]
+    for key in ("labor_monthly", "labor_annual", "labor_overtime",
+                "labor_vs_industry_monthly", "labor_vs_industry_annual"):
+        assert key in breakdown
+
+
+def test_labor_overtime_entries_include_total_hours_and_default_not_ot_allowed(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.get("/mobile/api/labor", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["overtime_risk"], "sample shift data should produce at least one overtime-risk entry"
+    for entry in data["overtime_risk"]:
+        assert "total_hours" in entry
+        assert entry["ot_allowed"] is False  # no staff constraint saved yet
+
+
+def test_labor_overtime_ot_allowed_true_when_staff_constraint_mentions_overtime(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/labor", headers=_auth_headers(token))
+    flagged = next(e for e in resp.get_json()["overtime_risk"] if e["status"] == "overtime")
+
+    from models import save_staff_note, init_staff_notes
+    init_staff_notes(db_path=db_path)
+    save_staff_note(rid, flagged["employee"], "Happy to pick up overtime shifts.", db_path=db_path)
+
+    resp2 = client.get("/mobile/api/labor", headers=_auth_headers(token))
+    re_flagged = next(e for e in resp2.get_json()["overtime_risk"] if e["employee"] == flagged["employee"])
+    assert re_flagged["ot_allowed"] is True
+    # An employee with no constraint note is unaffected by another's note.
+    others = [e for e in resp2.get_json()["overtime_risk"] if e["employee"] != flagged["employee"]]
+    assert all(e["ot_allowed"] is False for e in others)
+
+
+# ── /mobile/api/labor/availability ──────────────────────────────────────────
+
+def test_labor_availability_list_requires_auth(client):
+    resp = client.get("/mobile/api/labor/availability")
+    assert resp.status_code == 401
+
+
+def test_labor_availability_save_requires_auth(client):
+    resp = client.post("/mobile/api/labor/availability", json={"employee_name": "Sam"})
+    assert resp.status_code == 401
+
+
+def test_labor_availability_delete_requires_auth(client):
+    resp = client.post("/mobile/api/labor/availability/delete", json={"employee_name": "Sam"})
+    assert resp.status_code == 401
+
+
+def test_labor_availability_save_list_delete_roundtrip(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    save_resp = client.post(
+        "/mobile/api/labor/availability", headers=_auth_headers(token),
+        json={"employee_name": "Jake M.", "available_days": ["Monday", "Tuesday"],
+              "unavailable_days": ["Saturday"], "notes": "Student, no mornings"},
+    )
+    assert save_resp.get_json()["ok"] is True
+
+    list_resp = client.get("/mobile/api/labor/availability", headers=_auth_headers(token))
+    entries = list_resp.get_json()["availability"]
+    assert len(entries) == 1
+    assert entries[0]["employee_name"] == "Jake M."
+    assert entries[0]["available_days"] == ["Monday", "Tuesday"]
+    assert entries[0]["unavailable_days"] == ["Saturday"]
+    assert entries[0]["notes"] == "Student, no mornings"
+
+    del_resp = client.post(
+        "/mobile/api/labor/availability/delete", headers=_auth_headers(token),
+        json={"employee_name": "Jake M."},
+    )
+    assert del_resp.get_json()["ok"] is True
+    assert client.get("/mobile/api/labor/availability", headers=_auth_headers(token)).get_json()["availability"] == []
+
+
+def test_labor_availability_save_requires_employee_name(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/labor/availability", headers=_auth_headers(token), json={"employee_name": "  "})
+    assert resp.get_json()["ok"] is False
+
+
+def test_labor_availability_scoped_to_own_restaurant(client, db_path):
+    rid_a = _restaurant(db_path, name="Restaurant A")
+    rid_b = _restaurant(db_path, name="Restaurant B")
+    token_a = _login(client, db_path, rid_a, username="alice")
+    token_b = _login(client, db_path, rid_b, username="bob")
+
+    client.post("/mobile/api/labor/availability", headers=_auth_headers(token_a),
+                json={"employee_name": "Alice's Server", "available_days": ["Monday"]})
+
+    resp_b = client.get("/mobile/api/labor/availability", headers=_auth_headers(token_b))
+    assert resp_b.get_json()["availability"] == []  # never sees restaurant A's entry
+
+
 # ── /mobile/api/labor/trend, /gap, /insight ────────────────────────────────
 
 def test_labor_trend_requires_auth(client):

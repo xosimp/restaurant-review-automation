@@ -11,21 +11,14 @@ final class LaborAnalyticsTests: XCTestCase {
         XCTAssertEqual(week.pct, 29.5)
     }
 
-    func testDecodesLaborGap() throws {
-        let json = """
-        {"ok": true, "over_target": true, "monthly_gap": 850.0, "current_pct": 32.1, "target_pct": 30.0}
-        """
-        let gap = try JSONDecoder.cavnar.decode(LaborGap.self, from: Data(json.utf8))
-        XCTAssertTrue(gap.overTarget)
-        XCTAssertEqual(gap.monthlyGap, 850.0)
-    }
-
     func testDecodesScheduleRowAndGeneratedScheduleWithPreviewRows() throws {
         let json = """
         {"ok": true, "status": "done", "summary": ["Balanced coverage"],
          "week_dates": ["2026-08-10"], "week_days": ["Monday"],
          "hours_scheduled": 120.5, "labor_target": 30,
          "schedule_csv": "date,day,employee\\n2026-08-10,Monday,Jamie",
+         "hours_budget": 118.0, "labor_budget_dollars": 3068.0,
+         "staff_constraints": {"Jamie": "No Sundays"},
          "preview_rows": [
            {"date": "2026-08-10", "day": "Monday", "employee": "Jamie",
             "role": "Server", "shift_start": "9:00", "shift_end": "17:00",
@@ -36,5 +29,51 @@ final class LaborAnalyticsTests: XCTestCase {
         XCTAssertEqual(schedule.previewRows?.count, 1)
         XCTAssertEqual(schedule.previewRows?.first?.employee, "Jamie")
         XCTAssertEqual(schedule.scheduleCsv?.contains("Jamie"), true)
+        XCTAssertEqual(schedule.hoursBudget, 118.0)
+        XCTAssertEqual(schedule.laborBudgetDollars, 3068.0)
+        XCTAssertEqual(schedule.staffConstraints?["Jamie"], "No Sundays")
+    }
+
+    func testDecodesOvertimeEntryWithTotalHoursAndOtAllowed() throws {
+        let json = """
+        {"employee": "Carlos B.", "hours": 44.2, "week": "Jun 1", "status": "overtime",
+         "total_hours": 88.4, "ot_allowed": true}
+        """
+        let entry = try JSONDecoder.cavnar.decode(LaborOvertimeEntry.self, from: Data(json.utf8))
+        XCTAssertEqual(entry.totalHours, 88.4)
+        XCTAssertEqual(entry.otAllowed, true)
+    }
+
+    func testDecodesLaborStatsWithAnalyticsAndOverviewFields() throws {
+        let json = """
+        {"ok": true, "is_live": true, "overall_labor_pct": 31.2, "target": 30.0,
+         "on_track": false, "potential_savings": 120.5,
+         "overtime_risk": [], "role_summary": [],
+         "date_range": {"start": "2026-06-01", "end": "2026-06-14"},
+         "overstaffed_days": [{"date": "6/6/26", "day": "Saturday", "labor_pct": 38.0, "labor_cost": 900.0, "sales": 2200.0}],
+         "understaffed_days": [{"date": "6/4/26", "day": "Thursday", "labor_pct": 22.0, "sales": 5600.0}],
+         "dow_summary": {"Monday": 24.5, "Saturday": 38.0},
+         "savings_breakdown": {"labor_monthly": 522, "labor_annual": 6264, "labor_overtime": 210,
+                                "labor_vs_industry_monthly": 0, "labor_vs_industry_annual": 0},
+         "labor_upcoming": [{"name": "Labor Day", "date_str": "September 1st", "days_away": 5}]}
+        """
+        let stats = try JSONDecoder.cavnar.decode(LaborStats.self, from: Data(json.utf8))
+        XCTAssertEqual(stats.dateRange.start, "2026-06-01")
+        XCTAssertEqual(stats.overstaffedDays.first?.day, "Saturday")
+        XCTAssertEqual(stats.understaffedDays.first?.laborPct, 22.0)
+        XCTAssertEqual(stats.dowSummary["Saturday"], 38.0)
+        XCTAssertEqual(stats.savingsBreakdown.laborMonthly, 522)
+        XCTAssertEqual(stats.laborUpcoming.first?.name, "Labor Day")
+    }
+
+    func testDecodesStaffAvailabilityEntry() throws {
+        let json = """
+        {"employee_name": "Jake M.", "available_days": ["Monday", "Tuesday"],
+         "unavailable_days": ["Saturday"], "notes": "Student, no mornings"}
+        """
+        let entry = try JSONDecoder.cavnar.decode(StaffAvailabilityEntry.self, from: Data(json.utf8))
+        XCTAssertEqual(entry.employeeName, "Jake M.")
+        XCTAssertEqual(entry.availableDays, ["Monday", "Tuesday"])
+        XCTAssertEqual(entry.unavailableDays, ["Saturday"])
     }
 }
