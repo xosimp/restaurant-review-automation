@@ -23,33 +23,39 @@ struct RoleDonutChart: View {
 
     private var totalCost: Double { roles.reduce(0) { $0 + $1.laborCost } }
 
+    // Bigger than the original 108pt, and shared by both sides of the row
+    // (the ring is fixed to it, the legend gets a matching minHeight) so the
+    // donut and its legend read as one balanced pairing instead of a small
+    // chart floating next to a taller stack of text.
+    private static let ringSize: CGFloat = 148
+
     var body: some View {
-        HStack(alignment: .center, spacing: 20) {
+        HStack(alignment: .center, spacing: 22) {
             ring
-                .frame(width: 108, height: 108)
-                .padding(.vertical, 4)
+                .frame(width: Self.ringSize, height: Self.ringSize)
             legend
+                .frame(minHeight: Self.ringSize)
         }
     }
 
     private var ring: some View {
         ZStack {
             Circle()
-                .stroke(Color.cavnarPaper3.opacity(0.5), style: StrokeStyle(lineWidth: 13))
+                .stroke(Color.cavnarPaper3.opacity(0.5), style: StrokeStyle(lineWidth: 16))
             ForEach(Array(roles.enumerated()), id: \.element.id) { index, _ in
                 let (start, end) = segment(at: index)
                 Circle()
                     .trim(from: start, to: end)
-                    .stroke(color(at: index), style: StrokeStyle(lineWidth: 13, lineCap: .butt))
+                    .stroke(color(at: index), style: StrokeStyle(lineWidth: 16, lineCap: .butt))
                     .rotationEffect(.degrees(-90))
                     .shadow(color: color(at: index).opacity(0.5), radius: 3)
             }
-            VStack(spacing: 1) {
+            VStack(spacing: 2) {
                 Text(formattedTotal)
-                    .font(.cavnarNumber(15, weight: 700))
+                    .font(.cavnarNumber(19, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Text("TOTAL")
-                    .font(.cavnarBody(8, weight: 700))
+                    .font(.cavnarBody(9, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarInk3)
             }
@@ -57,28 +63,32 @@ struct RoleDonutChart: View {
     }
 
     private var legend: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(roles.enumerated()), id: \.element.id) { index, role in
-                HStack(alignment: .top, spacing: 8) {
-                    Circle()
-                        .fill(color(at: index))
-                        .frame(width: 8, height: 8)
-                        .padding(.top, 4)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(role.role)
-                            .font(.cavnarBody(12, weight: 600))
-                            .foregroundStyle(Color.cavnarInk)
-                            .lineLimit(1)
-                        Text("\(formattedHours(role.hours))h · \(role.headcount) staff · $\(formattedComma(role.laborCost))")
-                            .font(.cavnarBody(9))
-                            .foregroundStyle(Color.cavnarInk3)
+        VStack(alignment: .leading, spacing: 0) {
+            Spacer(minLength: 0)
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(roles.enumerated()), id: \.element.id) { index, role in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle()
+                            .fill(color(at: index))
+                            .frame(width: 8, height: 8)
+                            .padding(.top, 4)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(role.role)
+                                .font(.cavnarBody(12, weight: 600))
+                                .foregroundStyle(Color.cavnarInk)
+                                .lineLimit(1)
+                            Text("\(formattedHours(role.hours))h · \(role.headcount) staff · $\(formattedComma(role.laborCost))")
+                                .font(.cavnarBody(9))
+                                .foregroundStyle(Color.cavnarInk3)
+                        }
+                        Spacer(minLength: 4)
+                        Text(String(format: "%.0f%%", role.laborPct))
+                            .font(.cavnarNumber(13, weight: 700))
+                            .foregroundStyle(color(at: index))
                     }
-                    Spacer(minLength: 4)
-                    Text(String(format: "%.0f%%", role.laborPct))
-                        .font(.cavnarNumber(13, weight: 700))
-                        .foregroundStyle(color(at: index))
                 }
             }
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

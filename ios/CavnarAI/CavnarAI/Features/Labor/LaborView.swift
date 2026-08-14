@@ -10,6 +10,7 @@ struct LaborView: View {
     @State private var viewModel = LaborViewModel()
     @State private var analyticsViewModel = LaborAnalyticsViewModel()
     @State private var subTab: LaborSubTab = .overview
+    @State private var showDataInfo = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -102,10 +103,11 @@ struct LaborView: View {
     private func heroCard(_ stats: LaborStats) -> some View {
         let tone: CavnarTone = stats.onTrack ? .good : .bad
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            HStack(spacing: 6) {
                 Label("Labor cost", systemImage: "person.2.fill")
                     .font(.cavnarBody(11, weight: 700))
                     .foregroundStyle(Color.cavnarInk3)
+                dataFreshnessInfoButton(stats)
                 Spacer()
                 TonePill(text: stats.onTrack ? "On track" : "Over target", tone: tone)
             }
@@ -124,7 +126,6 @@ struct LaborView: View {
                     .font(.cavnarBody(12, weight: 600))
                     .foregroundStyle(Color.cavnarAmber)
             }
-            dataFreshnessNote(stats)
 
             ScheduleGenerateButton(
                 tone: tone,
@@ -134,6 +135,69 @@ struct LaborView: View {
             .padding(.top, 2)
         }
         .cavnarGlassCard(tint: tone.foreground)
+    }
+
+    private struct DataFreshness {
+        let rangeText: String
+        let daysOld: Int
+        let stale: Bool
+        let isLive: Bool
+    }
+
+    private func freshnessInfo(_ stats: LaborStats) -> DataFreshness? {
+        guard let start = stats.dateRange.start, let end = stats.dateRange.end,
+              let startDate = Self.isoDayFormatter.date(from: start),
+              let endDate = Self.isoDayFormatter.date(from: end) else { return nil }
+        let daysOld = Calendar.current.dateComponents([.day], from: endDate, to: Date()).day ?? 0
+        let rangeText = "\(Self.displayDayFormatter.string(from: startDate)) – \(Self.displayDayFormatter.string(from: endDate))"
+        return DataFreshness(rangeText: rangeText, daysOld: daysOld, stale: stats.isLive && daysOld > 21, isLive: stats.isLive)
+    }
+
+    /// Was an always-visible amber text row under the hero numbers — moved
+    /// behind a tap so the card's headline stat isn't sharing the spotlight
+    /// with a line about data provenance every time you glance at it. The
+    /// icon itself still tells you at a glance whether there's something to
+    /// check (amber + triangle when the underlying shift data is stale),
+    /// without spelling it out until asked.
+    @ViewBuilder
+    private func dataFreshnessInfoButton(_ stats: LaborStats) -> some View {
+        if let info = freshnessInfo(stats) {
+            Button {
+                Haptic.light()
+                showDataInfo = true
+            } label: {
+                Image(systemName: info.stale ? "exclamationmark.circle.fill" : "info.circle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(info.stale ? Color.cavnarAmber : Color.cavnarInk3)
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $showDataInfo, arrowEdge: .bottom) {
+                dataFreshnessPopoverContent(info)
+                    .presentationCompactAdaptation(.popover)
+            }
+        }
+    }
+
+    private func dataFreshnessPopoverContent(_ info: DataFreshness) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(info.isLive ? "Shift data window" : "Sample data")
+                .font(.cavnarBody(11, weight: 700))
+                .foregroundStyle(Color.cavnarEmber)
+            Group {
+                if !info.isLive {
+                    Text("Showing sample data for illustration — upload your shifts CSV in Account for real numbers.")
+                } else if info.stale {
+                    Text("Shift data is from \(info.rangeText) — \(info.daysOld) days old. Upload a fresher CSV for current numbers.")
+                } else {
+                    Text("Based on shift data from \(info.rangeText).")
+                }
+            }
+            .font(.cavnarBody(12))
+            .foregroundStyle(Color.cavnarInk2)
+        }
+        .padding(14)
+        .frame(maxWidth: 260, alignment: .leading)
+        .background(Color.cavnarPaper2)
     }
 
     private static let availabilityID = "labor-availability"
@@ -149,40 +213,6 @@ struct LaborView: View {
             withAnimation(.easeOut(duration: 0.25)) {
                 proxy.scrollTo(id, anchor: .center)
             }
-        }
-    }
-
-    /// Directly resolves the "why does this say Jun 1 in August" question —
-    /// the week-bucketing math behind Overtime risk's date labels was
-    /// already correct (real Monday-of-week from real shift dates); what
-    /// was missing was ever telling the user WHICH week that data is
-    /// actually from, so a real-but-months-old CSV upload (Gia Mia's actual
-    /// case — a live shifts_csv covering Jun 1–14 with nothing uploaded
-    /// since) silently looked like a stale/broken date instead of what it
-    /// is: real historical data that's overdue for a refresh.
-    @ViewBuilder
-    private func dataFreshnessNote(_ stats: LaborStats) -> some View {
-        if let start = stats.dateRange.start, let end = stats.dateRange.end,
-           let startDate = Self.isoDayFormatter.date(from: start),
-           let endDate = Self.isoDayFormatter.date(from: end) {
-            let daysOld = Calendar.current.dateComponents([.day], from: endDate, to: Date()).day ?? 0
-            let rangeText = "\(Self.displayDayFormatter.string(from: startDate)) – \(Self.displayDayFormatter.string(from: endDate))"
-            let stale = stats.isLive && daysOld > 21
-            HStack(alignment: .top, spacing: 5) {
-                Image(systemName: stats.isLive ? (stale ? "exclamationmark.triangle.fill" : "clock") : "sparkles")
-                    .font(.system(size: 10, weight: .semibold))
-                Group {
-                    if !stats.isLive {
-                        Text("Showing sample data for illustration — upload your shifts CSV in Account for real numbers.")
-                    } else if stale {
-                        Text("Shift data is from \(rangeText) — \(daysOld) days old. Upload a fresher CSV for current numbers.")
-                    } else {
-                        Text("Based on shift data from \(rangeText).")
-                    }
-                }
-            }
-            .font(.cavnarBody(10, weight: 600))
-            .foregroundStyle(stale ? Color.cavnarAmber : Color.cavnarInk3)
         }
     }
 
@@ -319,12 +349,15 @@ struct LaborView: View {
 
     @ViewBuilder
     private func roleSection(_ roles: [LaborRoleSummary]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        // Deliberately not wrapped in .cavnarCard() — every other section on
+        // this tab is a bordered box, and stacking one more made the page
+        // read as an unbroken column of boxes. Let the chart float directly
+        // on the page background instead.
+        VStack(alignment: .leading, spacing: 14) {
             Text("By role")
                 .font(.cavnarBody(13, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
             RoleDonutChart(roles: roles)
-                .cavnarCard()
         }
     }
 
@@ -451,18 +484,51 @@ struct LaborView: View {
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 
+    private static let scheduleDayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+    /// Grouped by day with one branded header per day instead of repeating
+    /// the day name under every single row — a client scanning this can
+    /// find "Monday" once and read straight down its staff, rather than
+    /// re-reading the same day label six times in a row.
     @ViewBuilder
     private func fullScheduleTable(_ rows: [ScheduleRow]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let grouped = Dictionary(grouping: rows, by: { $0.day ?? "—" })
+        let orderedDays = Self.scheduleDayOrder.filter { grouped[$0] != nil }
+            + grouped.keys.filter { !Self.scheduleDayOrder.contains($0) }.sorted()
+
+        VStack(alignment: .leading, spacing: 16) {
             Text("Full schedule")
                 .font(.cavnarBody(12, weight: 700))
                 .foregroundStyle(Color.cavnarInk3)
+            ForEach(orderedDays, id: \.self) { day in
+                scheduleDayGroup(day: day, rows: grouped[day] ?? [])
+            }
+        }
+    }
+
+    private func scheduleDayGroup(day: String, rows: [ScheduleRow]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(day.uppercased())
+                    .font(.cavnarBody(11, weight: 700))
+                    .tracking(1)
+                    .foregroundStyle(Color.cavnarEmber)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.cavnarEmber.opacity(0.16))
+                    .clipShape(Capsule())
+                Text("\(rows.count) shift\(rows.count == 1 ? "" : "s")")
+                    .font(.cavnarBody(10))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
             VStack(spacing: 6) {
                 ForEach(rows) { row in
                     HStack {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(row.employee ?? "").font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            Text("\(row.day ?? "") · \(row.role ?? "")").font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
+                            if let role = row.role, !role.isEmpty {
+                                Text(role).font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
+                            }
                         }
                         Spacer()
                         Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
@@ -502,7 +568,7 @@ private struct ScheduleGenerateButton: View {
                 ZStack {
                     Circle().fill(tone.foreground.opacity(0.16))
                     if isGenerating {
-                        ProgressView().tint(tone.foreground)
+                        PulsingSparkleIcon(color: tone.foreground)
                     } else {
                         Image(systemName: "sparkles")
                             .font(.system(size: 15, weight: .bold))
@@ -511,11 +577,13 @@ private struct ScheduleGenerateButton: View {
                 }
                 .frame(width: 34, height: 34)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(isGenerating ? "Generating your schedule…" : "Generate next week's schedule")
-                        .font(.cavnarBody(15, weight: 700))
-                        .foregroundStyle(tone.foreground)
-                    if !isGenerating {
+                if isGenerating {
+                    ScheduleLoadingText(color: tone.foreground)
+                } else {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Generate next week's schedule")
+                            .font(.cavnarBody(15, weight: 700))
+                            .foregroundStyle(tone.foreground)
                         Text("AI-optimized from your sales & shift history")
                             .font(.cavnarBody(10, weight: 500))
                             .foregroundStyle(Color.cavnarInk3)
@@ -532,7 +600,11 @@ private struct ScheduleGenerateButton: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
-            .background(Color.cavnarPaper)
+            // Same background token TonePill uses for its "On track"/"Over
+            // target" pill (a low-opacity tint of the tone color) — so the
+            // button reads as the exact same surface, not a separately
+            // chosen dark that happens to be similar.
+            .background(tone.background)
             .overlay(
                 RoundedRectangle(cornerRadius: CavnarRadius.control)
                     .strokeBorder(tone.foreground.opacity(0.4), lineWidth: 1)
@@ -545,5 +617,64 @@ private struct ScheduleGenerateButton: View {
         .scaleEffect(isGenerating ? 0.99 : 1)
         .animation(.easeOut(duration: 0.15), value: isGenerating)
         .sensoryFeedback(.impact(weight: .medium), trigger: isGenerating) { old, new in !old && new }
+    }
+}
+
+/// Gentle breathing opacity/scale pulse instead of a spinning ProgressView
+/// — reused only while the button is in its generating state (a fresh
+/// instance is created each time isGenerating flips true, so the pulse
+/// restarts cleanly rather than needing manual state resets).
+private struct PulsingSparkleIcon: View {
+    let color: Color
+    @State private var pulse = false
+
+    var body: some View {
+        Image(systemName: "sparkles")
+            .font(.system(size: 15, weight: .bold))
+            .foregroundStyle(color)
+            .opacity(pulse ? 1 : 0.45)
+            .scaleEffect(pulse ? 1.08 : 0.9)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                    pulse = true
+                }
+            }
+    }
+}
+
+/// Cycles through a handful of status lines while the schedule generates,
+/// cross-fading between them — replaces a single static "Generating…"
+/// label (and the bare spinner it sat next to) with something that reads
+/// as the AI actually working through real steps, matching how long a
+/// real Claude call over a week of shift/sales/weather/YoY context
+/// actually takes rather than an indeterminate wait.
+private struct ScheduleLoadingText: View {
+    let color: Color
+
+    private static let messages = [
+        "Reviewing your sales & shift history…",
+        "Usually takes 20–30 seconds…",
+        "Balancing coverage across the week…",
+        "Checking for overtime risk…",
+        "Weighing upcoming events & weather…",
+        "Almost there…",
+    ]
+
+    @State private var index = 0
+
+    var body: some View {
+        Text(Self.messages[index])
+            .font(.cavnarBody(13, weight: 700))
+            .foregroundStyle(color)
+            .contentTransition(.opacity)
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(2.4))
+                    if Task.isCancelled { return }
+                    withAnimation(.easeInOut(duration: 0.4)) {
+                        index = (index + 1) % Self.messages.count
+                    }
+                }
+            }
     }
 }
