@@ -6,21 +6,53 @@ import SwiftUI
 /// skeleton bars while loading, a word-by-word typewriter reveal once the
 /// insight arrives, numbered ember-circle recommendations in amber, and an
 /// optional italic Forecast callout.
+///
+/// Collapsed by default once an insight lands — the full intro + numbered
+/// recommendations + forecast could run long enough to push everything
+/// below it off-screen on a module's Overview tab (reported on Labor, but
+/// this is shared across every module that uses it). A two-line preview
+/// plus a tap-to-expand affordance reads as more considered than a wall of
+/// text always rendered in full.
 struct AIConsultantView: View {
     let title: String
     let insight: AIInsight?
     let isLoading: Bool
 
+    @State private var isExpanded = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(title)
-                .font(.cavnarBody(10, weight: 700))
-                .tracking(2)
-                .textCase(.uppercase)
+            Button {
+                guard insight != nil else { return }
+                Haptic.selection()
+                withAnimation(.easeOut(duration: 0.22)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(title)
+                        .font(.cavnarBody(10, weight: 700))
+                        .tracking(2)
+                        .textCase(.uppercase)
+                    Spacer()
+                    if insight != nil {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    }
+                }
                 .foregroundStyle(Color.cavnarEmber)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
 
             if let insight {
-                InsightContent(insight: insight)
+                if isExpanded {
+                    InsightContent(insight: insight)
+                        .transition(.opacity)
+                } else {
+                    CollapsedInsightPreview(insight: insight)
+                }
             } else if isLoading {
                 InsightSkeleton()
             }
@@ -35,6 +67,27 @@ struct AIConsultantView: View {
                 .strokeBorder(Color.cavnarPaper3, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+    }
+}
+
+private struct CollapsedInsightPreview: View {
+    let insight: AIInsight
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !insight.intro.isEmpty {
+                Text(insight.intro)
+                    .font(.cavnarBody(13))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .lineSpacing(4)
+                    .lineLimit(2)
+            }
+            if !insight.recommendations.isEmpty {
+                Text("\(insight.recommendations.count) recommendation\(insight.recommendations.count == 1 ? "" : "s") — tap to view")
+                    .font(.cavnarBody(11, weight: 600))
+                    .foregroundStyle(Color.cavnarAmber)
+            }
+        }
     }
 }
 

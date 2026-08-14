@@ -17,61 +17,71 @@ struct LaborView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if subTab == .overview {
-                        if let stats = viewModel.stats {
-                            heroCard(stats)
-                            if !stats.laborUpcoming.isEmpty {
-                                upcomingEventsCard(stats.laborUpcoming)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        if subTab == .overview {
+                            if let stats = viewModel.stats {
+                                heroCard(stats)
+                                if !stats.laborUpcoming.isEmpty {
+                                    upcomingEventsCard(stats.laborUpcoming)
+                                }
+                                if let result = viewModel.scheduleResult, result.ok {
+                                    scheduleResultSection(result)
+                                }
+                                if let error = viewModel.scheduleError {
+                                    Text(error)
+                                        .font(.cavnarBody(12))
+                                        .foregroundStyle(Color.cavnarRed)
+                                }
+                                // Same placement as the web Labor tab's Schedule
+                                // panel — this used to live on the Analytics
+                                // sub-tab, which put restaurant-level "why are my
+                                // numbers what they are" advice one tap away from
+                                // the actual schedule-generation workflow it's
+                                // usually informing.
+                                AIConsultantView(
+                                    title: "Cavnar AI Labor Consultant",
+                                    insight: analyticsViewModel.insight,
+                                    isLoading: analyticsViewModel.isLoadingInsight
+                                )
+                                // By role sits directly above the other three
+                                // dropdowns (Overtime/Overstaffed/Understaffed)
+                                // so all four read as one connected group —
+                                // Overtime used to sit above the donut chart,
+                                // visually separating it from the rest.
+                                if !stats.roleSummary.isEmpty {
+                                    roleSection(stats.roleSummary)
+                                }
+                                if !stats.overtimeRisk.isEmpty {
+                                    overtimeDropdown(stats.overtimeRisk, proxy: proxy)
+                                }
+                                if !stats.overstaffedDays.isEmpty {
+                                    overstaffedDropdown(stats.overstaffedDays, proxy: proxy)
+                                }
+                                if !stats.understaffedDays.isEmpty {
+                                    understaffedDropdown(stats.understaffedDays, proxy: proxy)
+                                }
+                                AvailabilityManagerSection(viewModel: viewModel) {
+                                    scrollToReveal(Self.availabilityID, proxy: proxy)
+                                }
+                                .id(Self.availabilityID)
+                            } else if viewModel.isLoading {
+                                ProgressView().padding(.top, 60)
+                            } else if let error = viewModel.errorMessage {
+                                VStack(spacing: 8) {
+                                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                                    Button("Retry") { Task { await viewModel.load() } }
+                                }
+                                .padding(.top, 60)
+                                .frame(maxWidth: .infinity)
                             }
-                            if let result = viewModel.scheduleResult, result.ok {
-                                scheduleResultSection(result)
-                            }
-                            if let error = viewModel.scheduleError {
-                                Text(error)
-                                    .font(.cavnarBody(12))
-                                    .foregroundStyle(Color.cavnarRed)
-                            }
-                            // Same placement as the web Labor tab's Schedule
-                            // panel — this used to live on the Analytics
-                            // sub-tab, which put restaurant-level "why are my
-                            // numbers what they are" advice one tap away from
-                            // the actual schedule-generation workflow it's
-                            // usually informing.
-                            AIConsultantView(
-                                title: "Cavnar AI Labor Consultant",
-                                insight: analyticsViewModel.insight,
-                                isLoading: analyticsViewModel.isLoadingInsight
-                            )
-                            if !stats.overtimeRisk.isEmpty {
-                                overtimeDropdown(stats.overtimeRisk)
-                            }
-                            if !stats.roleSummary.isEmpty {
-                                roleSection(stats.roleSummary)
-                            }
-                            if !stats.overstaffedDays.isEmpty {
-                                overstaffedDropdown(stats.overstaffedDays)
-                            }
-                            if !stats.understaffedDays.isEmpty {
-                                understaffedDropdown(stats.understaffedDays)
-                            }
-                            AvailabilityManagerSection(viewModel: viewModel)
-                        } else if viewModel.isLoading {
-                            ProgressView().padding(.top, 60)
-                        } else if let error = viewModel.errorMessage {
-                            VStack(spacing: 8) {
-                                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                                Button("Retry") { Task { await viewModel.load() } }
-                            }
-                            .padding(.top, 60)
-                            .frame(maxWidth: .infinity)
+                        } else {
+                            LaborAnalyticsSection(viewModel: analyticsViewModel, laborStats: viewModel.stats)
                         }
-                    } else {
-                        LaborAnalyticsSection(viewModel: analyticsViewModel, laborStats: viewModel.stats)
                     }
+                    .padding(20)
                 }
-                .padding(20)
             }
         }
         .cavnarModuleBackground()
@@ -117,12 +127,29 @@ struct LaborView: View {
             dataFreshnessNote(stats)
 
             ScheduleGenerateButton(
+                tone: tone,
                 isGenerating: viewModel.isGeneratingSchedule,
                 action: { Task { await viewModel.generateSchedule() } }
             )
             .padding(.top, 2)
         }
         .cavnarGlassCard(tint: tone.foreground)
+    }
+
+    private static let availabilityID = "labor-availability"
+
+    /// Scrolls the just-opened section into view once its expand animation
+    /// has room to settle — firing scrollTo in the same instant as the
+    /// disclosure's own height-change animation reliably centers against
+    /// the pre-expansion layout, not the taller one about to exist a beat
+    /// later. A short delay matched to CavnarDropdown's 0.22s expand
+    /// animation lets the new height land first.
+    private func scrollToReveal(_ id: String, proxy: ScrollViewProxy) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+            withAnimation(.easeOut(duration: 0.25)) {
+                proxy.scrollTo(id, anchor: .center)
+            }
+        }
     }
 
     /// Directly resolves the "why does this say Jun 1 in August" question —
@@ -222,14 +249,19 @@ struct LaborView: View {
         }
     }
 
+    private static let overtimeID = "labor-overtime"
+    private static let overstaffedID = "labor-overstaffed"
+    private static let understaffedID = "labor-understaffed"
+
     @ViewBuilder
-    private func overtimeDropdown(_ entries: [LaborOvertimeEntry]) -> some View {
+    private func overtimeDropdown(_ entries: [LaborOvertimeEntry], proxy: ScrollViewProxy) -> some View {
         let atRisk = entries.filter { $0.status == "overtime" && !($0.otAllowed ?? false) }.count
         CavnarDropdown(
             title: "Overtime risk",
             subtitle: "\(entries.count) \(entries.count == 1 ? "person" : "people") flagged this period",
             badge: atRisk > 0 ? atRisk : nil,
-            tone: .bad
+            tone: .bad,
+            onExpand: { scrollToReveal(Self.overtimeID, proxy: proxy) }
         ) {
             VStack(spacing: 8) {
                 ForEach(entries) { entry in
@@ -237,6 +269,7 @@ struct LaborView: View {
                 }
             }
         }
+        .id(Self.overtimeID)
     }
 
     private func overtimeRow(_ entry: LaborOvertimeEntry) -> some View {
@@ -296,10 +329,11 @@ struct LaborView: View {
     }
 
     @ViewBuilder
-    private func overstaffedDropdown(_ days: [LaborOverstaffedDay]) -> some View {
+    private func overstaffedDropdown(_ days: [LaborOverstaffedDay], proxy: ScrollViewProxy) -> some View {
         CavnarDropdown(
             title: "Overstaffed days", subtitle: "where the money is going",
-            badge: days.count, tone: .bad
+            badge: days.count, tone: .bad,
+            onExpand: { scrollToReveal(Self.overstaffedID, proxy: proxy) }
         ) {
             VStack(spacing: 8) {
                 ForEach(Array(days.prefix(10))) { day in
@@ -323,13 +357,15 @@ struct LaborView: View {
                 }
             }
         }
+        .id(Self.overstaffedID)
     }
 
     @ViewBuilder
-    private func understaffedDropdown(_ days: [LaborUnderstaffedDay]) -> some View {
+    private func understaffedDropdown(_ days: [LaborUnderstaffedDay], proxy: ScrollViewProxy) -> some View {
         CavnarDropdown(
             title: "Understaffed days", subtitle: "possible missed revenue",
-            badge: days.count, tone: .warning
+            badge: days.count, tone: .warning,
+            onExpand: { scrollToReveal(Self.understaffedID, proxy: proxy) }
         ) {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(days.prefix(10))) { day in
@@ -357,6 +393,7 @@ struct LaborView: View {
                     .padding(.top, 2)
             }
         }
+        .id(Self.understaffedID)
     }
 
     @ViewBuilder
@@ -445,7 +482,14 @@ struct LaborView: View {
 /// icon badge, glow shadow, subtitle) rather than a plain text button, and
 /// placed inside the hero card near the top instead of at the bottom of a
 /// long scroll.
+/// Matches the hero card's own status language instead of introducing a
+/// third color (orange, clashing against a card that's already tinted red
+/// or green depending on whether labor is over/under target) — a dark
+/// surface with the same green/red used by the "On track"/"Over target"
+/// pill above it, so the button reads as an extension of that card's own
+/// status rather than an unrelated CTA dropped on top of it.
 private struct ScheduleGenerateButton: View {
+    let tone: CavnarTone
     let isGenerating: Bool
     let action: () -> Void
 
@@ -456,13 +500,13 @@ private struct ScheduleGenerateButton: View {
         } label: {
             HStack(spacing: 12) {
                 ZStack {
-                    Circle().fill(Color.white.opacity(0.18))
+                    Circle().fill(tone.foreground.opacity(0.16))
                     if isGenerating {
-                        ProgressView().tint(.white)
+                        ProgressView().tint(tone.foreground)
                     } else {
                         Image(systemName: "sparkles")
                             .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(tone.foreground)
                     }
                 }
                 .frame(width: 34, height: 34)
@@ -470,11 +514,11 @@ private struct ScheduleGenerateButton: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(isGenerating ? "Generating your schedule…" : "Generate next week's schedule")
                         .font(.cavnarBody(15, weight: 700))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(tone.foreground)
                     if !isGenerating {
                         Text("AI-optimized from your sales & shift history")
                             .font(.cavnarBody(10, weight: 500))
-                            .foregroundStyle(.white.opacity(0.75))
+                            .foregroundStyle(Color.cavnarInk3)
                     }
                 }
 
@@ -483,20 +527,18 @@ private struct ScheduleGenerateButton: View {
                 if !isGenerating {
                     Image(systemName: "arrow.right")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.85))
+                        .foregroundStyle(tone.foreground.opacity(0.85))
                 }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
-            .background(
-                LinearGradient(colors: [Color.cavnarEmber2, Color.cavnarEmber], startPoint: .topLeading, endPoint: .bottomTrailing)
-            )
+            .background(Color.cavnarPaper)
             .overlay(
                 RoundedRectangle(cornerRadius: CavnarRadius.control)
-                    .strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+                    .strokeBorder(tone.foreground.opacity(0.4), lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-            .shadow(color: Color.cavnarEmber.opacity(0.45), radius: 14, x: 0, y: 6)
+            .shadow(color: tone.foreground.opacity(0.3), radius: 14, x: 0, y: 6)
         }
         .buttonStyle(.plain)
         .disabled(isGenerating)

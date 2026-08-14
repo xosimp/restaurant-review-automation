@@ -11,17 +11,24 @@ struct CavnarDropdown<Content: View>: View {
     var subtitle: String? = nil
     var badge: Int? = nil
     var tone: CavnarTone = .neutral
+    // Fires right as this transitions closed→open — lets a parent whose
+    // ScrollView doesn't otherwise know the page just grew (a section
+    // expanding below the fold) bring the newly-opened content into view,
+    // instead of leaving the user to scroll and find it themselves.
+    var onExpand: (() -> Void)? = nil
     @State private var isExpanded: Bool
     @ViewBuilder let content: () -> Content
 
     init(
         title: String, subtitle: String? = nil, badge: Int? = nil, tone: CavnarTone = .neutral,
-        startExpanded: Bool = false, @ViewBuilder content: @escaping () -> Content
+        startExpanded: Bool = false, onExpand: (() -> Void)? = nil,
+        @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
         self.subtitle = subtitle
         self.badge = badge
         self.tone = tone
+        self.onExpand = onExpand
         self._isExpanded = State(initialValue: startExpanded)
         self.content = content
     }
@@ -30,7 +37,9 @@ struct CavnarDropdown<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 Haptic.selection()
+                let opening = !isExpanded
                 withAnimation(.easeOut(duration: 0.22)) { isExpanded.toggle() }
+                if opening { onExpand?() }
             } label: {
                 HStack(spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -68,7 +77,18 @@ struct CavnarDropdown<Content: View>: View {
             if isExpanded {
                 content()
                     .padding(.top, 10)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    // Plain opacity only — no .move(edge:), which animated
+                    // the content in from the top of its transition's
+                    // coordinate space (effectively the top of the
+                    // ScrollView) while the VStack around it was
+                    // simultaneously reflowing to make room, so it visibly
+                    // slid down the page and rendered behind sibling
+                    // content mid-flight. The VStack's own height-change
+                    // animation (already wrapped in withAnimation above)
+                    // provides the "opens downward" motion on its own —
+                    // this only needed a fade, not a second directional
+                    // transition fighting it.
+                    .transition(.opacity)
             }
         }
     }

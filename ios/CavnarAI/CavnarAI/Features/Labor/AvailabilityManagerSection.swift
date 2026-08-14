@@ -10,6 +10,7 @@ import SwiftUI
 /// above it.
 struct AvailabilityManagerSection: View {
     let viewModel: LaborViewModel
+    var onExpand: (() -> Void)? = nil
 
     @State private var name = ""
     @State private var selectedDays: Set<String> = []
@@ -18,7 +19,8 @@ struct AvailabilityManagerSection: View {
     var body: some View {
         CavnarDropdown(
             title: "Employee availability",
-            subtitle: viewModel.availability.isEmpty ? "Set who's available which days" : "\(viewModel.availability.count) on file"
+            subtitle: viewModel.availability.isEmpty ? "Set who's available which days" : "\(viewModel.availability.count) on file",
+            onExpand: onExpand
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("The AI scheduler will never schedule someone on a day marked unavailable here.")
