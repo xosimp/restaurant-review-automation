@@ -76,4 +76,47 @@ final class LaborAnalyticsTests: XCTestCase {
         XCTAssertEqual(entry.availableDays, ["Monday", "Tuesday"])
         XCTAssertEqual(entry.unavailableDays, ["Saturday"])
     }
+
+    /// Regression test for the "generated schedule doesn't survive a
+    /// relaunch" report — proves GeneratedSchedule (including its nested
+    /// ScheduleRow array and staff_constraints dict) survives a real
+    /// encode → UserDefaults → decode round trip losslessly, the same
+    /// mechanism LaborViewModel's cacheSchedule()/configureCaching() use.
+    /// If this ever fails, the bug is in the Codable/serialization layer;
+    /// if it keeps passing while the symptom persists, the bug is in when
+    /// those methods get called, not how they encode/decode.
+    func testGeneratedScheduleSurvivesUserDefaultsRoundTrip() throws {
+        let json = """
+        {"ok": true, "status": "done", "summary": ["Balanced coverage", "Trimmed Sunday close"],
+         "week_dates": ["2026-08-17", "2026-08-18", "2026-08-23"], "week_days": ["Monday", "Tuesday", "Sunday"],
+         "hours_scheduled": 120.5, "labor_target": 30,
+         "schedule_csv": "date,day,employee\\n2026-08-17,Monday,Jamie",
+         "hours_budget": 118.0, "labor_budget_dollars": 3068.0,
+         "staff_constraints": {"Jamie": "No Sundays"},
+         "preview_rows": [
+           {"date": "2026-08-17", "day": "Monday", "employee": "Jamie",
+            "role": "Server", "shift_start": "9:00", "shift_end": "17:00",
+            "scheduled_hours": "8", "notes": ""}
+         ]}
+        """
+        let original = try JSONDecoder.cavnar.decode(GeneratedSchedule.self, from: Data(json.utf8))
+
+        let suiteName = "LaborAnalyticsTests.scheduleRoundTrip"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let encoded = try JSONEncoder.cavnar.encode(original)
+        defaults.set(encoded, forKey: "schedule")
+
+        let readBack = try XCTUnwrap(defaults.data(forKey: "schedule"))
+        let decoded = try JSONDecoder.cavnar.decode(GeneratedSchedule.self, from: readBack)
+
+        XCTAssertEqual(decoded.hoursScheduled, 120.5)
+        XCTAssertEqual(decoded.weekDates, original.weekDates)
+        XCTAssertEqual(decoded.summary, original.summary)
+        XCTAssertEqual(decoded.previewRows?.first?.employee, "Jamie")
+        XCTAssertEqual(decoded.staffConstraints?["Jamie"], "No Sundays")
+        XCTAssertEqual(decoded.hoursBudget, 118.0)
+    }
 }

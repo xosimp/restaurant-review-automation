@@ -2,15 +2,25 @@ import SwiftUI
 import Charts
 
 /// Real bar chart for labor % over time — replaces the plain text list the
-/// Analytics tab used to show. Two views toggled by the same branded
-/// segmented control used for the Overview/Analytics switch: "8-Week
+/// Analytics tab used to show. Two views toggled by pills matching the
+/// exact style of Home's ValueChartCard range pills (1M/3M/6M/...): "8-Week
 /// Trend" (one bar per week) and "By Day" (one bar per weekday, averaged
 /// across all occurrences) — matching the web dashboard's own Labor %
 /// Performance chart and its two tabs.
+///
+/// Deliberately unboxed (no .cavnarCard()/.cavnarGlassCard()) and using the
+/// same uppercase-eyebrow-label treatment as ValueChartCard, so this reads
+/// as the same chart language as Home's hero stat instead of another boxed
+/// tile — the Analytics tab had become an unbroken column of bordered
+/// cards.
 struct LaborPerformanceChart: View {
     let trend: [LaborTrendWeek]
     let dowSummary: [String: Double]
     let target: Double
+    // Whether the bars have ever grown up from zero before — see
+    // LaborAnalyticsViewModel.hasPlayedBarIntro for why this lives outside
+    // this view instead of as its own @State.
+    @Binding var hasPlayedIntro: Bool
 
     private enum ChartMode: String, CaseIterable, Identifiable, Hashable {
         case trend = "8-Week Trend"
@@ -19,6 +29,14 @@ struct LaborPerformanceChart: View {
     }
 
     @State private var mode: ChartMode = .trend
+    // Drives the bars' own height, independent of `bars`' real values —
+    // starts at false only on this view's very first appearance ever
+    // (see hasPlayedIntro); every appearance after that snaps straight to
+    // true with no animation, so switching back to this tab doesn't replay
+    // the reveal. Mode switches (trend ↔ by day) after the first reveal
+    // just animate the real value change, same as any other Chart data
+    // update — never back through zero.
+    @State private var barsVisible = false
 
     private struct Bar: Identifiable {
         let id: String
@@ -47,15 +65,13 @@ struct LaborPerformanceChart: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("Labor % performance")
-                    .font(.cavnarBody(13, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
-                Spacer()
-                CavnarSegmentedControl(selection: $mode, options: ChartMode.allCases) { $0.rawValue }
-                    .frame(width: 190)
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            Text("LABOR % PERFORMANCE")
+                .font(.cavnarBody(11, weight: 700))
+                .tracking(1.5)
+                .foregroundStyle(Color.cavnarEmber2)
+
+            modePills
 
             if bars.isEmpty {
                 Text("Not enough data yet")
@@ -66,7 +82,7 @@ struct LaborPerformanceChart: View {
             } else {
                 Chart {
                     ForEach(bars) { bar in
-                        BarMark(x: .value("Period", bar.label), y: .value("Labor %", bar.pct))
+                        BarMark(x: .value("Period", bar.label), y: .value("Labor %", barsVisible ? bar.pct : 0))
                             .foregroundStyle(barColor(bar.pct))
                             .cornerRadius(3)
                     }
@@ -91,6 +107,17 @@ struct LaborPerformanceChart: View {
                         AxisValueLabel().font(.system(size: 9)).foregroundStyle(Color.cavnarInk3)
                     }
                 }
+                .animation(.easeOut(duration: 0.4), value: mode)
+                .onAppear {
+                    if hasPlayedIntro {
+                        barsVisible = true
+                    } else {
+                        withAnimation(.easeOut(duration: 0.75)) {
+                            barsVisible = true
+                        }
+                        hasPlayedIntro = true
+                    }
+                }
             }
 
             HStack(spacing: 14) {
@@ -101,7 +128,27 @@ struct LaborPerformanceChart: View {
             .font(.cavnarBody(9))
             .foregroundStyle(Color.cavnarInk3)
         }
-        .cavnarGlassCard()
+    }
+
+    private var modePills: some View {
+        HStack(spacing: 6) {
+            ForEach(ChartMode.allCases) { m in
+                Button {
+                    Haptic.light()
+                    mode = m
+                } label: {
+                    Text(m.rawValue)
+                        .font(.cavnarBody(11, weight: 700))
+                        .foregroundStyle(m == mode ? Color.cavnarEmber2 : Color.cavnarInk3)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule().fill(m == mode ? Color.cavnarEmber.opacity(0.16) : .clear)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 
     private func legendDot(_ color: Color, _ label: String) -> some View {

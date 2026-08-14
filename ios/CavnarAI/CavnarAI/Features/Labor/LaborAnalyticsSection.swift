@@ -7,7 +7,7 @@ import SwiftUI
 /// insight card that used to live here moved to Overview to match the web
 /// tab's own placement (see LaborView.swift).
 struct LaborAnalyticsSection: View {
-    let viewModel: LaborAnalyticsViewModel
+    @Bindable var viewModel: LaborAnalyticsViewModel
     let laborStats: LaborStats?
 
     var body: some View {
@@ -15,7 +15,10 @@ struct LaborAnalyticsSection: View {
             if let stats = laborStats {
                 savingsTiles(stats)
                 benchmarkBar(stats)
-                LaborPerformanceChart(trend: viewModel.trend, dowSummary: stats.dowSummary, target: stats.target)
+                LaborPerformanceChart(
+                    trend: viewModel.trend, dowSummary: stats.dowSummary, target: stats.target,
+                    hasPlayedIntro: $viewModel.hasPlayedBarIntro
+                )
             } else if viewModel.isLoading {
                 ProgressView().frame(maxWidth: .infinity).padding(.vertical, 20)
             }

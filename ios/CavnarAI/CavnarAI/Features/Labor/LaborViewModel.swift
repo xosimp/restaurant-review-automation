@@ -264,12 +264,35 @@ final class LaborViewModel {
     func configureCaching(restaurantId: Int) {
         self.restaurantId = restaurantId
         guard let data = UserDefaults.standard.data(forKey: Self.scheduleCacheKey(restaurantId)),
-              let cached = try? JSONDecoder.cavnar.decode(GeneratedSchedule.self, from: data),
+              let cached = try? Self.cacheDecoder.decode(GeneratedSchedule.self, from: data),
               !Self.isStale(cached) else { return }
         scheduleResult = cached
     }
 
     private static func scheduleCacheKey(_ restaurantId: Int) -> String { "labor.cachedSchedule.\(restaurantId)" }
+
+    // Dedicated encoder/decoder for local caching (distinct from
+    // JSONEncoder/Decoder.cavnar, which are for network payloads) —
+    // tolerates NaN/Infinity in the budget/hours fields via
+    // convertToString instead of the default .throw, which would
+    // otherwise make encode() fail (silently, under the old `try?`) for
+    // any restaurant configuration that produces a non-finite value
+    // anywhere in the result, and the write would never happen at all.
+    private static let cacheEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.nonConformingFloatEncodingStrategy = .convertToString(
+            positiveInfinity: "inf", negativeInfinity: "-inf", nan: "nan"
+        )
+        return encoder
+    }()
+
+    private static let cacheDecoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.nonConformingFloatDecodingStrategy = .convertFromString(
+            positiveInfinity: "inf", negativeInfinity: "-inf", nan: "nan"
+        )
+        return decoder
+    }()
 
     /// A cached schedule for a week that's already ended isn't useful to
     /// resurrect — it'd read as "here's next week's plan" for a week that's
@@ -278,14 +301,21 @@ final class LaborViewModel {
         guard let lastDateString = schedule.weekDates?.last else { return false }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = TimeZone(identifier: "UTC")
+        // Device-local calendar/timezone (not forced UTC) — this keeps the
+        // parsed date in the same reference frame as Calendar.current
+        // below. Parsing as UTC while comparing against device-local
+        // "today" introduced a skew of several hours depending on the
+        // device's own timezone, which the day-of-slack cutoff below
+        // absorbs regardless.
         guard let lastDate = formatter.date(from: lastDateString) else { return false }
-        return lastDate < Calendar.current.startOfDay(for: Date())
+        guard let cutoff = Calendar.current.date(
+            byAdding: .day, value: -1, to: Calendar.current.startOfDay(for: Date())
+        ) else { return false }
+        return lastDate < cutoff
     }
 
     private func cacheSchedule(_ schedule: GeneratedSchedule) {
-        guard let restaurantId, let data = try? JSONEncoder.cavnar.encode(schedule) else { return }
+        guard let restaurantId, let data = try? Self.cacheEncoder.encode(schedule) else { return }
         UserDefaults.standard.set(data, forKey: Self.scheduleCacheKey(restaurantId))
     }
 

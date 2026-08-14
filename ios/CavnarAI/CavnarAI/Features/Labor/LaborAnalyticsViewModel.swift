@@ -18,6 +18,17 @@ final class LaborAnalyticsViewModel {
     var isLoadingInsight = false
     var isLoading = false
 
+    // Whether the performance chart's grow-up-from-zero bar reveal has
+    // already played. Lives here (not as the chart's own local @State)
+    // for the same reason the dropdown expand states moved to
+    // LaborViewModel — Overview/Analytics is an if/else branch in
+    // LaborView, so a view-local flag would replay every single time the
+    // user switches back to Analytics. This view model instance survives
+    // that switch; it only resets when LaborView itself is torn down and
+    // rebuilt (e.g. the Face ID lock/unlock cycle), which is exactly when
+    // a fresh "first load" reveal is actually wanted.
+    var hasPlayedBarIntro = false
+
     private let client: APIClient
     private var restaurantId: Int?
 
