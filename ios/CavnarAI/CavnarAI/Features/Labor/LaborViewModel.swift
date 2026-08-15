@@ -463,7 +463,14 @@ final class LaborViewModel {
     }
 
     private func pollSchedule(jobId: String) async {
-        for _ in 0..<30 {  // ~60s max at 2s intervals
+        // ~150s max at 2s intervals. Was 30 iterations (~60s) — server logs
+        // showed the real Claude call for a generation this size (full
+        // shift history + YoY + weather + the longer PAR-reconciliation
+        // prompt) taking ~71s end to end, so the client was giving up
+        // ~8-10s before the job actually finished: it completed
+        // server-side, but nothing was left polling to receive it. Wide
+        // margin over the observed worst case rather than the bare minimum.
+        for _ in 0..<75 {
             do {
                 let result: GeneratedSchedule = try await client.send(
                     "/mobile/api/labor/schedule-status/\(jobId)"

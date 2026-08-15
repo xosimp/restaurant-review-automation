@@ -795,12 +795,18 @@ private struct PulsingSparkleIcon: View {
 private struct ScheduleLoadingText: View {
     let color: Color
 
+    // "Usually takes..." was 25–35s, set before this was measured against
+    // a real server log — an actual generation (full shift history + YoY +
+    // weather + the PAR-reconciliation prompt) took ~71s end to end.
+    // Rounded up rather than quoting a precise range that varies run to
+    // run.
     private static let messages = [
         "Reviewing your sales & shift history…",
-        "Usually takes 25–35 seconds…",
+        "Usually takes about a minute…",
         "Balancing coverage across the week…",
         "Checking for overtime risk…",
         "Weighing upcoming events & weather…",
+        "Reconciling against your labor budget…",
         "Almost there…",
     ]
 
