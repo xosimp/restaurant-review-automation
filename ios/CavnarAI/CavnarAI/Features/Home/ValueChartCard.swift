@@ -268,7 +268,12 @@ private struct SparklineCanvas: View {
     private func draw(context: GraphicsContext, size: CGSize, progress: Double) {
         guard let minV = values.min(), let maxV = values.max() else { return }
         let range = max(maxV - minV, 1)
-        let pad: CGFloat = 6
+        // The endpoint glow below extends 16pt past its center in every
+        // direction — a 6pt pad let the highest/rightmost point's glow
+        // (routinely both at once, since the endpoint is always the last
+        // value) clip against the canvas edge. 20pt keeps the full glow on
+        // canvas with a small buffer, on every side.
+        let pad: CGFloat = 20
         let stepX = values.count > 1 ? (size.width - pad * 2) / CGFloat(values.count - 1) : 0
 
         let coords: [CGPoint] = values.enumerated().map { index, v in
@@ -277,9 +282,26 @@ private struct SparklineCanvas: View {
             let y = pad + (1 - CGFloat(normalized)) * (size.height - pad * 2 - 14)
             return CGPoint(x: x, y: y)
         }
+        guard coords.count >= 2 else { return }
 
-        let visibleCount = max(2, Int(Double(coords.count) * progress))
-        let visible = Array(coords.prefix(visibleCount))
+        // Reveal fractionally between points rather than jumping a whole
+        // point at a time. With the 21-point sample curve that jump was
+        // fine-grained enough to read as smooth; with a handful of real
+        // history points (a restaurant a few days into tracking) the same
+        // logic only has 3-4 discrete steps to work with, which reads as a
+        // few sharp snaps instead of a continuous left-to-right sweep.
+        let lastIndex = Double(coords.count - 1)
+        let revealPosition = min(lastIndex, lastIndex * progress)
+        let wholeIndex = Int(revealPosition)
+        let fraction = revealPosition - Double(wholeIndex)
+
+        var visible = Array(coords.prefix(wholeIndex + 1))
+        if wholeIndex + 1 < coords.count, fraction > 0 {
+            let a = coords[wholeIndex]
+            let b = coords[wholeIndex + 1]
+            visible.append(CGPoint(x: a.x + (b.x - a.x) * CGFloat(fraction),
+                                    y: a.y + (b.y - a.y) * CGFloat(fraction)))
+        }
         guard visible.count >= 2, let last = visible.last, let first = visible.first else { return }
 
         var fillPath = Path()
