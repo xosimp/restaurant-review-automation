@@ -20,7 +20,7 @@ struct ReviewsListView: View {
         // shares whichever stack pushed it in.
         VStack(spacing: 0) {
             CavnarSegmentedControl(selection: $subTab, options: ReviewsSubTab.allCases) { $0.rawValue }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 16)
 

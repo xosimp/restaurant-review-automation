@@ -14,7 +14,7 @@ struct MarketingView: View {
     var body: some View {
         VStack(spacing: 0) {
             CavnarSegmentedControl(selection: $subTab, options: MarketingSubTab.allCases) { $0.rawValue }
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 16)
 
