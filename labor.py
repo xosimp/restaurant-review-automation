@@ -829,7 +829,7 @@ SCHEDULING RULES:
 - Weekly hours target is {hours_budget}h (±10h). Prefer shift length and later start times to close small gaps. If historical headcount plus reasonable shift lengths would still leave you more than ~15% under this target, add headcount proportionally across roles instead of leaving the gap unaddressed (see PAR HOURS TARGET reconciliation above) — but never add headcount for a gap that shift-length adjustments could already close.
 
 ROLE STAGGER RULE (universal — applies to every restaurant):
-- Never schedule two employees in the same role at the exact same start time. The first person opens; additional staff stagger in based on volume. Only add headcount when YoY data or a flagged event justifies it.
+- Never schedule two employees in the same role at the exact same start time. The first person opens; additional staff stagger in based on volume. Add headcount when YoY data or a flagged event justifies it, or when closing a >15% PAR hours gap requires it (see PAR HOURS TARGET reconciliation above).
 
 CONSECUTIVE DAYS OFF:
 - Every employee must receive at least 2 consecutive days off per week. Never give isolated single days off. Part-time staff should have 3+ consecutive days off.
@@ -844,7 +844,7 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
 - Follow the RESTAURANT HOURS & SHIFT RULES block above exactly. Those are the definitive rules for this restaurant.
 - If a rule is not specified there, infer reasonable defaults from the historical shift data patterns.{_role_minimums_extra}
 
-- Shifts per day: use the TYPICAL HEADCOUNT block as your ceiling. Only go above on high-volume YoY days or flagged events. Use CROSS-TRAINED STAFF to fill role gaps before adding headcount.
+- Shifts per day: use the TYPICAL HEADCOUNT block as your starting point (see that block for when to scale beyond it — high-volume YoY days, flagged events, or closing a >15% PAR hours gap). Use CROSS-TRAINED STAFF to fill role gaps before adding new headcount.
 - Notes column: one brief phrase per shift (e.g. "YoY match - high volume", "staggered opener", "cross-trained flex")
 - IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time.{constraints}"""
 

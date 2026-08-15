@@ -171,6 +171,11 @@ struct ScheduleRow: Codable, Identifiable {
     let shiftEnd: String?
     let scheduledHours: String?
     let notes: String?
+    // Set server-side only when a row's columns came back scrambled in a
+    // way that couldn't be fully auto-repaired (day is always re-derived
+    // from date server-side now, so this — not an unrecognized `day` value
+    // — is the real signal that a row still needs a human look).
+    let needsReview: Bool?
 
     var id: String { "\(date ?? "")-\(employee ?? "")-\(shiftStart ?? "")" }
 
@@ -179,6 +184,7 @@ struct ScheduleRow: Codable, Identifiable {
         case shiftStart = "shift_start"
         case shiftEnd = "shift_end"
         case scheduledHours = "scheduled_hours"
+        case needsReview = "needs_review"
     }
 }
 

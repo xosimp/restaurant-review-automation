@@ -571,16 +571,18 @@ struct LaborView: View {
     /// find "Monday" once and read straight down its staff, rather than
     /// re-reading the same day label six times in a row.
     ///
-    /// Only real weekday values get that branded-day treatment — anything
-    /// else in the "day" field (an employee name, a role, etc.) means the
-    /// AI's generated CSV row had its columns shifted for that one line,
-    /// which previously rendered as its own orange day pill with a single
-    /// name under it and no way to tell it apart from a legitimate day.
-    /// Routed into a separate flagged group instead.
+    /// The backend re-derives `day` from the row's `date` server-side, so
+    /// every row's day value is a real weekday now even when the AI's raw
+    /// CSV had that column scrambled — `day` alone can no longer signal a
+    /// bad row. `needsReview` is the explicit flag the backend sets when a
+    /// row's other columns (employee/role/times) were scrambled badly
+    /// enough that it couldn't confidently auto-repair them; those still
+    /// get routed to a separate flagged group instead of rendering as a
+    /// normal (but silently wrong) day entry.
     @ViewBuilder
     private func fullScheduleTable(_ rows: [ScheduleRow], csv: String?) -> some View {
-        let recognized = rows.filter { Self.scheduleDayOrder.contains($0.day ?? "") }
-        let unrecognized = rows.filter { !Self.scheduleDayOrder.contains($0.day ?? "") }
+        let recognized = rows.filter { $0.needsReview != true }
+        let unrecognized = rows.filter { $0.needsReview == true }
         let grouped = Dictionary(grouping: recognized, by: { $0.day ?? "—" })
         let orderedDays = Self.scheduleDayOrder.filter { grouped[$0] != nil }
 

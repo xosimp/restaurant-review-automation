@@ -1308,7 +1308,7 @@ def _build_schedule_result(restaurant_id):
 _schedule_jobs = {}  # job_id -> {"status": "pending"|"done"|"error", "result": ...}
 
 def _run_schedule_job(job_id, restaurant_id):
-    import csv as _csv_mod, io as _io_sched, traceback as _tb
+    import csv as _csv_mod, io as _io_sched, traceback as _tb, datetime as _dt_sched
     try:
         result = _build_schedule_result(restaurant_id)
         from models import get_staff_notes as _gsn_sched
@@ -1332,12 +1332,46 @@ def _run_schedule_job(job_id, restaurant_id):
                 # Keep rows that have a non-empty employee name — skips header repeats and prose
                 if not _row.get("employee", "").strip() or _row.get("employee", "").lower() == "employee":
                     continue
+
+                # The model occasionally scrambles the day/employee columns
+                # for one row per generation (e.g. "...,Jamie L.,Friday,
+                # Server,..." instead of "...,Friday,Jamie L.,Server,...").
+                # `date` was correct in every malformed row observed, so
+                # re-derive `day` from it instead of trusting the model's own
+                # day text. When employee holds the day value that belongs
+                # there (a clean two-column swap), swap them back for a full
+                # recovery; otherwise the row is more scrambled than a swap
+                # can fix, so just correct the day label and flag the row.
+                try:
+                    _real_day = _dt_sched.datetime.strptime(_row.get("date", ""), "%Y-%m-%d").strftime("%A")
+                except (ValueError, TypeError):
+                    _real_day = None
+                if not _real_day:
+                    # date itself didn't parse — can't verify or repair
+                    # anything in this row, so flag it rather than let a
+                    # possibly-bogus day value pass through unmarked.
+                    _row["needs_review"] = True
+                elif _row.get("day") != _real_day:
+                    if _row.get("employee") == _real_day:
+                        _row["day"], _row["employee"] = _real_day, _row["day"]
+                    else:
+                        _row["day"] = _real_day
+                        _row["needs_review"] = True
+
                 preview_rows.append(_row)
                 try:
                     hours_scheduled += float(_row.get("scheduled_hours") or 0)
                 except (ValueError, TypeError):
                     pass
             print(f"[schedule] parsed {len(preview_rows)} rows, first={preview_rows[0] if preview_rows else None}")
+            # Rebuild schedule_csv from the (possibly repaired) rows so the
+            # downloadable/shared CSV matches what the app displays instead
+            # of shipping the pre-repair text out from under it.
+            if preview_rows:
+                _lines_out = [",".join(_COLS)]
+                for _r in preview_rows:
+                    _lines_out.append(",".join(_r.get(c, "") for c in _COLS))
+                result["schedule_csv"] = "\n".join(_lines_out)
         except Exception as _csv_ex:
             print(f"[schedule] csv parse error: {_csv_ex}")
             pass
