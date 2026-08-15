@@ -856,6 +856,7 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
 - If a rule is not specified there, infer reasonable defaults from the historical shift data patterns.{_role_minimums_extra}
 
 - Shifts per day: use the TYPICAL HEADCOUNT block as your starting point (see that block for when to scale beyond it — high-volume YoY days, flagged events, or closing a >15% PAR hours gap). Use CROSS-TRAINED STAFF to fill role gaps before adding new headcount.
+- Server shift length: split most servers into a lunch/day shift OR a dinner/night shift, not a single shift spanning the whole day — that's how real restaurants staff and it's what lets a manager read morning vs. night coverage at a glance. At most 1-2 servers per day may work a "straight through" (opening to close); everyone else gets a clear daypart split.
 - Notes column: one brief phrase per shift (e.g. "YoY match - high volume", "staggered opener", "cross-trained flex")
 - IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time.{constraints}"""
 

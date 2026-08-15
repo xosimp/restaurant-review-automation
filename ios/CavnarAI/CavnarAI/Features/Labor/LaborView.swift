@@ -651,8 +651,31 @@ struct LaborView: View {
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
     }
 
+    // Shifts starting before 3pm read as morning/day coverage (lunch, prep,
+    // openers); 3pm on is night coverage (dinner through close) — matches
+    // Gia Mia's own lunch/dinner daypart split. A row with an unparseable
+    // or missing start time falls into Night rather than being dropped,
+    // so it's still visible somewhere.
+    private static let shiftTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mma"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
+    private static let nightCutoffMinutes = 15 * 60  // 3:00pm
+
+    private static func minutesFromMidnight(_ timeString: String?) -> Int? {
+        guard let timeString, let date = shiftTimeFormatter.date(from: timeString.lowercased()) else { return nil }
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
+        guard let hour = comps.hour, let minute = comps.minute else { return nil }
+        return hour * 60 + minute
+    }
+
     private func scheduleDayGroup(day: String, rows: [ScheduleRow]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let morning = rows.filter { (Self.minutesFromMidnight($0.shiftStart) ?? Self.nightCutoffMinutes) < Self.nightCutoffMinutes }
+        let night = rows.filter { (Self.minutesFromMidnight($0.shiftStart) ?? Self.nightCutoffMinutes) >= Self.nightCutoffMinutes }
+
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text(day.uppercased())
                     .font(.cavnarBody(11, weight: 700))
@@ -666,24 +689,39 @@ struct LaborView: View {
                     .font(.cavnarBody(10))
                     .foregroundStyle(Color.cavnarInk3)
             }
-            VStack(spacing: 6) {
-                ForEach(rows) { row in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(row.employee ?? "").font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            if let role = row.role, !role.isEmpty {
-                                Text(role).font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
-                            }
-                        }
-                        Spacer()
-                        Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
-                            .font(.cavnarNumber(11))
-                            .foregroundStyle(Color.cavnarInk2)
-                    }
-                    .padding(.vertical, 4)
+            VStack(alignment: .leading, spacing: 12) {
+                if !morning.isEmpty {
+                    daypartRows(label: "MORNING", count: morning.count, rows: morning)
+                }
+                if !night.isEmpty {
+                    daypartRows(label: "NIGHT", count: night.count, rows: night)
                 }
             }
             .cavnarCard()
+        }
+    }
+
+    private func daypartRows(label: String, count: Int, rows: [ScheduleRow]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(label) · \(count)")
+                .font(.cavnarBody(10, weight: 700))
+                .tracking(0.8)
+                .foregroundStyle(Color.cavnarInk3)
+            ForEach(rows) { row in
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(row.employee ?? "").font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        if let role = row.role, !role.isEmpty {
+                            Text(role).font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
+                        }
+                    }
+                    Spacer()
+                    Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
+                        .font(.cavnarNumber(11))
+                        .foregroundStyle(Color.cavnarInk2)
+                }
+                .padding(.vertical, 4)
+            }
         }
     }
 }
