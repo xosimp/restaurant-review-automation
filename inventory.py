@@ -494,15 +494,17 @@ Write a food cost analysis. Rules that apply to everything:
 - Friendly and direct — like a trusted advisor, not a formal report
 - Always use $ signs before dollar amounts (e.g. $2,400 not 2400 or 2,400)
 
-First, write one paragraph of 3-4 sentences:
+This is read on a phone screen — brevity is the whole point. Cut ruthlessly.
+
+First, write one paragraph of 2 sentences max (never 3-4):
 - Open with the monthly waste projection dollar amount, make it feel real and personal
-- Name the 2 worst waste offenders by item name with their dollar amounts and a brief reason why it is likely happening
-- Call out the biggest overstock issue with the dollar amount tied up, if any
+- Name the single worst waste offender by item name with its dollar amount
 
 Then, on new lines after the paragraph, write 1-3 recommendations:
 - Only include recommendations where there is a genuine, specific opportunity — do not pad to three if the data does not support it
 - Maximum of three, minimum of one, ranked by dollar impact (highest first)
-- Number each one: start with "1. ", "2. ", "3. " 
+- Number each one: start with "1. ", "2. ", "3. "
+- Hard cap: 20 words per recommendation. Lead with the action, not the reasoning.
 - Each must directly save money this week or next week with an estimated dollar amount
 - Specific to the actual items in the data — never generic advice
 - Never suggest anything that hurts guest experience, reduces quality, or cuts portions
