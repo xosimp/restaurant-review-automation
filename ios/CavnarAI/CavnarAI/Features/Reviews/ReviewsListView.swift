@@ -21,7 +21,8 @@ struct ReviewsListView: View {
         VStack(spacing: 0) {
             CavnarSegmentedControl(selection: $subTab, options: ReviewsSubTab.allCases) { $0.rawValue }
                 .padding(.horizontal, 20)
-                .padding(.vertical, 8)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
 
             Group {
                 if subTab == .inbox {

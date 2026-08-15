@@ -19,6 +19,7 @@ struct LaborView: View {
             CavnarSegmentedControl(selection: $subTab, options: LaborSubTab.allCases) { $0.rawValue }
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
+                .padding(.bottom, 16)
 
             ScrollViewReader { proxy in
                 ScrollView {
