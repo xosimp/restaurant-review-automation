@@ -819,7 +819,7 @@ date,day,employee,role,shift_start,shift_end,scheduled_hours,notes
 
 No emoji anywhere in the CSV notes or summary bullets — plain professional text only.
 
-DO NOT write any explanation, reasoning, or preamble before the CSV header line. Start your response with "date,day,employee..." immediately.
+DO NOT write any explanation, reasoning, preamble, or step-by-step deliberation anywhere in your response — not before the CSV, not in a "<think>" block, not between rows, not woven into the notes column. Do the arithmetic and constraint-solving silently and output only the final answer: the CSV rows, then "---SUMMARY---", then the bullets. Start your response with "date,day,employee..." immediately and do not deviate from that format at any point.
 
 SCHEDULING RULES:
 - Use exact dates listed above and real employee names from the staff list
@@ -848,21 +848,37 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
 - Notes column: one brief phrase per shift (e.g. "YoY match - high volume", "staggered opener", "cross-trained flex")
 - IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time.{constraints}"""
 
+    EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
+
     msg = create_with_retry(
         client,
         model=os.getenv("SCHEDULE_MODEL", "claude-sonnet-5"),
-        max_tokens=8000,
+        # Was 8000 — ai_usage logs showed real generations for this
+        # restaurant landing on exactly 8000 output tokens, which is
+        # truncation (stop_reason: max_tokens), not natural completion.
+        # Raising the ceiling doesn't cost anything extra by itself —
+        # output tokens (and their cost/time) are billed for what the
+        # model actually generates, not the ceiling.
+        max_tokens=16000,
+        # A captured generation once opened with a literal "<think>...</think>"
+        # block of plain-text step-by-step reasoning — not the API's own
+        # (disabled) structured thinking feature, just prose the model chose
+        # to write — that alone consumed the entire max_tokens budget and
+        # left zero room for actual CSV rows (stop_reason: max_tokens,
+        # hours_scheduled: 0). An assistant-message prefill would have
+        # blocked this structurally, but this model rejects prefill outright
+        # ("This model does not support assistant message prefill" — a hard
+        # model constraint). The fix is prompt-only: the explicit
+        # no-preamble/no-"<think>" instruction in SCHEDULING RULES below.
+        # Verified live (2026-08-14): stop_reason=end_turn, ~3.7-4k output
+        # tokens (well under the ceiling), real non-empty CSV output.
         messages=[{"role": "user", "content": prompt}],
         restaurant_id=restaurant_id,
         action="labor_schedule",
     )
-    # The assistant prefill forces output to begin with data rows directly.
-    # raw = "<data rows>\n---SUMMARY---\n<bullets>"
     raw = extract_text(msg).strip()
     print(f"[schedule] raw length={len(raw)} stop_reason={msg.stop_reason}")
     import re as _re_sched
-
-    EXPECTED_HEADER = "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes"
 
     if "---SUMMARY---" in raw:
         _csv_raw, summary_part = raw.split("---SUMMARY---", 1)
