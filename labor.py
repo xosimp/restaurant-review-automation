@@ -500,6 +500,13 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
     """
+    # Was capped at 15 in the prompt below — silently invisible to any
+    # restaurant with a bigger real roster (found via Gia Mia's actual
+    # 66-person staff list): SCHEDULING RULES tells the model to use real
+    # names "from the staff list," but names past #15 were never in it, so
+    # the model could only ever assign shifts to the first 15 it happened to
+    # see. Raised generously; TYPICAL HEADCOUNT/PAR reconciliation already
+    # bound how many actually get scheduled per day.
     employees = list({s["employee"]: s["role"] for s in shifts}.items())
     overstaffed = analysis.get("overstaffed_days", [])[:5]
     understaffed = analysis.get("understaffed_days", [])[:3]
@@ -802,7 +809,7 @@ CONTEXT:
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
 - Recent labor % by day of week: {dow}
-- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:15]]}{yoy_block}{events_block}{_weather_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_avail_block}{_sched_notes_block}
+- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:100]]}{yoy_block}{events_block}{_weather_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_avail_block}{_sched_notes_block}
 
 Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
