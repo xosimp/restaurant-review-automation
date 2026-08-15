@@ -828,6 +828,8 @@ No emoji anywhere in the CSV notes or summary bullets — plain professional tex
 
 DO NOT write any explanation, reasoning, preamble, or step-by-step deliberation anywhere in your response — not before the CSV, not in a "<think>" block, not between rows, not woven into the notes column. Do the arithmetic and constraint-solving silently and output only the final answer: the CSV rows, then "---SUMMARY---", then the bullets. Start your response with "date,day,employee..." immediately and do not deviate from that format at any point.
 
+Rows for a non-routine addition — a food runner, a second/extra staff member added for volume, a role or arrival time called out by a special rule above — are exactly where column order most often gets scrambled, because they don't follow the same repeating pattern as the rest of the week. Before writing one of these rows, slow down internally (without narrating it) and confirm you are about to write, in order: date, day, employee, role, shift_start, shift_end, scheduled_hours, notes — a real weekday word in the day column and a real person's name in the employee column, same as every other row. Never let a special role name or rule override push into the day or employee position.
+
 SCHEDULING RULES:
 - Use exact dates listed above and real employee names from the staff list
 - Base each day's staffing on the YoY same-day data when available — that is your primary projection
