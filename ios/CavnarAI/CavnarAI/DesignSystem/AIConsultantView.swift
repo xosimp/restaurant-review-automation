@@ -1,18 +1,18 @@
 import SwiftUI
 
-/// The AI consultant box every analytics module shows — ports the web
-/// dashboard's dark-insight-card: ember left-edge accent stripe, uppercase
-/// ember module header ("Cavnar AI Labor Consultant" etc.), pulsing
-/// skeleton bars while loading, a word-by-word typewriter reveal once the
-/// insight arrives, numbered ember-circle recommendations in amber, and an
-/// optional italic Forecast callout.
+/// The AI consultant surface every module shows — deliberately unboxed
+/// (no background fill, no border, no left-edge stripe) rather than another
+/// bordered card among the many already on a module's Overview tab. Same
+/// reasoning as ValueChartCard on Home: sits flush on the page, and
+/// typography/color/spacing (not container chrome) signal "this is the AI
+/// surface" — an uppercase ember eyebrow, generous line-height, and a
+/// numeral-not-badge marker on each recommendation.
 ///
 /// Collapsed by default once an insight lands — the full intro + numbered
 /// recommendations + forecast could run long enough to push everything
-/// below it off-screen on a module's Overview tab (reported on Labor, but
-/// this is shared across every module that uses it). A two-line preview
-/// plus a tap-to-expand affordance reads as more considered than a wall of
-/// text always rendered in full.
+/// below it off-screen on a module's Overview tab. A two-line preview plus
+/// a tap-to-expand affordance reads as more considered than a wall of text
+/// always rendered in full.
 struct AIConsultantView: View {
     let title: String
     let insight: AIInsight?
@@ -57,16 +57,6 @@ struct AIConsultantView: View {
                 InsightSkeleton()
             }
         }
-        .padding(16)
-        .background(Color.cavnarSurface)
-        .overlay(alignment: .leading) {
-            Rectangle().fill(Color.cavnarEmber).frame(width: 3)
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: CavnarRadius.card)
-                .strokeBorder(Color.cavnarPaper3, lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
 }
 
@@ -134,11 +124,9 @@ private struct InsightContent: View {
                     ForEach(Array(insight.recommendations.enumerated()), id: \.offset) { index, rec in
                         HStack(alignment: .top, spacing: 10) {
                             Text("\(index + 1)")
-                                .font(.cavnarNumber(10, weight: 700))
-                                .foregroundStyle(.white)
-                                .frame(width: 20, height: 20)
-                                .background(Color.cavnarEmber)
-                                .clipShape(Circle())
+                                .font(.cavnarNumber(13, weight: 700))
+                                .foregroundStyle(Color.cavnarEmber)
+                                .frame(width: 16, alignment: .leading)
                             Text(rec)
                                 .font(.cavnarBody(13, weight: 500))
                                 .foregroundStyle(Color.cavnarAmber)
@@ -161,12 +149,6 @@ private struct InsightContent: View {
                         .foregroundStyle(Color.cavnarInk2)
                         .lineSpacing(4)
                 }
-                .padding(10)
-                .background(Color.cavnarEmber.opacity(0.08))
-                .overlay(alignment: .leading) {
-                    Rectangle().fill(Color.cavnarEmber).frame(width: 2)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
             }
         }
     }

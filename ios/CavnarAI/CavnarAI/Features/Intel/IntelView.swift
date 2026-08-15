@@ -14,7 +14,7 @@ struct IntelView: View {
     var body: some View {
         VStack(spacing: 0) {
             CavnarSegmentedControl(selection: $subTab, options: IntelSubTab.allCases) { $0.rawValue }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 20)
                 .padding(.vertical, 8)
 
             ScrollView {

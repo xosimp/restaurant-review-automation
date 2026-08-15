@@ -17,7 +17,7 @@ struct LaborView: View {
     var body: some View {
         VStack(spacing: 0) {
             CavnarSegmentedControl(selection: $subTab, options: LaborSubTab.allCases) { $0.rawValue }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 20)
                 .padding(.top, 8)
 
             ScrollViewReader { proxy in
@@ -25,21 +25,19 @@ struct LaborView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         if subTab == .overview {
                             if let stats = viewModel.stats {
-                                heroCard(stats)
-                                if !stats.laborUpcoming.isEmpty {
-                                    upcomingEventsCard(stats.laborUpcoming)
-                                }
-                                // Below the AI consultant (was between it and
-                                // the hero card) — the consultant reads as
-                                // ongoing situational advice, while a
-                                // generated schedule is a distinct, heavier
-                                // artifact that sitting right under the hero
-                                // banner made read as part of it.
+                                // Above the hero banner — reads as Cavnar's
+                                // own opening take on the week before the
+                                // budget/schedule numbers, not a footnote
+                                // wedged between other cards.
                                 AIConsultantView(
                                     title: "Cavnar AI Labor Consultant",
                                     insight: analyticsViewModel.insight,
                                     isLoading: analyticsViewModel.isLoadingInsight
                                 )
+                                heroCard(stats)
+                                if !stats.laborUpcoming.isEmpty {
+                                    upcomingEventsCard(stats.laborUpcoming)
+                                }
                                 if let result = viewModel.scheduleResult, result.ok {
                                     scheduleResultSection(result)
                                 }

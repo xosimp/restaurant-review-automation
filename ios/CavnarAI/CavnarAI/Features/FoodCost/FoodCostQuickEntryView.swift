@@ -16,7 +16,7 @@ struct FoodCostQuickEntryView: View {
         // Modules tab's stack now, not a tab root.
         VStack(spacing: 0) {
             CavnarSegmentedControl(selection: $subTab, options: FoodCostSubTab.allCases) { $0.rawValue }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 20)
                 .padding(.vertical, 8)
 
             if subTab == .tracker {
