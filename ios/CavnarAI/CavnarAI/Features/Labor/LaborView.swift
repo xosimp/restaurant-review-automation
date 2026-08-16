@@ -6,6 +6,15 @@ private enum LaborSubTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Reports the scrolled content's offset up to LaborView so the forecast
+/// ribbon can dim itself while the user is actively scrolling — a fixed
+/// left-edge overlay sitting on top of scrollable content will otherwise
+/// block whatever's underneath it while the user is trying to read past it.
+private struct ScrollOffsetPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 struct LaborView: View {
     @Environment(SessionStore.self) private var sessionStore
     @Environment(\.scenePhase) private var scenePhase
@@ -13,6 +22,9 @@ struct LaborView: View {
     @State private var analyticsViewModel = LaborAnalyticsViewModel()
     @State private var subTab: LaborSubTab = .overview
     @State private var showDataInfo = false
+    @State private var isScrolling = false
+    @State private var lastScrollOffset: CGFloat?
+    @State private var scrollIdleTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -80,6 +92,39 @@ struct LaborView: View {
                         }
                     }
                     .padding(20)
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: ScrollOffsetPreferenceKey.self,
+                                value: geo.frame(in: .named("laborScroll")).minY
+                            )
+                        }
+                    )
+                }
+                .coordinateSpace(name: "laborScroll")
+                .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
+                    // A left-edge overlay sitting on top of scrollable
+                    // content blocks whatever's underneath while the user
+                    // is trying to read past it — dim the collapsed tab
+                    // while actively scrolling, back to full opacity once
+                    // motion stops. No built-in "isScrolling" signal at
+                    // this deployment target (that's an iOS 18 ScrollView
+                    // API), so this infers it from offset deltas with a
+                    // short idle timeout instead.
+                    guard let last = lastScrollOffset else {
+                        lastScrollOffset = offset
+                        return
+                    }
+                    if abs(offset - last) > 0.5 {
+                        isScrolling = true
+                        scrollIdleTask?.cancel()
+                        scrollIdleTask = Task {
+                            try? await Task.sleep(for: .milliseconds(220))
+                            guard !Task.isCancelled else { return }
+                            withAnimation(.easeOut(duration: 0.25)) { isScrolling = false }
+                        }
+                    }
+                    lastScrollOffset = offset
                 }
             }
         }
@@ -96,6 +141,7 @@ struct LaborView: View {
                 ForecastRibbon(
                     events: events,
                     isExpanded: $viewModel.forecastExpanded,
+                    isDimmedByScroll: isScrolling,
                     daysAwayLabel: daysAwayLabel,
                     forecastCopy: forecastCopy
                 )
@@ -722,6 +768,7 @@ struct LaborView: View {
 private struct ForecastRibbon: View {
     let events: [LaborUpcomingEvent]
     @Binding var isExpanded: Bool
+    let isDimmedByScroll: Bool
     let daysAwayLabel: (Int) -> String
     let forecastCopy: (Int) -> String
 
@@ -739,6 +786,10 @@ private struct ForecastRibbon: View {
                     .transition(.move(edge: .leading).combined(with: .opacity))
             } else {
                 collapsedTab
+                    // Only dims while collapsed — once expanded the scrim
+                    // already blocks scrolling on whatever's underneath, so
+                    // there's nothing left for the ribbon itself to block.
+                    .opacity(isDimmedByScroll ? 0.35 : 1)
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
         }
@@ -755,15 +806,16 @@ private struct ForecastRibbon: View {
             Haptic.light()
             isExpanded = true
         } label: {
-            VStack(spacing: 8) {
+            VStack(spacing: 10) {
                 Image(systemName: "calendar")
                     .font(.system(size: 12, weight: .semibold))
+                    .rotationEffect(.degrees(-90))
                 Text("FORECAST")
-                    .font(.cavnarBody(9, weight: 700))
-                    .tracking(1.2)
+                    .font(.cavnarBody(10, weight: 700))
+                    .tracking(1.4)
                     .fixedSize()
                     .rotationEffect(.degrees(-90))
-                    .frame(width: 64)
+                    .frame(width: 100)
                 if events.count > 1 {
                     Text("\(events.count)")
                         .font(.cavnarNumber(10, weight: 700))
@@ -773,7 +825,7 @@ private struct ForecastRibbon: View {
                 }
             }
             .foregroundStyle(Color.cavnarInk)
-            .padding(.vertical, 12)
+            .padding(.vertical, 14)
             .frame(width: 34)
             .background(Color.cavnarEmber)
             .clipShape(
@@ -802,27 +854,31 @@ private struct ForecastRibbon: View {
             }
             .foregroundStyle(Color.cavnarEmber)
 
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 16) {
-                    ForEach(events) { event in
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 6) {
-                                Text(event.name)
-                                    .font(.cavnarBody(13, weight: 700))
-                                    .foregroundStyle(Color.cavnarInk)
-                                Text(daysAwayLabel(event.daysAway))
-                                    .font(.cavnarBody(10, weight: 600))
-                                    .foregroundStyle(Color.cavnarEmber2)
-                            }
-                            Text(forecastCopy(event.daysAway))
-                                .font(.cavnarBody(11))
-                                .foregroundStyle(Color.cavnarInk2)
-                                .lineSpacing(3)
+            // Plain VStack, not a ScrollView with a fixed max height — the
+            // forced height reserved space well past the actual content
+            // (typically 1-3 events), leaving a slab of empty background
+            // below the last row. Sizing to content removes that; a
+            // restaurant with an unusually long event list just gets a
+            // taller panel, which is the right tradeoff over guaranteed
+            // dead space in the common case.
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(events) { event in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(event.name)
+                                .font(.cavnarBody(13, weight: 700))
+                                .foregroundStyle(Color.cavnarInk)
+                            Text(daysAwayLabel(event.daysAway))
+                                .font(.cavnarBody(10, weight: 600))
+                                .foregroundStyle(Color.cavnarEmber2)
                         }
+                        Text(forecastCopy(event.daysAway))
+                            .font(.cavnarBody(11))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .lineSpacing(3)
                     }
                 }
             }
-            .frame(maxHeight: 280)
         }
         .padding(16)
         .frame(width: 250, alignment: .leading)
