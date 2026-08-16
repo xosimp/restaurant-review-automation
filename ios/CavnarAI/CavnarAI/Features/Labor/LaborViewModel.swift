@@ -254,6 +254,7 @@ final class LaborViewModel {
     var overstaffedExpanded = false
     var understaffedExpanded = false
     var availabilityExpanded = false
+    var rolesExpanded = false
 
     private let client: APIClient
     private var restaurantId: Int?

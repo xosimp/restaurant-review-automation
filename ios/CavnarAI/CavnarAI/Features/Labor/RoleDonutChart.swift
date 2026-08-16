@@ -8,18 +8,47 @@ import SwiftUI
 /// row per role with no visual weighting of which roles actually drive cost.
 struct RoleDonutChart: View {
     let roles: [LaborRoleSummary]
+    @Binding var isExpanded: Bool
 
-    /// Same 7-color sequence the web role donut cycles through, so the two
-    /// surfaces read as the same chart.
+    /// Started as the web role donut's 7-color cycle, but a real roster now
+    /// runs up to 11 distinct roles (cook split into 4 stations, Carry Out,
+    /// Shift Supervisor, Runner...) — cycling 7 colors across 11 roles put
+    /// visually-identical colors on unrelated roles. Extended to 12 chosen
+    /// for hue separation, not just appended: each new color sits in a gap
+    /// the original 7 left empty (deep indigo, burnt amber, deep emerald,
+    /// deep rose, slate) rather than being a lighter/darker twin of an
+    /// existing one.
     static let colors: [Color] = [
-        Color(red: 0.784, green: 0.294, blue: 0.184),  // #c84b2f
-        Color(red: 0.435, green: 0.812, blue: 0.592),  // #6fcf97
-        Color(red: 0.937, green: 0.624, blue: 0.153),  // #ef9f27
-        Color(red: 0.376, green: 0.678, blue: 0.961),  // #60adf5
-        Color(red: 0.702, green: 0.616, blue: 0.953),  // #b39df3
-        Color(red: 0.957, green: 0.447, blue: 0.714),  // #f472b6
-        Color(red: 0.302, green: 0.816, blue: 0.882),  // #4dd0e1
+        Color(red: 0.784, green: 0.294, blue: 0.184),  // #c84b2f ember red-orange
+        Color(red: 0.435, green: 0.812, blue: 0.592),  // #6fcf97 mint green
+        Color(red: 0.937, green: 0.624, blue: 0.153),  // #ef9f27 amber
+        Color(red: 0.376, green: 0.678, blue: 0.961),  // #60adf5 sky blue
+        Color(red: 0.702, green: 0.616, blue: 0.953),  // #b39df3 lavender
+        Color(red: 0.957, green: 0.447, blue: 0.714),  // #f472b6 pink
+        Color(red: 0.302, green: 0.816, blue: 0.882),  // #4dd0e1 cyan
+        Color(red: 0.263, green: 0.220, blue: 0.792),  // #4338ca deep indigo
+        Color(red: 0.851, green: 0.467, blue: 0.024),  // #d97706 burnt amber
+        Color(red: 0.020, green: 0.588, blue: 0.412),  // #059669 deep emerald
+        Color(red: 0.859, green: 0.153, blue: 0.467),  // #db2777 deep rose
+        Color(red: 0.392, green: 0.455, blue: 0.545),  // #64748b slate
     ]
+
+    /// Sorted highest-cost-first, once, so the ring's biggest segment leads
+    /// and the collapsed legend's top rows are the roles that actually
+    /// matter most to the number in the center.
+    private var sortedRoles: [LaborRoleSummary] {
+        roles.sorted { $0.laborCost > $1.laborCost }
+    }
+
+    // Past this many roles, the plain vertical list stopped being a legend
+    // and became a scroll-filling wall of rows (11 roles, one per cook
+    // station plus every FOH position) — collapse to the roles that
+    // actually drive the total, with the rest a tap away.
+    private static let collapseThreshold = 6
+
+    private var visibleRoles: [LaborRoleSummary] {
+        isExpanded ? sortedRoles : Array(sortedRoles.prefix(Self.collapseThreshold))
+    }
 
     private var totalCost: Double { roles.reduce(0) { $0 + $1.laborCost } }
 
@@ -30,11 +59,28 @@ struct RoleDonutChart: View {
     private static let ringSize: CGFloat = 148
 
     var body: some View {
-        HStack(alignment: .center, spacing: 22) {
-            ring
-                .frame(width: Self.ringSize, height: Self.ringSize)
-            legend
-                .frame(minHeight: Self.ringSize)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 22) {
+                ring
+                    .frame(width: Self.ringSize, height: Self.ringSize)
+                legend
+                    .frame(minHeight: Self.ringSize)
+            }
+            if sortedRoles.count > Self.collapseThreshold {
+                Button {
+                    Haptic.light()
+                    withAnimation(.easeOut(duration: 0.22)) { isExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(isExpanded ? "Show less" : "Show all \(sortedRoles.count) roles")
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .font(.cavnarBody(11, weight: 600))
+                    .foregroundStyle(Color.cavnarEmber)
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 
@@ -42,7 +88,7 @@ struct RoleDonutChart: View {
         ZStack {
             Circle()
                 .stroke(Color.cavnarPaper3.opacity(0.5), style: StrokeStyle(lineWidth: 16))
-            ForEach(Array(roles.enumerated()), id: \.element.id) { index, _ in
+            ForEach(Array(sortedRoles.enumerated()), id: \.element.id) { index, _ in
                 let (start, end) = segment(at: index)
                 Circle()
                     .trim(from: start, to: end)
@@ -66,7 +112,7 @@ struct RoleDonutChart: View {
         VStack(alignment: .leading, spacing: 0) {
             Spacer(minLength: 0)
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(Array(roles.enumerated()), id: \.element.id) { index, role in
+                ForEach(Array(visibleRoles.enumerated()), id: \.element.id) { index, role in
                     HStack(alignment: .top, spacing: 8) {
                         Circle()
                             .fill(color(at: index))
@@ -105,16 +151,17 @@ struct RoleDonutChart: View {
     }
 
     /// Matches the web chart's stroke-dasharray gap between segments — a
-    /// thin sliver of visual separation so adjacent same-hue-family
-    /// segments (there are only 7 colors, cycling for >7 roles) don't blur
-    /// into one continuous ring.
+    /// thin sliver of visual separation so adjacent segments don't blur
+    /// into one continuous ring. Always computed against the full sorted
+    /// list (not the collapsed legend subset) — the ring shows 100% of
+    /// cost regardless of how many legend rows are currently visible.
     private func segment(at index: Int) -> (Double, Double) {
-        guard totalCost > 0, !roles.isEmpty else { return (0, 0) }
+        guard totalCost > 0, !sortedRoles.isEmpty else { return (0, 0) }
         let gapFraction = 0.01
         var cumulative = 0.0
-        for i in 0..<index { cumulative += roles[i].laborCost / totalCost }
+        for i in 0..<index { cumulative += sortedRoles[i].laborCost / totalCost }
         let start = min(cumulative, 1)
-        let thisFraction = roles[index].laborCost / totalCost
+        let thisFraction = sortedRoles[index].laborCost / totalCost
         let end = min(start + max(thisFraction - gapFraction, 0), 1)
         return (start, end)
     }

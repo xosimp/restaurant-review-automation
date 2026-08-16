@@ -21,12 +21,12 @@ struct AIConsultantView: View {
     @State private var isExpanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Button {
-                guard insight != nil else { return }
-                Haptic.selection()
-                withAnimation(.easeOut(duration: 0.22)) { isExpanded.toggle() }
-            } label: {
+        Button {
+            guard insight != nil else { return }
+            Haptic.selection()
+            withAnimation(.easeOut(duration: 0.22)) { isExpanded.toggle() }
+        } label: {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 10, weight: .semibold))
@@ -42,21 +42,22 @@ struct AIConsultantView: View {
                     }
                 }
                 .foregroundStyle(Color.cavnarEmber)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
 
-            if let insight {
-                if isExpanded {
-                    InsightContent(insight: insight)
-                        .transition(.opacity)
-                } else {
-                    CollapsedInsightPreview(insight: insight)
+                if let insight {
+                    if isExpanded {
+                        InsightContent(insight: insight)
+                            .transition(.opacity)
+                    } else {
+                        CollapsedInsightPreview(insight: insight)
+                    }
+                } else if isLoading {
+                    InsightSkeleton()
                 }
-            } else if isLoading {
-                InsightSkeleton()
             }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .disabled(insight == nil)
     }
 }
 

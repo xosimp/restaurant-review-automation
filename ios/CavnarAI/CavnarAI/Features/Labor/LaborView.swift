@@ -272,37 +272,54 @@ struct LaborView: View {
         return f
     }()
 
+    // Horizontal chip strip instead of a stacked, left-aligned card — sat
+    // directly under the hero banner as one more boxy container pinned to
+    // the left edge. A scrolling row of compact chips reads as its own
+    // distinct widget (rhythm: bold hero card, chip strip, unboxed AI
+    // text, donut graphic) rather than another vertical block in the same
+    // stack, and side-steps "boxy" entirely — each chip is a soft tinted
+    // capsule, no hard border.
     @ViewBuilder
     private func upcomingEventsCard(_ events: [LaborUpcomingEvent]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "calendar")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.cavnarEmber)
                 Text("Scheduling forecast")
                     .font(.cavnarBody(11, weight: 700))
                     .tracking(0.8)
-                    .foregroundStyle(Color.cavnarEmber)
             }
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(events) { event in
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(event.name)
-                                .font(.cavnarBody(13, weight: 700))
-                                .foregroundStyle(Color.cavnarInk)
-                            Text(daysAwayLabel(event.daysAway))
+            .foregroundStyle(Color.cavnarEmber)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(events) { event in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 5) {
+                                Text(event.name)
+                                    .font(.cavnarBody(13, weight: 700))
+                                    .foregroundStyle(Color.cavnarInk)
+                                    .lineLimit(1)
+                                Text(daysAwayLabel(event.daysAway))
+                                    .font(.cavnarBody(10, weight: 600))
+                                    .foregroundStyle(Color.cavnarEmber2)
+                            }
+                            Text(forecastCopy(daysAway: event.daysAway))
                                 .font(.cavnarBody(11))
-                                .foregroundStyle(Color.cavnarInk3)
+                                .foregroundStyle(Color.cavnarInk2)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        Text(forecastCopy(daysAway: event.daysAway))
-                            .font(.cavnarBody(11))
-                            .foregroundStyle(Color.cavnarInk2)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(width: 190, alignment: .leading)
+                        .background(Color.cavnarEmber.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                     }
                 }
+                .padding(.trailing, 4)
             }
         }
-        .cavnarCard()
     }
 
     private func daysAwayLabel(_ days: Int) -> String {
@@ -404,7 +421,7 @@ struct LaborView: View {
             Text("By role")
                 .font(.cavnarBody(13, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
-            RoleDonutChart(roles: roles)
+            RoleDonutChart(roles: roles, isExpanded: $viewModel.rolesExpanded)
         }
     }
 
