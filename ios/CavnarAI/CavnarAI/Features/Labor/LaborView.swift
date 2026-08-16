@@ -36,9 +36,6 @@ struct LaborView: View {
                                     isLoading: analyticsViewModel.isLoadingInsight
                                 )
                                 heroCard(stats)
-                                if !stats.laborUpcoming.isEmpty {
-                                    upcomingEventsCard(stats.laborUpcoming)
-                                }
                                 if let result = viewModel.scheduleResult, result.ok {
                                     scheduleResultSection(result)
                                 }
@@ -87,6 +84,24 @@ struct LaborView: View {
             }
         }
         .cavnarModuleBackground()
+        .overlay(alignment: .leading) {
+            // Was a boxed, left-aligned card sitting in the normal scroll
+            // flow right under the hero banner — moved to a persistent
+            // edge tab per direct request: collapses to a slim ribbon on
+            // the screen's left edge, expands outward into a flyout panel
+            // on tap, and collapses back on a tap anywhere off it. Lives
+            // outside the ScrollView (on the outer container) so it stays
+            // fixed on screen rather than scrolling away with the content.
+            if subTab == .overview, let events = viewModel.stats?.laborUpcoming, !events.isEmpty {
+                ForecastRibbon(
+                    events: events,
+                    isExpanded: $viewModel.forecastExpanded,
+                    daysAwayLabel: daysAwayLabel,
+                    forecastCopy: forecastCopy
+                )
+                .padding(.top, 90)
+            }
+        }
         .refreshable {
             await viewModel.load()
             await viewModel.loadAvailability()
@@ -271,56 +286,6 @@ struct LaborView: View {
         f.dateFormat = "MMM d"
         return f
     }()
-
-    // Horizontal chip strip instead of a stacked, left-aligned card — sat
-    // directly under the hero banner as one more boxy container pinned to
-    // the left edge. A scrolling row of compact chips reads as its own
-    // distinct widget (rhythm: bold hero card, chip strip, unboxed AI
-    // text, donut graphic) rather than another vertical block in the same
-    // stack, and side-steps "boxy" entirely — each chip is a soft tinted
-    // capsule, no hard border.
-    @ViewBuilder
-    private func upcomingEventsCard(_ events: [LaborUpcomingEvent]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("Scheduling forecast")
-                    .font(.cavnarBody(11, weight: 700))
-                    .tracking(0.8)
-            }
-            .foregroundStyle(Color.cavnarEmber)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(events) { event in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 5) {
-                                Text(event.name)
-                                    .font(.cavnarBody(13, weight: 700))
-                                    .foregroundStyle(Color.cavnarInk)
-                                    .lineLimit(1)
-                                Text(daysAwayLabel(event.daysAway))
-                                    .font(.cavnarBody(10, weight: 600))
-                                    .foregroundStyle(Color.cavnarEmber2)
-                            }
-                            Text(forecastCopy(daysAway: event.daysAway))
-                                .font(.cavnarBody(11))
-                                .foregroundStyle(Color.cavnarInk2)
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .frame(width: 190, alignment: .leading)
-                        .background(Color.cavnarEmber.opacity(0.08))
-                        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                    }
-                }
-                .padding(.trailing, 4)
-            }
-        }
-    }
 
     private func daysAwayLabel(_ days: Int) -> String {
         if days == 0 { return "today" }
@@ -744,6 +709,129 @@ struct LaborView: View {
                 .padding(.vertical, 4)
             }
         }
+    }
+}
+
+/// A persistent edge tab on the screen's left side rather than a card in
+/// the normal scroll flow — collapses to a slim vertical ribbon, expands
+/// outward into a flyout panel on tap, and collapses back on a tap
+/// anywhere off it (the dimmed scrim behind the panel is the "off" target).
+/// Lives in an .overlay on the outer container, not the ScrollView, so it
+/// stays fixed on screen at a consistent position rather than scrolling
+/// away with the rest of the Overview content.
+private struct ForecastRibbon: View {
+    let events: [LaborUpcomingEvent]
+    @Binding var isExpanded: Bool
+    let daysAwayLabel: (Int) -> String
+    let forecastCopy: (Int) -> String
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            if isExpanded {
+                Color.black.opacity(0.32)
+                    .ignoresSafeArea()
+                    .onTapGesture { collapse() }
+                    .transition(.opacity)
+            }
+
+            if isExpanded {
+                expandedPanel
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            } else {
+                collapsedTab
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.86), value: isExpanded)
+    }
+
+    private func collapse() {
+        Haptic.light()
+        isExpanded = false
+    }
+
+    private var collapsedTab: some View {
+        Button {
+            Haptic.light()
+            isExpanded = true
+        } label: {
+            VStack(spacing: 8) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("FORECAST")
+                    .font(.cavnarBody(9, weight: 700))
+                    .tracking(1.2)
+                    .fixedSize()
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 64)
+                if events.count > 1 {
+                    Text("\(events.count)")
+                        .font(.cavnarNumber(10, weight: 700))
+                        .frame(width: 16, height: 16)
+                        .background(Color.cavnarInk.opacity(0.18))
+                        .clipShape(Circle())
+                }
+            }
+            .foregroundStyle(Color.cavnarInk)
+            .padding(.vertical, 12)
+            .frame(width: 34)
+            .background(Color.cavnarEmber)
+            .clipShape(
+                .rect(topLeadingRadius: 0, bottomLeadingRadius: 0,
+                      bottomTrailingRadius: 14, topTrailingRadius: 14)
+            )
+            .shadow(color: .black.opacity(0.25), radius: 6, x: 2)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var expandedPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 6) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Scheduling forecast")
+                    .font(.cavnarBody(12, weight: 700))
+                    .tracking(0.6)
+                Spacer()
+                Button { collapse() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.cavnarInk3)
+                }
+            }
+            .foregroundStyle(Color.cavnarEmber)
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 16) {
+                    ForEach(events) { event in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(event.name)
+                                    .font(.cavnarBody(13, weight: 700))
+                                    .foregroundStyle(Color.cavnarInk)
+                                Text(daysAwayLabel(event.daysAway))
+                                    .font(.cavnarBody(10, weight: 600))
+                                    .foregroundStyle(Color.cavnarEmber2)
+                            }
+                            Text(forecastCopy(event.daysAway))
+                                .font(.cavnarBody(11))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .lineSpacing(3)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 280)
+        }
+        .padding(16)
+        .frame(width: 250, alignment: .leading)
+        .background(Color.cavnarPaper2)
+        .clipShape(
+            .rect(topLeadingRadius: 0, bottomLeadingRadius: 0,
+                  bottomTrailingRadius: 20, topTrailingRadius: 20)
+        )
+        .shadow(color: .black.opacity(0.3), radius: 14, x: 5)
     }
 }
 
