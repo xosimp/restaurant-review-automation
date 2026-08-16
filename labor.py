@@ -556,33 +556,38 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         _cross_block = ("\n\nCROSS-TRAINED STAFF — these employees can flex between roles. "
                         "Use this flexibility to fill gaps before adding headcount:\n" + "\n".join(_lines))
 
-    # Compute typical headcount per role per day-of-week from actual shift history
-    # This prevents the AI from over/under-staffing vs what the restaurant actually runs
+    # Compute typical headcount per role per day-of-week, split by daypart,
+    # from actual shift history. This prevents the AI from over/under-
+    # staffing vs what the restaurant actually runs — and critically, from
+    # collapsing a night-specific headcount into a same-day morning+night
+    # split (a real bug: "6 servers Friday" was being read as 6 total for
+    # the day and cut to 3+3, when the real pattern is 6 AT NIGHT with a
+    # separate, smaller morning crew).
     from collections import defaultdict as _dd
-    _dow_role_staff = _dd(lambda: _dd(set))  # {dow -> {role -> set of employees}}
+    from datetime import datetime as _dt2
+
+    def _daypart(shift_start: str) -> str:
+        """3pm cutoff, matching the mobile app's own morning/night split."""
+        try:
+            _t = _dt2.strptime((shift_start or "").strip().lower(), "%I:%M%p")
+            return "night" if _t.hour >= 15 else "morning"
+        except Exception:
+            return "night"
+
+    # {dow -> {daypart -> {role -> set of employees}}}
+    _dow_daypart_role_staff = _dd(lambda: _dd(lambda: _dd(set)))
     for s in shifts:
         _date = s.get("date", "")
         _role = s.get("role", "Unknown")
         _emp  = s.get("employee", "")
         _dn   = ""
         try:
-            from datetime import datetime as _dt2
             _dn = _dt2.strptime(_date, "%Y-%m-%d").strftime("%A")
         except Exception:
             _dn = s.get("day", "")
         if _dn and _emp:
-            _dow_role_staff[_dn][_role].add(_emp)
-    # Summarize: avg unique staff per DOW per role (count unique across all dates / occurrences of that DOW)
-    _dow_counts = _dd(int)
-    for s in shifts:
-        _date = s.get("date", "")
-        try:
-            _dn = _dt2.strptime(_date, "%Y-%m-%d").strftime("%A")
-        except Exception:
-            _dn = s.get("day", "")
-        if _dn:
-            _dow_counts[_dn] = max(_dow_counts[_dn], 1)
-    # Count unique dates per DOW
+            _dow_daypart_role_staff[_dn][_daypart(s.get("shift_start", ""))][_role].add(_emp)
+    # Count unique dates per DOW (divisor for "avg per week")
     _dow_date_sets = _dd(set)
     for s in shifts:
         _date = s.get("date", "")
@@ -592,24 +597,36 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             _dn = s.get("day", "")
         if _dn and _date:
             _dow_date_sets[_dn].add(_date)
-    # Build headcount block: "Monday: Server 4, Cook 3, Bartender 1"
+    # Build headcount block: "Friday: Server 3 morning / 6 night, Cook 2 morning / 3 night"
     _dow_order = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
     _hc_lines = []
     for _dn in _dow_order:
-        if _dn not in _dow_role_staff:
+        if _dn not in _dow_daypart_role_staff:
             continue
         _n_weeks = max(len(_dow_date_sets[_dn]), 1)
+        _roles_seen = sorted({r for _dp in _dow_daypart_role_staff[_dn].values() for r in _dp})
         _parts = []
-        for _role, _emps in sorted(_dow_role_staff[_dn].items()):
-            # Unique employees seen on this DOW divided by number of occurrences = avg per week
-            _avg = max(1, round(len(_emps) / _n_weeks))
-            _parts.append(f"{_role}: {_avg}")
+        for _role in _roles_seen:
+            _morning_emps = _dow_daypart_role_staff[_dn]["morning"].get(_role, set())
+            _night_emps = _dow_daypart_role_staff[_dn]["night"].get(_role, set())
+            _m_avg = round(len(_morning_emps) / _n_weeks)
+            _n_avg = round(len(_night_emps) / _n_weeks)
+            if _m_avg and _n_avg:
+                _parts.append(f"{_role}: {_m_avg} morning / {_n_avg} night")
+            elif _n_avg:
+                _parts.append(f"{_role}: {_n_avg} night")
+            elif _m_avg:
+                _parts.append(f"{_role}: {_m_avg} morning")
         if _parts:
             _hc_lines.append(f"  {_dn}: {', '.join(_parts)}")
     _headcount_block = ""
     if _hc_lines:
         _headcount_block = ("\n\nTYPICAL HEADCOUNT PER DAY — your starting point for who/how many per role per "
-                            "day. Use these as the baseline. A reason to go over is an event, a YoY spike, OR "
+                            "day, split by daypart. IMPORTANT: morning and night are SEPARATE headcounts, not "
+                            "a combined daily total to divide between them — \"6 night\" means 6 people ON AT "
+                            "NIGHT, on top of (not instead of) whatever the morning figure says. Never read a "
+                            "day's total as one pool to split across dayparts.\n"
+                            "Use these as the baseline. A reason to go over is an event, a YoY spike, OR "
                             "the PAR HOURS TARGET below being significantly out of reach at this headcount — see "
                             "that section's reconciliation rule. If you do scale up for that reason, do it "
                             "proportionally across roles (not by piling extra hours onto one role) and say so "
@@ -856,7 +873,7 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
 - If a rule is not specified there, infer reasonable defaults from the historical shift data patterns.{_role_minimums_extra}
 
 - Shifts per day: use the TYPICAL HEADCOUNT block as your starting point (see that block for when to scale beyond it — high-volume YoY days, flagged events, or closing a >15% PAR hours gap). Use CROSS-TRAINED STAFF to fill role gaps before adding new headcount.
-- Server shift length: split most servers into a lunch/day shift OR a dinner/night shift, not a single shift spanning the whole day — that's how real restaurants staff and it's what lets a manager read morning vs. night coverage at a glance. At most 1-2 servers per day may work a "straight through" (opening to close); everyone else gets a clear daypart split.
+- Server shift length: split most servers into a lunch/day shift OR a dinner/night shift, not a single shift spanning the whole day — that's how real restaurants staff and it's what lets a manager read morning vs. night coverage at a glance. At most 1-2 servers per day may work a "straight through" (opening to close); everyone else gets a clear daypart split. This is about shift LENGTH, not headcount — do not use it as a reason to cut the number of people working nights. Each daypart gets its own full headcount per the TYPICAL HEADCOUNT block above (e.g. 6 people at night stays 6 people at night; splitting shift length doesn't mean splitting the 6 into 3 morning + 3 night).
 - Notes column: one brief phrase per shift (e.g. "YoY match - high volume", "staggered opener", "cross-trained flex")
 - IMPORTANT: All times in shift_start and shift_end MUST be in 12-hour US format with am/pm — e.g. "11:00am", "4:00pm", "9:30pm". Never use 24-hour/military time.{constraints}"""
 

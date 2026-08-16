@@ -703,10 +703,14 @@ struct LaborView: View {
 
     private func daypartRows(label: String, count: Int, rows: [ScheduleRow]) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("\(label) · \(count)")
-                .font(.cavnarBody(10, weight: 700))
-                .tracking(0.8)
-                .foregroundStyle(Color.cavnarInk3)
+            HStack(spacing: 4) {
+                Image(systemName: label == "MORNING" ? "sun.max.fill" : "moon.stars.fill")
+                    .font(.system(size: 10, weight: .bold))
+                Text("\(label) · \(count)")
+                    .font(.cavnarBody(12, weight: 800))
+                    .tracking(1.1)
+            }
+            .foregroundStyle(Color.cavnarEmber)
             ForEach(rows) { row in
                 HStack {
                     VStack(alignment: .leading, spacing: 1) {
