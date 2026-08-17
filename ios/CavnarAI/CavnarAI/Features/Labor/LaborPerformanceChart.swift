@@ -188,8 +188,8 @@ struct LaborPerformanceChart: View {
             .foregroundStyle(Color.cavnarInk3)
         case .trend:
             HStack(spacing: 14) {
-                legendDot(.cavnarRed, "Over \(Int(target))% target")
                 legendDot(.cavnarGreen, "At or under target")
+                legendDot(.cavnarRed, "Over \(Int(target))% target")
             }
             .font(.cavnarBody(9))
             .foregroundStyle(Color.cavnarInk3)

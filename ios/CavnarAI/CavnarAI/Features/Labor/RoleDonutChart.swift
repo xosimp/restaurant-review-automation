@@ -58,20 +58,40 @@ struct RoleDonutChart: View {
     // chart floating next to a taller stack of text.
     private static let ringSize: CGFloat = 148
 
+    // The real height of exactly the collapsed (6-role) legend, measured
+    // once below — not however many rows happen to be showing right now.
+    // Using the CURRENT legend's height (e.g. via .center alignment) would
+    // recenter the ring every time "Show all N roles" grows the legend
+    // taller, which is the exact bug .top-alignment was patched to avoid
+    // earlier. Measuring the fixed 6-row case specifically means the ring
+    // can be centered against it AND stay perfectly still on expand — both
+    // requirements at once, instead of trading one for the other.
+    @State private var collapsedLegendHeight: CGFloat = 0
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // .top, not .center — centering meant the ring re-centered
-            // (visually sliding down) against the row's own height every
-            // time the legend grew taller on "Show all N roles", since a
-            // taller legend made the shared row taller and the ring is
-            // fixed-size. Top-aligning pins the ring's position regardless
-            // of how many legend rows are showing.
             HStack(alignment: .top, spacing: 22) {
                 ring
                     .frame(width: Self.ringSize, height: Self.ringSize)
+                    .offset(y: max(0, (collapsedLegendHeight - Self.ringSize) / 2))
                 legend
                     .frame(minHeight: Self.ringSize)
+                    // Invisible always-6-row copy purely for measurement —
+                    // an overlay doesn't affect the real legend's own size,
+                    // and since the collapsed count is always ≤ whatever's
+                    // actually showing, it never visibly pokes out past it.
+                    .overlay(alignment: .topLeading) {
+                        legendRows(Array(sortedRoles.prefix(Self.collapseThreshold)))
+                            .opacity(0)
+                            .allowsHitTesting(false)
+                            .background(
+                                GeometryReader { geo in
+                                    Color.clear.preference(key: CollapsedLegendHeightKey.self, value: geo.size.height)
+                                }
+                            )
+                    }
             }
+            .onPreferenceChange(CollapsedLegendHeightKey.self) { collapsedLegendHeight = $0 }
             if sortedRoles.count > Self.collapseThreshold {
                 Button {
                     Haptic.light()
@@ -115,41 +135,41 @@ struct RoleDonutChart: View {
     }
 
     private var legend: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Spacer(minLength: 0)
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(Array(visibleRoles.enumerated()), id: \.element.id) { index, role in
-                    HStack(alignment: .top, spacing: 8) {
-                        Circle()
-                            .fill(color(at: index))
-                            .frame(width: 8, height: 8)
-                            .padding(.top, 4)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(role.role)
-                                .font(.cavnarBody(12, weight: 600))
-                                .foregroundStyle(Color.cavnarInk)
-                                .lineLimit(1)
-                            // Digits in Space Grotesk (cavnarNumber), same
-                            // as every other numeric value in the app —
-                            // this line was plain body text throughout,
-                            // including the hours/headcount/cost figures.
-                            (Text(formattedHours(role.hours)).font(.cavnarNumber(9))
-                                + Text("h · ").font(.cavnarBody(9))
-                                + Text("\(role.headcount)").font(.cavnarNumber(9))
-                                + Text(" staff · $").font(.cavnarBody(9))
-                                + Text(formattedComma(role.laborCost)).font(.cavnarNumber(9)))
-                                .foregroundStyle(Color.cavnarInk3)
-                        }
-                        Spacer(minLength: 4)
-                        Text(String(format: "%.0f%%", role.laborPct))
-                            .font(.cavnarNumber(13, weight: 700))
-                            .foregroundStyle(color(at: index))
+        legendRows(visibleRoles)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func legendRows(_ roles: [LaborRoleSummary]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(roles.enumerated()), id: \.element.id) { index, role in
+                HStack(alignment: .top, spacing: 8) {
+                    Circle()
+                        .fill(color(at: index))
+                        .frame(width: 8, height: 8)
+                        .padding(.top, 4)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(role.role)
+                            .font(.cavnarBody(12, weight: 600))
+                            .foregroundStyle(Color.cavnarInk)
+                            .lineLimit(1)
+                        // Digits in Space Grotesk (cavnarNumber), same
+                        // as every other numeric value in the app —
+                        // this line was plain body text throughout,
+                        // including the hours/headcount/cost figures.
+                        (Text(formattedHours(role.hours)).font(.cavnarNumber(9))
+                            + Text("h · ").font(.cavnarBody(9))
+                            + Text("\(role.headcount)").font(.cavnarNumber(9))
+                            + Text(" staff · $").font(.cavnarBody(9))
+                            + Text(formattedComma(role.laborCost)).font(.cavnarNumber(9)))
+                            .foregroundStyle(Color.cavnarInk3)
                     }
+                    Spacer(minLength: 4)
+                    Text(String(format: "%.0f%%", role.laborPct))
+                        .font(.cavnarNumber(13, weight: 700))
+                        .foregroundStyle(color(at: index))
                 }
             }
-            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func color(at index: Int) -> Color {
@@ -188,4 +208,9 @@ struct RoleDonutChart: View {
         formatter.numberStyle = .decimal
         return formatter.string(from: NSNumber(value: intVal)) ?? "\(intVal)"
     }
+}
+
+private struct CollapsedLegendHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
