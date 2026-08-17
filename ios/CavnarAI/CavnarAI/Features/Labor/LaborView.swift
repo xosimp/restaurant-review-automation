@@ -108,13 +108,18 @@ struct LaborView: View {
             // it — dimming everything behind the ribbon without ever
             // dimming the ribbon itself. Both only exist at all when the
             // anchor is actually present (Overview tab, a loaded hero
-            // card with upcoming events) — no dangling scrim with nothing
-            // for it to be focusing attention on.
-            if let anchor, let tone = heroTone, let events = viewModel.stats?.laborUpcoming, !events.isEmpty {
+            // card) — no dangling scrim with nothing for it to be
+            // focusing attention on. The ribbon itself always shows once
+            // there's a hero card, even with zero upcoming events —
+            // ForecastRibbon's expanded panel has its own empty-state
+            // copy for that case, rather than the whole feature just
+            // disappearing whenever nothing's coming up.
+            if let anchor, let tone = heroTone {
+                let events = viewModel.stats?.laborUpcoming ?? []
                 GeometryReader { geo in
                     ZStack {
                         if viewModel.forecastExpanded {
-                            Color.black.opacity(0.35)
+                            Color.black.opacity(0.6)
                                 .ignoresSafeArea()
                                 .onTapGesture {
                                     Haptic.light()
@@ -245,8 +250,12 @@ struct LaborView: View {
     /// behind a tap so the card's headline stat isn't sharing the spotlight
     /// with a line about data provenance every time you glance at it. The
     /// icon itself still tells you at a glance whether there's something to
-    /// check (amber + triangle when the underlying shift data is stale),
-    /// without spelling it out until asked.
+    /// check (a brighter fill + exclamation shape when the underlying shift
+    /// data is stale, dim + plain "i" otherwise) without spelling it out
+    /// until asked. Was amber for the stale case — amber sits close in hue
+    /// to the card's own green tint and outright clashes with its red one,
+    /// since this button lives directly on the tinted glass hero card. Ink
+    /// tones stay neutral against either.
     @ViewBuilder
     private func dataFreshnessInfoButton(_ stats: LaborStats) -> some View {
         if let info = freshnessInfo(stats) {
@@ -256,7 +265,7 @@ struct LaborView: View {
             } label: {
                 Image(systemName: info.stale ? "exclamationmark.circle.fill" : "info.circle")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(info.stale ? Color.cavnarAmber : Color.cavnarInk3)
+                    .foregroundStyle(info.stale ? Color.cavnarInk : Color.cavnarInk3)
             }
             .buttonStyle(.plain)
             .popover(isPresented: $showDataInfo, arrowEdge: .bottom) {
@@ -883,21 +892,28 @@ private struct ForecastRibbon: View {
             // restaurant with an unusually long event list just gets a
             // taller panel, which is the right tradeoff over guaranteed
             // dead space in the common case.
-            VStack(alignment: .leading, spacing: 16) {
-                ForEach(events) { event in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(event.name)
-                                .font(.cavnarBody(13, weight: 700))
-                                .foregroundStyle(Color.cavnarInk)
-                            Text(daysAwayLabel(event.daysAway))
-                                .font(.cavnarBody(10, weight: 600))
-                                .foregroundStyle(Color.cavnarEmber2)
+            if events.isEmpty {
+                Text("Nothing dining-relevant coming up in the next 3 weeks — no holiday or seasonal push to plan extra coverage around right now.")
+                    .font(.cavnarBody(12))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .lineSpacing(3)
+            } else {
+                VStack(alignment: .leading, spacing: 16) {
+                    ForEach(events) { event in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Text(event.name)
+                                    .font(.cavnarBody(13, weight: 700))
+                                    .foregroundStyle(Color.cavnarInk)
+                                Text(daysAwayLabel(event.daysAway))
+                                    .font(.cavnarBody(10, weight: 600))
+                                    .foregroundStyle(Color.cavnarEmber2)
+                            }
+                            Text(forecastCopy(event.daysAway))
+                                .font(.cavnarBody(11))
+                                .foregroundStyle(Color.cavnarInk2)
+                                .lineSpacing(3)
                         }
-                        Text(forecastCopy(event.daysAway))
-                            .font(.cavnarBody(11))
-                            .foregroundStyle(Color.cavnarInk2)
-                            .lineSpacing(3)
                     }
                 }
             }
