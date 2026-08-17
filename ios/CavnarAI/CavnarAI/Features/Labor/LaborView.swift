@@ -6,15 +6,6 @@ private enum LaborSubTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// Reports the scrolled content's offset up to LaborView so the forecast
-/// ribbon can dim itself while the user is actively scrolling — a fixed
-/// left-edge overlay sitting on top of scrollable content will otherwise
-/// block whatever's underneath it while the user is trying to read past it.
-private struct ScrollOffsetPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
 struct LaborView: View {
     @Environment(SessionStore.self) private var sessionStore
     @Environment(\.scenePhase) private var scenePhase
@@ -22,9 +13,6 @@ struct LaborView: View {
     @State private var analyticsViewModel = LaborAnalyticsViewModel()
     @State private var subTab: LaborSubTab = .overview
     @State private var showDataInfo = false
-    @State private var isScrolling = false
-    @State private var lastScrollOffset: CGFloat?
-    @State private var scrollIdleTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -92,74 +80,33 @@ struct LaborView: View {
                         }
                     }
                     .padding(20)
-                    .background(
-                        GeometryReader { geo in
-                            Color.clear.preference(
-                                key: ScrollOffsetPreferenceKey.self,
-                                value: geo.frame(in: .named("laborScroll")).minY
-                            )
-                        }
-                    )
-                }
-                .coordinateSpace(name: "laborScroll")
-                .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
-                    // A left-edge overlay sitting on top of scrollable
-                    // content blocks whatever's underneath while the user
-                    // is trying to read past it — dim the collapsed tab
-                    // while actively scrolling, back to full opacity once
-                    // motion stops. No built-in "isScrolling" signal at
-                    // this deployment target (that's an iOS 18 ScrollView
-                    // API), so this infers it from offset deltas with a
-                    // short idle timeout instead.
-                    guard let last = lastScrollOffset else {
-                        lastScrollOffset = offset
-                        return
-                    }
-                    if abs(offset - last) > 0.5 {
-                        isScrolling = true
-                        scrollIdleTask?.cancel()
-                        scrollIdleTask = Task {
-                            try? await Task.sleep(for: .milliseconds(220))
-                            guard !Task.isCancelled else { return }
-                            withAnimation(.easeOut(duration: 0.25)) { isScrolling = false }
-                        }
-                    }
-                    lastScrollOffset = offset
                 }
             }
         }
         .cavnarModuleBackground()
-        .overlay(alignment: .topLeading) {
-            // Was a boxed, left-aligned card sitting in the normal scroll
-            // flow right under the hero banner — moved to a persistent
-            // edge tab per direct request: collapses to a slim ribbon on
-            // the screen's left edge, expands outward into a flyout panel
-            // on tap, and collapses back on a tap anywhere off it. Lives
-            // outside the ScrollView (on the outer container) so it stays
-            // fixed on screen rather than scrolling away with the content.
-            //
-            // .topLeading, not .leading — .leading alone vertically
-            // centers on the *entire* outer container (full screen
-            // height), so the .padding(.top, 90) below was offsetting
-            // from mid-screen, not from the top — landing the ribbon down
-            // near the donut chart instead of near the hero banner.
-            if subTab == .overview, let events = viewModel.stats?.laborUpcoming, !events.isEmpty {
-                ForecastRibbon(
-                    events: events,
-                    isExpanded: $viewModel.forecastExpanded,
-                    isDimmedByScroll: isScrolling,
-                    daysAwayLabel: daysAwayLabel,
-                    forecastCopy: forecastCopy
-                )
-                // Estimated to land near the hero card's vertical center —
-                // tabs (~58pt) + AI Consultant block (~100pt) + roughly
-                // half the hero card's own height. I can't visually verify
-                // this against a live render, so treat it as a good first
-                // estimate rather than an exact placement; nudge the
-                // number if it's off in either direction.
-                .padding(.top, 230)
+        .overlay {
+            // Lives on the outer container, not nested with the ribbon
+            // itself (which now sits on the hero card, inside the
+            // ScrollView) — the ribbon's own position is offset to
+            // straddle the hero card's bottom border, and an ancestor
+            // padding/offset like that also shifts anything nested inside
+            // it, including .ignoresSafeArea() content (safe-area-ignoring
+            // only expands past device insets, it doesn't cancel out a
+            // parent's own layout offset). Keeping the scrim independent
+            // and unstyled by that offset is what makes it cover the full
+            // screen instead of starting partway down where the ribbon
+            // happens to sit.
+            if viewModel.forecastExpanded {
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        Haptic.light()
+                        viewModel.forecastExpanded = false
+                    }
+                    .transition(.opacity)
             }
         }
+        .animation(.easeOut(duration: 0.2), value: viewModel.forecastExpanded)
         .refreshable {
             await viewModel.load()
             await viewModel.loadAvailability()
@@ -235,6 +182,29 @@ struct LaborView: View {
             .padding(.top, 2)
         }
         .cavnarGlassCard(tint: tone.foreground)
+        .overlay(alignment: .bottom) {
+            if !stats.laborUpcoming.isEmpty {
+                // Straddles the card's own bottom border (half above, half
+                // below) rather than sitting flush under it — the offset is
+                // exactly half the tab's own rendered height, which this
+                // view fully controls (fixed font/padding), unlike the
+                // ribbon's old fixed-pixel-from-the-top-of-the-screen
+                // placement, which depended on unrelated content above it
+                // (the AI Consultant block) and drifted whenever that
+                // block's length changed. Tinted the same tone as the card
+                // itself (green/red, matching on-track/over-target) so it
+                // reads as an extension of the card, not an unrelated
+                // button dropped on top of it.
+                ForecastRibbon(
+                    events: stats.laborUpcoming,
+                    isExpanded: $viewModel.forecastExpanded,
+                    tone: tone,
+                    daysAwayLabel: daysAwayLabel,
+                    forecastCopy: forecastCopy
+                )
+                .offset(y: ForecastRibbon.tabHalfHeight)
+            }
+        }
     }
 
     private struct DataFreshness {
@@ -778,88 +748,80 @@ struct LaborView: View {
     }
 }
 
-/// A persistent edge tab on the screen's left side rather than a card in
-/// the normal scroll flow — collapses to a slim vertical ribbon, expands
-/// outward into a flyout panel on tap, and collapses back on a tap
-/// anywhere off it (the dimmed scrim behind the panel is the "off" target).
-/// Lives in an .overlay on the outer container, not the ScrollView, so it
-/// stays fixed on screen at a consistent position rather than scrolling
-/// away with the rest of the Overview content.
+/// A horizontal tab straddling the hero card's own bottom border — was a
+/// vertical edge tab fixed to the screen's left side; moved to read as part
+/// of the hero card itself (same tint/border as the card, floating just
+/// above it with its own shadow) rather than an unrelated fixed overlay.
+/// Because it's anchored to the card (see heroCard's .overlay(alignment:
+/// .bottom)), it now scrolls with the card instead of staying pinned to the
+/// screen — the scroll-dimming behavior the old edge-tab version needed
+/// (a fixed overlay blocking content underneath while scrolling) no longer
+/// applies once the tab moves with the content it's attached to.
 private struct ForecastRibbon: View {
     let events: [LaborUpcomingEvent]
     @Binding var isExpanded: Bool
-    let isDimmedByScroll: Bool
+    let tone: CavnarTone
     let daysAwayLabel: (Int) -> String
     let forecastCopy: (Int) -> String
 
+    // Half of collapsedTab's own rendered height — used by heroCard to
+    // center the tab on the card's border. Safe to hardcode here (unlike
+    // the old cross-hierarchy pixel offset that depended on unrelated
+    // content above it): this view fully owns the tab's font/padding, so
+    // its height can't drift out from under this number.
+    static let tabHalfHeight: CGFloat = 17
+
     var body: some View {
-        ZStack(alignment: .leading) {
-            if isExpanded {
-                Color.black.opacity(0.32)
-                    .ignoresSafeArea()
-                    .onTapGesture { collapse() }
-                    .transition(.opacity)
+        collapsedTab
+            .overlay(alignment: .top) {
+                if isExpanded {
+                    expandedPanel
+                        .padding(.top, ForecastRibbon.tabHalfHeight * 2 + 10)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
-
-            if isExpanded {
-                expandedPanel
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            } else {
-                collapsedTab
-                    // Only dims while collapsed — once expanded the scrim
-                    // already blocks scrolling on whatever's underneath, so
-                    // there's nothing left for the ribbon itself to block.
-                    .opacity(isDimmedByScroll ? 0.35 : 1)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
-        }
-        .animation(.spring(response: 0.35, dampingFraction: 0.86), value: isExpanded)
-    }
-
-    private func collapse() {
-        Haptic.light()
-        isExpanded = false
+            .animation(.spring(response: 0.35, dampingFraction: 0.86), value: isExpanded)
     }
 
     private var collapsedTab: some View {
         Button {
             Haptic.light()
-            isExpanded = true
+            isExpanded.toggle()
         } label: {
-            VStack(spacing: 10) {
+            HStack(spacing: 7) {
                 Image(systemName: "calendar")
-                    .font(.system(size: 12, weight: .semibold))
-                    .rotationEffect(.degrees(-90))
+                    .font(.system(size: 11, weight: .semibold))
                 Text("FORECAST")
                     .font(.cavnarBody(10, weight: 700))
                     .tracking(1.4)
-                    .fixedSize()
-                    .rotationEffect(.degrees(-90))
-                    // .frame constrains the shape AFTER rotation — a -90°
-                    // turn swaps which axis is which, so the word's actual
-                    // length becomes the box's HEIGHT post-rotation, not
-                    // its width. Constraining width (the old code) reserved
-                    // space on the wrong axis entirely, which is why the
-                    // full word wasn't rendering even after widening that
-                    // number.
-                    .frame(height: 100)
                 if events.count > 1 {
                     Text("\(events.count)")
                         .font(.cavnarNumber(10, weight: 700))
-                        .frame(width: 16, height: 16)
+                        .frame(width: 15, height: 15)
                         .background(Color.cavnarInk.opacity(0.18))
                         .clipShape(Circle())
                 }
             }
             .foregroundStyle(Color.cavnarInk)
-            .padding(.vertical, 14)
-            .frame(width: 34)
-            .background(Color.cavnarEmber)
-            .clipShape(
-                .rect(topLeadingRadius: 0, bottomLeadingRadius: 0,
-                      bottomTrailingRadius: 14, topTrailingRadius: 14)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            // Same gradient/opacities as CavnarGlassCardStyle (the hero
+            // card's own background) with the card's tone as the tint, so
+            // the tab reads as an extension of the card — green when on
+            // track, red when over target, matching it exactly rather than
+            // a fixed branded-ember color regardless of the card's status.
+            .background(
+                LinearGradient(
+                    colors: [tone.foreground.opacity(0.55), tone.foreground.opacity(0.22)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
             )
-            .shadow(color: .black.opacity(0.25), radius: 6, x: 2)
+            .background(Color.cavnarPaper2.opacity(0.5))
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(tone.foreground.opacity(0.5), lineWidth: 1.2))
+            // Reads as floating above the hero card behind it, not flush
+            // against it.
+            .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
         }
         .buttonStyle(.plain)
     }
@@ -873,13 +835,16 @@ private struct ForecastRibbon: View {
                     .font(.cavnarBody(12, weight: 700))
                     .tracking(0.6)
                 Spacer()
-                Button { collapse() } label: {
+                Button {
+                    Haptic.light()
+                    isExpanded = false
+                } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
-            .foregroundStyle(Color.cavnarEmber)
+            .foregroundStyle(tone.foreground)
 
             // Plain VStack, not a ScrollView with a fixed max height — the
             // forced height reserved space well past the actual content
@@ -910,11 +875,9 @@ private struct ForecastRibbon: View {
         .padding(16)
         .frame(width: 250, alignment: .leading)
         .background(Color.cavnarPaper2)
-        .clipShape(
-            .rect(topLeadingRadius: 0, bottomLeadingRadius: 0,
-                  bottomTrailingRadius: 20, topTrailingRadius: 20)
-        )
-        .shadow(color: .black.opacity(0.3), radius: 14, x: 5)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(tone.foreground.opacity(0.3), lineWidth: 1))
+        .shadow(color: .black.opacity(0.35), radius: 16, y: 8)
     }
 }
 
