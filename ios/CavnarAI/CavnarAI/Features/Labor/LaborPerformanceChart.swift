@@ -87,12 +87,12 @@ struct LaborPerformanceChart: View {
                             .cornerRadius(3)
                     }
                     RuleMark(y: .value("Target", target))
-                        .foregroundStyle(Color.cavnarEmber.opacity(0.8))
+                        .foregroundStyle(Color.cavnarInk.opacity(0.8))
                         .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                         .annotation(position: .top, alignment: .trailing) {
                             Text("\(Int(target))% target")
                                 .font(.cavnarBody(9, weight: 700))
-                                .foregroundStyle(Color.cavnarEmber)
+                                .foregroundStyle(Color.cavnarInk)
                         }
                 }
                 .frame(height: 180)

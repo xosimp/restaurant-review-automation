@@ -367,7 +367,15 @@ struct LaborView: View {
 
     @ViewBuilder
     private func overtimeDropdown(_ entries: [LaborOvertimeEntry], proxy: ScrollViewProxy) -> some View {
-        let atRisk = entries.filter { $0.status == "overtime" && !($0.otAllowed ?? false) }.count
+        // "Overtime risk" as a section covers both people already over 40h
+        // and people approaching it — that's why they share one list with
+        // per-row "overtime"/"near" tags rather than being split into two
+        // sections. The badge should count the section, not a filtered
+        // subset of it (it was previously overtime-only, which disagreed
+        // with the subtitle's "N people flagged" right below it). An
+        // explicit OT-allowed constraint (green tag, not actually a
+        // concern) still doesn't count.
+        let atRisk = entries.filter { !($0.otAllowed ?? false) }.count
         // Backend returns these in whatever order Python's dict iteration
         // happened to produce (first-seen-in-the-CSV order), which reads as
         // random — sorted lowest-to-highest hours here instead.

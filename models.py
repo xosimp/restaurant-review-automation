@@ -2143,12 +2143,28 @@ def save_labor_snapshot(restaurant_id: int, period_start: str, period_end: str,
 
 def get_labor_history(restaurant_id: int, limit: int = 4,
                       db_path: str = DB_PATH) -> list:
-    """Return recent labor snapshots for trend awareness."""
+    """Return recent labor snapshots for trend awareness.
+
+    save_labor_snapshot() inserts a new row every time an insight is
+    generated, not just on a genuinely new upload — a restaurant whose
+    data hasn't changed can accumulate many rows for the same
+    period_start/period_end. Without dedup, those duplicates share one
+    x-axis label on the client's trend chart, which makes Swift Charts'
+    BarMark treat them as a stacked series (same category = stack) and
+    sum them into one wildly-inflated bar. Keep only the latest snapshot
+    (highest id) per distinct period.
+    """
     conn = get_conn(db_path)
     rows = conn.execute("""
-        SELECT period_start, period_end, labor_pct, total_labor, total_sales
-        FROM labor_history WHERE restaurant_id=?
-        ORDER BY period_start DESC LIMIT ?
+        SELECT h.period_start, h.period_end, h.labor_pct, h.total_labor, h.total_sales
+        FROM labor_history h
+        JOIN (
+            SELECT period_start, MAX(id) AS max_id
+            FROM labor_history
+            WHERE restaurant_id=?
+            GROUP BY period_start
+        ) latest ON h.id = latest.max_id
+        ORDER BY h.period_start DESC LIMIT ?
     """, (restaurant_id, limit)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
