@@ -33,7 +33,10 @@ def get_upcoming_holidays(from_date=None) -> str:
             from_date = datetime.now()
 
     # Dining-relevant holidays only — skip civic/cultural holidays
-    # that don't naturally drive restaurant visits or fit most concepts
+    # that don't naturally drive restaurant visits or fit most concepts.
+    # Veterans Day added: many restaurants run free/discounted meal promos
+    # for veterans, which is a real measurable traffic driver, not just a
+    # civic observance.
     fixed = [
         (1, 1, "New Year's Day"),
         (2, 14, "Valentine's Day"),
@@ -41,6 +44,7 @@ def get_upcoming_holidays(from_date=None) -> str:
         (5, 5, "Cinco de Mayo"),
         (7, 4, "Fourth of July — summer cookout season"),
         (10, 31, "Halloween — great for themed specials"),
+        (11, 11, "Veterans Day — many restaurants offer free/discounted meals for veterans"),
         (12, 24, "Christmas Eve — holiday dining"),
         (12, 25, "Christmas Day"),
         (12, 31, "New Year's Eve — celebration dining"),
@@ -75,6 +79,40 @@ def get_upcoming_holidays(from_date=None) -> str:
     sep1 = datetime(year, 9, 1)
     labor_day = sep1 + timedelta(days=(7 - sep1.weekday()) % 7)
     calculated.append((labor_day, "Labor Day"))
+
+    # Easter Sunday — one of the single biggest brunch days of the year,
+    # arguably outranking several holidays already on the fixed list, but
+    # missing entirely since it doesn't fall on a fixed month/day. Anonymous
+    # Gregorian algorithm (Meeus/Jones/Butcher) — the standard closed-form
+    # computation for the date, not a lookup table.
+    def _easter(y: int) -> datetime:
+        a = y % 19
+        b = y // 100
+        c = y % 100
+        d = b // 4
+        e = b % 4
+        f = (b + 8) // 25
+        g = (b - f + 1) // 3
+        h = (19 * a + b - d - g + 15) % 30
+        i = c // 4
+        k = c % 4
+        l = (32 + 2 * e + 2 * i - h - k) % 7
+        m = (a + 11 * h + 22 * l) // 451
+        month = (h + l - 7 * m + 114) // 31
+        day = ((h + l - 7 * m + 114) % 31) + 1
+        return datetime(y, month, day)
+
+    calculated.append((_easter(year), "Easter — one of the biggest brunch days of the year"))
+
+    # Super Bowl Sunday — huge for bars/wings/takeout. Not a fixed civic
+    # date; approximated as the second Sunday of February, matching the
+    # NFL's current schedule pattern under the 17-game season (recent Super
+    # Bowls have landed there, not the first Sunday) — the League sets the
+    # exact date each year, so this can drift by a week in years it doesn't.
+    feb1 = datetime(year, 2, 1)
+    first_sunday = feb1 + timedelta(days=(6 - feb1.weekday()) % 7)
+    super_bowl = first_sunday + timedelta(weeks=1)
+    calculated.append((super_bowl, "Super Bowl Sunday — one of the biggest days of the year for bars/takeout"))
 
     # Check next year too for year-end queries
     year2 = year + 1

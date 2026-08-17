@@ -119,7 +119,7 @@ struct LaborView: View {
                 GeometryReader { geo in
                     ZStack {
                         if viewModel.forecastExpanded {
-                            Color.black.opacity(0.6)
+                            Color.black.opacity(0.78)
                                 .ignoresSafeArea()
                                 .onTapGesture {
                                     Haptic.light()
