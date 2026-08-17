@@ -6,6 +6,24 @@ private enum LaborSubTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Carries the hero card's bottom-edge anchor up to LaborView's root so the
+/// forecast ribbon can be positioned there while living in the SAME overlay
+/// stack as the dimming scrim, declared after it — an .overlay attached to
+/// heroCard (nested inside the ScrollView) always draws *underneath* a
+/// separate .overlay attached higher up on the outer container, no matter
+/// what order either one is declared in, since an ancestor's overlay
+/// composites on top of its entire rendered subtree. That meant the scrim
+/// was dimming the ribbon itself, not just the content behind it. Hoisting
+/// the ribbon out to the root, positioned via this anchor instead of being
+/// nested inside heroCard's own overlay, puts both in one stacking context
+/// where declaration order actually controls what's on top.
+private struct HeroCardBottomAnchorKey: PreferenceKey {
+    static var defaultValue: Anchor<CGPoint>?
+    static func reduce(value: inout Anchor<CGPoint>?, nextValue: () -> Anchor<CGPoint>?) {
+        value = nextValue() ?? value
+    }
+}
+
 struct LaborView: View {
     @Environment(SessionStore.self) private var sessionStore
     @Environment(\.scenePhase) private var scenePhase
@@ -84,26 +102,41 @@ struct LaborView: View {
             }
         }
         .cavnarModuleBackground()
-        .overlay {
-            // Lives on the outer container, not nested with the ribbon
-            // itself (which now sits on the hero card, inside the
-            // ScrollView) — the ribbon's own position is offset to
-            // straddle the hero card's bottom border, and an ancestor
-            // padding/offset like that also shifts anything nested inside
-            // it, including .ignoresSafeArea() content (safe-area-ignoring
-            // only expands past device insets, it doesn't cancel out a
-            // parent's own layout offset). Keeping the scrim independent
-            // and unstyled by that offset is what makes it cover the full
-            // screen instead of starting partway down where the ribbon
-            // happens to sit.
-            if viewModel.forecastExpanded {
-                Color.black.opacity(0.35)
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        Haptic.light()
-                        viewModel.forecastExpanded = false
+        .overlayPreferenceValue(HeroCardBottomAnchorKey.self) { anchor in
+            // Scrim declared before the ribbon in this SAME ZStack, so the
+            // ribbon (and its expanded panel) reliably composite on top of
+            // it — dimming everything behind the ribbon without ever
+            // dimming the ribbon itself. Both only exist at all when the
+            // anchor is actually present (Overview tab, a loaded hero
+            // card with upcoming events) — no dangling scrim with nothing
+            // for it to be focusing attention on.
+            if let anchor, let tone = heroTone, let events = viewModel.stats?.laborUpcoming, !events.isEmpty {
+                GeometryReader { geo in
+                    ZStack {
+                        if viewModel.forecastExpanded {
+                            Color.black.opacity(0.35)
+                                .ignoresSafeArea()
+                                .onTapGesture {
+                                    Haptic.light()
+                                    viewModel.forecastExpanded = false
+                                }
+                                .transition(.opacity)
+                        }
+                        // .position centers the ribbon's own center exactly
+                        // on the anchor point (hero card's bottom-center
+                        // edge) — already the "straddle the border,
+                        // centered on the line" placement with no extra
+                        // offset math needed.
+                        ForecastRibbon(
+                            events: events,
+                            isExpanded: $viewModel.forecastExpanded,
+                            tone: tone,
+                            daysAwayLabel: daysAwayLabel,
+                            forecastCopy: forecastCopy
+                        )
+                        .position(geo[anchor])
                     }
-                    .transition(.opacity)
+                }
             }
         }
         .animation(.easeOut(duration: 0.2), value: viewModel.forecastExpanded)
@@ -182,29 +215,14 @@ struct LaborView: View {
             .padding(.top, 2)
         }
         .cavnarGlassCard(tint: tone.foreground)
-        .overlay(alignment: .bottom) {
-            if !stats.laborUpcoming.isEmpty {
-                // Straddles the card's own bottom border (half above, half
-                // below) rather than sitting flush under it — the offset is
-                // exactly half the tab's own rendered height, which this
-                // view fully controls (fixed font/padding), unlike the
-                // ribbon's old fixed-pixel-from-the-top-of-the-screen
-                // placement, which depended on unrelated content above it
-                // (the AI Consultant block) and drifted whenever that
-                // block's length changed. Tinted the same tone as the card
-                // itself (green/red, matching on-track/over-target) so it
-                // reads as an extension of the card, not an unrelated
-                // button dropped on top of it.
-                ForecastRibbon(
-                    events: stats.laborUpcoming,
-                    isExpanded: $viewModel.forecastExpanded,
-                    tone: tone,
-                    daysAwayLabel: daysAwayLabel,
-                    forecastCopy: forecastCopy
-                )
-                .offset(y: ForecastRibbon.tabHalfHeight)
-            }
-        }
+        // Reports this card's bottom-center edge up to LaborView's root —
+        // see HeroCardBottomAnchorKey for why the ribbon itself is no
+        // longer rendered here directly.
+        .anchorPreference(key: HeroCardBottomAnchorKey.self, value: .bottom) { $0 }
+    }
+
+    private var heroTone: CavnarTone? {
+        viewModel.stats.map { $0.onTrack ? .good : .bad }
     }
 
     private struct DataFreshness {
@@ -752,11 +770,11 @@ struct LaborView: View {
 /// vertical edge tab fixed to the screen's left side; moved to read as part
 /// of the hero card itself (same tint/border as the card, floating just
 /// above it with its own shadow) rather than an unrelated fixed overlay.
-/// Because it's anchored to the card (see heroCard's .overlay(alignment:
-/// .bottom)), it now scrolls with the card instead of staying pinned to the
-/// screen — the scroll-dimming behavior the old edge-tab version needed
-/// (a fixed overlay blocking content underneath while scrolling) no longer
-/// applies once the tab moves with the content it's attached to.
+/// Positioned by LaborView's root via HeroCardBottomAnchorKey rather than
+/// being nested inside heroCard's own overlay — see that key's doc comment
+/// for why (the dimming scrim needs to composite underneath this view, not
+/// above it, which nesting inside the card's own overlay tree couldn't
+/// give).
 private struct ForecastRibbon: View {
     let events: [LaborUpcomingEvent]
     @Binding var isExpanded: Bool
@@ -764,19 +782,19 @@ private struct ForecastRibbon: View {
     let daysAwayLabel: (Int) -> String
     let forecastCopy: (Int) -> String
 
-    // Half of collapsedTab's own rendered height — used by heroCard to
-    // center the tab on the card's border. Safe to hardcode here (unlike
-    // the old cross-hierarchy pixel offset that depended on unrelated
-    // content above it): this view fully owns the tab's font/padding, so
-    // its height can't drift out from under this number.
-    static let tabHalfHeight: CGFloat = 17
+    // This view's own rendered height when collapsed — used only to push
+    // the expanded panel down clear of the tab. Safe to hardcode (unlike
+    // the old cross-hierarchy pixel offsets this file used to lean on):
+    // this view fully owns the tab's font/padding, so its height can't
+    // drift out from under this number.
+    private static let tabHeight: CGFloat = 34
 
     var body: some View {
         collapsedTab
             .overlay(alignment: .top) {
                 if isExpanded {
                     expandedPanel
-                        .padding(.top, ForecastRibbon.tabHalfHeight * 2 + 10)
+                        .padding(.top, Self.tabHeight + 10)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
@@ -811,16 +829,20 @@ private struct ForecastRibbon: View {
             .foregroundStyle(Color.cavnarInk)
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
-            // Full-strength tint over a fully opaque base (was the same
-            // reduced-alpha gradient over a semi-transparent
-            // CavnarGlassCardStyle base the hero card itself uses) — that
-            // "frosted glass" look read as the pill being partly see-through
-            // against the card behind it. A ribbon meant to look tappable
-            // needs to read as a solid, opaque control, not a translucent
-            // decoration.
+            // Same gradient stops as CavnarGlassCardStyle (the hero card's
+            // own background: tint 0.55 fading to 0.22) so the pill reads
+            // as the same "lit corner fading toward dark" sheen the card
+            // has — a narrower 0.95→0.75 range (tried first) stayed too
+            // uniformly saturated to read as a gradient at all. The
+            // difference from the card: Paper2 sits here at FULL opacity,
+            // not the card's own translucent 0.35 — that's what keeps the
+            // fade from ever revealing whatever's actually behind the pill
+            // (the earlier see-through complaint), since the dark end of
+            // the fade is a solid opaque color, not a window through to
+            // the card underneath.
             .background(
                 LinearGradient(
-                    colors: [tone.foreground.opacity(0.95), tone.foreground.opacity(0.75)],
+                    colors: [tone.foreground.opacity(0.55), tone.foreground.opacity(0.22)],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 )
             )
