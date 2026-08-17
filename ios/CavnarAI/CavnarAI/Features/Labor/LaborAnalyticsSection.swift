@@ -94,7 +94,7 @@ struct LaborAnalyticsSection: View {
                 }
             }
             .frame(height: 10)
-            Text("Industry range: 28–32% for full-service restaurants")
+            Text("Industry range: 33–36% for full-service restaurants")
                 .font(.cavnarBody(10))
                 .foregroundStyle(Color.cavnarInk3)
         }

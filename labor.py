@@ -436,7 +436,7 @@ Today's date: {today_labor}{upload_context}{holiday_context}
 
 Data:
 - Overall labor cost: ${analysis['total_labor_cost']:,.0f} on ${analysis['total_sales']:,.0f} in sales ({analysis['overall_labor_pct']}% labor ratio)
-- This restaurant's labor target: {analysis.get('labor_target', 30)}% (industry full-service range: 28–32%)
+- This restaurant's labor target: {analysis.get('labor_target', 30)}% (industry full-service range: 33–36%, National Restaurant Association 2024)
 - Overstaffed days: {json.dumps(analysis['overstaffed_days'][:3])}
 - Understaffed days (IMPORTANT — these are NOT good days despite low labor %): {json.dumps(analysis['understaffed_days'][:2])} — these days had strong sales but lean staffing, meaning the restaurant likely left revenue on the table through slower service, longer waits, or missed covers. Flag these explicitly as missed revenue opportunities and recommend adding 1-2 staff on these days going forward.
 - Overtime risk: {json.dumps(analysis['overtime_risk'])}{role_context}{trend_context}

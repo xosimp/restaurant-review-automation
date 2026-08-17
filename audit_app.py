@@ -229,7 +229,7 @@ def generate_pdf(data):
                       ("Response time","How quickly are reviews being answered?"),
                       ("Review sentiment","Overall positive/negative ratio")],
         "labor":     [("Scheduling method","Excel, paper, app, or gut feel?"),
-                      ("Labor % of revenue","Target: 28-32%"),
+                      ("Labor % of revenue","Target: 33-36%"),
                       ("Overtime frequency","How often are staff hitting 40+ hrs?"),
                       ("Overstaffed/understaffed","Does staffing match sales volume?"),
                       ("POS data utilization","Is sales data used to inform scheduling?")],
@@ -611,7 +611,7 @@ const SECTIONS = [
   ]},
   {key:'labor', num:'02', title:'Labor & Scheduling', questions:[
     {lbl:'Scheduling method',sub:'Excel, paper, app, or gut feel?'},
-    {lbl:'Labor % of revenue',sub:'Target: 28-32%. Write actual % in notes.'},
+    {lbl:'Labor % of revenue',sub:'Target: 33-36%. Write actual % in notes.'},
     {lbl:'Overtime frequency',sub:'How often are staff hitting 40+ hours?'},
     {lbl:'Overstaffed / understaffed',sub:'Does staffing match actual sales volume?'},
     {lbl:'POS data utilization',sub:'Is sales data being used to inform scheduling?'},

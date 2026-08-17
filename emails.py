@@ -449,7 +449,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
       <strong>Labor tab</strong> — Upload your shift schedule CSV and the dashboard will calculate your labor cost percentage, flag overstaffed days, and surface overtime risk automatically.
     </p>
     <p style="font-size:13px;color:#7a736a;margin:0">
-      The target is 28-32% labor ratio. The dashboard shows you exactly where you're over and by how much.
+      The target is 33-36% labor ratio. The dashboard shows you exactly where you're over and by how much.
     </p>
   </div>"""
         elif has_inventory:
