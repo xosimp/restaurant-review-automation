@@ -129,7 +129,7 @@ struct LaborView: View {
             }
         }
         .cavnarModuleBackground()
-        .overlay(alignment: .leading) {
+        .overlay(alignment: .topLeading) {
             // Was a boxed, left-aligned card sitting in the normal scroll
             // flow right under the hero banner — moved to a persistent
             // edge tab per direct request: collapses to a slim ribbon on
@@ -137,6 +137,12 @@ struct LaborView: View {
             // on tap, and collapses back on a tap anywhere off it. Lives
             // outside the ScrollView (on the outer container) so it stays
             // fixed on screen rather than scrolling away with the content.
+            //
+            // .topLeading, not .leading — .leading alone vertically
+            // centers on the *entire* outer container (full screen
+            // height), so the .padding(.top, 90) below was offsetting
+            // from mid-screen, not from the top — landing the ribbon down
+            // near the donut chart instead of near the hero banner.
             if subTab == .overview, let events = viewModel.stats?.laborUpcoming, !events.isEmpty {
                 ForecastRibbon(
                     events: events,
@@ -815,7 +821,14 @@ private struct ForecastRibbon: View {
                     .tracking(1.4)
                     .fixedSize()
                     .rotationEffect(.degrees(-90))
-                    .frame(width: 100)
+                    // .frame constrains the shape AFTER rotation — a -90°
+                    // turn swaps which axis is which, so the word's actual
+                    // length becomes the box's HEIGHT post-rotation, not
+                    // its width. Constraining width (the old code) reserved
+                    // space on the wrong axis entirely, which is why the
+                    // full word wasn't rendering even after widening that
+                    // number.
+                    .frame(height: 100)
                 if events.count > 1 {
                     Text("\(events.count)")
                         .font(.cavnarNumber(10, weight: 700))

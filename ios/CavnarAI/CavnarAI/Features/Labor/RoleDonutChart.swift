@@ -60,7 +60,13 @@ struct RoleDonutChart: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 22) {
+            // .top, not .center — centering meant the ring re-centered
+            // (visually sliding down) against the row's own height every
+            // time the legend grew taller on "Show all N roles", since a
+            // taller legend made the shared row taller and the ring is
+            // fixed-size. Top-aligning pins the ring's position regardless
+            // of how many legend rows are showing.
+            HStack(alignment: .top, spacing: 22) {
                 ring
                     .frame(width: Self.ringSize, height: Self.ringSize)
                 legend
