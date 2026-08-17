@@ -151,7 +151,13 @@ struct LaborView: View {
                     daysAwayLabel: daysAwayLabel,
                     forecastCopy: forecastCopy
                 )
-                .padding(.top, 90)
+                // Estimated to land near the hero card's vertical center —
+                // tabs (~58pt) + AI Consultant block (~100pt) + roughly
+                // half the hero card's own height. I can't visually verify
+                // this against a live render, so treat it as a good first
+                // estimate rather than an exact placement; nudge the
+                // number if it's off in either direction.
+                .padding(.top, 230)
             }
         }
         .refreshable {
