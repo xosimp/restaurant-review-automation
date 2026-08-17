@@ -17,6 +17,7 @@ struct LaborAnalyticsSection: View {
                 benchmarkBar(stats)
                 LaborPerformanceChart(
                     trend: viewModel.trend, dowSummary: stats.dowSummary, target: stats.target,
+                    dateRangeStart: stats.dateRange.start, dateRangeEnd: stats.dateRange.end,
                     hasPlayedIntro: $viewModel.hasPlayedBarIntro
                 )
             } else if viewModel.isLoading {
@@ -57,6 +58,14 @@ struct LaborAnalyticsSection: View {
         return "$\(Int(value))"
     }
 
+    // National Restaurant Association 2024 full-service median range — see
+    // labor.py's own comment for the same figure and its source. Kept here
+    // as the single place the benchmark BAND's position is computed; the
+    // "Industry range: 33–36%" caption text below is the same numbers
+    // spelled out, not a second, independently-maintained source of truth.
+    private static let industryLow = 33.0
+    private static let industryHigh = 36.0
+
     @ViewBuilder
     private func benchmarkBar(_ stats: LaborStats) -> some View {
         let pct = stats.overallLaborPct
@@ -64,6 +73,8 @@ struct LaborAnalyticsSection: View {
         let bucket = benchmarkBucket(pct: pct, target: target)
         let barFill = min(pct / 50 * 100, 100)
         let targetPos = min(target / 50 * 100, 97)
+        let industryStart = min(Self.industryLow / 50 * 100, 100)
+        let industryWidth = max(0, min((Self.industryHigh - Self.industryLow) / 50 * 100, 100 - industryStart))
 
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -86,6 +97,13 @@ struct LaborAnalyticsSection: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.cavnarPaper3.opacity(0.6))
+                    // The industry range is a band (33–36%), not a single
+                    // point, so it gets a shaded region rather than a tick
+                    // — a single line would falsely imply one exact
+                    // "average" value instead of the real reported range.
+                    Rectangle().fill(Color.cavnarInk.opacity(0.35))
+                        .frame(width: geo.size.width * industryWidth / 100)
+                        .offset(x: geo.size.width * industryStart / 100)
                     Capsule().fill(bucket.color)
                         .frame(width: geo.size.width * barFill / 100)
                     Rectangle().fill(Color.cavnarGreen)
@@ -94,9 +112,18 @@ struct LaborAnalyticsSection: View {
                 }
             }
             .frame(height: 10)
-            Text("Industry range: 33–36% for full-service restaurants")
-                .font(.cavnarBody(10))
-                .foregroundStyle(Color.cavnarInk3)
+            HStack(spacing: 14) {
+                HStack(spacing: 4) {
+                    Rectangle().fill(Color.cavnarGreen).frame(width: 8, height: 2)
+                    Text("Your target (\(Int(target))%)")
+                }
+                HStack(spacing: 4) {
+                    Rectangle().fill(Color.cavnarInk.opacity(0.35)).frame(width: 8, height: 8)
+                    Text("Industry range: 33–36% for full-service restaurants")
+                }
+            }
+            .font(.cavnarBody(10))
+            .foregroundStyle(Color.cavnarInk3)
         }
         .cavnarCard()
     }

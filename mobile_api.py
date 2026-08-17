@@ -1002,6 +1002,8 @@ def mobile_labor_trend(current_user):
                 "pct": round(h["labor_pct"], 1),
                 "labor": h["total_labor"],
                 "sales": h["total_sales"],
+                "start": h["period_start"],
+                "end": h["period_end"],
             })
         return jsonify(ok=True, weeks=weeks)
     except Exception as e:

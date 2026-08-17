@@ -6,6 +6,8 @@ struct LaborTrendWeek: Decodable, Identifiable {
     let pct: Double
     let labor: Double
     let sales: Double
+    let start: String
+    let end: String
 
     var id: String { label }
 }
