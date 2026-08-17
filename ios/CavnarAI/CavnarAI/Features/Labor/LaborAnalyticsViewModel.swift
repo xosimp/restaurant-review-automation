@@ -31,6 +31,12 @@ final class LaborAnalyticsViewModel {
     // a fresh "first load" reveal is actually wanted.
     var hasPlayedBarIntro = false
 
+    // Same reasoning, same lifetime as hasPlayedBarIntro above — guards the
+    // savings tiles' count-up-from-zero reveal against replaying every time
+    // Analytics is switched back to (Overview/Analytics is an if/else
+    // branch that tears the view down each time).
+    var hasPlayedTilesIntro = false
+
     private let client: APIClient
     private var restaurantId: Int?
 

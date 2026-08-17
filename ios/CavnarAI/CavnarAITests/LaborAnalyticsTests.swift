@@ -4,11 +4,13 @@ import XCTest
 final class LaborAnalyticsTests: XCTestCase {
     func testDecodesLaborTrendWeek() throws {
         let json = """
-        {"label": "8/1", "pct": 29.5, "labor": 4200, "sales": 14200}
+        {"label": "8/1", "pct": 29.5, "labor": 4200, "sales": 14200, "start": "2026-08-01", "end": "2026-08-07"}
         """
         let week = try JSONDecoder.cavnar.decode(LaborTrendWeek.self, from: Data(json.utf8))
         XCTAssertEqual(week.label, "8/1")
         XCTAssertEqual(week.pct, 29.5)
+        XCTAssertEqual(week.start, "2026-08-01")
+        XCTAssertEqual(week.end, "2026-08-07")
     }
 
     func testDecodesScheduleRowAndGeneratedScheduleWithPreviewRows() throws {

@@ -915,7 +915,12 @@ def _do_mobile_labor(restaurant_id):
     monthly_sales_est = (total_sales / period_days * 30) if period_days else 0
     potential_savings = analysis.get("potential_savings", 0)
     labor_monthly = round(potential_savings * 4.33)
-    labor_vs_industry_monthly = max(0, round((0.32 - overall_pct / 100) * monthly_sales_est))
+    # 0.345 = midpoint of the 33-36% full-service industry range (NRA 2024
+    # Restaurant Operations Data Abstract) — was 0.32, a leftover from the
+    # stale pre-pandemic 28-32% benchmark already corrected everywhere else
+    # this figure appears (labor.py's AI prompt, the web dashboard, iOS's
+    # own benchmark band).
+    labor_vs_industry_monthly = max(0, round((0.345 - overall_pct / 100) * monthly_sales_est))
 
     savings_breakdown = {
         "labor_monthly": labor_monthly,

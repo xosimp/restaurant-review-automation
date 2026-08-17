@@ -29,27 +29,35 @@ struct LaborAnalyticsSection: View {
     @ViewBuilder
     private func savingsTiles(_ stats: LaborStats) -> some View {
         let b = stats.savingsBreakdown
+        // Captured once per render, before the .onAppear below flips the
+        // flag — every tile in this pass sees the same snapshot, so all
+        // four count up together on first load instead of racing each
+        // other for which gets to be "first" and flip the shared flag.
+        let startFromZero = !viewModel.hasPlayedTilesIntro
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 10)], spacing: 10) {
             if b.laborMonthly > 0 {
-                SavingsTile(value: formattedDollarsK(b.laborMonthly), label: "Monthly savings", sublabel: "if schedule optimized")
+                SavingsTile(numericValue: b.laborMonthly, format: formattedDollarsK, label: "Monthly savings", sublabel: "if schedule optimized", startFromZero: startFromZero)
             } else {
-                SavingsTile(value: formattedDollarsK(b.laborVsIndustryMonthly), label: "Saving vs. industry avg", sublabel: "per month vs 32% avg")
+                SavingsTile(numericValue: b.laborVsIndustryMonthly, format: formattedDollarsK, label: "Saving vs. industry avg", sublabel: "per month vs 34.5% avg", startFromZero: startFromZero)
             }
             if b.laborAnnual > 0 {
-                SavingsTile(value: formattedDollarsK(b.laborAnnual), label: "Annual savings", sublabel: "extrapolated yearly")
+                SavingsTile(numericValue: b.laborAnnual, format: formattedDollarsK, label: "Annual savings", sublabel: "extrapolated yearly", startFromZero: startFromZero)
             } else {
-                SavingsTile(value: formattedDollarsK(b.laborVsIndustryAnnual), label: "Annual advantage", sublabel: "vs. 32% industry avg/yr")
+                SavingsTile(numericValue: b.laborVsIndustryAnnual, format: formattedDollarsK, label: "Annual advantage", sublabel: "vs. 34.5% industry avg/yr", startFromZero: startFromZero)
             }
             if b.laborOvertime > 0 {
-                SavingsTile(value: formattedDollarsK(b.laborOvertime), label: "Overtime premium", sublabel: "0.5× rate on hours over 40", tone: Color.cavnarRed)
+                SavingsTile(numericValue: b.laborOvertime, format: formattedDollarsK, label: "Overtime premium", sublabel: "0.5× rate on hours over 40", tone: Color.cavnarRed, startFromZero: startFromZero)
             }
             SavingsTile(
-                value: "\(stats.overstaffedDays.count)",
+                numericValue: Double(stats.overstaffedDays.count),
+                format: { "\(Int($0.rounded()))" },
                 label: "Overstaffed days",
                 sublabel: "vs \(stats.understaffedDays.count) understaffed",
-                tone: stats.overstaffedDays.isEmpty ? Color.cavnarInk3 : Color.cavnarAmber
+                tone: stats.overstaffedDays.isEmpty ? Color.cavnarInk3 : Color.cavnarAmber,
+                startFromZero: startFromZero
             )
         }
+        .onAppear { viewModel.hasPlayedTilesIntro = true }
     }
 
     private func formattedDollarsK(_ value: Double) -> String {
@@ -124,6 +132,20 @@ struct LaborAnalyticsSection: View {
             }
             .font(.cavnarBody(10))
             .foregroundStyle(Color.cavnarInk3)
+
+            // Measured against the industry band's midpoint (34.5%), not
+            // the restaurant's own target — "your target" and "industry
+            // average" are two different lines on this same bar, and this
+            // sentence is specifically about the second one.
+            let industryMid = (Self.industryLow + Self.industryHigh) / 2
+            let diff = pct - industryMid
+            let isBelow = diff <= 0
+            (Text("Your restaurant is ")
+                + Text(String(format: "%.1f%%", abs(diff))).font(.cavnarNumber(11, weight: 700))
+                + Text(isBelow ? " below" : " above")
+                + Text(" other similar restaurants in the U.S."))
+                .font(.cavnarBody(11))
+                .foregroundStyle(isBelow ? Color.cavnarGreen : Color.cavnarRed)
         }
         .cavnarCard()
     }
@@ -138,17 +160,34 @@ struct LaborAnalyticsSection: View {
 }
 
 private struct SavingsTile: View {
-    let value: String
+    let numericValue: Double
+    let format: (Double) -> String
     let label: String
     let sublabel: String
     var tone: Color = Color.cavnarGreen
+    let startFromZero: Bool
+
+    // Same count-up-once treatment as Home's ValueChartCard hero number —
+    // a flat instant figure reads as "just a stat," counting up reads as
+    // "watch how much this is."
+    @State private var animatedValue: Double = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(value)
+            AnimatableTileNumber(value: animatedValue, format: format)
                 .font(.cavnarNumber(22, weight: 700))
                 .foregroundStyle(tone)
                 .cavnarNumberGlow(tone)
+                .onAppear {
+                    if startFromZero {
+                        withAnimation(.easeOut(duration: 1.2)) { animatedValue = numericValue }
+                    } else {
+                        animatedValue = numericValue
+                    }
+                }
+                .onChange(of: numericValue) { _, newValue in
+                    animatedValue = newValue
+                }
             Text(label)
                 .font(.cavnarBody(9, weight: 700))
                 .tracking(0.6)
@@ -161,5 +200,23 @@ private struct SavingsTile: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .cavnarCard()
+    }
+}
+
+/// Interpolates its own numeric value across an implicit animation and
+/// re-formats it every intermediate frame — same technique as Home's
+/// ValueChartCard, which is what makes the figure visibly count up rather
+/// than cross-fade between two static strings.
+private struct AnimatableTileNumber: View, Animatable {
+    var value: Double
+    var format: (Double) -> String
+
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+
+    var body: some View {
+        Text(format(value))
     }
 }

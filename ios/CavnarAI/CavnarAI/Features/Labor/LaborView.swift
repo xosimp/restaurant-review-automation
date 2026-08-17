@@ -801,24 +801,32 @@ private struct ForecastRibbon: View {
                         .background(Color.cavnarInk.opacity(0.18))
                         .clipShape(Circle())
                 }
+                // Signals the pill itself is tappable, not just informational
+                // — points down while collapsed (more to reveal) and flips
+                // to point up once expanded, matching the panel dropping
+                // open below it.
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
             }
             .foregroundStyle(Color.cavnarInk)
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
-            // Same gradient/opacities as CavnarGlassCardStyle (the hero
-            // card's own background) with the card's tone as the tint, so
-            // the tab reads as an extension of the card — green when on
-            // track, red when over target, matching it exactly rather than
-            // a fixed branded-ember color regardless of the card's status.
+            // Full-strength tint over a fully opaque base (was the same
+            // reduced-alpha gradient over a semi-transparent
+            // CavnarGlassCardStyle base the hero card itself uses) — that
+            // "frosted glass" look read as the pill being partly see-through
+            // against the card behind it. A ribbon meant to look tappable
+            // needs to read as a solid, opaque control, not a translucent
+            // decoration.
             .background(
                 LinearGradient(
-                    colors: [tone.foreground.opacity(0.55), tone.foreground.opacity(0.22)],
+                    colors: [tone.foreground.opacity(0.95), tone.foreground.opacity(0.75)],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 )
             )
-            .background(Color.cavnarPaper2.opacity(0.5))
+            .background(Color.cavnarPaper2)
             .clipShape(Capsule())
-            .overlay(Capsule().strokeBorder(tone.foreground.opacity(0.5), lineWidth: 1.2))
+            .overlay(Capsule().strokeBorder(tone.foreground.opacity(0.6), lineWidth: 1.2))
             // Reads as floating above the hero card behind it, not flush
             // against it.
             .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
