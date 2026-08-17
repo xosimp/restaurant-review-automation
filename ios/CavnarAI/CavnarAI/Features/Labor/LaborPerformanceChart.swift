@@ -52,6 +52,13 @@ struct LaborPerformanceChart: View {
         let id: String
         let label: String
         let pct: Double
+        // Full "6/1–6/14" period for trend bars — the x-axis label alone
+        // is just the period's start date, which reads like "this is one
+        // specific day" rather than the (often 2-week) aggregate it
+        // actually is. nil for By Day bars, which don't have a single
+        // underlying date range to show (each is an average across every
+        // occurrence of that weekday).
+        let rangeText: String?
     }
 
     private static let dayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -59,13 +66,21 @@ struct LaborPerformanceChart: View {
     private var bars: [Bar] {
         switch mode {
         case .trend:
-            return trend.map { Bar(id: $0.label, label: $0.label, pct: $0.pct) }
+            return trend.map { week in
+                Bar(id: week.label, label: week.label, pct: week.pct, rangeText: formattedShortRange(week.start, week.end))
+            }
         case .byDay:
             return Self.dayOrder.compactMap { day in
                 guard let pct = dowSummary[day] else { return nil }
-                return Bar(id: day, label: String(day.prefix(3)), pct: pct)
+                return Bar(id: day, label: String(day.prefix(3)), pct: pct, rangeText: nil)
             }
         }
+    }
+
+    private func formattedShortRange(_ start: String, _ end: String) -> String? {
+        guard let startDate = Self.isoFormatter.date(from: start),
+              let endDate = Self.isoFormatter.date(from: end) else { return nil }
+        return "\(Self.shortDisplayFormatter.string(from: startDate))–\(Self.shortDisplayFormatter.string(from: endDate))"
     }
 
     // "By Day" flags a single day for being *close* to target as a real
@@ -258,7 +273,7 @@ struct LaborPerformanceChart: View {
 
     private func barTooltip(_ bar: Bar) -> some View {
         VStack(spacing: 2) {
-            Text(bar.label)
+            Text(bar.rangeText ?? bar.label)
                 .font(.cavnarBody(9, weight: 700))
                 .foregroundStyle(Color.cavnarInk3)
             Text(String(format: "%.1f%%", bar.pct))
@@ -288,6 +303,12 @@ struct LaborPerformanceChart: View {
     private static let displayFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "MMM d, yyyy"
+        return f
+    }()
+
+    private static let shortDisplayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "M/d"
         return f
     }()
 }

@@ -58,40 +58,35 @@ struct RoleDonutChart: View {
     // chart floating next to a taller stack of text.
     private static let ringSize: CGFloat = 148
 
-    // The real height of exactly the collapsed (6-role) legend, measured
-    // once below — not however many rows happen to be showing right now.
-    // Using the CURRENT legend's height (e.g. via .center alignment) would
-    // recenter the ring every time "Show all N roles" grows the legend
-    // taller, which is the exact bug .top-alignment was patched to avoid
-    // earlier. Measuring the fixed 6-row case specifically means the ring
-    // can be centered against it AND stay perfectly still on expand — both
-    // requirements at once, instead of trading one for the other.
-    @State private var collapsedLegendHeight: CGFloat = 0
+    // Hand-computed height of exactly the collapsed (6-role) legend block,
+    // not measured live — a hidden-view GeometryReader/PreferenceKey
+    // measurement was tried first and didn't actually move the ring
+    // (reported still top-aligned after that fix), so this replaces it
+    // with arithmetic built from typography this view fully owns: each
+    // row is a 12pt name line + 1pt inner spacing + a 9pt subtext line
+    // (≈27pt for the two together, using this custom font family's
+    // typical ~1.2x line-height), with 12pt between rows.
+    private static let collapsedRowHeight: CGFloat = 27
+    private static var collapsedLegendHeight: CGFloat {
+        let rows = CGFloat(collapseThreshold)
+        return rows * collapsedRowHeight + (rows - 1) * 12
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 22) {
                 ring
                     .frame(width: Self.ringSize, height: Self.ringSize)
-                    .offset(y: max(0, (collapsedLegendHeight - Self.ringSize) / 2))
+                    // Shifts the ring down by half the gap between its own
+                    // height and the (fixed, always-6-row) legend height,
+                    // landing its center on the legend's center regardless
+                    // of how many rows are actually showing — expanding to
+                    // "Show all N roles" grows the legend below this
+                    // reference point without moving it.
+                    .offset(y: max(0, (Self.collapsedLegendHeight - Self.ringSize) / 2))
                 legend
                     .frame(minHeight: Self.ringSize)
-                    // Invisible always-6-row copy purely for measurement —
-                    // an overlay doesn't affect the real legend's own size,
-                    // and since the collapsed count is always ≤ whatever's
-                    // actually showing, it never visibly pokes out past it.
-                    .overlay(alignment: .topLeading) {
-                        legendRows(Array(sortedRoles.prefix(Self.collapseThreshold)))
-                            .opacity(0)
-                            .allowsHitTesting(false)
-                            .background(
-                                GeometryReader { geo in
-                                    Color.clear.preference(key: CollapsedLegendHeightKey.self, value: geo.size.height)
-                                }
-                            )
-                    }
             }
-            .onPreferenceChange(CollapsedLegendHeightKey.self) { collapsedLegendHeight = $0 }
             if sortedRoles.count > Self.collapseThreshold {
                 Button {
                     Haptic.light()
@@ -208,9 +203,4 @@ struct RoleDonutChart: View {
         formatter.numberStyle = .decimal
         return formatter.string(from: NSNumber(value: intVal)) ?? "\(intVal)"
     }
-}
-
-private struct CollapsedLegendHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
