@@ -18,7 +18,8 @@ struct LaborAnalyticsSection: View {
                 LaborPerformanceChart(
                     trend: viewModel.trend, dowSummary: stats.dowSummary, target: stats.target,
                     dateRangeStart: stats.dateRange.start, dateRangeEnd: stats.dateRange.end,
-                    hasPlayedIntro: $viewModel.hasPlayedBarIntro
+                    hasPlayedIntro: viewModel.hasPlayedBarIntro,
+                    onIntroPlayed: { viewModel.markBarIntroPlayed() }
                 )
             } else if viewModel.isLoading {
                 ProgressView().frame(maxWidth: .infinity).padding(.vertical, 20)
@@ -57,7 +58,7 @@ struct LaborAnalyticsSection: View {
                 startFromZero: startFromZero
             )
         }
-        .onAppear { viewModel.hasPlayedTilesIntro = true }
+        .onAppear { viewModel.markTilesIntroPlayed() }
     }
 
     private func formattedDollarsK(_ value: Double) -> String {

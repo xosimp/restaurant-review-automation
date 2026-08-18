@@ -25,8 +25,14 @@ struct LaborPerformanceChart: View {
     let dateRangeEnd: String?
     // Whether the bars have ever grown up from zero before — see
     // LaborAnalyticsViewModel.hasPlayedBarIntro for why this lives outside
-    // this view instead of as its own @State.
-    @Binding var hasPlayedIntro: Bool
+    // this view instead of as its own @State. A plain value + callback
+    // (not a Binding) so the owning view model's setter can also persist
+    // the flag to UserDefaults — a raw Binding could only ever flip the
+    // in-memory property, which is exactly what let this replay every time
+    // a user left Labor entirely and came back (a fresh LaborView means a
+    // fresh LaborAnalyticsViewModel, resetting any in-memory-only flag).
+    let hasPlayedIntro: Bool
+    let onIntroPlayed: () -> Void
 
     private enum ChartMode: String, CaseIterable, Identifiable, Hashable {
         case trend = "8-Week Trend"
@@ -150,9 +156,18 @@ struct LaborPerformanceChart: View {
                         .foregroundStyle(Color.cavnarInk.opacity(0.8))
                         .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                         .annotation(position: .top, alignment: .trailing) {
+                            // Bare cream text on top of a red (over-target)
+                            // bar reads as low-contrast in exactly the case
+                            // this label matters most — a solid backing
+                            // pill guarantees separation from whatever bar
+                            // color happens to sit underneath it.
                             Text("\(Int(target))% target")
                                 .font(.cavnarBody(9, weight: 700))
                                 .foregroundStyle(Color.cavnarInk)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Color.cavnarPaper2.opacity(0.92))
+                                .clipShape(Capsule())
                         }
                 }
                 .frame(height: 180)
@@ -180,7 +195,7 @@ struct LaborPerformanceChart: View {
                         withAnimation(.easeOut(duration: 0.75)) {
                             barsVisible = true
                         }
-                        hasPlayedIntro = true
+                        onIntroPlayed()
                     }
                 }
             }

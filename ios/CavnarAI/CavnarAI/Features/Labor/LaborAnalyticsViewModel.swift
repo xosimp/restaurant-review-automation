@@ -21,20 +21,19 @@ final class LaborAnalyticsViewModel {
     var isLoading = false
 
     // Whether the performance chart's grow-up-from-zero bar reveal has
-    // already played. Lives here (not as the chart's own local @State)
-    // for the same reason the dropdown expand states moved to
-    // LaborViewModel — Overview/Analytics is an if/else branch in
-    // LaborView, so a view-local flag would replay every single time the
-    // user switches back to Analytics. This view model instance survives
-    // that switch; it only resets when LaborView itself is torn down and
-    // rebuilt (e.g. the Face ID lock/unlock cycle), which is exactly when
-    // a fresh "first load" reveal is actually wanted.
+    // already played. Persisted to UserDefaults, same as
+    // hasPlayedInsightTypewriter below and for the same reason: this view
+    // model gets recreated fresh every time a user leaves Labor entirely
+    // (e.g. switches to another module) and comes back — an in-memory-only
+    // flag survived an Overview/Analytics tab switch (this instance itself
+    // doesn't change for that), but not a genuinely fresh navigation into
+    // Labor, which is exactly the "reloads and counts up again" report this
+    // fixes. Only ever reset by actually clearing UserDefaults (there's no
+    // reason to replay this for a restaurant the device has already seen).
     var hasPlayedBarIntro = false
 
     // Same reasoning, same lifetime as hasPlayedBarIntro above — guards the
-    // savings tiles' count-up-from-zero reveal against replaying every time
-    // Analytics is switched back to (Overview/Analytics is an if/else
-    // branch that tears the view down each time).
+    // savings tiles' count-up-from-zero reveal.
     var hasPlayedTilesIntro = false
 
     // Whether the AI Consultant's intro has already typewritten out once.
@@ -70,6 +69,8 @@ final class LaborAnalyticsViewModel {
     func configureCaching(restaurantId: Int) {
         self.restaurantId = restaurantId
         hasPlayedInsightTypewriter = UserDefaults.standard.bool(forKey: Self.typewriterPlayedKey(restaurantId))
+        hasPlayedBarIntro = UserDefaults.standard.bool(forKey: Self.barIntroPlayedKey(restaurantId))
+        hasPlayedTilesIntro = UserDefaults.standard.bool(forKey: Self.tilesIntroPlayedKey(restaurantId))
         guard let data = UserDefaults.standard.data(forKey: Self.insightCacheKey(restaurantId)),
               let cached = try? JSONDecoder.cavnar.decode(AIInsight.self, from: data) else { return }
         insight = cached
@@ -82,6 +83,8 @@ final class LaborAnalyticsViewModel {
 
     private static func insightCacheKey(_ restaurantId: Int) -> String { "labor.cachedInsight.\(restaurantId)" }
     private static func typewriterPlayedKey(_ restaurantId: Int) -> String { "labor.hasTypedInsight.\(restaurantId)" }
+    private static func barIntroPlayedKey(_ restaurantId: Int) -> String { "labor.hasPlayedBarIntro.\(restaurantId)" }
+    private static func tilesIntroPlayedKey(_ restaurantId: Int) -> String { "labor.hasPlayedTilesIntro.\(restaurantId)" }
 
     private func cacheInsight(_ insight: AIInsight) {
         guard let restaurantId, let data = try? JSONEncoder.cavnar.encode(insight) else { return }
@@ -95,6 +98,18 @@ final class LaborAnalyticsViewModel {
         hasPlayedInsightTypewriter = true
         guard let restaurantId else { return }
         UserDefaults.standard.set(true, forKey: Self.typewriterPlayedKey(restaurantId))
+    }
+
+    func markBarIntroPlayed() {
+        hasPlayedBarIntro = true
+        guard let restaurantId else { return }
+        UserDefaults.standard.set(true, forKey: Self.barIntroPlayedKey(restaurantId))
+    }
+
+    func markTilesIntroPlayed() {
+        hasPlayedTilesIntro = true
+        guard let restaurantId else { return }
+        UserDefaults.standard.set(true, forKey: Self.tilesIntroPlayedKey(restaurantId))
     }
 
     func load() async {

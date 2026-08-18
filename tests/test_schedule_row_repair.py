@@ -41,9 +41,15 @@ def _fake_build_schedule_result(csv_text):
     return fake
 
 
-def _run(monkeypatch, csv_text):
+def _run(monkeypatch, csv_text, close_times=None, role_close_buffers=None):
     monkeypatch.setattr(client_api, "_build_schedule_result", _fake_build_schedule_result(csv_text))
     monkeypatch.setattr(models, "get_staff_notes", lambda restaurant_id: [])
+    # Unconfigured (the default, matching a restaurant that never set
+    # close_times_json) means no enforcement at all — every existing test
+    # above relies on that opt-in behavior to stay unaffected by the
+    # close-time feature below.
+    monkeypatch.setattr(models, "get_close_times", lambda restaurant_id: close_times or {})
+    monkeypatch.setattr(models, "get_role_close_buffers", lambda restaurant_id: role_close_buffers or {})
     client_api._schedule_jobs.pop("test-job", None)
     client_api._run_schedule_job("test-job", 1)
     job = client_api._schedule_jobs.pop("test-job")
@@ -156,3 +162,88 @@ def test_unparseable_date_is_flagged_rather_than_dropped_or_trusted(monkeypatch)
 
     assert len(result["preview_rows"]) == 1
     assert result["preview_rows"][0].get("needs_review") is True
+
+
+# ── Close-time enforcement — a deterministic backstop, not a prompt request ─
+#
+# Live testing showed servers occasionally scheduled to 9:30-10pm on a night
+# that closes at 9pm, even after the prompt was made more explicit about it
+# (plausibly borrowing a busier day's later close from a "staff this like a
+# busy Friday" volume note). Prose alone plateaued below 100% compliance, so
+# this hard-caps shift_end at the restaurant's own configured close time —
+# opt-in per restaurant (get_close_times returns {} until an owner sets
+# close_times_json), so a restaurant that hasn't configured this is
+# completely unaffected.
+
+def test_shift_scheduled_past_close_is_trimmed_not_just_flagged(monkeypatch):
+    # 2026-08-21 is a Friday; configured close is 9pm, no role buffer.
+    csv_text = HEADER + "\n" + "2026-08-21,Friday,Sofia R.,Server,4:00pm,9:30pm,5.5,dinner closer"
+
+    result = _run(monkeypatch, csv_text, close_times={"Friday": "9:00pm"})
+
+    assert len(result["preview_rows"]) == 1
+    row = result["preview_rows"][0]
+    assert row["shift_end"] == "9:00pm"
+    assert row["scheduled_hours"] == "5.0"
+    assert "auto-capped to close time" in row["notes"]
+    assert "needs_review" not in row
+    # The shared/exported CSV must reflect the trim too.
+    assert "9:00pm,5.0" in result["schedule_csv"]
+
+
+def test_role_with_configured_after_close_buffer_is_left_alone(monkeypatch):
+    # Bartender has an explicit "stay 1h after close" allowance — 10pm on a
+    # 9pm-close night is within that buffer and shouldn't be touched.
+    csv_text = HEADER + "\n" + "2026-08-21,Friday,Marco D.,Bartender,4:00pm,10:00pm,6.0,closer"
+
+    result = _run(
+        monkeypatch, csv_text,
+        close_times={"Friday": "9:00pm"}, role_close_buffers={"Bartender": 60},
+    )
+
+    row = result["preview_rows"][0]
+    assert row["shift_end"] == "10:00pm"
+    assert row["scheduled_hours"] == "6.0"
+    assert "auto-capped" not in row.get("notes", "")
+
+
+def test_role_buffer_still_enforced_once_exceeded(monkeypatch):
+    # Same bartender buffer, but 10:30pm blows past even the 1h allowance
+    # (9pm close + 60min = 10pm ceiling) — still gets trimmed.
+    csv_text = HEADER + "\n" + "2026-08-21,Friday,Marco D.,Bartender,4:00pm,10:30pm,6.5,closer"
+
+    result = _run(
+        monkeypatch, csv_text,
+        close_times={"Friday": "9:00pm"}, role_close_buffers={"Bartender": 60},
+    )
+
+    row = result["preview_rows"][0]
+    assert row["shift_end"] == "10:00pm"
+
+
+def test_unconfigured_restaurant_is_not_enforced_at_all(monkeypatch):
+    # No close_times passed — matches a restaurant that never set
+    # close_times_json. Even a wildly-late shift_end must pass through
+    # completely untouched; this feature must never suddenly start
+    # rewriting schedules for restaurants that haven't opted in.
+    csv_text = HEADER + "\n" + "2026-08-21,Friday,Sofia R.,Server,4:00pm,11:45pm,7.75,closer"
+
+    result = _run(monkeypatch, csv_text)
+
+    row = result["preview_rows"][0]
+    assert row["shift_end"] == "11:45pm"
+    assert "needs_review" not in row
+
+
+def test_shift_start_already_past_close_is_flagged_not_fabricated(monkeypatch):
+    # shift_start itself (10pm) is already past the 9pm ceiling — trimming
+    # shift_end to the ceiling would produce negative/zero hours, so this
+    # must flag for a human instead of inventing a number.
+    csv_text = HEADER + "\n" + "2026-08-21,Friday,Sofia R.,Server,10:00pm,11:00pm,1.0,late add"
+
+    result = _run(monkeypatch, csv_text, close_times={"Friday": "9:00pm"})
+
+    row = result["preview_rows"][0]
+    assert row.get("needs_review") is True
+    # Left as the model wrote it — not silently rewritten to something wrong.
+    assert row["shift_end"] == "11:00pm"

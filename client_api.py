@@ -1315,6 +1315,76 @@ _TIME_FIELD_RE = re.compile(r'^\d{1,2}:\d{2}\s*(am|pm)$', re.IGNORECASE)
 _WEEKDAYS = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
 
 
+def _parse_time_to_minutes(t: str):
+    """Parses a "9:00pm"/"9:30 am" style string (the exact format the AI is
+    instructed to always produce) to minutes-since-midnight, or None if it
+    doesn't match that format at all."""
+    if not t or not _TIME_FIELD_RE.match(t.strip()):
+        return None
+    t_clean = t.strip().lower().replace(" ", "")
+    period, hm = t_clean[-2:], t_clean[:-2]
+    try:
+        hour_str, minute_str = hm.split(":")
+        hour, minute = int(hour_str), int(minute_str)
+    except (ValueError, IndexError):
+        return None
+    if period == "pm" and hour != 12:
+        hour += 12
+    if period == "am" and hour == 12:
+        hour = 0
+    return hour * 60 + minute
+
+
+def _format_minutes_to_time(total_minutes: int) -> str:
+    """Inverse of _parse_time_to_minutes — "9:00pm" style."""
+    total_minutes %= 24 * 60
+    hour24, minute = divmod(total_minutes, 60)
+    period = "am" if hour24 < 12 else "pm"
+    hour12 = hour24 % 12 or 12
+    return f"{hour12}:{minute:02d}{period}"
+
+
+def _enforce_close_time(row: dict, real_day: str, close_times: dict, role_buffers: dict) -> None:
+    """Hard-caps a row's shift_end at that day's actual close time (plus any
+    role-specific after-close allowance, e.g. a bartender's stated "stay 1h
+    after close") — mutates `row` in place. A no-op for any restaurant that
+    hasn't configured close_times_json, so this only ever applies where an
+    owner has actually set real hours.
+
+    Telling the model "the close time is 9pm, never schedule past it" in
+    prose plateaued below 100% compliance on live testing (captured
+    servers scheduled to 9:30-10pm on a night that closes at 9pm, likely
+    from over-generalizing a "staff this day like a busy Friday" volume
+    note to Friday's later close time too) — this is the deterministic
+    backstop for a rule that must never be violated, not one more request
+    the model can occasionally miss.
+    """
+    if not real_day or real_day not in close_times:
+        return
+    close_minutes = _parse_time_to_minutes(close_times[real_day])
+    if close_minutes is None:
+        return
+    role = (row.get("role") or "").strip()
+    ceiling = close_minutes + role_buffers.get(role, 0)
+
+    end_minutes = _parse_time_to_minutes(row.get("shift_end", ""))
+    if end_minutes is None or end_minutes <= ceiling:
+        return
+
+    start_minutes = _parse_time_to_minutes(row.get("shift_start", ""))
+    if start_minutes is None or start_minutes >= ceiling:
+        # Can't produce a sensible corrected shift (e.g. shift_start is
+        # itself already past the ceiling) — don't fabricate a number,
+        # flag it for a human instead.
+        row["needs_review"] = True
+        return
+
+    row["shift_end"] = _format_minutes_to_time(ceiling)
+    row["scheduled_hours"] = str(round((ceiling - start_minutes) / 60, 1))
+    note = (row.get("notes") or "").strip()
+    row["notes"] = f"{note} (auto-capped to close time)" if note else "auto-capped to close time"
+
+
 def _row_fields_look_sane(row: dict) -> bool:
     """True when everything but `day` already looks individually
     well-formed — confirmed against two more live-captured failure shapes
@@ -1348,9 +1418,11 @@ def _run_schedule_job(job_id, restaurant_id):
     import csv as _csv_mod, io as _io_sched, traceback as _tb, datetime as _dt_sched
     try:
         result = _build_schedule_result(restaurant_id)
-        from models import get_staff_notes as _gsn_sched
+        from models import get_staff_notes as _gsn_sched, get_close_times as _gct_sched, get_role_close_buffers as _grcb_sched
         _raw_notes = _gsn_sched(restaurant_id) or []
         staff_constraints = {n["employee_name"]: n["notes"] for n in _raw_notes if n.get("employee_name")}
+        _close_times = _gct_sched(restaurant_id)
+        _role_close_buffers = _grcb_sched(restaurant_id)
         preview_rows = []
         hours_scheduled = 0.0
         try:
@@ -1419,6 +1491,8 @@ def _run_schedule_job(job_id, restaurant_id):
                         _row["day"] = _real_day
                         if not _row_fields_look_sane(_row):
                             _row["needs_review"] = True
+
+                _enforce_close_time(_row, _real_day, _close_times, _role_close_buffers)
 
                 preview_rows.append(_row)
                 try:

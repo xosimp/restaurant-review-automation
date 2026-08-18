@@ -254,6 +254,8 @@ class Restaurant:
     monthly_revenue_target: float        = 0.0
     hours_notes: Optional[str]           = None
     role_rates_json: Optional[str]       = None
+    close_times_json: Optional[str]      = None   # e.g. {"Monday":"9:00pm","Friday":"10:00pm"} — per-day close time, used to hard-cap generated shift_end
+    role_close_buffer_json: Optional[str] = None  # e.g. {"Bartender":60} — minutes a role may run past close; any role not listed defaults to 0 (must end at or before close)
     section_count: Optional[int]         = None
     daypart_split: Optional[str]         = None   # e.g. "lunch:35,dinner:65"
     delivery_pct: Optional[int]          = None   # % of revenue from delivery/takeout
@@ -463,6 +465,8 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "monthly_revenue_target", "REAL"),
         ("restaurants", "hours_notes", "TEXT"),
         ("restaurants", "role_rates_json", "TEXT"),
+        ("restaurants", "close_times_json", "TEXT"),
+        ("restaurants", "role_close_buffer_json", "TEXT"),
         ("restaurants", "section_count", "INTEGER"),
         ("restaurants", "daypart_split", "TEXT"),
         ("restaurants", "delivery_pct", "INTEGER"),
@@ -892,6 +896,21 @@ def _seed_gia_mia(db_path: str = DB_PATH):
         "Pantry Cook": 22.00, "Prep Cook": 22.00, "Saute Cook": 22.00, "Pizza Cook": 22.00,
         "Runner": 9.00, "Carry Out": 15.00, "Shift Supervisor": 12.00,
     }
+    # Matches hours_notes' own "RESTAURANT HOURS" line exactly — the
+    # generator was told this in prose already, but prose alone let it
+    # occasionally borrow Thu-Sat's later close for a Sun-Wed night (e.g.
+    # scheduling Monday servers to 9:30-10pm when Monday actually closes at
+    # 9pm). This structured copy is what the post-generation enforcement in
+    # client_api.py checks every shift_end against — a hard cap, not a
+    # request.
+    gia_mia_close_times = {
+        "Sunday": "9:00pm", "Monday": "9:00pm", "Tuesday": "9:00pm", "Wednesday": "9:00pm",
+        "Thursday": "10:00pm", "Friday": "10:00pm", "Saturday": "10:00pm",
+    }
+    # The only role hours_notes explicitly authorizes to run past close
+    # ("Stay 1 hour after close"). Every other role defaults to 0 — must
+    # end at or before that day's close time.
+    gia_mia_role_close_buffer = {"Bartender": 60}
     # Use update_restaurant so the correct DB connection path is always used
     update_restaurant(2, {
         "monthly_revenue_target": 365000.0,
@@ -911,6 +930,8 @@ def _seed_gia_mia(db_path: str = DB_PATH):
         "section_count": 7,
         "daypart_split": "lunch 40%, dinner 60%",
         "role_rates_json": json.dumps(gia_mia_role_rates),
+        "close_times_json": json.dumps(gia_mia_close_times),
+        "role_close_buffer_json": json.dumps(gia_mia_role_close_buffer),
         "location_name": "St. Charles, IL",
         "email_theme": "dark",
     })
@@ -1393,7 +1414,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","monthly_revenue_target","hours_notes","role_rates_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
+        "hourly_rate","labor_target_pct","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","login_notify","timezone","onboarding_dismissed",
@@ -1458,6 +1479,8 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         hours_notes=row["hours_notes"] if "hours_notes" in row.keys() else None,
         email_theme=row["email_theme"] if "email_theme" in row.keys() and row["email_theme"] else "dark",
         role_rates_json=row["role_rates_json"] if "role_rates_json" in row.keys() else None,
+        close_times_json=row["close_times_json"] if "close_times_json" in row.keys() else None,
+        role_close_buffer_json=row["role_close_buffer_json"] if "role_close_buffer_json" in row.keys() else None,
         inventory_updated_at=row["inventory_updated_at"] if "inventory_updated_at" in row.keys() else None,
         temp_password=row["temp_password"] if "temp_password" in row.keys() else None,
         ig_token=row["ig_token"] if "ig_token" in row.keys() else None,
@@ -2184,6 +2207,38 @@ def get_role_rates(restaurant_id: int, db_path: str = DB_PATH) -> dict:
         except Exception:
             pass
     return {"_default": base}
+
+
+def get_close_times(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """Per-day-of-week close time strings (e.g. {"Monday": "9:00pm", "Friday":
+    "10:00pm"}) for hard-capping a generated schedule's shift_end. Empty dict
+    when unconfigured — callers should treat "no config" as "don't enforce,"
+    not as "close time is midnight," since most restaurants haven't set this
+    yet and generation shouldn't start rejecting rows for restaurants that
+    never opted in.
+    """
+    import json as _json
+    r = get_restaurant(restaurant_id, db_path)
+    if not r or not r.close_times_json:
+        return {}
+    try:
+        return {k: str(v) for k, v in _json.loads(r.close_times_json).items()}
+    except Exception:
+        return {}
+
+
+def get_role_close_buffers(restaurant_id: int, db_path: str = DB_PATH) -> dict:
+    """Per-role minutes a shift may run past close (e.g. {"Bartender": 60}
+    for a stated "stay 1h after close" rule). Any role not present here
+    defaults to 0 — must end at or before close."""
+    import json as _json
+    r = get_restaurant(restaurant_id, db_path)
+    if not r or not r.role_close_buffer_json:
+        return {}
+    try:
+        return {k: int(v) for k, v in _json.loads(r.role_close_buffer_json).items()}
+    except Exception:
+        return {}
 
 
 def compute_blended_rate(shifts: list, role_rates: dict, fallback: float = 26.0) -> float:
