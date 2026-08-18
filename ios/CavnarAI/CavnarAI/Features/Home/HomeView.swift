@@ -11,7 +11,14 @@ struct HomeView: View {
     // shows the already-loaded list immediately instead of resetting to a
     // fresh loading state — see NotificationsListView's own doc comment.
     @State private var notificationsList = NotificationsListViewModel()
-    @State private var path = NavigationPath()
+    // Bound from RootView, not owned here — see ModulesGridView.path's doc
+    // comment (the identical pattern there) for why: RootView.body swaps
+    // this whole view out for LockedView across a Face ID lock/unlock
+    // cycle, and a locally-owned @State path would reset to empty on every
+    // unlock, silently discarding whatever module screen (e.g. Labor,
+    // mid-viewing a just-generated schedule) the user had pushed to from a
+    // Home tile.
+    @Binding var path: NavigationPath
     // Ticked on every accepted tile/row tap instead of calling Haptic.light()
     // directly in the action closure, paired with .sensoryFeedback below.
     @State private var navHapticTrigger = 0

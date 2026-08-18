@@ -36,7 +36,16 @@ final class ModulesGridViewModel {
 /// now live instead of as separate tabs.
 struct ModulesGridView: View {
     @State private var viewModel = ModulesGridViewModel()
-    @State private var path = NavigationPath()
+    // Bound from RootView, not owned here — RootView.body swaps this
+    // entire view out for LockedView (and back) across a Face ID
+    // lock/unlock cycle, which tears down and recreates ModulesGridView
+    // from scratch. A locally-owned @State path would reset to empty on
+    // every unlock, silently popping the user back to the grid and
+    // discarding whatever module screen (e.g. Labor, mid-viewing a
+    // just-generated schedule) they'd pushed to — binding to a path RootView
+    // itself owns means it survives that swap, so unlocking lands back on
+    // the exact same pushed screen instead of the grid.
+    @Binding var path: NavigationPath
     // See HomeView's identical navigate(to:)/navHapticTrigger/lastNavigationAt
     // for why tile taps go through a debounced helper instead of appending
     // to path directly from the Button's action closure.

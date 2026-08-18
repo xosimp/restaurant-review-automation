@@ -37,6 +37,18 @@ final class LaborAnalyticsViewModel {
     // branch that tears the view down each time).
     var hasPlayedTilesIntro = false
 
+    // Whether the AI Consultant's intro has already typewritten out once.
+    // Persisted to UserDefaults (not just in-memory, unlike the two flags
+    // above) — this view model itself gets recreated fresh every time a
+    // user leaves Labor and taps back into it (a new NavigationLink push),
+    // so an in-memory flag alone would still replay the reveal on every
+    // revisit, only fixing it within a single continuous view on the
+    // Overview tab. Set true immediately whenever configureCaching finds a
+    // previously-cached insight (that content was already shown once
+    // before, however long ago), and again as soon as a fresh network
+    // insight actually starts typing out for the first time.
+    var hasPlayedInsightTypewriter = false
+
     private let client: APIClient
     private var restaurantId: Int?
 
@@ -57,16 +69,32 @@ final class LaborAnalyticsViewModel {
     /// string. This just removes that flash.
     func configureCaching(restaurantId: Int) {
         self.restaurantId = restaurantId
+        hasPlayedInsightTypewriter = UserDefaults.standard.bool(forKey: Self.typewriterPlayedKey(restaurantId))
         guard let data = UserDefaults.standard.data(forKey: Self.insightCacheKey(restaurantId)),
               let cached = try? JSONDecoder.cavnar.decode(AIInsight.self, from: data) else { return }
         insight = cached
+        // A cached insight is, by definition, one this device has already
+        // shown before — never replay the typewriter for it even if this
+        // is technically the first time *this* view model instance has
+        // seen it.
+        hasPlayedInsightTypewriter = true
     }
 
     private static func insightCacheKey(_ restaurantId: Int) -> String { "labor.cachedInsight.\(restaurantId)" }
+    private static func typewriterPlayedKey(_ restaurantId: Int) -> String { "labor.hasTypedInsight.\(restaurantId)" }
 
     private func cacheInsight(_ insight: AIInsight) {
         guard let restaurantId, let data = try? JSONEncoder.cavnar.encode(insight) else { return }
         UserDefaults.standard.set(data, forKey: Self.insightCacheKey(restaurantId))
+    }
+
+    /// Called once the typewriter reveal actually starts for a genuinely
+    /// new insight — persists so it never replays again for this
+    /// restaurant, on this device, across any future app session.
+    func markInsightTypewriterPlayed() {
+        hasPlayedInsightTypewriter = true
+        guard let restaurantId else { return }
+        UserDefaults.standard.set(true, forKey: Self.typewriterPlayedKey(restaurantId))
     }
 
     func load() async {

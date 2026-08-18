@@ -17,8 +17,21 @@ struct AIConsultantView: View {
     let title: String
     let insight: AIInsight?
     let isLoading: Bool
+    // Whether the intro has already typewritten out once — nil (the
+    // default) falls back to view-local state, which still stops it
+    // replaying on every re-expand/collapse within one continuous view,
+    // but resets whenever this view itself gets torn down and recreated.
+    // A caller that also wants it to survive leaving and re-entering the
+    // screen entirely (Labor's Overview call site persists this via
+    // UserDefaults) passes its own longer-lived binding instead.
+    var hasPlayedIntro: Binding<Bool>? = nil
 
     @State private var isExpanded = false
+    @State private var localHasPlayedIntro = false
+
+    private var playedIntroBinding: Binding<Bool> {
+        hasPlayedIntro ?? $localHasPlayedIntro
+    }
 
     var body: some View {
         Button {
@@ -45,7 +58,7 @@ struct AIConsultantView: View {
 
                 if let insight {
                     if isExpanded {
-                        InsightContent(insight: insight)
+                        InsightContent(insight: insight, hasPlayedIntro: playedIntroBinding)
                             .transition(.opacity)
                     } else {
                         CollapsedInsightPreview(insight: insight)
@@ -107,11 +120,20 @@ private struct InsightSkeleton: View {
 
 private struct InsightContent: View {
     let insight: AIInsight
+    @Binding var hasPlayedIntro: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !insight.intro.isEmpty {
-                TypewriterText(fullText: insight.intro, font: .cavnarBody(13), color: Color.cavnarInk2, lineSpacing: 5)
+                if hasPlayedIntro {
+                    Text(insight.intro)
+                        .font(.cavnarBody(13))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .lineSpacing(5)
+                } else {
+                    TypewriterText(fullText: insight.intro, font: .cavnarBody(13), color: Color.cavnarInk2, lineSpacing: 5)
+                        .onAppear { hasPlayedIntro = true }
+                }
             }
 
             if !insight.recommendations.isEmpty {

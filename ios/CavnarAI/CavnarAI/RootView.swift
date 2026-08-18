@@ -5,6 +5,12 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var deepLinkRouter = DeepLinkRouter()
     @State private var selectedTab: AppTab = .home
+    // Owned here rather than by HomeView/ModulesGridView themselves — see
+    // ModulesGridView.path's doc comment for why: these need to survive
+    // the LockedView swap in body below, which discards and recreates
+    // mainTabs (and everything nested in it) on every Face ID lock/unlock.
+    @State private var homePath = NavigationPath()
+    @State private var modulesPath = NavigationPath()
     @State private var showingAskCavnar = false
     // Single shared flip that drives BOTH Home's hero fade-in and the FAB's
     // — owned up here (not by HomeView, which lives in a separate subtree
@@ -62,11 +68,11 @@ struct RootView: View {
     // control haptic convention for a discrete-choice change.
     private var mainTabs: some View {
         TabView(selection: $selectedTab) {
-            HomeView(heroAppeared: introAppeared, onHeroAppear: startIntroSequence)
+            HomeView(path: $homePath, heroAppeared: introAppeared, onHeroAppear: startIntroSequence)
                 .tabItem { Label(AppTab.home.title, systemImage: AppTab.home.systemImage) }
                 .tag(AppTab.home)
 
-            ModulesGridView()
+            ModulesGridView(path: $modulesPath)
                 .tabItem { Label(AppTab.modules.title, systemImage: AppTab.modules.systemImage) }
                 .tag(AppTab.modules)
 

@@ -51,7 +51,8 @@ struct LaborView: View {
                                 AIConsultantView(
                                     title: "Cavnar AI Labor Consultant",
                                     insight: analyticsViewModel.insight,
-                                    isLoading: analyticsViewModel.isLoadingInsight
+                                    isLoading: analyticsViewModel.isLoadingInsight,
+                                    hasPlayedIntro: hasPlayedInsightTypewriterBinding
                                 )
                                 heroCard(stats)
                                 if let result = viewModel.scheduleResult, result.ok {
@@ -228,6 +229,24 @@ struct LaborView: View {
 
     private var heroTone: CavnarTone? {
         viewModel.stats.map { $0.onTrack ? .good : .bad }
+    }
+
+    // Wraps LaborAnalyticsViewModel.hasPlayedInsightTypewriter with the
+    // UserDefaults persistence call on set — a plain $analyticsViewModel.…
+    // binding would mutate the in-memory flag but never actually write it
+    // to disk, so a fresh view model on the next visit to Labor would have
+    // no way to know the typewriter already played.
+    private var hasPlayedInsightTypewriterBinding: Binding<Bool> {
+        Binding(
+            get: { analyticsViewModel.hasPlayedInsightTypewriter },
+            set: { newValue in
+                if newValue {
+                    analyticsViewModel.markInsightTypewriterPlayed()
+                } else {
+                    analyticsViewModel.hasPlayedInsightTypewriter = newValue
+                }
+            }
+        )
     }
 
     private struct DataFreshness {
