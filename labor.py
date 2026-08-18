@@ -843,6 +843,8 @@ date,day,employee,role,shift_start,shift_end,scheduled_hours,notes
 - bullet 2
 - bullet 3
 
+Each summary bullet: one short clause, 10 words or fewer, plain language — the concrete change and its one-line reason, nothing more. A restaurant owner should be able to read all 3 in under 5 seconds. No full sentences, no restating these rules back, no generic scheduling advice.
+
 No emoji anywhere in the CSV notes or summary bullets — plain professional text only.
 
 DO NOT write any explanation, reasoning, preamble, or step-by-step deliberation anywhere in your response — not before the CSV, not in a "<think>" block, not between rows, not woven into the notes column. Do the arithmetic and constraint-solving silently and output only the final answer: the CSV rows, then "---SUMMARY---", then the bullets. Start your response with "date,day,employee..." immediately and do not deviate from that format at any point.
@@ -858,6 +860,9 @@ SCHEDULING RULES:
 
 ROLE STAGGER RULE (universal — applies to every restaurant):
 - Never schedule two employees in the same role at the exact same start time. The first person opens; additional staff stagger in based on volume. Add headcount when YoY data or a flagged event justifies it, or when closing a >15% PAR hours gap requires it (see PAR HOURS TARGET reconciliation above).
+
+SERVER CLOSING STAGGER RULE (universal — applies to every restaurant, including busy nights like Mondays and weekends, unless RESTAURANT HOURS & SHIFT RULES below explicitly says otherwise):
+- Never schedule every server on a shift to close at the same time. Dinner rush tapers off well before actual closing — real restaurants don't pay a full server lineup to stand around a dead dining room for the last hour. Keep only 1-2 servers on through close to handle stragglers and closing side-work; end the rest of that shift's servers' shifts once volume visibly drops (commonly ~8:30-9pm, adjust to this restaurant's own patterns). A busier night justifies scheduling MORE servers earlier in the shift, not keeping more of them until close.
 
 CONSECUTIVE DAYS OFF:
 - Every employee must receive at least 2 consecutive days off per week. Never give isolated single days off. Part-time staff should have 3+ consecutive days off.

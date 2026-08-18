@@ -1307,6 +1307,43 @@ def _build_schedule_result(restaurant_id):
 
 _schedule_jobs = {}  # job_id -> {"status": "pending"|"done"|"error", "result": ...}
 
+# Matches a clock time like "8:00am"/"3:00 pm" — a real role name (Server,
+# Prep Cook, Carry Out, ...) never looks like this, which is what makes it a
+# reliable signal that a row's `day` field was dropped and every field after
+# `date` shifted one position left. See _run_schedule_job's row-repair logic.
+_TIME_FIELD_RE = re.compile(r'^\d{1,2}:\d{2}\s*(am|pm)$', re.IGNORECASE)
+_WEEKDAYS = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
+
+
+def _row_fields_look_sane(row: dict) -> bool:
+    """True when everything but `day` already looks individually
+    well-formed — confirmed against two more live-captured failure shapes
+    beyond the day-omitted-shift one: the model sometimes just misspells
+    the day word itself ("Thursson" instead of "Thursday"), or duplicates
+    the employee name into the day slot instead of writing a weekday
+    ("Piper A.,Piper A.,Runner,..."). In both, employee/role/times/hours
+    were all already in the right place — only the day label itself was
+    wrong, which `date` already fixes. Flagging those for human review is
+    just noise; this reserves the flag for rows where something beyond the
+    day label can't be confirmed sane.
+    """
+    emp = (row.get("employee") or "").strip()
+    role = (row.get("role") or "").strip()
+    start = (row.get("shift_start") or "").strip()
+    end = (row.get("shift_end") or "").strip()
+    hours = (row.get("scheduled_hours") or "").strip()
+    if not emp or emp in _WEEKDAYS or _TIME_FIELD_RE.match(emp):
+        return False
+    if not role or role in _WEEKDAYS or _TIME_FIELD_RE.match(role):
+        return False
+    if not _TIME_FIELD_RE.match(start) or not _TIME_FIELD_RE.match(end):
+        return False
+    try:
+        float(hours)
+    except (ValueError, TypeError):
+        return False
+    return True
+
 def _run_schedule_job(job_id, restaurant_id):
     import csv as _csv_mod, io as _io_sched, traceback as _tb, datetime as _dt_sched
     try:
@@ -1333,15 +1370,15 @@ def _run_schedule_job(job_id, restaurant_id):
                 if not _row.get("employee", "").strip() or _row.get("employee", "").lower() == "employee":
                     continue
 
-                # The model occasionally scrambles the day/employee columns
-                # for one row per generation (e.g. "...,Jamie L.,Friday,
-                # Server,..." instead of "...,Friday,Jamie L.,Server,...").
-                # `date` was correct in every malformed row observed, so
-                # re-derive `day` from it instead of trusting the model's own
-                # day text. When employee holds the day value that belongs
-                # there (a clean two-column swap), swap them back for a full
-                # recovery; otherwise the row is more scrambled than a swap
-                # can fix, so just correct the day label and flag the row.
+                # The model occasionally mis-writes one row per generation
+                # (out of 60-100+) — always a non-routine addition (a food
+                # runner, a "misfill check," an extra staff member) that
+                # doesn't follow the same repeating pattern as the rest of
+                # the week. `date` was correct in every malformed row
+                # observed, so re-derive `day` from it instead of trusting
+                # the model's own day text, and detect+repair the specific
+                # failure shapes actually seen in captured live output
+                # rather than guessing.
                 try:
                     _real_day = _dt_sched.datetime.strptime(_row.get("date", ""), "%Y-%m-%d").strftime("%A")
                 except (ValueError, TypeError):
@@ -1353,10 +1390,35 @@ def _run_schedule_job(job_id, restaurant_id):
                     _row["needs_review"] = True
                 elif _row.get("day") != _real_day:
                     if _row.get("employee") == _real_day:
+                        # Clean two-column swap: "...,Jamie L.,Friday,
+                        # Server,..." instead of "...,Friday,Jamie L.,
+                        # Server,...". Swap back for a full recovery.
                         _row["day"], _row["employee"] = _real_day, _row["day"]
+                    elif _TIME_FIELD_RE.match(_row.get("role", "")):
+                        # The far more common failure, confirmed against
+                        # live captured output: the model drops the `day`
+                        # field entirely for this one row (never reorders
+                        # it — just omits it), which shifts every field
+                        # after `date` one position left. The tell is that
+                        # "role" ends up holding a clock time
+                        # ("...,Farah A.,Prep Cook,8:00am,3:00pm,7,morning
+                        # prep,,"), which a real role name never does —
+                        # every field after `date` un-shifts one position
+                        # right, recovering a fully sensible row instead of
+                        # just flagging it.
+                        _old_day, _old_employee, _old_role = _row.get("day", ""), _row.get("employee", ""), _row.get("role", "")
+                        _old_start, _old_end, _old_hours = _row.get("shift_start", ""), _row.get("shift_end", ""), _row.get("scheduled_hours", "")
+                        _row["day"] = _real_day
+                        _row["employee"] = _old_day
+                        _row["role"] = _old_employee
+                        _row["shift_start"] = _old_role
+                        _row["shift_end"] = _old_start
+                        _row["scheduled_hours"] = _old_end
+                        _row["notes"] = _old_hours
                     else:
                         _row["day"] = _real_day
-                        _row["needs_review"] = True
+                        if not _row_fields_look_sane(_row):
+                            _row["needs_review"] = True
 
                 preview_rows.append(_row)
                 try:

@@ -610,6 +610,38 @@ struct LaborView: View {
 
     private static let scheduleDayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
+    /// Host and Carry Out are the same front-of-house cross-training pair
+    /// (hosts run carryout orders up front) — the AI writes CSV rows in
+    /// whatever order it generated them, with no guarantee those two end
+    /// up anywhere near each other, so a Host row can land at the top of a
+    /// list and its Carry Out counterpart several unrelated Server rows
+    /// later. Rather than depend on prompting the model to group them
+    /// (the kind of formatting instruction this generator doesn't reliably
+    /// follow — see the row-repair logic in client_api.py for a concrete
+    /// example), this reorders deterministically on the client: every row
+    /// whose role matches either name collapses into one group, placed
+    /// wherever the FIRST Host/Carry Out row in this list originally was.
+    /// Every other role keeps its existing relative order untouched.
+    private static func roleGroupKey(_ role: String?) -> String {
+        let r = (role ?? "").lowercased()
+        if r.contains("host") || r.contains("carry") { return "host" }
+        return r
+    }
+
+    private static func groupedByRole(_ rows: [ScheduleRow]) -> [ScheduleRow] {
+        var groupOrder: [String] = []
+        var buckets: [String: [ScheduleRow]] = [:]
+        for row in rows {
+            let key = roleGroupKey(row.role)
+            if buckets[key] == nil {
+                buckets[key] = []
+                groupOrder.append(key)
+            }
+            buckets[key]?.append(row)
+        }
+        return groupOrder.flatMap { buckets[$0] ?? [] }
+    }
+
     /// Grouped by day with one branded header per day instead of repeating
     /// the day name under every single row — a client scanning this can
     /// find "Monday" once and read straight down its staff, rather than
@@ -756,7 +788,7 @@ struct LaborView: View {
                     .tracking(1.1)
             }
             .foregroundStyle(Color.cavnarEmber)
-            ForEach(rows) { row in
+            ForEach(Self.groupedByRole(rows)) { row in
                 HStack {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(row.employee ?? "").font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarInk)
