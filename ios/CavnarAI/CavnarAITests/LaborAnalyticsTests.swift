@@ -129,10 +129,13 @@ final class LaborAnalyticsTests: XCTestCase {
     /// cacheSchedule (a schedule finishes generating) → a brand new
     /// LaborViewModel instance (simulating whatever tears the real one
     /// down) → configureCaching again (app reopens) → assert the schedule
-    /// comes back. Reported still missing after the encode/decode fix, so
-    /// if this test passes too, the bug isn't in this Swift code at all —
-    /// it's in when/whether these methods actually get invoked at runtime,
-    /// which no unit test can observe.
+    /// comes back. Reported still missing after the encode/decode fix — this
+    /// test does pass, and stays passing, because the actual remaining gap
+    /// was never in this round trip: LaborView only ever renders
+    /// scheduleResultSection nested inside `if let stats = viewModel.stats`,
+    /// and stats had no cache of its own (see the next test below). A
+    /// correctly-restored scheduleResult was still invisible behind a fresh,
+    /// uncached network fetch for stats on every view-model recreation.
     @MainActor
     func testScheduleSurvivesAcrossFreshViewModelInstancesLikeARealRelaunch() throws {
         let restaurantId = 987_654_321  // unlikely to collide with real data
@@ -158,5 +161,65 @@ final class LaborAnalyticsTests: XCTestCase {
 
         XCTAssertNotNil(secondLaunch.scheduleResult, "a fresh LaborViewModel should restore the cached schedule on configureCaching")
         XCTAssertEqual(secondLaunch.scheduleResult?.hoursScheduled, 500.0)
+    }
+
+    /// The actual root cause: scheduleResultSection only renders nested
+    /// inside `if let stats = viewModel.stats` (LaborView.swift), so a
+    /// perfectly-restored scheduleResult stayed invisible on every Face ID
+    /// lock/unlock (RootView tears down and recreates the whole mainTabs
+    /// subtree, including this view model, every time) until a fresh
+    /// network fetch for stats completed — or, on a bad connection right
+    /// after unlocking, failed and left the whole Overview tab on an
+    /// error/Retry screen instead of showing anything. Both stats and
+    /// scheduleResult now cache the same way; this proves they restore
+    /// together, which is the actual invariant the view depends on.
+    @MainActor
+    func testStatsSurvivesAlongsideScheduleAcrossFreshViewModelInstances() throws {
+        let restaurantId = 987_654_322  // distinct from the schedule-only test above
+        let statsKey = "labor.cachedStats.\(restaurantId)"
+        let scheduleKey = "labor.cachedSchedule.\(restaurantId)"
+        UserDefaults.standard.removeObject(forKey: statsKey)
+        UserDefaults.standard.removeObject(forKey: scheduleKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: statsKey)
+            UserDefaults.standard.removeObject(forKey: scheduleKey)
+        }
+
+        let statsJson = """
+        {"ok": true, "is_live": true, "overall_labor_pct": 31.2, "target": 30.0,
+         "on_track": false, "potential_savings": 120.5,
+         "overtime_risk": [], "role_summary": [],
+         "date_range": {"start": "2026-06-01", "end": "2026-06-14"},
+         "overstaffed_days": [], "understaffed_days": [],
+         "dow_summary": {"Monday": 24.5},
+         "savings_breakdown": {"labor_monthly": 522, "labor_annual": 6264, "labor_overtime": 210,
+                                "labor_vs_industry_monthly": 0, "labor_vs_industry_annual": 0},
+         "labor_upcoming": []}
+        """
+        let stats = try JSONDecoder.cavnar.decode(LaborStats.self, from: Data(statsJson.utf8))
+        let farFuture = Calendar.current.date(byAdding: .day, value: 10, to: Date())!
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let scheduleJson = """
+        {"ok": true, "status": "done", "hours_scheduled": 500.0,
+         "week_dates": ["\(formatter.string(from: farFuture))"]}
+        """
+        let schedule = try JSONDecoder.cavnar.decode(GeneratedSchedule.self, from: Data(scheduleJson.utf8))
+
+        let firstInstance = LaborViewModel()
+        firstInstance.configureCaching(restaurantId: restaurantId)
+        firstInstance.cacheStats(stats)
+        firstInstance.cacheSchedule(schedule)
+
+        // Simulates RootView tearing down and recreating mainTabs (and
+        // everything nested in it, including LaborViewModel) on Face ID
+        // unlock — a fresh instance, not the same one that just cached.
+        let afterLockUnlock = LaborViewModel()
+        afterLockUnlock.configureCaching(restaurantId: restaurantId)
+
+        XCTAssertNotNil(afterLockUnlock.stats, "stats must survive a lock/unlock or the Overview tab renders nothing at all")
+        XCTAssertEqual(afterLockUnlock.stats?.overallLaborPct, 31.2)
+        XCTAssertNotNil(afterLockUnlock.scheduleResult, "a fresh instance should restore the cached schedule on configureCaching")
+        XCTAssertEqual(afterLockUnlock.scheduleResult?.hoursScheduled, 500.0)
     }
 }

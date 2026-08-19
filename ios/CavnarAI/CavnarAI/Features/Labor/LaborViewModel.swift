@@ -128,7 +128,7 @@ struct StaffAvailabilityEntry: Codable, Identifiable, Equatable {
     }
 }
 
-struct LaborStats: Decodable {
+struct LaborStats: Codable {
     let ok: Bool
     let isLive: Bool
     let overallLaborPct: Double
@@ -264,13 +264,31 @@ final class LaborViewModel {
         self.client = client
     }
 
-    /// Loads whatever schedule was last generated and cached on this device
-    /// for this restaurant, if any — called before the network load() so a
-    /// relaunch shows the last real result immediately instead of an empty
-    /// Overview tab, rather than losing it the moment the process restarts
-    /// (previously in-memory only).
+    /// Loads whatever schedule/stats were last fetched and cached on this
+    /// device for this restaurant, if any — called before the network
+    /// load() so a relaunch (or a Face ID lock/unlock, which tears down and
+    /// recreates this whole view model — see RootView's mainTabs comment)
+    /// shows the last real result immediately instead of an empty Overview
+    /// tab.
+    ///
+    /// Caching scheduleResult alone (the original fix here) turned out to
+    /// be incomplete: LaborView only ever renders scheduleResultSection
+    /// nested inside `if let stats = viewModel.stats`, and stats had no
+    /// cache of its own — so a correctly-restored schedule still stayed
+    /// invisible behind a fresh network fetch that had to complete (or
+    /// fail visibly, kicking the whole Overview tab to an error/Retry
+    /// state) before anything showed. That's what "the schedule keeps
+    /// disappearing after I come back into the app" was actually reporting:
+    /// scheduleResult was fine, stats just wasn't there yet to unlock it.
+    /// Both need to survive together. No staleness check on stats, unlike
+    /// the schedule below — it's a rolling snapshot with no "this was for a
+    /// specific week" expiry, same as LaborAnalyticsViewModel's insight cache.
     func configureCaching(restaurantId: Int) {
         self.restaurantId = restaurantId
+        if let data = UserDefaults.standard.data(forKey: Self.statsCacheKey(restaurantId)),
+           let cached = try? Self.cacheDecoder.decode(LaborStats.self, from: data) {
+            stats = cached
+        }
         guard let data = UserDefaults.standard.data(forKey: Self.scheduleCacheKey(restaurantId)),
               let cached = try? Self.cacheDecoder.decode(GeneratedSchedule.self, from: data),
               !Self.isStale(cached) else { return }
@@ -278,6 +296,7 @@ final class LaborViewModel {
     }
 
     private static func scheduleCacheKey(_ restaurantId: Int) -> String { "labor.cachedSchedule.\(restaurantId)" }
+    private static func statsCacheKey(_ restaurantId: Int) -> String { "labor.cachedStats.\(restaurantId)" }
 
     // Dedicated encoder/decoder for local caching (distinct from
     // JSONEncoder/Decoder.cavnar, which are for network payloads) —
@@ -333,12 +352,21 @@ final class LaborViewModel {
         UserDefaults.standard.set(data, forKey: Self.scheduleCacheKey(restaurantId))
     }
 
+    // Not private, same reason as cacheSchedule above — exercised directly
+    // by the round-trip test.
+    func cacheStats(_ stats: LaborStats) {
+        guard let restaurantId, let data = try? Self.cacheEncoder.encode(stats) else { return }
+        UserDefaults.standard.set(data, forKey: Self.statsCacheKey(restaurantId))
+    }
+
     func load() async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
         do {
-            stats = try await client.send("/mobile/api/labor")
+            let fetched: LaborStats = try await client.send("/mobile/api/labor")
+            stats = fetched
+            cacheStats(fetched)
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch {
