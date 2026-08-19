@@ -172,31 +172,86 @@ struct ScheduleHistoryDetailView: View {
     @ViewBuilder
     private func scheduleByDay(_ rows: [ScheduleRow]) -> some View {
         let grouped = Dictionary(grouping: rows) { $0.day ?? "" }
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 16) {
             ForEach(Self.dayOrder.filter { grouped[$0] != nil }, id: \.self) { day in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(day.uppercased())
-                        .font(.cavnarBody(10, weight: 700))
-                        .tracking(1)
-                        .foregroundStyle(Color.cavnarInk3)
-                    ForEach(Self.groupedByRole(grouped[day] ?? [])) { row in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(row.employee ?? "—")
-                                    .font(.cavnarBody(13, weight: 600))
-                                Text(row.role ?? "")
-                                    .font(.cavnarBody(11))
-                                    .foregroundStyle(Color.cavnarInk3)
-                            }
-                            Spacer()
-                            Text("\(row.shiftStart ?? "") – \(row.shiftEnd ?? "")")
-                                .font(.cavnarBody(12))
-                                .foregroundStyle(Color.cavnarInk2)
-                        }
-                        .padding(.vertical, 4)
-                    }
+                scheduleDayGroup(day: day, rows: grouped[day] ?? [])
+            }
+        }
+    }
+
+    // Same 3pm morning/night split and identical "orange branded day" pill
+    // treatment as LaborView's own scheduleDayGroup/daypartRows — a past
+    // schedule read from history should look exactly like the live
+    // generation it was pulled from, not a plainer, unstyled version of it.
+    private static let shiftTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mma"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
+    private static let nightCutoffMinutes = 15 * 60  // 3:00pm
+
+    private static func minutesFromMidnight(_ timeString: String?) -> Int? {
+        guard let timeString, let date = shiftTimeFormatter.date(from: timeString.lowercased()) else { return nil }
+        let comps = Calendar.current.dateComponents([.hour, .minute], from: date)
+        guard let hour = comps.hour, let minute = comps.minute else { return nil }
+        return hour * 60 + minute
+    }
+
+    private func scheduleDayGroup(day: String, rows: [ScheduleRow]) -> some View {
+        let morning = rows.filter { (Self.minutesFromMidnight($0.shiftStart) ?? Self.nightCutoffMinutes) < Self.nightCutoffMinutes }
+        let night = rows.filter { (Self.minutesFromMidnight($0.shiftStart) ?? Self.nightCutoffMinutes) >= Self.nightCutoffMinutes }
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(day.uppercased())
+                    .font(.cavnarBody(11, weight: 700))
+                    .tracking(1)
+                    .foregroundStyle(Color.cavnarEmber)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Color.cavnarEmber.opacity(0.16))
+                    .clipShape(Capsule())
+                Text("\(rows.count) shift\(rows.count == 1 ? "" : "s")")
+                    .font(.cavnarBody(10))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                if !morning.isEmpty {
+                    daypartRows(label: "MORNING", count: morning.count, rows: morning)
                 }
-                .cavnarCard()
+                if !night.isEmpty {
+                    daypartRows(label: "NIGHT", count: night.count, rows: night)
+                }
+            }
+            .cavnarCard()
+        }
+    }
+
+    private func daypartRows(label: String, count: Int, rows: [ScheduleRow]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: label == "MORNING" ? "sun.max.fill" : "moon.stars.fill")
+                    .font(.system(size: 10, weight: .bold))
+                Text("\(label) · \(count)")
+                    .font(.cavnarBody(12, weight: 800))
+                    .tracking(1.1)
+            }
+            .foregroundStyle(Color.cavnarEmber)
+            ForEach(Self.groupedByRole(rows)) { row in
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(row.employee ?? "").font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        if let role = row.role, !role.isEmpty {
+                            Text(role).font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
+                        }
+                    }
+                    Spacer()
+                    Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
+                        .font(.cavnarNumber(11))
+                        .foregroundStyle(Color.cavnarInk2)
+                }
+                .padding(.vertical, 4)
             }
         }
     }
