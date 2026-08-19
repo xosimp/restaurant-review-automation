@@ -156,17 +156,21 @@ struct LaborPerformanceChart: View {
                         .foregroundStyle(Color.cavnarInk.opacity(0.8))
                         .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                         .annotation(position: .top, alignment: .trailing) {
-                            // Bare cream text on top of a red (over-target)
-                            // bar reads as low-contrast in exactly the case
-                            // this label matters most — a solid backing
-                            // pill guarantees separation from whatever bar
-                            // color happens to sit underneath it.
+                            // A dark near-black pill (the previous attempt)
+                            // still read as washed-out — it's too close in
+                            // tone to the page's own near-black background
+                            // to visually pop as its own shape, even at
+                            // near-full opacity. Inverted to a solid bright
+                            // cream chip with dark text instead: unmissable
+                            // against any bar color underneath, and against
+                            // the page itself, with zero opacity blending
+                            // either way.
                             Text("\(Int(target))% target")
                                 .font(.cavnarBody(9, weight: 700))
-                                .foregroundStyle(Color.cavnarInk)
+                                .foregroundStyle(Color.black)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 3)
-                                .background(Color.cavnarPaper2.opacity(0.92))
+                                .background(Color.cavnarInk)
                                 .clipShape(Capsule())
                         }
                 }
