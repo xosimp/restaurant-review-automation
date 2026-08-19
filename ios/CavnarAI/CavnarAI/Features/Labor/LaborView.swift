@@ -693,39 +693,63 @@ struct LaborView: View {
 
     private static let scheduleDayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
-    /// Host and Carry Out are the same front-of-house cross-training pair
-    /// (hosts run carryout orders up front), and every kitchen role (Prep
-    /// Cook, Pantry Cook, Saute Cook, Pizza Cook, ...) reads as one team —
-    /// the AI writes CSV rows in whatever order it generated them, with no
-    /// guarantee same-team roles end up anywhere near each other, so e.g.
-    /// Pizza Cook can land at the very bottom of a day while the rest of
-    /// the kitchen sits up top. Rather than depend on prompting the model
-    /// to group them (the kind of formatting instruction this generator
-    /// doesn't reliably follow — see the row-repair logic in
-    /// client_api.py for a concrete example), this reorders
-    /// deterministically on the client: every row whose role matches
-    /// collapses into one group, placed wherever the FIRST row in that
-    /// group originally was. Every other role keeps its existing relative
-    /// order untouched.
-    private static func roleGroupKey(_ role: String?) -> String {
+    /// Every generated schedule reads in the same fixed team order,
+    /// regardless of what order the AI happened to write the CSV rows in:
+    /// cooks, then host/carry-out, bussers, runners, bartenders, servers,
+    /// shift supervisors, with anything unrecognized last. Within the
+    /// cooks category specifically, every kind (Prep/Pantry/Saute/Pizza
+    /// Cook, ...) further clusters by its own exact role name rather than
+    /// interleaving — Pizza Cook rows sitting together, not scattered
+    /// between Prep Cook rows just because that's the order the AI wrote
+    /// them in. Rather than depend on prompting the model for this (the
+    /// kind of formatting instruction this generator doesn't reliably
+    /// follow — see the row-repair logic in client_api.py for a concrete
+    /// example), this reorders deterministically on the client.
+    private static let roleCategoryOrder = ["cook", "host", "busser", "runner", "bartender", "server", "supervisor"]
+
+    private static func roleCategory(_ role: String?) -> String {
         let r = (role ?? "").lowercased()
-        if r.contains("host") || r.contains("carry") { return "host" }
         if r.contains("cook") || r.contains("kitchen") { return "cook" }
-        return r
+        if r.contains("host") || r.contains("carry") { return "host" }
+        if r.contains("buss") { return "busser" }
+        if r.contains("runner") { return "runner" }
+        if r.contains("bartend") { return "bartender" }
+        if r.contains("supervisor") || r.contains("shift lead") { return "supervisor" }
+        if r.contains("server") { return "server" }
+        return "other"
     }
 
+    /// Two-level grouping: fixed category order (roleCategoryOrder) first,
+    /// then every distinct exact role name within a category clusters
+    /// together — a role's first appearance in `rows` decides where its
+    /// cluster lands within the category; row order inside a cluster, and
+    /// which role appears before another within the same category, is
+    /// otherwise left exactly as the AI wrote it.
     private static func groupedByRole(_ rows: [ScheduleRow]) -> [ScheduleRow] {
-        var groupOrder: [String] = []
-        var buckets: [String: [ScheduleRow]] = [:]
+        var categoriesSeen: [String] = []
+        var rolesByCategory: [String: [String]] = [:]
+        var rowsByExactRole: [String: [ScheduleRow]] = [:]
+
         for row in rows {
-            let key = roleGroupKey(row.role)
-            if buckets[key] == nil {
-                buckets[key] = []
-                groupOrder.append(key)
+            let category = roleCategory(row.role)
+            let exactRole = row.role ?? ""
+            if !categoriesSeen.contains(category) { categoriesSeen.append(category) }
+            if rowsByExactRole[exactRole] == nil {
+                rowsByExactRole[exactRole] = []
+                rolesByCategory[category, default: []].append(exactRole)
             }
-            buckets[key]?.append(row)
+            rowsByExactRole[exactRole]?.append(row)
         }
-        return groupOrder.flatMap { buckets[$0] ?? [] }
+
+        // The fixed order first, then anything that didn't match any
+        // named category (e.g. a role this list has never heard of),
+        // appended last rather than dropped.
+        let orderedCategories = roleCategoryOrder.filter(categoriesSeen.contains)
+            + categoriesSeen.filter { !roleCategoryOrder.contains($0) }
+
+        return orderedCategories.flatMap { category in
+            (rolesByCategory[category] ?? []).flatMap { rowsByExactRole[$0] ?? [] }
+        }
     }
 
     /// Grouped by day with one branded header per day instead of repeating

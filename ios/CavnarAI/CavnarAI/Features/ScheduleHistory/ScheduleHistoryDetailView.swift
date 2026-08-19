@@ -102,6 +102,46 @@ struct ScheduleHistoryDetailView: View {
 
     private static let dayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
+    // Same fixed team order and per-role clustering as LaborView's own
+    // fullScheduleTable (see its groupedByRole/roleCategory doc comment
+    // for the full reasoning) — a past schedule read from history should
+    // look exactly as organized as a freshly generated one, not revert to
+    // whatever raw order the AI originally wrote the CSV in.
+    private static let roleCategoryOrder = ["cook", "host", "busser", "runner", "bartender", "server", "supervisor"]
+
+    private static func roleCategory(_ role: String?) -> String {
+        let r = (role ?? "").lowercased()
+        if r.contains("cook") || r.contains("kitchen") { return "cook" }
+        if r.contains("host") || r.contains("carry") { return "host" }
+        if r.contains("buss") { return "busser" }
+        if r.contains("runner") { return "runner" }
+        if r.contains("bartend") { return "bartender" }
+        if r.contains("supervisor") || r.contains("shift lead") { return "supervisor" }
+        if r.contains("server") { return "server" }
+        return "other"
+    }
+
+    private static func groupedByRole(_ rows: [ScheduleRow]) -> [ScheduleRow] {
+        var categoriesSeen: [String] = []
+        var rolesByCategory: [String: [String]] = [:]
+        var rowsByExactRole: [String: [ScheduleRow]] = [:]
+        for row in rows {
+            let category = roleCategory(row.role)
+            let exactRole = row.role ?? ""
+            if !categoriesSeen.contains(category) { categoriesSeen.append(category) }
+            if rowsByExactRole[exactRole] == nil {
+                rowsByExactRole[exactRole] = []
+                rolesByCategory[category, default: []].append(exactRole)
+            }
+            rowsByExactRole[exactRole]?.append(row)
+        }
+        let orderedCategories = roleCategoryOrder.filter(categoriesSeen.contains)
+            + categoriesSeen.filter { !roleCategoryOrder.contains($0) }
+        return orderedCategories.flatMap { category in
+            (rolesByCategory[category] ?? []).flatMap { rowsByExactRole[$0] ?? [] }
+        }
+    }
+
     @ViewBuilder
     private func scheduleByDay(_ rows: [ScheduleRow]) -> some View {
         let grouped = Dictionary(grouping: rows) { $0.day ?? "" }
@@ -112,7 +152,7 @@ struct ScheduleHistoryDetailView: View {
                         .font(.cavnarBody(10, weight: 700))
                         .tracking(1)
                         .foregroundStyle(Color.cavnarInk3)
-                    ForEach(grouped[day] ?? []) { row in
+                    ForEach(Self.groupedByRole(grouped[day] ?? [])) { row in
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(row.employee ?? "—")
