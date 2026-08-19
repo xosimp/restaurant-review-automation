@@ -728,8 +728,13 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         hours_block = ("\n\nShift timing: base start/end times on the patterns visible in the historical shift data. "
                        "Ensure prep staff (cooks) start before open and closers stay until service ends.")
 
-    # Compute per-day hour targets scaled from YoY totals to hit PAR
+    # Compute per-day hour targets scaled from YoY totals to hit PAR.
+    # _daily_target_map (date -> target hours) is the structured form of
+    # the same numbers, returned below for the deterministic top-up pass
+    # in client_api.py — the AI only ever sees the text block, but the
+    # top-up needs real per-day numbers to know which days to add to.
     _daily_targets = ""
+    _daily_target_map: dict = {}
     if yoy_context:
         _yoy_total = sum(float(r.get("yoy_hours") or 0) for r in yoy_context)
         if _yoy_total > 0:
@@ -738,7 +743,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             for _r in yoy_context:
                 _yh = float(_r.get("yoy_hours") or 0)
                 if _yh:
-                    _day_lines.append(f"    {_r['next_week_dow']} {_r['next_week_date']}: {round(_yh * _scale, 1)}h")
+                    _target_h = round(_yh * _scale, 1)
+                    _day_lines.append(f"    {_r['next_week_dow']} {_r['next_week_date']}: {_target_h}h")
+                    _daily_target_map[_r['next_week_date']] = _target_h
             if _day_lines:
                 _daily_targets = "\n  Per-day targets (YoY scaled to PAR):\n" + "\n".join(_day_lines)
 
@@ -766,7 +773,9 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             for _wd, _wdate in zip(week_days, week_dates):
                 _h = _hist_by_dow.get(_wd, 0.0)
                 if _h:
-                    _day_lines2.append(f"    {_wd} {_wdate}: {round(_h * _scale2, 1)}h")
+                    _target_h2 = round(_h * _scale2, 1)
+                    _day_lines2.append(f"    {_wd} {_wdate}: {_target_h2}h")
+                    _daily_target_map[_wdate] = _target_h2
             if _day_lines2:
                 _daily_targets = ("\n  Per-day targets (historical hours-by-weekday scaled to PAR — no YoY "
                                    "data available, so this is this restaurant's own recent day-of-week pattern "
@@ -1005,6 +1014,7 @@ ARRIVAL TIMES, ROLE MINIMUMS, SHIFT LENGTHS, AND ROLE-SPECIFIC RULES:
         "hours_budget": hours_budget,
         "labor_budget_dollars": labor_budget_dollars,
         "labor_target": labor_target,
+        "daily_target_hours": _daily_target_map,
     }
 
 

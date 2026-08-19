@@ -1414,6 +1414,178 @@ def _row_fields_look_sane(row: dict) -> bool:
         return False
     return True
 
+def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget: float,
+                       hours_scheduled: float, restaurant_id: int,
+                       close_times: dict, role_buffers: dict) -> tuple:
+    """Deterministic post-generation pass that adds real shifts on the days
+    furthest under their own per-day target when the AI's output lands well
+    under the week's PAR hours budget.
+
+    Prompt-only fixes for this (see par_block/_daily_targets in labor.py)
+    plateaued around -240h under a ~1314h budget on live testing — asking
+    the model to hit a number more insistently in prose has a ceiling. This
+    is the same deterministic-backstop pattern as _enforce_close_time,
+    applied to headcount instead of shift end times.
+
+    Never invents an employee: only adds a shift for someone who already
+    has other shifts this week in that exact role, on a day they aren't
+    already working and haven't marked unavailable, picking whoever has
+    the fewest hours so far to spread the addition fairly. Uses an existing
+    same-day/role shift as a time template when one exists, else that
+    role's typical time block anywhere in the week. Every added row is
+    tagged in its notes so it's visible, never silent.
+
+    Returns (preview_rows, hours_added, added_dates) where added_dates is
+    {date: shifts_added_count}.
+    """
+    total_gap = hours_budget - hours_scheduled
+    # Don't force an already-close result — only step in for a real miss.
+    if not daily_target_hours or total_gap < max(20, hours_budget * 0.05):
+        return preview_rows, 0.0, {}
+
+    import datetime as _dt_topup
+    import json as _json_avail
+    from models import get_staff_availability
+
+    _avail_rows = get_staff_availability(restaurant_id) or []
+    unavailable_by_emp: dict = {}
+    available_by_emp: dict = {}
+    for a in _avail_rows:
+        name = a.get("employee_name")
+        if not name:
+            continue
+        try:
+            unavailable_by_emp[name] = set(_json_avail.loads(a.get("unavailable_days") or "[]"))
+        except Exception:
+            unavailable_by_emp[name] = set()
+        try:
+            avail = _json_avail.loads(a.get("available_days") or "[]")
+            if avail:
+                available_by_emp[name] = set(avail)
+        except Exception:
+            pass
+
+    # Roster + time templates from the AI's own output this week
+    role_employees: dict = {}
+    role_time_template: dict = {}
+    date_role_template: dict = {}
+    hours_by_employee: dict = {}
+    working_on_date: dict = {}
+    role_headcount_by_date: dict = {}
+    by_date_hours: dict = {}
+
+    for r in preview_rows:
+        date, emp, role = r.get("date", ""), r.get("employee", ""), r.get("role", "")
+        if not (date and emp and role):
+            continue
+        role_employees.setdefault(role, set()).add(emp)
+        working_on_date.setdefault(date, set()).add(emp)
+        try:
+            hrs = float(r.get("scheduled_hours") or 0)
+        except (ValueError, TypeError):
+            hrs = 0.0
+        hours_by_employee[emp] = hours_by_employee.get(emp, 0.0) + hrs
+        by_date_hours[date] = by_date_hours.get(date, 0.0) + hrs
+        role_headcount_by_date[(date, role)] = role_headcount_by_date.get((date, role), 0) + 1
+        if r.get("shift_start") and r.get("shift_end"):
+            date_role_template.setdefault((date, role), (r["shift_start"], r["shift_end"]))
+            role_time_template.setdefault(role, (r["shift_start"], r["shift_end"]))
+
+    # Average headcount per role across the days it appears — used to spot
+    # a thin day for a role that's normally better staffed, the same lens
+    # the PAR prompt instruction already asks the model to apply, just
+    # applied mechanically here instead of trusted to prose compliance.
+    role_day_counts: dict = {}
+    for (d, role), n in role_headcount_by_date.items():
+        role_day_counts.setdefault(role, []).append(n)
+    role_avg_headcount = {role: sum(v) / len(v) for role, v in role_day_counts.items() if v}
+
+    daily_target_hours = dict(daily_target_hours)  # local copy — we mutate to drop exhausted dates
+    hours_added = 0.0
+    added_dates: dict = {}
+    remaining_gap = total_gap
+    MAX_ADDS = 100  # hard safety ceiling regardless of gap size
+
+    for _pass in range(MAX_ADDS):
+        if remaining_gap <= 0:
+            break
+        target_date = max(
+            (d for d in daily_target_hours if daily_target_hours[d] - by_date_hours.get(d, 0.0) > 0),
+            key=lambda d: daily_target_hours[d] - by_date_hours.get(d, 0.0),
+            default=None,
+        )
+        if not target_date:
+            break
+
+        try:
+            day_name = _dt_topup.datetime.strptime(target_date, "%Y-%m-%d").strftime("%A")
+        except (ValueError, TypeError):
+            daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
+            continue
+
+        # Pick the role furthest below its own weekly-average headcount for
+        # this day, among roles that actually have an available candidate.
+        candidates_role = None
+        best_shortfall = 0.0
+        for role, avg_hc in role_avg_headcount.items():
+            today_hc = role_headcount_by_date.get((target_date, role), 0)
+            shortfall = avg_hc - today_hc
+            if shortfall > best_shortfall:
+                pool = role_employees.get(role, set()) - working_on_date.get(target_date, set())
+                pool = {e for e in pool
+                        if day_name not in unavailable_by_emp.get(e, set())
+                        and (e not in available_by_emp or day_name in available_by_emp[e])}
+                if pool:
+                    best_shortfall = shortfall
+                    candidates_role = (role, pool)
+
+        if not candidates_role:
+            # No role on this date has a real, available candidate — can't
+            # responsibly add here. Drop the date and move to the
+            # next-neediest one instead of forcing a bad pick.
+            daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
+            continue
+
+        role, pool = candidates_role
+        employee = min(pool, key=lambda e: hours_by_employee.get(e, 0.0))
+        start, end = date_role_template.get((target_date, role)) or role_time_template.get(role, ("11:00am", "5:00pm"))
+
+        new_row = {
+            "date": target_date, "day": day_name, "employee": employee, "role": role,
+            "shift_start": start, "shift_end": end, "scheduled_hours": "0",
+            "notes": "added — PAR hours top-up",
+        }
+        _enforce_close_time(new_row, day_name, close_times, role_buffers)
+        if new_row.get("needs_review"):
+            # Template (borrowed from another day) doesn't produce a sane
+            # shift once capped to this day's close time — skip rather
+            # than fabricate a number, same discipline _enforce_close_time
+            # itself follows.
+            daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
+            continue
+        s_min, e_min = _parse_time_to_minutes(new_row["shift_start"]), _parse_time_to_minutes(new_row["shift_end"])
+        if s_min is None or e_min is None or e_min <= s_min:
+            daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
+            continue
+        new_row["scheduled_hours"] = str(round((e_min - s_min) / 60, 1))
+        hrs = float(new_row["scheduled_hours"])
+        if hrs <= 0:
+            daily_target_hours[target_date] = by_date_hours.get(target_date, 0.0)
+            continue
+
+        preview_rows.append(new_row)
+        hours_added += hrs
+        remaining_gap -= hrs
+        added_dates[target_date] = added_dates.get(target_date, 0) + 1
+
+        by_date_hours[target_date] = by_date_hours.get(target_date, 0.0) + hrs
+        working_on_date.setdefault(target_date, set()).add(employee)
+        hours_by_employee[employee] = hours_by_employee.get(employee, 0.0) + hrs
+        role_headcount_by_date[(target_date, role)] = role_headcount_by_date.get((target_date, role), 0) + 1
+
+    return preview_rows, round(hours_added, 1), added_dates
+
+
 def _run_schedule_job(job_id, restaurant_id):
     import csv as _csv_mod, io as _io_sched, traceback as _tb, datetime as _dt_sched
     try:
@@ -1425,6 +1597,8 @@ def _run_schedule_job(job_id, restaurant_id):
         _role_close_buffers = _grcb_sched(restaurant_id)
         preview_rows = []
         hours_scheduled = 0.0
+        hours_added = 0.0
+        added_dates = {}
         try:
             _COLS = ["date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes"]
             _csv_lines = result["schedule_csv"].split("\n")
@@ -1500,6 +1674,16 @@ def _run_schedule_job(job_id, restaurant_id):
                 except (ValueError, TypeError):
                     pass
             print(f"[schedule] parsed {len(preview_rows)} rows, first={preview_rows[0] if preview_rows else None}")
+
+            preview_rows, hours_added, added_dates = _top_up_hours_gap(
+                preview_rows, result.get("daily_target_hours", {}),
+                result.get("hours_budget", 0), hours_scheduled, restaurant_id,
+                _close_times, _role_close_buffers,
+            )
+            if hours_added:
+                hours_scheduled = round(hours_scheduled + hours_added, 1)
+                print(f"[schedule] top-up added {hours_added}h across {added_dates}")
+
             # Rebuild schedule_csv from the (possibly repaired) rows so the
             # downloadable/shared CSV matches what the app displays instead
             # of shipping the pre-repair text out from under it.
@@ -1526,6 +1710,8 @@ def _run_schedule_job(job_id, restaurant_id):
                 hours_scheduled=round(hours_scheduled, 1),
                 labor_target=result.get("labor_target", 30),
                 staff_constraints=staff_constraints,
+                hours_added_by_backstop=hours_added,
+                backstop_added_dates=added_dates,
             )
         }
     except Exception as e:
