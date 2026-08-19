@@ -6,7 +6,8 @@ private enum LaborSubTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// Carries the hero card's bottom-edge anchor up to LaborView's root so the
+/// Carries the hero card's bottom-edge anchor, and the segmented control
+/// header's bottom edge alongside it, up to LaborView's root so the
 /// forecast ribbon can be positioned there while living in the SAME overlay
 /// stack as the dimming scrim, declared after it — an .overlay attached to
 /// heroCard (nested inside the ScrollView) always draws *underneath* a
@@ -14,13 +15,29 @@ private enum LaborSubTab: String, CaseIterable, Identifiable {
 /// what order either one is declared in, since an ancestor's overlay
 /// composites on top of its entire rendered subtree. That meant the scrim
 /// was dimming the ribbon itself, not just the content behind it. Hoisting
-/// the ribbon out to the root, positioned via this anchor instead of being
+/// the ribbon out to the root, positioned via an anchor instead of being
 /// nested inside heroCard's own overlay, puts both in one stacking context
 /// where declaration order actually controls what's on top.
-private struct HeroCardBottomAnchorKey: PreferenceKey {
-    static var defaultValue: Anchor<CGPoint>?
-    static func reduce(value: inout Anchor<CGPoint>?, nextValue: () -> Anchor<CGPoint>?) {
-        value = nextValue() ?? value
+///
+/// The header anchor exists to undo a side effect of that hoist: living
+/// outside the ScrollView means the ribbon isn't naturally clipped away by
+/// the ScrollView's own scroll clipping the way in-ScrollView content is —
+/// it kept rendering wherever its hero-card anchor's geometry said to, even
+/// once that point had scrolled up above the visible content area and into
+/// the header itself. Comparing the two anchors tells the overlay when
+/// that's happened. Two separate .anchorPreference calls (one on the
+/// header, one on heroCard) each contribute one half of this value; reduce
+/// merges whichever half each carries.
+private struct RibbonAnchorsKey: PreferenceKey {
+    struct Anchors {
+        var heroBottom: Anchor<CGPoint>?
+        var headerBottom: Anchor<CGPoint>?
+    }
+    static var defaultValue: Anchors { Anchors() }
+    static func reduce(value: inout Anchors, nextValue: () -> Anchors) {
+        let next = nextValue()
+        if let h = next.heroBottom { value.heroBottom = h }
+        if let hd = next.headerBottom { value.headerBottom = hd }
     }
 }
 
@@ -38,6 +55,9 @@ struct LaborView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 16)
+                .anchorPreference(key: RibbonAnchorsKey.self, value: .bottom) {
+                    RibbonAnchorsKey.Anchors(headerBottom: $0)
+                }
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -103,7 +123,7 @@ struct LaborView: View {
             }
         }
         .cavnarModuleBackground()
-        .overlayPreferenceValue(HeroCardBottomAnchorKey.self) { anchor in
+        .overlayPreferenceValue(RibbonAnchorsKey.self) { anchors in
             // Scrim declared before the ribbon in this SAME ZStack, so the
             // ribbon (and its expanded panel) reliably composite on top of
             // it — dimming everything behind the ribbon without ever
@@ -115,11 +135,18 @@ struct LaborView: View {
             // ForecastRibbon's expanded panel has its own empty-state
             // copy for that case, rather than the whole feature just
             // disappearing whenever nothing's coming up.
-            if let anchor, let tone = heroTone {
+            if let anchor = anchors.heroBottom, let tone = heroTone {
                 let events = viewModel.stats?.laborUpcoming ?? []
                 GeometryReader { geo in
+                    // True once the hero card has scrolled up far enough
+                    // that its bottom edge (where the ribbon sits) passes
+                    // behind the header — see RibbonAnchorsKey's comment
+                    // for why this isn't just handled by ordinary
+                    // ScrollView clipping.
+                    let heroY = geo[anchor].y
+                    let hiddenByScroll = anchors.headerBottom.map { geo[$0].y > heroY } ?? false
                     ZStack {
-                        if viewModel.forecastExpanded {
+                        if viewModel.forecastExpanded && !hiddenByScroll {
                             Color.black.opacity(0.78)
                                 .ignoresSafeArea()
                                 .onTapGesture {
@@ -133,14 +160,16 @@ struct LaborView: View {
                         // edge) — already the "straddle the border,
                         // centered on the line" placement with no extra
                         // offset math needed.
-                        ForecastRibbon(
-                            events: events,
-                            isExpanded: $viewModel.forecastExpanded,
-                            tone: tone,
-                            daysAwayLabel: daysAwayLabel,
-                            forecastCopy: forecastCopy
-                        )
-                        .position(geo[anchor])
+                        if !hiddenByScroll {
+                            ForecastRibbon(
+                                events: events,
+                                isExpanded: $viewModel.forecastExpanded,
+                                tone: tone,
+                                daysAwayLabel: daysAwayLabel,
+                                forecastCopy: forecastCopy
+                            )
+                            .position(geo[anchor])
+                        }
                     }
                 }
             }
@@ -179,9 +208,18 @@ struct LaborView: View {
         // costs nothing when scheduleResult is already populated —
         // configureCaching only ever sets it from a valid cache entry, it
         // never clears an existing value.
+        //
+        // analyticsViewModel was missing from this same safety net until
+        // now — only viewModel was restored here, which meant the Labor
+        // Analytics tab's count-up/bar-grow animations (hasPlayedTilesIntro
+        // / hasPlayedBarIntro, gated exactly like scheduleResult is) had no
+        // fallback at all on the same "the .task fix isn't reliably firing"
+        // path this comment already describes, and would replay every
+        // time that path was hit.
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active, let restaurantId = sessionStore.currentUser?.restaurantId else { return }
             viewModel.configureCaching(restaurantId: restaurantId)
+            analyticsViewModel.configureCaching(restaurantId: restaurantId)
         }
     }
 
@@ -222,9 +260,11 @@ struct LaborView: View {
         }
         .cavnarGlassCard(tint: tone.foreground)
         // Reports this card's bottom-center edge up to LaborView's root —
-        // see HeroCardBottomAnchorKey for why the ribbon itself is no
-        // longer rendered here directly.
-        .anchorPreference(key: HeroCardBottomAnchorKey.self, value: .bottom) { $0 }
+        // see RibbonAnchorsKey for why the ribbon itself is no longer
+        // rendered here directly.
+        .anchorPreference(key: RibbonAnchorsKey.self, value: .bottom) {
+            RibbonAnchorsKey.Anchors(heroBottom: $0)
+        }
     }
 
     private var heroTone: CavnarTone? {
@@ -830,9 +870,9 @@ struct LaborView: View {
 /// vertical edge tab fixed to the screen's left side; moved to read as part
 /// of the hero card itself (same tint/border as the card, floating just
 /// above it with its own shadow) rather than an unrelated fixed overlay.
-/// Positioned by LaborView's root via HeroCardBottomAnchorKey rather than
-/// being nested inside heroCard's own overlay — see that key's doc comment
-/// for why (the dimming scrim needs to composite underneath this view, not
+/// Positioned by LaborView's root via RibbonAnchorsKey rather than being
+/// nested inside heroCard's own overlay — see that key's doc comment for
+/// why (the dimming scrim needs to composite underneath this view, not
 /// above it, which nesting inside the card's own overlay tree couldn't
 /// give).
 private struct ForecastRibbon: View {

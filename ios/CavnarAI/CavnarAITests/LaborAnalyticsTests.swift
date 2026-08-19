@@ -222,4 +222,38 @@ final class LaborAnalyticsTests: XCTestCase {
         XCTAssertNotNil(afterLockUnlock.scheduleResult, "a fresh instance should restore the cached schedule on configureCaching")
         XCTAssertEqual(afterLockUnlock.scheduleResult?.hoursScheduled, 500.0)
     }
+
+    /// Regression test for "Labor Analytics counts up / bars grow every
+    /// time the module is backed out of and back into" — mark the tiles
+    /// and bar-chart intros played (as the real views do via
+    /// onIntroPlayed/onAppear once they've actually shown once), then
+    /// simulate a fresh LaborAnalyticsViewModel instance the way leaving
+    /// and re-entering Labor produces one, and confirm configureCaching
+    /// restores both flags as already-played so the animations don't
+    /// replay.
+    @MainActor
+    func testAnalyticsIntroFlagsSurviveAcrossFreshViewModelInstances() throws {
+        let restaurantId = 987_654_323  // distinct from the other tests above
+        let tilesKey = "labor.hasPlayedTilesIntro.\(restaurantId)"
+        let barKey = "labor.hasPlayedBarIntro.\(restaurantId)"
+        UserDefaults.standard.removeObject(forKey: tilesKey)
+        UserDefaults.standard.removeObject(forKey: barKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: tilesKey)
+            UserDefaults.standard.removeObject(forKey: barKey)
+        }
+
+        let firstInstance = LaborAnalyticsViewModel()
+        firstInstance.configureCaching(restaurantId: restaurantId)
+        firstInstance.markTilesIntroPlayed()
+        firstInstance.markBarIntroPlayed()
+
+        // Simulates backing out of Labor and back in — a fresh instance,
+        // not the same one that just marked the intros played.
+        let afterReturn = LaborAnalyticsViewModel()
+        afterReturn.configureCaching(restaurantId: restaurantId)
+
+        XCTAssertTrue(afterReturn.hasPlayedTilesIntro, "tiles count-up must not replay on a return visit")
+        XCTAssertTrue(afterReturn.hasPlayedBarIntro, "bar chart grow-in must not replay on a return visit")
+    }
 }
