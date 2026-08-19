@@ -40,6 +40,33 @@ final class ScheduleHistoryViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.detail?.summary?.first, "Added servers/cooks daily to close 30 percent PAR hours gap.")
     }
 
+    /// Regression test for the "blank page" bug: .task/.onAppear on the
+    /// destination view have repeatedly proven unreliable in this app for
+    /// a view pushed from a List row's NavigationLink. The fix was to
+    /// have the view model start loading the moment it's constructed with
+    /// an id, rather than depending on a view lifecycle callback firing
+    /// at all — this confirms that path actually populates detail on its
+    /// own, with no separate call to load(id:).
+    @MainActor
+    func testInitWithIdAutomaticallyLoadsWithoutAnExplicitLoadCall() async {
+        let client = makeClient { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (response, Data(Self.realDetailJSON.utf8))
+        }
+        let viewModel = ScheduleHistoryDetailViewModel(id: 79, client: client)
+
+        // init fires a detached Task rather than something this test can
+        // await directly (see its own doc comment) — poll briefly instead
+        // of asserting immediately.
+        for _ in 0..<50 where viewModel.detail == nil && viewModel.errorMessage == nil {
+            await Task.yield()
+        }
+
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.detail, "constructing with an id should load without a separate .load(id:) call")
+        XCTAssertEqual(viewModel.detail?.hoursScheduled, 1293.9)
+    }
+
     @MainActor
     func testDeleteRemovesTheEntryLocallyOnSuccess() async {
         let client = makeClient { request in

@@ -8,7 +8,17 @@ import SwiftUI
 struct ScheduleHistoryDetailView: View {
     let historyId: Int
     let weekLabel: String
-    @State private var viewModel = ScheduleHistoryDetailViewModel()
+    @State private var viewModel: ScheduleHistoryDetailViewModel
+
+    // Custom init so the view model can be constructed with historyId
+    // already known — see ScheduleHistoryDetailViewModel.init's own
+    // comment: this kicks off the load the moment this view is created,
+    // instead of depending on .task/.onAppear firing reliably first.
+    init(historyId: Int, weekLabel: String) {
+        self.historyId = historyId
+        self.weekLabel = weekLabel
+        _viewModel = State(initialValue: ScheduleHistoryDetailViewModel(id: historyId))
+    }
 
     var body: some View {
         Group {
@@ -54,6 +64,27 @@ struct ScheduleHistoryDetailView: View {
                 VStack(spacing: 10) {
                     Text("Couldn't load this schedule").font(.cavnarBody(15, weight: 700))
                     Text(error).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk2).multilineTextAlignment(.center)
+                    Button("Retry") { Task { await viewModel.load(id: historyId) } }
+                        .buttonStyle(CavnarPrimaryButtonStyle())
+                        .padding(.top, 4)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                // detail == nil, isLoading == false, errorMessage == nil —
+                // the view model's own init now starts loading immediately
+                // (see its doc comment), so this should be unreachable in
+                // practice, but a blank Group here is exactly what a fully
+                // blank screen looks like if it's ever hit anyway (this
+                // was the actual "removing the diagnostic brought back the
+                // blank page" regression: the old diagnostic branch was
+                // deleted outright instead of just its loud red styling,
+                // leaving nothing to render for this state at all). Same
+                // plain styling as the real error branch above, just
+                // without an error line, since there isn't one — always
+                // something on screen, always a way to retry.
+                VStack(spacing: 10) {
+                    Text("Couldn't load this schedule").font(.cavnarBody(15, weight: 700))
                     Button("Retry") { Task { await viewModel.load(id: historyId) } }
                         .buttonStyle(CavnarPrimaryButtonStyle())
                         .padding(.top, 4)

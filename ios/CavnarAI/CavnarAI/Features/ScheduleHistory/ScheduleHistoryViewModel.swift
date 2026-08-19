@@ -97,15 +97,32 @@ final class ScheduleHistoryDetailViewModel {
     var errorMessage: String?
 
     private let client: APIClient
-    init(client: APIClient = .shared) {
-        self.client = client
-    }
 
     // Tracks which id is currently loaded/loading so a second .task/
     // onAppear firing for the same id (see ScheduleHistoryDetailView's
     // belt-and-suspenders comment) is a harmless no-op instead of
     // re-fetching or racing the first call.
     private var loadedID: Int?
+
+    // Passing an id here kicks off the load immediately at construction
+    // time, instead of waiting on a view lifecycle callback. This app has
+    // repeatedly hit cases where .task/.onAppear don't reliably fire (or
+    // resolve) for a view pushed from a List row's NavigationLink — see
+    // ScheduleHistoryDetailView's own .task+.onAppear belt-and-suspenders
+    // comment, added for exactly that reason and evidently still not
+    // 100% reliable on its own (this was the "blank page" bug). Starting
+    // the load here removes the dependency on view lifecycle timing
+    // entirely for the common case; .task/.onAppear stay in place as
+    // redundant, harmless no-ops via the loadedID guard in load() below.
+    // The default nil keeps the existing test-only `client:`-only
+    // initializer (see ScheduleHistoryViewModelTests) from auto-firing a
+    // load neither test wants.
+    init(id: Int? = nil, client: APIClient = .shared) {
+        self.client = client
+        if let id {
+            Task { await self.load(id: id) }
+        }
+    }
 
     func load(id: Int) async {
         guard loadedID != id || (detail == nil && errorMessage == nil) else { return }

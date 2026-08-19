@@ -150,29 +150,36 @@ struct ScheduleHistoryView: View {
         // deliberately called out from a plain neutral card. Text keeps
         // its normal ink colors — cavnarInk/Ink2/Ink3 are already proven
         // legible against ember-tinted grounds elsewhere in this app
-        // (e.g. AskCavnarView's suggested-question pills). Was a flat
-        // 2-stop fade (0.4 -> paper) that read as "mostly black with an
-        // orange edge" — a 3-stop gradient holding strong orange through
-        // the first half, THEN fading, was primarily orange but read as
-        // "stages" instead of a smooth fade: the first half barely
-        // changed (0.75 -> 0.55) while nearly the whole transition was
-        // crammed into the second half (0.55 -> opaque paper is a much
-        // bigger jump than 0.75 -> 0.55), which looks like a flat block
-        // that suddenly cuts to black rather than one continuous fade.
-        // 5 evenly-spaced stops, each a similar-sized step down, reads as
-        // genuinely continuous instead of a plateau-then-cliff.
+        // (e.g. AskCavnarView's suggested-question pills).
+        //
+        // The orange side of earlier versions was tuned right, but the
+        // black side kept reading as a hard cutoff no matter how many
+        // stops led into it — because the LAST stop was a fully *opaque*
+        // solid Color.cavnarPaper, jumping straight from a translucent
+        // ember (alpha ~0.15) to alpha 1.0 of a different hue in one
+        // step. That alpha cliff is what "jarring" was — not the stop
+        // count. Fix: paint solid cavnarPaper as a base layer, then let
+        // the ember gradient itself fade to fully *transparent* alpha 0,
+        // never switching color. With alpha decreasing continuously to
+        // zero over an already-cavnarPaper-colored base, there's no seam
+        // left to be jarring.
         .padding(16)
         .background(
-            LinearGradient(
-                stops: [
-                    .init(color: Color.cavnarEmber.opacity(0.85), location: 0),
-                    .init(color: Color.cavnarEmber.opacity(0.65), location: 0.35),
-                    .init(color: Color.cavnarEmber.opacity(0.4), location: 0.6),
-                    .init(color: Color.cavnarEmber.opacity(0.15), location: 0.82),
-                    .init(color: Color.cavnarPaper, location: 1),
-                ],
-                startPoint: .leading, endPoint: .trailing
-            )
+            ZStack {
+                Color.cavnarPaper
+                LinearGradient(
+                    stops: [
+                        .init(color: Color.cavnarEmber.opacity(0.85), location: 0),
+                        .init(color: Color.cavnarEmber.opacity(0.68), location: 0.28),
+                        .init(color: Color.cavnarEmber.opacity(0.5), location: 0.48),
+                        .init(color: Color.cavnarEmber.opacity(0.33), location: 0.64),
+                        .init(color: Color.cavnarEmber.opacity(0.18), location: 0.78),
+                        .init(color: Color.cavnarEmber.opacity(0.07), location: 0.9),
+                        .init(color: Color.cavnarEmber.opacity(0), location: 1),
+                    ],
+                    startPoint: .leading, endPoint: .trailing
+                )
+            }
         )
         .overlay(
             RoundedRectangle(cornerRadius: CavnarRadius.card)
