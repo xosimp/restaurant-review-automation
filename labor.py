@@ -693,10 +693,19 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
         for w in weather_forecast:
             precip = f", {w['precip_pct']}% chance of rain" if w.get("precip_pct") else ""
             _w_lines.append(f"  {w['date']} ({w['day_name']}): {w['high_f']}°F, {w['short_forecast']}{precip}")
-        _weather_block = ("\n\nWeather forecast for next week (adjust staffing for weather-driven demand — "
-                          "heavy rain/snow/extreme heat typically means fewer walk-ins and unusable patio "
-                          "seating, mild/clear days especially on weekends typically mean higher patio "
-                          "traffic):\n" + "\n".join(_w_lines))
+        _weather_block = ("\n\nWeather forecast for next week — a MODEST nudge on top of TYPICAL "
+                          "HEADCOUNT and the per-day targets above, never a replacement for them. Heavy "
+                          "rain/snow/extreme heat typically means fewer walk-ins and unusable patio "
+                          "seating; mild/clear days, especially on weekends, typically mean higher patio "
+                          "traffic. But a day can still turn out busy despite a bad forecast (or slow "
+                          "despite a good one) — actual demand routinely doesn't match the forecast, so "
+                          "weather alone should shift staffing by at most a person or two on any given "
+                          "day, never restructure it. This especially applies to a day that's ALREADY "
+                          "historically slow (e.g. a typical quiet Tuesday): its historical pattern "
+                          "already reflects ordinary weather variance for that day, so bad weather on top "
+                          "of it is not a reason to cut further below the historical baseline or the "
+                          "minimum staffing floors below — those floors hold regardless of forecast.\n"
+                          + "\n".join(_w_lines))
 
     # Compute PAR hours budget — monthly_revenue_target takes priority, then YoY sum, then recent
     projected_revenue = 0.0
