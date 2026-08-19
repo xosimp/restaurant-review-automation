@@ -51,6 +51,7 @@ struct AccountView: View {
         connectionsSection(summary.connections)
         alertsSection(summary.alerts)
         billingSection
+        scheduleHistorySection
         changelogSection
         signOutSection
     }
@@ -313,6 +314,26 @@ struct AccountView: View {
             }
             .cavnarCard()
         }
+    }
+
+    // MARK: - Schedule History
+
+    // A durable server-side record of every generated schedule, reachable
+    // here independent of the Labor tab's own client-side caching — see
+    // ScheduleHistoryView's doc comment.
+    @ViewBuilder
+    private var scheduleHistorySection: some View {
+        NavigationLink {
+            ScheduleHistoryView()
+        } label: {
+            HStack {
+                Text("Schedule History").font(.cavnarBody(13, weight: 600))
+                Spacer()
+                Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(Color.cavnarInk3)
+            }
+        }
+        .foregroundStyle(Color.cavnarInk)
+        .cavnarCard()
     }
 
     // MARK: - Changelog

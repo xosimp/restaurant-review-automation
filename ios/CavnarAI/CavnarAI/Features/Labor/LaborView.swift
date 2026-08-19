@@ -138,15 +138,31 @@ struct LaborView: View {
             if let anchor = anchors.heroBottom, let tone = heroTone {
                 let events = viewModel.stats?.laborUpcoming ?? []
                 GeometryReader { geo in
-                    // True once the hero card has scrolled up far enough
-                    // that its bottom edge (where the ribbon sits) passes
-                    // behind the header — see RibbonAnchorsKey's comment
-                    // for why this isn't just handled by ordinary
-                    // ScrollView clipping.
+                    // Rest of the hero content fades away *continuously* as
+                    // it scrolls — it's already sliding smoothly toward the
+                    // header, so vanishing behind a fixed clip boundary
+                    // reads as one continuous motion. The ribbon lives
+                    // outside that clipping (see RibbonAnchorsKey's
+                    // comment) and was previously a hard SwiftUI `if`
+                    // toggle keyed on crossing that same boundary — visibly
+                    // sliding right up until the exact pixel, then popping
+                    // out of existence with no transition. Driving opacity
+                    // directly off the same scroll-position delta instead
+                    // (over a small pixel range, not a boolean) gives it
+                    // the same continuous-fade character as everything
+                    // around it, with no separate animation curve needed —
+                    // the fade IS the scroll position.
                     let heroY = geo[anchor].y
-                    let hiddenByScroll = anchors.headerBottom.map { geo[$0].y > heroY } ?? false
+                    let fadeRange: CGFloat = 24
+                    let opacity: Double = {
+                        guard let headerY = anchors.headerBottom.map({ geo[$0].y }) else { return 1 }
+                        let delta = heroY - headerY  // positive while still below the header
+                        if delta >= fadeRange { return 1 }
+                        if delta <= 0 { return 0 }
+                        return Double(delta / fadeRange)
+                    }()
                     ZStack {
-                        if viewModel.forecastExpanded && !hiddenByScroll {
+                        if viewModel.forecastExpanded {
                             Color.black.opacity(0.78)
                                 .ignoresSafeArea()
                                 .onTapGesture {
@@ -160,17 +176,17 @@ struct LaborView: View {
                         // edge) — already the "straddle the border,
                         // centered on the line" placement with no extra
                         // offset math needed.
-                        if !hiddenByScroll {
-                            ForecastRibbon(
-                                events: events,
-                                isExpanded: $viewModel.forecastExpanded,
-                                tone: tone,
-                                daysAwayLabel: daysAwayLabel,
-                                forecastCopy: forecastCopy
-                            )
-                            .position(geo[anchor])
-                        }
+                        ForecastRibbon(
+                            events: events,
+                            isExpanded: $viewModel.forecastExpanded,
+                            tone: tone,
+                            daysAwayLabel: daysAwayLabel,
+                            forecastCopy: forecastCopy
+                        )
+                        .position(geo[anchor])
                     }
+                    .opacity(opacity)
+                    .allowsHitTesting(opacity > 0.01)
                 }
             }
         }
