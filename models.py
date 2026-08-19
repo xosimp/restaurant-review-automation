@@ -781,7 +781,7 @@ def _seed_gia_mia(db_path: str = DB_PATH):
     except Exception:
         conn.close()
         return
-    skip_shift_seed = row and row["shifts_source"] == "upload"
+    skip_shift_seed = row and row["shifts_source"] in ("upload", "toast")
     conn.close()
 
     if not skip_shift_seed:
@@ -866,9 +866,12 @@ def _seed_gia_mia(db_path: str = DB_PATH):
         "are at least 4 before finalizing, regardless of what TYPICAL HEADCOUNT shows.\n"
         "- Bartenders: minimum 1 whenever the bar is open.\n"
         "- Hosts: minimum 1 whenever the dining room is open.\n"
-        "- Bussers: minimum 2 on at once for BOTH morning and night service on Pizza "
-        "Monday and busy weekend days (Fri, Sat, Sun) — this is a hard floor for those "
-        "days specifically, not a historical average. Other days, use TYPICAL HEADCOUNT.\n"
+        "- Bussers, NIGHT service: minimum 2 on at once, every single night, no exceptions "
+        "-- this applies all 7 days, not just Pizza Monday/weekends. This is a hard floor, "
+        "not a historical average.\n"
+        "- Bussers, MORNING/lunch service: minimum 2 on at once every day EXCEPT Tuesday, "
+        "Wednesday, and Thursday, where 1 is acceptable if that's what TYPICAL HEADCOUNT "
+        "shows. Monday, Friday, Saturday, Sunday mornings still need 2 minimum.\n"
         "- Food Runners: see FOOD RUNNER RULES below for the full pattern.\n\n"
         "SHIFT LENGTHS:\n"
         "- Servers: 4–7h. Openers run 6–7h through lunch. Closers run 5–7h.\n"

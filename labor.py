@@ -742,6 +742,36 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
             if _day_lines:
                 _daily_targets = "\n  Per-day targets (YoY scaled to PAR):\n" + "\n".join(_day_lines)
 
+    # Fallback for a restaurant with no real YoY history yet (same-day-
+    # last-year data needs a full year on the platform — Gia Mia's 2-week
+    # seed history never has it, and this fallback was consistently
+    # missing every time this was tested live this session). Without it, a
+    # large PAR gap got a single abstract "hit 1314h somehow" instruction
+    # with no per-day breakdown at all — far easier to under-shoot than 7
+    # concrete numbers. Scales actual historical hours-by-weekday (same
+    # technique as the YoY branch above, just sourced from by_day instead
+    # of a prior year) up to the PAR total.
+    if not _daily_targets:
+        _hist_by_dow: dict = {}
+        for _date, _d in (analysis.get("by_day") or {}).items():
+            try:
+                _dow = datetime.strptime(_date, "%Y-%m-%d").strftime("%A")
+            except (ValueError, TypeError):
+                continue
+            _hist_by_dow[_dow] = _hist_by_dow.get(_dow, 0.0) + float(_d.get("actual") or 0)
+        _hist_total = sum(_hist_by_dow.values())
+        if _hist_total > 0:
+            _scale2 = hours_budget / _hist_total
+            _day_lines2 = []
+            for _wd, _wdate in zip(week_days, week_dates):
+                _h = _hist_by_dow.get(_wd, 0.0)
+                if _h:
+                    _day_lines2.append(f"    {_wd} {_wdate}: {round(_h * _scale2, 1)}h")
+            if _day_lines2:
+                _daily_targets = ("\n  Per-day targets (historical hours-by-weekday scaled to PAR — no YoY "
+                                   "data available, so this is this restaurant's own recent day-of-week pattern "
+                                   "scaled up to the budget instead):\n" + "\n".join(_day_lines2))
+
     # Section count — caps how many servers can work simultaneously
     _section_block = ""
     if section_count:
