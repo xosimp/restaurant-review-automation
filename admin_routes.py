@@ -547,6 +547,8 @@ def save_client_settings(restaurant_id, current_user):
             "inventory_notes":       sanitize(data.get("inventory_notes","")),
             "hours_notes":           sanitize(data.get("hours_notes",""), max_len=2000),
             "role_rates_json":       data.get("role_rates_json","") or None,
+            "close_times_json":      data.get("close_times_json","") or None,
+            "role_close_buffer_json": data.get("role_close_buffer_json","") or None,
             "section_count":         int(data["section_count"]) if data.get("section_count") else None,
             "daypart_split":         data.get("daypart_split","").strip() or None,
             "delivery_pct":          int(data["delivery_pct"]) if data.get("delivery_pct") is not None and str(data.get("delivery_pct","")) != "" else None,
