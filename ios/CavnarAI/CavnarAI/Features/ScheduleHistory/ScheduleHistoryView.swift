@@ -124,8 +124,32 @@ struct ScheduleHistoryView: View {
                     .font(.cavnarNumber(14, weight: 700))
                     .foregroundStyle(Color.cavnarInk2)
             }
-            Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(Color.cavnarInk3)
+            // No manual chevron here — a NavigationLink inside a List
+            // (unlike one in a plain ScrollView/VStack) already adds its
+            // own system disclosure indicator for free, same as every
+            // other List-based screen in this app (e.g. ReviewsListView).
+            // This row used to add a second one on top of it.
         }
-        .cavnarCard()
+        // Distinct from the standard .cavnarCard() used everywhere else —
+        // primarily orange fading into black (leading to trailing, since
+        // these rows are wide and short, so a left-to-right fade actually
+        // travels across the visible shape) with an orange outline,
+        // deliberately called out from a plain neutral card. Text keeps
+        // its normal ink colors — cavnarInk/Ink2/Ink3 are already proven
+        // legible against ember-tinted grounds elsewhere in this app
+        // (e.g. AskCavnarView's suggested-question pills), and 0.4 peak
+        // opacity here keeps the gradient from ever competing with it.
+        .padding(16)
+        .background(
+            LinearGradient(
+                colors: [Color.cavnarEmber.opacity(0.4), Color.cavnarPaper],
+                startPoint: .leading, endPoint: .trailing
+            )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: CavnarRadius.card)
+                .strokeBorder(Color.cavnarEmber.opacity(0.55), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
 }

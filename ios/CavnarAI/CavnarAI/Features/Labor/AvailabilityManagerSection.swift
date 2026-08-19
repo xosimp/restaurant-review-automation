@@ -73,14 +73,31 @@ struct AvailabilityManagerSection: View {
         // shrinking content or got yanked away out of sync with the
         // collapse animation. Clearing focus in lockstep with the collapse
         // lets both run as one animation instead of two fighting ones.
+        //
+        // The FIRST expand specifically (not later ones) had another,
+        // separate problem on top of the dropdown-timing one above: the
+        // loading spinner for the availability list lives INSIDE this
+        // dropdown's own expanded content (see the ProgressView branch
+        // above), so if loadAvailability() (fired from LaborView's .task
+        // when the tab first appears) hasn't resolved yet by the time
+        // someone taps to expand, the content is short (spinner) and then
+        // resizes — spinner to real rows or the empty-state text — right
+        // in the middle of this focus/scroll choreography, fighting both
+        // animations at once. Every later expand is already smooth
+        // because the data's already cached from the first load, so
+        // there's nothing left to resize. Fixed by not focusing until
+        // BOTH the dropdown has settled AND the load has actually
+        // finished, whichever comes last.
         .onChange(of: viewModel.availabilityExpanded) { _, expanded in
             if expanded {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    focusedField = .name
-                }
+                scheduleAutoFocus()
             } else {
                 focusedField = nil
             }
+        }
+        .onChange(of: viewModel.isLoadingAvailability) { _, isLoading in
+            guard !isLoading, viewModel.availabilityExpanded else { return }
+            scheduleAutoFocus()
         }
         // Follows ANY focus change, not just the auto-focus above — a
         // manual tap into a field later (e.g. re-opening notes after
@@ -93,6 +110,19 @@ struct AvailabilityManagerSection: View {
         .onChange(of: focusedField) { _, newValue in
             guard newValue != nil else { return }
             onExpand?()
+        }
+    }
+
+    /// Schedules focus 0.3s out (CavnarDropdown's real expand duration —
+    /// see the .onChange(of: viewModel.availabilityExpanded) comment
+    /// above), then re-checks both conditions are STILL true before
+    /// actually focusing. Called from two different triggers (expand, and
+    /// load finishing) — harmless if both fire close together, since
+    /// setting focusedField to a value it's already set to is a no-op.
+    private func scheduleAutoFocus() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            guard viewModel.availabilityExpanded, !viewModel.isLoadingAvailability else { return }
+            focusedField = .name
         }
     }
 
