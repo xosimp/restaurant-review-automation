@@ -190,8 +190,6 @@ private struct AddGuestContactSheet: View {
             .cavnarModuleBackground()
             .navigationTitle("Add Guest")
             .navigationBarTitleDisplayMode(.inline)
-            .cavnarEmberTitle("Add Guest")
         }
-        .cavnarSheetTopRim()
     }
 }

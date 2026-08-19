@@ -38,6 +38,20 @@ struct ScheduleHistoryDetailView: View {
                                         .lineSpacing(5)
                                 }
                             }
+                            // Without this, the card's width is purely
+                            // content-driven — a VStack with no Spacer
+                            // anywhere sizes itself to its widest text
+                            // line, so a short AI-generated summary made
+                            // the whole card narrower than the PAR banner
+                            // below it (that one is full-width "for free"
+                            // only because its HStack has its own internal
+                            // Spacer forcing it to claim all available
+                            // width — siblings in a VStack are never
+                            // forced to match each other's width). This is
+                            // exactly why it was inconsistent: it tracked
+                            // how long that week's summary text happened
+                            // to be, not the screen width.
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .cavnarCard()
                         }
                         if let budget = detail.hoursBudget, budget > 0, let scheduled = detail.hoursScheduled {

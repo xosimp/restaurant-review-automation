@@ -277,53 +277,6 @@ extension View {
     }
 }
 
-/// Traces just the top rounded-corner perimeter of a sheet — the curved
-/// top-left corner, a straight top edge, the curved top-right corner, and a
-/// short vertical stub down each side. Deliberately not a closed rectangle
-/// outline (that would just look like a bordered card, and drawing the
-/// stroke all the way down both sides toward the bottom would fight the
-/// sheet's own edge) — this reads as a highlighted grab-handle rim, a cue
-/// that the sheet swipes away from here.
-private struct CavnarSheetTopRimShape: Shape {
-    var cornerRadius: CGFloat
-    var stubLength: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        let r = min(cornerRadius, rect.width / 2)
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: min(r + stubLength, rect.height)))
-        path.addLine(to: CGPoint(x: rect.minX, y: r))
-        path.addArc(
-            center: CGPoint(x: rect.minX + r, y: r), radius: r,
-            startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false
-        )
-        path.addLine(to: CGPoint(x: rect.maxX - r, y: 0))
-        path.addArc(
-            center: CGPoint(x: rect.maxX - r, y: r), radius: r,
-            startAngle: .degrees(270), endAngle: .degrees(0), clockwise: false
-        )
-        path.addLine(to: CGPoint(x: rect.maxX, y: min(r + stubLength, rect.height)))
-        return path
-    }
-}
-
-extension View {
-    /// A thin, noticeable ember rim around a sheet's top rounded corners —
-    /// a visual nudge that this is a swipe-down-to-dismiss sheet, not a
-    /// screen the client is stuck on. Also pins the sheet's own corner
-    /// radius to the same value so the stroke traces the real corner
-    /// exactly, not an approximation of whatever the system default is.
-    func cavnarSheetTopRim(cornerRadius: CGFloat = CavnarRadius.sheet) -> some View {
-        presentationCornerRadius(cornerRadius)
-            .overlay(alignment: .top) {
-                CavnarSheetTopRimShape(cornerRadius: cornerRadius, stubLength: 16)
-                    .stroke(Color.cavnarEmber.opacity(0.7), lineWidth: 1.5)
-                    .frame(height: cornerRadius + 16)
-                    .allowsHitTesting(false)
-            }
-    }
-}
-
 /// A dark branded-ember wash from the very top of the screen, fading into
 /// the flat jet-black content background — originally the module screens
 /// only (Reviews/Labor/Food Cost/Marketing/Intel), now also every modal
@@ -341,22 +294,6 @@ struct CavnarOutlineCircle: View {
         Circle()
             .fill(Color.clear)
             .overlay(Circle().strokeBorder(Color.cavnarEmber.opacity(0.45), lineWidth: 1))
-    }
-}
-
-/// Ember-colored centered nav title, overriding the app-wide cream title
-/// color (set globally via UINavigationBarAppearance in AppDelegate) —
-/// SwiftUI's .navigationTitle has no per-screen color modifier, so this
-/// swaps in a styled principal toolbar item instead.
-extension View {
-    func cavnarEmberTitle(_ title: String) -> some View {
-        toolbar {
-            ToolbarItem(placement: .principal) {
-                Text(title)
-                    .font(.cavnarBody(17, weight: 700))
-                    .foregroundStyle(Color.cavnarEmber)
-            }
-        }
     }
 }
 

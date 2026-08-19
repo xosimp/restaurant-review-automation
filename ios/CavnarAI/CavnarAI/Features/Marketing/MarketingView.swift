@@ -59,7 +59,6 @@ struct MarketingView: View {
         .refreshable { await viewModel.load() }
         .navigationTitle("Marketing")
         .navigationBarTitleDisplayMode(.inline)
-        .cavnarEmberTitle("Marketing")
         .cavnarEmberBackButton()
         .task { await viewModel.load() }
         .task { await analyticsViewModel.load() }

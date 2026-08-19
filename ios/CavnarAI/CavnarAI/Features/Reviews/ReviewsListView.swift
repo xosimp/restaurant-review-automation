@@ -35,7 +35,6 @@ struct ReviewsListView: View {
         .cavnarModuleBackground()
         .navigationTitle("Reviews")
         .navigationBarTitleDisplayMode(.inline)
-        .cavnarEmberTitle("Reviews")
         .cavnarEmberBackButton()
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {

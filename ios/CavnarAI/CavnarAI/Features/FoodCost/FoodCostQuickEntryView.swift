@@ -29,7 +29,6 @@ struct FoodCostQuickEntryView: View {
         .cavnarModuleBackground()
         .navigationTitle("Food Cost")
         .navigationBarTitleDisplayMode(.inline)
-        .cavnarEmberTitle("Food Cost")
         .cavnarEmberBackButton()
         .task {
             await analyticsViewModel.load()

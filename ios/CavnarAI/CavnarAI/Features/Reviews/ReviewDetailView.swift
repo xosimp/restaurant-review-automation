@@ -32,7 +32,6 @@ struct ReviewDetailView: View {
         .cavnarModuleBackground()
         .navigationTitle(reviewTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .cavnarEmberTitle(reviewTitle)
         .cavnarEmberBackButton()
         .onChange(of: viewModel.didComplete) { _, completed in
             if completed, let status = viewModel.finalStatus {
@@ -296,6 +295,5 @@ private struct TemplatePickerSheet: View {
                 }
             }
         }
-        .cavnarSheetTopRim()
     }
 }

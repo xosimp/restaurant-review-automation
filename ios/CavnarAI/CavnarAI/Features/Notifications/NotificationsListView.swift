@@ -166,6 +166,5 @@ struct NotificationsListView: View {
             .refreshable { await viewModel.load() }
             .navigationTitle("Notifications")
         }
-        .cavnarSheetTopRim()
     }
 }

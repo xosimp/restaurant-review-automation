@@ -460,9 +460,7 @@ private struct ChangePasswordSheet: View {
             .cavnarModuleBackground()
             .navigationTitle("Change Password")
             .navigationBarTitleDisplayMode(.inline)
-            .cavnarEmberTitle("Change Password")
         }
-        .cavnarSheetTopRim()
     }
 }
 
@@ -542,8 +540,6 @@ private struct TwoFactorSetupSheet: View {
             .cavnarModuleBackground()
             .navigationTitle("Enable 2FA")
             .navigationBarTitleDisplayMode(.inline)
-            .cavnarEmberTitle("Enable 2FA")
         }
-        .cavnarSheetTopRim()
     }
 }

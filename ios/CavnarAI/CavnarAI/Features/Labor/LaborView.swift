@@ -201,7 +201,6 @@ struct LaborView: View {
         }
         .navigationTitle("Labor")
         .navigationBarTitleDisplayMode(.inline)
-        .cavnarEmberTitle("Labor")
         .cavnarEmberBackButton()
         .task {
             // Loaded synchronously from disk before either network call —

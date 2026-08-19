@@ -48,7 +48,6 @@ struct IntelView: View {
         .refreshable { await viewModel.load() }
         .navigationTitle("Intel")
         .navigationBarTitleDisplayMode(.inline)
-        .cavnarEmberTitle("Intel")
         .cavnarEmberBackButton()
         .task { await viewModel.load() }
     }

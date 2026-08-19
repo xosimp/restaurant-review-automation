@@ -95,7 +95,6 @@ struct AskCavnarView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden, for: .navigationBar)
         }
-        .cavnarSheetTopRim()
     }
 
     private var header: some View {

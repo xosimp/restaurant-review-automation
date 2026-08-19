@@ -167,24 +167,43 @@ struct ScheduleHistoryView: View {
         .background(
             ZStack {
                 Color.cavnarPaper
-                LinearGradient(
-                    stops: [
-                        .init(color: Color.cavnarEmber.opacity(0.85), location: 0),
-                        .init(color: Color.cavnarEmber.opacity(0.68), location: 0.28),
-                        .init(color: Color.cavnarEmber.opacity(0.5), location: 0.48),
-                        .init(color: Color.cavnarEmber.opacity(0.33), location: 0.64),
-                        .init(color: Color.cavnarEmber.opacity(0.18), location: 0.78),
-                        .init(color: Color.cavnarEmber.opacity(0.07), location: 0.9),
-                        .init(color: Color.cavnarEmber.opacity(0), location: 1),
-                    ],
-                    startPoint: .leading, endPoint: .trailing
-                )
+                Self.rowFadeGradient
             }
         )
+        // Inset (not a plain strokeBorder at the true edge) so this reads
+        // as an inner highlight line sitting just inside the pill's
+        // boundary, not a frame drawn around the outside of it — and
+        // painted with the exact same gradient as the fill above (not a
+        // flat orange) so the border and the background it's tracing
+        // fade together as one continuous surface, instead of a
+        // constant-strength orange ring sitting on top of a fill that's
+        // fading out underneath it.
         .overlay(
             RoundedRectangle(cornerRadius: CavnarRadius.card)
-                .strokeBorder(Color.cavnarEmber.opacity(0.55), lineWidth: 1)
+                .inset(by: 1)
+                .strokeBorder(Self.rowFadeGradient, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+        // Dark shadow biased downward so it reads as peeking out from
+        // under the card rather than a diffuse glow all the way around —
+        // y-offset roughly matches the blur radius so most of the shadow
+        // falls below the pill instead of evenly on every side.
+        .shadow(color: .black.opacity(0.45), radius: 10, x: 0, y: 6)
     }
+
+    // Shared by both the row's fill and its border (see row(_:)'s own
+    // comment) so the two are guaranteed to be the exact same gradient,
+    // not two separately-tuned ones that drift out of sync over time.
+    private static let rowFadeGradient = LinearGradient(
+        stops: [
+            .init(color: Color.cavnarEmber.opacity(0.85), location: 0),
+            .init(color: Color.cavnarEmber.opacity(0.68), location: 0.28),
+            .init(color: Color.cavnarEmber.opacity(0.5), location: 0.48),
+            .init(color: Color.cavnarEmber.opacity(0.33), location: 0.64),
+            .init(color: Color.cavnarEmber.opacity(0.18), location: 0.78),
+            .init(color: Color.cavnarEmber.opacity(0.07), location: 0.9),
+            .init(color: Color.cavnarEmber.opacity(0), location: 1),
+        ],
+        startPoint: .leading, endPoint: .trailing
+    )
 }
