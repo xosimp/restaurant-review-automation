@@ -48,7 +48,7 @@ struct ScheduleHistoryDetailView: View {
                 }
             }
         }
-        .background(Color.cavnarPaper)
+        .cavnarModuleBackground()
         .navigationTitle(weekLabel)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

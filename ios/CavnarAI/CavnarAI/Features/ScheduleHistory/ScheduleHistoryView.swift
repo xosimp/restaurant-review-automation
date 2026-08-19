@@ -60,7 +60,7 @@ struct ScheduleHistoryView: View {
                         }
                         .foregroundStyle(Color.cavnarInk)
                         .listRowBackground(Color.clear)
-                        .listRowSeparatorTint(Color.cavnarPaper3)
+                        .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 20))
                         // Schedules never disappear on their own — this is
                         // the only removal path, deliberately requiring an
@@ -79,11 +79,22 @@ struct ScheduleHistoryView: View {
                 .scrollContentBackground(.hidden)
             }
         }
-        .background(Color.cavnarPaper)
+        .cavnarModuleBackground()
         .navigationTitle("Schedule History")
         .navigationBarTitleDisplayMode(.inline)
         .task { await viewModel.load() }
         .refreshable { await viewModel.load() }
+        // A standard modal alert for a failed delete — surfaces the real
+        // error without replacing the list underneath it (see
+        // deleteErrorMessage's own comment on the view model).
+        .alert("Couldn't delete schedule", isPresented: Binding(
+            get: { viewModel.deleteErrorMessage != nil },
+            set: { if !$0 { viewModel.deleteErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(viewModel.deleteErrorMessage ?? "")
+        }
     }
 
     private func weekLabel(_ entry: ScheduleHistoryEntry) -> String {

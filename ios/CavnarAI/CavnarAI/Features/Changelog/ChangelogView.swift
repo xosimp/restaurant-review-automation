@@ -39,7 +39,7 @@ struct ChangelogView: View {
                 }
             }
         }
-        .background(Color.cavnarPaper)
+        .cavnarModuleBackground()
         .navigationTitle("What's New")
         .task { await viewModel.load() }
     }

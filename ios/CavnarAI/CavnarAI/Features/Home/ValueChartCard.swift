@@ -86,12 +86,9 @@ struct ValueChartCard: View {
             // (worse) a flat line with no context, so a brand-new
             // restaurant sees what the chart becomes rather than an empty
             // box.
-            SparklineCanvas(
-                values: hasRealTrend ? rangeHistory.map { Double($0.value) } : Self.sampleTrend,
-                axisLabels: hasRealTrend ? nil : Self.sampleAxisLabels
-            )
-            .id(selectedRange)
-            .frame(height: 120)
+            SparklineCanvas(values: hasRealTrend ? rangeHistory.map { Double($0.value) } : Self.sampleTrend)
+                .id(selectedRange)
+                .frame(height: 120)
 
             if !hasRealTrend {
                 Text("Example — shows the trend a typical restaurant sees over time")
@@ -172,12 +169,6 @@ struct ValueChartCard: View {
         0.10, 0.11, 0.11, 0.22, 0.20, 0.30, 0.31, 0.30, 0.42, 0.48,
         0.47, 0.55, 0.60, 0.58, 0.66, 0.70, 0.74, 0.80, 0.86, 0.90, 1.0,
     ]
-
-    // Representative low/high dollar figures for a typical restaurant's
-    // Total Value Delivered — gives the illustrative curve real axis
-    // numbers instead of an unlabeled line, without implying either figure
-    // is this restaurant's own data (see the "Example" caption alongside).
-    private static let sampleAxisLabels = SparklineCanvas.AxisLabels(yTop: "$4.8K", yBottom: "$800")
 }
 
 /// 1M/3M/6M/1Y/ALL — filters the already-fetched value_history client-side
@@ -235,16 +226,16 @@ private struct AnimatableNumberText: View, Animatable {
 /// ValueSnapshot directly, so the same drawing code serves both real
 /// history and the synthetic sample curve.
 private struct SparklineCanvas: View {
-    struct AxisLabels {
-        let yTop: String
-        let yBottom: String
-    }
-
     let values: [Double]
-    var axisLabels: AxisLabels? = nil
 
     @State private var startDate = Date()
     @State private var isRevealed = false
+
+    // Matches the big total's own count-up duration (see ValueChartCard's
+    // AnimatableNumberText.onAppear) — was 0.9s against the number's 1.6s,
+    // so the line consistently finished drawing 0.7s before the number was
+    // done counting up instead of both settling together.
+    private static let revealDuration: Double = 1.6
 
     var body: some View {
         Group {
@@ -253,12 +244,12 @@ private struct SparklineCanvas: View {
             } else {
                 TimelineView(.animation) { timeline in
                     Canvas { context, size in
-                        let progress = min(1, timeline.date.timeIntervalSince(startDate) / 0.9)
+                        let progress = min(1, timeline.date.timeIntervalSince(startDate) / Self.revealDuration)
                         draw(context: context, size: size, progress: progress)
                     }
                 }
                 .task {
-                    try? await Task.sleep(for: .seconds(0.95))
+                    try? await Task.sleep(for: .seconds(Self.revealDuration + 0.05))
                     isRevealed = true
                 }
             }
@@ -335,18 +326,5 @@ private struct SparklineCanvas: View {
         )
         let dotRect = CGRect(x: last.x - 3, y: last.y - 3, width: 6, height: 6)
         context.fill(Path(ellipseIn: dotRect), with: .color(Color.cavnarInk))
-
-        if let axisLabels, progress >= 1 {
-            let labelFont = Font.cavnarBody(9, weight: 600)
-            let labelColor = Color.cavnarInk3.opacity(0.8)
-            context.draw(
-                Text(axisLabels.yTop).font(labelFont).foregroundStyle(labelColor),
-                at: CGPoint(x: 2, y: 2), anchor: .topLeading
-            )
-            context.draw(
-                Text(axisLabels.yBottom).font(labelFont).foregroundStyle(labelColor),
-                at: CGPoint(x: 2, y: size.height - 2), anchor: .bottomLeading
-            )
-        }
     }
 }

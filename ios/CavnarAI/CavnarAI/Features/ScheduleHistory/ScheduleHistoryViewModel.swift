@@ -27,6 +27,12 @@ final class ScheduleHistoryViewModel {
     var history: [ScheduleHistoryEntry] = []
     var isLoading = false
     var errorMessage: String?
+    // Deliberately separate from errorMessage above — that one gates
+    // whether the List renders at all (see ScheduleHistoryView.body),
+    // so a failed delete setting the SAME property was replacing the
+    // entire list with a full-screen error the moment one swipe-delete
+    // failed, rather than surfacing just that one failure.
+    var deleteErrorMessage: String?
 
     private let client: APIClient
     init(client: APIClient = .shared) {
@@ -68,8 +74,13 @@ final class ScheduleHistoryViewModel {
             )
             history.removeAll { $0.id == id }
             Haptic.selection()
+        } catch let error as APIClient.APIError {
+            // The real underlying message (e.g. a specific status code),
+            // not a hardcoded string — needed to actually diagnose why a
+            // delete is failing rather than guessing at it blind.
+            deleteErrorMessage = error.message
         } catch {
-            errorMessage = "Couldn't delete that schedule."
+            deleteErrorMessage = "Couldn't delete that schedule."
         }
     }
 }
