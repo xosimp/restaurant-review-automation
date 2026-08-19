@@ -1344,6 +1344,25 @@ def _format_minutes_to_time(total_minutes: int) -> str:
     return f"{hour12}:{minute:02d}{period}"
 
 
+def _safe_hours_sum(rows: list) -> float:
+    """Total scheduled_hours across rows, skipping any row whose value
+    isn't actually numeric instead of raising — a live generation
+    occasionally has one malformed row out of 100+ (see
+    test_schedule_row_repair.py) where scheduled_hours ends up holding a
+    stray time string from a column shift. The original per-row parsing
+    loop already tolerates this per-row; the backstop passes' own
+    hours_scheduled recomputes need the same tolerance, since a single bad
+    row previously aborted the recompute (and by extension the CSV
+    rebuild) via an uncaught ValueError from float() inside sum()."""
+    total = 0.0
+    for r in rows:
+        try:
+            total += float(r.get("scheduled_hours") or 0)
+        except (ValueError, TypeError):
+            pass
+    return round(total, 1)
+
+
 def _enforce_close_time(row: dict, real_day: str, close_times: dict, role_buffers: dict) -> None:
     """Hard-caps a row's shift_end at that day's actual close time (plus any
     role-specific after-close allowance, e.g. a bartender's stated "stay 1h
@@ -1450,6 +1469,16 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
     _avail_rows = get_staff_availability(restaurant_id) or []
     unavailable_by_emp: dict = {}
     available_by_emp: dict = {}
+    # staff_availability only has whole-day granularity in its structured
+    # fields — a client who writes "only mornings" or "no closes" has to
+    # put it in the freeform notes field instead, which the AI prompt does
+    # read (see labor.py's _avail_block) but this deterministic code has
+    # no reliable way to parse. Rather than risk scheduling a body into a
+    # time window their notes explicitly rule out, exclude anyone with any
+    # notes at all from automatic day-level additions -- conservative, but
+    # a missed top-up is a far smaller problem than deterministically
+    # violating a constraint a human specifically wrote down.
+    notes_restricted: set = set()
     for a in _avail_rows:
         name = a.get("employee_name")
         if not name:
@@ -1464,6 +1493,8 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
                 available_by_emp[name] = set(avail)
         except Exception:
             pass
+        if (a.get("notes") or "").strip():
+            notes_restricted.add(name)
 
     # Roster + time templates from the AI's own output this week
     role_employees: dict = {}
@@ -1534,7 +1565,8 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
                 pool = role_employees.get(role, set()) - working_on_date.get(target_date, set())
                 pool = {e for e in pool
                         if day_name not in unavailable_by_emp.get(e, set())
-                        and (e not in available_by_emp or day_name in available_by_emp[e])}
+                        and (e not in available_by_emp or day_name in available_by_emp[e])
+                        and e not in notes_restricted}
                 if pool:
                     best_shortfall = shortfall
                     candidates_role = (role, pool)
@@ -1587,7 +1619,8 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
 
 
 def _extend_shifts_to_close_gap(preview_rows: list, daily_target_hours: dict, hours_budget: float,
-                                 hours_scheduled: float, close_times: dict, role_buffers: dict) -> tuple:
+                                 hours_scheduled: float, restaurant_id: int,
+                                 close_times: dict, role_buffers: dict) -> tuple:
     """Second-line deterministic top-up, run after _top_up_hours_gap. That
     pass stops adding to a day once every role on it has run out of a real,
     available, not-already-scheduled candidate — which is correct (it
@@ -1613,7 +1646,20 @@ def _extend_shifts_to_close_gap(preview_rows: list, daily_target_hours: dict, ho
         return preview_rows, 0.0, {}
 
     import datetime as _dt_ext
+    from models import get_staff_availability as _gsa_ext
     MAX_EXTENSION_MINUTES = 120
+
+    # Same conservative rule as the other passes: staff_availability's
+    # structured fields can't express "only mornings"/"no closes" — that
+    # only ever lives in freeform notes, which this code can't reliably
+    # parse. A shift extension is a smaller violation than scheduling a
+    # brand-new one, but still real (pushing someone's shift 2h later
+    # could turn a stated "mornings only" into an afternoon), so anyone
+    # with any notes at all is left alone here too.
+    notes_restricted_ext: set = {
+        a.get("employee_name") for a in (_gsa_ext(restaurant_id) or [])
+        if a.get("employee_name") and (a.get("notes") or "").strip()
+    }
 
     by_date_hours: dict = {}
     rows_by_date: dict = {}
@@ -1660,6 +1706,8 @@ def _extend_shifts_to_close_gap(preview_rows: list, daily_target_hours: dict, ho
         for row in day_rows_sorted:
             if day_gap <= 0 or remaining_gap <= 0:
                 break
+            if row.get("employee") in notes_restricted_ext:
+                continue
             end_min = _parse_time_to_minutes(row.get("shift_end", ""))
             start_min = _parse_time_to_minutes(row.get("shift_start", ""))
             if end_min is None or start_min is None or end_min <= start_min:
@@ -1849,6 +1897,13 @@ def _ensure_pizza_cook_coverage(preview_rows: list, week_dates: list, week_days:
     _avail_rows = get_staff_availability(restaurant_id) or []
     unavailable_by_emp: dict = {}
     available_by_emp: dict = {}
+    # Same conservative exclusion as _top_up_hours_gap's notes_restricted,
+    # and more directly relevant here specifically: this function decides
+    # MORNING vs NIGHT coverage, which is exactly the granularity
+    # staff_availability's structured fields can't express -- a "only
+    # mornings" note on someone whose available_days includes a day this
+    # loop needs NIGHT coverage for would otherwise get silently ignored.
+    notes_restricted: set = set()
     for a in _avail_rows:
         name = a.get("employee_name")
         if not name:
@@ -1863,6 +1918,8 @@ def _ensure_pizza_cook_coverage(preview_rows: list, week_dates: list, week_days:
                 available_by_emp[name] = set(avail)
         except Exception:
             pass
+        if (a.get("notes") or "").strip():
+            notes_restricted.add(name)
 
     pizza_cooks: set = set()
     working_on_date: dict = {}
@@ -1901,7 +1958,8 @@ def _ensure_pizza_cook_coverage(preview_rows: list, week_dates: list, week_days:
                 pool = pizza_cooks - working_on_date.get(date, set())
                 pool = {e for e in pool
                         if day_name not in unavailable_by_emp.get(e, set())
-                        and (e not in available_by_emp or day_name in available_by_emp[e])}
+                        and (e not in available_by_emp or day_name in available_by_emp[e])
+                        and e not in notes_restricted}
                 if not pool:
                     break  # no real, available Pizza Cook left this week -- don't invent one
                 employee = min(pool, key=lambda e: hours_by_employee.get(e, 0.0))
@@ -2023,7 +2081,7 @@ def _run_schedule_job(job_id, restaurant_id):
                 restaurant_id, _close_times, _role_close_buffers,
             )
             if pizza_rows_added:
-                hours_scheduled = round(sum(float(r.get("scheduled_hours") or 0) for r in preview_rows), 1)
+                hours_scheduled = _safe_hours_sum(preview_rows)
                 print(f"[schedule] pizza cook coverage added {pizza_rows_added} row(s) across {pizza_added_dates}")
 
             preview_rows, hours_added, added_dates = _top_up_hours_gap(
@@ -2037,7 +2095,7 @@ def _run_schedule_job(job_id, restaurant_id):
 
             preview_rows, hours_extended, extended_dates = _extend_shifts_to_close_gap(
                 preview_rows, result.get("daily_target_hours", {}),
-                result.get("hours_budget", 0), hours_scheduled,
+                result.get("hours_budget", 0), hours_scheduled, restaurant_id,
                 _close_times, _role_close_buffers,
             )
             if hours_extended:
@@ -2049,7 +2107,7 @@ def _run_schedule_job(job_id, restaurant_id):
                 preview_rows, _close_times, _role_close_buffers,
             )
             if rows_trimmed:
-                hours_scheduled = round(sum(float(r.get("scheduled_hours") or 0) for r in preview_rows), 1)
+                hours_scheduled = _safe_hours_sum(preview_rows)
                 print(f"[schedule] trimmed {rows_trimmed} row(s) over the 7-server cap across {trimmed_dates}")
 
             # Rebuild schedule_csv from the (possibly repaired) rows so the

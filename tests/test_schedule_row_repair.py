@@ -235,6 +235,37 @@ def test_unconfigured_restaurant_is_not_enforced_at_all(monkeypatch):
     assert "needs_review" not in row
 
 
+def test_malformed_scheduled_hours_does_not_crash_the_backstop_passes(monkeypatch):
+    # A row whose day already matches (so the day-repair sanity check
+    # never runs on it) but whose scheduled_hours holds a stray time
+    # string instead of a number -- reproduces a real live crash: the
+    # deterministic backstop passes (_ensure_pizza_cook_coverage,
+    # _top_up_hours_gap, _extend_shifts_to_close_gap,
+    # _trim_server_overlap_cap) each recompute hours_scheduled by summing
+    # every row's scheduled_hours, and a bare float() in that sum aborted
+    # the whole rest of the job (including the CSV rebuild) the moment it
+    # hit this row -- caught only by the outer try/except, silently
+    # skipping whatever backstop work hadn't finished yet. Eight
+    # overlapping Server rows guarantee _trim_server_overlap_cap actually
+    # runs its hours_scheduled recompute (the exact vulnerable line), not
+    # just parses cleanly and exits early.
+    rows = [
+        f"2026-08-17,Monday,Server{i},Server,5:00pm,10:00pm,5,closer"
+        for i in range(8)
+    ]
+    rows.append("2026-08-17,Monday,Jamie L.,Host,5:00pm,9:30pm,2:30pm,closer")  # scheduled_hours corrupted
+    csv_text = HEADER + "\n" + "\n".join(rows)
+
+    result = _run(monkeypatch, csv_text)
+
+    assert result["ok"] is True
+    # The corrupted row is skipped (contributes 0), not crashed on.
+    server_rows = [r for r in result["preview_rows"] if r["role"] == "Server"]
+    assert len(server_rows) <= 7  # trim pass actually ran
+    # schedule_csv was rebuilt (proves the job didn't abort partway).
+    assert "Host" in result["schedule_csv"]
+
+
 def test_shift_start_already_past_close_is_flagged_not_fabricated(monkeypatch):
     # shift_start itself (10pm) is already past the 9pm ceiling — trimming
     # shift_end to the ceiling would produce negative/zero hours, so this
