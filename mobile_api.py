@@ -1152,6 +1152,19 @@ def mobile_schedule_history_detail(history_id, current_user):
     return jsonify(ok=True, **detail, preview_rows=preview_rows)
 
 
+@mobile_bp.route("/labor/schedule-history/<int:history_id>", methods=["DELETE"])
+@mobile_login_required
+def mobile_schedule_history_delete(history_id, current_user):
+    """The only deletion path for schedule_history rows -- nothing in this
+    codebase ever removes one automatically. Scoped to current_user's
+    restaurant_id the same way the detail route is."""
+    from models import delete_schedule_history
+    deleted = delete_schedule_history(history_id, current_user["restaurant_id"])
+    if not deleted:
+        return jsonify(ok=False, error="Not found"), 404
+    return jsonify(ok=True)
+
+
 @mobile_bp.route("/labor/availability")
 @mobile_login_required
 def mobile_labor_availability(current_user):

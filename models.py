@@ -2270,7 +2270,7 @@ def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
     return new_id
 
 
-def get_schedule_history(restaurant_id: int, limit: int = 30, db_path: str = DB_PATH) -> list:
+def get_schedule_history(restaurant_id: int, limit: int = 300, db_path: str = DB_PATH) -> list:
     """Summary rows only (no schedule_csv) for the history list screen —
     keeps the list payload light; fetch the full record via
     get_schedule_history_detail() once a specific entry is tapped."""
@@ -2309,6 +2309,22 @@ def get_schedule_history_detail(history_id: int, restaurant_id: int, db_path: st
     except Exception:
         d["summary"] = []
     return d
+
+
+def delete_schedule_history(history_id: int, restaurant_id: int, db_path: str = DB_PATH) -> bool:
+    """Deletes one schedule history row, scoped to restaurant_id so one
+    tenant can never delete another's by guessing an id. Schedules are
+    never removed automatically anywhere in this codebase -- this is the
+    only deletion path, and it only ever fires on an explicit user action
+    (the iOS swipe-to-delete). Returns True if a row was actually deleted,
+    False if the id didn't exist or belonged to a different restaurant.
+    """
+    conn = get_conn(db_path)
+    cur = conn.execute("DELETE FROM schedule_history WHERE id=? AND restaurant_id=?", (history_id, restaurant_id))
+    conn.commit()
+    deleted = cur.rowcount > 0
+    conn.close()
+    return deleted
 
 
 def get_role_rates(restaurant_id: int, db_path: str = DB_PATH) -> dict:

@@ -742,6 +742,37 @@ def test_schedule_history_detail_rejects_cross_tenant_id(client, db_path):
     assert resp.status_code == 404
 
 
+def test_schedule_history_delete_requires_auth(client):
+    resp = client.delete("/mobile/api/labor/schedule-history/1")
+    assert resp.status_code == 401
+
+
+def test_schedule_history_delete_removes_own_entry(client, db_path):
+    from models import save_schedule_history, get_schedule_history
+    rid = _restaurant(db_path)
+    history_id = save_schedule_history(rid, "2026-08-17", "2026-08-23", 1250.0, 1300.0, 23.0,
+                                        "date,day,employee\n2026-08-17,Monday,Jamie", [], db_path=db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.delete(f"/mobile/api/labor/schedule-history/{history_id}", headers=_auth_headers(token))
+    assert resp.get_json()["ok"] is True
+    assert get_schedule_history(rid, db_path=db_path) == []
+
+
+def test_schedule_history_delete_rejects_cross_tenant_id(client, db_path):
+    from models import save_schedule_history, get_schedule_history
+    rid_a = _restaurant(db_path, name="Restaurant A")
+    rid_b = _restaurant(db_path, name="Restaurant B")
+    history_id = save_schedule_history(rid_a, "2026-08-17", "2026-08-23", 1250.0, 1300.0, 23.0,
+                                        "date,day,employee\n2026-08-17,Monday,Jamie", [], db_path=db_path)
+    token_b = _login(client, db_path, rid_b, username="bob")
+
+    resp = client.delete(f"/mobile/api/labor/schedule-history/{history_id}", headers=_auth_headers(token_b))
+    assert resp.status_code == 404
+    # Restaurant A's entry must survive an attempted cross-tenant delete.
+    assert len(get_schedule_history(rid_a, db_path=db_path)) == 1
+
+
 def test_labor_endpoint_includes_new_analytics_fields(client, db_path):
     """Overview/Analytics tab parity fields — date_range, overstaffed/
     understaffed day lists, dow_summary (By Day chart), savings_breakdown
