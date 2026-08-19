@@ -59,21 +59,40 @@ struct AvailabilityManagerSection: View {
             .contentShape(Rectangle())
             .onTapGesture { focusedField = nil }
         }
-        // Auto-focuses the name field once the section opens, same
-        // "ready to type immediately" feel as Ask Cavnar's input — then
-        // re-runs the same scrollToReveal onExpand already uses (see
-        // LaborView) a second time once the keyboard has actually slid
-        // up, since the first scroll (timed to the dropdown's own expand
-        // animation) centers the section before the keyboard exists to
-        // push anything up over it.
+        // Auto-focuses the name field once the section's own expand
+        // animation has settled — 0.3s, CavnarDropdown's real expand
+        // duration (see scrollToReveal's comment for why this must match
+        // exactly, not the animation's own now-corrected 0.22s-vs-0.3s
+        // mismatch): focusing mid-expand made the keyboard fight the
+        // still-growing dropdown instead of the two reading as one
+        // motion, same "ready to type immediately" feel as Ask Cavnar's
+        // input.
+        //
+        // Collapsing while a field is still focused previously left nothing
+        // dismissing the keyboard — it either stayed up over the now-
+        // shrinking content or got yanked away out of sync with the
+        // collapse animation. Clearing focus in lockstep with the collapse
+        // lets both run as one animation instead of two fighting ones.
         .onChange(of: viewModel.availabilityExpanded) { _, expanded in
-            guard expanded else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                focusedField = .name
+            if expanded {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    onExpand?()
+                    focusedField = .name
                 }
+            } else {
+                focusedField = nil
             }
+        }
+        // Follows ANY focus change, not just the auto-focus above — a
+        // manual tap into a field later (e.g. re-opening notes after
+        // already dismissing the keyboard once) gets the same "scroll to
+        // keep it above the keyboard" treatment auto-focus gets, instead
+        // of only working the one time this view happens to drive focus
+        // itself. Fires immediately (no extra delay) — the keyboard's own
+        // rise animation and this scroll then move together rather than
+        // the scroll waiting for the keyboard to finish first.
+        .onChange(of: focusedField) { _, newValue in
+            guard newValue != nil else { return }
+            onExpand?()
         }
     }
 

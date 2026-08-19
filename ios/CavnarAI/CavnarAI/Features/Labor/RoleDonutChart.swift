@@ -9,6 +9,15 @@ import SwiftUI
 struct RoleDonutChart: View {
     let roles: [LaborRoleSummary]
     @Binding var isExpanded: Bool
+    // Optional: labels the center total with the actual span it covers
+    // (e.g. "2-WK TOTAL") instead of a bare "TOTAL" that reads as if it
+    // matched a single week's PAR hours budget elsewhere on this screen.
+    // roles/totalCost here are the restaurant's real historical shift
+    // data — whatever's currently loaded, which for a fresh account can
+    // be several weeks — not the one week a freshly generated schedule's
+    // PAR banner budgets for; those two are different numbers by design,
+    // not a bug, but "TOTAL" alone didn't say which one this was.
+    var dateRange: LaborDateRange? = nil
 
     /// Started as the web role donut's 7-color cycle, but a real roster now
     /// runs up to 11 distinct roles (cook split into 4 stations, Carry Out,
@@ -51,6 +60,22 @@ struct RoleDonutChart: View {
     }
 
     private var totalCost: Double { roles.reduce(0) { $0 + $1.laborCost } }
+
+    private static let isoDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    private var totalLabel: String {
+        guard let start = dateRange?.start, let end = dateRange?.end,
+              let startDate = Self.isoDayFormatter.date(from: start),
+              let endDate = Self.isoDayFormatter.date(from: end) else { return "TOTAL" }
+        let days = Calendar.current.dateComponents([.day], from: startDate, to: endDate).day.map { $0 + 1 } ?? 0
+        if days <= 0 { return "TOTAL" }
+        if days % 7 == 0 { return "\(days / 7)-WK TOTAL" }
+        return "\(days)-DAY TOTAL"
+    }
 
     // Bigger than the original 108pt, and shared by both sides of the row
     // (the ring is fixed to it, the legend gets a matching minHeight) so the
@@ -121,7 +146,7 @@ struct RoleDonutChart: View {
                 Text(formattedTotal)
                     .font(.cavnarNumber(19, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
-                Text("TOTAL")
+                Text(totalLabel)
                     .font(.cavnarBody(9, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarInk3)
@@ -155,7 +180,7 @@ struct RoleDonutChart: View {
                             + Text("h · ").font(.cavnarBody(9))
                             + Text("\(role.headcount)").font(.cavnarNumber(9))
                             + Text(" staff · $").font(.cavnarBody(9))
-                            + Text(formattedComma(role.laborCost)).font(.cavnarNumber(9)))
+                            + Text(role.laborCost.commaFormatted).font(.cavnarNumber(9)))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                     Spacer(minLength: 4)
@@ -195,12 +220,5 @@ struct RoleDonutChart: View {
 
     private func formattedHours(_ hours: Double) -> String {
         hours.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(hours)) : String(format: "%.1f", hours)
-    }
-
-    private func formattedComma(_ value: Double) -> String {
-        let intVal = Int(value.rounded())
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: intVal)) ?? "\(intVal)"
     }
 }

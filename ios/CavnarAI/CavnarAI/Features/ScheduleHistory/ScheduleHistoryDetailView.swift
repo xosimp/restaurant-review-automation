@@ -86,12 +86,12 @@ struct ScheduleHistoryDetailView: View {
                     .font(.cavnarBody(9, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarGreen)
-                Text("Budgeted \(String(format: "%.0f", budget))h for the week")
+                Text("Budgeted \(budget.commaFormatted)h for the week")
                     .font(.cavnarBody(11))
                     .foregroundStyle(Color.cavnarInk2)
             }
             Spacer()
-            Text(withinRange ? "On budget" : (diff > 0 ? "+\(String(format: "%.0f", diff))h over" : "\(String(format: "%.0f", diff))h under"))
+            Text(withinRange ? "On budget" : (diff > 0 ? "+\(diff.commaFormatted)h over" : "\(diff.commaFormatted)h under"))
                 .font(.cavnarBody(11, weight: 700))
                 .foregroundStyle(withinRange ? Color.cavnarGreen : Color.cavnarAmber)
         }

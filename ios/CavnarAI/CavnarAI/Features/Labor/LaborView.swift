@@ -89,7 +89,7 @@ struct LaborView: View {
                                 // Overtime used to sit above the donut chart,
                                 // visually separating it from the rest.
                                 if !stats.roleSummary.isEmpty {
-                                    roleSection(stats.roleSummary)
+                                    roleSection(stats.roleSummary, dateRange: stats.dateRange)
                                 }
                                 if !stats.overtimeRisk.isEmpty {
                                     overtimeDropdown(stats.overtimeRisk, proxy: proxy)
@@ -397,10 +397,14 @@ struct LaborView: View {
     /// has room to settle — firing scrollTo in the same instant as the
     /// disclosure's own height-change animation reliably centers against
     /// the pre-expansion layout, not the taller one about to exist a beat
-    /// later. A short delay matched to CavnarDropdown's 0.22s expand
-    /// animation lets the new height land first.
+    /// later. Delay matches CavnarDropdown's real 0.3s expand animation
+    /// (was 0.24s, timed against a stale "0.22s" claim that never matched
+    /// the actual withAnimation(.easeOut(duration: 0.3)) in
+    /// CavnarDropdown.swift — firing ~0.06s before the container had
+    /// actually finished growing, scrolling to a position that was still
+    /// shifting underneath it).
     private func scrollToReveal(_ id: String, proxy: ScrollViewProxy) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             withAnimation(.easeOut(duration: 0.25)) {
                 proxy.scrollTo(id, anchor: .center)
             }
@@ -519,7 +523,7 @@ struct LaborView: View {
     }
 
     @ViewBuilder
-    private func roleSection(_ roles: [LaborRoleSummary]) -> some View {
+    private func roleSection(_ roles: [LaborRoleSummary], dateRange: LaborDateRange?) -> some View {
         // Deliberately not wrapped in .cavnarCard() — every other section on
         // this tab is a bordered box, and stacking one more made the page
         // read as an unbroken column of boxes. Let the chart float directly
@@ -528,7 +532,7 @@ struct LaborView: View {
             Text("By role")
                 .font(.cavnarBody(13, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
-            RoleDonutChart(roles: roles, isExpanded: $viewModel.rolesExpanded)
+            RoleDonutChart(roles: roles, isExpanded: $viewModel.rolesExpanded, dateRange: dateRange)
         }
     }
 
@@ -673,12 +677,12 @@ struct LaborView: View {
                     .font(.cavnarBody(9, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarGreen)
-                Text("Budgeted \(String(format: "%.0f", budget))h\(dollars.map { " ($\(Int($0)))" } ?? "") for the week")
+                Text("Budgeted \(budget.commaFormatted)h\(dollars.map { " ($\($0.commaFormatted))" } ?? "") for the week")
                     .font(.cavnarBody(11))
                     .foregroundStyle(Color.cavnarInk2)
             }
             Spacer()
-            Text(withinRange ? "On budget" : (diff > 0 ? "+\(String(format: "%.0f", diff))h over" : "\(String(format: "%.0f", diff))h under"))
+            Text(withinRange ? "On budget" : (diff > 0 ? "+\(diff.commaFormatted)h over" : "\(diff.commaFormatted)h under"))
                 .font(.cavnarBody(11, weight: 700))
                 .foregroundStyle(withinRange ? Color.cavnarGreen : Color.cavnarAmber)
         }
@@ -690,20 +694,23 @@ struct LaborView: View {
     private static let scheduleDayOrder = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
     /// Host and Carry Out are the same front-of-house cross-training pair
-    /// (hosts run carryout orders up front) — the AI writes CSV rows in
-    /// whatever order it generated them, with no guarantee those two end
-    /// up anywhere near each other, so a Host row can land at the top of a
-    /// list and its Carry Out counterpart several unrelated Server rows
-    /// later. Rather than depend on prompting the model to group them
-    /// (the kind of formatting instruction this generator doesn't reliably
-    /// follow — see the row-repair logic in client_api.py for a concrete
-    /// example), this reorders deterministically on the client: every row
-    /// whose role matches either name collapses into one group, placed
-    /// wherever the FIRST Host/Carry Out row in this list originally was.
-    /// Every other role keeps its existing relative order untouched.
+    /// (hosts run carryout orders up front), and every kitchen role (Prep
+    /// Cook, Pantry Cook, Saute Cook, Pizza Cook, ...) reads as one team —
+    /// the AI writes CSV rows in whatever order it generated them, with no
+    /// guarantee same-team roles end up anywhere near each other, so e.g.
+    /// Pizza Cook can land at the very bottom of a day while the rest of
+    /// the kitchen sits up top. Rather than depend on prompting the model
+    /// to group them (the kind of formatting instruction this generator
+    /// doesn't reliably follow — see the row-repair logic in
+    /// client_api.py for a concrete example), this reorders
+    /// deterministically on the client: every row whose role matches
+    /// collapses into one group, placed wherever the FIRST row in that
+    /// group originally was. Every other role keeps its existing relative
+    /// order untouched.
     private static func roleGroupKey(_ role: String?) -> String {
         let r = (role ?? "").lowercased()
         if r.contains("host") || r.contains("carry") { return "host" }
+        if r.contains("cook") || r.contains("kitchen") { return "cook" }
         return r
     }
 
