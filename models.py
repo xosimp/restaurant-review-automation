@@ -847,7 +847,16 @@ def _seed_gia_mia(db_path: str = DB_PATH):
         "- Additional servers only at 12pm+ and only when YoY/event data backs it up.\n"
         "- Never two servers at the same start time.\n\n"
         "MINIMUM STAFFING FLOORS:\n"
-        "- Servers: minimum 1 on the floor at all times during service. Maximum 7 at once.\n"
+        "- Servers: minimum 2 on the floor during ANY open service hour, every single day "
+        "-- 1 is never enough to cover the floor, that's a hard rule regardless of how "
+        "slow TYPICAL HEADCOUNT makes a given morning look. Dinner/night service "
+        "specifically: minimum 3, even on the slowest weeknight (e.g. a normal Tuesday). "
+        "Maximum 7 at once.\n"
+        "- Cooks/Kitchen for morning/lunch service: minimum 2 people total, every single "
+        "day -- 1 Prep/Pantry cook alone is never enough. Scale to 3 on Pizza Monday and "
+        "weekends. This is a hard floor, not a historical average, same as the dinner "
+        "floor below -- a morning with only 1 cook and 1 server on is never correct, no "
+        "matter what day it is.\n"
         "- Cooks/Kitchen for dinner/night service: minimum 4 people total, every single "
         "night. Count them: 1 on Pizza (wood-fired pizza is Gia Mia's signature dish, so "
         "Pizza station is never left empty during service, no exceptions) + 3 on "
@@ -857,6 +866,9 @@ def _seed_gia_mia(db_path: str = DB_PATH):
         "are at least 4 before finalizing, regardless of what TYPICAL HEADCOUNT shows.\n"
         "- Bartenders: minimum 1 whenever the bar is open.\n"
         "- Hosts: minimum 1 whenever the dining room is open.\n"
+        "- Bussers: minimum 2 on at once for BOTH morning and night service on Pizza "
+        "Monday and busy weekend days (Fri, Sat, Sun) — this is a hard floor for those "
+        "days specifically, not a historical average. Other days, use TYPICAL HEADCOUNT.\n"
         "- Food Runners: see FOOD RUNNER RULES below for the full pattern.\n\n"
         "SHIFT LENGTHS:\n"
         "- Servers: 4–7h. Openers run 6–7h through lunch. Closers run 5–7h.\n"
@@ -911,31 +923,44 @@ def _seed_gia_mia(db_path: str = DB_PATH):
     # ("Stay 1 hour after close"). Every other role defaults to 0 — must
     # end at or before that day's close time.
     gia_mia_role_close_buffer = {"Bartender": 60}
-    # Use update_restaurant so the correct DB connection path is always used
-    update_restaurant(2, {
-        "monthly_revenue_target": 365000.0,
-        "labor_target_pct": 23.0,
-        # Was a flat 26.0 — nowhere close to any real role's actual wage,
-        # which meant PAR's hours_budget (dollars / rate) was computed
-        # against a rate roughly double the real weighted blended rate
-        # (~$13.53/hr given the current role/hours mix), understating
-        # achievable hours by about half. role_rates_json below is the
-        # real fix (per-role, used everywhere cost is computed); this flat
-        # value now only matters as the last-resort fallback for a role
-        # that isn't in role_rates_json, so it's set to roughly match the
-        # real blended rate rather than being wildly high.
-        "hourly_rate": 13.50,
-        "hours_notes": gia_mia_hours,
-        "sched_notes": gia_mia_sched_notes,
-        "section_count": 7,
-        "daypart_split": "lunch 40%, dinner 60%",
-        "role_rates_json": json.dumps(gia_mia_role_rates),
-        "close_times_json": json.dumps(gia_mia_close_times),
-        "role_close_buffer_json": json.dumps(gia_mia_role_close_buffer),
-        "location_name": "St. Charles, IL",
-        "email_theme": "dark",
-    })
-    print("[auto-seed] Restaurant settings updated: labor_target=23%, monthly_revenue=$365k")
+    # Only apply on a genuinely fresh/never-configured restaurant (or one
+    # that somehow lost its notes) — this used to run unconditionally on
+    # every single server restart, which meant any admin-panel edit to
+    # these exact fields (hours_notes, role_rates_json, close_times_json,
+    # etc. — all editable from client_settings.html) got silently
+    # overwritten back to these hardcoded values the next time the server
+    # redeployed. hours_notes empty is the signal "still needs seeding";
+    # once it's set (by this block or by a real admin edit), it never gets
+    # blown away again just because the process restarted.
+    _existing = get_restaurant(2, db_path)
+    if not _existing or not (_existing.hours_notes or "").strip():
+        # Use update_restaurant so the correct DB connection path is always used
+        update_restaurant(2, {
+            "monthly_revenue_target": 365000.0,
+            "labor_target_pct": 23.0,
+            # Was a flat 26.0 — nowhere close to any real role's actual wage,
+            # which meant PAR's hours_budget (dollars / rate) was computed
+            # against a rate roughly double the real weighted blended rate
+            # (~$13.53/hr given the current role/hours mix), understating
+            # achievable hours by about half. role_rates_json below is the
+            # real fix (per-role, used everywhere cost is computed); this flat
+            # value now only matters as the last-resort fallback for a role
+            # that isn't in role_rates_json, so it's set to roughly match the
+            # real blended rate rather than being wildly high.
+            "hourly_rate": 13.50,
+            "hours_notes": gia_mia_hours,
+            "sched_notes": gia_mia_sched_notes,
+            "section_count": 7,
+            "daypart_split": "lunch 40%, dinner 60%",
+            "role_rates_json": json.dumps(gia_mia_role_rates),
+            "close_times_json": json.dumps(gia_mia_close_times),
+            "role_close_buffer_json": json.dumps(gia_mia_role_close_buffer),
+            "location_name": "St. Charles, IL",
+            "email_theme": "dark",
+        })
+        print("[auto-seed] Restaurant settings updated: labor_target=23%, monthly_revenue=$365k")
+    else:
+        print("[auto-seed] Restaurant settings already configured — skipping (won't clobber admin edits)")
 
     gia_mia_csv = """date,day,employee,role,shift_start,shift_end,scheduled_hours,actual_hours,sales,notes
 2026-06-01,Monday,Derek M.,Bartender,4:00pm,10:30pm,6.5,6.5,8000,

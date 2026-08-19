@@ -1072,13 +1072,18 @@ def _seed_gia_mia_background():
 
 
 def _ensure_gia_mia_vibe():
+    """Backfills owner_email/owner_name/vibe/known_for on the demo restaurant
+    only when at least one is genuinely missing — used to run unconditionally
+    on every server restart, which meant any admin-panel edit to these exact
+    fields (all editable from client_settings.html) got silently reverted
+    back to these hardcoded values on the next deploy."""
     try:
         conn = get_conn()
         # Search by restaurant name — avoids colliding with admin's will@cavnar.ai
         row = conn.execute(
-            "SELECT id FROM restaurants WHERE name=?", ("Gia Mia",)
+            "SELECT id, owner_email, owner_name, vibe, known_for FROM restaurants WHERE name=?", ("Gia Mia",)
         ).fetchone()
-        if row:
+        if row and not all([row["owner_email"], row["owner_name"], row["vibe"], row["known_for"]]):
             conn.execute("""
                 UPDATE restaurants SET
                     owner_email=?, owner_name=?,
@@ -1095,7 +1100,7 @@ def _ensure_gia_mia_vibe():
                 ("cavnarwill@gmail.com", "brian", row["id"])
             )
             conn.commit()
-            print(f"  Gia Mia profile updated (email, owner, vibe, known_for) on restaurant id={row['id']}")
+            print(f"  Gia Mia profile backfilled (email, owner, vibe, known_for) on restaurant id={row['id']}")
         conn.close()
     except Exception as _vibe_e:
         print(f"  Gia Mia vibe ensure error: {_vibe_e}")

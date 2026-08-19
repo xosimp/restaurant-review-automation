@@ -812,13 +812,19 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                  f"use them as-is. If they would leave you MORE than 15% under budget, that gap means the "
                  f"historical staffing data doesn't reflect what this restaurant can now afford — close most of "
                  f"the gap by scaling headcount up proportionally across roles (shift-length extensions alone "
-                 f"have an obvious ceiling and usually can't close a gap that size), and state the gap and your "
-                 f"adjustment explicitly in the summary. Never land silently far under budget with no "
-                 f"explanation — if you can't close the gap, say why in the summary instead of leaving it "
-                 f"unaddressed.\n"
-                 f"  Priority once the gap above is satisfied: 1) per-day YoY targets, 2) TYPICAL HEADCOUNT "
-                 f"pattern, 3) total hours target — a large gap to the hours target overrides a strict headcount "
-                 f"cap, it does not get silently ignored.{_daily_targets}")
+                 f"have an obvious ceiling and usually can't close a gap that size).\n"
+                 f"  Spread the added headcount across EVERY day of the week, not just the days that were "
+                 f"already busiest. Closing this gap by only extending Thursday/Friday/Saturday and Pizza "
+                 f"Monday leaves the ordinary weekdays (Tuesday, Wednesday) exactly as thin as before — that is "
+                 f"concentrating the gap, not closing it. Before finalizing, check every day against the "
+                 f"MINIMUM STAFFING FLOORS above individually — if a normal Tuesday or Wednesday is still sitting "
+                 f"at or near those floors while Thursday-Saturday are well above them, that is a sign the added "
+                 f"hours went to the wrong days.\n"
+                 f"  State the gap and your adjustment explicitly in the summary. Never land silently far under "
+                 f"budget with no explanation — if you genuinely cannot close it, say why in the summary instead "
+                 f"of leaving it unaddressed. The hours target is never a lower priority than TYPICAL HEADCOUNT "
+                 f"or the per-day YoY targets — when they conflict, the hours target is what "
+                 f"governs.{_daily_targets}")
 
     prompt = f"""You are a restaurant scheduling expert for {restaurant_name}. Generate an optimized schedule for next week AND a brief plain-English summary of your decisions.
 
