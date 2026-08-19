@@ -1279,6 +1279,21 @@ def _build_schedule_result(restaurant_id):
     except Exception:
         weather_forecast = []
 
+    # The actual most recent prior generation (not just historical shift
+    # data) — see _summarize_schedule_csv_by_day_role's own docstring for
+    # why this gives the AI something real to compare against for its
+    # summary. None if this is the restaurant's first-ever generation.
+    prior_schedule_summary = None
+    try:
+        from models import get_schedule_history, get_schedule_history_detail
+        _prior_entries = get_schedule_history(restaurant_id, limit=1)
+        if _prior_entries:
+            _prior_detail = get_schedule_history_detail(_prior_entries[0]["id"], restaurant_id)
+            if _prior_detail and _prior_detail.get("schedule_csv"):
+                prior_schedule_summary = _summarize_schedule_csv_by_day_role(_prior_detail["schedule_csv"])
+    except Exception:
+        prior_schedule_summary = None
+
     result = generate_optimized_schedule(
         analysis, shifts,
         restaurant_name=restaurant.name if restaurant else "Restaurant",
@@ -1300,6 +1315,7 @@ def _build_schedule_result(restaurant_id):
         tz_name=getattr(restaurant, 'timezone', None),
         restaurant_id=restaurant_id,
         weather_forecast=weather_forecast or None,
+        prior_schedule_summary=prior_schedule_summary or None,
     )
     result["restaurant_name"] = restaurant.name if restaurant else "Restaurant"
     return result
@@ -1342,6 +1358,38 @@ def _format_minutes_to_time(total_minutes: int) -> str:
     period = "am" if hour24 < 12 else "pm"
     hour12 = hour24 % 12 or 12
     return f"{hour12}:{minute:02d}{period}"
+
+
+def _summarize_schedule_csv_by_day_role(csv_text: str) -> dict:
+    """Compact day -> {role: {"count": N, "hours": H}} rollup of a past
+    generation's schedule_csv — enough detail (headcount and hours per
+    role per day) for the AI to describe a genuine week-over-week
+    difference in its next "what changed and why" summary, without
+    feeding it the full 100-200 row CSV again. Used to give
+    generate_optimized_schedule something concrete to compare against —
+    previously the summary only ever compared against historical shift
+    patterns (TYPICAL HEADCOUNT), never the restaurant's own actual prior
+    generated schedule, which is what "what changed" should mean to an
+    owner reading it week to week.
+    """
+    import csv as _csv_mod, io as _io_mod
+    summary: dict = {}
+    try:
+        for row in _csv_mod.DictReader(_io_mod.StringIO(csv_text or "")):
+            day = row.get("day", "")
+            role = row.get("role", "")
+            if not day or not role:
+                continue
+            try:
+                hrs = float(row.get("scheduled_hours") or 0)
+            except (ValueError, TypeError):
+                hrs = 0.0
+            bucket = summary.setdefault(day, {}).setdefault(role, {"count": 0, "hours": 0.0})
+            bucket["count"] += 1
+            bucket["hours"] += hrs
+    except Exception:
+        return {}
+    return summary
 
 
 def _safe_hours_sum(rows: list) -> float:

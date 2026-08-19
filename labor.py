@@ -497,7 +497,8 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                                  staff_availability: list = None,
                                  tz_name: str = None,
                                  restaurant_id: int = None,
-                                 weather_forecast: list = None) -> dict:
+                                 weather_forecast: list = None,
+                                 prior_schedule_summary: dict = None) -> dict:
     """
     Use Claude to generate an optimized weekly schedule.
     Returns dict: {schedule_csv: str, summary: list[str], week_dates: list, week_days: list}
@@ -707,6 +708,31 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                           "minimum staffing floors below — those floors hold regardless of forecast.\n"
                           + "\n".join(_w_lines))
 
+    # The actual previous generation's per-day/per-role staffing (not just
+    # historical shift patterns, which TYPICAL HEADCOUNT above already
+    # covers) — gives the model something concrete to genuinely compare
+    # against for the summary, instead of writing about "changes" with
+    # nothing specific to have changed from.
+    _prior_schedule_block = ""
+    if prior_schedule_summary:
+        _prior_lines = []
+        for _day in week_days:
+            _roles = prior_schedule_summary.get(_day)
+            if not _roles:
+                continue
+            _role_parts = [f"{role} {d['count']} ({d['hours']:.0f}h)" for role, d in _roles.items()]
+            _prior_lines.append(f"  {_day}: " + ", ".join(_role_parts))
+        if _prior_lines:
+            _prior_schedule_block = (
+                "\n\nPREVIOUS GENERATED SCHEDULE (last time this was run, per day — headcount and hours "
+                "by role):\n" + "\n".join(_prior_lines) +
+                "\n  Your summary bullets must describe what's ACTUALLY DIFFERENT this time vs. this "
+                "specific prior schedule, not just restate today's staffing in isolation or describe "
+                "changes relative to historical patterns instead. If a day's staffing is essentially "
+                "unchanged from last time, say so plainly rather than inventing a change that didn't "
+                "happen — an accurate 'no change' is more useful to the owner than a fabricated one."
+            )
+
     # Compute PAR hours budget — monthly_revenue_target takes priority, then YoY sum, then recent
     projected_revenue = 0.0
     if monthly_revenue_target and monthly_revenue_target > 0:
@@ -882,7 +908,7 @@ CONTEXT:
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
 - Recent labor % by day of week: {dow}
-- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:100]]}{yoy_block}{events_block}{_weather_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_avail_block}{_sched_notes_block}
+- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:100]]}{yoy_block}{events_block}{_weather_block}{_prior_schedule_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_avail_block}{_sched_notes_block}
 
 Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
