@@ -40,12 +40,56 @@ struct ScheduleHistoryDetailView: View {
                     .padding(20)
                 }
             } else if viewModel.isLoading {
-                ProgressView()
-            } else if let error = viewModel.errorMessage {
                 VStack(spacing: 8) {
-                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                    Button("Retry") { Task { await viewModel.load(id: historyId) } }
+                    ProgressView()
+                    // Labeled so a spinner that never resolves reads
+                    // differently from one that briefly flashes by —
+                    // "blank" and "stuck on this exact text" are two very
+                    // different bugs to chase.
+                    Text("Loading schedule \(historyId)…")
+                        .font(.cavnarBody(11))
+                        .foregroundStyle(Color.cavnarInk3)
                 }
+                .padding(.top, 60)
+            } else if let error = viewModel.errorMessage {
+                VStack(spacing: 10) {
+                    Text("Couldn't load this schedule").font(.cavnarBody(15, weight: 700))
+                    Text(error).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk2).multilineTextAlignment(.center)
+                    Button("Retry") { Task { await viewModel.load(id: historyId) } }
+                        .buttonStyle(CavnarPrimaryButtonStyle())
+                        .padding(.top, 4)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 60)
+            } else {
+                // Temporary, deliberately loud diagnostic for a state this
+                // view should be structurally unable to reach: detail is
+                // nil, isLoading is false, errorMessage is nil — meaning
+                // .task/.onAppear either never ran or their async work
+                // never resolved either way. Every other layer of this
+                // feature (the live backend route, the exact JSON it
+                // returns, the decode logic against that exact shape, the
+                // URL construction) has been directly verified correct in
+                // isolation; this is the one state that couldn't be
+                // reproduced or ruled out without seeing it happen live.
+                // Remove once this is diagnosed.
+                VStack(spacing: 12) {
+                    Text("⚠️ DIAGNOSTIC").font(.cavnarBody(12, weight: 700)).foregroundStyle(Color.cavnarRed)
+                    Text("Nothing ever loaded for schedule \(historyId).")
+                        .font(.cavnarBody(14, weight: 600))
+                        .multilineTextAlignment(.center)
+                    Text("detail=nil, isLoading=false, errorMessage=nil")
+                        .font(.cavnarBody(11))
+                        .foregroundStyle(Color.cavnarInk3)
+                    Button("Load now") { Task { await viewModel.load(id: historyId) } }
+                        .buttonStyle(CavnarPrimaryButtonStyle())
+                        .padding(.top, 4)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 60)
+                .background(Color.cavnarRed.opacity(0.08))
             }
         }
         .cavnarModuleBackground()

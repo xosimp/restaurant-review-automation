@@ -120,7 +120,7 @@ struct ScheduleHistoryView: View {
             }
             Spacer()
             if let scheduled = entry.hoursScheduled {
-                Text("\(String(format: "%.0f", scheduled))h")
+                Text("\(scheduled.commaFormatted)h")
                     .font(.cavnarNumber(14, weight: 700))
                     .foregroundStyle(Color.cavnarInk2)
             }
@@ -137,12 +137,20 @@ struct ScheduleHistoryView: View {
         // deliberately called out from a plain neutral card. Text keeps
         // its normal ink colors — cavnarInk/Ink2/Ink3 are already proven
         // legible against ember-tinted grounds elsewhere in this app
-        // (e.g. AskCavnarView's suggested-question pills), and 0.4 peak
-        // opacity here keeps the gradient from ever competing with it.
+        // (e.g. AskCavnarView's suggested-question pills). Was a flat
+        // 2-stop fade (0.4 -> paper) that read as "mostly black with an
+        // orange edge" — a 3-stop gradient holding strong orange through
+        // the first half, THEN fading, actually reads as primarily orange
+        // the way a 2-stop linear fade can't (a straight line from 0.4 to
+        // 0 is already mostly faded by the midpoint).
         .padding(16)
         .background(
             LinearGradient(
-                colors: [Color.cavnarEmber.opacity(0.4), Color.cavnarPaper],
+                stops: [
+                    .init(color: Color.cavnarEmber.opacity(0.75), location: 0),
+                    .init(color: Color.cavnarEmber.opacity(0.55), location: 0.55),
+                    .init(color: Color.cavnarPaper, location: 1),
+                ],
                 startPoint: .leading, endPoint: .trailing
             )
         )
