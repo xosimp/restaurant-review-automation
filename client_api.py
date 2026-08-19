@@ -1586,6 +1586,113 @@ def _top_up_hours_gap(preview_rows: list, daily_target_hours: dict, hours_budget
     return preview_rows, round(hours_added, 1), added_dates
 
 
+def _extend_shifts_to_close_gap(preview_rows: list, daily_target_hours: dict, hours_budget: float,
+                                 hours_scheduled: float, close_times: dict, role_buffers: dict) -> tuple:
+    """Second-line deterministic top-up, run after _top_up_hours_gap. That
+    pass stops adding to a day once every role on it has run out of a real,
+    available, not-already-scheduled candidate — which is correct (it
+    should never invent a person), but it means some days still end up
+    under target purely because the roster is thin, not because the day
+    doesn't need the hours. This closes more of that gap the only way left
+    that doesn't compromise on "never invent a person": push an existing
+    closer's shift_end a bit later, up to that day's own close-time
+    ceiling — the exact same ceiling _enforce_close_time already caps
+    shift_end at, just applied as a bounded increase instead of a decrease.
+
+    Only ever extends one of that day's later finishers for its role (a
+    closer staying a bit longer is plausible; turning a lunch-only opener
+    into a closer isn't), and caps each row's extension at 2h so no single
+    shift balloons into something unrealistic. Never invents a new row —
+    every hour added here belongs to someone already scheduled that day.
+
+    Returns (preview_rows, hours_added, extended_dates) where
+    extended_dates is {date: rows_extended_count}.
+    """
+    total_gap = hours_budget - hours_scheduled
+    if not daily_target_hours or total_gap <= 0:
+        return preview_rows, 0.0, {}
+
+    import datetime as _dt_ext
+    MAX_EXTENSION_MINUTES = 120
+
+    by_date_hours: dict = {}
+    rows_by_date: dict = {}
+    for r in preview_rows:
+        d = r.get("date")
+        if not d:
+            continue
+        try:
+            hrs = float(r.get("scheduled_hours") or 0)
+        except (ValueError, TypeError):
+            hrs = 0.0
+        by_date_hours[d] = by_date_hours.get(d, 0.0) + hrs
+        rows_by_date.setdefault(d, []).append(r)
+
+    hours_added = 0.0
+    extended_dates: dict = {}
+    remaining_gap = total_gap
+
+    dates_by_need = sorted(
+        (d for d in daily_target_hours if daily_target_hours[d] - by_date_hours.get(d, 0.0) > 0),
+        key=lambda d: daily_target_hours[d] - by_date_hours.get(d, 0.0),
+        reverse=True,
+    )
+
+    for target_date in dates_by_need:
+        if remaining_gap <= 0:
+            break
+        day_gap = daily_target_hours[target_date] - by_date_hours.get(target_date, 0.0)
+        if day_gap <= 0:
+            continue
+        try:
+            day_name = _dt_ext.datetime.strptime(target_date, "%Y-%m-%d").strftime("%A")
+        except (ValueError, TypeError):
+            continue
+
+        # Latest finishers first — the realistic "closer stays a little
+        # longer" candidates, not openers or lunch-only shifts.
+        day_rows_sorted = sorted(
+            rows_by_date.get(target_date, []),
+            key=lambda r: _parse_time_to_minutes(r.get("shift_end", "")) or -1,
+            reverse=True,
+        )
+
+        for row in day_rows_sorted:
+            if day_gap <= 0 or remaining_gap <= 0:
+                break
+            end_min = _parse_time_to_minutes(row.get("shift_end", ""))
+            start_min = _parse_time_to_minutes(row.get("shift_start", ""))
+            if end_min is None or start_min is None or end_min <= start_min:
+                continue
+
+            extend_by = min(MAX_EXTENSION_MINUTES, int(day_gap * 60))
+            if extend_by <= 0:
+                continue
+            original_end = row["shift_end"]
+            row["shift_end"] = _format_minutes_to_time(end_min + extend_by)
+            _enforce_close_time(row, day_name, close_times, role_buffers)  # clamps back down if past close
+            new_end_min = _parse_time_to_minutes(row["shift_end"])
+            if new_end_min is None or new_end_min <= end_min:
+                row["shift_end"] = original_end  # at/past the close-time ceiling already — nothing gained
+                continue
+
+            added_hours = round((new_end_min - end_min) / 60, 1)
+            if added_hours <= 0:
+                row["shift_end"] = original_end
+                continue
+            row["scheduled_hours"] = str(round((new_end_min - start_min) / 60, 1))
+            note = (row.get("notes") or "").strip()
+            row["notes"] = f"{note} (extended — PAR hours top-up)" if note else "extended — PAR hours top-up"
+
+            hours_added += added_hours
+            remaining_gap -= added_hours
+            day_gap -= added_hours
+            by_date_hours[target_date] = by_date_hours.get(target_date, 0.0) + added_hours
+            extended_dates[target_date] = extended_dates.get(target_date, 0) + 1
+
+    return preview_rows, round(hours_added, 1), extended_dates
+
+
 def _run_schedule_job(job_id, restaurant_id):
     import csv as _csv_mod, io as _io_sched, traceback as _tb, datetime as _dt_sched
     try:
@@ -1599,6 +1706,7 @@ def _run_schedule_job(job_id, restaurant_id):
         hours_scheduled = 0.0
         hours_added = 0.0
         added_dates = {}
+        extended_dates = {}
         try:
             _COLS = ["date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes"]
             _csv_lines = result["schedule_csv"].split("\n")
@@ -1684,6 +1792,16 @@ def _run_schedule_job(job_id, restaurant_id):
                 hours_scheduled = round(hours_scheduled + hours_added, 1)
                 print(f"[schedule] top-up added {hours_added}h across {added_dates}")
 
+            preview_rows, hours_extended, extended_dates = _extend_shifts_to_close_gap(
+                preview_rows, result.get("daily_target_hours", {}),
+                result.get("hours_budget", 0), hours_scheduled,
+                _close_times, _role_close_buffers,
+            )
+            if hours_extended:
+                hours_scheduled = round(hours_scheduled + hours_extended, 1)
+                hours_added = round(hours_added + hours_extended, 1)
+                print(f"[schedule] extension added {hours_extended}h across {extended_dates}")
+
             # Rebuild schedule_csv from the (possibly repaired) rows so the
             # downloadable/shared CSV matches what the app displays instead
             # of shipping the pre-repair text out from under it.
@@ -1712,6 +1830,7 @@ def _run_schedule_job(job_id, restaurant_id):
                 staff_constraints=staff_constraints,
                 hours_added_by_backstop=hours_added,
                 backstop_added_dates=added_dates,
+                backstop_extended_dates=extended_dates,
             )
         }
     except Exception as e:
