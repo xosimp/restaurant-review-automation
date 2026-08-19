@@ -15,6 +15,11 @@ struct AvailabilityManagerSection: View {
     @State private var name = ""
     @State private var selectedDays: Set<String> = []
     @State private var notes = ""
+    @FocusState private var focusedField: Field?
+
+    private enum Field {
+        case name, notes
+    }
 
     var body: some View {
         CavnarDropdown(
@@ -45,6 +50,30 @@ struct AvailabilityManagerSection: View {
                     }
                 }
             }
+            // Tapping anywhere in the expanded section outside an actual
+            // text field dismisses the keyboard — Enter was previously the
+            // only way to close it. A Color.clear background is needed
+            // for the tap gesture to actually hit an empty area of the
+            // VStack (a VStack with no background is transparent to hit
+            // testing, same as any SwiftUI container with no fill).
+            .contentShape(Rectangle())
+            .onTapGesture { focusedField = nil }
+        }
+        // Auto-focuses the name field once the section opens, same
+        // "ready to type immediately" feel as Ask Cavnar's input — then
+        // re-runs the same scrollToReveal onExpand already uses (see
+        // LaborView) a second time once the keyboard has actually slid
+        // up, since the first scroll (timed to the dropdown's own expand
+        // animation) centers the section before the keyboard exists to
+        // push anything up over it.
+        .onChange(of: viewModel.availabilityExpanded) { _, expanded in
+            guard expanded else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                focusedField = .name
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    onExpand?()
+                }
+            }
         }
     }
 
@@ -52,6 +81,7 @@ struct AvailabilityManagerSection: View {
         VStack(alignment: .leading, spacing: 10) {
             TextField("Employee name", text: $name)
                 .cavnarTextFieldStyle()
+                .focused($focusedField, equals: .name)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Available days")
@@ -66,6 +96,7 @@ struct AvailabilityManagerSection: View {
 
             TextField("Notes (optional) — e.g. student, no mornings", text: $notes)
                 .cavnarTextFieldStyle()
+                .focused($focusedField, equals: .notes)
 
             Button {
                 Task {
@@ -76,6 +107,7 @@ struct AvailabilityManagerSection: View {
                     name = ""
                     notes = ""
                     selectedDays = []
+                    focusedField = nil
                 }
             } label: {
                 if viewModel.isSavingAvailability {

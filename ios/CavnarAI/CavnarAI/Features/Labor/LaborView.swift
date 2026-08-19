@@ -120,6 +120,10 @@ struct LaborView: View {
                     }
                     .padding(20)
                 }
+                // Starting a scroll dismisses an open keyboard immediately
+                // — the other standard half of keyboard dismissal, next to
+                // AvailabilityManagerSection's tap-to-dismiss.
+                .scrollDismissesKeyboard(.immediately)
             }
         }
         .cavnarModuleBackground()
