@@ -140,15 +140,22 @@ struct ScheduleHistoryView: View {
         // (e.g. AskCavnarView's suggested-question pills). Was a flat
         // 2-stop fade (0.4 -> paper) that read as "mostly black with an
         // orange edge" — a 3-stop gradient holding strong orange through
-        // the first half, THEN fading, actually reads as primarily orange
-        // the way a 2-stop linear fade can't (a straight line from 0.4 to
-        // 0 is already mostly faded by the midpoint).
+        // the first half, THEN fading, was primarily orange but read as
+        // "stages" instead of a smooth fade: the first half barely
+        // changed (0.75 -> 0.55) while nearly the whole transition was
+        // crammed into the second half (0.55 -> opaque paper is a much
+        // bigger jump than 0.75 -> 0.55), which looks like a flat block
+        // that suddenly cuts to black rather than one continuous fade.
+        // 5 evenly-spaced stops, each a similar-sized step down, reads as
+        // genuinely continuous instead of a plateau-then-cliff.
         .padding(16)
         .background(
             LinearGradient(
                 stops: [
-                    .init(color: Color.cavnarEmber.opacity(0.75), location: 0),
-                    .init(color: Color.cavnarEmber.opacity(0.55), location: 0.55),
+                    .init(color: Color.cavnarEmber.opacity(0.85), location: 0),
+                    .init(color: Color.cavnarEmber.opacity(0.65), location: 0.35),
+                    .init(color: Color.cavnarEmber.opacity(0.4), location: 0.6),
+                    .init(color: Color.cavnarEmber.opacity(0.15), location: 0.82),
                     .init(color: Color.cavnarPaper, location: 1),
                 ],
                 startPoint: .leading, endPoint: .trailing

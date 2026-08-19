@@ -19,7 +19,18 @@ struct AccountView: View {
                     if let summary = viewModel.summary {
                         content(summary)
                     } else if viewModel.isLoading {
-                        ProgressView().padding(.top, 60)
+                        // maxWidth/maxHeight matter here, not just visual
+                        // centering — .cavnarModuleBackground()'s ember
+                        // wash below sizes itself to whatever this Group
+                        // actually renders, and a bare ProgressView hugs
+                        // its own tiny intrinsic size. Without this, the
+                        // wash briefly rendered as a narrow, short
+                        // rectangle instead of the full-screen background
+                        // it becomes once real content (which IS full-
+                        // width) replaces this loading state.
+                        ProgressView()
+                            .padding(.top, 60)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if let error = viewModel.errorMessage {
                         VStack(spacing: 8) {
                             Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)

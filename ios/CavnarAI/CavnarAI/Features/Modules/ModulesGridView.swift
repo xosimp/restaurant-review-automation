@@ -73,7 +73,13 @@ struct ModulesGridView: View {
                 // empty (a client with zero active real modules used to
                 // hit a blank screen here).
                 if viewModel.isLoading && viewModel.modules.isEmpty && viewModel.errorMessage == nil {
+                    // See AccountView's identical fix for why the frame
+                    // matters, not just centering: .cavnarModuleBackground()
+                    // sizes to this Group, and a bare ProgressView hugging
+                    // its own tiny size made the wash flash as a narrow
+                    // rectangle instead of full-screen.
                     ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let error = viewModel.errorMessage, viewModel.modules.isEmpty {
                     VStack(spacing: 8) {
                         Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
