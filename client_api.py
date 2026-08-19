@@ -1693,6 +1693,125 @@ def _extend_shifts_to_close_gap(preview_rows: list, daily_target_hours: dict, ho
     return preview_rows, round(hours_added, 1), extended_dates
 
 
+_SERVER_MAX_OVERLAP = 7
+
+
+def _peak_server_overlap(day_rows: list) -> tuple:
+    """Sweep-line peak concurrent Server headcount for one day's rows.
+    Returns (peak_count, peak_time_minutes) — peak_time is None if there
+    are no rows. Ends are processed before starts at the same instant, so
+    a shift ending at 3pm and one starting at 3pm never count as
+    overlapping at that exact minute."""
+    events = []
+    for r in day_rows:
+        s = _parse_time_to_minutes(r.get("shift_start", ""))
+        e = _parse_time_to_minutes(r.get("shift_end", ""))
+        if s is None or e is None or e <= s:
+            continue
+        events.append((s, 1))
+        events.append((e, -1))
+    events.sort(key=lambda ev: (ev[0], ev[1]))  # -1 (end) before +1 (start) at same minute
+    running = 0
+    peak = 0
+    peak_time = None
+    for t, delta in events:
+        running += delta
+        if running > peak:
+            peak = running
+            peak_time = t
+    return peak, peak_time
+
+
+def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers: dict) -> tuple:
+    """Deterministic backstop for the "never more than 7 servers at once"
+    hard cap already stated in hours_notes. Live testing showed the AI
+    missing this reliably at 190-220+ row scale, including via double
+    shifts (a server working both morning and night) that were never
+    subtracted from the night total before more closers got added on top —
+    the exact reported bug (Monday: 6 correct night closers + 2 uncounted
+    doubles = 8) plus worse cases found in verification (10 on one night).
+
+    Only ever shortens a row's shift_end (never shift_start) — "cut early
+    when overstaffed" is already this restaurant's own stated convention
+    for servers (see hours_notes' SHIFT END / CLOSER RULES), not something
+    invented here. Priority for which row absorbs the cut, most to least
+    preferred: a row this file's own top-up/extension passes added (most
+    discretionary), then the later leg of a double shift (the specific
+    reported pattern), then whichever active row started latest (a
+    "last in, first cut" tiebreak). Removes a row outright if trimming it
+    below ~30min would leave a token sliver shift.
+
+    Returns (preview_rows, rows_trimmed, trimmed_dates).
+    """
+    by_date: dict = {}
+    for r in preview_rows:
+        if (r.get("role") or "").strip().lower() == "server":
+            by_date.setdefault(r.get("date"), []).append(r)
+
+    trimmed_dates: dict = {}
+    rows_trimmed = 0
+
+    for date, day_rows in by_date.items():
+        try:
+            day_name = __import__("datetime").datetime.strptime(date, "%Y-%m-%d").strftime("%A")
+        except (ValueError, TypeError):
+            day_name = None
+
+        # Which employees are working a double shift today (2+ rows) — the
+        # later of their rows (by start time) is the "carryover" leg.
+        rows_by_employee: dict = {}
+        for r in day_rows:
+            emp = r.get("employee")
+            if emp:
+                rows_by_employee.setdefault(emp, []).append(r)
+        double_shift_second_legs = set()
+        for emp, rows in rows_by_employee.items():
+            if len(rows) > 1:
+                rows_sorted = sorted(rows, key=lambda r: _parse_time_to_minutes(r.get("shift_start", "")) or 0)
+                for r in rows_sorted[1:]:
+                    double_shift_second_legs.add(id(r))
+
+        for _pass in range(20):  # bounded — one trim per pass, per day
+            peak, peak_time = _peak_server_overlap(day_rows)
+            if peak <= _SERVER_MAX_OVERLAP or peak_time is None:
+                break
+
+            active = []
+            for r in day_rows:
+                s = _parse_time_to_minutes(r.get("shift_start", ""))
+                e = _parse_time_to_minutes(r.get("shift_end", ""))
+                if s is not None and e is not None and s <= peak_time < e:
+                    active.append(r)
+
+            def _priority(r):
+                is_topup = "PAR hours top-up" in (r.get("notes") or "")
+                is_second_leg = id(r) in double_shift_second_legs
+                start = _parse_time_to_minutes(r.get("shift_start", "")) or 0
+                return (0 if is_topup else 1, 0 if is_second_leg else 1, -start)
+
+            candidate = min(active, key=_priority)
+            start_min = _parse_time_to_minutes(candidate.get("shift_start", ""))
+            if start_min is None:
+                break
+            new_end = peak_time
+            if new_end - start_min < 30:
+                day_rows.remove(candidate)
+                preview_rows.remove(candidate)
+            else:
+                candidate["shift_end"] = _format_minutes_to_time(new_end)
+                if day_name:
+                    _enforce_close_time(candidate, day_name, close_times, role_buffers)
+                final_end = _parse_time_to_minutes(candidate["shift_end"])
+                candidate["scheduled_hours"] = str(round((final_end - start_min) / 60, 1))
+                note = (candidate.get("notes") or "").strip()
+                candidate["notes"] = f"{note} (trimmed — over the 7-server cap)" if note else "trimmed — over the 7-server cap"
+
+            rows_trimmed += 1
+            trimmed_dates[date] = trimmed_dates.get(date, 0) + 1
+
+    return preview_rows, rows_trimmed, trimmed_dates
+
+
 def _run_schedule_job(job_id, restaurant_id):
     import csv as _csv_mod, io as _io_sched, traceback as _tb, datetime as _dt_sched
     try:
@@ -1707,6 +1826,7 @@ def _run_schedule_job(job_id, restaurant_id):
         hours_added = 0.0
         added_dates = {}
         extended_dates = {}
+        trimmed_dates = {}
         try:
             _COLS = ["date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes"]
             _csv_lines = result["schedule_csv"].split("\n")
@@ -1802,6 +1922,13 @@ def _run_schedule_job(job_id, restaurant_id):
                 hours_added = round(hours_added + hours_extended, 1)
                 print(f"[schedule] extension added {hours_extended}h across {extended_dates}")
 
+            preview_rows, rows_trimmed, trimmed_dates = _trim_server_overlap_cap(
+                preview_rows, _close_times, _role_close_buffers,
+            )
+            if rows_trimmed:
+                hours_scheduled = round(sum(float(r.get("scheduled_hours") or 0) for r in preview_rows), 1)
+                print(f"[schedule] trimmed {rows_trimmed} row(s) over the 7-server cap across {trimmed_dates}")
+
             # Rebuild schedule_csv from the (possibly repaired) rows so the
             # downloadable/shared CSV matches what the app displays instead
             # of shipping the pre-repair text out from under it.
@@ -1831,6 +1958,7 @@ def _run_schedule_job(job_id, restaurant_id):
                 hours_added_by_backstop=hours_added,
                 backstop_added_dates=added_dates,
                 backstop_extended_dates=extended_dates,
+                backstop_trimmed_dates=trimmed_dates,
             )
         }
     except Exception as e:
