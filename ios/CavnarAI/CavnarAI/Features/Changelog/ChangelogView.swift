@@ -3,12 +3,28 @@ import SwiftUI
 struct ChangelogView: View {
     @State private var viewModel = ChangelogViewModel()
 
+    // Own NavigationStack, not pushed onto a parent's — this is now
+    // presented as a sheet from AccountView (see its own comment for why:
+    // matches how every other modal in this app opens, sliding up from
+    // the bottom, instead of a horizontal push like the rest of Account's
+    // rows). NotificationsListView is the established precedent for this
+    // exact shape (List-style sheet, own NavigationStack + navigationTitle,
+    // no explicit close button — swipe-down-to-dismiss is this app's
+    // convention for every sheet).
     var body: some View {
+        NavigationStack {
         Group {
             if viewModel.entries.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
                 ContentUnavailableView("Nothing new yet", systemImage: "sparkles")
             } else if viewModel.isLoading && viewModel.entries.isEmpty {
+                // maxWidth/maxHeight matter here, not just centering — see
+                // AccountView/ModulesGridView's identical fix:
+                // .cavnarModuleBackground()'s wash sizes to whatever it's
+                // attached to, and a bare ProgressView hugging its own
+                // tiny size made it flash as a narrow rectangle instead of
+                // full-screen for the split second this state is visible.
                 ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = viewModel.errorMessage {
                 VStack(spacing: 8) {
                     Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
@@ -41,6 +57,8 @@ struct ChangelogView: View {
         }
         .cavnarModuleBackground()
         .navigationTitle("What's New")
+        .navigationBarTitleDisplayMode(.inline)
         .task { await viewModel.load() }
+        }
     }
 }

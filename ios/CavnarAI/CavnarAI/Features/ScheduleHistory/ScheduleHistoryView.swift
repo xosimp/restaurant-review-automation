@@ -32,12 +32,24 @@ struct ScheduleHistoryView: View {
         return f
     }()
 
+    // Own NavigationStack, not pushed onto a parent's — presented as a
+    // sheet from AccountView now (see its own comment), matching how
+    // every other modal in this app opens, sliding up from the bottom.
+    // ScheduleHistoryDetailView still pushes normally *within* this
+    // stack when a row is tapped — only the outermost presentation
+    // changed, drill-down navigation inside the sheet is unaffected.
     var body: some View {
+        NavigationStack {
         Group {
             if viewModel.history.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
                 ContentUnavailableView("No schedules generated yet", systemImage: "calendar.badge.clock")
             } else if viewModel.isLoading && viewModel.history.isEmpty {
+                // See ChangelogView/AccountView/ModulesGridView's identical
+                // fix — a bare ProgressView with no frame let
+                // .cavnarModuleBackground()'s wash flash as a narrow
+                // rectangle instead of full-screen.
                 ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = viewModel.errorMessage {
                 VStack(spacing: 8) {
                     Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
@@ -94,6 +106,7 @@ struct ScheduleHistoryView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(viewModel.deleteErrorMessage ?? "")
+        }
         }
     }
 

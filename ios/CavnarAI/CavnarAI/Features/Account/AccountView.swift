@@ -332,10 +332,19 @@ struct AccountView: View {
     // A durable server-side record of every generated schedule, reachable
     // here independent of the Labor tab's own client-side caching — see
     // ScheduleHistoryView's doc comment.
+    //
+    // Presented as a sheet now, not a NavigationLink push — matches how
+    // every other modal in this app opens (sliding up from the bottom),
+    // rather than the horizontal push every other row on this screen
+    // still correctly uses (this and What's New are the only two rows
+    // here that open a whole separate flow, not an in-place edit).
+    @State private var showingScheduleHistory = false
+
     @ViewBuilder
     private var scheduleHistorySection: some View {
-        NavigationLink {
-            ScheduleHistoryView()
+        Button {
+            Haptic.light()
+            showingScheduleHistory = true
         } label: {
             HStack {
                 Text("Schedule History").font(.cavnarBody(13, weight: 600))
@@ -345,16 +354,21 @@ struct AccountView: View {
         }
         .foregroundStyle(Color.cavnarInk)
         .cavnarCard()
+        .sheet(isPresented: $showingScheduleHistory) {
+            ScheduleHistoryView()
+        }
     }
 
     // MARK: - Changelog
 
     @State private var changelogBadge = ChangelogBadgeViewModel()
+    @State private var showingChangelog = false
 
     @ViewBuilder
     private var changelogSection: some View {
-        NavigationLink {
-            ChangelogView()
+        Button {
+            Haptic.light()
+            showingChangelog = true
         } label: {
             HStack {
                 Text("What's New").font(.cavnarBody(13, weight: 600))
@@ -374,6 +388,9 @@ struct AccountView: View {
         .foregroundStyle(Color.cavnarInk)
         .cavnarCard()
         .task { await changelogBadge.refresh() }
+        .sheet(isPresented: $showingChangelog) {
+            ChangelogView()
+        }
     }
 
     // MARK: - Sign out
