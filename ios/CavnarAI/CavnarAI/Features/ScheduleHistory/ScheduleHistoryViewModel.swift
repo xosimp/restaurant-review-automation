@@ -51,6 +51,27 @@ final class ScheduleHistoryViewModel {
             errorMessage = "Couldn't load schedule history."
         }
     }
+
+    private struct OkResponse: Decodable {
+        let ok: Bool
+        let error: String?
+    }
+
+    /// The only way a schedule ever leaves this list — nothing here or
+    /// server-side removes one automatically (see delete_schedule_history's
+    /// own doc comment). Removes locally on success rather than a full
+    /// reload, so swipe-to-delete's row-removal animation stays smooth.
+    func delete(id: Int) async {
+        do {
+            let _: OkResponse = try await client.send(
+                "/mobile/api/labor/schedule-history/\(id)", method: .delete
+            )
+            history.removeAll { $0.id == id }
+            Haptic.selection()
+        } catch {
+            errorMessage = "Couldn't delete that schedule."
+        }
+    }
 }
 
 /// Detail reuses GeneratedSchedule (defined in LaborViewModel.swift) —
@@ -69,12 +90,28 @@ final class ScheduleHistoryDetailViewModel {
         self.client = client
     }
 
+    // Tracks which id is currently loaded/loading so a second .task/
+    // onAppear firing for the same id (see ScheduleHistoryDetailView's
+    // belt-and-suspenders comment) is a harmless no-op instead of
+    // re-fetching or racing the first call.
+    private var loadedID: Int?
+
     func load(id: Int) async {
+        guard loadedID != id || (detail == nil && errorMessage == nil) else { return }
+        loadedID = id
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
         do {
-            detail = try await client.send("/mobile/api/labor/schedule-history/\(id)")
+            // Explicit non-optional local, not a direct assignment into
+            // the optional `detail` property — matches every other
+            // load() in this codebase (see LaborViewModel.pollSchedule).
+            // Assigning straight into an Optional-typed property lets the
+            // compiler infer send<Response>'s Response as GeneratedSchedule?
+            // instead of GeneratedSchedule, decoding the JSON as a
+            // top-level Optional rather than the concrete type.
+            let fetched: GeneratedSchedule = try await client.send("/mobile/api/labor/schedule-history/\(id)")
+            detail = fetched
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch {

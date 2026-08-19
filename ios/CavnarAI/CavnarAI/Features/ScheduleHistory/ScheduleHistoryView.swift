@@ -44,19 +44,39 @@ struct ScheduleHistoryView: View {
                     Button("Retry") { Task { await viewModel.load() } }
                 }
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(viewModel.history) { entry in
-                            NavigationLink {
-                                ScheduleHistoryDetailView(historyId: entry.id, weekLabel: weekLabel(entry))
+                // List, not a plain ScrollView+ForEach (every other module
+                // screen's convention) — .swipeActions only works inside a
+                // real List row, and swipe-to-delete is the ask here.
+                // Styling matches ReviewsListView's own List (see its
+                // comment): .listRowBackground(.clear) +
+                // .scrollContentBackground(.hidden) since a List row keeps
+                // an opaque background of its own otherwise.
+                List {
+                    ForEach(viewModel.history) { entry in
+                        NavigationLink {
+                            ScheduleHistoryDetailView(historyId: entry.id, weekLabel: weekLabel(entry))
+                        } label: {
+                            row(entry)
+                        }
+                        .foregroundStyle(Color.cavnarInk)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparatorTint(Color.cavnarPaper3)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 20))
+                        // Schedules never disappear on their own — this is
+                        // the only removal path, deliberately requiring an
+                        // explicit swipe, not a tap.
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                Haptic.light()
+                                Task { await viewModel.delete(id: entry.id) }
                             } label: {
-                                row(entry)
+                                Label("Delete", systemImage: "trash")
                             }
-                            .foregroundStyle(Color.cavnarInk)
                         }
                     }
-                    .padding(20)
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
         }
         .background(Color.cavnarPaper)

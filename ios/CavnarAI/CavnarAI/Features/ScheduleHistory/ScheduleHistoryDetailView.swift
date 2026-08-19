@@ -51,7 +51,30 @@ struct ScheduleHistoryDetailView: View {
         .background(Color.cavnarPaper)
         .navigationTitle(weekLabel)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // Same ShareLink(item:preview:) pattern as the Labor tab's own
+            // schedule export (LaborView.fullScheduleTable) — plain-text
+            // CSV content, not a written temp file, matching what already
+            // works there rather than introducing a second export
+            // mechanism. Ember-tinted icon for the "orange branded" ask.
+            if let csv = viewModel.detail?.scheduleCsv {
+                ToolbarItem(placement: .topBarTrailing) {
+                    ShareLink(item: csv, preview: SharePreview("Schedule — \(weekLabel).csv")) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.cavnarEmber)
+                    }
+                }
+            }
+        }
         .task { await viewModel.load(id: historyId) }
+        // Belt-and-suspenders alongside .task — the same fix LaborView
+        // needed for its own scheduleResult restore, tied to a signal
+        // that isn't dependent on SwiftUI reliably re-running .task for
+        // this specific push-from-NavigationLink case. load() itself is a
+        // no-op if this id is already loaded/loading, so this costs
+        // nothing on the common path where .task already handled it.
+        .onAppear { Task { await viewModel.load(id: historyId) } }
     }
 
     private func parHoursBanner(budget: Double, scheduled: Double) -> some View {
