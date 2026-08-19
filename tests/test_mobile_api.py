@@ -684,6 +684,64 @@ def test_schedule_status_unknown_job_returns_404(client, db_path):
     assert resp.status_code == 404
 
 
+def test_schedule_history_requires_auth(client):
+    resp = client.get("/mobile/api/labor/schedule-history")
+    assert resp.status_code == 401
+
+
+def test_schedule_history_detail_requires_auth(client):
+    resp = client.get("/mobile/api/labor/schedule-history/1")
+    assert resp.status_code == 401
+
+
+def test_schedule_history_lists_own_generations_newest_first(client, db_path):
+    from models import save_schedule_history
+    rid = _restaurant(db_path)
+    save_schedule_history(rid, "2026-08-10", "2026-08-16", 1200.0, 1300.0, 23.0,
+                           "date,day,employee\n2026-08-10,Monday,Jamie", ["Older week"], db_path=db_path)
+    save_schedule_history(rid, "2026-08-17", "2026-08-23", 1250.0, 1300.0, 23.0,
+                           "date,day,employee\n2026-08-17,Monday,Jamie", ["Newer week"], db_path=db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.get("/mobile/api/labor/schedule-history", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert len(data["history"]) == 2
+    assert data["history"][0]["week_start"] == "2026-08-17"  # newest first
+    assert "schedule_csv" not in data["history"][0]  # list is summary-only
+
+
+def test_schedule_history_detail_returns_parsed_preview_rows(client, db_path):
+    from models import save_schedule_history
+    rid = _restaurant(db_path)
+    history_id = save_schedule_history(
+        rid, "2026-08-17", "2026-08-23", 1250.0, 1300.0, 23.0,
+        "date,day,employee,role,shift_start,shift_end,scheduled_hours,notes\n"
+        "2026-08-17,Monday,Jamie L.,Server,10:00am,4:00pm,6,opener",
+        ["Balanced week"], db_path=db_path,
+    )
+    token = _login(client, db_path, rid)
+
+    resp = client.get(f"/mobile/api/labor/schedule-history/{history_id}", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["summary"] == ["Balanced week"]
+    assert data["preview_rows"][0]["employee"] == "Jamie L."
+    assert data["preview_rows"][0]["role"] == "Server"
+
+
+def test_schedule_history_detail_rejects_cross_tenant_id(client, db_path):
+    from models import save_schedule_history
+    rid_a = _restaurant(db_path, name="Restaurant A")
+    rid_b = _restaurant(db_path, name="Restaurant B")
+    history_id = save_schedule_history(rid_a, "2026-08-17", "2026-08-23", 1250.0, 1300.0, 23.0,
+                                        "date,day,employee\n2026-08-17,Monday,Jamie", [], db_path=db_path)
+    token_b = _login(client, db_path, rid_b, username="bob")
+
+    resp = client.get(f"/mobile/api/labor/schedule-history/{history_id}", headers=_auth_headers(token_b))
+    assert resp.status_code == 404
+
+
 def test_labor_endpoint_includes_new_analytics_fields(client, db_path):
     """Overview/Analytics tab parity fields — date_range, overstaffed/
     understaffed day lists, dow_summary (By Day chart), savings_breakdown

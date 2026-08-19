@@ -1812,6 +1812,120 @@ def _trim_server_overlap_cap(preview_rows: list, close_times: dict, role_buffers
     return preview_rows, rows_trimmed, trimmed_dates
 
 
+_PIZZA_MORNING_WINDOW = (_parse_time_to_minutes("11:30am"), _parse_time_to_minutes("1:30pm"))
+_PIZZA_NIGHT_WINDOW = (_parse_time_to_minutes("6:30pm"), _parse_time_to_minutes("8:30pm"))
+_PIZZA_BUSY_DAYS = {"Monday", "Friday", "Saturday", "Sunday"}  # matches the existing "Pizza Monday and weekends" scale-up already in hours_notes
+
+
+def _window_overlap(row: dict, window: tuple) -> bool:
+    s = _parse_time_to_minutes(row.get("shift_start", ""))
+    e = _parse_time_to_minutes(row.get("shift_end", ""))
+    return s is not None and e is not None and s < window[1] and e > window[0]
+
+
+def _ensure_pizza_cook_coverage(preview_rows: list, week_dates: list, week_days: list, restaurant_id: int,
+                                 close_times: dict, role_buffers: dict) -> tuple:
+    """Deterministic backstop for "always at least 1 Pizza Cook on, morning
+    and night, every day -- 2 on busy days" (Monday/weekends, matching the
+    existing dinner-service Pizza Cook scale-up already in hours_notes).
+    Same prompt-only rule was already in hours_notes and still missed
+    entirely on 2 of 7 days in live testing (Tuesday and Thursday mornings
+    both landed at zero) -- same plateau as every other per-daypart
+    headcount rule this session, now given the same deterministic
+    treatment as PAR-hours and the server cap.
+
+    Only ever adds a shift for someone who already works Pizza Cook
+    elsewhere this week, on a day/daypart they aren't already scheduled
+    for any role and haven't marked unavailable -- never invents an
+    employee. Times come from another Pizza Cook shift in the same
+    daypart this week when one exists, else a generous placeholder that
+    _enforce_close_time correctly bounds to that day's real close time.
+
+    Returns (preview_rows, rows_added, added_dates).
+    """
+    from models import get_staff_availability
+    import json as _json_avail
+
+    _avail_rows = get_staff_availability(restaurant_id) or []
+    unavailable_by_emp: dict = {}
+    available_by_emp: dict = {}
+    for a in _avail_rows:
+        name = a.get("employee_name")
+        if not name:
+            continue
+        try:
+            unavailable_by_emp[name] = set(_json_avail.loads(a.get("unavailable_days") or "[]"))
+        except Exception:
+            unavailable_by_emp[name] = set()
+        try:
+            avail = _json_avail.loads(a.get("available_days") or "[]")
+            if avail:
+                available_by_emp[name] = set(avail)
+        except Exception:
+            pass
+
+    pizza_cooks: set = set()
+    working_on_date: dict = {}
+    hours_by_employee: dict = {}
+    morning_template = None
+    night_template = None
+    for r in preview_rows:
+        emp, role, date = r.get("employee"), (r.get("role") or "").strip(), r.get("date")
+        if not (emp and date):
+            continue
+        working_on_date.setdefault(date, set()).add(emp)
+        try:
+            hours_by_employee[emp] = hours_by_employee.get(emp, 0.0) + float(r.get("scheduled_hours") or 0)
+        except (ValueError, TypeError):
+            pass
+        if role.lower() == "pizza cook":
+            pizza_cooks.add(emp)
+            if morning_template is None and _window_overlap(r, _PIZZA_MORNING_WINDOW):
+                morning_template = (r["shift_start"], r["shift_end"])
+            if night_template is None and _window_overlap(r, _PIZZA_NIGHT_WINDOW):
+                night_template = (r["shift_start"], r["shift_end"])
+
+    rows_added = 0
+    added_dates: dict = {}
+
+    for date, day_name in zip(week_dates, week_days):
+        target = 2 if day_name in _PIZZA_BUSY_DAYS else 1
+        for window, template, fallback in (
+            (_PIZZA_MORNING_WINDOW, morning_template, ("8:00am", "11:00pm")),
+            (_PIZZA_NIGHT_WINDOW, night_template, ("4:00pm", "11:00pm")),
+        ):
+            current = [r for r in preview_rows if r.get("date") == date
+                       and (r.get("role") or "").strip().lower() == "pizza cook" and _window_overlap(r, window)]
+            need = target - len(current)
+            for _ in range(max(0, need)):
+                pool = pizza_cooks - working_on_date.get(date, set())
+                pool = {e for e in pool
+                        if day_name not in unavailable_by_emp.get(e, set())
+                        and (e not in available_by_emp or day_name in available_by_emp[e])}
+                if not pool:
+                    break  # no real, available Pizza Cook left this week -- don't invent one
+                employee = min(pool, key=lambda e: hours_by_employee.get(e, 0.0))
+                start, end = template or fallback
+                new_row = {
+                    "date": date, "day": day_name, "employee": employee, "role": "Pizza Cook",
+                    "shift_start": start, "shift_end": end, "scheduled_hours": "0",
+                    "notes": "added — Pizza Cook coverage floor",
+                }
+                _enforce_close_time(new_row, day_name, close_times, role_buffers)
+                s_min = _parse_time_to_minutes(new_row["shift_start"])
+                e_min = _parse_time_to_minutes(new_row["shift_end"])
+                if new_row.get("needs_review") or s_min is None or e_min is None or e_min <= s_min:
+                    break
+                new_row["scheduled_hours"] = str(round((e_min - s_min) / 60, 1))
+                preview_rows.append(new_row)
+                working_on_date.setdefault(date, set()).add(employee)
+                hours_by_employee[employee] = hours_by_employee.get(employee, 0.0) + float(new_row["scheduled_hours"])
+                rows_added += 1
+                added_dates[date] = added_dates.get(date, 0) + 1
+
+    return preview_rows, rows_added, added_dates
+
+
 def _run_schedule_job(job_id, restaurant_id):
     import csv as _csv_mod, io as _io_sched, traceback as _tb, datetime as _dt_sched
     try:
@@ -1827,6 +1941,7 @@ def _run_schedule_job(job_id, restaurant_id):
         added_dates = {}
         extended_dates = {}
         trimmed_dates = {}
+        pizza_added_dates = {}
         try:
             _COLS = ["date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes"]
             _csv_lines = result["schedule_csv"].split("\n")
@@ -1903,6 +2018,14 @@ def _run_schedule_job(job_id, restaurant_id):
                     pass
             print(f"[schedule] parsed {len(preview_rows)} rows, first={preview_rows[0] if preview_rows else None}")
 
+            preview_rows, pizza_rows_added, pizza_added_dates = _ensure_pizza_cook_coverage(
+                preview_rows, result.get("week_dates", []), result.get("week_days", []),
+                restaurant_id, _close_times, _role_close_buffers,
+            )
+            if pizza_rows_added:
+                hours_scheduled = round(sum(float(r.get("scheduled_hours") or 0) for r in preview_rows), 1)
+                print(f"[schedule] pizza cook coverage added {pizza_rows_added} row(s) across {pizza_added_dates}")
+
             preview_rows, hours_added, added_dates = _top_up_hours_gap(
                 preview_rows, result.get("daily_target_hours", {}),
                 result.get("hours_budget", 0), hours_scheduled, restaurant_id,
@@ -1940,6 +2063,18 @@ def _run_schedule_job(job_id, restaurant_id):
         except Exception as _csv_ex:
             print(f"[schedule] csv parse error: {_csv_ex}")
             pass
+
+        try:
+            from models import save_schedule_history
+            _wd = result.get("week_dates", [])
+            save_schedule_history(
+                restaurant_id, _wd[0] if _wd else None, _wd[-1] if _wd else None,
+                round(hours_scheduled, 1), result.get("hours_budget", 0), result.get("labor_target", 30),
+                result["schedule_csv"], result.get("summary", []),
+            )
+        except Exception as _hist_ex:
+            print(f"[schedule history] save error: {_hist_ex}")
+
         _schedule_jobs[job_id] = {
             "status": "done",
             "result": dict(
@@ -1959,6 +2094,7 @@ def _run_schedule_job(job_id, restaurant_id):
                 backstop_added_dates=added_dates,
                 backstop_extended_dates=extended_dates,
                 backstop_trimmed_dates=trimmed_dates,
+                backstop_pizza_added_dates=pizza_added_dates,
             )
         }
     except Exception as e:

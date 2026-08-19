@@ -2235,6 +2235,82 @@ def get_labor_history(restaurant_id: int, limit: int = 4,
     return [dict(r) for r in rows]
 
 
+def save_schedule_history(restaurant_id: int, week_start: str, week_end: str,
+                           hours_scheduled: float, hours_budget: float, labor_target: float,
+                           schedule_csv: str, summary: list, db_path: str = DB_PATH) -> int:
+    """Persists every generated schedule permanently, independent of
+    whatever the mobile app's own client-side caching does — a durable
+    record on the Account tab's Schedule History screen that survives
+    regardless of any iOS view-state bug, rather than depending on getting
+    every layer of client caching right. Returns the new row's id.
+    """
+    import json as _json_sh
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS schedule_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id INTEGER NOT NULL,
+        generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        week_start TEXT,
+        week_end TEXT,
+        hours_scheduled REAL,
+        hours_budget REAL,
+        labor_target REAL,
+        schedule_csv TEXT,
+        summary_json TEXT
+    )""")
+    cur = conn.execute("""
+        INSERT INTO schedule_history
+            (restaurant_id, week_start, week_end, hours_scheduled, hours_budget, labor_target, schedule_csv, summary_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (restaurant_id, week_start, week_end, hours_scheduled, hours_budget, labor_target,
+          schedule_csv, _json_sh.dumps(summary or [])))
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return new_id
+
+
+def get_schedule_history(restaurant_id: int, limit: int = 30, db_path: str = DB_PATH) -> list:
+    """Summary rows only (no schedule_csv) for the history list screen —
+    keeps the list payload light; fetch the full record via
+    get_schedule_history_detail() once a specific entry is tapped."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT id, generated_at, week_start, week_end, hours_scheduled, hours_budget, labor_target
+            FROM schedule_history WHERE restaurant_id=?
+            ORDER BY generated_at DESC, id DESC LIMIT ?
+        """, (restaurant_id, limit)).fetchall()
+    except Exception:
+        rows = []  # table doesn't exist yet -- no schedule has ever been generated
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_schedule_history_detail(history_id: int, restaurant_id: int, db_path: str = DB_PATH):
+    """Full record including schedule_csv, scoped to restaurant_id so one
+    tenant can never read another's by guessing an id — returns None on a
+    missing id or an id that belongs to a different restaurant, treating
+    both the same to avoid confirming which ids exist for other tenants."""
+    import json as _json_sh
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("""
+            SELECT * FROM schedule_history WHERE id=? AND restaurant_id=?
+        """, (history_id, restaurant_id)).fetchone()
+    except Exception:
+        row = None
+    conn.close()
+    if not row:
+        return None
+    d = dict(row)
+    try:
+        d["summary"] = _json_sh.loads(d.pop("summary_json") or "[]")
+    except Exception:
+        d["summary"] = []
+    return d
+
+
 def get_role_rates(restaurant_id: int, db_path: str = DB_PATH) -> dict:
     """Return per-role hourly rates dict. Falls back to flat hourly_rate for any missing role."""
     import json as _json

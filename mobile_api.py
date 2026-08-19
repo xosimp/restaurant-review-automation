@@ -1110,6 +1110,48 @@ def mobile_schedule_status(job_id, current_user):
         return jsonify(ok=False, status="error", error=str(e)), 500
 
 
+@mobile_bp.route("/labor/schedule-history")
+@mobile_login_required
+def mobile_schedule_history(current_user):
+    """Every schedule this restaurant has ever generated, newest first —
+    a durable server-side record on the Account tab, independent of
+    whatever the Labor tab's own client-side caching does."""
+    from models import get_schedule_history
+    try:
+        history = get_schedule_history(current_user["restaurant_id"])
+        return jsonify(ok=True, history=history)
+    except Exception as e:
+        return jsonify(ok=False, history=[], error=str(e)), 500
+
+
+@mobile_bp.route("/labor/schedule-history/<int:history_id>")
+@mobile_login_required
+def mobile_schedule_history_detail(history_id, current_user):
+    """Full record for one past generation, including the CSV parsed into
+    preview_rows the same shape the Labor tab's own schedule result uses
+    (so the iOS detail screen can reuse the same row-rendering component).
+    Scoped to current_user's restaurant_id — get_schedule_history_detail()
+    returns None for an id that belongs to a different tenant, same as a
+    genuinely missing id, rather than confirming which ids exist."""
+    from models import get_schedule_history_detail
+    detail = get_schedule_history_detail(history_id, current_user["restaurant_id"])
+    if not detail:
+        return jsonify(ok=False, error="Not found"), 404
+
+    _COLS = ["date", "day", "employee", "role", "shift_start", "shift_end", "scheduled_hours", "notes"]
+    preview_rows = []
+    for _line in (detail.get("schedule_csv") or "").split("\n")[1:]:
+        _line = _line.strip()
+        if not _line:
+            continue
+        _parts = _line.split(",", 7)
+        if len(_parts) < 6:
+            continue
+        preview_rows.append({_COLS[i]: _parts[i].strip() for i in range(min(len(_parts), 8))})
+
+    return jsonify(ok=True, **detail, preview_rows=preview_rows)
+
+
 @mobile_bp.route("/labor/availability")
 @mobile_login_required
 def mobile_labor_availability(current_user):
