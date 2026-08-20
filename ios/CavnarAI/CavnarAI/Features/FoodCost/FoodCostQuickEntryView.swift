@@ -109,6 +109,15 @@ struct FoodCostQuickEntryView: View {
     }
 }
 
+/// Which field, on which card, currently has focus — lives here (not
+/// inside IngredientCard) so "Add ingredient" can drive focus onto a
+/// specific new card's name field from outside it, and so one shared
+/// keyboard-dismiss toolbar covers every card instead of each row needing
+/// its own.
+private enum CarouselField: Hashable {
+    case name(UUID), unit(UUID), price(UUID), usage(UUID)
+}
+
 /// A fixed-height window showing 3 ingredient cards at a time, scrolling
 /// through the rest — not a plain full-length list. Cards crossing the
 /// window's top edge fade/scale/blur away as they exit; cards rising into
@@ -127,6 +136,8 @@ private struct IngredientCarousel: View {
     private let visibleCardCount: CGFloat = 3
     private let verticalInset: CGFloat = 14
 
+    @FocusState private var focusedField: CarouselField?
+
     private var windowHeight: CGFloat {
         cardHeight * visibleCardCount + cardSpacing * (visibleCardCount - 1) + verticalInset * 2
     }
@@ -137,7 +148,7 @@ private struct IngredientCarousel: View {
                 ScrollView(showsIndicators: false) {
                     LazyVStack(spacing: cardSpacing) {
                         ForEach($items) { $item in
-                            IngredientCard(item: $item, height: cardHeight) {
+                            IngredientCard(item: $item, height: cardHeight, focusedField: $focusedField) {
                                 Haptic.selection()
                                 withAnimation(.easeOut(duration: 0.22)) {
                                     items.removeAll { $0.id == item.id }
@@ -145,12 +156,19 @@ private struct IngredientCarousel: View {
                             }
                             .id(item.id)
                             .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                            // Toned down from the first pass — opacity/blur
+                            // dropping too far at the edges, on top of each
+                            // card's own gradient already fading toward
+                            // transparent there, read as the cards
+                            // smearing into a dark blur rather than gently
+                            // dissolving.
                             .scrollTransition(.interactive(timingCurve: .easeInOut), axis: .vertical) { content, phase in
+                                let d = min(abs(phase.value), 1)
                                 return content
-                                    .opacity(1 - min(abs(phase.value), 1) * 0.92)
-                                    .scaleEffect(1 - min(abs(phase.value), 1) * 0.1)
-                                    .blur(radius: min(abs(phase.value), 1) * 2.5)
-                                    .offset(y: phase.value * 22)
+                                    .opacity(1 - d * 0.55)
+                                    .scaleEffect(1 - d * 0.06)
+                                    .blur(radius: d * 1.2)
+                                    .offset(y: phase.value * 16)
                             }
                         }
                     }
@@ -159,24 +177,56 @@ private struct IngredientCarousel: View {
                 .frame(height: windowHeight)
                 // Soft top/bottom dissolve instead of a hard clip edge —
                 // reinforces the scrollTransition fade rather than cutting
-                // cards off mid-fade right at the window boundary.
+                // cards off mid-fade right at the window boundary. Floored
+                // at 0.5 alpha (not fully clear) and a wider stable zone
+                // (22%–78%, was 10%–88%) so edge cards stay legibly dimmed
+                // instead of nearly vanishing — same "too much" fix as the
+                // scrollTransition above.
                 .mask(
                     LinearGradient(
                         stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.1),
-                            .init(color: .black, location: 0.88),
-                            .init(color: .clear, location: 1),
+                            .init(color: .black.opacity(0.5), location: 0),
+                            .init(color: .black, location: 0.22),
+                            .init(color: .black, location: 0.78),
+                            .init(color: .black.opacity(0.5), location: 1),
                         ],
                         startPoint: .top, endPoint: .bottom
                     )
                 )
+                // A visible hint that this window scrolls — same SWIPE +
+                // arrow language as Home's NeedsAttentionCarousel, rotated
+                // to point down since this carousel is vertical. Sits above
+                // the mask (applied after it in the chain) so it's never
+                // itself faded, and only shows once there's actually more
+                // than the default 3 to reveal.
+                .overlay(alignment: .topTrailing) {
+                    if items.count > Int(visibleCardCount) {
+                        HStack(spacing: 4) {
+                            Text("SWIPE")
+                                .font(.cavnarBody(9, weight: 700))
+                                .tracking(1.5)
+                            Image(systemName: "arrow.down")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundStyle(Color.cavnarEmber2.opacity(0.8))
+                        .padding(.top, 4)
+                        .padding(.trailing, 6)
+                    }
+                }
 
                 Button {
                     Haptic.light()
                     let newItem = onAddRow()
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                        proxy.scrollTo(newItem.id, anchor: .bottom)
+                    // completionCriteria: .logicallyComplete (not the
+                    // default) fires `completion` once the scroll's real
+                    // motion settles, not the instant the animation block
+                    // returns — focusing the field any earlier would ask
+                    // for focus on a row that hasn't scrolled into place
+                    // yet.
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.85), completionCriteria: .logicallyComplete) {
+                        proxy.scrollTo(newItem.id, anchor: .center)
+                    } completion: {
+                        focusedField = .name(newItem.id)
                     }
                 } label: {
                     HStack(spacing: 6) {
@@ -195,6 +245,18 @@ private struct IngredientCarousel: View {
                 )
             }
         }
+        // decimalPad has no built-in Done key — without this there was no
+        // way to dismiss the keyboard short of navigating away entirely.
+        // One shared bar covers every card's price/usage/name/unit field
+        // since focusedField lives here, not per-card.
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { focusedField = nil }
+                    .font(.cavnarBody(14, weight: 600))
+                    .foregroundStyle(Color.cavnarEmber)
+            }
+        }
     }
 }
 
@@ -206,32 +268,42 @@ private struct IngredientCarousel: View {
 private struct IngredientCard: View {
     @Binding var item: FoodCostItem
     let height: CGFloat
+    var focusedField: FocusState<CarouselField?>.Binding
     var onDelete: () -> Void
 
-    private enum Field { case name, unit, price, usage }
-    @FocusState private var focusedField: Field?
+    private var isNameFocused: Bool { focusedField.wrappedValue == .name(item.id) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                TextField("Ingredient name", text: $item.name)
-                    .font(.cavnarHeadline(17, weight: .semiBold))
-                    .foregroundStyle(Color.cavnarInk)
-                    .lineLimit(1)
-                    .focused($focusedField, equals: .name)
-                Spacer(minLength: 8)
+            HStack(alignment: .bottom, spacing: 8) {
+                // A hairline underline that lights up ember on focus —
+                // same convention as CavnarFloatingField everywhere else
+                // in the app — is what actually signals "this is editable"
+                // at a glance; a plain TextField with no chrome reads
+                // identically to static Text until someone happens to tap it.
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField("Ingredient name", text: $item.name)
+                        .font(.cavnarHeadline(17, weight: .semiBold))
+                        .foregroundStyle(Color.cavnarInk)
+                        .lineLimit(1)
+                        .focused(focusedField, equals: .name(item.id))
+                    Rectangle()
+                        .fill(isNameFocused ? Color.cavnarEmber2 : Color.cavnarInk.opacity(0.3))
+                        .frame(height: isNameFocused ? 1.5 : 1)
+                }
                 TextField("unit", text: $item.unit)
                     .font(.cavnarBody(10, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                     .tracking(0.4)
                     .multilineTextAlignment(.center)
                     .frame(width: 38)
-                    .focused($focusedField, equals: .unit)
+                    .focused(focusedField, equals: .unit(item.id))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 5)
                     .background(Color.black.opacity(0.35))
                     .overlay(Capsule().strokeBorder(Color.cavnarInk.opacity(0.18), lineWidth: 1))
                     .clipShape(Capsule())
+                    .padding(.bottom, 2)
                 Button(action: onDelete) {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .bold))
@@ -239,10 +311,11 @@ private struct IngredientCard: View {
                         .frame(width: 22, height: 22)
                         .background(Color.black.opacity(0.3), in: Circle())
                 }
+                .padding(.bottom, 1)
             }
             HStack(spacing: 24) {
-                statField(label: "PRICE", prefix: "$", text: $item.priceText, field: .price)
-                statField(label: "USED / WK", prefix: nil, text: $item.usageText, field: .usage)
+                statField(label: "PRICE", prefix: "$", text: $item.priceText, field: .price(item.id))
+                statField(label: "USED / WK", prefix: nil, text: $item.usageText, field: .usage(item.id))
                 Spacer(minLength: 0)
             }
         }
@@ -263,7 +336,7 @@ private struct IngredientCard: View {
         .shadow(color: .black.opacity(0.4), radius: 8, x: 0, y: 5)
     }
 
-    private func statField(label: String, prefix: String?, text: Binding<String>, field: Field) -> some View {
+    private func statField(label: String, prefix: String?, text: Binding<String>, field: CarouselField) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
                 .font(.cavnarBody(8.5, weight: 700))
@@ -279,7 +352,7 @@ private struct IngredientCard: View {
                     .keyboardType(.decimalPad)
                     .font(.cavnarNumber(17, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
-                    .focused($focusedField, equals: field)
+                    .focused(focusedField, equals: field)
                     .fixedSize()
             }
         }
