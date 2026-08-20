@@ -184,6 +184,13 @@ struct HomeView: View {
                     // and module tiles, which never had this problem because
                     // they already use a stripped-chrome button style.
                     .buttonStyle(.plain)
+                    // The ember ring around this icon was RootView's
+                    // app-wide .tint(cavnarEmber) reaching the system's own
+                    // automatic Liquid Glass toolbar-button background, not
+                    // anything drawn here — that background already looks
+                    // right on its own; .tint(nil) just stops it inheriting
+                    // an orange tint it was never meant to have.
+                    .tint(nil)
                 }
                 if sessionStore.currentUser?.isOwner == true {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -194,6 +201,7 @@ struct HomeView: View {
                             Image(systemName: "building.2")
                         }
                         .buttonStyle(.plain)
+                        .tint(nil)
                     }
                 }
             }

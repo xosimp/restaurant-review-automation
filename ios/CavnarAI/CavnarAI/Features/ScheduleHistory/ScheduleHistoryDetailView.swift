@@ -132,6 +132,12 @@ struct ScheduleHistoryDetailView: View {
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Color.cavnarEmber)
                     }
+                    // The ember ring here was RootView's app-wide
+                    // .tint(cavnarEmber) reaching the system's own
+                    // automatic Liquid Glass toolbar-button background —
+                    // .tint(nil) stops it inheriting an orange tint that
+                    // background already looks right without.
+                    .tint(nil)
                 } else {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 15, weight: .semibold))

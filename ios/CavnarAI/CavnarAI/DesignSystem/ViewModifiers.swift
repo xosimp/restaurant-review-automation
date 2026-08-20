@@ -382,6 +382,15 @@ private struct CavnarEmberBackButton: ViewModifier {
                             .foregroundStyle(Color.cavnarEmber)
                     }
                     .buttonStyle(.plain)
+                    // The system's own automatic Liquid Glass button
+                    // background already looks right on its own — the
+                    // ember ring/circle here was never drawn by this
+                    // view, it was RootView's app-wide .tint(cavnarEmber)
+                    // bleeding into that automatic glass surface. .tint(nil)
+                    // stops this one button from inheriting it, so the
+                    // glass renders neutral while the chevron glyph itself
+                    // stays ember.
+                    .tint(nil)
                 }
             }
     }
@@ -455,6 +464,12 @@ private struct CavnarTabSwipeNavigation<Tab: Equatable>: ViewModifier {
                             .foregroundStyle(Color.cavnarEmber)
                     }
                     .buttonStyle(.plain)
+                    // See CavnarEmberBackButton's identical comment — the
+                    // ring/circle here is RootView's app-wide
+                    // .tint(cavnarEmber) reaching the system's own
+                    // automatic Liquid Glass background, not anything
+                    // this view draws itself.
+                    .tint(nil)
                 }
             }
             // .simultaneousGesture (not .gesture) so this never steals a
