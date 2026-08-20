@@ -36,6 +36,7 @@ struct ReviewsListView: View {
         .navigationTitle("Reviews")
         .navigationBarTitleDisplayMode(.inline)
         .cavnarEmberBackButton()
+        .cavnarSwipeToAnalytics($subTab, analyticsTab: .analytics)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {

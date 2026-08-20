@@ -395,3 +395,42 @@ extension View {
         )
     }
 }
+
+/// The left-swipe counterpart to the system's own swipe-right-to-go-back
+/// gesture (see InteractivePopGestureEnabler above) — every module screen
+/// with a Tracker/Inbox/Overview + Analytics CavnarSegmentedControl gets
+/// this so jumping to that module's Analytics tab is a one-handed gesture
+/// from anywhere on screen, not just a small tap target at the top.
+private struct CavnarSwipeToAnalytics<Tab: Equatable>: ViewModifier {
+    @Binding var selection: Tab
+    let analyticsTab: Tab
+
+    func body(content: Content) -> some View {
+        content.simultaneousGesture(
+            // .simultaneousGesture (not .gesture) so this never steals a
+            // touch from something more specific already handling it — a
+            // ScrollView's own pan, a card's own hold gesture, a button's
+            // tap — this only acts in onEnded, once the FULL gesture is
+            // already known to have been a clearly horizontal, clearly
+            // leftward drag, not a vertical scroll that happened to drift
+            // a little sideways.
+            DragGesture(minimumDistance: 40)
+                .onEnded { value in
+                    guard value.translation.width < -60,
+                          abs(value.translation.width) > abs(value.translation.height) * 1.5,
+                          selection != analyticsTab
+                    else { return }
+                    Haptic.light()
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selection = analyticsTab
+                    }
+                }
+        )
+    }
+}
+
+extension View {
+    func cavnarSwipeToAnalytics<Tab: Equatable>(_ selection: Binding<Tab>, analyticsTab: Tab) -> some View {
+        modifier(CavnarSwipeToAnalytics(selection: selection, analyticsTab: analyticsTab))
+    }
+}
