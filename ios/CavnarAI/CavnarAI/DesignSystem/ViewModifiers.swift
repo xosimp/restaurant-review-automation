@@ -215,6 +215,56 @@ extension View {
     }
 }
 
+/// THE actual fix for every "toolbar icon looks wrong" symptom this app
+/// has hit — the oversized/double-wrapped back-button circle, the Done
+/// button clipped down to a single "D", the faded-glass-with-asymmetric-
+/// orange-edge look before that. All of it traced to one real mechanism,
+/// confirmed against Apple's own documentation (not guessed): on iOS 26+,
+/// `ToolbarItem`/`ToolbarItemGroup` content is automatically wrapped in a
+/// SHARED glass background at the toolbar-group level — a system behavior
+/// entirely separate from the inner content's own button style, which is
+/// exactly why .buttonStyle(.plain) and .tint(nil) never fully fixed
+/// anything: they don't touch this layer at all. That automatic wrapper
+/// composited on top of this app's own explicit cavnarToolbarIconGlass()/
+/// cavnarToolbarPillGlass() content, doubling up sizing/clipping (the
+/// oversized circle, the "D") and, before those existed, showing the
+/// page's own background bleeding through unevenly (the orange edge).
+///
+/// `.sharedBackgroundVisibility(.hidden)` (SwiftUI, iOS 26+, declared on
+/// ToolbarContent — https://developer.apple.com/documentation/swiftui/toolbarcontent/sharedbackgroundvisibility(_:))
+/// is Apple's own, documented way to opt a toolbar item out of that
+/// automatic wrapper. This helper applies it wherever available and
+/// no-ops on iOS 17-25 (nothing to hide there — the automatic shared-glass
+/// grouping is an iOS 26+ concept), so cavnarToolbarIconGlass()/
+/// cavnarToolbarPillGlass() are finally the ONLY chrome being applied,
+/// with nothing left compositing on top of them.
+@ToolbarContentBuilder
+func cavnarToolbarItem<Content: View>(
+    placement: ToolbarItemPlacement, @ViewBuilder content: () -> Content
+) -> some ToolbarContent {
+    if #available(iOS 26.0, *) {
+        ToolbarItem(placement: placement, content: content)
+            .sharedBackgroundVisibility(.hidden)
+    } else {
+        ToolbarItem(placement: placement, content: content)
+    }
+}
+
+/// Same as cavnarToolbarItem, for a ToolbarItemGroup (the keyboard's
+/// Done button sits in one alongside a Spacer, not a standalone
+/// ToolbarItem).
+@ToolbarContentBuilder
+func cavnarToolbarItemGroup<Content: View>(
+    placement: ToolbarItemPlacement, @ViewBuilder content: () -> Content
+) -> some ToolbarContent {
+    if #available(iOS 26.0, *) {
+        ToolbarItemGroup(placement: placement, content: content)
+            .sharedBackgroundVisibility(.hidden)
+    } else {
+        ToolbarItemGroup(placement: placement, content: content)
+    }
+}
+
 /// Deliberately light — a faint tint fill plus a hairline border communicates
 /// grouping without the flat, blocky "everything is a solid box" look. Mirrors
 /// how Raycast/Apple's HIG signal elevation in dark mode: a subtle border
@@ -431,7 +481,7 @@ private struct CavnarEmberBackButton: ViewModifier {
             .navigationBarBackButtonHidden(true)
             .background(InteractivePopGestureEnabler().frame(width: 0, height: 0))
             .toolbar {
-                ToolbarItem(placement: .navigation) {
+                cavnarToolbarItem(placement: .navigation) {
                     Button {
                         dismiss()
                     } label: {
@@ -501,7 +551,7 @@ private struct CavnarTabSwipeNavigation<Tab: Equatable>: ViewModifier {
             .navigationBarBackButtonHidden(true)
             .background(InteractivePopGestureEnabler(isEnabled: !isOnSecondary).frame(width: 0, height: 0))
             .toolbar {
-                ToolbarItem(placement: .navigation) {
+                cavnarToolbarItem(placement: .navigation) {
                     Button {
                         Haptic.light()
                         if isOnSecondary {

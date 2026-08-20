@@ -145,7 +145,7 @@ struct HomeView: View {
             // building icons instead of a flat bar sitting over it.
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                cavnarToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Haptic.light()
                         Task {
@@ -194,7 +194,7 @@ struct HomeView: View {
                     .tint(nil)
                 }
                 if sessionStore.currentUser?.isOwner == true {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    cavnarToolbarItem(placement: .topBarTrailing) {
                         Button {
                             Haptic.light()
                             showingLocationSwitcher = true

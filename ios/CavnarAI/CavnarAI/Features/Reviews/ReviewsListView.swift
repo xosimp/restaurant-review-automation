@@ -37,7 +37,7 @@ struct ReviewsListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .cavnarTabSwipeNavigation($subTab, primaryTab: .inbox, secondaryTab: .analytics)
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            cavnarToolbarItem(placement: .navigationBarTrailing) {
                 Button {
                     showingSendRequest = true
                 } label: {

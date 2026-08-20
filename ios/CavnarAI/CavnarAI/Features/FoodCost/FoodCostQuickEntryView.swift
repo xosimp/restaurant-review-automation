@@ -322,7 +322,14 @@ private struct IngredientCarousel: View {
                 // by a few points no matter how much top padding it got,
                 // since the card itself starts rendering right at the
                 // window's edge.
-                if items.count > Int(visibleCardCount) {
+                // Hidden while a field is focused — not just tidiness:
+                // this is real vertical space, and freeing it is what
+                // lets the outer page push the carousel that much higher
+                // above the keyboard for the exact card someone's
+                // actively editing. The hint's whole job is discoverability
+                // before interacting; it has nothing left to say once
+                // someone's already mid-edit.
+                if items.count > Int(visibleCardCount), focusedField == nil {
                     HStack(spacing: 4) {
                         Spacer()
                         Text("SWIPE")
@@ -333,6 +340,7 @@ private struct IngredientCarousel: View {
                     }
                     .foregroundStyle(Color.cavnarEmber2.opacity(0.8))
                     .padding(.trailing, 4)
+                    .transition(.opacity)
                 }
 
                 ScrollView(showsIndicators: false) {
@@ -427,7 +435,9 @@ private struct IngredientCarousel: View {
                         // avoidance keeps the field clear of the keyboard.
                         Task { @MainActor in
                             try? await Task.sleep(nanoseconds: 450_000_000)
-                            focusedField = .name(newItem.id)
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                focusedField = .name(newItem.id)
+                            }
                         }
                     }
                 } label: {
@@ -452,18 +462,18 @@ private struct IngredientCarousel: View {
         // One shared bar covers every card's price/usage/name/unit field
         // since focusedField lives here, not per-card.
         //
-        // cavnarToolbarPillGlass() (see ViewModifiers.swift) — an earlier
-        // version here used a flat custom .background() capsule, which
-        // fought the system's own automatic Liquid Glass keyboard chrome
-        // into a clipped double-pill mess; a later version dropped the
-        // custom background entirely and relied on that automatic chrome
-        // alone, which turned out to be genuinely translucent and showed
-        // whatever's behind it (this page's own ember wash) bleeding
-        // through unevenly once scrolled. An explicit, deliberately-tinted
-        // glass is what's actually predictable regardless of scroll
-        // position — same fix as every other toolbar button in this app.
+        // cavnarToolbarPillGlass() + cavnarToolbarItemGroup() (see
+        // ViewModifiers.swift's cavnarToolbarItem doc comment for the
+        // full root-cause writeup, confirmed against Apple's own docs):
+        // iOS 26+ wraps ToolbarItemGroup content in its own automatic
+        // SHARED glass background at the group level, entirely separate
+        // from .buttonStyle — that's what was compositing with this
+        // button's own styling and clipping "Done" down to just "D".
+        // cavnarToolbarItemGroup applies .sharedBackgroundVisibility(.hidden)
+        // to opt out of that automatic wrapper, so cavnarToolbarPillGlass()
+        // is finally the only chrome actually being applied.
         .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
+            cavnarToolbarItemGroup(placement: .keyboard) {
                 Spacer()
                 Button("Done") { focusedField = nil }
                     .font(.cavnarBody(14, weight: 700))

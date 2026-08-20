@@ -125,7 +125,7 @@ struct ScheduleHistoryDetailView: View {
             // ShareLink until there's something to share removes that
             // pop-in; nothing about the toolbar's layout changes once
             // loading finishes; only the icon's opacity and function do.
-            ToolbarItem(placement: .topBarTrailing) {
+            cavnarToolbarItem(placement: .topBarTrailing) {
                 if let csv = viewModel.detail?.scheduleCsv {
                     ShareLink(item: csv, preview: SharePreview("Schedule — \(weekLabel).csv")) {
                         Image(systemName: "square.and.arrow.up")
