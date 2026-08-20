@@ -201,8 +201,7 @@ struct LaborView: View {
         }
         .navigationTitle("Labor")
         .navigationBarTitleDisplayMode(.inline)
-        .cavnarEmberBackButton()
-        .cavnarSwipeToAnalytics($subTab, analyticsTab: .analytics)
+        .cavnarTabSwipeNavigation($subTab, primaryTab: .overview, secondaryTab: .analytics)
         .task {
             // Loaded synchronously from disk before either network call —
             // shows the last known schedule/insight immediately on a fresh

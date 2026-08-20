@@ -30,11 +30,12 @@ struct FoodCostQuickEntryView: View {
         .cavnarModuleBackground()
         .navigationTitle("Food Cost")
         .navigationBarTitleDisplayMode(.inline)
-        .cavnarEmberBackButton()
-        // The left-swipe counterpart to the system's own swipe-right-to-
-        // go-back gesture — jumps straight to this module's Analytics tab
-        // from anywhere on screen, same as every other module.
-        .cavnarSwipeToAnalytics($subTab, analyticsTab: .analytics)
+        // Replaces the plain cavnarEmberBackButton() — swipe left anywhere
+        // jumps to Analytics; swipe right or tap back while on Analytics
+        // returns to Tracker first, and only leaves the module once
+        // already there. See the modifier's own doc comment for why this
+        // needs to own the back chevron/gesture too, not just add a swipe.
+        .cavnarTabSwipeNavigation($subTab, primaryTab: .tracker, secondaryTab: .analytics)
         .overlay(alignment: .top) { successToast }
         .task {
             await analyticsViewModel.load()
@@ -120,6 +121,13 @@ struct FoodCostQuickEntryView: View {
                 }
             }
             .padding(20)
+            // Extra bottom breathing room specifically so the outer
+            // ScrollView's own automatic keyboard-avoidance (which pushes
+            // scrollable content up to keep a focused field visible) has
+            // somewhere to push the carousel TO — without slack content
+            // below it, that avoidance runs out of room to work with once
+            // the carousel is already near the bottom of the page.
+            .padding(.bottom, 260)
         }
     }
 
@@ -363,8 +371,19 @@ private struct IngredientCarousel: View {
                     // themselves. Dispatching to the next tick lets that
                     // render happen first, so the id actually resolves.
                     DispatchQueue.main.async {
+                        // .top, not .center — the carousel's own window is
+                        // a fixed height that knows nothing about the
+                        // keyboard, so centering the card within THAT
+                        // window doesn't guarantee clearance from the
+                        // keyboard covering the BOTTOM of the actual
+                        // screen. Anchoring to the window's top instead
+                        // leaves the other ~2 card-heights of window below
+                        // it as buffer, and the outer page ScrollView's
+                        // own bottom padding (below) gives the system's
+                        // keyboard-avoidance room to push the whole
+                        // carousel further up still.
                         withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                            proxy.scrollTo(newItem.id, anchor: .center)
+                            proxy.scrollTo(newItem.id, anchor: .top)
                         }
                         // Same reasoning as the scroll above for why this
                         // is a fixed delay rather than an animation
@@ -398,17 +417,32 @@ private struct IngredientCarousel: View {
         // decimalPad has no built-in Done key — without this there was no
         // way to dismiss the keyboard short of navigating away entirely.
         // One shared bar covers every card's price/usage/name/unit field
-        // since focusedField lives here, not per-card. Bottom padding on
-        // the button itself (not a wrapping HStack — that stretched the
-        // whole accessory bar's height/width) is what actually creates
-        // gap between the button and the keyboard's top edge below it.
+        // since focusedField lives here, not per-card.
+        //
+        // .buttonStyle(.plain) + an explicit background pill of our own —
+        // a bare Button("Done") with no style gets automatically wrapped
+        // in the system's own Liquid Glass pill on iOS 26, with its own
+        // internal padding this view has no control over (that's the
+        // "wonky, not symmetrical" look — it was never this view's
+        // padding, it was the system's). .plain strips that entirely, so
+        // every pixel of this pill's padding/spacing-from-keyboard is
+        // actually ours.
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("Done") { focusedField = nil }
-                    .font(.cavnarBody(14, weight: 700))
-                    .foregroundStyle(Color.cavnarEmber)
-                    .padding(.bottom, 8)
+                Button {
+                    focusedField = nil
+                } label: {
+                    Text("Done")
+                        .font(.cavnarBody(14, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.cavnarPaper2, in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.cavnarEmber.opacity(0.35), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, 10)
             }
         }
     }

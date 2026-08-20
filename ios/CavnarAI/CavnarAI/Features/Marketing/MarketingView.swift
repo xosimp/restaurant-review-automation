@@ -59,8 +59,7 @@ struct MarketingView: View {
         .refreshable { await viewModel.load() }
         .navigationTitle("Marketing")
         .navigationBarTitleDisplayMode(.inline)
-        .cavnarEmberBackButton()
-        .cavnarSwipeToAnalytics($subTab, analyticsTab: .analytics)
+        .cavnarTabSwipeNavigation($subTab, primaryTab: .content, secondaryTab: .analytics)
         .task { await viewModel.load() }
         .task { await analyticsViewModel.load() }
     }

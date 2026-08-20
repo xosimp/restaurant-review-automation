@@ -339,17 +339,30 @@ struct CavnarOutlineCircle: View {
 /// for the ember-chevron restyle doesn't cost us swipe-back or reliable
 /// single-tap.
 private struct InteractivePopGestureEnabler: UIViewControllerRepresentable {
+    // Defaults true for every existing plain cavnarEmberBackButton() call
+    // site. CavnarTabSwipeNavigation below is the one caller that passes
+    // false — while a module is showing its Analytics sub-tab, the edge-
+    // swipe-to-pop gesture is disabled entirely so it can't race a plain
+    // swipe-right's OWN handling of "go back to the primary sub-tab first"
+    // (see that modifier's doc comment for the full reasoning).
+    var isEnabled: Bool = true
+
     func makeUIViewController(context: Context) -> UIViewController {
-        let controller = UIViewController()
-        DispatchQueue.main.async {
-            guard let nav = controller.navigationController else { return }
-            nav.interactivePopGestureRecognizer?.isEnabled = true
-            nav.interactivePopGestureRecognizer?.delegate = nil
-        }
-        return controller
+        UIViewController()
     }
 
-    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+    // The enable/disable toggle lives here, not in makeUIViewController —
+    // that only ever runs once, so it could set the gesture's initial
+    // state but never react to isEnabled changing afterward. updateUIViewController
+    // runs on every SwiftUI re-render, including the one right after
+    // creation, so it covers both the initial state and every later toggle.
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
+        DispatchQueue.main.async {
+            guard let nav = uiViewController.navigationController else { return }
+            nav.interactivePopGestureRecognizer?.isEnabled = isEnabled
+            nav.interactivePopGestureRecognizer?.delegate = nil
+        }
+    }
 }
 
 private struct CavnarEmberBackButton: ViewModifier {
@@ -396,41 +409,78 @@ extension View {
     }
 }
 
-/// The left-swipe counterpart to the system's own swipe-right-to-go-back
-/// gesture (see InteractivePopGestureEnabler above) — every module screen
-/// with a Tracker/Inbox/Overview + Analytics CavnarSegmentedControl gets
-/// this so jumping to that module's Analytics tab is a one-handed gesture
-/// from anywhere on screen, not just a small tap target at the top.
-private struct CavnarSwipeToAnalytics<Tab: Equatable>: ViewModifier {
+/// Replaces cavnarEmberBackButton() for a module screen that has a
+/// Tracker/Inbox/Overview + Analytics CavnarSegmentedControl — ties the
+/// sub-tab switch into the same "back" vocabulary as real navigation
+/// instead of leaving it as a second, disconnected way to move around the
+/// screen. Swipe left anywhere jumps to Analytics (the counterpart to the
+/// system's own swipe-right-to-go-back). Swipe right, OR tap the back
+/// chevron, while already on Analytics returns to the primary tab first;
+/// only once actually on the primary tab does either one leave the module.
+///
+/// Without this, switching to Analytics was invisible to the system: it's
+/// just local @State, not a real navigation push, so the interactive pop
+/// gesture and the back button both had nothing to undo but the module
+/// itself, popping all the way out regardless of which sub-tab was
+/// showing. The interactive pop gesture is explicitly disabled while on
+/// Analytics (not left running alongside the new swipe-right handling) —
+/// UIKit's edge-pan recognizer starts tracking a drag interactively from
+/// first touch, while a SwiftUI DragGesture only evaluates on release, so
+/// left running together the system gesture would already be mid-pop
+/// transition before this view's own onEnded ever got a say.
+private struct CavnarTabSwipeNavigation<Tab: Equatable>: ViewModifier {
+    @Environment(\.dismiss) private var dismiss
     @Binding var selection: Tab
-    let analyticsTab: Tab
+    let primaryTab: Tab
+    let secondaryTab: Tab
+
+    private var isOnSecondary: Bool { selection == secondaryTab }
 
     func body(content: Content) -> some View {
-        content.simultaneousGesture(
+        content
+            .navigationBarBackButtonHidden(true)
+            .background(InteractivePopGestureEnabler(isEnabled: !isOnSecondary).frame(width: 0, height: 0))
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        Haptic.light()
+                        if isOnSecondary {
+                            withAnimation(.easeInOut(duration: 0.2)) { selection = primaryTab }
+                        } else {
+                            dismiss()
+                        }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(Color.cavnarEmber)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
             // .simultaneousGesture (not .gesture) so this never steals a
             // touch from something more specific already handling it — a
             // ScrollView's own pan, a card's own hold gesture, a button's
             // tap — this only acts in onEnded, once the FULL gesture is
-            // already known to have been a clearly horizontal, clearly
-            // leftward drag, not a vertical scroll that happened to drift
-            // a little sideways.
-            DragGesture(minimumDistance: 40)
-                .onEnded { value in
-                    guard value.translation.width < -60,
-                          abs(value.translation.width) > abs(value.translation.height) * 1.5,
-                          selection != analyticsTab
-                    else { return }
-                    Haptic.light()
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        selection = analyticsTab
+            // already known to have been a clearly horizontal drag past a
+            // real threshold, not a vertical scroll that drifted sideways.
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 40)
+                    .onEnded { value in
+                        guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
+                        if value.translation.width < -60, selection != secondaryTab {
+                            Haptic.light()
+                            withAnimation(.easeInOut(duration: 0.2)) { selection = secondaryTab }
+                        } else if value.translation.width > 60, isOnSecondary {
+                            Haptic.light()
+                            withAnimation(.easeInOut(duration: 0.2)) { selection = primaryTab }
+                        }
                     }
-                }
-        )
+            )
     }
 }
 
 extension View {
-    func cavnarSwipeToAnalytics<Tab: Equatable>(_ selection: Binding<Tab>, analyticsTab: Tab) -> some View {
-        modifier(CavnarSwipeToAnalytics(selection: selection, analyticsTab: analyticsTab))
+    func cavnarTabSwipeNavigation<Tab: Equatable>(_ selection: Binding<Tab>, primaryTab: Tab, secondaryTab: Tab) -> some View {
+        modifier(CavnarTabSwipeNavigation(selection: selection, primaryTab: primaryTab, secondaryTab: secondaryTab))
     }
 }
