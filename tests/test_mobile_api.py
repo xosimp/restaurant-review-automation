@@ -495,6 +495,77 @@ def test_food_cost_analytics_returns_ok_for_fresh_restaurant(client, db_path, mo
     assert isinstance(data["waste_items"], list)
     assert isinstance(data["overstock"], list)
     assert data["insight"] == "Waste is under control."
+    # Analytics tab redesign fields — computed by analyse_inventory() all
+    # along, previously just never forwarded to mobile.
+    for key in (
+        "critical_low", "reorder_soon", "order_reduction",
+        "annual_recoverable", "total_waste_cost_week", "monthly_waste_projection",
+        "annual_waste_projection", "waste_rate_pct", "benchmark_label",
+        "benchmark_detail", "total_stock_value", "total_items",
+        "week_start", "week_end", "last_updated",
+    ):
+        assert key in data, f"missing {key}"
+
+
+# ── /mobile/api/food-cost/trend ─────────────────────────────────────────────
+
+def test_food_cost_trend_requires_auth(client):
+    resp = client.get("/mobile/api/food-cost/trend")
+    assert resp.status_code == 401
+
+
+def test_food_cost_trend_returns_empty_weeks_with_no_history(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/food-cost/trend", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["weeks"] == []
+
+
+def test_food_cost_trend_only_returns_this_restaurants_history(client, db_path):
+    # IDOR check — a second restaurant's inventory_history rows must never
+    # leak into this restaurant's trend chart. Explicit get_conn(db_path),
+    # not the bare module-level get_conn imported at the top of this file —
+    # that reference was bound before _redirect_db's monkeypatch runs (it
+    # captures the original, un-patched function at file-import time), so
+    # calling it with no args here would hit the real default DB_PATH
+    # instead of this test's isolated database.
+    import json
+    rid = _restaurant(db_path)
+    other_rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+
+    conn = get_conn(db_path)
+    # inventory_history isn't part of init_db()'s base schema — it's
+    # created lazily by inventory.py's own get_claude_insights() on first
+    # real use, which this test never triggers, so it's created here
+    # matching that exact schema.
+    conn.execute("""CREATE TABLE IF NOT EXISTS inventory_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id INTEGER NOT NULL,
+        waste_json TEXT,
+        week_end    TEXT,
+        items_json  TEXT,
+        saved_at    TEXT DEFAULT (datetime('now'))
+    )""")
+    conn.execute(
+        "INSERT INTO inventory_history (restaurant_id, week_end, waste_json) VALUES (?,?,?)",
+        (rid, "2026-08-13", json.dumps({"total_waste_cost": 210.5})),
+    )
+    conn.execute(
+        "INSERT INTO inventory_history (restaurant_id, week_end, waste_json) VALUES (?,?,?)",
+        (other_rid, "2026-08-13", json.dumps({"total_waste_cost": 999.0})),
+    )
+    conn.commit()
+    conn.close()
+
+    resp = client.get("/mobile/api/food-cost/trend", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert len(data["weeks"]) == 1
+    assert data["weeks"][0]["waste"] == 210.5
+    assert data["weeks"][0]["label"] == "8/13"
 
 
 # ── switch-location owner/group checks ─────────────────────────────────────

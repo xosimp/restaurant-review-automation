@@ -5,6 +5,7 @@ import Observation
 @MainActor
 final class FoodCostAnalyticsViewModel {
     var analytics: FoodCostAnalytics?
+    var trend: [FoodCostTrendWeek] = []
     var isLoading = false
 
     private let client: APIClient
@@ -16,6 +17,13 @@ final class FoodCostAnalyticsViewModel {
     func load() async {
         isLoading = true
         defer { isLoading = false }
-        analytics = try? await client.send("/mobile/api/food-cost/analytics")
+        // Two independent endpoints, loaded together — a trend-fetch
+        // failure shouldn't block the rest of the tab from showing (the
+        // chart just renders its own "not enough data" state), matching
+        // how Labor's own trend fetch is similarly best-effort.
+        async let analyticsResult: FoodCostAnalytics? = try? client.send("/mobile/api/food-cost/analytics")
+        async let trendResult: FoodCostTrend? = try? client.send("/mobile/api/food-cost/trend")
+        analytics = await analyticsResult
+        trend = await trendResult?.weeks ?? []
     }
 }

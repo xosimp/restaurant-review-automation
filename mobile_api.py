@@ -761,13 +761,85 @@ def mobile_food_cost_analytics(current_user):
             **_insight_json(insight),
             waste_items=analysis.get("waste_items", []),
             overstock=analysis.get("overstock", []),
+            critical_low=analysis.get("critical_low", []),
+            reorder_soon=analysis.get("reorder_soon", []),
+            order_reduction=analysis.get("order_reduction", []),
             recoverable_monthly=analysis.get("recoverable_monthly", 0),
+            annual_recoverable=analysis.get("annual_recoverable", 0),
+            total_waste_cost_week=analysis.get("total_waste_cost_week", 0),
+            monthly_waste_projection=analysis.get("monthly_waste_projection", 0),
+            annual_waste_projection=analysis.get("annual_waste_projection", 0),
+            waste_rate_pct=analysis.get("waste_rate_pct", 0),
+            benchmark_label=analysis.get("benchmark_label", "—"),
+            benchmark_detail=analysis.get("benchmark_detail", ""),
+            total_stock_value=analysis.get("total_stock_value", 0),
+            total_items=analysis.get("total_items", 0),
+            week_start=analysis.get("week_start", ""),
+            week_end=analysis.get("week_end", ""),
+            last_updated=analysis.get("last_updated", ""),
         )
     except Exception as e:
         return jsonify(ok=False, error=str(e), insight="Analysis unavailable — check back shortly.",
                        insight_intro="Analysis unavailable — check back shortly.",
                        insight_recommendations=[], insight_forecast=None,
-                       waste_items=[], overstock=[]), 500
+                       waste_items=[], overstock=[], critical_low=[], reorder_soon=[],
+                       order_reduction=[]), 500
+
+
+@mobile_bp.route("/food-cost/trend")
+@mobile_login_required
+def mobile_food_cost_trend(current_user):
+    """Weekly waste-cost history for the Analytics tab's trend chart — same
+    inventory_history table admin_routes.py's own /api/inv-trend (desktop-
+    only) reads, just mobile-auth'd and re-exposed here. 8 weeks (not that
+    route's 6) to match LaborPerformanceChart's own "8-Week Trend" window,
+    so the two modules' trend charts read as the same convention."""
+    from models import get_conn
+    import json as _json
+    import datetime as _dt
+    rid = current_user["restaurant_id"]
+    try:
+        conn = get_conn()
+        # Not part of init_db()'s base schema — inventory.py's own
+        # get_claude_insights() creates this lazily on first real analytics
+        # fetch. A restaurant that's never viewed Analytics yet (fresh
+        # install, or hitting this trend route before that one) would 500
+        # on "no such table" otherwise, which reads as an error when it's
+        # really just "no history yet" — same schema as that lazy creation.
+        conn.execute("""CREATE TABLE IF NOT EXISTS inventory_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            waste_json TEXT,
+            week_end    TEXT,
+            items_json  TEXT,
+            saved_at    TEXT DEFAULT (datetime('now'))
+        )""")
+        rows = conn.execute("""
+            SELECT week_end, waste_json FROM inventory_history
+            WHERE restaurant_id=? AND week_end IS NOT NULL
+            ORDER BY week_end DESC LIMIT 8
+        """, (rid,)).fetchall()
+        conn.close()
+
+        weeks = []
+        for row in reversed(rows):  # oldest first, left-to-right on the chart
+            try:
+                data = _json.loads(row["waste_json"])
+                waste = round(float(data.get("total_waste_cost", 0)), 2)
+                we = _dt.date.fromisoformat(row["week_end"])
+                ws = we - _dt.timedelta(days=6)
+                weeks.append({
+                    "label": f"{we.month}/{we.day}",
+                    "start": ws.isoformat(),
+                    "end": row["week_end"],
+                    "waste": waste,
+                })
+            except Exception:
+                continue
+
+        return jsonify(ok=True, weeks=weeks)
+    except Exception as e:
+        return jsonify(ok=False, weeks=[], error=str(e)), 500
 
 
 # ── Restaurant switcher ───────────────────────────────────────────────────
