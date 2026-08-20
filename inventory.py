@@ -510,11 +510,7 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
 - Never suggest anything that hurts guest experience, reduces quality, or cuts portions
 - Focus on quantity reductions or par level adjustments based on the data — NEVER assume or mention ordering frequency (daily, weekly, twice a week etc.) since you don't know their ordering schedule
 - Do not use the owner name anywhere in the recommendations
-
-Finally, on a new line with NO number, write one short warm closing sentence:
-- Tied loosely to how the week looks — good week gets a small celebration, rough week gets encouragement
-- Never generic filler, no more than one sentence
-- Do NOT start it with a number{forecast_instruction}"""
+- On the LAST numbered recommendation only, you may add up to 8 words of warm closing after it — tied loosely to how the week looks (good week gets a small celebration, rough week gets encouragement), nothing more. Do NOT write a separate closing line after the numbered list; there must be nothing after the last recommendation.{forecast_instruction}"""
 
     msg = create_with_retry(
         client,

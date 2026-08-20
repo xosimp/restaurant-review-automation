@@ -352,23 +352,31 @@ private struct IngredientCarousel: View {
                 Button {
                     Haptic.light()
                     let newItem = onAddRow()
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                        proxy.scrollTo(newItem.id, anchor: .center)
-                    }
-                    // withAnimation's completion-callback overload doesn't
-                    // reliably track ScrollViewProxy.scrollTo's motion (it
-                    // isn't a tracked animatable value the way a plain
-                    // state change is) — it was firing focus essentially
-                    // immediately, before the scroll had visibly moved, so
-                    // the keyboard appeared and the card snapped into
-                    // place in the same instant instead of scroll-then-
-                    // focus. A fixed delay comfortably past the spring's
-                    // settle time is the reliable fix; once focus actually
-                    // lands, iOS's own keyboard avoidance takes over to
-                    // keep the field clear of the keyboard.
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 450_000_000)
-                        focusedField = .name(newItem.id)
+                    // onAddRow() appends to the parent's @Binding array —
+                    // that mutation doesn't take effect in this view's own
+                    // ForEach/LazyVStack until SwiftUI processes it on the
+                    // NEXT render pass. Calling proxy.scrollTo for the new
+                    // item's id synchronously, in the same run-loop tick,
+                    // was scrolling to an id that didn't exist in the
+                    // hierarchy yet — a silent no-op, which is why nothing
+                    // visibly moved until the user scrolled it into view
+                    // themselves. Dispatching to the next tick lets that
+                    // render happen first, so the id actually resolves.
+                    DispatchQueue.main.async {
+                        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                            proxy.scrollTo(newItem.id, anchor: .center)
+                        }
+                        // Same reasoning as the scroll above for why this
+                        // is a fixed delay rather than an animation
+                        // completion callback — scrollTo isn't a tracked
+                        // animatable value withAnimation's completion can
+                        // wait on. Comfortably past the spring's settle
+                        // time; once focus lands, iOS's own keyboard
+                        // avoidance keeps the field clear of the keyboard.
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 450_000_000)
+                            focusedField = .name(newItem.id)
+                        }
                     }
                 } label: {
                     HStack(spacing: 6) {
@@ -390,19 +398,17 @@ private struct IngredientCarousel: View {
         // decimalPad has no built-in Done key — without this there was no
         // way to dismiss the keyboard short of navigating away entirely.
         // One shared bar covers every card's price/usage/name/unit field
-        // since focusedField lives here, not per-card. Vertical padding
-        // lifts the button clear of the bar's own top edge (which sits
-        // flush against the keyboard) instead of crowding it.
+        // since focusedField lives here, not per-card. Bottom padding on
+        // the button itself (not a wrapping HStack — that stretched the
+        // whole accessory bar's height/width) is what actually creates
+        // gap between the button and the keyboard's top edge below it.
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
-                HStack {
-                    Spacer()
-                    Button("Done") { focusedField = nil }
-                        .font(.cavnarBody(14, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber)
-                }
-                .padding(.vertical, 10)
-                .padding(.trailing, 2)
+                Spacer()
+                Button("Done") { focusedField = nil }
+                    .font(.cavnarBody(14, weight: 700))
+                    .foregroundStyle(Color.cavnarEmber)
+                    .padding(.bottom, 8)
             }
         }
     }
