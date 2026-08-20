@@ -12,6 +12,29 @@ enum CavnarRadius {
     static let pill: CGFloat = 999     // fully-rounded badges/capsules
 }
 
+/// The house "branded pill" gradient — full-strength ember on one edge,
+/// fading continuously to fully *transparent* on the other, never hard-
+/// switching to a solid color partway through (see ScheduleHistoryView's
+/// row-gradient fix for why: a solid final stop reads as an abrupt cliff no
+/// matter how many stops lead into it). Shared by every "branded pill"
+/// surface in the app — Schedule History rows, Food Cost ingredient cards —
+/// so they read as one consistent material instead of two separately-tuned
+/// gradients that drift apart over time.
+enum CavnarEmberFade {
+    static let horizontal = LinearGradient(
+        stops: [
+            .init(color: Color.cavnarEmber.opacity(0.85), location: 0),
+            .init(color: Color.cavnarEmber.opacity(0.68), location: 0.28),
+            .init(color: Color.cavnarEmber.opacity(0.5), location: 0.48),
+            .init(color: Color.cavnarEmber.opacity(0.33), location: 0.64),
+            .init(color: Color.cavnarEmber.opacity(0.18), location: 0.78),
+            .init(color: Color.cavnarEmber.opacity(0.07), location: 0.9),
+            .init(color: Color.cavnarEmber.opacity(0), location: 1),
+        ],
+        startPoint: .leading, endPoint: .trailing
+    )
+}
+
 /// Shared field/button chrome so every screen doesn't hand-roll the same
 /// padding/corner-radius/background values.
 struct CavnarTextFieldStyle: ViewModifier {

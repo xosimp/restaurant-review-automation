@@ -61,8 +61,14 @@ final class FoodCostQuickEntryViewModel {
         self.client = client
     }
 
-    func addCustomRow() {
-        items.append(FoodCostItem(name: "", unit: ""))
+    // Returns the new item so the carousel can scroll to reveal it — a
+    // blank row appended off the bottom of a 3-card viewport is invisible
+    // otherwise, with no indication anything happened.
+    @discardableResult
+    func addCustomRow() -> FoodCostItem {
+        let newItem = FoodCostItem(name: "", unit: "")
+        items.append(newItem)
+        return newItem
     }
 
     private struct ItemPayload: Encodable {
