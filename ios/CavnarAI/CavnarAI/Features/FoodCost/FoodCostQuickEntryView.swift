@@ -91,6 +91,18 @@ struct FoodCostQuickEntryView: View {
                         Text("Fill in this week's price per unit right after an invoice arrives.")
                             .font(.cavnarBody(12))
                             .foregroundStyle(Color.cavnarInk3)
+                        // 8-10 is the standard food-cost-consulting sweet
+                        // spot for a WEEKLY quick-price-check specifically
+                        // (not a full inventory count) — enough of a
+                        // restaurant's highest-dollar-volume, most price-
+                        // volatile items (proteins especially) to catch a
+                        // real supplier price swing, without turning this
+                        // into a chore nobody keeps up with every week.
+                        (Text("Track your top ")
+                            + Text("8–10").font(.cavnarNumber(12, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                            + Text(" highest-cost ingredients — enough to catch real swings, not busywork."))
+                            .font(.cavnarBody(12))
+                            .foregroundStyle(Color.cavnarInk3)
                     }
                     .id("foodCostIntro")
 
@@ -462,25 +474,37 @@ private struct IngredientCarousel: View {
         // One shared bar covers every card's price/usage/name/unit field
         // since focusedField lives here, not per-card.
         //
-        // cavnarToolbarPillGlass() + cavnarToolbarItemGroup() (see
-        // ViewModifiers.swift's cavnarToolbarItem doc comment for the
-        // full root-cause writeup, confirmed against Apple's own docs):
-        // iOS 26+ wraps ToolbarItemGroup content in its own automatic
-        // SHARED glass background at the group level, entirely separate
-        // from .buttonStyle — that's what was compositing with this
-        // button's own styling and clipping "Done" down to just "D".
-        // cavnarToolbarItemGroup applies .sharedBackgroundVisibility(.hidden)
-        // to opt out of that automatic wrapper, so cavnarToolbarPillGlass()
-        // is finally the only chrome actually being applied.
+        // Two confirmed, documented iOS 26 causes, not two guesses:
+        // 1. cavnarToolbarItemGroup's .sharedBackgroundVisibility(.hidden)
+        //    (see ViewModifiers.swift's cavnarToolbarItem doc comment) —
+        //    the automatic SHARED glass wrapper at the toolbar-group level.
+        // 2. The "D"-only clipping specifically: a documented iOS 26
+        //    regression where the toolbar's own layout pass mis-measures
+        //    a CUSTOM-styled button's content (anything routed through a
+        //    modifier chain like cavnarToolbarPillGlass, rather than a
+        //    bare Text) and allocates far less width than the content
+        //    actually needs — https://developer.apple.com/forums/thread/797070.
+        //    .fixedSize() forces this button to report its own real
+        //    intrinsic size instead of accepting whatever the toolbar's
+        //    layout guesses. Separately, a bare Spacer() as its own
+        //    top-level item inside a .keyboard ToolbarItemGroup is
+        //    independently reported to trigger the same class of bug —
+        //    https://developer.apple.com/forums/thread/797250 — so the
+        //    Spacer now lives inside a plain HStack instead, a single
+        //    well-understood layout child rather than two separate
+        //    top-level toolbar items.
         .toolbar {
             cavnarToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") { focusedField = nil }
-                    .font(.cavnarBody(14, weight: 700))
-                    .foregroundStyle(Color.cavnarEmber)
-                    .cavnarToolbarPillGlass()
-                    .buttonStyle(.plain)
-                    .tint(nil)
+                HStack {
+                    Spacer()
+                    Button("Done") { focusedField = nil }
+                        .font(.cavnarBody(14, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber)
+                        .fixedSize()
+                        .cavnarToolbarPillGlass()
+                        .buttonStyle(.plain)
+                        .tint(nil)
+                }
             }
         }
     }
