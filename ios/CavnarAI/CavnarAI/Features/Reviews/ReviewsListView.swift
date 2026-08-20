@@ -44,13 +44,9 @@ struct ReviewsListView: View {
                     Image(systemName: "envelope.badge")
                         .font(.system(size: 17, weight: .medium))
                         .foregroundStyle(Color.cavnarEmber)
+                        .cavnarToolbarIconGlass()
                 }
                 .buttonStyle(.plain)
-                // The ember ring here was RootView's app-wide
-                // .tint(cavnarEmber) reaching the system's own automatic
-                // Liquid Glass toolbar-button background, not anything
-                // drawn by this button — .tint(nil) stops it inheriting
-                // an orange tint that background was never meant to have.
                 .tint(nil)
             }
         }

@@ -168,15 +168,22 @@ struct HomeView: View {
                             }
                         }
                     } label: {
-                        ZStack(alignment: .topTrailing) {
-                            Image(systemName: "bell")
-                            if notificationsBadge.unreadCount > 0 {
-                                Circle()
-                                    .fill(Color.cavnarEmber)
-                                    .frame(width: 8, height: 8)
-                                    .offset(x: 5, y: -3)
+                        // Badge dot is its own overlay on top of the
+                        // already glass-wrapped bell, not inside the same
+                        // ZStack — cavnarToolbarIconGlass() clips the icon
+                        // to a tight circle, and the badge sits offset
+                        // past that icon's own bounds, so it needs to
+                        // composite outside that clip, not get cut off by it.
+                        Image(systemName: "bell")
+                            .cavnarToolbarIconGlass()
+                            .overlay(alignment: .topTrailing) {
+                                if notificationsBadge.unreadCount > 0 {
+                                    Circle()
+                                        .fill(Color.cavnarEmber)
+                                        .frame(width: 8, height: 8)
+                                        .offset(x: 2, y: -2)
+                                }
                             }
-                        }
                     }
                     // .plain strips the default toolbar-button chrome that
                     // was stacking its own automatic tap feedback on top of
@@ -184,12 +191,6 @@ struct HomeView: View {
                     // and module tiles, which never had this problem because
                     // they already use a stripped-chrome button style.
                     .buttonStyle(.plain)
-                    // The ember ring around this icon was RootView's
-                    // app-wide .tint(cavnarEmber) reaching the system's own
-                    // automatic Liquid Glass toolbar-button background, not
-                    // anything drawn here — that background already looks
-                    // right on its own; .tint(nil) just stops it inheriting
-                    // an orange tint it was never meant to have.
                     .tint(nil)
                 }
                 if sessionStore.currentUser?.isOwner == true {
@@ -199,6 +200,7 @@ struct HomeView: View {
                             showingLocationSwitcher = true
                         } label: {
                             Image(systemName: "building.2")
+                                .cavnarToolbarIconGlass()
                         }
                         .buttonStyle(.plain)
                         .tint(nil)

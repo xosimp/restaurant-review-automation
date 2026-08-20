@@ -157,6 +157,64 @@ struct CavnarGlassButtonStyle: ButtonStyle {
     }
 }
 
+/// A deliberately-tinted circular glass background for a lone toolbar
+/// icon (back chevron, bell, share, Done) — NOT the automatic system
+/// chrome a bare Button gets for free on iOS 26+.
+///
+/// That automatic wrapping is genuinely translucent material, and this
+/// app's screens sit on cavnarModuleBackground()'s own ember wash near
+/// the top — an untinted (or app-tint-inherited, which .tint(nil) alone
+/// only ever addressed) glass surface shows that wash bleeding through,
+/// unevenly, since a gradient doesn't refract symmetrically through a
+/// round lens the way a flat color would. That's the "faded glass with
+/// an asymmetric orange edge" look — not a stroke or tint this app was
+/// drawing, just glass being glass over an orange background.
+///
+/// The fix is an explicit tint dark/opaque enough to dominate whatever
+/// sits behind it (same technique CavnarSegmentedControl's selected
+/// segment already uses, just with a neutral color instead of ember),
+/// so the glass reads as a predictable dark chip regardless of scroll
+/// position or which screen it's on — real Liquid Glass, deliberately
+/// controlled, not left to render however the system infers it should.
+extension View {
+    func cavnarToolbarIconGlass(size: CGFloat = 34) -> some View {
+        Group {
+            if #available(iOS 26.0, *) {
+                self
+                    .frame(width: size, height: size)
+                    .glassEffect(.regular.tint(Color.cavnarPaper2.opacity(0.92)).interactive(), in: Circle())
+            } else {
+                self
+                    .frame(width: size, height: size)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .background(Color.cavnarPaper2.opacity(0.75), in: Circle())
+            }
+        }
+    }
+}
+
+/// Same reasoning and tint as cavnarToolbarIconGlass, shaped as a Capsule
+/// around its own content's padding instead of a fixed circle — for a
+/// text toolbar button (the keyboard's Done key) rather than a lone icon.
+extension View {
+    func cavnarToolbarPillGlass() -> some View {
+        Group {
+            if #available(iOS 26.0, *) {
+                self
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .glassEffect(.regular.tint(Color.cavnarPaper2.opacity(0.92)).interactive(), in: Capsule())
+            } else {
+                self
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .background(Color.cavnarPaper2.opacity(0.75), in: Capsule())
+            }
+        }
+    }
+}
+
 /// Deliberately light — a faint tint fill plus a hairline border communicates
 /// grouping without the flat, blocky "everything is a solid box" look. Mirrors
 /// how Raycast/Apple's HIG signal elevation in dark mode: a subtle border
@@ -380,16 +438,9 @@ private struct CavnarEmberBackButton: ViewModifier {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(Color.cavnarEmber)
+                            .cavnarToolbarIconGlass()
                     }
                     .buttonStyle(.plain)
-                    // The system's own automatic Liquid Glass button
-                    // background already looks right on its own — the
-                    // ember ring/circle here was never drawn by this
-                    // view, it was RootView's app-wide .tint(cavnarEmber)
-                    // bleeding into that automatic glass surface. .tint(nil)
-                    // stops this one button from inheriting it, so the
-                    // glass renders neutral while the chevron glyph itself
-                    // stays ember.
                     .tint(nil)
                 }
             }
@@ -462,13 +513,9 @@ private struct CavnarTabSwipeNavigation<Tab: Equatable>: ViewModifier {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(Color.cavnarEmber)
+                            .cavnarToolbarIconGlass()
                     }
                     .buttonStyle(.plain)
-                    // See CavnarEmberBackButton's identical comment — the
-                    // ring/circle here is RootView's app-wide
-                    // .tint(cavnarEmber) reaching the system's own
-                    // automatic Liquid Glass background, not anything
-                    // this view draws itself.
                     .tint(nil)
                 }
             }

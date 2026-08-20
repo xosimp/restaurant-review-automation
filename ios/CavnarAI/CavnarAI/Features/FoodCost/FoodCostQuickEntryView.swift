@@ -452,22 +452,23 @@ private struct IngredientCarousel: View {
         // One shared bar covers every card's price/usage/name/unit field
         // since focusedField lives here, not per-card.
         //
-        // A custom .background() pill here was actively fighting the
-        // system's own automatic Liquid Glass keyboard-accessory chrome —
-        // the two composited into a clipped, double-pill mess. The fix
-        // used for every OTHER toolbar icon in this app (back chevron,
-        // notification bell, share icon — see ViewModifiers.swift's
-        // CavnarEmberBackButton) is the same one here: don't draw a
-        // competing background at all, just .buttonStyle(.plain) + a
-        // plain Text, and let the system's own glass render this button
-        // on its own. .tint(nil) is what keeps that glass neutral instead
-        // of inheriting RootView's app-wide ember tint.
+        // cavnarToolbarPillGlass() (see ViewModifiers.swift) — an earlier
+        // version here used a flat custom .background() capsule, which
+        // fought the system's own automatic Liquid Glass keyboard chrome
+        // into a clipped double-pill mess; a later version dropped the
+        // custom background entirely and relied on that automatic chrome
+        // alone, which turned out to be genuinely translucent and showed
+        // whatever's behind it (this page's own ember wash) bleeding
+        // through unevenly once scrolled. An explicit, deliberately-tinted
+        // glass is what's actually predictable regardless of scroll
+        // position — same fix as every other toolbar button in this app.
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
                 Button("Done") { focusedField = nil }
                     .font(.cavnarBody(14, weight: 700))
                     .foregroundStyle(Color.cavnarEmber)
+                    .cavnarToolbarPillGlass()
                     .buttonStyle(.plain)
                     .tint(nil)
             }

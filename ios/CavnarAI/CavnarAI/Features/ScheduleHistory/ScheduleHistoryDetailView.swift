@@ -131,17 +131,18 @@ struct ScheduleHistoryDetailView: View {
                         Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Color.cavnarEmber)
+                            .cavnarToolbarIconGlass()
                     }
-                    // The ember ring here was RootView's app-wide
-                    // .tint(cavnarEmber) reaching the system's own
-                    // automatic Liquid Glass toolbar-button background —
-                    // .tint(nil) stops it inheriting an orange tint that
-                    // background already looks right without.
                     .tint(nil)
                 } else {
+                    // Same cavnarToolbarIconGlass() sizing as the real
+                    // ShareLink above so the toolbar slot doesn't visibly
+                    // resize once loading finishes — only the icon's
+                    // opacity and function change.
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Color.cavnarEmber.opacity(0.3))
+                        .cavnarToolbarIconGlass()
                 }
             }
         }
