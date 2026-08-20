@@ -71,19 +71,38 @@ struct FoodCostQuickEntryView: View {
     }
 
     private var tracker: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("KEY INGREDIENT PRICES")
-                        .font(.cavnarBody(10, weight: 700))
-                        .tracking(1.2)
-                        .foregroundStyle(Color.cavnarEmber2)
-                    Text("Fill in this week's price per unit right after an invoice arrives.")
-                        .font(.cavnarBody(12))
-                        .foregroundStyle(Color.cavnarInk3)
-                }
+        // Owns its own ScrollViewReader, separate from the carousel's
+        // inner one — scrolling the target card to the top of the
+        // carousel's own small window (see IngredientCarousel) only
+        // guarantees clearance WITHIN that fixed-height window; it says
+        // nothing about where that window itself sits on the full page.
+        // Also scrolling this outer page so the section right above the
+        // carousel sits at the very top of the screen pushes the whole
+        // carousel as high as the page allows, which is what actually
+        // guarantees clearance from the keyboard below it.
+        ScrollViewReader { outerProxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("KEY INGREDIENT PRICES")
+                            .font(.cavnarBody(10, weight: 700))
+                            .tracking(1.2)
+                            .foregroundStyle(Color.cavnarEmber2)
+                        Text("Fill in this week's price per unit right after an invoice arrives.")
+                            .font(.cavnarBody(12))
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
+                    .id("foodCostIntro")
 
-                IngredientCarousel(items: $viewModel.items, onAddRow: { viewModel.addCustomRow() })
+                    IngredientCarousel(
+                        items: $viewModel.items,
+                        onAddRow: { viewModel.addCustomRow() },
+                        scrollOuterToTop: {
+                            withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+                                outerProxy.scrollTo("foodCostIntro", anchor: .top)
+                            }
+                        }
+                    )
 
                 if let error = viewModel.errorMessage {
                     Text(error)
@@ -119,15 +138,16 @@ struct FoodCostQuickEntryView: View {
                     }
                     .cavnarCard()
                 }
+                }
+                .padding(20)
+                // Extra bottom breathing room — belt-and-suspenders
+                // alongside the explicit outer scrollTo above: gives the
+                // outer ScrollView's own automatic keyboard-avoidance
+                // somewhere to push TO if it kicks in as well, instead of
+                // running out of scrollable content near the bottom of
+                // the page.
+                .padding(.bottom, 300)
             }
-            .padding(20)
-            // Extra bottom breathing room specifically so the outer
-            // ScrollView's own automatic keyboard-avoidance (which pushes
-            // scrollable content up to keep a focused field visible) has
-            // somewhere to push the carousel TO — without slack content
-            // below it, that avoidance runs out of room to work with once
-            // the carousel is already near the bottom of the page.
-            .padding(.bottom, 260)
         }
     }
 
@@ -271,6 +291,13 @@ private enum CarouselField: Hashable {
 private struct IngredientCarousel: View {
     @Binding var items: [FoodCostItem]
     var onAddRow: () -> FoodCostItem
+    // Called alongside this view's own inner scrollTo when a new card is
+    // added — see FoodCostQuickEntryView.tracker's own comment for why
+    // scrolling THIS window's target card to its own top isn't enough on
+    // its own: it says nothing about where this fixed-height window sits
+    // on the full page, which is what actually determines keyboard
+    // clearance.
+    var scrollOuterToTop: () -> Void
 
     private let cardHeight: CGFloat = 108
     private let cardSpacing: CGFloat = 12
@@ -381,7 +408,13 @@ private struct IngredientCarousel: View {
                         // it as buffer, and the outer page ScrollView's
                         // own bottom padding (below) gives the system's
                         // keyboard-avoidance room to push the whole
-                        // carousel further up still.
+                        // carousel further up still. scrollOuterToTop()
+                        // does the heavier lifting: it pushes the whole
+                        // carousel section to the top of the OUTER page,
+                        // which is what actually determines clearance from
+                        // the keyboard — this window's own scrollTo only
+                        // ever controlled where the card sits WITHIN itself.
+                        scrollOuterToTop()
                         withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
                             proxy.scrollTo(newItem.id, anchor: .top)
                         }
@@ -419,30 +452,24 @@ private struct IngredientCarousel: View {
         // One shared bar covers every card's price/usage/name/unit field
         // since focusedField lives here, not per-card.
         //
-        // .buttonStyle(.plain) + an explicit background pill of our own —
-        // a bare Button("Done") with no style gets automatically wrapped
-        // in the system's own Liquid Glass pill on iOS 26, with its own
-        // internal padding this view has no control over (that's the
-        // "wonky, not symmetrical" look — it was never this view's
-        // padding, it was the system's). .plain strips that entirely, so
-        // every pixel of this pill's padding/spacing-from-keyboard is
-        // actually ours.
+        // A custom .background() pill here was actively fighting the
+        // system's own automatic Liquid Glass keyboard-accessory chrome —
+        // the two composited into a clipped, double-pill mess. The fix
+        // used for every OTHER toolbar icon in this app (back chevron,
+        // notification bell, share icon — see ViewModifiers.swift's
+        // CavnarEmberBackButton) is the same one here: don't draw a
+        // competing background at all, just .buttonStyle(.plain) + a
+        // plain Text, and let the system's own glass render this button
+        // on its own. .tint(nil) is what keeps that glass neutral instead
+        // of inheriting RootView's app-wide ember tint.
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button {
-                    focusedField = nil
-                } label: {
-                    Text("Done")
-                        .font(.cavnarBody(14, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Color.cavnarPaper2, in: Capsule())
-                        .overlay(Capsule().strokeBorder(Color.cavnarEmber.opacity(0.35), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .padding(.bottom, 10)
+                Button("Done") { focusedField = nil }
+                    .font(.cavnarBody(14, weight: 700))
+                    .foregroundStyle(Color.cavnarEmber)
+                    .buttonStyle(.plain)
+                    .tint(nil)
             }
         }
     }
