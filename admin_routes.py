@@ -369,6 +369,141 @@ def delete_staff_note_route(note_id, current_user):
     delete_staff_note(note_id)
     return jsonify(ok=True)
 
+@admin_bp.route("/admin/inventory/import-csv/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def import_csv_to_ingredients_route(restaurant_id, current_user):
+    import inventory_ledger
+    return jsonify(ok=True, **inventory_ledger.import_csv_to_ingredients(restaurant_id))
+
+
+@admin_bp.route("/admin/inventory/ingredients/<int:restaurant_id>", methods=["GET"])
+@admin_required
+def list_ingredients_route(restaurant_id, current_user):
+    import inventory_ledger
+    return jsonify(ok=True, ingredients=inventory_ledger.list_ingredients(restaurant_id))
+
+
+@admin_bp.route("/admin/inventory/ingredients/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def create_ingredient_route(restaurant_id, current_user):
+    import inventory_ledger
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="Ingredient name required")
+    ingredient_id = inventory_ledger.create_ingredient(
+        restaurant_id, name=name, category=data.get("category", ""), unit=data.get("unit", ""),
+        par_level=float(data.get("par_level") or 0), unit_cost=float(data.get("unit_cost") or 0),
+        case_size=float(data.get("case_size") or 1.0), current_stock=float(data.get("current_stock") or 0)
+    )
+    return jsonify(ok=True, id=ingredient_id)
+
+
+@admin_bp.route("/admin/inventory/ingredients/<int:restaurant_id>/<int:ingredient_id>", methods=["POST"])
+@admin_required
+def update_ingredient_route(restaurant_id, ingredient_id, current_user):
+    import inventory_ledger
+    data = request.get_json() or {}
+    fields = {}
+    for key in ("name", "category", "unit"):
+        if key in data:
+            fields[key] = data[key]
+    for key in ("par_level", "unit_cost", "case_size", "avg_daily_usage", "waste_last_week"):
+        if key in data and data[key] not in (None, ""):
+            fields[key] = float(data[key])
+    inventory_ledger.update_ingredient(ingredient_id, **fields)
+    return jsonify(ok=True)
+
+
+@admin_bp.route("/admin/inventory/ingredients/<int:restaurant_id>/<int:ingredient_id>/delete", methods=["POST"])
+@admin_required
+def delete_ingredient_route(restaurant_id, ingredient_id, current_user):
+    import inventory_ledger
+    inventory_ledger.deactivate_ingredient(ingredient_id)
+    return jsonify(ok=True)
+
+
+@admin_bp.route("/admin/inventory/discover-menu-items/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def discover_menu_items_route(restaurant_id, current_user):
+    import inventory_ledger
+    try:
+        return jsonify(ok=True, **inventory_ledger.discover_menu_items(restaurant_id))
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
+
+@admin_bp.route("/admin/inventory/recipes/<int:restaurant_id>", methods=["GET"])
+@admin_required
+def list_recipes_route(restaurant_id, current_user):
+    import inventory_ledger
+    return jsonify(ok=True, menu_items=inventory_ledger.list_menu_items_with_recipes(restaurant_id),
+                   ingredients=inventory_ledger.list_ingredients(restaurant_id))
+
+
+@admin_bp.route("/admin/inventory/recipes/<int:menu_item_id>", methods=["POST"])
+@admin_required
+def add_recipe_ingredient_route(menu_item_id, current_user):
+    import inventory_ledger
+    data = request.get_json() or {}
+    ingredient_id = data.get("ingredient_id")
+    qty_per_unit = data.get("qty_per_unit")
+    if not ingredient_id or not qty_per_unit:
+        return jsonify(ok=False, error="ingredient_id and qty_per_unit required")
+    row_id = inventory_ledger.add_recipe_ingredient(menu_item_id, int(ingredient_id), float(qty_per_unit))
+    return jsonify(ok=True, id=row_id)
+
+
+@admin_bp.route("/admin/inventory/recipes/<int:menu_item_id>/<int:recipe_ingredient_id>/delete", methods=["POST"])
+@admin_required
+def delete_recipe_ingredient_route(menu_item_id, recipe_ingredient_id, current_user):
+    import inventory_ledger
+    inventory_ledger.delete_recipe_ingredient(recipe_ingredient_id)
+    return jsonify(ok=True)
+
+
+@admin_bp.route("/admin/inventory/recount/<int:restaurant_id>/<int:ingredient_id>", methods=["POST"])
+@admin_required
+def record_recount_route(restaurant_id, ingredient_id, current_user):
+    import inventory_ledger
+    data = request.get_json() or {}
+    if "counted_qty" not in data:
+        return jsonify(ok=False, error="counted_qty required")
+    result = inventory_ledger.record_recount(
+        restaurant_id, ingredient_id, float(data["counted_qty"]),
+        source="admin", note=data.get("note")
+    )
+    return jsonify(ok=True, **result)
+
+
+@admin_bp.route("/admin/inventory/receiving/<int:restaurant_id>/<int:ingredient_id>", methods=["POST"])
+@admin_required
+def record_receiving_route(restaurant_id, ingredient_id, current_user):
+    import inventory_ledger
+    data = request.get_json() or {}
+    if "qty" not in data:
+        return jsonify(ok=False, error="qty required")
+    event_id = inventory_ledger.record_receiving(
+        restaurant_id, ingredient_id, float(data["qty"]),
+        source="admin", note=data.get("note")
+    )
+    return jsonify(ok=True, id=event_id)
+
+
+@admin_bp.route("/admin/inventory/resync-depletion/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def resync_depletion_route(restaurant_id, current_user):
+    import inventory_ledger
+    from datetime import date as _date, timedelta as _td
+    data = request.get_json() or {}
+    business_date_str = data.get("business_date")
+    business_date = _date.fromisoformat(business_date_str) if business_date_str else (_date.today() - _td(days=1))
+    try:
+        return jsonify(ok=True, **inventory_ledger.compute_daily_depletion(restaurant_id, business_date))
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
+
 @admin_bp.route("/admin/staff-availability/<int:restaurant_id>", methods=["GET"])
 @login_required
 def get_staff_availability_route(restaurant_id, current_user):

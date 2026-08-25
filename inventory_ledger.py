@@ -281,6 +281,51 @@ def compute_daily_depletion(restaurant_id: int, business_date) -> dict:
     return {"ingredients_updated": len(ingredients_updated), "unmapped_selections": unmapped}
 
 
+def discover_menu_items(restaurant_id: int, days: int = 7) -> dict:
+    """Scan a recent window of real Toast business dates (via
+    fetch_business_days, so we only hit days Toast actually reports rather
+    than guessing) and upsert every distinct item.guid seen in their order
+    selections into menu_items — the one-time-ish admin action that seeds
+    the recipe editor without a separate Toast Menus API integration.
+    Safe to re-run: upserts by (restaurant_id, toast_guid), never duplicates."""
+    import toast as _toast
+    from models import db_conn
+
+    end = date.today()
+    start = end - timedelta(days=days)
+    business_dates = sorted(_toast.fetch_business_days(restaurant_id, start, end).keys())
+
+    seen = {}  # guid -> display name
+    for bd_str in business_dates:
+        bd = date.fromisoformat(bd_str)
+        for sel in _toast.fetch_order_selections(restaurant_id, bd):
+            guid = (sel.get("item") or {}).get("guid")
+            if not guid:
+                continue
+            seen[guid] = sel.get("displayName") or seen.get(guid) or guid
+
+    discovered, updated = 0, 0
+    with db_conn() as conn:
+        for guid, name in seen.items():
+            existing = conn.execute(
+                "SELECT id, name FROM menu_items WHERE restaurant_id=? AND toast_guid=?",
+                (restaurant_id, guid)
+            ).fetchone()
+            if existing:
+                if existing["name"] != name:
+                    conn.execute("UPDATE menu_items SET name=? WHERE id=?", (name, existing["id"]))
+                    updated += 1
+                continue
+            conn.execute(
+                "INSERT INTO menu_items (restaurant_id, toast_guid, name) VALUES (?,?,?)",
+                (restaurant_id, guid, name)
+            )
+            discovered += 1
+        conn.commit()
+
+    return {"discovered": discovered, "updated": updated, "total_seen": len(seen)}
+
+
 def import_csv_to_ingredients(restaurant_id: int) -> dict:
     """One-time admin migration: parses client_data.inventory_csv via the
     existing load_inventory(), upserts one ingredients row per item keyed
@@ -330,3 +375,108 @@ def import_csv_to_ingredients(restaurant_id: int) -> dict:
         conn.commit()
 
     return {"imported": imported, "skipped_existing": skipped}
+
+
+# ── Admin CRUD helpers (thin routes in admin_routes.py delegate here so DB
+#    access always goes through the lazily-imported get_conn/db_conn above) ──
+
+def list_ingredients(restaurant_id: int) -> list:
+    from models import get_conn
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM ingredients WHERE restaurant_id=? AND is_active=1 ORDER BY name",
+        (restaurant_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def create_ingredient(restaurant_id: int, name: str, category: str = "", unit: str = "",
+                       par_level: float = 0, unit_cost: float = 0, case_size: float = 1.0,
+                       current_stock: float = 0) -> int:
+    """Creates the ingredient and its initial recount anchor in one call —
+    every ingredient must have at least one recount (see module docstring)."""
+    from models import db_conn
+    today_str = date.today().isoformat()
+    with db_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO ingredients (restaurant_id, name, category, unit, par_level, "
+            "unit_cost, case_size, current_stock, last_recount_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (restaurant_id, name, category, unit, par_level, unit_cost, case_size or 1.0,
+             current_stock, today_str)
+        )
+        ingredient_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO ingredient_stock_events "
+            "(restaurant_id, ingredient_id, event_type, qty, event_date, source, note) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (restaurant_id, ingredient_id, "recount", current_stock, today_str,
+             "admin", "initial count at creation")
+        )
+        conn.commit()
+    return ingredient_id
+
+
+def update_ingredient(ingredient_id: int, **fields) -> None:
+    """Updates static attributes only (name/category/unit/par_level/unit_cost/
+    case_size) plus avg_daily_usage/waste_last_week as a manual override —
+    current_stock is deliberately not editable here, it can only change via
+    record_recount/record_receiving so the ledger stays the source of truth."""
+    from models import db_conn
+    allowed = {"name", "category", "unit", "par_level", "unit_cost", "case_size",
+               "avg_daily_usage", "waste_last_week"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return
+    sets = ", ".join(f"{k}=?" for k in updates) + ", updated_at=datetime('now')"
+    with db_conn() as conn:
+        conn.execute(f"UPDATE ingredients SET {sets} WHERE id=?", [*updates.values(), ingredient_id])
+        conn.commit()
+
+
+def deactivate_ingredient(ingredient_id: int) -> None:
+    """Soft-delete only — recipe_ingredients/ingredient_stock_events may
+    still reference this ingredient, never hard-delete it."""
+    from models import db_conn
+    with db_conn() as conn:
+        conn.execute("UPDATE ingredients SET is_active=0, updated_at=datetime('now') WHERE id=?",
+                     (ingredient_id,))
+        conn.commit()
+
+
+def list_menu_items_with_recipes(restaurant_id: int) -> list:
+    from models import get_conn
+    conn = get_conn()
+    menu_items = conn.execute(
+        "SELECT * FROM menu_items WHERE restaurant_id=? AND is_active=1 ORDER BY name",
+        (restaurant_id,)
+    ).fetchall()
+    result = []
+    for mi in menu_items:
+        recipe_rows = conn.execute(
+            "SELECT ri.id, ri.ingredient_id, ri.qty_per_unit, i.name AS ingredient_name, i.unit "
+            "FROM recipe_ingredients ri JOIN ingredients i ON i.id = ri.ingredient_id "
+            "WHERE ri.menu_item_id=?",
+            (mi["id"],)
+        ).fetchall()
+        result.append({**dict(mi), "recipe": [dict(r) for r in recipe_rows]})
+    conn.close()
+    return result
+
+
+def add_recipe_ingredient(menu_item_id: int, ingredient_id: int, qty_per_unit: float) -> int:
+    from models import db_conn
+    with db_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,?)",
+            (menu_item_id, ingredient_id, qty_per_unit)
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def delete_recipe_ingredient(recipe_ingredient_id: int) -> None:
+    from models import db_conn
+    with db_conn() as conn:
+        conn.execute("DELETE FROM recipe_ingredients WHERE id=?", (recipe_ingredient_id,))
+        conn.commit()

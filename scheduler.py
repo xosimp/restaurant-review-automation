@@ -356,8 +356,31 @@ def check_stale_inventory():
         for r in restaurants:
             if not r.module_inventory or r.billing_status not in ("trial", "active"):
                 continue
-            # Check updated_at on inventory data
             conn = __import__('models').get_conn()
+            # Once a restaurant is migrated to the ingredients ledger (see
+            # inventory_ledger.import_csv_to_ingredients), client_data.updated_at
+            # never changes again for it — checking only that would report
+            # a live, nightly-synced restaurant as "never uploaded" forever.
+            # Use the freshest ingredients.updated_at instead when it has any.
+            ledger_row = conn.execute(
+                "SELECT MAX(updated_at) AS updated_at FROM ingredients WHERE restaurant_id=? AND is_active=1",
+                (r.id,)
+            ).fetchone()
+            if ledger_row and ledger_row["updated_at"]:
+                updated = datetime.fromisoformat(ledger_row["updated_at"])
+                days_old = (_chi_now() - updated).days
+                # A disconnected Toast restaurant's numbers freeze rather than
+                # silently drifting wrong — surface that explicitly instead of
+                # applying the same day-count threshold as a live sync.
+                import toast as _toast
+                if not _toast.is_connected(r.id) and days_old >= 3:
+                    stale.append((r.name, f"Toast disconnected, ledger frozen {days_old}d"))
+                elif days_old >= 3:
+                    stale.append((r.name, f"ledger not synced in {days_old}d"))
+                conn.close()
+                continue
+
+            # Legacy CSV path — unchanged for restaurants not yet migrated.
             row = conn.execute(
                 "SELECT updated_at, inventory_source FROM client_data WHERE restaurant_id=? LIMIT 1",
                 (r.id,)
@@ -444,6 +467,59 @@ def run_toast_sync():
             log.info(f"POS nightly sync: {ok}/{len(results)} restaurants OK")
     except Exception as e:
         log.error(f"run_toast_sync error: {e}")
+
+
+def run_daily_depletion_sync():
+    """
+    Nightly ingredient depletion sync (5am CT, right after the 3am Toast
+    labor sync): for every Toast-connected restaurant that has at least one
+    recipe configured, pull yesterday's real Toast business date(s) and
+    compute ingredient depletion from actual sales — see
+    inventory_ledger.compute_daily_depletion(). Two-layer error isolation
+    matching pos.sync_all(): one restaurant's bad recipe data must never
+    take down the whole night's run for everyone else.
+    """
+    try:
+        import toast
+        import inventory_ledger
+        import ops
+        from datetime import timedelta as _td
+        from models import get_all_restaurants, get_conn as _gc
+
+        conn = _gc()
+        restaurants_with_recipes = {
+            row["restaurant_id"] for row in conn.execute(
+                "SELECT DISTINCT mi.restaurant_id FROM recipe_ingredients ri "
+                "JOIN menu_items mi ON mi.id = ri.menu_item_id"
+            ).fetchall()
+        }
+        conn.close()
+
+        ok_count, total = 0, 0
+        for r in get_all_restaurants():
+            if r.id not in restaurants_with_recipes:
+                continue
+            try:
+                if not toast.is_connected(r.id):
+                    continue
+                total += 1
+                end = _chi_now().date()
+                start = end - _td(days=2)  # small overlap window, idempotent re-sync covers gaps
+                business_dates = toast.fetch_business_days(r.id, start, end)
+                for bd_str in business_dates:
+                    result = inventory_ledger.compute_daily_depletion(r.id, __import__('datetime').date.fromisoformat(bd_str))
+                    if result.get("unmapped_selections"):
+                        log.warning(f"[inventory_depletion] {r.name}: "
+                                   f"{len(result['unmapped_selections'])} unmapped selection(s) on {bd_str}")
+                ok_count += 1
+            except Exception as e:
+                log.warning(f"[inventory_depletion] {r.name} failed: {e}")
+                ops.capture(e, job="inventory_depletion", context=r.name)
+
+        if total:
+            log.info(f"Inventory depletion nightly sync: {ok_count}/{total} restaurants OK")
+    except Exception as e:
+        log.error(f"run_daily_depletion_sync error: {e}")
 
 
 def refresh_expiring_tokens():
@@ -535,6 +611,7 @@ _last_fetch_date      = None
 _last_digest_date     = None
 _last_backup_date     = None
 _last_toast_sync_date = None
+_last_depletion_sync_date = None
 _last_onboard_date    = None
 _last_stale_inv_date  = None
 _last_inactive_date   = None
@@ -830,7 +907,7 @@ def check_inactive_clients():
 
 def scheduler_loop():
     global _last_fetch_date, _last_digest_date, _last_backup_date
-    global _last_toast_sync_date, _last_onboard_date, _last_stale_inv_date
+    global _last_toast_sync_date, _last_depletion_sync_date, _last_onboard_date, _last_stale_inv_date
     global _last_inactive_date, _last_monthly_date, _last_opsdigest_date, _last_mktmetrics_date
     log.info("Scheduler started — review fetch every 4hr (8am/12pm/4pm/8pm CT), digests 9am on client's chosen day")
 
@@ -866,6 +943,11 @@ def scheduler_loop():
                 _last_toast_sync_date = today
                 log.info("Running nightly Toast POS sync...")
                 _ops.run_job("pos_sync", run_toast_sync)
+
+            if now.hour == 5 and _last_depletion_sync_date != today:
+                _last_depletion_sync_date = today
+                log.info("Running nightly ingredient depletion sync...")
+                _ops.run_job("inventory_depletion", run_daily_depletion_sync)
 
             if now.hour == 4 and _last_mktmetrics_date != today:
                 _last_mktmetrics_date = today
