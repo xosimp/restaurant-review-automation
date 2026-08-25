@@ -2153,6 +2153,17 @@ def save_client_data(restaurant_id: int, data_type: str,
     conn.commit()
     conn.close()
 
+    # Every inventory CSV save immediately becomes ledger rows too — no
+    # separate "import" click needed. import_csv_to_ingredients() is
+    # idempotent (skips already-imported names), so this is safe to run on
+    # every save, including re-uploads that only add a few new items.
+    if data_type == "inventory":
+        try:
+            import inventory_ledger
+            inventory_ledger.import_csv_to_ingredients(restaurant_id)
+        except Exception as e:
+            print(f"[save_client_data] auto-migration to ingredients failed: {e}")
+
 
 def get_client_data(restaurant_id: int,
                     db_path: str = DB_PATH) -> Optional[dict]:

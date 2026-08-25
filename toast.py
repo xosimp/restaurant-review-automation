@@ -518,6 +518,16 @@ def sync_to_db(restaurant_id: int) -> dict:
         except Exception as _hist_e:
             print(f"[toast sync] daily history archive error: {_hist_e}")
 
+        # Keep the food-cost recipe editor's menu item list current on every
+        # sync (manual "Sync now" or nightly) — new dishes get picked up
+        # automatically; only mapping a new item's recipe stays a manual,
+        # one-time-per-item step (see inventory_ledger.discover_menu_items).
+        try:
+            import inventory_ledger
+            inventory_ledger.discover_menu_items(restaurant_id)
+        except Exception as _menu_e:
+            print(f"[toast sync] menu item discovery error: {_menu_e}")
+
         return {"ok": True, "rows": max(0, row_count)}
 
     except Exception as e:

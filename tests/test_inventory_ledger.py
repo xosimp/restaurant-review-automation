@@ -25,6 +25,20 @@ def _restaurant(db_path):
     return rid
 
 
+def _save_inventory_csv_raw(db_path, restaurant_id, csv_str):
+    """Writes client_data.inventory_csv directly via SQL, bypassing
+    models.save_client_data() and its auto-migration hook — for tests that
+    want to exercise import_csv_to_ingredients() in isolation rather than
+    the auto-trigger (that behavior has its own test class below)."""
+    conn = get_conn(db_path)
+    conn.execute(
+        "INSERT INTO client_data (restaurant_id, inventory_csv, inventory_source) VALUES (?,?,?)",
+        (restaurant_id, csv_str, "upload")
+    )
+    conn.commit()
+    conn.close()
+
+
 def _ingredient(db_path, restaurant_id, **overrides):
     defaults = dict(name="Romaine Lettuce", category="Produce", unit="lb",
                      par_level=20, unit_cost=2.5, case_size=1.0,
@@ -229,7 +243,7 @@ _SAMPLE_CSV = (
 class TestImportCsvToIngredients:
     def test_imports_all_rows_with_fields_intact(self, db_path):
         rid = _restaurant(db_path)
-        save_client_data(rid, "inventory", _SAMPLE_CSV, source="upload", db_path=db_path)
+        _save_inventory_csv_raw(db_path, rid, _SAMPLE_CSV)
         result = ledger.import_csv_to_ingredients(rid)
         assert result["imported"] == 2
         assert result["skipped_existing"] == 0
@@ -280,13 +294,54 @@ class TestImportCsvToIngredients:
         assert recounts == 1
 
 
+# ── Automatic migration on every inventory CSV save ──────────────────────
+
+class TestAutoMigrationOnCsvSave:
+    def test_saving_inventory_csv_immediately_creates_ingredients(self, db_path):
+        """The whole point: no separate 'import' click needed — saving the
+        CSV (admin upload, client self-upload, or a future Toast-fed path)
+        populates the ledger right away."""
+        rid = _restaurant(db_path)
+        save_client_data(rid, "inventory", _SAMPLE_CSV, source="upload", db_path=db_path)
+
+        conn = get_conn(db_path)
+        rows = {r["name"] for r in conn.execute(
+            "SELECT name FROM ingredients WHERE restaurant_id=? AND is_active=1", (rid,)).fetchall()}
+        conn.close()
+        assert rows == {"Chicken Breast", "Heavy Cream"}
+
+    def test_re_saving_a_csv_with_a_new_item_only_adds_the_new_one(self, db_path):
+        """Idempotent-by-name means a re-upload adding one dish's ingredient
+        doesn't touch or duplicate the ones already tracked."""
+        rid = _restaurant(db_path)
+        save_client_data(rid, "inventory", _SAMPLE_CSV, source="upload", db_path=db_path)
+
+        updated_csv = _SAMPLE_CSV + "Butter,Dairy,10,8,4.5,1.5,10,0.5,1\n"
+        save_client_data(rid, "inventory", updated_csv, source="upload", db_path=db_path)
+
+        conn = get_conn(db_path)
+        rows = {r["name"] for r in conn.execute(
+            "SELECT name FROM ingredients WHERE restaurant_id=? AND is_active=1", (rid,)).fetchall()}
+        conn.close()
+        assert rows == {"Chicken Breast", "Heavy Cream", "Butter"}
+
+    def test_shifts_csv_save_does_not_trigger_ingredient_import(self, db_path):
+        rid = _restaurant(db_path)
+        save_client_data(rid, "shifts", "date,employee,actual_hours,sales\n2026-08-20,Ann,8,500\n",
+                         source="upload", db_path=db_path)
+        conn = get_conn(db_path)
+        n = conn.execute("SELECT COUNT(*) AS n FROM ingredients WHERE restaurant_id=?", (rid,)).fetchone()["n"]
+        conn.close()
+        assert n == 0
+
+
 # ── load_inventory_for_restaurant resolution order ───────────────────────
 
 class TestLoadInventoryResolutionOrder:
     def test_prefers_ingredients_table_when_present(self, db_path):
         import inventory
         rid = _restaurant(db_path)
-        save_client_data(rid, "inventory", _SAMPLE_CSV, source="upload", db_path=db_path)
+        _save_inventory_csv_raw(db_path, rid, _SAMPLE_CSV)
         _ingredient(db_path, rid, name="Only In Ledger", current_stock=99)
 
         items, is_live = inventory.load_inventory_for_restaurant(rid)

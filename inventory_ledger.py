@@ -292,8 +292,12 @@ def discover_menu_items(restaurant_id: int, days: int = 7) -> dict:
     from models import db_conn
 
     end = date.today()
-    start = end - timedelta(days=days)
-    business_dates = sorted(_toast.fetch_business_days(restaurant_id, start, end).keys())
+    # fetch_business_days isn't demo-mode aware (only fetch_order_selections
+    # is), so a demo/showcase restaurant would otherwise throw trying a real
+    # HTTP call with a fake token. _demo_order_selections returns the same
+    # fixed menu regardless of date, so one representative date is enough.
+    business_dates = [end.isoformat()] if _toast._is_demo(restaurant_id) else \
+        sorted(_toast.fetch_business_days(restaurant_id, end - timedelta(days=days), end).keys())
 
     seen = {}  # guid -> display name
     for bd_str in business_dates:

@@ -133,19 +133,46 @@ def test_receiving_route_increases_stock(app, db_path):
     assert inventory_ledger.list_ingredients(rid)[0]["current_stock"] == 15.0
 
 
-# ── CSV import route ──────────────────────────────────────────────────────
+# ── CSV import route (now mostly a manual backfill — saving inventory CSV
+#    auto-migrates on its own, see tests/test_inventory_ledger.py's
+#    TestAutoMigrationOnCsvSave) ───────────────────────────────────────────
 
-def test_import_csv_route(app, db_path):
-    from models import save_client_data
+def test_import_csv_route_backfills_data_saved_before_auto_migration_existed(app, db_path):
+    """Simulates a restaurant with inventory_csv written directly (as if
+    from before the auto-migration hook existed) — the manual route is
+    still the backfill path for that."""
     rid = _restaurant(db_path)
-    csv_str = ("item,category,par_level,current_stock,unit_cost,avg_daily_usage,"
-              "last_order_qty,waste_last_week\nOnions,Produce,10,8,1.2,2,10,0.5\n")
-    save_client_data(rid, "inventory", csv_str, source="upload", db_path=db_path)
+    conn = get_conn(db_path)
+    conn.execute(
+        "INSERT INTO client_data (restaurant_id, inventory_csv, inventory_source) VALUES (?,?,?)",
+        (rid, "item,category,par_level,current_stock,unit_cost,avg_daily_usage,"
+              "last_order_qty,waste_last_week\nOnions,Produce,10,8,1.2,2,10,0.5\n", "upload")
+    )
+    conn.commit()
+    conn.close()
+
     with app.test_request_context(f"/admin/inventory/import-csv/{rid}", method="POST"):
         resp = import_csv_to_ingredients_route(rid)
     body = resp.get_json()
     assert body["ok"] is True
     assert body["imported"] == 1
+
+
+def test_saving_inventory_csv_auto_migrates_without_the_route(app, db_path):
+    from models import save_client_data
+    rid = _restaurant(db_path)
+    csv_str = ("item,category,par_level,current_stock,unit_cost,avg_daily_usage,"
+              "last_order_qty,waste_last_week\nOnions,Produce,10,8,1.2,2,10,0.5\n")
+    save_client_data(rid, "inventory", csv_str, source="upload", db_path=db_path)
+    assert inventory_ledger.list_ingredients(rid)[0]["name"] == "Onions"
+
+    # The route still works, but it's now an idempotent no-op.
+    with app.test_request_context(f"/admin/inventory/import-csv/{rid}", method="POST"):
+        resp = import_csv_to_ingredients_route(rid)
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert body["imported"] == 0
+    assert body["skipped_existing"] == 1
 
 
 # ── Recipe editor routes ──────────────────────────────────────────────────
