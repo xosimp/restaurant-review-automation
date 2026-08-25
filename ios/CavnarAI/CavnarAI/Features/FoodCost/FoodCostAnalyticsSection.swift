@@ -191,6 +191,13 @@ struct FoodCostAnalyticsSection: View {
     private static let benchmarkScaleMax = 15.0
     private static let industryLow = 4.0
     private static let industryHigh = 5.0
+    // A fixed light yellow, not a translucent white overlay — .white.opacity
+    // blended with whatever fill tone sits underneath it (green/amber/red
+    // depending on this restaurant's current bucket), so the band read as a
+    // DIFFERENT color depending on which bucket a restaurant happened to be
+    // in, and never matched the legend swatch sitting on plain black beside
+    // it. This is the one color used for both, always, regardless of tone.
+    private static let industryBandColor = Color(red: 0.95, green: 0.85, blue: 0.45)
 
     private func benchmarkBar(label: String, pct: Double) -> some View {
         let tone = benchmarkColor(label)
@@ -221,16 +228,16 @@ struct FoodCostAnalyticsSection: View {
                     // waste rate above 5% is exactly the case worth
                     // flagging, and the fill for anything above 5% already
                     // extends past this band's position, painting over it
-                    // when it's drawn first. A light, semi-transparent
-                    // overlay stays legible regardless of what's under it.
-                    Rectangle().fill(Color.white.opacity(0.4))
+                    // when it's drawn first. Solid enough to stay legible
+                    // regardless of what's under it.
+                    Rectangle().fill(Self.industryBandColor.opacity(0.85))
                         .frame(width: max(geo.size.width * industryWidth, 2))
                         .offset(x: geo.size.width * industryStart)
                 }
             }
             .frame(height: 8)
             HStack(spacing: 4) {
-                Rectangle().fill(Color.white.opacity(0.4)).frame(width: 8, height: 8)
+                Rectangle().fill(Self.industryBandColor).frame(width: 8, height: 8)
                 Text("Industry target: 4–5% of purchases")
             }
             .font(.cavnarBody(9.5))
