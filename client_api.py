@@ -1030,9 +1030,14 @@ def labor_insight_api(current_user):
 def inv_insight_api(current_user):
     try:
         from inventory import load_inventory_for_restaurant, analyse_inventory, get_claude_insights
+        from marketing import get_upcoming_holidays
         restaurant = get_restaurant(current_user["restaurant_id"])
         items, _is_live = load_inventory_for_restaurant(current_user["restaurant_id"])
-        analysis = analyse_inventory(items)
+        analysis = analyse_inventory(
+            items,
+            delivery_days=restaurant.delivery_days if restaurant else None,
+            upcoming_holidays=get_upcoming_holidays(),
+        )
         owner_name = restaurant.owner_name if restaurant else None
         insight = get_claude_insights(analysis, owner_name=owner_name, restaurant_name=restaurant.name if restaurant else None, restaurant_id=current_user["restaurant_id"], items=items)
         return jsonify(insight=format_insight_html(insight))

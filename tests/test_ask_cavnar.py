@@ -303,7 +303,7 @@ def test_inventory_context_names_critical_and_reorder_items(db_path, monkeypatch
     import inventory
     r = _restaurant(db_path, module_inventory=1)
     monkeypatch.setattr(inventory, "load_inventory_for_restaurant", lambda rid: ([{"item": "Salmon"}], True))
-    monkeypatch.setattr(inventory, "analyse_inventory", lambda items: {
+    monkeypatch.setattr(inventory, "analyse_inventory", lambda items, delivery_days=None, upcoming_holidays=None, today=None: {
         "total_waste_cost_week": 200, "monthly_waste_projection": 800, "total_stock_value": 5000,
         "critical_low": [{"item": "Salmon", "days_remaining": 1}],
         "reorder_soon": [{"item": "Chicken", "days_remaining": 4}],

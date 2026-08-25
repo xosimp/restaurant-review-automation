@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS restaurants (
     location_group  TEXT,                 -- group name for multi-location clients (e.g. "Syrup")
     location_name   TEXT,                 -- specific location name (e.g. "Lincoln Park")
     inventory_frequency TEXT DEFAULT 'weekly', -- how often to request inventory data
+    delivery_days   TEXT,                 -- comma-separated weekday abbrevs this client's supplier delivers on, e.g. "Mon,Thu"
     inventory_notes TEXT,                 -- admin notes on how to get data from this client
     food_cost_target REAL DEFAULT 30.0,  -- target food cost % of revenue
     inventory_updated_at TEXT,            -- last time inventory data was uploaded
@@ -249,6 +250,7 @@ class Restaurant:
     location_group: Optional[str]        = None
     location_name: Optional[str]         = None
     inventory_frequency: str             = "weekly"
+    delivery_days: Optional[str]         = None
     inventory_notes: Optional[str]       = None
     food_cost_target: float              = 30.0
     monthly_revenue_target: float        = 0.0
@@ -460,6 +462,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("restaurants", "location_name", "TEXT"),
         ("restaurants", "pos_system", "TEXT"),
         ("restaurants", "inventory_frequency", "TEXT"),
+        ("restaurants", "delivery_days", "TEXT"),
         ("restaurants", "inventory_notes", "TEXT"),
         ("restaurants", "food_cost_target", "REAL"),
         ("restaurants", "monthly_revenue_target", "REAL"),
@@ -1456,7 +1459,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
     allowed = {
         "name","owner_email","google_place_id","yelp_business_id","voice_notes",
         "neighborhood","vibe","known_for","sign_off_name","never_say",
-        "hourly_rate","labor_target_pct","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
+        "hourly_rate","labor_target_pct","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","login_notify","timezone","onboarding_dismissed",
@@ -1515,6 +1518,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         location_group=row["location_group"] if "location_group" in row.keys() else None,
         location_name=row["location_name"] if "location_name" in row.keys() else None,
         inventory_frequency=row["inventory_frequency"] if "inventory_frequency" in row.keys() else "weekly",
+        delivery_days=row["delivery_days"] if "delivery_days" in row.keys() else None,
         inventory_notes=row["inventory_notes"] if "inventory_notes" in row.keys() else None,
         food_cost_target=row["food_cost_target"] if "food_cost_target" in row.keys() else 30.0,
         monthly_revenue_target=float(row["monthly_revenue_target"]) if "monthly_revenue_target" in row.keys() and row["monthly_revenue_target"] else 0.0,

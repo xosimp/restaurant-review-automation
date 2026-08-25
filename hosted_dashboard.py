@@ -407,7 +407,12 @@ def index(current_user):
                  "by_day":{},"employee_hours":{},"role_summary":{},"role_summary_sorted":[],"role_max_pct":0,"trend_delta":None,"staff_constraints":{}}
     try:
         _inv_items, _inv_live = load_inventory_for_restaurant(rid)
-        inv = analyse_inventory(_inv_items)
+        from marketing import get_upcoming_holidays as _guh_dash
+        inv = analyse_inventory(
+            _inv_items,
+            delivery_days=restaurant.delivery_days if restaurant else None,
+            upcoming_holidays=_guh_dash(),
+        )
         inv['is_live'] = _inv_live
         inv['banner_gradient'] = inv_banner_gradient(inv['annual_waste_projection'], inv['annual_recoverable'])
     except Exception as e:

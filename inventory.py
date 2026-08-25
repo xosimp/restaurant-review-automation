@@ -1,13 +1,104 @@
 """
 inventory.py — Food waste analysis + Claude-powered ordering recommendations
 """
-import os, csv, json
+import os, csv, json, math
 import anthropic
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from ai_utils import create_with_retry, extract_text
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+# Category-specific waste tolerance — fresh produce/herbs naturally run
+# higher waste (wilting, trim loss) than proteins/dairy, so a flat 20%
+# threshold either buries real problems in low-waste categories or flags
+# normal spoilage in high-waste ones as if it were a mistake.
+_WASTE_TOLERANCE_PCT = {
+    "produce": 28,
+    "bakery":  25,
+    "protein": 15,
+    "dairy":   15,
+    "beverage": 20,
+    "pantry":  20,
+}
+_DEFAULT_WASTE_TOLERANCE_PCT = 20
+
+# Ingredient keywords relevant to each upcoming holiday/event — shared by
+# get_claude_insights (narrative "heads-up" text) and analyse_inventory
+# (actual suggested_order_qty scaling), so the two never drift apart.
+_HOLIDAY_ITEM_KEYWORDS = {
+    "valentine": ["salmon", "filet", "lobster", "shrimp", "chocolate", "cream", "butter"],
+    "mother": ["salmon", "filet", "lobster", "shrimp", "cream", "herbs", "asparagus"],
+    "father": ["prime rib", "steak", "beef", "ribs", "lobster"],
+    "thanksgiving": ["turkey", "potato", "cream", "butter", "herbs", "onion"],
+    "christmas": ["prime rib", "beef", "salmon", "cream", "butter", "herbs"],
+    "fourth of july": ["beef", "chicken", "ribs", "corn", "potato"],
+    "memorial": ["beef", "chicken", "ribs", "potato"],
+    "labor day": ["beef", "chicken", "ribs", "potato"],
+    "new year": ["salmon", "lobster", "shrimp", "cream", "butter", "champagne"],
+    "st. patrick": ["beef", "potato", "cabbage", "onion"],
+}
+# Bump suggested order qty ~40% for items tied to a holiday in the next 30 days
+_EVENT_SCALE_FACTOR = 1.4
+
+# Fri/Sat/Sun usage multiplier vs. a flat Mon-Thu baseline — most full-service
+# restaurants see a real weekend demand surge that a single flat average masks.
+_WEEKEND_USAGE_MULTIPLIER = {4: 1.3, 5: 1.5, 6: 1.15}  # Mon=0 ... Sun=6
+
+_WEEKDAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def _holiday_relevant_keywords(upcoming_holidays: str) -> set:
+    """Ingredient keywords relevant to any holiday named in an
+    upcoming-holidays string (see marketing.get_upcoming_holidays)."""
+    relevant = set()
+    if not upcoming_holidays:
+        return relevant
+    for holiday_str in upcoming_holidays.split(", "):
+        h_lower = holiday_str.lower()
+        for keyword, ingredients in _HOLIDAY_ITEM_KEYWORDS.items():
+            if keyword in h_lower:
+                relevant.update(ingredients)
+    return relevant
+
+
+def days_until_next_delivery(delivery_days: str, today=None):
+    """Days from today until this restaurant's next scheduled delivery.
+    delivery_days is a comma-separated list of weekday abbreviations/names
+    (e.g. "Mon,Thu" or "Monday, Thursday"). Returns None when not
+    configured or unparseable — callers should fall back to flat
+    calendar-day thresholds in that case."""
+    if not delivery_days:
+        return None
+    today = today or datetime.now(ZoneInfo('America/Chicago')).date()
+    wanted = {d.strip()[:3].title() for d in delivery_days.split(",") if d.strip()}
+    wanted_idx = {_WEEKDAY_ABBR.index(w) for w in wanted if w in _WEEKDAY_ABBR}
+    if not wanted_idx:
+        return None
+    today_idx = today.weekday()  # Monday=0
+    for offset in range(0, 8):
+        if (today_idx + offset) % 7 in wanted_idx:
+            return offset
+    return None
+
+
+def _simulate_days_remaining(current_stock: float, avg_daily_usage: float, today=None) -> float:
+    """Days until current_stock is depleted, weighting Fri/Sat/Sun usage
+    higher than the flat weekly average instead of a single flat division —
+    a restaurant heading into a busy weekend runs out sooner than a flat
+    avg_daily_usage implies. Falls back to identical output as the old flat
+    division for date ranges with no weekend in them."""
+    if avg_daily_usage <= 0:
+        return 99.0
+    today = today or datetime.now(ZoneInfo('America/Chicago')).date()
+    remaining = current_stock
+    for day_offset in range(0, 30):
+        d = today + timedelta(days=day_offset)
+        usage = avg_daily_usage * _WEEKEND_USAGE_MULTIPLIER.get(d.weekday(), 1.0)
+        if remaining <= usage:
+            return round(day_offset + max(0.0, remaining / usage), 1)
+        remaining -= usage
+    return 30.0
 
 
 def load_inventory(path: str = "sample_inventory.csv",
@@ -54,11 +145,32 @@ Shrimp 16/20,Protein,10,8,14.2,1.6,10,1.2"""
         r["last_order_qty"] = float(r["last_order_qty"])
         r["waste_last_week"]= float(r["waste_last_week"])
         r.setdefault("unit", "")  # unit label optional (e.g. "lbs", "cases")
+        # Supplier case/pack size, optional — used to round suggested_order_qty
+        # up to an actionable number instead of a raw formula output.
+        r["case_size"] = float(r["case_size"]) if r.get("case_size") not in (None, "") else 1.0
     return rows
 
 
-def analyse_inventory(items: list[dict]) -> dict:
-    """Compute waste, overstock, and reorder flags."""
+def analyse_inventory(items: list[dict], delivery_days: str = None,
+                      upcoming_holidays: str = None, today=None) -> dict:
+    """Compute waste, overstock, and reorder flags.
+
+    delivery_days: optional comma-separated weekday abbreviations (e.g.
+        "Mon,Thu") — this restaurant's actual supplier delivery schedule.
+        When set, critical_low/reorder_soon are judged against days until
+        the next delivery instead of flat calendar-day cutoffs: 2 days of
+        stock is fine the day before a delivery and dangerous the day
+        after one. Falls back to the flat 2/4-day cutoffs when omitted.
+    upcoming_holidays: optional comma-separated holiday/event names (see
+        marketing.get_upcoming_holidays) — scales suggested_order_qty up
+        for ingredients tied to a matching event.
+    today: optional date override for deterministic testing; defaults to
+        the real current date (America/Chicago).
+    """
+    today = today or datetime.now(ZoneInfo('America/Chicago')).date()
+    delivery_offset = days_until_next_delivery(delivery_days, today)
+    holiday_keywords = _holiday_relevant_keywords(upcoming_holidays)
+
     waste_items   = []
     overstock     = []
     reorder_soon     = []
@@ -69,8 +181,10 @@ def analyse_inventory(items: list[dict]) -> dict:
     total_stock_value = 0.0
 
     for item in items:
-        days_remaining  = (item["current_stock"] / item["avg_daily_usage"]
-                           if item["avg_daily_usage"] > 0 else 99)
+        # Weekend-weighted depletion simulation instead of a flat division —
+        # a restaurant heading into a busy Fri/Sat/Sun runs out sooner than
+        # a single flat avg_daily_usage would suggest.
+        days_remaining  = _simulate_days_remaining(item["current_stock"], item["avg_daily_usage"], today)
         waste_cost      = item["waste_last_week"] * item["unit_cost"]
         # Category-specific overstock thresholds (industry standard)
         # Proteins/dairy: flag at 110% of par (perishable, high cost)
@@ -101,23 +215,64 @@ def analyse_inventory(items: list[dict]) -> dict:
         # If wasting a lot, pull the order quantity down proportionally
         waste_adj     = min(0.95, max(0.60, 1.0 - (waste_pct / 100) * 0.5))
         raw_qty       = (item["par_level"] * 1.5) - item["current_stock"] + (item["avg_daily_usage"] * 3)
-        suggested_qty = max(0, round(raw_qty * waste_adj))
+
+        # Event scaling — bump quantity for items tied to a holiday/event in
+        # the next 30 days, so the actual order number reflects the surge,
+        # not just the AI's narrative text about it.
+        event_scaled = bool(holiday_keywords) and any(kw in item["item"].lower() for kw in holiday_keywords)
+        if event_scaled:
+            raw_qty *= _EVENT_SCALE_FACTOR
+
+        suggested_qty = max(0.0, raw_qty * waste_adj)
+
+        # Case-size/MOQ rounding — round up to the nearest full supplier
+        # case so the number is directly actionable, not a raw formula
+        # output the owner still has to do math on.
+        case_size = item.get("case_size") or 1
+        try:
+            case_size = float(case_size)
+        except (TypeError, ValueError):
+            case_size = 1.0
+        if case_size <= 0:
+            case_size = 1.0
+        if suggested_qty > 0 and case_size > 1:
+            suggested_qty = math.ceil(suggested_qty / case_size) * case_size
+        suggested_qty = int(round(suggested_qty))
+
         savings_vs_last = round((item["last_order_qty"] - suggested_qty) * item["unit_cost"], 2)
         item["suggested_order_qty"] = suggested_qty
         item["savings_vs_last"]     = savings_vs_last  # positive = save money, negative = need more
+        item["event_scaled"]        = event_scaled
 
-        if waste_pct > 20:
+        # Per-category waste tolerance — see _WASTE_TOLERANCE_PCT above.
+        tolerance = _WASTE_TOLERANCE_PCT.get(category, _DEFAULT_WASTE_TOLERANCE_PCT)
+        if waste_pct > tolerance:
             waste_items.append(item)
         if overstock_units > 0:
             overstock.append(item)
-        if days_remaining <= 2 and item["current_stock"] < item["par_level"]:
-            critical_low.append(item)
-        elif days_remaining <= 4:
-            reorder_soon.append(item)
-        # Flag items with meaningful savings potential even if stock isn't critically low
-        # Threshold: saves $5+ vs last order AND not already in critical/reorder lists
-        elif savings_vs_last >= 5.0:
-            order_reduction.append(item)
+
+        if delivery_offset is not None:
+            # Judge urgency against when the truck actually comes, not a
+            # flat day count.
+            margin = days_remaining - delivery_offset
+            item["delivery_margin_days"] = round(margin, 1)
+            if margin < 0 and item["current_stock"] < item["par_level"]:
+                critical_low.append(item)
+            elif margin <= 1.5:
+                reorder_soon.append(item)
+            # Flag items with meaningful savings potential even if stock isn't critically low
+            elif savings_vs_last >= 5.0:
+                order_reduction.append(item)
+        else:
+            item["delivery_margin_days"] = None
+            if days_remaining <= 2 and item["current_stock"] < item["par_level"]:
+                critical_low.append(item)
+            elif days_remaining <= 4:
+                reorder_soon.append(item)
+            # Flag items with meaningful savings potential even if stock isn't critically low
+            # Threshold: saves $5+ vs last order AND not already in critical/reorder lists
+            elif savings_vs_last >= 5.0:
+                order_reduction.append(item)
 
     waste_items      = sorted(waste_items,      key=lambda x: x["waste_cost"],     reverse=True)
     overstock        = sorted(overstock,        key=lambda x: x["overstock_cost"],  reverse=True)
@@ -428,19 +583,10 @@ def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name:
                          analysis.get("reorder_soon", []) +
                          analysis.get("order_reduction", []))
             _item_names = [x["item"].lower() for x in _all_items]
-            # Holiday-to-ingredient hints
-            _holiday_items = {
-                "valentine": ["salmon", "filet", "lobster", "shrimp", "chocolate", "cream", "butter"],
-                "mother": ["salmon", "filet", "lobster", "shrimp", "cream", "herbs", "asparagus"],
-                "father": ["prime rib", "steak", "beef", "ribs", "lobster"],
-                "thanksgiving": ["turkey", "potato", "cream", "butter", "herbs", "onion"],
-                "christmas": ["prime rib", "beef", "salmon", "cream", "butter", "herbs"],
-                "fourth of july": ["beef", "chicken", "ribs", "corn", "potato"],
-                "memorial": ["beef", "chicken", "ribs", "potato"],
-                "labor day": ["beef", "chicken", "ribs", "potato"],
-                "new year": ["salmon", "lobster", "shrimp", "cream", "butter", "champagne"],
-                "st. patrick": ["beef", "potato", "cabbage", "onion"],
-            }
+            # Holiday-to-ingredient hints — shared with analyse_inventory's
+            # own event-scaling logic so narrative text and actual order
+            # quantities never drift apart.
+            _holiday_items = _HOLIDAY_ITEM_KEYWORDS
             relevant_flags = []
             for holiday_str in _upcoming.split(", "):
                 h_lower = holiday_str.lower()

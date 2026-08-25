@@ -740,11 +740,16 @@ def mobile_food_cost_analytics(current_user):
     charts at render time — both already computed by analyse_inventory(),
     just not previously exposed as JSON."""
     from inventory import load_inventory_for_restaurant, analyse_inventory, get_claude_insights
+    from marketing import get_upcoming_holidays
     rid = current_user["restaurant_id"]
     try:
         restaurant = get_restaurant(rid)
         items, _is_live = load_inventory_for_restaurant(rid)
-        analysis = analyse_inventory(items)
+        analysis = analyse_inventory(
+            items,
+            delivery_days=restaurant.delivery_days if restaurant else None,
+            upcoming_holidays=get_upcoming_holidays(),
+        )
         cached = _capi._cache_get("mobile-inv-insight:" + str(rid))
         if cached:
             insight = cached

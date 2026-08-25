@@ -206,11 +206,18 @@ def _labor_context(restaurant_id):
 
 def _inventory_context(restaurant_id):
     from inventory import load_inventory_for_restaurant, analyse_inventory
+    from marketing import get_upcoming_holidays
+    from models import get_restaurant as _gr_ac
     items, is_live = load_inventory_for_restaurant(restaurant_id)
     # Same sample-data-fallback concern as labor above.
     if not items or not is_live:
         return "FOOD COST\n- No real inventory data uploaded yet — the owner needs to upload an inventory CSV. (The Food Cost tab currently shows sample placeholder data, not this restaurant's real numbers.)\n"
-    a = analyse_inventory(items)
+    _rest_ac = _gr_ac(restaurant_id)
+    a = analyse_inventory(
+        items,
+        delivery_days=_rest_ac.delivery_days if _rest_ac else None,
+        upcoming_holidays=get_upcoming_holidays(),
+    )
     critical = a.get("critical_low") or []
     reorder = a.get("reorder_soon") or []
     critical_names = ", ".join(f"{x['item']} ({x['days_remaining']}d left)" for x in critical) or "none"
