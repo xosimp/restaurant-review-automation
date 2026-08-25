@@ -544,6 +544,7 @@ def save_client_settings(restaurant_id, current_user):
             "location_group":        data.get("location_group","").strip() or None,
             "location_name":         data.get("location_name","").strip() or None,
             "inventory_frequency":   data.get("inventory_frequency","weekly"),
+            "delivery_days":         data.get("delivery_days","").strip() or None,
             "inventory_notes":       sanitize(data.get("inventory_notes","")),
             "hours_notes":           sanitize(data.get("hours_notes",""), max_len=2000),
             "role_rates_json":       data.get("role_rates_json","") or None,
