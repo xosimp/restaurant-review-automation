@@ -92,7 +92,7 @@ struct FoodCostAnalyticsSection: View {
                         .foregroundStyle(Color.cavnarInk.opacity(0.6))
                     Text("$\((a.annualRecoverable ?? 0).commaFormatted)")
                         .font(.cavnarNumber(26, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
+                        .foregroundStyle(Color.cavnarGreen)
                         .cavnarNumberGlow(Color.cavnarGreen)
                     Text("$\((a.recoverableMonthly ?? 0).commaFormatted)/mo with better ordering")
                         .font(.cavnarBody(10))
@@ -123,14 +123,14 @@ struct FoodCostAnalyticsSection: View {
     private func statStrip(_ a: FoodCostAnalytics) -> some View {
         VStack(spacing: 14) {
             statRow([
-                ("$\(Int(a.totalWasteCostWeek ?? 0))", "Waste / wk", Color.cavnarRed),
-                ("$\(Int(a.monthlyWasteProjection ?? 0))", "Proj. / mo", Color.cavnarAmber),
+                ("$\((a.totalWasteCostWeek ?? 0).commaFormatted)", "Waste / wk", Color.cavnarRed),
+                ("$\((a.monthlyWasteProjection ?? 0).commaFormatted)", "Proj. / mo", Color.cavnarAmber),
                 ("\(a.wasteItems.count)", "Waste items", a.wasteItems.isEmpty ? Color.cavnarGreen : Color.cavnarAmber),
             ])
             Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
             statRow([
                 ("\(a.criticalLow.count)", "Critical low", a.criticalLow.isEmpty ? Color.cavnarGreen : Color.cavnarRed),
-                ("$\(Int(a.totalStockValue ?? 0))", "Inv. value", Color.cavnarInk),
+                ("$\((a.totalStockValue ?? 0).commaFormatted)", "Inv. value", Color.cavnarInk),
                 ("\(a.totalItems ?? 0)", "Tracked", Color.cavnarInk),
             ])
         }
