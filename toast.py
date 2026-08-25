@@ -275,6 +275,93 @@ def fetch_business_days(restaurant_id: int, start_date: date, end_date: date) ->
     return sales_by_date
 
 
+def _demo_order_selections(business_date: date) -> list:
+    """Canned selections for demo-mode restaurants, mirroring
+    _demo_shifts_csv()'s role for build_shifts_csv — so the nightly
+    depletion job never throws on a restaurant with no real Toast
+    credentials. A small, fixed menu so demo recipe setup has something
+    real to map."""
+    import random
+    random.seed(business_date.toordinal())  # reproducible per day
+    demo_menu = [
+        ("11111111-demo-caesar",   "Caesar Salad",   (8, 22)),
+        ("22222222-demo-salmon",   "Grilled Salmon",  (10, 26)),
+        ("33333333-demo-rigatoni", "Rigatoni Bolognese", (14, 30)),
+        ("44444444-demo-margherita", "Margherita Pizza", (12, 28)),
+    ]
+    selections = []
+    for guid, name, (lo, hi) in demo_menu:
+        selections.append({
+            "item": {"guid": guid, "externalId": guid},
+            "displayName": name,
+            "quantity": random.randint(lo, hi),
+            "voided": False,
+        })
+    return selections
+
+
+def fetch_order_selections(restaurant_id: int, business_date: date) -> list:
+    """
+    Pull every order-line-item ("selection") for one Toast business date via
+    GET /orders/v2/ordersBulk?businessDate=YYYYMMDD, flattening
+    orders -> checks[] -> selections[]. Each returned dict carries at least
+    item.guid, displayName, and quantity — enough to match against
+    recipe_ingredients (see inventory_ledger.py) and compute ingredient
+    depletion from real sales.
+
+    Paginated by page/pageSize (max 100) — NOT the pageToken style
+    fetch_time_entries uses, ordersBulk is a different endpoint shape.
+    Voided/refunded selections are excluded so cancelled orders don't
+    deplete stock that was never actually used.
+
+    Callers should get business_date from fetch_business_days()'s own
+    returned dates, not local date math — Toast's business-day boundary
+    isn't calendar midnight, so "today - 1 day" can silently point at the
+    wrong day around close time.
+    """
+    if _is_demo(restaurant_id):
+        return _demo_order_selections(business_date)
+
+    from models import get_restaurant
+
+    r     = get_restaurant(restaurant_id)
+    token = get_toast_token(restaurant_id)
+    base  = TOAST_SANDBOX if os.getenv("TOAST_SANDBOX", "").lower() in ("1", "true") else TOAST_BASE
+    business_date_str = business_date.strftime("%Y%m%d")
+
+    all_selections = []
+    page = 1
+    page_limit = 20  # safety cap, same rationale as fetch_time_entries
+    for _ in range(page_limit):
+        resp = requests.get(
+            f"{base}/orders/v2/ordersBulk",
+            headers=_headers(token, r.toast_restaurant_guid),
+            params={"businessDate": business_date_str, "page": page, "pageSize": 100},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        orders = resp.json() or []
+        if not orders:
+            break
+
+        for order in orders:
+            for check in (order.get("checks") or []):
+                for sel in (check.get("selections") or []):
+                    # `voided` is documented; `refundStatus` is a best-effort
+                    # guess at the refund field name pending verification
+                    # against a real sandbox response — harmless if wrong
+                    # (just never matches), but confirm before relying on it.
+                    if sel.get("voided") or sel.get("refundStatus") not in (None, "NONE"):
+                        continue
+                    all_selections.append(sel)
+
+        if len(orders) < 100:
+            break
+        page += 1
+
+    return all_selections
+
+
 # ── Data normalisation ─────────────────────────────────────────────────────────
 
 _DOW = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]

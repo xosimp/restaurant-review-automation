@@ -748,6 +748,62 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE marketing_content_log ADD COLUMN comments INTEGER DEFAULT 0",
         "ALTER TABLE marketing_content_log ADD COLUMN shares INTEGER DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS idx_mkt_content_restaurant ON marketing_content_log(restaurant_id, created_at)",
+        # Toast-driven food cost engine — persistent per-ingredient records
+        # replacing the old re-parsed inventory_csv blob, plus a stock-event
+        # ledger (recount/receiving/depletion/waste) and a recipe/BOM mapping
+        # so ingredient usage can be computed from real Toast sales instead
+        # of guessed. See inventory_ledger.py.
+        """CREATE TABLE IF NOT EXISTS ingredients (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            name            TEXT NOT NULL,
+            category        TEXT,
+            unit            TEXT,
+            par_level       REAL DEFAULT 0,
+            unit_cost       REAL DEFAULT 0,
+            case_size       REAL DEFAULT 1.0,
+            current_stock   REAL DEFAULT 0,
+            avg_daily_usage REAL DEFAULT 0,
+            last_order_qty  REAL DEFAULT 0,
+            waste_last_week REAL DEFAULT 0,
+            last_recount_at TEXT,
+            is_active       INTEGER DEFAULT 1,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_ingredients_restaurant ON ingredients(restaurant_id, is_active)",
+        # event_type: 'recount' (qty = absolute counted amount) |
+        # 'receiving' | 'depletion' | 'waste' (qty = signed delta).
+        # source: 'toast' | 'manual' | 'admin' | 'inferred' | 'migration'.
+        """CREATE TABLE IF NOT EXISTS ingredient_stock_events (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL,
+            ingredient_id   INTEGER NOT NULL REFERENCES ingredients(id),
+            event_type      TEXT NOT NULL,
+            qty             REAL NOT NULL,
+            event_date      TEXT NOT NULL,
+            source          TEXT NOT NULL,
+            note            TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_stock_events_ingredient ON ingredient_stock_events(restaurant_id, ingredient_id, event_date)",
+        """CREATE TABLE IF NOT EXISTS menu_items (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL,
+            toast_guid      TEXT,
+            name            TEXT NOT NULL,
+            is_active       INTEGER DEFAULT 1,
+            UNIQUE(restaurant_id, toast_guid)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_menu_items_restaurant ON menu_items(restaurant_id, toast_guid)",
+        """CREATE TABLE IF NOT EXISTS recipe_ingredients (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            menu_item_id    INTEGER NOT NULL REFERENCES menu_items(id),
+            ingredient_id   INTEGER NOT NULL REFERENCES ingredients(id),
+            qty_per_unit    REAL NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_recipe_menu_item ON recipe_ingredients(menu_item_id)",
+        "CREATE INDEX IF NOT EXISTS idx_recipe_ingredient ON recipe_ingredients(ingredient_id)",
     ]
     for m in migrations:
         try:

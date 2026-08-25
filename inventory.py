@@ -676,8 +676,33 @@ Then, on new lines after the paragraph, write 1-3 recommendations:
 
 
 def load_inventory_for_restaurant(restaurant_id: int):
-    """Load real client data if available, otherwise use sample data. Returns (items, is_live)."""
-    from models import get_client_data
+    """Load this restaurant's inventory. Resolution order: the persistent
+    ingredients table (once migrated — see inventory_ledger.import_csv_to_ingredients
+    and the nightly Toast depletion sync) -> the legacy inventory_csv blob
+    -> sample data. Returns (items, is_live). Output shape is identical
+    across all three paths, so analyse_inventory() and every caller need
+    no changes regardless of which path a given restaurant is on."""
+    from models import get_client_data, get_conn
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM ingredients WHERE restaurant_id=? AND is_active=1",
+        (restaurant_id,)
+    ).fetchall()
+    conn.close()
+    if rows:
+        items = [{
+            "item":            r["name"],
+            "category":        r["category"] or "",
+            "par_level":       r["par_level"],
+            "current_stock":   r["current_stock"],
+            "unit_cost":       r["unit_cost"],
+            "avg_daily_usage": r["avg_daily_usage"],
+            "last_order_qty":  r["last_order_qty"],
+            "waste_last_week": r["waste_last_week"],
+            "unit":            r["unit"] or "",
+            "case_size":       r["case_size"] or 1.0,
+        } for r in rows]
+        return items, True
     data = get_client_data(restaurant_id)
     if data and data.get("inventory_csv"):
         return load_inventory(csv_string=data["inventory_csv"]), True
