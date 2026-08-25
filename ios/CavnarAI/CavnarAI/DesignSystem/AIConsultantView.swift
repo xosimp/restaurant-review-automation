@@ -1,28 +1,16 @@
 import SwiftUI
 
-/// The AI consultant surface every module shows — redesigned from a full
-/// inline expand/collapse block (title row + a 2-line intro preview + an
-/// amber "N recommendations" line, ~90-110pt even collapsed) into a single
-/// compact strip that opens the full analysis as a sheet on tap instead of
-/// growing the page in place. The old version read as a disconnected slab
-/// of text splitting the page in half; this one is sized and tinted to sit
-/// tight against whatever lead/hero card a module already has above it —
-/// each call site places it directly after its own hero with a small gap
-/// (not the page's normal section spacing) so it reads as that card's own
-/// follow-up commentary, not a second unrelated section.
-struct AIConsultantView: View {
-    let title: String
+/// Just the tappable strip content (sparkle + truncated intro + chevron) —
+/// no background/border of its own. AIConsultantEmbeddedStrip and
+/// AIConsultantView below both build on this; the difference between them
+/// is only whether they draw their own card chrome around it.
+private struct AIConsultantStripContent: View {
     let insight: AIInsight?
     let isLoading: Bool
-
-    @State private var isPresented = false
+    let onTap: () -> Void
 
     var body: some View {
-        Button {
-            guard insight != nil else { return }
-            Haptic.selection()
-            isPresented = true
-        } label: {
+        Button(action: onTap) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 11, weight: .semibold))
@@ -45,19 +33,64 @@ struct AIConsultantView: View {
                 }
             }
             .foregroundStyle(Color.cavnarEmber2)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .frame(maxWidth: .infinity)
-            .background(Color.cavnarEmber.opacity(0.12))
-            .overlay(
-                RoundedRectangle(cornerRadius: CavnarRadius.control)
-                    .strokeBorder(Color.cavnarEmber.opacity(0.32), lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(insight == nil)
+    }
+}
+
+/// For embedding directly inside a module's own hero card, as its own
+/// footer row after a divider — sharing the hero's background/border
+/// instead of drawing a second, separate card right underneath it. See
+/// each module's own heroCard for exactly how it's placed (a divider line,
+/// then this, inside the SAME VStack the hero's own stats sit in, so the
+/// whole thing shares one .background()/.overlay(border)/.clipShape()).
+struct AIConsultantEmbeddedStrip: View {
+    let title: String
+    let insight: AIInsight?
+    let isLoading: Bool
+
+    @State private var isPresented = false
+
+    var body: some View {
+        AIConsultantStripContent(insight: insight, isLoading: isLoading) {
+            guard insight != nil else { return }
+            Haptic.selection()
+            isPresented = true
+        }
+        .sheet(isPresented: $isPresented) {
+            if let insight {
+                AIConsultantSheet(title: title, insight: insight)
+            }
+        }
+    }
+}
+
+/// Self-contained version — its own bordered pill — for a module tab with
+/// no hero-style card to embed into (Marketing's Analytics tab today).
+struct AIConsultantView: View {
+    let title: String
+    let insight: AIInsight?
+    let isLoading: Bool
+
+    @State private var isPresented = false
+
+    var body: some View {
+        AIConsultantStripContent(insight: insight, isLoading: isLoading) {
+            guard insight != nil else { return }
+            Haptic.selection()
+            isPresented = true
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity)
+        .background(Color.cavnarEmber.opacity(0.12))
+        .overlay(
+            RoundedRectangle(cornerRadius: CavnarRadius.control)
+                .strokeBorder(Color.cavnarEmber.opacity(0.32), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
         .sheet(isPresented: $isPresented) {
             if let insight {
                 AIConsultantSheet(title: title, insight: insight)
@@ -68,11 +101,12 @@ struct AIConsultantView: View {
 
 /// Full analysis, opened from the strip above — same intro/recommendations/
 /// forecast content the old inline-expanded state showed, just presented as
-/// its own screen instead of pushing the module's page content down.
+/// its own screen instead of pushing the module's page content down. No
+/// explicit close button — swipe-down-to-dismiss, same as every other sheet
+/// in this app (NotificationsListView is the established precedent).
 private struct AIConsultantSheet: View {
     let title: String
     let insight: AIInsight
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
@@ -128,11 +162,6 @@ private struct AIConsultantSheet: View {
             .cavnarModuleBackground()
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                }
-            }
         }
     }
 }

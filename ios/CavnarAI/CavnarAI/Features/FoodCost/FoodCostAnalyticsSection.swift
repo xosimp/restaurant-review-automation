@@ -18,22 +18,13 @@ struct FoodCostAnalyticsSection: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 if let analytics = viewModel.analytics {
-                    // Hero + AI strip share a tight inner spacing (8pt, not
-                    // this page's normal 28pt between sections) so the
-                    // strip reads as the hero's own follow-up commentary —
-                    // "here's what these numbers mean" — instead of a
-                    // second, unrelated block floating further down the
-                    // page. Only rendered together when there's a hero to
-                    // attach to; the strip still shows on its own otherwise.
+                    // The AI strip lives INSIDE the hero card itself (see
+                    // heroCard's own comment) when there's a hero to embed
+                    // into — reads as that card's own footer commentary,
+                    // not a second adjacent card. Only the no-hero case
+                    // falls back to the self-contained AIConsultantView.
                     if hasHeroData(analytics) {
-                        VStack(spacing: 8) {
-                            heroCard(analytics)
-                            AIConsultantView(
-                                title: "Cavnar AI Food Cost Analysis",
-                                insight: analytics.insight,
-                                isLoading: viewModel.isLoading
-                            )
-                        }
+                        heroCard(analytics, isLoading: viewModel.isLoading)
                     } else {
                         AIConsultantView(
                             title: "Cavnar AI Food Cost Analysis",
@@ -43,13 +34,17 @@ struct FoodCostAnalyticsSection: View {
                     }
                     statStrip(analytics)
                     if let label = analytics.benchmarkLabel, let pct = analytics.wasteRatePct, label != "—" {
-                        benchmarkBar(label: label, pct: pct, detail: analytics.benchmarkDetail)
+                        benchmarkBar(label: label, pct: pct)
                     }
                     if !analytics.wasteItems.isEmpty {
                         FoodCostDonutChart(
                             title: "TOP WASTE OFFENDERS",
                             slices: analytics.wasteItems.map {
-                                FoodCostDonutSlice(id: $0.id, name: $0.item, value: $0.wasteCost, subtitle: "\(String(format: "%.0f", $0.wastePct))% waste")
+                                FoodCostDonutSlice(
+                                    id: $0.id, name: $0.item, value: $0.wasteCost,
+                                    subtitle: Text(String(format: "%.0f", $0.wastePct)).font(.cavnarNumber(9))
+                                        + Text("% waste").font(.cavnarBody(9))
+                                )
                             },
                             centerLabel: "TOTAL"
                         )
@@ -61,7 +56,11 @@ struct FoodCostAnalyticsSection: View {
                                 FoodCostDonutSlice(
                                     id: $0.id, name: $0.item, value: $0.overstockCost,
                                     subtitle: [$0.currentStock, $0.parLevel].compactMap { $0 }.count == 2
-                                        ? "\(Int($0.currentStock ?? 0)) / \(Int($0.parLevel ?? 0)) par" : ""
+                                        ? Text("\(Int($0.currentStock ?? 0))").font(.cavnarNumber(9))
+                                            + Text(" / ").font(.cavnarBody(9))
+                                            + Text("\(Int($0.parLevel ?? 0))").font(.cavnarNumber(9))
+                                            + Text(" par").font(.cavnarBody(9))
+                                        : Text("")
                                 )
                             },
                             centerLabel: "TIED UP"
@@ -83,7 +82,12 @@ struct FoodCostAnalyticsSection: View {
 
     // MARK: - Hero (the one real container on this page)
 
-    private func heroCard(_ a: FoodCostAnalytics) -> some View {
+    // The AI strip is the LAST row inside this same VStack, after a
+    // divider — sharing this card's own .background()/.overlay(border)/
+    // .clipShape() instead of being a separate card placed underneath it.
+    // That's the actual "attached to the hero" ask: one continuous
+    // surface, not two adjacent ones with a small gap between them.
+    private func heroCard(_ a: FoodCostAnalytics, isLoading: Bool) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -115,8 +119,18 @@ struct FoodCostAnalyticsSection: View {
                         .multilineTextAlignment(.trailing)
                 }
             }
+            .padding(18)
+
+            Rectangle().fill(Color.cavnarEmber.opacity(0.35)).frame(height: 1)
+
+            AIConsultantEmbeddedStrip(
+                title: "Cavnar AI Food Cost Analysis",
+                insight: a.insight,
+                isLoading: isLoading
+            )
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
         }
-        .padding(18)
         .background(
             LinearGradient(
                 colors: [Color.cavnarEmber.opacity(0.5), Color.cavnarEmber.opacity(0.1)],
@@ -178,7 +192,7 @@ struct FoodCostAnalyticsSection: View {
     private static let industryLow = 4.0
     private static let industryHigh = 5.0
 
-    private func benchmarkBar(label: String, pct: Double, detail: String?) -> some View {
+    private func benchmarkBar(label: String, pct: Double) -> some View {
         let tone = benchmarkColor(label)
         let fill = min(pct / Self.benchmarkScaleMax, 1)
         let industryStart = Self.industryLow / Self.benchmarkScaleMax
@@ -201,25 +215,26 @@ struct FoodCostAnalyticsSection: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.cavnarPaper3.opacity(0.6))
-                    Rectangle().fill(Color.cavnarInk.opacity(0.3))
-                        .frame(width: geo.size.width * industryWidth)
-                        .offset(x: geo.size.width * industryStart)
                     Capsule().fill(tone)
                         .frame(width: geo.size.width * fill)
+                    // Drawn LAST (was second, under the fill capsule) — a
+                    // waste rate above 5% is exactly the case worth
+                    // flagging, and the fill for anything above 5% already
+                    // extends past this band's position, painting over it
+                    // when it's drawn first. A light, semi-transparent
+                    // overlay stays legible regardless of what's under it.
+                    Rectangle().fill(Color.white.opacity(0.4))
+                        .frame(width: max(geo.size.width * industryWidth, 2))
+                        .offset(x: geo.size.width * industryStart)
                 }
             }
             .frame(height: 8)
             HStack(spacing: 4) {
-                Rectangle().fill(Color.cavnarInk.opacity(0.3)).frame(width: 8, height: 8)
+                Rectangle().fill(Color.white.opacity(0.4)).frame(width: 8, height: 8)
                 Text("Industry target: 4–5% of purchases")
             }
             .font(.cavnarBody(9.5))
             .foregroundStyle(Color.cavnarInk3)
-            if let detail, !detail.isEmpty {
-                Text(detail)
-                    .font(.cavnarBody(10))
-                    .foregroundStyle(Color.cavnarInk3)
-            }
         }
     }
 

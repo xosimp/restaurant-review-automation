@@ -3,11 +3,16 @@ import SwiftUI
 /// One slice of a FoodCostDonutChart — waste_items and overstock items have
 /// different underlying shapes (waste %, current/par stock) but both boil
 /// down to "a name, a dollar value, and a short subtitle" for this chart.
+/// subtitle is a pre-built Text (not a String) so the call site can give
+/// its numeric portions Space Grotesk and its words Plus Jakarta Sans —
+/// same mixed-font-via-Text-concatenation technique RoleDonutChart's own
+/// legend already uses, matching this app's "digits are always Space
+/// Grotesk" rule everywhere else.
 struct FoodCostDonutSlice: Identifiable {
     let id: String
     let name: String
     let value: Double
-    let subtitle: String
+    let subtitle: Text
 }
 
 /// Same ring-plus-legend construction as Labor's RoleDonutChart (segmented
@@ -15,16 +20,26 @@ struct FoodCostDonutSlice: Identifiable {
 /// fit for the same center-total-plus-legend layout that chart already
 /// nailed), reusing its exact 12-color palette so a color always means the
 /// same relative "how many things ahead of it" position across both
-/// modules. Deliberately unboxed — no card background/border — the ring
-/// itself is already a strong enough visual anchor that it doesn't need a
-/// frame around it too; a kicker label is what marks the section start.
+/// modules, and its exact collapse/expand-to-show-all pattern (was a
+/// static, non-interactive "+N more" label — matched RoleDonutChart's own
+/// real tap-to-expand instead). Deliberately unboxed — no card background/
+/// border — the ring itself is already a strong enough visual anchor that
+/// it doesn't need a frame around it too; a kicker label is what marks the
+/// section start.
 struct FoodCostDonutChart: View {
     let title: String
     let slices: [FoodCostDonutSlice]
     let centerLabel: String
 
+    @State private var isExpanded = false
+
     private var total: Double { slices.reduce(0) { $0 + $1.value } }
     private static let ringSize: CGFloat = 92
+    private static let collapseThreshold = 4
+
+    private var visibleSlices: [FoodCostDonutSlice] {
+        isExpanded ? slices : Array(slices.prefix(Self.collapseThreshold))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -42,6 +57,21 @@ struct FoodCostDonutChart: View {
                     ring
                         .frame(width: Self.ringSize, height: Self.ringSize)
                     legend
+                }
+                if slices.count > Self.collapseThreshold {
+                    Button {
+                        Haptic.light()
+                        withAnimation(.easeOut(duration: 0.22)) { isExpanded.toggle() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(isExpanded ? "Show less" : "Show all \(slices.count)")
+                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                        }
+                        .font(.cavnarBody(11, weight: 600))
+                        .foregroundStyle(Color.cavnarEmber)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -73,7 +103,7 @@ struct FoodCostDonutChart: View {
 
     private var legend: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(slices.prefix(4).enumerated()), id: \.element.id) { index, slice in
+            ForEach(Array(visibleSlices.enumerated()), id: \.element.id) { index, slice in
                 HStack(alignment: .top, spacing: 7) {
                     Circle()
                         .fill(color(at: index))
@@ -84,8 +114,7 @@ struct FoodCostDonutChart: View {
                             .font(.cavnarBody(11.5, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
                             .lineLimit(1)
-                        Text(slice.subtitle)
-                            .font(.cavnarBody(9))
+                        slice.subtitle
                             .foregroundStyle(Color.cavnarInk3)
                     }
                     Spacer(minLength: 4)
@@ -93,12 +122,6 @@ struct FoodCostDonutChart: View {
                         .font(.cavnarNumber(11, weight: 700))
                         .foregroundStyle(color(at: index))
                 }
-            }
-            if slices.count > 4 {
-                Text("+\(slices.count - 4) more")
-                    .font(.cavnarBody(10, weight: 600))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .padding(.leading, 14)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -108,6 +131,10 @@ struct FoodCostDonutChart: View {
         RoleDonutChart.colors[index % RoleDonutChart.colors.count]
     }
 
+    /// Segments are always computed against the FULL slice list, not the
+    /// collapsed visibleSlices subset — the ring shows 100% of the total
+    /// regardless of how many legend rows are currently visible, same
+    /// reasoning as RoleDonutChart's own segment(at:).
     private func segment(at index: Int) -> (Double, Double) {
         guard total > 0, !slices.isEmpty else { return (0, 0) }
         let gapFraction = 0.012

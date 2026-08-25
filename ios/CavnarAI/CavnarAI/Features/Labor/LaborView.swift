@@ -64,20 +64,11 @@ struct LaborView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         if subTab == .overview {
                             if let stats = viewModel.stats {
-                                // Tight 8pt inner spacing (not this VStack's
-                                // normal 20pt) between the hero and the AI
-                                // strip so the strip reads as the hero's own
-                                // follow-up commentary — "here's what these
-                                // numbers mean" — instead of a disconnected
-                                // block floating separately on the page.
-                                VStack(spacing: 8) {
-                                    heroCard(stats)
-                                    AIConsultantView(
-                                        title: "Cavnar AI Labor Consultant",
-                                        insight: analyticsViewModel.insight,
-                                        isLoading: analyticsViewModel.isLoadingInsight
-                                    )
-                                }
+                                // AI strip now lives inside heroCard itself
+                                // (its own last row, sharing the card's
+                                // background/border) — see heroCard's own
+                                // comment.
+                                heroCard(stats)
                                 if let result = viewModel.scheduleResult, result.ok {
                                     scheduleResultSection(result)
                                 }
@@ -279,6 +270,17 @@ struct LaborView: View {
                 action: { Task { await viewModel.generateSchedule() } }
             )
             .padding(.top, 2)
+
+            // The AI strip lives inside this SAME card, as its own footer
+            // row, instead of a separate card placed underneath it — reads
+            // as this hero's own follow-up commentary.
+            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                .padding(.top, 4)
+            AIConsultantEmbeddedStrip(
+                title: "Cavnar AI Labor Consultant",
+                insight: analyticsViewModel.insight,
+                isLoading: analyticsViewModel.isLoadingInsight
+            )
         }
         .cavnarGlassCard(tint: tone.foreground)
         // Reports this card's bottom-center edge up to LaborView's root —
