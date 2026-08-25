@@ -64,17 +64,20 @@ struct LaborView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         if subTab == .overview {
                             if let stats = viewModel.stats {
-                                // Above the hero banner — reads as Cavnar's
-                                // own opening take on the week before the
-                                // budget/schedule numbers, not a footnote
-                                // wedged between other cards.
-                                AIConsultantView(
-                                    title: "Cavnar AI Labor Consultant",
-                                    insight: analyticsViewModel.insight,
-                                    isLoading: analyticsViewModel.isLoadingInsight,
-                                    hasPlayedIntro: hasPlayedInsightTypewriterBinding
-                                )
-                                heroCard(stats)
+                                // Tight 8pt inner spacing (not this VStack's
+                                // normal 20pt) between the hero and the AI
+                                // strip so the strip reads as the hero's own
+                                // follow-up commentary — "here's what these
+                                // numbers mean" — instead of a disconnected
+                                // block floating separately on the page.
+                                VStack(spacing: 8) {
+                                    heroCard(stats)
+                                    AIConsultantView(
+                                        title: "Cavnar AI Labor Consultant",
+                                        insight: analyticsViewModel.insight,
+                                        isLoading: analyticsViewModel.isLoadingInsight
+                                    )
+                                }
                                 if let result = viewModel.scheduleResult, result.ok {
                                     scheduleResultSection(result)
                                 }
@@ -288,24 +291,6 @@ struct LaborView: View {
 
     private var heroTone: CavnarTone? {
         viewModel.stats.map { $0.onTrack ? .good : .bad }
-    }
-
-    // Wraps LaborAnalyticsViewModel.hasPlayedInsightTypewriter with the
-    // UserDefaults persistence call on set — a plain $analyticsViewModel.…
-    // binding would mutate the in-memory flag but never actually write it
-    // to disk, so a fresh view model on the next visit to Labor would have
-    // no way to know the typewriter already played.
-    private var hasPlayedInsightTypewriterBinding: Binding<Bool> {
-        Binding(
-            get: { analyticsViewModel.hasPlayedInsightTypewriter },
-            set: { newValue in
-                if newValue {
-                    analyticsViewModel.markInsightTypewriterPlayed()
-                } else {
-                    analyticsViewModel.hasPlayedInsightTypewriter = newValue
-                }
-            }
-        )
     }
 
     private struct DataFreshness {

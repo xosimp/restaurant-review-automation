@@ -18,18 +18,33 @@ struct FoodCostAnalyticsSection: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 if let analytics = viewModel.analytics {
+                    // Hero + AI strip share a tight inner spacing (8pt, not
+                    // this page's normal 28pt between sections) so the
+                    // strip reads as the hero's own follow-up commentary —
+                    // "here's what these numbers mean" — instead of a
+                    // second, unrelated block floating further down the
+                    // page. Only rendered together when there's a hero to
+                    // attach to; the strip still shows on its own otherwise.
                     if hasHeroData(analytics) {
-                        heroCard(analytics)
+                        VStack(spacing: 8) {
+                            heroCard(analytics)
+                            AIConsultantView(
+                                title: "Cavnar AI Food Cost Analysis",
+                                insight: analytics.insight,
+                                isLoading: viewModel.isLoading
+                            )
+                        }
+                    } else {
+                        AIConsultantView(
+                            title: "Cavnar AI Food Cost Analysis",
+                            insight: analytics.insight,
+                            isLoading: viewModel.isLoading
+                        )
                     }
                     statStrip(analytics)
                     if let label = analytics.benchmarkLabel, let pct = analytics.wasteRatePct, label != "—" {
                         benchmarkBar(label: label, pct: pct, detail: analytics.benchmarkDetail)
                     }
-                    AIConsultantView(
-                        title: "Cavnar AI Food Cost Analysis",
-                        insight: analytics.insight,
-                        isLoading: viewModel.isLoading
-                    )
                     if !analytics.wasteItems.isEmpty {
                         FoodCostDonutChart(
                             title: "TOP WASTE OFFENDERS",
@@ -78,7 +93,7 @@ struct FoodCostAnalyticsSection: View {
                         .foregroundStyle(Color.cavnarInk.opacity(0.6))
                     Text("$\((a.annualWasteProjection ?? 0).commaFormatted)")
                         .font(.cavnarNumber(26, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
+                        .foregroundStyle(Color.cavnarRed)
                         .cavnarNumberGlow(Color.cavnarRed)
                     Text("$\((a.monthlyWasteProjection ?? 0).commaFormatted)/mo at current rate")
                         .font(.cavnarBody(10))
@@ -239,8 +254,6 @@ struct FoodCostAnalyticsSection: View {
     private func actionGroup(title: String, color: Color, items: [InventoryActionItem], showDays: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Circle().fill(color).frame(width: 6, height: 6)
-                    .shadow(color: color.opacity(0.7), radius: 3)
                 Text(title)
                     .font(.cavnarBody(10, weight: 700))
                     .tracking(1.2)
