@@ -56,6 +56,13 @@ body{font-family:'DM Sans',sans-serif;background:var(--paper);color:var(--ink);f
 .result-err{background:#fdf0ef;color:var(--ember);border:1px solid #f5c6c2}
 .current-data{background:var(--paper2);border-radius:6px;padding:12px 14px;font-size:12px;color:var(--ink2);margin-bottom:14px}
 .format-box{background:var(--ink);border-radius:6px;padding:12px 14px;font-family:monospace;font-size:11px;color:rgba(250,248,245,.8);overflow-x:auto;margin-top:8px;line-height:1.6}
+.fc-input{padding:6px 8px;border:1px solid var(--paper3);border-radius:5px;font-size:12px;font-family:'DM Sans',sans-serif;color:var(--ink)}
+.fc-flabel{font-size:10px;color:var(--ink3);margin-bottom:3px}
+.fc-ing-row td{padding:5px 8px;border-bottom:1px solid var(--paper2)}
+.fc-recipe-card{background:var(--paper2);border-radius:6px;padding:12px 14px;margin-bottom:10px}
+.fc-recipe-title{font-weight:600;font-size:13px;margin-bottom:8px}
+.fc-recipe-row{display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 0;color:var(--ink2)}
+.fc-x{cursor:pointer;color:var(--ember);font-weight:700;padding:0 4px}
 </style>
 </head>
 <body>
@@ -243,6 +250,76 @@ waste_last_week — Units wasted in the last 7 days</div>
       </div>
     </div>
   </div>
+
+  <!-- FOOD COST ENGINE (persistent ingredients + Toast-driven recipes) -->
+  <div class="module-card">
+    <div class="module-hdr">
+      <div class="module-title">Food Cost — Ingredients &amp; Recipes</div>
+      <span class="module-status status-sample" id="fc-status-badge">0 ingredients</span>
+    </div>
+    <div class="module-body">
+      <div style="background:#f0faf4;border:1px solid #a7d7b8;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#2d6a4f;line-height:1.6">
+        <strong>How this works:</strong> Once ingredients exist here, they replace the CSV above as this
+        client's source of truth. Import the CSV once, connect Toast, discover their menu items, and map
+        each one to the ingredients it uses (a "recipe") — from then on, usage/stock/waste compute
+        automatically from real sales every night instead of needing a manual re-upload.
+      </div>
+
+      <button class="btn-primary" onclick="fcImportCsv()">Import CSV → Ingredients (one-time)</button>
+      <span id="fc-import-result" style="font-size:12px;margin-left:10px;color:var(--green)"></span>
+
+      <div class="slabel" style="margin-top:22px">Ingredients (<span id="fc-ing-count">0</span>)</div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:760px">
+          <thead>
+            <tr style="text-align:left;color:var(--ink3);font-size:10px;text-transform:uppercase;letter-spacing:.05em">
+              <th style="padding:6px 8px">Name</th><th>Category</th><th>Unit</th><th>Par</th>
+              <th>Stock</th><th>Cost</th><th>Case size</th><th>Avg/day</th><th>Waste/wk</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="fc-ing-rows"></tbody>
+        </table>
+      </div>
+      <button class="btn-primary" style="background:white;color:var(--ink2);border:1px solid var(--paper3);margin-top:10px"
+              onclick="fcShowAddIngredient()">+ Add ingredient</button>
+      <div id="fc-add-ingredient-row" style="display:none;margin-top:10px;padding:12px;background:var(--paper2);border-radius:6px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
+          <div><div class="fc-flabel">Name</div><input class="fc-input" id="fc-new-name" style="width:150px"></div>
+          <div><div class="fc-flabel">Category</div><input class="fc-input" id="fc-new-category" style="width:100px"></div>
+          <div><div class="fc-flabel">Unit</div><input class="fc-input" id="fc-new-unit" style="width:70px"></div>
+          <div><div class="fc-flabel">Par</div><input class="fc-input" type="number" step="0.01" id="fc-new-par" style="width:70px"></div>
+          <div><div class="fc-flabel">Current stock</div><input class="fc-input" type="number" step="0.01" id="fc-new-stock" style="width:80px"></div>
+          <div><div class="fc-flabel">Unit cost</div><input class="fc-input" type="number" step="0.01" id="fc-new-cost" style="width:80px"></div>
+          <div><div class="fc-flabel">Case size</div><input class="fc-input" type="number" step="0.01" id="fc-new-case" value="1" style="width:70px"></div>
+          <button class="btn-primary" onclick="fcCreateIngredient()">Save</button>
+        </div>
+      </div>
+
+      <div class="slabel" style="margin-top:22px">Manual recount / receiving</div>
+      <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+        <div><div class="fc-flabel">Ingredient</div><select class="fc-input" id="fc-quick-ingredient" style="width:170px"></select></div>
+        <div><div class="fc-flabel">Recount to</div><input class="fc-input" type="number" step="0.01" id="fc-recount-qty" style="width:90px"></div>
+        <button class="btn-primary" onclick="fcSubmitRecount()">Save recount</button>
+        <div><div class="fc-flabel">Receiving qty</div><input class="fc-input" type="number" step="0.01" id="fc-receiving-qty" style="width:90px"></div>
+        <button class="btn-primary" onclick="fcSubmitReceiving()">Save receiving</button>
+      </div>
+      <div class="result-msg" id="fc-quick-result"></div>
+
+      <div class="slabel" style="margin-top:22px">Recipes (menu item → ingredients used)</div>
+      <button class="btn-primary" style="background:white;color:var(--ink2);border:1px solid var(--paper3)"
+              onclick="fcDiscoverMenuItems()">Discover menu items from Toast</button>
+      <span id="fc-discover-result" style="font-size:12px;margin-left:8px;color:var(--ink3)"></span>
+      <div id="fc-recipes-list" style="margin-top:14px"></div>
+
+      <div class="slabel" style="margin-top:22px">Debug: resync one business date</div>
+      <div style="display:flex;gap:8px;align-items:end">
+        <input class="fc-input" type="date" id="fc-resync-date">
+        <button class="btn-primary" style="background:white;color:var(--ink2);border:1px solid var(--paper3)"
+                onclick="fcResyncDepletion()">Resync</button>
+      </div>
+      <div class="result-msg" id="fc-resync-result"></div>
+    </div>
+  </div>
 </div>
 
 
@@ -312,6 +389,203 @@ function showResult(el, ok, msg) {
   el.textContent = msg;
 }
 
+// ── Food Cost engine (ingredients / recipes / ledger) ──────────────────────
+
+let fcIngredients = [];
+
+async function fcLoadIngredients() {
+  const res = await fetch(`/admin/inventory/ingredients/${restaurantId}`);
+  const data = await res.json();
+  if (!data.ok) return;
+  fcIngredients = data.ingredients;
+
+  document.getElementById('fc-ing-count').textContent = fcIngredients.length;
+  const badge = document.getElementById('fc-status-badge');
+  badge.textContent = fcIngredients.length ? fcIngredients.length + ' ingredients (live)' : '0 ingredients';
+  badge.className = 'module-status ' + (fcIngredients.length ? 'status-live' : 'status-sample');
+
+  const tbody = document.getElementById('fc-ing-rows');
+  tbody.innerHTML = fcIngredients.map(ing => `
+    <tr class="fc-ing-row" data-id="${ing.id}">
+      <td>${ing.name}</td>
+      <td><input class="fc-input" style="width:80px" value="${ing.category||''}" onchange="fcUpdateField(${ing.id},'category',this.value)"></td>
+      <td><input class="fc-input" style="width:55px" value="${ing.unit||''}" onchange="fcUpdateField(${ing.id},'unit',this.value)"></td>
+      <td><input class="fc-input" type="number" step="0.01" style="width:60px" value="${ing.par_level}" onchange="fcUpdateField(${ing.id},'par_level',this.value)"></td>
+      <td style="color:var(--ink3)" title="Change via recount/receiving below, not directly">${Number(ing.current_stock).toFixed(1)}</td>
+      <td><input class="fc-input" type="number" step="0.01" style="width:65px" value="${ing.unit_cost}" onchange="fcUpdateField(${ing.id},'unit_cost',this.value)"></td>
+      <td><input class="fc-input" type="number" step="0.01" style="width:55px" value="${ing.case_size}" onchange="fcUpdateField(${ing.id},'case_size',this.value)"></td>
+      <td style="color:var(--ink3)">${Number(ing.avg_daily_usage).toFixed(2)}</td>
+      <td style="color:var(--ink3)">${Number(ing.waste_last_week).toFixed(2)}</td>
+      <td><span class="fc-x" onclick="fcDeleteIngredient(${ing.id})">✕</span></td>
+    </tr>
+  `).join('');
+
+  const sel = document.getElementById('fc-quick-ingredient');
+  sel.innerHTML = fcIngredients.map(ing => `<option value="${ing.id}">${ing.name}</option>`).join('');
+}
+
+async function fcUpdateField(ingredientId, field, value) {
+  await fetch(`/admin/inventory/ingredients/${restaurantId}/${ingredientId}`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({[field]: value})
+  });
+  fcLoadIngredients();
+}
+
+async function fcDeleteIngredient(ingredientId) {
+  if (!confirm('Remove this ingredient? It stays in history, just hidden going forward.')) return;
+  await fetch(`/admin/inventory/ingredients/${restaurantId}/${ingredientId}/delete`, {method:'POST'});
+  fcLoadIngredients();
+}
+
+function fcShowAddIngredient() {
+  document.getElementById('fc-add-ingredient-row').style.display = 'block';
+}
+
+async function fcCreateIngredient() {
+  const name = document.getElementById('fc-new-name').value.trim();
+  if (!name) { alert('Ingredient name required'); return; }
+  await fetch(`/admin/inventory/ingredients/${restaurantId}`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      name,
+      category: document.getElementById('fc-new-category').value,
+      unit: document.getElementById('fc-new-unit').value,
+      par_level: document.getElementById('fc-new-par').value || 0,
+      current_stock: document.getElementById('fc-new-stock').value || 0,
+      unit_cost: document.getElementById('fc-new-cost').value || 0,
+      case_size: document.getElementById('fc-new-case').value || 1,
+    })
+  });
+  document.getElementById('fc-add-ingredient-row').style.display = 'none';
+  ['fc-new-name','fc-new-category','fc-new-unit','fc-new-par','fc-new-stock','fc-new-cost'].forEach(id => document.getElementById(id).value = '');
+  fcLoadIngredients();
+}
+
+async function fcImportCsv() {
+  const res = await fetch(`/admin/inventory/import-csv/${restaurantId}`, {method:'POST'});
+  const data = await res.json();
+  const el = document.getElementById('fc-import-result');
+  if (data.ok) {
+    el.textContent = `✓ Imported ${data.imported}, skipped ${data.skipped_existing} already-imported`;
+    fcLoadIngredients();
+  } else {
+    el.style.color = 'var(--ember)';
+    el.textContent = data.error || 'Import failed';
+  }
+}
+
+async function fcSubmitRecount() {
+  const ingredientId = document.getElementById('fc-quick-ingredient').value;
+  const qty = document.getElementById('fc-recount-qty').value;
+  const resultEl = document.getElementById('fc-quick-result');
+  if (!ingredientId || qty === '') { showResult(resultEl, false, 'Pick an ingredient and enter a count'); return; }
+  const res = await fetch(`/admin/inventory/recount/${restaurantId}/${ingredientId}`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({counted_qty: qty})
+  });
+  const data = await res.json();
+  if (data.ok) {
+    showResult(resultEl, true, data.inferred_waste_qty > 0
+      ? `✓ Recount saved — inferred ${data.inferred_waste_qty} units of waste since last count`
+      : '✓ Recount saved');
+    document.getElementById('fc-recount-qty').value = '';
+    fcLoadIngredients();
+  } else {
+    showResult(resultEl, false, data.error || 'Failed');
+  }
+}
+
+async function fcSubmitReceiving() {
+  const ingredientId = document.getElementById('fc-quick-ingredient').value;
+  const qty = document.getElementById('fc-receiving-qty').value;
+  const resultEl = document.getElementById('fc-quick-result');
+  if (!ingredientId || qty === '') { showResult(resultEl, false, 'Pick an ingredient and enter a quantity'); return; }
+  const res = await fetch(`/admin/inventory/receiving/${restaurantId}/${ingredientId}`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({qty})
+  });
+  const data = await res.json();
+  showResult(resultEl, data.ok, data.ok ? '✓ Receiving saved' : (data.error || 'Failed'));
+  if (data.ok) { document.getElementById('fc-receiving-qty').value = ''; fcLoadIngredients(); }
+}
+
+async function fcDiscoverMenuItems() {
+  const el = document.getElementById('fc-discover-result');
+  el.textContent = 'Scanning recent Toast orders…';
+  const res = await fetch(`/admin/inventory/discover-menu-items/${restaurantId}`, {method:'POST'});
+  const data = await res.json();
+  el.textContent = data.ok
+    ? `✓ ${data.discovered} new, ${data.updated} updated, ${data.total_seen} menu items seen`
+    : (data.error || 'Discovery failed — is Toast connected?');
+  if (data.ok) fcLoadRecipes();
+}
+
+async function fcLoadRecipes() {
+  const res = await fetch(`/admin/inventory/recipes/${restaurantId}`);
+  const data = await res.json();
+  if (!data.ok) return;
+  const ingredientOptions = data.ingredients.map(i => `<option value="${i.id}">${i.name}</option>`).join('');
+
+  const list = document.getElementById('fc-recipes-list');
+  if (!data.menu_items.length) {
+    list.innerHTML = '<div style="font-size:12px;color:var(--ink3)">No menu items discovered yet.</div>';
+    return;
+  }
+  list.innerHTML = data.menu_items.map(mi => `
+    <div class="fc-recipe-card">
+      <div class="fc-recipe-title">${mi.name}</div>
+      ${mi.recipe.map(r => `
+        <div class="fc-recipe-row">
+          <span style="flex:1">${r.ingredient_name}</span>
+          <span style="color:var(--ink3)">${r.qty_per_unit} ${r.unit||''} / sale</span>
+          <span class="fc-x" onclick="fcDeleteRecipeRow(${mi.id},${r.id})">✕</span>
+        </div>
+      `).join('') || '<div style="font-size:11px;color:var(--ink3);margin-bottom:6px">No ingredients mapped yet</div>'}
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <select class="fc-input" id="fc-recipe-ing-${mi.id}" style="width:150px">${ingredientOptions}</select>
+        <input class="fc-input" type="number" step="0.01" placeholder="qty/sale" id="fc-recipe-qty-${mi.id}" style="width:80px">
+        <button class="btn-primary" style="padding:6px 12px" onclick="fcAddRecipeRow(${mi.id})">Add</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function fcAddRecipeRow(menuItemId) {
+  const ingredientId = document.getElementById(`fc-recipe-ing-${menuItemId}`).value;
+  const qty = document.getElementById(`fc-recipe-qty-${menuItemId}`).value;
+  if (!ingredientId || !qty) { alert('Pick an ingredient and a quantity'); return; }
+  await fetch(`/admin/inventory/recipes/${menuItemId}`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ingredient_id: ingredientId, qty_per_unit: qty})
+  });
+  fcLoadRecipes();
+}
+
+async function fcDeleteRecipeRow(menuItemId, recipeIngredientId) {
+  await fetch(`/admin/inventory/recipes/${menuItemId}/${recipeIngredientId}/delete`, {method:'POST'});
+  fcLoadRecipes();
+}
+
+async function fcResyncDepletion() {
+  const businessDate = document.getElementById('fc-resync-date').value;
+  const resultEl = document.getElementById('fc-resync-result');
+  const res = await fetch(`/admin/inventory/resync-depletion/${restaurantId}`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(businessDate ? {business_date: businessDate} : {})
+  });
+  const data = await res.json();
+  if (data.ok) {
+    const unmapped = data.unmapped_selections.length
+      ? ` — ${data.unmapped_selections.length} unmapped selection(s), check recipes`
+      : '';
+    showResult(resultEl, true, `✓ ${data.ingredients_updated} ingredient(s) updated${unmapped}`);
+    fcLoadIngredients();
+  } else {
+    showResult(resultEl, false, data.error || 'Resync failed');
+  }
+}
+
+fcLoadIngredients();
+fcLoadRecipes();
 
 </script>
 </body>
