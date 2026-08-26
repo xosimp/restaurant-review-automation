@@ -260,6 +260,14 @@ struct FoodCostAnalyticsSection: View {
     private func actionSection(_ a: FoodCostAnalytics) -> some View {
         if !a.criticalLow.isEmpty || !a.reorderSoon.isEmpty || !a.orderReduction.isEmpty {
             VStack(alignment: .leading, spacing: 22) {
+                // Matches dashboard.html's "Order List — Recommended
+                // Quantities" heading — without it, the ORDER caption on
+                // each row's right-side number (below) reads correctly on
+                // its own, but the section as a whole had no framing at all.
+                Text("ORDER LIST — RECOMMENDED QUANTITIES")
+                    .font(.cavnarBody(10, weight: 700))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.cavnarEmber2)
                 if !a.criticalLow.isEmpty {
                     actionGroup(title: "URGENT — ORDER NOW", color: Color.cavnarRed, items: a.criticalLow, showDays: true)
                 }
@@ -309,6 +317,10 @@ struct FoodCostAnalyticsSection: View {
             }
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 3) {
+                Text("ORDER")
+                    .font(.cavnarBody(7.5, weight: 700))
+                    .tracking(0.8)
+                    .foregroundStyle(Color.cavnarInk3)
                 Text(item.suggestedOrderLabel)
                     .font(.cavnarNumber(12, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
@@ -322,13 +334,15 @@ struct FoodCostAnalyticsSection: View {
         .padding(.vertical, 9)
     }
 
+    // "last order" (not bare "last") — the number itself is always a past
+    // ORDER quantity, never a stock level, and that wasn't clear before.
     private func subtitle(for item: InventoryActionItem, showDays: Bool) -> String {
         let unitSuffix = item.unit.map { " \($0)" } ?? ""
         let lastQty = item.lastOrderQty.map { $0.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int($0))" : String(format: "%.1f", $0) } ?? "—"
         if showDays, let days = item.daysRemaining {
             let daysStr = days.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(days))" : String(format: "%.1f", days)
-            return "\(daysStr)d left · last \(lastQty)\(unitSuffix)"
+            return "\(daysStr)d left · last order \(lastQty)\(unitSuffix)"
         }
-        return "last: \(lastQty)\(unitSuffix)"
+        return "last order: \(lastQty)\(unitSuffix)"
     }
 }

@@ -2668,9 +2668,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid rgba(255,255,255,.04);gap:10px">
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.88);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{item.item}}</div>
-          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">{{item.days_remaining}}d left · last {{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %}</div>
+          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">{{item.days_remaining}}d left · last order {{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %}</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
+          <div style="font-size:8px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:2px">Order</div>
           <div style="font-size:12px;font-weight:700;color:white;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.32);border-radius:6px;padding:3px 10px;white-space:nowrap;font-family:'Space Grotesk',sans-serif">{% if item.suggested_order_qty == 0 %}skip{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</div>
           <div style="font-size:10px;font-weight:700;font-family:'Space Grotesk',sans-serif;margin-top:3px">{% if item.savings_vs_last > 0 %}<span style="color:#6fcf97">↓ ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:#ef4444">↑ ${{"{:.2f}".format(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:rgba(255,255,255,.25)">—</span>{% endif %}</div>
         </div>
@@ -2693,9 +2694,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid rgba(255,255,255,.04);gap:10px">
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.88);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{item.item}}</div>
-          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">{{item.days_remaining}}d left · last {{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %}</div>
+          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">{{item.days_remaining}}d left · last order {{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %}</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
+          <div style="font-size:8px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:2px">Order</div>
           <div style="font-size:12px;font-weight:700;color:white;background:rgba(239,159,39,.11);border:1px solid rgba(239,159,39,.28);border-radius:6px;padding:3px 10px;white-space:nowrap;font-family:'Space Grotesk',sans-serif">{% if item.suggested_order_qty == 0 %}skip{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</div>
           <div style="font-size:10px;font-weight:700;font-family:'Space Grotesk',sans-serif;margin-top:3px">{% if item.savings_vs_last > 0 %}<span style="color:#6fcf97">↓ ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:#ef4444">↑ ${{"{:.2f}".format(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:rgba(255,255,255,.25)">—</span>{% endif %}</div>
         </div>
@@ -2718,9 +2720,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid rgba(255,255,255,.04);gap:10px">
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.88);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{item.item}}</div>
-          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">last: {{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %}</div>
+          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">last order: {{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %}</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
+          <div style="font-size:8px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:2px">Order</div>
           <div style="font-size:12px;font-weight:700;color:#6fcf97;background:rgba(111,207,151,.09);border:1px solid rgba(111,207,151,.25);border-radius:6px;padding:3px 10px;white-space:nowrap;font-family:'Space Grotesk',sans-serif">{% if item.suggested_order_qty == 0 %}skip{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</div>
           <div style="font-size:10px;font-weight:700;font-family:'Space Grotesk',sans-serif;margin-top:3px;color:#6fcf97">↓ ${{item.savings_vs_last}}</div>
         </div>
