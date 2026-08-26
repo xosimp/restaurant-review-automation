@@ -385,59 +385,26 @@ struct ReviewsAnalyticsSection: View {
         return weightedSum / Double(totalReviews)
     }
 
-    /// One continuous bar per week (bottom→top: positive, neutral,
-    /// negative) rather than three stacked BarMarks — a single gradient can
-    /// blend smoothly across each segment boundary, where three flat-color
-    /// marks would always meet at a hard edge. Zero-count segments are
-    /// dropped BEFORE building stops (not just clamped after) — a week
-    /// that's 100% positive gets a single solid-green gradient with no
-    /// amber/red stop at all, and a positive+negative week with no neutral
-    /// gets one direct green→red blend instead of two collapsed,
-    /// cancel-each-other-out transitions that rendered as a hard edge.
-    /// Bright at the base, fading to a dark shadow at the top — same
-    /// treatment as Food Cost/Labor's trend bars (the confirmed mockup
-    /// style) — applied per-stop here via `faded`, so the sentiment-
-    /// composition blend below (which color transitions where, and when)
-    /// still reads correctly underneath the fade rather than being
-    /// replaced by it.
-    private func faded(_ color: Color, at location: Double) -> Color {
-        color.opacity(0.9 - location * 0.55)
+    /// Single hue per bar, same as Food Cost's barColor(waste) and Labor's
+    /// barColor(pct) — a week's rating relative to the window's own average
+    /// decides the tier, matching Food Cost's "relative to its own average"
+    /// threshold (there's no restaurant-set target rating the way Labor has
+    /// a labor-% target). A 0.3★ buffer avoids flipping color on noise from
+    /// week to week; a review-free week stays neutral gray, same as before.
+    private func barColor(_ week: SentimentWeek) -> Color {
+        guard week.total > 0 else { return Color.cavnarPaper3 }
+        return week.avgRating < overallAvgRating - 0.3 ? Color.cavnarRed : Color.cavnarGreen
     }
 
+    /// Bright at the base, fading to a dark shadow at the top — identical
+    /// two-stop treatment to Food Cost/Labor's trend bars, built from
+    /// whichever hue barColor already picked for this bar.
     private func barGradient(for week: SentimentWeek) -> LinearGradient {
-        let total = Double(week.total)
-        let segments = [
-            (color: Color.cavnarGreen, count: week.positive),
-            (color: Color.cavnarAmber, count: week.neutral),
-            (color: Color.cavnarRed, count: week.negative),
-        ].filter { $0.count > 0 }
-
-        guard total > 0, !segments.isEmpty else {
-            return LinearGradient(colors: [Color.cavnarPaper3], startPoint: .bottom, endPoint: .top)
-        }
-        guard segments.count > 1 else {
-            return LinearGradient(
-                stops: [.init(color: faded(segments[0].color, at: 0), location: 0),
-                        .init(color: faded(segments[0].color, at: 1), location: 1)],
-                startPoint: .bottom, endPoint: .top
-            )
-        }
-
-        let blend = 0.06
-        var stops: [Gradient.Stop] = [.init(color: faded(segments[0].color, at: 0), location: 0)]
-        var cumulative = 0.0
-        for i in 0..<segments.count - 1 {
-            cumulative += Double(segments[i].count) / total
-            let loc1 = max(0, cumulative - blend)
-            let loc2 = min(1, cumulative + blend)
-            stops.append(.init(color: faded(segments[i].color, at: loc1), location: loc1))
-            stops.append(.init(color: faded(segments[i + 1].color, at: loc2), location: loc2))
-        }
-        stops.append(.init(color: faded(segments.last!.color, at: 1), location: 1))
-        for i in 1..<stops.count where stops[i].location < stops[i - 1].location {
-            stops[i].location = stops[i - 1].location
-        }
-        return LinearGradient(gradient: Gradient(stops: stops), startPoint: .bottom, endPoint: .top)
+        let hue = barColor(week)
+        return LinearGradient(
+            colors: [hue.opacity(0.9), hue.opacity(0.35)],
+            startPoint: .bottom, endPoint: .top
+        )
     }
 
     /// Average weekly review volume across the visible window — a neutral

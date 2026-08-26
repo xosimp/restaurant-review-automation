@@ -166,8 +166,8 @@ struct ValueChartCard: View {
     // shown next to a real dollar figure implying it IS this restaurant's
     // data (see the "Example" caption above).
     private static let sampleTrend: [Double] = [
-        0.10, 0.11, 0.11, 0.22, 0.20, 0.30, 0.31, 0.30, 0.42, 0.48,
-        0.47, 0.55, 0.60, 0.58, 0.66, 0.70, 0.74, 0.80, 0.86, 0.90, 1.0,
+        0.12, 0.20, 0.17, 0.26, 0.31, 0.27, 0.35, 0.44, 0.39, 0.47,
+        0.43, 0.53, 0.61, 0.56, 0.65, 0.60, 0.70, 0.78, 0.73, 0.85, 1.0,
     ]
 }
 

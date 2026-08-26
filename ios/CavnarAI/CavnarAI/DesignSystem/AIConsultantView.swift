@@ -18,7 +18,7 @@ private struct AIConsultantStripContent: View {
                     if let insight, !insight.intro.isEmpty {
                         Text(insight.intro)
                     } else if isLoading {
-                        Text("Analyzing this week's numbers…")
+                        PulsingAnalyzingText()
                     } else {
                         Text("No analysis yet")
                     }
@@ -37,6 +37,24 @@ private struct AIConsultantStripContent: View {
         }
         .buttonStyle(.plain)
         .disabled(insight == nil)
+    }
+}
+
+/// Gentle breathing opacity while the AI consultant's first insight is
+/// still loading — matches PulsingSparkleIcon's exact curve/duration
+/// (LaborView.swift) rather than a static "Analyzing…" label sitting
+/// still for however long the request takes.
+private struct PulsingAnalyzingText: View {
+    @State private var pulse = false
+
+    var body: some View {
+        Text("Analyzing this week's numbers…")
+            .opacity(pulse ? 1 : 0.45)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                    pulse = true
+                }
+            }
     }
 }
 

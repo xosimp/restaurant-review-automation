@@ -349,38 +349,17 @@ struct FoodCostAnalyticsSection: View {
         return "last order: (\(lastQty)\(unitSuffix))"
     }
 
-    // MARK: - Price Watch (banner sits directly above its own detail rows —
-    // not a "jump elsewhere" teaser, so no chevron/tap affordance).
-
-    private func priceWatchBanner(_ items: [PriceWatchItem]) -> some View {
-        HStack(spacing: 9) {
-            Circle()
-                .fill(Color.cavnarAmber)
-                .frame(width: 7, height: 7)
-                .shadow(color: Color.cavnarAmber.opacity(0.7), radius: 4)
-            Text("Price Watch — ")
-                .foregroundStyle(Color.cavnarInk2)
-                + Text("\(items.count)")
-                    .font(.cavnarNumber(11.5, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
-                + Text(items.count == 1 ? " ingredient trending" : " ingredients trending")
-                    .foregroundStyle(Color.cavnarInk2)
-            Spacer()
-        }
-        .font(.cavnarBody(11.5))
-        .padding(.horizontal, 13)
-        .padding(.vertical, 10)
-        .background(Color.cavnarAmber.opacity(0.09))
-        .overlay(
-            RoundedRectangle(cornerRadius: CavnarRadius.control)
-                .strokeBorder(Color.cavnarAmber.opacity(0.28), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-    }
+    // MARK: - Price Watch (bare kicker heading, matching "TOP WASTE
+    // OFFENDERS" / "ORDER LIST — RECOMMENDED QUANTITIES" elsewhere on this
+    // page — no background/border treatment, that read as a redundant
+    // second banner sitting right above these same rows).
 
     private func priceWatchDetail(_ items: [PriceWatchItem]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            priceWatchBanner(items)
+            Text("PRICE WATCH")
+                .font(.cavnarBody(10, weight: 700))
+                .tracking(1.2)
+                .foregroundStyle(Color.cavnarEmber2)
             VStack(spacing: 0) {
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                     priceWatchRow(item)

@@ -2746,10 +2746,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   {% endif %}
 
   {% if inv.price_watch %}
-  <div id="price-watch-detail" style="display:flex;align-items:center;gap:9px;background:rgba(239,159,39,.09);border:1px solid rgba(239,159,39,.28);border-radius:10px;padding:10px 13px;margin:16px 0 10px">
-    <div style="width:7px;height:7px;border-radius:50%;background:#ef9f27;box-shadow:0 0 8px rgba(239,159,39,.7);flex-shrink:0"></div>
-    <div style="flex:1;font-size:11.5px;color:rgba(255,255,255,.75)">Price Watch — <span style="font-family:'Space Grotesk',sans-serif;font-weight:700;color:rgba(255,255,255,.92)">{{inv.price_watch|length}}</span> ingredient{% if inv.price_watch|length != 1 %}s{% endif %} trending</div>
-  </div>
+  <div id="price-watch-detail" style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin:16px 0 10px">Price Watch</div>
   <div class="dark-hero-card" style="border:1px solid rgba(239,159,39,.3);border-radius:12px;overflow:hidden">
     {% for w in inv.price_watch %}
     <div style="display:flex;align-items:flex-start;padding:12px 16px;{% if not loop.last %}border-bottom:1px solid rgba(255,255,255,.04);{% endif %}gap:12px">
