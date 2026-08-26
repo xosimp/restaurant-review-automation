@@ -418,6 +418,20 @@ struct ReviewsAnalyticsSection: View {
         return viewModel.sentimentWeeks.reduce(0.0) { $0 + Double($1.total) } / Double(viewModel.sentimentWeeks.count)
     }
 
+    // Swift Charts auto-scales its Y-domain tight to the data's own max with
+    // no explicit floor here — fine for Food Cost/Labor's dollar-amount
+    // bars, where that auto max naturally lands well above the tallest bar,
+    // but review VOLUME is small integers (a typical week is single digits),
+    // so the auto domain sits right at the data ceiling and every bar reads
+    // as maxed-out with almost no headroom. An explicit domain with real
+    // padding above the tallest week fixes that — same "bars sit at a
+    // comfortable fraction of the chart height" proportion the other two
+    // charts get for free from their larger dollar magnitudes.
+    private var chartYMax: Double {
+        let maxTotal = viewModel.sentimentWeeks.map { Double($0.total) }.max() ?? 0
+        return max(maxTotal * 2, 4)
+    }
+
     @ChartContentBuilder
     private func trendBars() -> some ChartContent {
         ForEach(viewModel.sentimentWeeks) { week in
@@ -456,6 +470,7 @@ struct ReviewsAnalyticsSection: View {
             ZStack {
                 Chart { trendBars() }
                     .chartLegend(.hidden)
+                    .chartYScale(domain: 0...chartYMax)
                     .chartYAxis {
                         AxisMarks(position: .leading) { value in
                             AxisGridLine().foregroundStyle(.clear)
@@ -495,6 +510,7 @@ struct ReviewsAnalyticsSection: View {
                         }
                 }
                     .chartLegend(.hidden)
+                    .chartYScale(domain: 0...chartYMax)
                     .chartYAxis {
                         AxisMarks(position: .leading) { value in
                             AxisGridLine().foregroundStyle(Color.cavnarPaper3.opacity(0.4))

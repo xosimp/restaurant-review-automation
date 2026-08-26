@@ -68,6 +68,12 @@ struct AIConsultantEmbeddedStrip: View {
     let title: String
     let insight: AIInsight?
     let isLoading: Bool
+    // Food Cost pulls its own forecast sentence out into a standalone
+    // FoodCostForecastPill next to this strip (see
+    // FoodCostAnalyticsSection) instead of leaving it as a section a user
+    // only sees after tapping in — set false there so it isn't shown
+    // twice. Every other caller keeps the default, unchanged behavior.
+    var showForecastInSheet: Bool = true
 
     @State private var isPresented = false
 
@@ -79,7 +85,7 @@ struct AIConsultantEmbeddedStrip: View {
         }
         .sheet(isPresented: $isPresented) {
             if let insight {
-                AIConsultantSheet(title: title, insight: insight)
+                AIConsultantSheet(title: title, insight: insight, showForecast: showForecastInSheet)
             }
         }
     }
@@ -91,6 +97,7 @@ struct AIConsultantView: View {
     let title: String
     let insight: AIInsight?
     let isLoading: Bool
+    var showForecastInSheet: Bool = true
 
     @State private var isPresented = false
 
@@ -111,7 +118,7 @@ struct AIConsultantView: View {
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
         .sheet(isPresented: $isPresented) {
             if let insight {
-                AIConsultantSheet(title: title, insight: insight)
+                AIConsultantSheet(title: title, insight: insight, showForecast: showForecastInSheet)
             }
         }
     }
@@ -125,6 +132,7 @@ struct AIConsultantView: View {
 private struct AIConsultantSheet: View {
     let title: String
     let insight: AIInsight
+    var showForecast: Bool = true
 
     var body: some View {
         NavigationStack {
@@ -160,7 +168,7 @@ private struct AIConsultantSheet: View {
                         }
                     }
 
-                    if let forecast = insight.forecast, !forecast.isEmpty {
+                    if showForecast, let forecast = insight.forecast, !forecast.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             Label("Forecast", systemImage: "sparkles")
                                 .font(.cavnarBody(11, weight: 700))
