@@ -739,7 +739,8 @@ def mobile_food_cost_analytics(current_user):
     same waste_items/overstock breakdowns dashboard.html bakes into its donut
     charts at render time — both already computed by analyse_inventory(),
     just not previously exposed as JSON."""
-    from inventory import load_inventory_for_restaurant, analyse_inventory, get_claude_insights
+    from inventory import (load_inventory_for_restaurant, analyse_inventory, get_claude_insights,
+                          compute_item_trends, build_price_watch)
     from marketing import get_upcoming_holidays
     rid = current_user["restaurant_id"]
     try:
@@ -750,6 +751,10 @@ def mobile_food_cost_analytics(current_user):
             delivery_days=restaurant.delivery_days if restaurant else None,
             upcoming_holidays=get_upcoming_holidays(),
         )
+        try:
+            price_watch = build_price_watch(compute_item_trends(rid, items))
+        except Exception:
+            price_watch = []
         cached = _capi._cache_get("mobile-inv-insight:" + str(rid))
         if cached:
             insight = cached
@@ -769,6 +774,7 @@ def mobile_food_cost_analytics(current_user):
             critical_low=analysis.get("critical_low", []),
             reorder_soon=analysis.get("reorder_soon", []),
             order_reduction=analysis.get("order_reduction", []),
+            price_watch=price_watch,
             recoverable_monthly=analysis.get("recoverable_monthly", 0),
             annual_recoverable=analysis.get("annual_recoverable", 0),
             total_waste_cost_week=analysis.get("total_waste_cost_week", 0),
@@ -788,7 +794,7 @@ def mobile_food_cost_analytics(current_user):
                        insight_intro="Analysis unavailable — check back shortly.",
                        insight_recommendations=[], insight_forecast=None,
                        waste_items=[], overstock=[], critical_low=[], reorder_soon=[],
-                       order_reduction=[]), 500
+                       order_reduction=[], price_watch=[]), 500
 
 
 @mobile_bp.route("/food-cost/trend")

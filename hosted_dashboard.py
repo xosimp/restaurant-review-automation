@@ -415,6 +415,12 @@ def index(current_user):
         )
         inv['is_live'] = _inv_live
         inv['banner_gradient'] = inv_banner_gradient(inv['annual_waste_projection'], inv['annual_recoverable'])
+        try:
+            from inventory import compute_item_trends as _cit_dash, build_price_watch as _bpw_dash
+            inv['price_watch'] = _bpw_dash(_cit_dash(rid, _inv_items))
+        except Exception as _pw_e:
+            print(f"Price watch error: {_pw_e}")
+            inv['price_watch'] = []
     except Exception as e:
         print(f"Inventory analysis error: {e}")
         inv = {"total_waste_cost_week":0,"monthly_waste_projection":0,
@@ -424,7 +430,7 @@ def index(current_user):
                "annual_waste_projection":0,"annual_recoverable":0,"waste_rate_pct":0,"benchmark_label":"—","benchmark_color":"#999","benchmark_detail":"Upload inventory to see benchmark",
                "week_start":"—","week_end":"—","last_updated":"—",
                "banner_gradient":"linear-gradient(to right,#2a0808 0%,#0d331f 100%)",
-               "is_live":False}
+               "is_live":False,"price_watch":[]}
     # Show welcome banner if user has never logged in before (last_login is None)
     from auth import get_user_by_id
     _user_row = get_user_by_id(current_user["id"]) if not current_user.get("is_admin") else None

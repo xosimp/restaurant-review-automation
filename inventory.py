@@ -366,9 +366,17 @@ def compute_item_trends(restaurant_id: int, current_items: list, db_path: str = 
 
     try:
         conn = _gc_t(_db)
+        # week_end < date('now','-1 day') — same guard get_claude_insights()
+        # already uses for its own wow_context comparison just below.
+        # get_claude_insights() auto-writes a snapshot for TODAY on every
+        # insight view (not just once a week), so without this, the first
+        # Analytics view of the day compares the live current price
+        # against a same-day snapshot of itself — always equal, so a real
+        # spike/trend from a fresh price update would silently stop being
+        # detectable for the rest of that day.
         rows = conn.execute("""
             SELECT week_end, items_json FROM inventory_history
-            WHERE restaurant_id=? AND items_json IS NOT NULL
+            WHERE restaurant_id=? AND items_json IS NOT NULL AND week_end < date('now','-1 day')
             ORDER BY week_end DESC LIMIT 8
         """, (restaurant_id,)).fetchall()
         conn.close()
@@ -457,6 +465,33 @@ def compute_item_trends(restaurant_id: int, current_items: list, db_path: str = 
         "trend_context": trend_context,
         "weeks_of_history": len(rows),
     }
+
+
+def build_price_watch(trends: dict) -> list:
+    """Unifies price_alerts (single-week 5%+ spike) and trend_alerts (3+
+    consecutive weeks rising) from compute_item_trends() into one
+    display-ready list, deduped by item — a sustained trend is more
+    informative than a same-week spike for the same ingredient, so the
+    trend classification wins when an item has both. Each entry carries a
+    ready-to-show suggested action so the client (web/iOS) doesn't have to
+    duplicate this judgment call."""
+    watch = {}
+    for a in trends.get("price_alerts", []):
+        watch[a["item"]] = {
+            "item": a["item"], "kind": "spike", "change_pct": a["change_pct"],
+            "weeks": None, "old_price": a["old_price"], "new_price": a["new_price"],
+            "is_big_8": a["is_big_8"],
+            "action_hint": "One-week spike — worth checking this week's invoice for an error.",
+        }
+    for a in trends.get("trend_alerts", []):
+        hint = ("Sustained rise — consider a menu price adjustment on dishes using this, or shop suppliers."
+                if a["is_big_8"] else "Sustained rise — worth keeping an eye on.")
+        watch[a["item"]] = {
+            "item": a["item"], "kind": "trend", "change_pct": a["total_change_pct"],
+            "weeks": a["weeks"], "old_price": a["start_price"], "new_price": a["current_price"],
+            "is_big_8": a["is_big_8"], "action_hint": hint,
+        }
+    return sorted(watch.values(), key=lambda x: abs(x["change_pct"]), reverse=True)
 
 
 def get_claude_insights(analysis: dict, owner_name: str = None, restaurant_name: str = None,
