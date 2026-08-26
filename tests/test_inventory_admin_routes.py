@@ -197,6 +197,8 @@ def test_discover_add_delete_recipe_flow(app, db_path, monkeypatch):
     assert len(recipes["menu_items"]) == 1
     menu_item_id = recipes["menu_items"][0]["id"]
     assert recipes["menu_items"][0]["recipe"] == []
+    assert recipes["priority_ingredients"][0]["name"] == "Romaine Lettuce"
+    assert recipes["priority_ingredients"][0]["has_recipe"] is False
 
     with app.test_request_context(f"/admin/inventory/recipes/{menu_item_id}", method="POST",
                                    json={"ingredient_id": ingredient_id, "qty_per_unit": 0.25}):

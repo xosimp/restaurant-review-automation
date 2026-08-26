@@ -488,8 +488,10 @@ textarea{resize:vertical;min-height:60px}
         <strong style="color:var(--ink2)">Ingredients &amp; recipes.</strong>
         Uploading an inventory CSV (above, or on <a href="/admin/client-data/{{ restaurant.id }}" style="color:var(--ember)">Manage data</a>)
         automatically creates ingredients below — no separate import step. Once Toast is connected, its menu
-        items sync in on every sync too. Mapping each menu item to the ingredients it uses (a "recipe") is the
-        one step that always needs you — nothing can guess a restaurant's actual recipes.
+        items sync in on every sync too. Recipes (which ingredients a dish uses) are the one thing that
+        needs you — but only for the handful of ingredients that actually drive this client's food cost
+        (the "priority" list below), not the whole menu. Everything else just stays on manual tracking,
+        same as today, with zero extra setup required.
       </div>
 
       <div class="form-group full">
@@ -534,6 +536,10 @@ textarea{resize:vertical;min-height:60px}
 
       <div class="form-group full" style="margin-top:18px">
         <label>Recipes (menu item → ingredients used)</label>
+        <div class="hint" style="font-size:11px;line-height:1.5;margin-bottom:8px">
+          You don't need every dish — only the ingredients that actually move this client's food cost.
+          <span id="fc-priority-list"></span>
+        </div>
         <div>
           <button type="button" class="btn-data" style="padding:6px 14px;font-size:12px" onclick="fcDiscoverMenuItems()">Refresh menu items from Toast</button>
           <span id="fc-discover-result" class="hint" style="display:inline;margin-left:8px"></span>
@@ -1109,6 +1115,16 @@ async function fcLoadRecipes() {
   const data = await res.json();
   if (!data.ok) return;
   const ingredientOptions = data.ingredients.map(i => `<option value="${i.id}">${i.name}</option>`).join('');
+
+  const priorityEl = document.getElementById('fc-priority-list');
+  const priority = data.priority_ingredients || [];
+  if (!priority.length) {
+    priorityEl.textContent = '';
+  } else {
+    const remaining = priority.filter(p => !p.has_recipe).length;
+    const names = priority.map(p => p.has_recipe ? `${p.name} ✓` : p.name).join(', ');
+    priorityEl.innerHTML = ` Start here (highest weekly spend impact, ${remaining} of ${priority.length} still need a recipe): <strong style="color:var(--ink2)">${names}</strong>`;
+  }
 
   const list = document.getElementById('fc-recipes-list');
   if (!data.menu_items.length) {

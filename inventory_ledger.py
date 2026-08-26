@@ -468,6 +468,40 @@ def list_menu_items_with_recipes(restaurant_id: int) -> list:
     return result
 
 
+def priority_ingredients(restaurant_id: int) -> list:
+    """The 8 highest weekly-spend-impact ingredients (unit_cost x
+    avg_daily_usage — see inventory.compute_item_trends' identical "Big 8"
+    logic, reused here rather than duplicated), each flagged with whether
+    it already has a recipe mapped. This is the realistic scope for recipe
+    setup — the handful of ingredients that actually move the food-cost
+    number, not every ingredient on the menu. Requires no sales/waste
+    history to compute, only the current par/cost/usage snapshot, so it
+    works the moment a restaurant has any ingredients at all."""
+    from inventory import load_inventory_for_restaurant, compute_item_trends
+    from models import get_conn
+
+    items, is_live = load_inventory_for_restaurant(restaurant_id)
+    if not items or not is_live:
+        return []  # don't surface "priorities" computed from generic sample data
+    big_8 = compute_item_trends(restaurant_id, items).get("big_8", [])
+
+    conn = get_conn()
+    mapped_names = {
+        row["name"] for row in conn.execute(
+            "SELECT DISTINCT i.name FROM recipe_ingredients ri "
+            "JOIN ingredients i ON i.id = ri.ingredient_id WHERE i.restaurant_id=?",
+            (restaurant_id,)
+        ).fetchall()
+    }
+    conn.close()
+
+    return [{
+        "name": i["item"],
+        "weekly_impact": round((i.get("unit_cost") or 0) * (i.get("avg_daily_usage") or 0) * 7, 2),
+        "has_recipe": i["item"] in mapped_names,
+    } for i in big_8]
+
+
 def add_recipe_ingredient(menu_item_id: int, ingredient_id: int, qty_per_unit: float) -> int:
     from models import db_conn
     with db_conn() as conn:

@@ -376,3 +376,40 @@ class TestLoadInventoryResolutionOrder:
         # Regression smoke test: analyse_inventory must accept this shape unchanged.
         analysis = inventory.analyse_inventory(items)
         assert "waste_items" in analysis
+
+
+# ── Priority ingredients (the realistic recipe-setup scope) ─────────────
+
+class TestPriorityIngredients:
+    def test_ranks_by_weekly_spend_impact_and_flags_unmapped(self, db_path):
+        rid = _restaurant(db_path)
+        # High impact: $12/unit * 5/day = $60/day driven
+        salmon_id = _ingredient(db_path, rid, name="Salmon", unit_cost=12, avg_daily_usage=5)
+        # Low impact: $0.50/unit * 1/day
+        napkins_id = _ingredient(db_path, rid, name="Napkins", unit_cost=0.5, avg_daily_usage=1)
+
+        result = ledger.priority_ingredients(rid)
+        names = [r["name"] for r in result]
+        assert names[0] == "Salmon"  # highest impact first
+        salmon_row = next(r for r in result if r["name"] == "Salmon")
+        assert salmon_row["has_recipe"] is False
+
+    def test_flags_has_recipe_true_once_mapped(self, db_path):
+        rid = _restaurant(db_path)
+        salmon_id = _ingredient(db_path, rid, name="Salmon", unit_cost=12, avg_daily_usage=5)
+        conn = get_conn(db_path)
+        cur = conn.execute("INSERT INTO menu_items (restaurant_id, toast_guid, name) VALUES (?,?,?)",
+                           (rid, "guid-salmon-dish", "Grilled Salmon"))
+        menu_item_id = cur.lastrowid
+        conn.execute("INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,?)",
+                    (menu_item_id, salmon_id, 0.5))
+        conn.commit()
+        conn.close()
+
+        result = ledger.priority_ingredients(rid)
+        salmon_row = next(r for r in result if r["name"] == "Salmon")
+        assert salmon_row["has_recipe"] is True
+
+    def test_empty_when_no_ingredients_exist(self, db_path):
+        rid = _restaurant(db_path)
+        assert ledger.priority_ingredients(rid) == []

@@ -438,7 +438,8 @@ def discover_menu_items_route(restaurant_id, current_user):
 def list_recipes_route(restaurant_id, current_user):
     import inventory_ledger
     return jsonify(ok=True, menu_items=inventory_ledger.list_menu_items_with_recipes(restaurant_id),
-                   ingredients=inventory_ledger.list_ingredients(restaurant_id))
+                   ingredients=inventory_ledger.list_ingredients(restaurant_id),
+                   priority_ingredients=inventory_ledger.priority_ingredients(restaurant_id))
 
 
 @admin_bp.route("/admin/inventory/recipes/<int:menu_item_id>", methods=["POST"])
