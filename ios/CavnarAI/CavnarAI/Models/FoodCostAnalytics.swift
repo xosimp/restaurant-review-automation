@@ -66,6 +66,56 @@ struct InventoryActionItem: Decodable, Identifiable {
             ? String(Int(suggestedOrderQty)) : String(format: "%.1f", suggestedOrderQty)
         return unit.map { "\(qty) \($0)" } ?? qty
     }
+
+    private static func fmt(_ v: Double) -> String {
+        v.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(v)) : String(format: "%.1f", v)
+    }
+
+    /// "ORDER" alone doesn't say whether this is more or less than last
+    /// time — computed against last_order_qty so the caption states the
+    /// delta directly ("ORDER 4 MORE"/"ORDER 6 LESS") instead of making
+    /// the reader do that subtraction themselves against the number below.
+    /// Falls back to plain "ORDER" when there's nothing to compare (a
+    /// skipped order, no prior order on file, or an unchanged quantity).
+    var orderCaption: String {
+        guard let suggestedOrderQty, suggestedOrderQty > 0,
+              let lastOrderQty else { return "ORDER" }
+        let delta = suggestedOrderQty - lastOrderQty
+        if abs(delta) < 0.05 { return "ORDER" }
+        return delta > 0 ? "ORDER \(Self.fmt(delta)) MORE" : "ORDER \(Self.fmt(-delta)) LESS"
+    }
+}
+
+/// One entry from inventory.build_price_watch() — either a single-week
+/// price spike or a sustained multi-week rise, already deduped/classified
+/// server-side so the client only has to render, not judge.
+struct PriceWatchItem: Decodable, Identifiable {
+    let item: String
+    let kind: String  // "spike" | "trend"
+    let changePct: Double
+    let weeks: Int?
+    let oldPrice: Double
+    let newPrice: Double
+    let isBig8: Bool
+    let actionHint: String
+
+    var id: String { item }
+
+    enum CodingKeys: String, CodingKey {
+        case item, kind, weeks
+        case changePct = "change_pct"
+        case oldPrice = "old_price"
+        case newPrice = "new_price"
+        case isBig8 = "is_big_8"
+        case actionHint = "action_hint"
+    }
+
+    var isTrend: Bool { kind == "trend" }
+
+    var timeframeLabel: String {
+        if let weeks, isTrend { return "\(weeks) week\(weeks == 1 ? "" : "s")" }
+        return "this week"
+    }
 }
 
 struct FoodCostTrendWeek: Decodable, Identifiable {
@@ -92,6 +142,7 @@ struct FoodCostAnalytics: Decodable {
     let criticalLow: [InventoryActionItem]
     let reorderSoon: [InventoryActionItem]
     let orderReduction: [InventoryActionItem]
+    let priceWatch: [PriceWatchItem]
     let recoverableMonthly: Double?
     let annualRecoverable: Double?
     let totalWasteCostWeek: Double?
@@ -115,6 +166,7 @@ struct FoodCostAnalytics: Decodable {
         case criticalLow = "critical_low"
         case reorderSoon = "reorder_soon"
         case orderReduction = "order_reduction"
+        case priceWatch = "price_watch"
         case recoverableMonthly = "recoverable_monthly"
         case annualRecoverable = "annual_recoverable"
         case totalWasteCostWeek = "total_waste_cost_week"

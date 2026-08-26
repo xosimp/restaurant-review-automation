@@ -36,6 +36,15 @@ struct FoodCostAnalyticsSection: View {
                     if let label = analytics.benchmarkLabel, let pct = analytics.wasteRatePct, label != "—" {
                         benchmarkBar(label: label, pct: pct)
                     }
+                    // Nothing renders at all when prices are flat — the
+                    // page stays exactly as lean as it is without this
+                    // feature. When something's moving, this teaser sits
+                    // high on the page (so it's seen without scrolling past
+                    // the waste/overstock donuts) and points at the real
+                    // detail list further down, after the order list.
+                    if !analytics.priceWatch.isEmpty {
+                        priceWatchBanner(analytics.priceWatch)
+                    }
                     if !analytics.wasteItems.isEmpty {
                         FoodCostDonutChart(
                             title: "TOP WASTE OFFENDERS",
@@ -67,6 +76,9 @@ struct FoodCostAnalyticsSection: View {
                         )
                     }
                     actionSection(analytics)
+                    if !analytics.priceWatch.isEmpty {
+                        priceWatchDetail(analytics.priceWatch)
+                    }
                     FoodCostTrendChart(weeks: viewModel.trend)
                 } else if viewModel.isLoading {
                     FoodCostAnalyticsSkeleton()
@@ -317,7 +329,7 @@ struct FoodCostAnalyticsSection: View {
             }
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 3) {
-                Text("ORDER")
+                Text(item.orderCaption)
                     .font(.cavnarBody(7.5, weight: 700))
                     .tracking(0.8)
                     .foregroundStyle(Color.cavnarInk3)
@@ -341,8 +353,85 @@ struct FoodCostAnalyticsSection: View {
         let lastQty = item.lastOrderQty.map { $0.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int($0))" : String(format: "%.1f", $0) } ?? "—"
         if showDays, let days = item.daysRemaining {
             let daysStr = days.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(days))" : String(format: "%.1f", days)
-            return "\(daysStr)d left · last order \(lastQty)\(unitSuffix)"
+            return "\(daysStr)d left · last order (\(lastQty)\(unitSuffix))"
         }
-        return "last order: \(lastQty)\(unitSuffix)"
+        return "last order: (\(lastQty)\(unitSuffix))"
+    }
+
+    // MARK: - Price Watch (teaser near the top, detail after the order list)
+
+    private func priceWatchBanner(_ items: [PriceWatchItem]) -> some View {
+        HStack(spacing: 9) {
+            Circle()
+                .fill(Color.cavnarAmber)
+                .frame(width: 7, height: 7)
+                .shadow(color: Color.cavnarAmber.opacity(0.7), radius: 4)
+            Text("Price Watch — ")
+                .foregroundStyle(Color.cavnarInk2)
+                + Text("\(items.count)")
+                    .font(.cavnarNumber(11.5, weight: 700))
+                    .foregroundStyle(Color.cavnarInk)
+                + Text(items.count == 1 ? " ingredient trending" : " ingredients trending")
+                    .foregroundStyle(Color.cavnarInk2)
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.cavnarInk3)
+        }
+        .font(.cavnarBody(11.5))
+        .padding(.horizontal, 13)
+        .padding(.vertical, 10)
+        .background(Color.cavnarAmber.opacity(0.09))
+        .overlay(
+            RoundedRectangle(cornerRadius: CavnarRadius.control)
+                .strokeBorder(Color.cavnarAmber.opacity(0.28), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+    }
+
+    private func priceWatchDetail(_ items: [PriceWatchItem]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("PRICE WATCH")
+                .font(.cavnarBody(10, weight: 700))
+                .tracking(1.2)
+                .foregroundStyle(Color.cavnarEmber2)
+            VStack(spacing: 0) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    priceWatchRow(item)
+                    if index < items.count - 1 {
+                        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                    }
+                }
+            }
+        }
+    }
+
+    private func priceWatchRow(_ item: PriceWatchItem) -> some View {
+        let accent = item.isTrend ? Color.cavnarRed : Color.cavnarAmber
+        return HStack(alignment: .top, spacing: 12) {
+            Rectangle().fill(accent).frame(width: 2.5)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.item)
+                    .font(.cavnarBody(13, weight: 600))
+                    .foregroundStyle(Color.cavnarInk)
+                Text("$\(String(format: "%.2f", item.oldPrice)) → $\(String(format: "%.2f", item.newPrice))")
+                    .font(.cavnarBody(10))
+                    .foregroundStyle(Color.cavnarInk3)
+                Text(item.actionHint)
+                    .font(.cavnarBody(10))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .lineSpacing(2)
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 3) {
+                Text("+\(String(format: "%.0f", item.changePct))%")
+                    .font(.cavnarNumber(13, weight: 700))
+                    .foregroundStyle(accent)
+                Text(item.timeframeLabel)
+                    .font(.cavnarBody(9))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+        }
+        .padding(.vertical, 10)
     }
 }
