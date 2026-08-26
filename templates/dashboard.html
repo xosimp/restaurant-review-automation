@@ -2405,12 +2405,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
 
     <!-- Price drift status -->
-    {% if food_cost_data and food_cost_data.current and food_cost_data.previous and food_cost_data.previous.items %}
+    {% if food_cost_data and food_cost_data.current and food_cost_data.previous and food_cost_data.previous['items'] %}
     <div id="fc-drift-saved" style="position:relative;z-index:1;margin-bottom:16px">
       {% set curr_map = {} %}
-      {% for it in food_cost_data.current.items %}{% if it.name %}{% set _ = curr_map.update({it.name|lower: it}) %}{% endif %}{% endfor %}
+      {% for it in food_cost_data.current['items'] %}{% if it.name %}{% set _ = curr_map.update({it.name|lower: it}) %}{% endif %}{% endfor %}
       {% set drift_found = namespace(count=0) %}
-      {% for it in food_cost_data.previous.items %}
+      {% for it in food_cost_data.previous['items'] %}
         {% set curr_it = curr_map.get(it.name|lower) %}
         {% if curr_it and it.price and curr_it.price %}
           {% set pct = ((curr_it.price|float - it.price|float) / it.price|float * 100)|round(1) %}
@@ -2443,7 +2443,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </thead>
       <tbody id="fc-rows">
         {% if food_cost_data and food_cost_data.current %}
-          {% for _fci in food_cost_data.current.items %}
+          {% for _fci in food_cost_data.current['items'] %}
           <tr style="border-bottom:1px solid rgba(255,255,255,.07)">
             <td style="padding:7px 8px"><input type="text" value="{{_fci.name}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="Item name"></td>
             <td style="padding:7px 8px"><input type="text" value="{{_fci.unit}}" style="width:100%;border:none;background:transparent;font-size:12px;color:rgba(255,255,255,.85);font-family:inherit;outline:none" placeholder="lb"></td>
@@ -2565,6 +2565,18 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div class="insight-text insight-loading" id="inv-insight" style="font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:88%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:72%">&nbsp;</div><div class="skeleton" style="height:13px;width:60%">&nbsp;</div></div>
   </div>
 
+  <!-- Price Watch teaser — nothing renders when prices are flat; when
+       something's moving this sits high on the page (before the waste/
+       overstock donuts) and points at the detail list further down, after
+       the order list. -->
+  {% if inv.price_watch %}
+  <a href="#price-watch-detail" style="display:flex;align-items:center;gap:9px;background:rgba(239,159,39,.09);border:1px solid rgba(239,159,39,.28);border-radius:10px;padding:10px 13px;margin-bottom:14px;text-decoration:none">
+    <div style="width:7px;height:7px;border-radius:50%;background:#ef9f27;box-shadow:0 0 8px rgba(239,159,39,.7);flex-shrink:0"></div>
+    <div style="flex:1;font-size:11.5px;color:rgba(255,255,255,.75)">Price Watch — <span style="font-family:'Space Grotesk',sans-serif;font-weight:700;color:rgba(255,255,255,.92)">{{inv.price_watch|length}}</span> ingredient{% if inv.price_watch|length != 1 %}s{% endif %} trending</div>
+    <div style="color:rgba(255,255,255,.3);font-size:13px">&#8250;</div>
+  </a>
+  {% endif %}
+
   <!-- Waste offenders + Overstocked as side-by-side donut ring charts -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
 
@@ -2668,10 +2680,11 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid rgba(255,255,255,.04);gap:10px">
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.88);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{item.item}}</div>
-          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">{{item.days_remaining}}d left · last order {{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %}</div>
+          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">{{item.days_remaining}}d left · last order ({{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %})</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
-          <div style="font-size:8px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:2px">Order</div>
+          {% set _delta = (item.suggested_order_qty - item.last_order_qty) if (item.suggested_order_qty and item.suggested_order_qty > 0 and item.last_order_qty is not none) else 0 %}
+          <div style="font-size:8px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:2px">{% if _delta > 0.05 %}Order {{ _delta|round|int }} more{% elif _delta < -0.05 %}Order {{ (-_delta)|round|int }} less{% else %}Order{% endif %}</div>
           <div style="font-size:12px;font-weight:700;color:white;background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.32);border-radius:6px;padding:3px 10px;white-space:nowrap;font-family:'Space Grotesk',sans-serif">{% if item.suggested_order_qty == 0 %}skip{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</div>
           <div style="font-size:10px;font-weight:700;font-family:'Space Grotesk',sans-serif;margin-top:3px">{% if item.savings_vs_last > 0 %}<span style="color:#6fcf97">↓ ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:#ef4444">↑ ${{"{:.2f}".format(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:rgba(255,255,255,.25)">—</span>{% endif %}</div>
         </div>
@@ -2694,10 +2707,11 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid rgba(255,255,255,.04);gap:10px">
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.88);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{item.item}}</div>
-          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">{{item.days_remaining}}d left · last order {{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %}</div>
+          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">{{item.days_remaining}}d left · last order ({{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %})</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
-          <div style="font-size:8px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:2px">Order</div>
+          {% set _delta = (item.suggested_order_qty - item.last_order_qty) if (item.suggested_order_qty and item.suggested_order_qty > 0 and item.last_order_qty is not none) else 0 %}
+          <div style="font-size:8px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:2px">{% if _delta > 0.05 %}Order {{ _delta|round|int }} more{% elif _delta < -0.05 %}Order {{ (-_delta)|round|int }} less{% else %}Order{% endif %}</div>
           <div style="font-size:12px;font-weight:700;color:white;background:rgba(239,159,39,.11);border:1px solid rgba(239,159,39,.28);border-radius:6px;padding:3px 10px;white-space:nowrap;font-family:'Space Grotesk',sans-serif">{% if item.suggested_order_qty == 0 %}skip{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</div>
           <div style="font-size:10px;font-weight:700;font-family:'Space Grotesk',sans-serif;margin-top:3px">{% if item.savings_vs_last > 0 %}<span style="color:#6fcf97">↓ ${{item.savings_vs_last}}</span>{% elif item.savings_vs_last < 0 %}<span style="color:#ef4444">↑ ${{"{:.2f}".format(item.savings_vs_last * -1)}}</span>{% else %}<span style="color:rgba(255,255,255,.25)">—</span>{% endif %}</div>
         </div>
@@ -2720,10 +2734,11 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div style="display:flex;align-items:center;padding:9px 16px;border-bottom:1px solid rgba(255,255,255,.04);gap:10px">
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.88);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{item.item}}</div>
-          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">last order: {{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %}</div>
+          <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">last order: ({{item.last_order_qty|int}}{% if item.unit %} {{item.unit}}{% endif %})</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
-          <div style="font-size:8px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:2px">Order</div>
+          {% set _delta = (item.suggested_order_qty - item.last_order_qty) if (item.suggested_order_qty and item.suggested_order_qty > 0 and item.last_order_qty is not none) else 0 %}
+          <div style="font-size:8px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:rgba(255,255,255,.3);margin-bottom:2px">{% if _delta > 0.05 %}Order {{ _delta|round|int }} more{% elif _delta < -0.05 %}Order {{ (-_delta)|round|int }} less{% else %}Order{% endif %}</div>
           <div style="font-size:12px;font-weight:700;color:#6fcf97;background:rgba(111,207,151,.09);border:1px solid rgba(111,207,151,.25);border-radius:6px;padding:3px 10px;white-space:nowrap;font-family:'Space Grotesk',sans-serif">{% if item.suggested_order_qty == 0 %}skip{% else %}{{item.suggested_order_qty}}{% if item.unit %} {{item.unit}}{% endif %}{% endif %}</div>
           <div style="font-size:10px;font-weight:700;font-family:'Space Grotesk',sans-serif;margin-top:3px;color:#6fcf97">↓ ${{item.savings_vs_last}}</div>
         </div>
@@ -2739,6 +2754,26 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div class="dark-hero-card" style="border:1px solid rgba(111,207,151,.3);border-radius:12px;padding:16px 20px;display:flex;align-items:center;gap:10px">
     <div style="width:8px;height:8px;border-radius:50%;background:#6fcf97;box-shadow:0 0 8px rgba(111,207,151,.7);flex-shrink:0"></div>
     <div style="font-size:13px;color:#6fcf97;font-weight:500">Your ordering looks well-calibrated this week — no adjustments needed.</div>
+  </div>
+  {% endif %}
+
+  {% if inv.price_watch %}
+  <div id="price-watch-detail" style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin:16px 0 10px;scroll-margin-top:20px">Price Watch</div>
+  <div class="dark-hero-card" style="border:1px solid rgba(239,159,39,.3);border-radius:12px;overflow:hidden">
+    {% for w in inv.price_watch %}
+    <div style="display:flex;align-items:flex-start;padding:12px 16px;{% if not loop.last %}border-bottom:1px solid rgba(255,255,255,.04);{% endif %}gap:12px">
+      <div style="width:2.5px;align-self:stretch;border-radius:0;flex-shrink:0;background:{% if w.kind == 'trend' %}#ef4444{% else %}#ef9f27{% endif %}"></div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;color:rgba(255,255,255,.88)">{{w.item}}</div>
+        <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px;font-family:'Space Grotesk',sans-serif">${{"%.2f"|format(w.old_price)}} &#8594; ${{"%.2f"|format(w.new_price)}}</div>
+        <div style="font-size:10.5px;color:rgba(255,255,255,.5);margin-top:4px;line-height:1.5">{{w.action_hint}}</div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div style="font-size:13px;font-weight:700;font-family:'Space Grotesk',sans-serif;color:{% if w.kind == 'trend' %}#ef4444{% else %}#ef9f27{% endif %}">+{{w.change_pct|round|int}}%</div>
+        <div style="font-size:9px;color:rgba(255,255,255,.3);margin-top:1px">{% if w.kind == 'trend' %}{{w.weeks}} week{% if w.weeks != 1 %}s{% endif %}{% else %}this week{% endif %}</div>
+      </div>
+    </div>
+    {% endfor %}
   </div>
   {% endif %}
 
