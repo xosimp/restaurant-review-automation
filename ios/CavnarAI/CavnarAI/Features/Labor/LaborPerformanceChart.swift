@@ -109,6 +109,18 @@ struct LaborPerformanceChart: View {
         }
     }
 
+    /// Same bright-base/dark-shadow-top fade as Food Cost's trend chart
+    /// (the confirmed mockup style), applied on top of whichever of the
+    /// red/amber/green tiers barColor already picked — the on-track/over-
+    /// target semantics are unchanged, only the fill goes from flat to gradient.
+    private func barGradient(_ pct: Double) -> LinearGradient {
+        let hue = barColor(pct)
+        return LinearGradient(
+            colors: [hue.opacity(0.9), hue.opacity(0.35)],
+            startPoint: .bottom, endPoint: .top
+        )
+    }
+
     private var dateRangeText: String? {
         switch mode {
         case .byDay:
@@ -149,7 +161,7 @@ struct LaborPerformanceChart: View {
                 Chart {
                     ForEach(bars) { bar in
                         BarMark(x: .value("Period", bar.label), y: .value("Labor %", barsVisible ? bar.pct : 0))
-                            .foregroundStyle(barColor(bar.pct))
+                            .foregroundStyle(barGradient(bar.pct))
                             .cornerRadius(3)
                     }
                     RuleMark(y: .value("Target", target))

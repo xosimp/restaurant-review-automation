@@ -163,7 +163,7 @@ struct ScheduleHistoryView: View {
         // never switching color. With alpha decreasing continuously to
         // zero over an already-cavnarPaper-colored base, there's no seam
         // left to be jarring.
-        .padding(16)
+        .padding(15)
         .background(
             ZStack {
                 Color.cavnarPaper
@@ -187,7 +187,10 @@ struct ScheduleHistoryView: View {
         // Dark shadow biased downward so it reads as peeking out from
         // under the card rather than a diffuse glow all the way around —
         // y-offset roughly matches the blur radius so most of the shadow
-        // falls below the pill instead of evenly on every side.
-        .shadow(color: .black.opacity(0.45), radius: 10, x: 0, y: 6)
+        // falls below the pill instead of evenly on every side. Matches
+        // the Tracker tab's IngredientCard exactly (FoodCostQuickEntryView
+        // .swift) — was 0.45/10/6 here, a small unintentional drift from
+        // that card's 0.4/8/5, now brought back in line.
+        .shadow(color: .black.opacity(0.4), radius: 8, x: 0, y: 5)
     }
 }

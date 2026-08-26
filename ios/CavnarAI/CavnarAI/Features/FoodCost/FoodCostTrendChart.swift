@@ -22,6 +22,18 @@ struct FoodCostTrendChart: View {
         waste > average * 1.15 ? Color.cavnarRed : Color.cavnarEmber
     }
 
+    /// Bright at the base, fading to a dark shadow at the top — matches
+    /// the confirmed Food Cost Analytics mockup's bar treatment exactly
+    /// (rgba(ember,.9) -> rgba(ember,.4), bottom to top), applied here to
+    /// whichever hue barColor already picked for this bar.
+    private func barGradient(_ waste: Double) -> LinearGradient {
+        let hue = barColor(waste)
+        return LinearGradient(
+            colors: [hue.opacity(0.9), hue.opacity(0.35)],
+            startPoint: .bottom, endPoint: .top
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("WASTE — LAST 8 WEEKS")
@@ -39,7 +51,7 @@ struct FoodCostTrendChart: View {
                 Chart {
                     ForEach(weeks) { week in
                         BarMark(x: .value("Week", week.label), y: .value("Waste", barsVisible ? week.waste : 0))
-                            .foregroundStyle(barColor(week.waste))
+                            .foregroundStyle(barGradient(week.waste))
                             .cornerRadius(3)
                     }
                     RuleMark(y: .value("Average", average))

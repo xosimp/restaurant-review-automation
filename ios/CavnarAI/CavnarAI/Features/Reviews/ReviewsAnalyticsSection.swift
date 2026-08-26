@@ -394,6 +394,16 @@ struct ReviewsAnalyticsSection: View {
     /// amber/red stop at all, and a positive+negative week with no neutral
     /// gets one direct green→red blend instead of two collapsed,
     /// cancel-each-other-out transitions that rendered as a hard edge.
+    /// Bright at the base, fading to a dark shadow at the top — same
+    /// treatment as Food Cost/Labor's trend bars (the confirmed mockup
+    /// style) — applied per-stop here via `faded`, so the sentiment-
+    /// composition blend below (which color transitions where, and when)
+    /// still reads correctly underneath the fade rather than being
+    /// replaced by it.
+    private func faded(_ color: Color, at location: Double) -> Color {
+        color.opacity(0.9 - location * 0.55)
+    }
+
     private func barGradient(for week: SentimentWeek) -> LinearGradient {
         let total = Double(week.total)
         let segments = [
@@ -406,22 +416,39 @@ struct ReviewsAnalyticsSection: View {
             return LinearGradient(colors: [Color.cavnarPaper3], startPoint: .bottom, endPoint: .top)
         }
         guard segments.count > 1 else {
-            return LinearGradient(colors: [segments[0].color], startPoint: .bottom, endPoint: .top)
+            return LinearGradient(
+                stops: [.init(color: faded(segments[0].color, at: 0), location: 0),
+                        .init(color: faded(segments[0].color, at: 1), location: 1)],
+                startPoint: .bottom, endPoint: .top
+            )
         }
 
         let blend = 0.06
-        var stops: [Gradient.Stop] = [.init(color: segments[0].color, location: 0)]
+        var stops: [Gradient.Stop] = [.init(color: faded(segments[0].color, at: 0), location: 0)]
         var cumulative = 0.0
         for i in 0..<segments.count - 1 {
             cumulative += Double(segments[i].count) / total
-            stops.append(.init(color: segments[i].color, location: max(0, cumulative - blend)))
-            stops.append(.init(color: segments[i + 1].color, location: min(1, cumulative + blend)))
+            let loc1 = max(0, cumulative - blend)
+            let loc2 = min(1, cumulative + blend)
+            stops.append(.init(color: faded(segments[i].color, at: loc1), location: loc1))
+            stops.append(.init(color: faded(segments[i + 1].color, at: loc2), location: loc2))
         }
-        stops.append(.init(color: segments.last!.color, location: 1))
+        stops.append(.init(color: faded(segments.last!.color, at: 1), location: 1))
         for i in 1..<stops.count where stops[i].location < stops[i - 1].location {
             stops[i].location = stops[i - 1].location
         }
         return LinearGradient(gradient: Gradient(stops: stops), startPoint: .bottom, endPoint: .top)
+    }
+
+    /// Average weekly review volume across the visible window — a neutral
+    /// reference line (no red/green implication the way Food Cost's waste
+    /// average or Labor's target line has): more reviews than average
+    /// isn't "bad" the way more waste or higher labor % is, so unlike
+    /// those two charts this line never recolors a bar, it's purely
+    /// there for the same "is this week typical" context at a glance.
+    private var averageWeeklyVolume: Double {
+        guard !viewModel.sentimentWeeks.isEmpty else { return 0 }
+        return viewModel.sentimentWeeks.reduce(0.0) { $0 + Double($1.total) } / Double(viewModel.sentimentWeeks.count)
     }
 
     @ChartContentBuilder
@@ -436,9 +463,10 @@ struct ReviewsAnalyticsSection: View {
     private var trendChartCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Sentiment trend — last 8 weeks")
-                    .font(.cavnarBody(11, weight: 700))
-                    .foregroundStyle(Color.cavnarInk3)
+                Text("SENTIMENT TREND — LAST 8 WEEKS")
+                    .font(.cavnarBody(10, weight: 700))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.cavnarEmber2)
                 Spacer()
                 (Text("Avg ") + Text(String(format: "%.1f★", overallAvgRating)).font(.cavnarNumber(11, weight: 700)))
                     .font(.cavnarBody(11, weight: 700))
@@ -480,7 +508,25 @@ struct ReviewsAnalyticsSection: View {
                     .blur(radius: 1.6)
                     .allowsHitTesting(false)
 
-                Chart { trendBars() }
+                // The average RuleMark + its capsule annotation live only
+                // on this crisp chart, not the blurred glow copy above —
+                // duplicating it there would blur the label text itself,
+                // which reads as a mistake rather than a glow.
+                Chart {
+                    trendBars()
+                    RuleMark(y: .value("Average", averageWeeklyVolume))
+                        .foregroundStyle(Color.cavnarInk.opacity(0.8))
+                        .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                        .annotation(position: .top, alignment: .trailing) {
+                            Text("avg \(Int(averageWeeklyVolume))")
+                                .font(.cavnarBody(9, weight: 700))
+                                .foregroundStyle(Color.black)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Color.cavnarInk)
+                                .clipShape(Capsule())
+                        }
+                }
                     .chartLegend(.hidden)
                     .chartYAxis {
                         AxisMarks(position: .leading) { value in
