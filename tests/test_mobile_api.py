@@ -1314,6 +1314,99 @@ def test_intel_endpoint_scoped_to_own_restaurant(client, db_path):
     assert data["has_data"] is False  # restaurant B has no competitor_intel of its own
 
 
+def test_intel_endpoint_parses_real_json_blob_shape(client, db_path):
+    """competitor_intel is stored as a JSON blob (run_competitor_analysis's
+    {"competitors": [...], "insight": <narrative text>, ...}), not the raw
+    narrative text on its own — passing the raw column straight into the
+    text parser (the old bug) fed it an escaped JSON fragment and produced
+    garbage intro/sections/recommendations for every restaurant with real
+    data. This pins the fix: intro/sections/recommendations must reflect
+    the *decoded* insight text, and the raw competitors list must pass
+    through untouched."""
+    import json
+    rid = _restaurant(db_path)
+    insight = (
+        "Solid ambiance, slow on weekends.\n\n"
+        "WHAT COMPETITORS ARE DOING WELL:\n- Fast table turnover\n\n"
+        "WHAT COMPETITORS ARE DOING POORLY:\n- Inconsistent hours\n\n"
+        "Recommendations:\n1. Speed up weekend service\n2. Post updated hours\n"
+    )
+    blob = json.dumps({
+        "competitors": [{
+            "name": "Mio Modo", "rating": 4.5, "review_count": 270,
+            "vicinity": "123 Main St", "reviews": [{"author": "Sam", "rating": 5, "text": "Great!", "time": "a week ago"}],
+        }],
+        "insight": insight,
+        "generated_at": "2026-08-01",
+    })
+    update_restaurant(rid, {"competitor_intel": blob, "competitor_updated_at": "2026-08-01 12:00:00"}, db_path=db_path)
+    token = _login(client, db_path, rid)
+
+    resp = client.get("/mobile/api/intel", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["has_data"] is True
+    assert data["intro"] == "Solid ambiance, slow on weekends."
+    assert data["sections"] == [
+        {"name": "What competitors are doing well", "bullets": ["Fast table turnover"]},
+        {"name": "What competitors are doing poorly", "bullets": ["Inconsistent hours"]},
+    ]
+    assert data["recommendations"] == ["Speed up weekend service", "Post updated hours"]
+    assert data["competitors"] == [{
+        "name": "Mio Modo", "rating": 4.5, "review_count": 270, "vicinity": "123 Main St",
+        "reviews": [{"author": "Sam", "rating": 5, "text": "Great!", "time": "a week ago"}],
+    }]
+    assert data["updated_at"] == "2026-08-01 12:00:00"
+
+
+def test_refresh_competitors_requires_full_tier(client, db_path):
+    rid = _restaurant(db_path, module_reviews=1, module_labor=0, module_inventory=1, module_marketing=1)
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/intel/refresh-competitors", headers=_auth_headers(token))
+    assert resp.status_code == 403
+    assert resp.get_json()["ok"] is False
+
+
+def test_refresh_competitors_starts_job_and_status_reports_pending_then_done(client, db_path, monkeypatch):
+    rid = _restaurant(db_path, module_reviews=1, module_labor=1, module_inventory=1, module_marketing=1)
+    token = _login(client, db_path, rid)
+
+    # _run_competitor_job does `from competitor import run_competitor_analysis`
+    # lazily inside its own body (same lazy-import-for-testability convention
+    # as models.get_conn elsewhere), so the patch target is competitor's own
+    # module, not admin_routes's namespace.
+    import competitor
+    monkeypatch.setattr(competitor, "run_competitor_analysis",
+                         lambda restaurant_id: {"ok": True, "competitors": [], "insight": "done", "generated_at": "2026-08-01"})
+
+    resp = client.post("/mobile/api/intel/refresh-competitors", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    job_id = data["job_id"]
+
+    # _run_competitor_job runs on a background thread — poll until it lands
+    # rather than assuming it's already done the instant the route returns.
+    import time
+    status_data = None
+    for _ in range(50):
+        status_resp = client.get(f"/mobile/api/intel/refresh-status/{job_id}", headers=_auth_headers(token))
+        status_data = status_resp.get_json()
+        if status_data.get("status") != "pending":
+            break
+        time.sleep(0.05)
+    assert status_data["status"] == "done"
+    assert status_data["ok"] is True
+    assert status_data["insight"] == "done"
+
+
+def test_refresh_status_reports_not_found_for_unknown_job(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/intel/refresh-status/nonexistent-job-id", headers=_auth_headers(token))
+    assert resp.status_code == 404
+    assert resp.get_json()["ok"] is False
+
+
 # ── /mobile/api/changelog ────────────────────────────────────────────────────
 
 def test_changelog_requires_auth(client):

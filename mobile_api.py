@@ -290,15 +290,22 @@ def mobile_revoke_other_sessions(current_user):
 
 def _intel_home_kpi(restaurant):
     """No stored numeric 'average competitor rating' exists — competitor_intel
-    is free-text AI analysis, not structured data. Rather than fabricate a
-    number, the Home tile surfaces how many recommendations are ready to
-    read (the full Intel screen does the real side-by-side comparison)."""
+    is a JSON blob ({"competitors": [...], "insight": <narrative text>,
+    "generated_at": ...}), not structured rating data. Rather than fabricate
+    a number, the Home tile surfaces how many recommendations are ready to
+    read (the full Intel screen does the real side-by-side comparison).
+    Uses extract_recs (not parse_competitor_intel's own recommendations) to
+    match the count web's stat row shows — the two parsers deliberately
+    disagree on edge cases (see extract_recs's docstring), so mixing them
+    made the Home tile and the web "Action items" tile show different
+    counts for the same restaurant."""
     if not getattr(restaurant, "competitor_intel", None):
         return {"value": "—", "sublabel": "no data yet"}
     try:
-        from competitor_intel_format import parse_competitor_intel
-        parsed = parse_competitor_intel(restaurant.competitor_intel)
-        n = len(parsed.get("recommendations", []))
+        import json as _json
+        from competitor_intel_format import extract_recs
+        insight = _json.loads(restaurant.competitor_intel).get("insight", "")
+        n = len(extract_recs(insight))
         return {"value": str(n), "sublabel": f"recommendation{'' if n == 1 else 's'} ready"}
     except Exception:
         return {"value": "—", "sublabel": "no data yet"}
@@ -1571,23 +1578,57 @@ def mobile_guest_join_link(current_user):
 # ── Intel ─────────────────────────────────────────────────────────────────
 
 def _do_mobile_intel(restaurant_id):
-    """Read-only — refreshing competitor intel is a long-running, desktop-
-    triggered operation (see ai-visibility/competitor refresh in
-    client_api.py); mobile just reads whatever that last produced."""
+    """Read-only for the narrative + competitor list; refreshing is its own
+    async job (see mobile_refresh_competitors below), the same job-id/poll
+    pattern already used for schedule generation.
+
+    restaurant.competitor_intel is a JSON blob — {"competitors": [...],
+    "insight": <narrative text>, "generated_at": ...} — written by
+    competitor.py's run_competitor_analysis(). The narrative text has to be
+    pulled out of that blob BEFORE handing it to parse_competitor_intel/
+    extract_recs (both are plain regex text parsers); passing the raw JSON
+    string straight through, as this used to do, fed them an escaped JSON
+    fragment instead of real text and silently produced garbage intro/
+    sections/recommendations for every restaurant with real competitor data."""
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
         return {"ok": False, "error": "Restaurant not found"}, 404
+    empty = {"ok": True, "has_data": False, "intro": None, "recommendations": [], "sections": [],
+             "competitors": [], "updated_at": None, "own_rating": None}
     if not getattr(restaurant, "competitor_intel", None):
-        return {"ok": True, "has_data": False, "intro": None, "recommendations": [], "sections": []}, 200
+        return empty, 200
     try:
-        from competitor_intel_format import parse_competitor_intel
-        parsed = parse_competitor_intel(restaurant.competitor_intel)
+        import json as _json
+        from competitor_intel_format import parse_competitor_intel, extract_recs
+        blob = _json.loads(restaurant.competitor_intel)
+        insight = blob.get("insight", "")
+        parsed = parse_competitor_intel(insight)
+
+        own_rating = None
+        if restaurant.module_reviews:
+            from models import get_review_stats
+            rstats = get_review_stats(restaurant_id)
+            if rstats and rstats.get("avg_rating"):
+                own_rating = rstats["avg_rating"]
+
         return {
             "ok": True,
             "has_data": True,
             "intro": parsed.get("intro"),
-            "recommendations": parsed.get("recommendations", []),
+            "recommendations": extract_recs(insight),
             "sections": [{"name": name, "bullets": bullets} for name, bullets in parsed.get("sections", [])],
+            "competitors": [
+                {
+                    "name": c.get("name", ""),
+                    "rating": c.get("rating", 0),
+                    "review_count": c.get("review_count", 0),
+                    "vicinity": c.get("vicinity", ""),
+                    "reviews": c.get("reviews", []),
+                }
+                for c in blob.get("competitors", [])
+            ],
+            "updated_at": restaurant.competitor_updated_at,
+            "own_rating": own_rating,
         }, 200
     except Exception as e:
         return {"ok": False, "error": str(e)}, 500
@@ -1598,6 +1639,50 @@ def _do_mobile_intel(restaurant_id):
 def mobile_intel(current_user):
     payload, status = _do_mobile_intel(current_user["restaurant_id"])
     return jsonify(**payload), status
+
+
+@mobile_bp.route("/intel/refresh-competitors", methods=["POST"])
+@mobile_login_required
+def mobile_refresh_competitors(current_user):
+    """Same async job pattern as /labor/generate-schedule — reuses
+    admin_routes.py's existing _run_competitor_job/_competitor_jobs rather
+    than building a second job system. (admin_routes.py despite its
+    filename: this specific route is @login_required, not @admin_required —
+    any logged-in owner can trigger it, matching the web dashboard's own
+    "Refresh" button.)"""
+    import threading
+    import uuid
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not (restaurant and restaurant.module_reviews and restaurant.module_labor
+            and restaurant.module_inventory and restaurant.module_marketing):
+        return jsonify(ok=False, error="Competitor intelligence is available on the Full System plan only."), 403
+    import admin_routes as _admin
+    job_id = str(uuid.uuid4())
+    _admin._competitor_jobs[job_id] = {"status": "pending", "result": None}
+    t = threading.Thread(target=_admin._run_competitor_job, args=(job_id, rid), daemon=True)
+    t.start()
+    return jsonify(ok=True, job_id=job_id)
+
+
+@mobile_bp.route("/intel/refresh-status/<job_id>")
+@mobile_login_required
+def mobile_refresh_competitors_status(job_id, current_user):
+    """Mirrors mobile_schedule_status's body/shape, reading admin_routes.py's
+    shared _competitor_jobs dict."""
+    import admin_routes as _admin
+    job = _admin._competitor_jobs.get(job_id)
+    if not job:
+        return jsonify(ok=False, status="error", error="Job not found"), 404
+    if job["status"] == "pending":
+        return jsonify(ok=True, status="pending")
+    try:
+        result = dict(job["result"])
+        result["status"] = job["status"]
+        _admin._competitor_jobs.pop(job_id, None)
+        return jsonify(**result)
+    except Exception as e:
+        return jsonify(ok=False, status="error", error=str(e)), 500
 
 
 @mobile_bp.route("/intel/ai-visibility")
