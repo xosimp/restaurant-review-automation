@@ -433,6 +433,20 @@ def discover_menu_items_route(restaurant_id, current_user):
         return jsonify(ok=False, error=str(e))
 
 
+@admin_bp.route("/admin/inventory/menu-items/<int:restaurant_id>", methods=["POST"])
+@admin_required
+def create_menu_item_route(restaurant_id, current_user):
+    """Manual add — the only path for a restaurant with no Toast connection,
+    or a dish too new to have shown up in discover_menu_items yet."""
+    import inventory_ledger
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="Menu item name required")
+    menu_item_id = inventory_ledger.create_menu_item(restaurant_id, name)
+    return jsonify(ok=True, id=menu_item_id)
+
+
 @admin_bp.route("/admin/inventory/recipes/<int:restaurant_id>", methods=["GET"])
 @admin_required
 def list_recipes_route(restaurant_id, current_user):

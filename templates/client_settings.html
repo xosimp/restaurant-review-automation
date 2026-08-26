@@ -540,9 +540,11 @@ textarea{resize:vertical;min-height:60px}
           You don't need every dish — only the ingredients that actually move this client's food cost.
           <span id="fc-priority-list"></span>
         </div>
-        <div>
+        <div class="fc-inline">
           <button type="button" class="btn-data" style="padding:6px 14px;font-size:12px" onclick="fcDiscoverMenuItems()">Refresh menu items from Toast</button>
-          <span id="fc-discover-result" class="hint" style="display:inline;margin-left:8px"></span>
+          <input id="fc-new-menu-item" placeholder="Or add a dish by name" style="width:180px">
+          <button type="button" class="btn-data" style="padding:6px 14px;font-size:12px" onclick="fcCreateMenuItem()">+ Add dish</button>
+          <span id="fc-discover-result" class="hint" style="display:inline"></span>
         </div>
         <div id="fc-recipes-list" style="margin-top:10px"></div>
       </div>
@@ -1097,6 +1099,17 @@ async function fcSubmitReceiving() {
   const data = await res.json();
   fcShowResult(resultEl, data.ok, data.ok ? '✓ Receiving saved' : (data.error || 'Failed'));
   if (data.ok) { document.getElementById('fc-receiving-qty').value = ''; fcLoadIngredients(); }
+}
+
+async function fcCreateMenuItem() {
+  const input = document.getElementById('fc-new-menu-item');
+  const name = input.value.trim();
+  if (!name) { alert('Enter a dish name'); return; }
+  await fetch('/admin/inventory/menu-items/{{ restaurant.id }}', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name})
+  });
+  input.value = '';
+  fcLoadRecipes();
 }
 
 async function fcDiscoverMenuItems() {

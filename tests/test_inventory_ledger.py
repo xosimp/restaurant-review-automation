@@ -144,6 +144,39 @@ class TestRecordDepletion:
         assert _row(db_path, iid)["avg_daily_usage"] == 4.2
 
 
+# ── Manual menu-item creation (the non-Toast / not-yet-discovered path) ──
+
+class TestCreateMenuItem:
+    def test_creates_with_null_toast_guid(self, db_path):
+        rid = _restaurant(db_path)
+        menu_item_id = ledger.create_menu_item(rid, "Grandma's Meatloaf")
+        conn = get_conn(db_path)
+        row = conn.execute("SELECT * FROM menu_items WHERE id=?", (menu_item_id,)).fetchone()
+        conn.close()
+        assert row["name"] == "Grandma's Meatloaf"
+        assert row["toast_guid"] is None
+        assert row["restaurant_id"] == rid
+
+    def test_multiple_manual_items_dont_collide_on_null_guid(self, db_path):
+        """SQLite UNIQUE(restaurant_id, toast_guid) treats multiple NULLs as
+        distinct — this is the whole reason manual creation is even
+        possible without assigning fake guids."""
+        rid = _restaurant(db_path)
+        id1 = ledger.create_menu_item(rid, "Dish One")
+        id2 = ledger.create_menu_item(rid, "Dish Two")
+        assert id1 != id2
+        conn = get_conn(db_path)
+        n = conn.execute("SELECT COUNT(*) AS n FROM menu_items WHERE restaurant_id=?", (rid,)).fetchone()["n"]
+        conn.close()
+        assert n == 2
+
+    def test_manually_created_item_appears_in_recipe_editor(self, db_path):
+        rid = _restaurant(db_path)
+        ledger.create_menu_item(rid, "House Salad")
+        menu_items = ledger.list_menu_items_with_recipes(rid)
+        assert any(mi["name"] == "House Salad" for mi in menu_items)
+
+
 # ── compute_daily_depletion idempotency ──────────────────────────────────
 
 class TestComputeDailyDepletion:

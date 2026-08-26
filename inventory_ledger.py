@@ -448,6 +448,23 @@ def deactivate_ingredient(ingredient_id: int) -> None:
         conn.commit()
 
 
+def create_menu_item(restaurant_id: int, name: str) -> int:
+    """Manually add a menu item with no toast_guid — the only way to map a
+    recipe for a restaurant that isn't Toast-connected (or for a dish that
+    exists but hasn't sold enough yet to show up in discover_menu_items).
+    toast_guid stays NULL; SQLite's UNIQUE(restaurant_id, toast_guid)
+    treats multiple NULLs as distinct, so this never collides with itself
+    or with Toast-discovered rows."""
+    from models import db_conn
+    with db_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO menu_items (restaurant_id, toast_guid, name) VALUES (?,NULL,?)",
+            (restaurant_id, name)
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
 def list_menu_items_with_recipes(restaurant_id: int) -> list:
     from models import get_conn
     conn = get_conn()

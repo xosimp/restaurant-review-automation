@@ -11,9 +11,9 @@ import models
 from admin_routes import (
     admin_bp, import_csv_to_ingredients_route, list_ingredients_route,
     create_ingredient_route, update_ingredient_route, delete_ingredient_route,
-    discover_menu_items_route, list_recipes_route, add_recipe_ingredient_route,
-    delete_recipe_ingredient_route, record_recount_route, record_receiving_route,
-    resync_depletion_route,
+    discover_menu_items_route, create_menu_item_route, list_recipes_route,
+    add_recipe_ingredient_route, delete_recipe_ingredient_route,
+    record_recount_route, record_receiving_route, resync_depletion_route,
 )
 from models import create_restaurant, Restaurant, get_conn
 
@@ -176,6 +176,28 @@ def test_saving_inventory_csv_auto_migrates_without_the_route(app, db_path):
 
 
 # ── Recipe editor routes ──────────────────────────────────────────────────
+
+def test_create_menu_item_route_manual_add(app, db_path):
+    """The non-Toast path: a client with no POS connection still needs a
+    way to map recipes, so a plain name-only creation must work."""
+    rid = _restaurant(db_path)
+    with app.test_request_context(f"/admin/inventory/menu-items/{rid}", method="POST",
+                                   json={"name": "Chef's Special Pasta"}):
+        resp = create_menu_item_route(rid)
+    body = resp.get_json()
+    assert body["ok"] is True
+
+    with app.test_request_context(f"/admin/inventory/recipes/{rid}"):
+        recipes = list_recipes_route(rid).get_json()
+    assert any(mi["name"] == "Chef's Special Pasta" for mi in recipes["menu_items"])
+
+
+def test_create_menu_item_route_requires_name(app, db_path):
+    rid = _restaurant(db_path)
+    with app.test_request_context(f"/admin/inventory/menu-items/{rid}", method="POST", json={}):
+        resp = create_menu_item_route(rid)
+    assert resp.get_json()["ok"] is False
+
 
 def test_discover_add_delete_recipe_flow(app, db_path, monkeypatch):
     rid = _restaurant(db_path)
