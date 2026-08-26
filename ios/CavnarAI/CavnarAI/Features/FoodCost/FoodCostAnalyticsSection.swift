@@ -69,7 +69,7 @@ struct FoodCostAnalyticsSection: View {
                     actionSection(analytics)
                     FoodCostTrendChart(weeks: viewModel.trend)
                 } else if viewModel.isLoading {
-                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 40)
+                    FoodCostAnalyticsSkeleton()
                 }
             }
             .padding(20)

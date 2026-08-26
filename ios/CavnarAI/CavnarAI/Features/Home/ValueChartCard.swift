@@ -230,6 +230,13 @@ private struct SparklineCanvas: View {
 
     @State private var startDate = Date()
     @State private var isRevealed = false
+    // Drives the endpoint dot/glow's breathing pulse — separate from the
+    // Canvas entirely (see PulsingEndpointDot below) so the pulse can use
+    // ordinary SwiftUI animation instead of forcing the line/fill drawing
+    // back into a continuous per-frame TimelineView redraw forever, which
+    // is exactly what isRevealed's static single Canvas draw above was
+    // added to avoid.
+    @State private var pulse = false
 
     // Matches the big total's own count-up duration (see ValueChartCard's
     // AnimatableNumberText.onAppear) — was 0.9s against the number's 1.6s,
@@ -238,25 +245,58 @@ private struct SparklineCanvas: View {
     private static let revealDuration: Double = 1.6
 
     var body: some View {
-        Group {
-            if isRevealed {
-                Canvas { context, size in draw(context: context, size: size, progress: 1) }
-            } else {
-                TimelineView(.animation) { timeline in
-                    Canvas { context, size in
-                        let progress = min(1, timeline.date.timeIntervalSince(startDate) / Self.revealDuration)
-                        draw(context: context, size: size, progress: progress)
+        GeometryReader { geo in
+            ZStack {
+                if isRevealed {
+                    // drawEndpointMarker: false — the pulsing overlay above
+                    // owns the endpoint dot/glow once the reveal has settled.
+                    Canvas { context, size in draw(context: context, size: size, progress: 1, drawEndpointMarker: false) }
+                } else {
+                    TimelineView(.animation) { timeline in
+                        Canvas { context, size in
+                            let progress = min(1, timeline.date.timeIntervalSince(startDate) / Self.revealDuration)
+                            draw(context: context, size: size, progress: progress)
+                        }
+                    }
+                    .task {
+                        try? await Task.sleep(for: .seconds(Self.revealDuration + 0.05))
+                        isRevealed = true
                     }
                 }
-                .task {
-                    try? await Task.sleep(for: .seconds(Self.revealDuration + 0.05))
-                    isRevealed = true
+
+                if isRevealed, let endpoint = endpointPosition(in: geo.size) {
+                    PulsingEndpointDot(pulse: pulse)
+                        .position(endpoint)
+                }
+            }
+        }
+        .onAppear {
+            // Waits for the line reveal to finish so the dot doesn't jump
+            // straight into a mid-pulse frame the instant it appears.
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.revealDuration) {
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                    pulse = true
                 }
             }
         }
     }
 
-    private func draw(context: GraphicsContext, size: CGSize, progress: Double) {
+    /// Same math draw() uses to place the endpoint glow/dot, pulled out so
+    /// the SwiftUI overlay above and the Canvas's own coordinate space
+    /// always agree on exactly where the last point lands.
+    private func endpointPosition(in size: CGSize) -> CGPoint? {
+        guard let minV = values.min(), let maxV = values.max(), let lastValue = values.last,
+              values.count > 1 else { return nil }
+        let range = max(maxV - minV, 1)
+        let pad: CGFloat = 20
+        let stepX = (size.width - pad * 2) / CGFloat(values.count - 1)
+        let normalized = (lastValue - minV) / range
+        let x = pad + CGFloat(values.count - 1) * stepX
+        let y = pad + (1 - CGFloat(normalized)) * (size.height - pad * 2 - 14)
+        return CGPoint(x: x, y: y)
+    }
+
+    private func draw(context: GraphicsContext, size: CGSize, progress: Double, drawEndpointMarker: Bool = true) {
         guard let minV = values.min(), let maxV = values.max() else { return }
         let range = max(maxV - minV, 1)
         // The endpoint glow below extends 16pt past its center in every
@@ -316,15 +356,48 @@ private struct SparklineCanvas: View {
         visible.dropFirst().forEach { linePath.addLine(to: $0) }
         context.stroke(linePath, with: .color(Color.cavnarEmber2), lineWidth: 2)
 
-        let glowRect = CGRect(x: last.x - 16, y: last.y - 16, width: 32, height: 32)
-        context.fill(
-            Path(ellipseIn: glowRect),
-            with: .radialGradient(
-                Gradient(colors: [Color.cavnarEmber2.opacity(0.9), Color.cavnarEmber2.opacity(0)]),
-                center: last, startRadius: 0, endRadius: 16
+        // During the initial line reveal this still travels with the
+        // leading edge frame-by-frame (progress < 1, isRevealed still
+        // false) — only the settled static draw skips it in favor of
+        // PulsingEndpointDot below, which takes over from there.
+        if drawEndpointMarker {
+            let glowRect = CGRect(x: last.x - 16, y: last.y - 16, width: 32, height: 32)
+            context.fill(
+                Path(ellipseIn: glowRect),
+                with: .radialGradient(
+                    Gradient(colors: [Color.cavnarEmber2.opacity(0.9), Color.cavnarEmber2.opacity(0)]),
+                    center: last, startRadius: 0, endRadius: 16
+                )
             )
-        )
-        let dotRect = CGRect(x: last.x - 3, y: last.y - 3, width: 6, height: 6)
-        context.fill(Path(ellipseIn: dotRect), with: .color(Color.cavnarInk))
+            let dotRect = CGRect(x: last.x - 3, y: last.y - 3, width: 6, height: 6)
+            context.fill(Path(ellipseIn: dotRect), with: .color(Color.cavnarInk))
+        }
+    }
+}
+
+/// Takes over the endpoint marker once the sparkline's reveal has settled
+/// into its static Canvas draw — a real SwiftUI view (not more Canvas
+/// drawing) specifically so it can breathe on an ordinary repeatForever
+/// animation without forcing the whole line/fill back into a continuous
+/// per-frame redraw. Mirrors the Canvas version's exact sizing (32pt glow,
+/// 6pt dot) at rest so the handoff between the two is seamless.
+private struct PulsingEndpointDot: View {
+    let pulse: Bool
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Color.cavnarEmber2.opacity(pulse ? 1.0 : 0.9), Color.cavnarEmber2.opacity(0)],
+                        center: .center, startRadius: 0, endRadius: pulse ? 20 : 16
+                    )
+                )
+                .frame(width: pulse ? 40 : 32, height: pulse ? 40 : 32)
+            Circle()
+                .fill(Color.cavnarInk)
+                .frame(width: 6, height: 6)
+                .scaleEffect(pulse ? 1.3 : 1.0)
+        }
     }
 }

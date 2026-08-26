@@ -96,14 +96,7 @@ struct NeedsAttentionCarousel: View {
             .frame(height: 190)
 
             if items.count > 1 {
-                HStack(spacing: 4) {
-                    Text("SWIPE")
-                        .font(.cavnarBody(9, weight: 700))
-                        .tracking(1.5)
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 10, weight: .bold))
-                }
-                .foregroundStyle(Color.cavnarEmber2.opacity(0.75))
+                PulsingSwipeArrow()
             }
         }
     }
@@ -183,5 +176,35 @@ struct AllClearRow: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
+    }
+}
+
+/// The "swipe hint" arrow — no text label (the gesture is discoverable
+/// enough visually; "SWIPE" in tiny tracked-out caps was dead weight).
+/// Continuously pops upward and its shaft (the "long part") extends as it
+/// pops, then both retract together as it settles back down — a two-phase
+/// PhaseAnimator loop (iOS 17+, deployment target here) rather than a
+/// manual @State + repeatForever pair, since the up/down and short/long
+/// states are naturally two alternating phases.
+private struct PulsingSwipeArrow: View {
+    private enum Phase: CaseIterable { case rest, popped }
+
+    var body: some View {
+        PhaseAnimator(Phase.allCases) { phase in
+            HStack(spacing: 2) {
+                Capsule()
+                    .fill(Color.cavnarEmber2.opacity(0.75))
+                    .frame(width: phase == .popped ? 18 : 5, height: 2)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.cavnarEmber2.opacity(0.75))
+            }
+            .offset(y: phase == .popped ? -3 : 0)
+        } animation: { phase in
+            switch phase {
+            case .popped: .spring(response: 0.32, dampingFraction: 0.55)
+            case .rest:   .easeInOut(duration: 0.3)
+            }
+        }
     }
 }
