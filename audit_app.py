@@ -267,7 +267,7 @@ def generate_pdf(data):
     story.append(Paragraph("OVERALL SCORE SUMMARY", sEyebrow))
     module_map = {
         "reviews":"Review Intelligence","labor":"Labor Optimizer",
-        "inventory":"Inventory Control","marketing":"Marketing Autopilot","tech":"—"
+        "inventory":"Food Cost Control","marketing":"Marketing Autopilot","tech":"—"
     }
     sum_data = [[
         Paragraph("Area", sCellBoldW),

@@ -245,7 +245,7 @@ def create_client(current_user):
         module_names = []
         if _flag("module_reviews"): module_names.append("Review Intelligence")
         if _flag("module_labor"):   module_names.append("Labor Optimizer")
-        if _flag("module_inventory"): module_names.append("Inventory Control")
+        if _flag("module_inventory"): module_names.append("Food Cost Control")
         if _flag("module_marketing"): module_names.append("Marketing Autopilot")
         mods = len(module_names)
         modules_list = ", ".join(module_names)
@@ -810,7 +810,7 @@ def resend_contract(restaurant_id, current_user):
         module_names = []
         if restaurant.module_reviews:  module_names.append("Review Intelligence")
         if restaurant.module_labor:    module_names.append("Labor Optimizer")
-        if restaurant.module_inventory: module_names.append("Inventory Control")
+        if restaurant.module_inventory: module_names.append("Food Cost Control")
         if restaurant.module_marketing: module_names.append("Marketing Autopilot")
         from docusign_helper import send_contract
         result = send_contract(

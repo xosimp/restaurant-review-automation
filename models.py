@@ -16,7 +16,7 @@ TIER_LABELS = {
     "trial":             "Trial",
     "starter_reviews":   "Starter Module — Review Intelligence",
     "starter_labor":     "Starter Module — Labor Optimizer",
-    "starter_inventory": "Starter Module — Inventory Control",
+    "starter_inventory": "Starter Module — Food Cost Control",
     "starter_marketing": "Starter Module — Marketing Autopilot",
     "full":              "Full System",
 }

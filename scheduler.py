@@ -724,7 +724,7 @@ def run_onboarding_sequence():
         modules = []
         if r.module_reviews:  modules.append("Review Intelligence")
         if r.module_labor:    modules.append("Labor Optimizer")
-        if r.module_inventory: modules.append("Inventory Control")
+        if r.module_inventory: modules.append("Food Cost Control")
         if r.module_marketing: modules.append("Marketing Autopilot")
 
         # Day 2 — send on day 2 or 3 (small buffer in case scheduler runs slightly late)

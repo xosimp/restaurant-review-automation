@@ -301,7 +301,7 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
 
         modules_active = []
         if has_labor: modules_active.append("Labor Optimizer")
-        if has_inventory: modules_active.append("Inventory Control")
+        if has_inventory: modules_active.append("Food Cost Control")
         if has_marketing: modules_active.append("Marketing Autopilot")
 
         # Build per-module instructions — every ACTIVE module must produce a line, even with thin data
@@ -493,7 +493,7 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 <tr><td style="padding:0 0 12px">
   <div style="{_card_bg};border:1px solid rgba(255,194,102,.4);border-radius:12px;padding:16px 18px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#ffc266">Inventory Control</span>
+      <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#ffc266">Food Cost Control</span>
       {_stat_pill(i_color, i_label)}
     </div>
     <div style="display:flex;gap:22px">

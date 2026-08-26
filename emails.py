@@ -259,7 +259,7 @@ def send_welcome_email(to_email, restaurant_name, username, password,
     active_modules = []
     if module_reviews:  active_modules.append("Review Intelligence")
     if module_labor:    active_modules.append("Labor Optimizer")
-    if module_inventory: active_modules.append("Inventory Control")
+    if module_inventory: active_modules.append("Food Cost Control")
     if module_marketing: active_modules.append("Marketing Autopilot")
     if not active_modules:
         active_modules = ["Review Intelligence"]  # fallback
@@ -428,7 +428,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
         # Build the callout block based on their primary module
         has_reviews   = "Review Intelligence" in modules
         has_labor     = "Labor Optimizer" in modules
-        has_inventory = "Inventory Control" in modules
+        has_inventory = "Food Cost Control" in modules
         has_marketing = "Marketing Autopilot" in modules
 
         if has_reviews:
@@ -566,7 +566,7 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
             f"Restaurant: {restaurant_name}. It's been one week since they went live on the dashboard.\n"
             f"Approved review responses so far: {approved_count}.\n"
             f"Reviews still pending their approval: {pending_count}.\n"
-            f"Modules: {'Labor Optimizer, ' if has_labor else ''}{'Inventory Control' if has_inventory else ''}\n"
+            f"Modules: {'Labor Optimizer, ' if has_labor else ''}{'Food Cost Control' if has_inventory else ''}\n"
             "Write the one-week check-in paragraph referencing this activity naturally."
         )
         body_paragraph = generate_email_personalization(ai_context, fallback_paragraph, restaurant_id=restaurant_id)
@@ -703,7 +703,7 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
         if has_inventory:
             module_blocks += """
   <div style="background:#f5f3f0;border-radius:8px;padding:14px 20px;margin-bottom:12px">
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#7a736a;margin-bottom:6px">Inventory Control</div>
+    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#7a736a;margin-bottom:6px">Food Cost Control</div>
     <p style="font-size:13px;color:#3a3530;margin:0;line-height:1.6">Food cost and waste tracking has been running. Check your dashboard for this month's waste report and ordering recommendations.</p>
   </div>"""
         if has_marketing:
@@ -717,7 +717,7 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
         fallback_paragraph = f"Here's a look at how {restaurant_name} performed on Cavnar AI in {month_name}."
         modules_in_use = ", ".join(m for m, on in [
             ("Review Intelligence", has_reviews), ("Labor Optimizer", has_labor),
-            ("Inventory Control", has_inventory), ("Marketing Autopilot", has_marketing),
+            ("Food Cost Control", has_inventory), ("Marketing Autopilot", has_marketing),
         ] if on) or "Review Intelligence"
         ai_context = (
             f"Restaurant: {restaurant_name}. This is their {month_name} {year} monthly summary email.\n"
@@ -773,7 +773,7 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
         modules = modules or []
 
         # Suggest unused modules if they don't have all 4
-        all_modules = ["Review Intelligence", "Labor Optimizer", "Inventory Control", "Marketing Autopilot"]
+        all_modules = ["Review Intelligence", "Labor Optimizer", "Food Cost Control", "Marketing Autopilot"]
         unused = [m for m in all_modules if m not in modules]
         upsell_block = ""
         if unused:
