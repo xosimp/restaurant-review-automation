@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TwoFactorView: View {
     @State private var viewModel: TwoFactorViewModel
+    @FocusState private var isCodeFocused: Bool
 
     init(viewModel: TwoFactorViewModel) {
         _viewModel = State(initialValue: viewModel)
@@ -28,6 +29,7 @@ struct TwoFactorView: View {
                     .multilineTextAlignment(.center)
                     .font(.cavnarNumber(24, weight: 600))
                     .cavnarTextFieldStyle()
+                    .focused($isCodeFocused)
 
                 Toggle("Remember this device for 30 days", isOn: $viewModel.rememberDevice)
                     .font(.cavnarBody(13))
@@ -58,5 +60,6 @@ struct TwoFactorView: View {
             .padding(28)
         }
         .navigationBarTitleDisplayMode(.inline)
+        .keyboardDoneToolbar { isCodeFocused = false }
     }
 }

@@ -5,6 +5,7 @@ struct ReviewDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showingTemplates = false
     @State private var showingRetractConfirm = false
+    @FocusState private var isDraftFocused: Bool
     var onCompleted: (String) -> Void
 
     init(viewModel: ReviewDetailViewModel, onCompleted: @escaping (String) -> Void) {
@@ -33,6 +34,7 @@ struct ReviewDetailView: View {
         .navigationTitle(reviewTitle)
         .navigationBarTitleDisplayMode(.inline)
         .cavnarEmberBackButton()
+        .keyboardDoneToolbar { isDraftFocused = false }
         .onChange(of: viewModel.didComplete) { _, completed in
             if completed, let status = viewModel.finalStatus {
                 onCompleted(status)
@@ -145,6 +147,7 @@ struct ReviewDetailView: View {
                 TextEditor(text: $viewModel.editedDraft)
                     .font(.cavnarBody(15))
                     .lineSpacing(5)
+                    .focused($isDraftFocused)
                     // TextEditor keeps its own opaque system background by
                     // default, which was rendering as a second, darker box
                     // nested inside this one — .scrollContentBackground

@@ -6,10 +6,15 @@ private enum MarketingSubTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+private enum MarketingContentField: Hashable, CaseIterable {
+    case topic, imageURL
+}
+
 struct MarketingView: View {
     @State private var viewModel = MarketingViewModel()
     @State private var analyticsViewModel = MarketingAnalyticsViewModel()
     @State private var subTab: MarketingSubTab = .content
+    @FocusState private var focusedField: MarketingContentField?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -60,6 +65,7 @@ struct MarketingView: View {
         .navigationTitle("Marketing")
         .navigationBarTitleDisplayMode(.inline)
         .cavnarTabSwipeNavigation($subTab, primaryTab: .content, secondaryTab: .analytics)
+        .keyboardNavToolbar($focusedField)
         .task { await viewModel.load() }
         .task { await analyticsViewModel.load() }
     }
@@ -101,6 +107,7 @@ struct MarketingView: View {
 
             TextField("Topic (optional)", text: $viewModel.topic)
                 .cavnarTextFieldStyle()
+                .focused($focusedField, equals: .topic)
 
             Button {
                 Task { await viewModel.generate() }
@@ -131,6 +138,7 @@ struct MarketingView: View {
                 if viewModel.selectedType == "instagram_post" {
                     TextField("Image URL (required for Instagram)", text: $viewModel.imageURL)
                         .cavnarTextFieldStyle()
+                        .focused($focusedField, equals: .imageURL)
                 }
 
                 HStack(spacing: 10) {

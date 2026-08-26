@@ -495,15 +495,16 @@ private struct IngredientCarousel: View {
         //    top-level toolbar items.
         .toolbar {
             cavnarToolbarItemGroup(placement: .keyboard) {
+                // Checkmark, not chevrons — CarouselField's cases carry a
+                // per-card UUID (.name(UUID), not a fixed CaseIterable
+                // set), so it doesn't fit keyboardNavToolbar's up/down
+                // stepping the way a static form's fields do. Still routes
+                // through the same keyboardIconButton every other keyboard
+                // toolbar in the app uses, so the dismiss glyph itself
+                // matches everywhere.
                 HStack {
                     Spacer()
-                    Button("Done") { focusedField = nil }
-                        .font(.cavnarBody(14, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber)
-                        .fixedSize()
-                        .cavnarToolbarPillGlass()
-                        .buttonStyle(.plain)
-                        .tint(nil)
+                    keyboardIconButton(systemName: "checkmark", enabled: true) { focusedField = nil }
                 }
             }
         }

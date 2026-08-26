@@ -48,6 +48,10 @@ private final class SendReviewRequestViewModel {
     }
 }
 
+private enum SendReviewRequestField: Hashable, CaseIterable {
+    case name, email, phone, message
+}
+
 struct SendReviewRequestSheet: View {
     @State private var viewModel = SendReviewRequestViewModel()
     @Environment(\.dismiss) private var dismiss
@@ -55,6 +59,7 @@ struct SendReviewRequestSheet: View {
     @State private var email = ""
     @State private var phone = ""
     @State private var message = ""
+    @FocusState private var focusedField: SendReviewRequestField?
 
     private var canSend: Bool {
         !viewModel.isSending && !(email.isEmpty && phone.isEmpty)
@@ -64,17 +69,25 @@ struct SendReviewRequestSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
-                    CavnarFloatingField(icon: "person", placeholder: "Guest name", text: $name, textContentType: .name)
+                    CavnarFloatingField(
+                        icon: "person", placeholder: "Guest name", text: $name, textContentType: .name,
+                        focus: $focusedField, field: .name
+                    )
                     CavnarFloatingField(
                         icon: "envelope", placeholder: "Email", text: $email,
-                        keyboardType: .emailAddress, textContentType: .emailAddress, autocapitalization: .never
+                        keyboardType: .emailAddress, textContentType: .emailAddress, autocapitalization: .never,
+                        focus: $focusedField, field: .email
                     )
-                    CavnarFloatingField(icon: "phone", placeholder: "Phone (optional)", text: $phone, keyboardType: .phonePad)
+                    CavnarFloatingField(
+                        icon: "phone", placeholder: "Phone (optional)", text: $phone, keyboardType: .phonePad,
+                        focus: $focusedField, field: .phone
+                    )
 
                     CavnarFloatingTextArea(
                         caption: "Note to guest — optional",
                         placeholder: "e.g. Thanks for celebrating your anniversary with us!",
-                        text: $message
+                        text: $message,
+                        focus: $focusedField, field: .message
                     )
                     Text("Sent along with the review link. Leave it blank to use the default message.")
                         .font(.cavnarBody(11))
@@ -111,6 +124,7 @@ struct SendReviewRequestSheet: View {
             .cavnarModuleBackground()
             .navigationTitle("Request a Review")
             .navigationBarTitleDisplayMode(.inline)
+            .keyboardNavToolbar($focusedField)
         }
     }
 }

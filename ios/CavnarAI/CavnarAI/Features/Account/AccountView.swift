@@ -407,11 +407,16 @@ struct AccountView: View {
     }
 }
 
+private enum ChangePasswordField: Hashable, CaseIterable {
+    case current, newPassword
+}
+
 private struct ChangePasswordSheet: View {
     let viewModel: AccountViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var current = ""
     @State private var newPassword = ""
+    @FocusState private var focusedField: ChangePasswordField?
 
     private var canSubmit: Bool {
         !viewModel.isChangingPassword && !current.isEmpty && newPassword.count >= 8
@@ -423,11 +428,13 @@ private struct ChangePasswordSheet: View {
                 VStack(alignment: .leading, spacing: 26) {
                     CavnarFloatingField(
                         icon: "lock", placeholder: "Current password", text: $current,
-                        isSecure: true, textContentType: .password
+                        isSecure: true, textContentType: .password,
+                        focus: $focusedField, field: .current
                     )
                     CavnarFloatingField(
                         icon: "lock.fill", placeholder: "New password (8+ characters)", text: $newPassword,
-                        isSecure: true, textContentType: .newPassword
+                        isSecure: true, textContentType: .newPassword,
+                        focus: $focusedField, field: .newPassword
                     )
 
                     if let error = viewModel.changePasswordError {
@@ -460,14 +467,20 @@ private struct ChangePasswordSheet: View {
             .cavnarModuleBackground()
             .navigationTitle("Change Password")
             .navigationBarTitleDisplayMode(.inline)
+            .keyboardNavToolbar($focusedField)
         }
     }
+}
+
+private enum TwoFactorSetupField: Hashable, CaseIterable {
+    case code
 }
 
 private struct TwoFactorSetupSheet: View {
     let viewModel: AccountViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var code = ""
+    @FocusState private var focusedField: TwoFactorSetupField?
 
     var body: some View {
         NavigationStack {
@@ -481,7 +494,8 @@ private struct TwoFactorSetupSheet: View {
 
                         CavnarFloatingField(
                             icon: "lock.shield", placeholder: "6-digit code", text: $code,
-                            keyboardType: .numberPad
+                            keyboardType: .numberPad,
+                            focus: $focusedField, field: .code
                         )
 
                         if let error = viewModel.twoFAError {
@@ -540,6 +554,10 @@ private struct TwoFactorSetupSheet: View {
             .cavnarModuleBackground()
             .navigationTitle("Enable 2FA")
             .navigationBarTitleDisplayMode(.inline)
+            // Single field, nothing to step between — checkmark only,
+            // matching Apple's own single-field bar rather than showing
+            // two permanently-disabled chevrons for show.
+            .keyboardDoneToolbar { focusedField = nil }
         }
     }
 }

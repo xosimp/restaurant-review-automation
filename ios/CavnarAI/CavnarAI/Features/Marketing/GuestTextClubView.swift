@@ -1,8 +1,13 @@
 import SwiftUI
 
+private enum CampaignField: Hashable, CaseIterable {
+    case topic, draftMessage
+}
+
 struct GuestTextClubView: View {
     @State private var viewModel = GuestTextClubViewModel()
     @State private var showingAddContact = false
+    @FocusState private var focusedField: CampaignField?
 
     var body: some View {
         ScrollView {
@@ -17,6 +22,7 @@ struct GuestTextClubView: View {
         }
         .background(Color.cavnarPaper)
         .navigationTitle("Guest Text Club")
+        .keyboardNavToolbar($focusedField)
         .task {
             await viewModel.load()
             await viewModel.loadJoinLink()
@@ -54,6 +60,7 @@ struct GuestTextClubView: View {
 
             TextField("Topic (optional)", text: $viewModel.campaignTopic)
                 .cavnarTextFieldStyle()
+                .focused($focusedField, equals: .topic)
 
             Button {
                 Task { await viewModel.draftCampaign() }
@@ -74,6 +81,7 @@ struct GuestTextClubView: View {
                     .padding(8)
                     .background(Color.cavnarPaper2)
                     .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                    .focused($focusedField, equals: .draftMessage)
 
                 Button {
                     Task { await viewModel.sendCampaign() }
@@ -146,12 +154,17 @@ struct GuestTextClubView: View {
     }
 }
 
+private enum AddGuestContactField: Hashable, CaseIterable {
+    case name, phone
+}
+
 private struct AddGuestContactSheet: View {
     let viewModel: GuestTextClubViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var phone = ""
     @State private var isAdding = false
+    @FocusState private var focusedField: AddGuestContactField?
 
     private var canAdd: Bool { !isAdding && !name.isEmpty && !phone.isEmpty }
 
@@ -159,8 +172,14 @@ private struct AddGuestContactSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
-                    CavnarFloatingField(icon: "person", placeholder: "Guest name", text: $name, textContentType: .name)
-                    CavnarFloatingField(icon: "phone", placeholder: "Phone", text: $phone, keyboardType: .phonePad)
+                    CavnarFloatingField(
+                        icon: "person", placeholder: "Guest name", text: $name, textContentType: .name,
+                        focus: $focusedField, field: .name
+                    )
+                    CavnarFloatingField(
+                        icon: "phone", placeholder: "Phone", text: $phone, keyboardType: .phonePad,
+                        focus: $focusedField, field: .phone
+                    )
 
                     VStack(spacing: 10) {
                         Button {
@@ -190,6 +209,7 @@ private struct AddGuestContactSheet: View {
             .cavnarModuleBackground()
             .navigationTitle("Add Guest")
             .navigationBarTitleDisplayMode(.inline)
+            .keyboardNavToolbar($focusedField)
         }
     }
 }

@@ -94,6 +94,7 @@ struct AskCavnarView: View {
             .cavnarModuleBackground()
             .navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden, for: .navigationBar)
+            .keyboardDoneToolbar { inputFocused = false }
         }
     }
 

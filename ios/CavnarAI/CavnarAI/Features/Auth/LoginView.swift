@@ -1,8 +1,13 @@
 import SwiftUI
 
+private enum LoginField: Hashable, CaseIterable {
+    case username, password
+}
+
 struct LoginView: View {
     @Environment(SessionStore.self) private var sessionStore
     @State private var viewModel: LoginViewModel
+    @FocusState private var focusedField: LoginField?
 
     init(sessionStore: SessionStore) {
         _viewModel = State(initialValue: LoginViewModel(sessionStore: sessionStore))
@@ -29,8 +34,10 @@ struct LoginView: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .cavnarTextFieldStyle()
+                            .focused($focusedField, equals: .username)
                         SecureField("Password", text: $viewModel.password)
                             .cavnarTextFieldStyle()
+                            .focused($focusedField, equals: .password)
                     }
 
                     if let error = viewModel.errorMessage {
@@ -68,6 +75,7 @@ struct LoginView: View {
                 }
                 .padding(28)
             }
+            .keyboardNavToolbar($focusedField)
             .navigationDestination(
                 isPresented: Binding(
                     get: { viewModel.twoFactorPendingToken != nil },

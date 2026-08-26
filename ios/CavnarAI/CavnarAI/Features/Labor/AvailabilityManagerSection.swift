@@ -17,7 +17,7 @@ struct AvailabilityManagerSection: View {
     @State private var notes = ""
     @FocusState private var focusedField: Field?
 
-    private enum Field {
+    private enum Field: Hashable, CaseIterable {
         case name, notes
     }
 
@@ -111,6 +111,7 @@ struct AvailabilityManagerSection: View {
             guard newValue != nil else { return }
             onExpand?()
         }
+        .keyboardNavToolbar($focusedField)
     }
 
     /// Schedules focus 0.3s out (CavnarDropdown's real expand duration —
