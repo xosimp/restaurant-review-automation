@@ -36,15 +36,6 @@ struct FoodCostAnalyticsSection: View {
                     if let label = analytics.benchmarkLabel, let pct = analytics.wasteRatePct, label != "—" {
                         benchmarkBar(label: label, pct: pct)
                     }
-                    // Nothing renders at all when prices are flat — the
-                    // page stays exactly as lean as it is without this
-                    // feature. When something's moving, this teaser sits
-                    // high on the page (so it's seen without scrolling past
-                    // the waste/overstock donuts) and points at the real
-                    // detail list further down, after the order list.
-                    if !analytics.priceWatch.isEmpty {
-                        priceWatchBanner(analytics.priceWatch)
-                    }
                     if !analytics.wasteItems.isEmpty {
                         FoodCostDonutChart(
                             title: "TOP WASTE OFFENDERS",
@@ -358,7 +349,8 @@ struct FoodCostAnalyticsSection: View {
         return "last order: (\(lastQty)\(unitSuffix))"
     }
 
-    // MARK: - Price Watch (teaser near the top, detail after the order list)
+    // MARK: - Price Watch (banner sits directly above its own detail rows —
+    // not a "jump elsewhere" teaser, so no chevron/tap affordance).
 
     private func priceWatchBanner(_ items: [PriceWatchItem]) -> some View {
         HStack(spacing: 9) {
@@ -374,9 +366,6 @@ struct FoodCostAnalyticsSection: View {
                 + Text(items.count == 1 ? " ingredient trending" : " ingredients trending")
                     .foregroundStyle(Color.cavnarInk2)
             Spacer()
-            Image(systemName: "chevron.right")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.cavnarInk3)
         }
         .font(.cavnarBody(11.5))
         .padding(.horizontal, 13)
@@ -391,10 +380,7 @@ struct FoodCostAnalyticsSection: View {
 
     private func priceWatchDetail(_ items: [PriceWatchItem]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("PRICE WATCH")
-                .font(.cavnarBody(10, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
+            priceWatchBanner(items)
             VStack(spacing: 0) {
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                     priceWatchRow(item)
