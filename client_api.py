@@ -3128,7 +3128,17 @@ def _do_ai_visibility_inner(rid):
     # Short cuisine descriptor from known_for first word(s), fallback to "restaurant"
     cuisine = (known_for.split(",")[0].strip() if known_for else "") or "restaurant"
 
-    vibe_query = ("Where can I find " + vibe.strip() + " in " + city_full + "?") if (vibe and city) else None
+    # Was "Where can I find " + the full vibe sentence + " in [city]?" —
+    # vibe is a paragraph-length internal profile description (e.g.
+    # "Contemporary Italian pizza bar with wood-fired Neapolitan pizzas
+    # and a lively bar scene"), and embedding it verbatim made this an
+    # exact-match fingerprint of the restaurant's own profile text, not a
+    # query a real person would ever type. Reuses the same short cuisine
+    # phrase already extracted above (known_for's first comma-separated
+    # item) instead, lowercased to read as a natural mid-sentence phrase —
+    # specific enough to test real cuisine-keyword discoverability,
+    # generic enough that it isn't just parroting the profile back.
+    vibe_query = ("Where can I find good " + cuisine.lower() + " in " + city_full + "?") if (vibe and city) else None
 
     if vibe and city:
         vibe_l = vibe.lower()

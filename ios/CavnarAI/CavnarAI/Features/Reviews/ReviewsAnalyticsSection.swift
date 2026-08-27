@@ -500,7 +500,14 @@ struct ReviewsAnalyticsSection: View {
                         .foregroundStyle(Color.cavnarInk.opacity(0.8))
                         .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                         .annotation(position: .top, alignment: .trailing) {
-                            Text("avg \(Int(averageWeeklyVolume))")
+                            // Was bare "avg 11" — ambiguous whether that's
+                            // total reviews, just positive ones, or some
+                            // sentiment score, especially under a
+                            // "SENTIMENT TREND" heading. week.total (see
+                            // trendBars()) is every review regardless of
+                            // sentiment, so this is total volume, spelled
+                            // out explicitly now.
+                            Text("avg \(Int(averageWeeklyVolume)) reviews/wk")
                                 .font(.cavnarBody(9, weight: 700))
                                 .foregroundStyle(Color.black)
                                 .padding(.horizontal, 6)
