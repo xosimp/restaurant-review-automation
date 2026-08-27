@@ -175,6 +175,7 @@ struct HomeView: View {
                         // past that icon's own bounds, so it needs to
                         // composite outside that clip, not get cut off by it.
                         Image(systemName: "bell")
+                            .foregroundStyle(Color.cavnarEmber)
                             .cavnarToolbarIconGlass()
                             .overlay(alignment: .topTrailing) {
                                 if notificationsBadge.unreadCount > 0 {
@@ -200,6 +201,7 @@ struct HomeView: View {
                             showingLocationSwitcher = true
                         } label: {
                             Image(systemName: "building.2")
+                                .foregroundStyle(Color.cavnarEmber)
                                 .cavnarToolbarIconGlass()
                         }
                         .buttonStyle(.plain)

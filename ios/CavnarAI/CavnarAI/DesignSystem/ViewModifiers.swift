@@ -54,27 +54,37 @@ extension View {
     }
 }
 
-/// The exact button treatment approved from the design preview (matched
-/// point-for-point to a reference screenshot): a three-stop vertical
-/// gradient (bright top, ember mid, deep burnt base — not just a
-/// two-color fade), a glossy white sheen across the upper half, a
-/// hairline light-catching edge, a stacked pair of ember glows (tight +
-/// wide, not one shadow — that's what gives real bloom instead of a
-/// hard-edged halo), and a soft floor-reflection glow that sits BELOW
-/// the button on whatever's behind it, simulating light spilling onto
-/// the surface underneath. Always a full capsule/pill — the earlier
-/// version used the app's normal 12pt control radius, which is exactly
-/// what read as a "weird outline" next to this glow treatment; the
-/// glow/sheen recipe here was built for a fully rounded pill shape.
-/// Shared by CavnarPrimaryButtonStyle and CavnarSplitButton so both stay
-/// visually identical rather than two hand-tuned near-matches.
+/// The button treatment from the design preview, tuned down one round
+/// after "way too glowy" feedback on the shipped version: a three-stop
+/// vertical gradient (bright top, ember mid, deep burnt base — not just
+/// a two-color fade), a glossy white sheen across the upper half, a
+/// hairline light-catching edge. The ember glow itself is now ONE
+/// moderate layer (`Self.glowRadius`, reused by the small Filled icon-
+/// button treatment so both share the same recipe) instead of the
+/// original's two large stacked shadows. A separate, darker, tighter
+/// elevation shadow is applied BEFORE the glow in the modifier chain —
+/// SwiftUI shadows each wrap everything above them, so the shadow
+/// applied first stays the crisp, close-to-the-edge layer, and the glow
+/// applied after it is the one that reads as the softer outer halo —
+/// which is what actually gives "lifting off the page" instead of just
+/// glowing. Always a full capsule/pill — the app's normal 12pt control
+/// radius is exactly what read as a "weird outline" next to this
+/// gradient/glow combination; the recipe was built for a fully rounded
+/// pill shape. Shared by CavnarPrimaryButtonStyle, CavnarSplitButton,
+/// and the Filled small icon-button treatment.
 struct CavnarPremiumButtonSurface: ViewModifier {
     var isDisabled: Bool = false
+    // Off for small/dense contexts (icon buttons) where a floor
+    // reflection either looks disproportionate or has no open space
+    // below it to read as intentional — on by default for standalone
+    // CTAs, which is every existing call site as of this change.
+    var showFloorReflection: Bool = true
 
     // #F0946B / #D4583A (brand Ember) / #9E3B24 — bright-to-deep three
     // stop gradient, not evenly spaced (48%, not 50%, matches reference).
     private static let gradientTop = Color(red: 0.941, green: 0.580, blue: 0.420)
     private static let gradientBase = Color(red: 0.620, green: 0.231, blue: 0.141)
+    static let glowRadius: CGFloat = 12
 
     func body(content: Content) -> some View {
         content
@@ -104,37 +114,38 @@ struct CavnarPremiumButtonSurface: ViewModifier {
                 Capsule().strokeBorder(Color.white.opacity(isDisabled ? 0 : 0.18), lineWidth: 1)
             }
             .clipShape(Capsule())
-            .shadow(color: Color.cavnarEmber.opacity(isDisabled ? 0 : 0.55), radius: 20, x: 0, y: 6)
-            .shadow(color: Color.cavnarEmber.opacity(isDisabled ? 0 : 0.3), radius: 40, x: 0, y: 10)
-            .shadow(color: .black.opacity(isDisabled ? 0 : 0.35), radius: 8, x: 0, y: 4)
+            .shadow(color: .black.opacity(isDisabled ? 0 : 0.55), radius: 10, x: 0, y: 6)
+            .shadow(color: Color.cavnarEmber.opacity(isDisabled ? 0 : 0.4), radius: Self.glowRadius, x: 0, y: 4)
             // Added AFTER clipShape/shadow so it isn't clipped to the
             // capsule — a second, independent background layer whose
             // GeometryReader reads this view's own (already-capsule-
             // shaped) size, then positions a blurred glow just below it.
             .background {
-                GeometryReader { geo in
-                    Ellipse()
-                        .fill(
-                            RadialGradient(
-                                colors: [
-                                    Color.cavnarEmber.opacity(isDisabled ? 0 : 0.5),
-                                    Color.cavnarEmber.opacity(0),
-                                ],
-                                center: .center, startRadius: 0, endRadius: geo.size.width * 0.35
+                if showFloorReflection {
+                    GeometryReader { geo in
+                        Ellipse()
+                            .fill(
+                                RadialGradient(
+                                    colors: [
+                                        Color.cavnarEmber.opacity(isDisabled ? 0 : 0.32),
+                                        Color.cavnarEmber.opacity(0),
+                                    ],
+                                    center: .center, startRadius: 0, endRadius: geo.size.width * 0.35
+                                )
                             )
-                        )
-                        .frame(width: geo.size.width * 0.7, height: 18)
-                        .position(x: geo.size.width / 2, y: geo.size.height + 13)
-                        .blur(radius: 7)
+                            .frame(width: geo.size.width * 0.7, height: 18)
+                            .position(x: geo.size.width / 2, y: geo.size.height + 13)
+                            .blur(radius: 7)
+                    }
+                    .allowsHitTesting(false)
                 }
-                .allowsHitTesting(false)
             }
     }
 }
 
 extension View {
-    func cavnarPremiumButtonSurface(isDisabled: Bool = false) -> some View {
-        modifier(CavnarPremiumButtonSurface(isDisabled: isDisabled))
+    func cavnarPremiumButtonSurface(isDisabled: Bool = false, showFloorReflection: Bool = true) -> some View {
+        modifier(CavnarPremiumButtonSurface(isDisabled: isDisabled, showFloorReflection: showFloorReflection))
     }
 }
 
@@ -147,6 +158,12 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity)
             .padding(14)
             .foregroundStyle(.white)
+            // Flat white read as lifeless against the gradient — a tight,
+            // low-opacity drop shadow directly under the glyphs gives the
+            // text a slight embossed lift instead of looking pasted flat
+            // on top, the same text-shadow the approved reference preview
+            // itself used.
+            .shadow(color: .black.opacity(0.28), radius: 1, x: 0, y: 1)
             .cavnarPremiumButtonSurface(isDisabled: isDisabled)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
@@ -279,20 +296,23 @@ struct CavnarGlassButtonStyle: ButtonStyle {
 /// so the glass reads as a predictable dark chip regardless of scroll
 /// position or which screen it's on — real Liquid Glass, deliberately
 /// controlled, not left to render however the system infers it should.
+/// The "Tinted" treatment from the icon-button design preview — a flat,
+/// translucent ember wash, no blur/refraction at all. Replaces the
+/// previous neutral dark-glass version (real Liquid Glass on iOS 26,
+/// material+opaque-paper fallback below it) for every constant-chrome
+/// icon button in the app: back, notifications, keyboard nav, share.
+/// Deliberately drops real glass entirely rather than trying to tint it
+/// ember — the whole "faded glass, asymmetric orange edge" saga
+/// documented above this function existed because glass refracts this
+/// app's own orange background wash unevenly; a flat color fill has no
+/// such failure mode and matches the approved preview exactly. Icons
+/// using this should be Color.cavnarEmber themselves (not the previous
+/// neutral tint) for the tinted-bg + ember-icon pairing to read right.
 extension View {
     func cavnarToolbarIconGlass(size: CGFloat = 34) -> some View {
-        Group {
-            if #available(iOS 26.0, *) {
-                self
-                    .frame(width: size, height: size)
-                    .glassEffect(.regular.tint(Color.cavnarPaper2.opacity(0.92)).interactive(), in: Circle())
-            } else {
-                self
-                    .frame(width: size, height: size)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .background(Color.cavnarPaper2.opacity(0.75), in: Circle())
-            }
-        }
+        self
+            .frame(width: size, height: size)
+            .background(Color.cavnarEmber.opacity(0.14), in: Circle())
     }
 }
 
