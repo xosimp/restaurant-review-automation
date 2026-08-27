@@ -33,9 +33,6 @@ struct FoodCostAnalyticsSection: View {
                             showForecastInSheet: false
                         )
                     }
-                    if let forecast = analytics.insight?.forecast, !forecast.isEmpty {
-                        FoodCostForecastPill(forecast: forecast)
-                    }
                     statStrip(analytics)
                     if let label = analytics.benchmarkLabel, let pct = analytics.wasteRatePct, label != "—" {
                         benchmarkBar(label: label, pct: pct)
@@ -137,7 +134,12 @@ struct FoodCostAnalyticsSection: View {
                 showForecastInSheet: false
             )
             .padding(.horizontal, 18)
-            .padding(.vertical, 12)
+            .padding(.top, 12)
+            // The forecast ribbon straddles this card's bottom edge (see
+            // .cavnarRibbonHeroAnchor() below) — matches Labor's own
+            // identical fix (LaborView's heroCard) so the ribbon's
+            // ~34pt-tall pill doesn't touch the AI strip text right above it.
+            .padding(.bottom, 22)
         }
         .background(
             LinearGradient(
@@ -153,6 +155,11 @@ struct FoodCostAnalyticsSection: View {
                 .strokeBorder(Color.cavnarEmber.opacity(0.5), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+        // Mimics Labor's forecast ribbon exactly (DesignSystem/
+        // HeroForecastRibbon.swift) — reports this card's bottom-center
+        // edge up to FoodCostQuickEntryView's root, which renders the
+        // pill there via .cavnarHeroForecastRibbon(...).
+        .cavnarRibbonHeroAnchor()
     }
 
     // MARK: - Stat strip — borderless, hairline dividers instead of tiles
@@ -406,96 +413,7 @@ struct FoodCostAnalyticsSection: View {
     }
 }
 
-/// Standalone "FORECAST" pill, matching Labor's ForecastRibbon look and
-/// tap-to-expand interaction (LaborView.swift) — placed inline in the
-/// content flow rather than floating pinned to a hero card's edge, since
-/// that positioning is Labor Overview-tab-specific plumbing (see
-/// LaborView's RibbonAnchorsKey) with no equivalent anchor on this tab to
-/// hook into; a simple inline expand reads just as clearly here. Content
-/// is the AI's own predicted-trend sentence (insight.forecast) — this used
-/// to only be visible after tapping into the AI Consultant's full sheet
-/// (see showForecastInSheet: false at both call sites above), now
-/// surfaced directly on the tab instead.
-private struct FoodCostForecastPill: View {
-    let forecast: String
-    @State private var isExpanded = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            collapsedPill
-            if isExpanded {
-                expandedPanel
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
-        }
-        .animation(.spring(response: 0.35, dampingFraction: 0.86), value: isExpanded)
-    }
-
-    private var collapsedPill: some View {
-        Button {
-            Haptic.light()
-            isExpanded.toggle()
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("FORECAST")
-                    .font(.cavnarBody(10, weight: 700))
-                    .tracking(1.4)
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
-            }
-            .foregroundStyle(Color.cavnarInk)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            // Same gradient DNA as ForecastRibbon's collapsedTab: a lit
-            // corner (0.55) fading to a darker but still-tinted corner
-            // (0.22) over an opaque Paper2 base, not a translucent window
-            // onto whatever sits behind the pill.
-            .background(
-                LinearGradient(
-                    colors: [Color.cavnarEmber.opacity(0.55), Color.cavnarEmber.opacity(0.22)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
-            )
-            .background(Color.cavnarPaper2)
-            .clipShape(Capsule())
-            .overlay(Capsule().strokeBorder(Color.cavnarEmber.opacity(0.6), lineWidth: 1.2))
-            .shadow(color: .black.opacity(0.3), radius: 6, y: 3)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var expandedPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Forecast", systemImage: "sparkles")
-                    .font(.cavnarBody(11, weight: 700))
-                    .tracking(0.6)
-                Spacer()
-                Button {
-                    Haptic.light()
-                    isExpanded = false
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.cavnarInk3)
-                }
-            }
-            .foregroundStyle(Color.cavnarEmber)
-            Text(forecast)
-                .font(.cavnarBody(13))
-                .italic()
-                .foregroundStyle(Color.cavnarInk2)
-                .lineSpacing(4)
-        }
-        .padding(14)
-        .background(Color.cavnarPaper2)
-        .overlay(
-            RoundedRectangle(cornerRadius: CavnarRadius.control)
-                .strokeBorder(Color.cavnarEmber.opacity(0.3), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-        .padding(.top, 8)
-    }
-}
+// The forecast pill now mimics Labor's exactly via the shared
+// DesignSystem/HeroForecastRibbon.swift component — see
+// FoodCostQuickEntryView's .cavnarHeroForecastRibbon(...) call and this
+// file's heroCard .cavnarRibbonHeroAnchor().

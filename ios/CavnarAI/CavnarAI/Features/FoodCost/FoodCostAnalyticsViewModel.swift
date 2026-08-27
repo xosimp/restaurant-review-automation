@@ -7,6 +7,10 @@ final class FoodCostAnalyticsViewModel {
     var analytics: FoodCostAnalytics?
     var trend: [FoodCostTrendWeek] = []
     var isLoading = false
+    // Drives the shared hero-forecast-ribbon pill (see
+    // FoodCostQuickEntryView's .cavnarHeroForecastRibbon call) — matches
+    // LaborViewModel.forecastExpanded exactly.
+    var forecastExpanded = false
 
     private let client: APIClient
 

@@ -20,6 +20,7 @@ struct FoodCostQuickEntryView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 16)
+                .cavnarRibbonHeaderAnchor()
 
             if subTab == .tracker {
                 tracker
@@ -36,6 +37,25 @@ struct FoodCostQuickEntryView: View {
         // already there. See the modifier's own doc comment for why this
         // needs to own the back chevron/gesture too, not just add a swipe.
         .cavnarTabSwipeNavigation($subTab, primaryTab: .tracker, secondaryTab: .analytics)
+        // Mimics Labor's Overview hero forecast pill exactly (same shared
+        // DesignSystem/HeroForecastRibbon.swift component) — straddles the
+        // Analytics hero card's bottom edge (see FoodCostAnalyticsSection's
+        // .cavnarRibbonHeroAnchor()), only appears once that hero is on
+        // screen since the anchor itself is only present then.
+        .cavnarHeroForecastRibbon(
+            isExpanded: $analyticsViewModel.forecastExpanded,
+            tone: Color.cavnarEmber
+        ) {
+            CavnarForecastPanel(
+                title: "Food cost forecast", tone: Color.cavnarEmber,
+                isExpanded: $analyticsViewModel.forecastExpanded
+            ) {
+                Text(analyticsViewModel.analytics?.insight?.forecast ?? "No forecast yet — check back once this week's numbers are in.")
+                    .font(.cavnarBody(12))
+                    .foregroundStyle(Color.cavnarInk2)
+                    .lineSpacing(3)
+            }
+        }
         .overlay(alignment: .top) { successToast }
         .task {
             await analyticsViewModel.load()

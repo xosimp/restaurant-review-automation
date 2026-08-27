@@ -6,41 +6,6 @@ private enum LaborSubTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-/// Carries the hero card's bottom-edge anchor, and the segmented control
-/// header's bottom edge alongside it, up to LaborView's root so the
-/// forecast ribbon can be positioned there while living in the SAME overlay
-/// stack as the dimming scrim, declared after it — an .overlay attached to
-/// heroCard (nested inside the ScrollView) always draws *underneath* a
-/// separate .overlay attached higher up on the outer container, no matter
-/// what order either one is declared in, since an ancestor's overlay
-/// composites on top of its entire rendered subtree. That meant the scrim
-/// was dimming the ribbon itself, not just the content behind it. Hoisting
-/// the ribbon out to the root, positioned via an anchor instead of being
-/// nested inside heroCard's own overlay, puts both in one stacking context
-/// where declaration order actually controls what's on top.
-///
-/// The header anchor exists to undo a side effect of that hoist: living
-/// outside the ScrollView means the ribbon isn't naturally clipped away by
-/// the ScrollView's own scroll clipping the way in-ScrollView content is —
-/// it kept rendering wherever its hero-card anchor's geometry said to, even
-/// once that point had scrolled up above the visible content area and into
-/// the header itself. Comparing the two anchors tells the overlay when
-/// that's happened. Two separate .anchorPreference calls (one on the
-/// header, one on heroCard) each contribute one half of this value; reduce
-/// merges whichever half each carries.
-private struct RibbonAnchorsKey: PreferenceKey {
-    struct Anchors {
-        var heroBottom: Anchor<CGPoint>?
-        var headerBottom: Anchor<CGPoint>?
-    }
-    static var defaultValue: Anchors { Anchors() }
-    static func reduce(value: inout Anchors, nextValue: () -> Anchors) {
-        let next = nextValue()
-        if let h = next.heroBottom { value.heroBottom = h }
-        if let hd = next.headerBottom { value.headerBottom = hd }
-    }
-}
-
 struct LaborView: View {
     @Environment(SessionStore.self) private var sessionStore
     @Environment(\.scenePhase) private var scenePhase
@@ -55,9 +20,7 @@ struct LaborView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 16)
-                .anchorPreference(key: RibbonAnchorsKey.self, value: .bottom) {
-                    RibbonAnchorsKey.Anchors(headerBottom: $0)
-                }
+                .cavnarRibbonHeaderAnchor()
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -121,74 +84,55 @@ struct LaborView: View {
             }
         }
         .cavnarModuleBackground()
-        .overlayPreferenceValue(RibbonAnchorsKey.self) { anchors in
-            // Scrim declared before the ribbon in this SAME ZStack, so the
-            // ribbon (and its expanded panel) reliably composite on top of
-            // it — dimming everything behind the ribbon without ever
-            // dimming the ribbon itself. Both only exist at all when the
-            // anchor is actually present (Overview tab, a loaded hero
-            // card) — no dangling scrim with nothing for it to be
-            // focusing attention on. The ribbon itself always shows once
-            // there's a hero card, even with zero upcoming events —
-            // ForecastRibbon's expanded panel has its own empty-state
-            // copy for that case, rather than the whole feature just
-            // disappearing whenever nothing's coming up.
-            if let anchor = anchors.heroBottom, let tone = heroTone {
-                let events = viewModel.stats?.laborUpcoming ?? []
-                GeometryReader { geo in
-                    // Rest of the hero content fades away *continuously* as
-                    // it scrolls — it's already sliding smoothly toward the
-                    // header, so vanishing behind a fixed clip boundary
-                    // reads as one continuous motion. The ribbon lives
-                    // outside that clipping (see RibbonAnchorsKey's
-                    // comment) and was previously a hard SwiftUI `if`
-                    // toggle keyed on crossing that same boundary — visibly
-                    // sliding right up until the exact pixel, then popping
-                    // out of existence with no transition. Driving opacity
-                    // directly off the same scroll-position delta instead
-                    // (over a small pixel range, not a boolean) gives it
-                    // the same continuous-fade character as everything
-                    // around it, with no separate animation curve needed —
-                    // the fade IS the scroll position.
-                    let heroY = geo[anchor].y
-                    let fadeRange: CGFloat = 24
-                    let opacity: Double = {
-                        guard let headerY = anchors.headerBottom.map({ geo[$0].y }) else { return 1 }
-                        let delta = heroY - headerY  // positive while still below the header
-                        if delta >= fadeRange { return 1 }
-                        if delta <= 0 { return 0 }
-                        return Double(delta / fadeRange)
-                    }()
-                    ZStack {
-                        if viewModel.forecastExpanded {
-                            Color.black.opacity(0.78)
-                                .ignoresSafeArea()
-                                .onTapGesture {
-                                    Haptic.light()
-                                    viewModel.forecastExpanded = false
+        // The ribbon itself always shows once there's a hero card, even
+        // with zero upcoming events — the panel's own empty-state copy
+        // covers that case, rather than the whole feature disappearing
+        // whenever nothing's coming up.
+        .cavnarHeroForecastRibbon(
+            isExpanded: $viewModel.forecastExpanded,
+            tone: (heroTone ?? .neutral).foreground,
+            icon: "calendar",
+            badgeCount: viewModel.stats?.laborUpcoming.count
+        ) {
+            let events = viewModel.stats?.laborUpcoming ?? []
+            CavnarForecastPanel(
+                title: "Scheduling forecast", tone: (heroTone ?? .neutral).foreground, icon: "calendar",
+                isExpanded: $viewModel.forecastExpanded
+            ) {
+                // Plain VStack, not a ScrollView with a fixed max height —
+                // a forced height reserved space well past the actual
+                // content (typically 1-3 events), leaving a slab of empty
+                // background below the last row. Sizing to content
+                // removes that; a restaurant with an unusually long event
+                // list just gets a taller panel, which is the right
+                // tradeoff over guaranteed dead space in the common case.
+                if events.isEmpty {
+                    Text("Nothing dining-relevant coming up in the next 3 weeks — no holiday or seasonal push to plan extra coverage around right now.")
+                        .font(.cavnarBody(12))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .lineSpacing(3)
+                } else {
+                    VStack(alignment: .leading, spacing: 16) {
+                        ForEach(events) { event in
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 6) {
+                                    Text(event.name)
+                                        .font(.cavnarBody(13, weight: 700))
+                                        .foregroundStyle(Color.cavnarInk)
+                                    Text(daysAwayLabel(event.daysAway))
+                                        .font(.cavnarBody(10, weight: 600))
+                                        .foregroundStyle(Color.cavnarEmber2)
                                 }
-                                .transition(.opacity)
+                                Text(forecastCopy(daysAway: event.daysAway))
+                                    .font(.cavnarBody(11))
+                                    .foregroundStyle(Color.cavnarInk2)
+                                    .lineSpacing(3)
+                            }
                         }
-                        // .position centers the ribbon's own center exactly
-                        // on the anchor point (hero card's bottom-center
-                        // edge) — already the "straddle the border,
-                        // centered on the line" placement with no extra
-                        // offset math needed.
-                        ForecastRibbon(
-                            events: events,
-                            isExpanded: $viewModel.forecastExpanded,
-                            tone: tone,
-                            daysAwayLabel: daysAwayLabel,
-                            forecastCopy: forecastCopy
-                        )
-                        .position(geo[anchor])
                     }
-                    .opacity(opacity)
-                    .allowsHitTesting(opacity > 0.01)
                 }
             }
         }
-        .animation(.easeOut(duration: 0.2), value: viewModel.forecastExpanded)
         .refreshable {
             await viewModel.load()
             await viewModel.loadAvailability()
@@ -281,14 +225,18 @@ struct LaborView: View {
                 insight: analyticsViewModel.insight,
                 isLoading: analyticsViewModel.isLoadingInsight
             )
+            // The forecast ribbon straddles this card's bottom edge (see
+            // cavnarRibbonHeroAnchor below) — cavnarGlassCard's own 16pt
+            // padding alone left the ribbon's ~34pt-tall pill touching the
+            // AI strip text right above it. A bit of extra clearance here
+            // pushes the strip up off that edge instead.
+            Color.clear.frame(height: 10)
         }
         .cavnarGlassCard(tint: tone.foreground)
         // Reports this card's bottom-center edge up to LaborView's root —
-        // see RibbonAnchorsKey for why the ribbon itself is no longer
-        // rendered here directly.
-        .anchorPreference(key: RibbonAnchorsKey.self, value: .bottom) {
-            RibbonAnchorsKey.Anchors(heroBottom: $0)
-        }
+        // see CavnarRibbonAnchorKey's doc comment for why the ribbon
+        // itself is no longer rendered here directly.
+        .cavnarRibbonHeroAnchor()
     }
 
     private var heroTone: CavnarTone? {
@@ -903,157 +851,11 @@ struct LaborView: View {
     }
 }
 
-/// A horizontal tab straddling the hero card's own bottom border — was a
-/// vertical edge tab fixed to the screen's left side; moved to read as part
-/// of the hero card itself (same tint/border as the card, floating just
-/// above it with its own shadow) rather than an unrelated fixed overlay.
-/// Positioned by LaborView's root via RibbonAnchorsKey rather than being
-/// nested inside heroCard's own overlay — see that key's doc comment for
-/// why (the dimming scrim needs to composite underneath this view, not
-/// above it, which nesting inside the card's own overlay tree couldn't
-/// give).
-private struct ForecastRibbon: View {
-    let events: [LaborUpcomingEvent]
-    @Binding var isExpanded: Bool
-    let tone: CavnarTone
-    let daysAwayLabel: (Int) -> String
-    let forecastCopy: (Int) -> String
-
-    // This view's own rendered height when collapsed — used only to push
-    // the expanded panel down clear of the tab. Safe to hardcode (unlike
-    // the old cross-hierarchy pixel offsets this file used to lean on):
-    // this view fully owns the tab's font/padding, so its height can't
-    // drift out from under this number.
-    private static let tabHeight: CGFloat = 34
-
-    var body: some View {
-        collapsedTab
-            .overlay(alignment: .top) {
-                if isExpanded {
-                    expandedPanel
-                        .padding(.top, Self.tabHeight + 10)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-            }
-            .animation(.spring(response: 0.35, dampingFraction: 0.86), value: isExpanded)
-    }
-
-    private var collapsedTab: some View {
-        Button {
-            Haptic.light()
-            isExpanded.toggle()
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("FORECAST")
-                    .font(.cavnarBody(10, weight: 700))
-                    .tracking(1.4)
-                if events.count > 1 {
-                    Text("\(events.count)")
-                        .font(.cavnarNumber(10, weight: 700))
-                        .frame(width: 15, height: 15)
-                        .background(Color.cavnarInk.opacity(0.18))
-                        .clipShape(Circle())
-                }
-                // Signals the pill itself is tappable, not just informational
-                // — points down while collapsed (more to reveal) and flips
-                // to point up once expanded, matching the panel dropping
-                // open below it.
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
-            }
-            .foregroundStyle(Color.cavnarInk)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            // Same gradient stops as CavnarGlassCardStyle (the hero card's
-            // own background: tint 0.55 fading to 0.22) so the pill reads
-            // as the same "lit corner fading toward dark" sheen the card
-            // has — a narrower 0.95→0.75 range (tried first) stayed too
-            // uniformly saturated to read as a gradient at all. The
-            // difference from the card: Paper2 sits here at FULL opacity,
-            // not the card's own translucent 0.35 — that's what keeps the
-            // fade from ever revealing whatever's actually behind the pill
-            // (the earlier see-through complaint), since the dark end of
-            // the fade is a solid opaque color, not a window through to
-            // the card underneath.
-            .background(
-                LinearGradient(
-                    colors: [tone.foreground.opacity(0.55), tone.foreground.opacity(0.22)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
-            )
-            .background(Color.cavnarPaper2)
-            .clipShape(Capsule())
-            .overlay(Capsule().strokeBorder(tone.foreground.opacity(0.6), lineWidth: 1.2))
-            // Reads as floating above the hero card behind it, not flush
-            // against it.
-            .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var expandedPanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 6) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 12, weight: .semibold))
-                Text("Scheduling forecast")
-                    .font(.cavnarBody(12, weight: 700))
-                    .tracking(0.6)
-                Spacer()
-                Button {
-                    Haptic.light()
-                    isExpanded = false
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Color.cavnarInk3)
-                }
-            }
-            .foregroundStyle(tone.foreground)
-
-            // Plain VStack, not a ScrollView with a fixed max height — the
-            // forced height reserved space well past the actual content
-            // (typically 1-3 events), leaving a slab of empty background
-            // below the last row. Sizing to content removes that; a
-            // restaurant with an unusually long event list just gets a
-            // taller panel, which is the right tradeoff over guaranteed
-            // dead space in the common case.
-            if events.isEmpty {
-                Text("Nothing dining-relevant coming up in the next 3 weeks — no holiday or seasonal push to plan extra coverage around right now.")
-                    .font(.cavnarBody(12))
-                    .foregroundStyle(Color.cavnarInk2)
-                    .lineSpacing(3)
-            } else {
-                VStack(alignment: .leading, spacing: 16) {
-                    ForEach(events) { event in
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 6) {
-                                Text(event.name)
-                                    .font(.cavnarBody(13, weight: 700))
-                                    .foregroundStyle(Color.cavnarInk)
-                                Text(daysAwayLabel(event.daysAway))
-                                    .font(.cavnarBody(10, weight: 600))
-                                    .foregroundStyle(Color.cavnarEmber2)
-                            }
-                            Text(forecastCopy(event.daysAway))
-                                .font(.cavnarBody(11))
-                                .foregroundStyle(Color.cavnarInk2)
-                                .lineSpacing(3)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .frame(width: 250, alignment: .leading)
-        .background(Color.cavnarPaper2)
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(tone.foreground.opacity(0.3), lineWidth: 1))
-        .shadow(color: .black.opacity(0.35), radius: 16, y: 8)
-    }
-}
+// The forecast ribbon/panel now lives in DesignSystem/HeroForecastRibbon.swift
+// as the shared .cavnarHeroForecastRibbon(...) modifier + CavnarForecastPanel
+// — see heroCard's .cavnarRibbonHeroAnchor() and the .cavnarHeroForecastRibbon(...)
+// call above. Extracted so Food Cost's own forecast pill can mimic this one
+// exactly instead of a hand-rolled lookalike.
 
 /// The AI schedule generator is Gia Mia's single most-used feature —
 /// deliberately styled as the standout action on the page (gradient fill,
