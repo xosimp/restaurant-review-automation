@@ -3380,6 +3380,26 @@ def _do_ai_visibility_inner(rid):
                           "action": "In Google Business Profile → Info → Website: add your restaurant's website",
                           "needs_gmb": True})
 
+    # Social posting cadence — deliberately NOT a checklist item / part of
+    # gbp_score (this isn't a Google Business Profile field, it's marketing
+    # activity within this app), returned as its own field so the roadmap's
+    # "Post consistently on social" card can auto-complete instead of
+    # always showing not-done. marketing_content_log only proves content
+    # was drafted through this app, not confirmed-posted to a platform —
+    # an imperfect signal, but a real, live one rather than none at all.
+    # Same table-creation pattern mobile_api.py's own home-KPI query uses
+    # for this table, since this is the first read of it from client_api.py.
+    _conn = get_conn()
+    _conn.execute("""CREATE TABLE IF NOT EXISTS marketing_content_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, restaurant_id INTEGER NOT NULL,
+        content_type TEXT, topic TEXT, post_id TEXT, post_platform TEXT,
+        created_at TEXT DEFAULT (datetime('now')))""")
+    social_posts_30d = _conn.execute(
+        "SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=? AND created_at >= date('now','-30 days')",
+        (rid,)
+    ).fetchone()[0] or 0
+    _conn.close()
+
     ai_score = round((appeared_count / len(queries)) * 100) if queries else 0
 
     return {
@@ -3393,6 +3413,7 @@ def _do_ai_visibility_inner(rid):
         "gbp_score": gbp_score,
         "checklist": checklist,
         "gbp_connected": gbp_connected,
+        "social_posts_30d": social_posts_30d,
     }, 200
 
 

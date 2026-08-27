@@ -405,6 +405,11 @@ struct AIVisibilitySection: View {
         let reviewsDone = checklist.contains { $0.label.localizedCaseInsensitiveContains("google review") && $0.done }
         let responseDone = checklist.contains { $0.label.localizedCaseInsensitiveContains("response rate") && $0.done }
         let gbpDone = (result.gbpScore ?? 0) >= 80
+        // marketing_content_log only proves content was drafted through
+        // this app, not confirmed-posted to a platform — an imperfect
+        // signal, but a real, live one. 8+ in the trailing 30 days roughly
+        // matches this card's own "2–3x per week" claim.
+        let socialDone = (result.socialPosts30d ?? 0) >= 8
 
         let cards: [RoadmapCard] = [
             RoadmapCard(
@@ -432,7 +437,7 @@ struct AIVisibilitySection: View {
                 id: "social", color: .cavnarEmber,
                 title: "Post consistently on social",
                 why: "Food blogs and social content get indexed by search engines, which AI tools then pull from. Regular posts with your restaurant name, neighborhood, and cuisine type build the online footprint AI needs to find you.",
-                actionLabel: "Go to marketing", impact: "Long-term", timeframe: "2–3x per week", done: false,
+                actionLabel: "Go to marketing", impact: "Long-term", timeframe: "2–3x per week", done: socialDone,
                 action: { deepLinkRouter.pendingTab = .modules; deepLinkRouter.pendingModuleKey = "marketing" }
             ),
         ]

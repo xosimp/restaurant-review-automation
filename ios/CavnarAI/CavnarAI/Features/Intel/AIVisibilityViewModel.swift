@@ -34,6 +34,10 @@ struct AIVisibilityResult: Decodable {
     let gbpScore: Int?
     let checklist: [AIVisibilityChecklistItem]?
     let gbpConnected: Bool?
+    // Marketing pieces logged in the trailing 30 days — not a GBP field,
+    // so it rides along outside gbp_score/checklist as its own count. Powers
+    // the roadmap's "Post consistently on social" auto-done detection.
+    let socialPosts30d: Int?
     let error: String?
 
     enum CodingKeys: String, CodingKey {
@@ -44,6 +48,7 @@ struct AIVisibilityResult: Decodable {
         case aiScore = "ai_score"
         case gbpScore = "gbp_score"
         case gbpConnected = "gbp_connected"
+        case socialPosts30d = "social_posts_30d"
     }
 }
 
