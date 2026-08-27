@@ -3163,10 +3163,19 @@ def _do_ai_visibility_inner(rid):
             q3,
         ]
     else:
+        # cuisine falls back to the literal word "restaurant" when known_for
+        # is empty (line ~3129) — blindly concatenating that into these two
+        # produced "Top local restaurant restaurants" / "Best restaurant
+        # restaurant near me" for any restaurant with an incomplete profile,
+        # exactly the "not a query a real person would type" problem the
+        # vibe_query fix above already solved once, just resurfacing here in
+        # the no-city fallback path. Only insert the cuisine word when it's
+        # a real, non-fallback value.
+        has_cuisine = bool(known_for)
         queries = [
-            name + " restaurant",
-            "Top local " + cuisine + " restaurants",
-            "Best " + cuisine + " restaurant near me",
+            (name + " restaurant") if name else "restaurant near me",
+            ("Top local " + cuisine + " restaurants") if has_cuisine else "Top local restaurants",
+            ("Best " + cuisine + " restaurant near me") if has_cuisine else "Best restaurant near me",
         ]
 
     import requests as _pplx_req

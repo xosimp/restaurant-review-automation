@@ -7,6 +7,7 @@ private enum FoodCostSubTab: String, CaseIterable, Identifiable {
 }
 
 struct FoodCostQuickEntryView: View {
+    @Environment(SessionStore.self) private var sessionStore
     @State private var viewModel = FoodCostQuickEntryViewModel()
     @State private var analyticsViewModel = FoodCostAnalyticsViewModel()
     @State private var subTab: FoodCostSubTab = .tracker
@@ -59,6 +60,9 @@ struct FoodCostQuickEntryView: View {
         }
         .overlay(alignment: .top) { successToast }
         .task {
+            if let restaurantId = sessionStore.currentUser?.restaurantId {
+                analyticsViewModel.configureCaching(restaurantId: restaurantId)
+            }
             await analyticsViewModel.load()
         }
     }

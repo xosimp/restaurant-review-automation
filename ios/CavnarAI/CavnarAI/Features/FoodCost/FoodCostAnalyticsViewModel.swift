@@ -12,10 +12,33 @@ final class FoodCostAnalyticsViewModel {
     // LaborViewModel.forecastExpanded exactly.
     var forecastExpanded = false
 
+    // Whether the hero card's count-up-from-zero number reveal has already
+    // played. Persisted to UserDefaults for the same reason Labor's own
+    // hasPlayedTilesIntro is (LaborAnalyticsViewModel) — this view model
+    // gets recreated fresh every time a user leaves Food Cost entirely and
+    // comes back, so an in-memory-only flag wouldn't survive a genuine
+    // fresh navigation into the module, which is exactly when this should
+    // only ever count up once, not replay on every return visit.
+    var hasPlayedHeroIntro = false
+
     private let client: APIClient
+    private var restaurantId: Int?
 
     init(client: APIClient = .shared) {
         self.client = client
+    }
+
+    func configureCaching(restaurantId: Int) {
+        self.restaurantId = restaurantId
+        hasPlayedHeroIntro = UserDefaults.standard.bool(forKey: Self.heroIntroPlayedKey(restaurantId))
+    }
+
+    private static func heroIntroPlayedKey(_ restaurantId: Int) -> String { "foodcost.hasPlayedHeroIntro.\(restaurantId)" }
+
+    func markHeroIntroPlayed() {
+        hasPlayedHeroIntro = true
+        guard let restaurantId else { return }
+        UserDefaults.standard.set(true, forKey: Self.heroIntroPlayedKey(restaurantId))
     }
 
     func load() async {

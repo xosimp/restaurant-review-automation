@@ -506,6 +506,26 @@ extension View {
     }
 }
 
+/// Interpolates its own numeric value across an implicit animation and
+/// re-formats it every intermediate frame — what makes a figure visibly
+/// count up rather than cross-fade between two static strings. Originally
+/// LaborAnalyticsSection's own private AnimatableTileNumber; promoted here
+/// once Food Cost's hero numbers needed the exact same count-up treatment,
+/// so both draw from one shared implementation.
+struct CavnarAnimatableNumber: View, Animatable {
+    var value: Double
+    var format: (Double) -> String
+
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+
+    var body: some View {
+        Text(format(value))
+    }
+}
+
 private struct CavnarWidthKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {

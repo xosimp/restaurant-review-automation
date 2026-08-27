@@ -95,22 +95,6 @@ struct FoodCostAnalyticsSection: View {
         (a.annualWasteProjection ?? 0) > 0 || (a.annualRecoverable ?? 0) > 0
     }
 
-    /// The standard cavnarNumberGlow() (a faint 0.5pt shadow + a soft
-    /// 6pt colored glow) reads fine on the app's usual near-black
-    /// surfaces, but sitting on this card's own warm orange gradient
-    /// background it had nothing to separate from — same warm hue on
-    /// both sides of the number. A real drop shadow underneath (not just
-    /// a glow) gives it something to sit ON TOP OF instead of blending
-    /// into the card, so it's layered in here rather than changed on the
-    /// shared modifier itself, which other screens still use as-is.
-    private func heroNumber(_ text: String, tone: Color) -> some View {
-        Text(text)
-            .font(.cavnarNumber(27, weight: 700))
-            .foregroundStyle(tone)
-            .shadow(color: .black.opacity(0.5), radius: 5, x: 0, y: 3)
-            .cavnarNumberGlow(tone)
-    }
-
     // MARK: - Hero (the one real container on this page)
 
     // The AI strip is the LAST row inside this same VStack, after a
@@ -119,14 +103,15 @@ struct FoodCostAnalyticsSection: View {
     // That's the actual "attached to the hero" ask: one continuous
     // surface, not two adjacent ones with a small gap between them.
     private func heroCard(_ a: FoodCostAnalytics, isLoading: Bool) -> some View {
-        VStack(spacing: 0) {
+        let startFromZero = !viewModel.hasPlayedHeroIntro
+        return VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("PROJECTED ANNUAL WASTE")
                         .font(.cavnarBody(9, weight: 700))
                         .tracking(1.4)
                         .foregroundStyle(Color.cavnarInk.opacity(0.6))
-                    heroNumber("$\((a.annualWasteProjection ?? 0).commaFormatted)", tone: Color.cavnarRed)
+                    HeroAnimatedNumber(numericValue: a.annualWasteProjection ?? 0, tone: Color.cavnarRed, startFromZero: startFromZero)
                     Text("$\((a.monthlyWasteProjection ?? 0).commaFormatted)/mo at current rate")
                         .font(.cavnarBody(10))
                         .foregroundStyle(Color.cavnarInk.opacity(0.55))
@@ -137,7 +122,7 @@ struct FoodCostAnalyticsSection: View {
                         .font(.cavnarBody(9, weight: 700))
                         .tracking(1.4)
                         .foregroundStyle(Color.cavnarInk.opacity(0.6))
-                    heroNumber("$\((a.annualRecoverable ?? 0).commaFormatted)", tone: Color.cavnarGreen)
+                    HeroAnimatedNumber(numericValue: a.annualRecoverable ?? 0, tone: Color.cavnarGreen, startFromZero: startFromZero)
                     Text("$\((a.recoverableMonthly ?? 0).commaFormatted)/mo with better ordering")
                         .font(.cavnarBody(10))
                         .foregroundStyle(Color.cavnarInk.opacity(0.55))
@@ -181,6 +166,43 @@ struct FoodCostAnalyticsSection: View {
         // edge up to FoodCostQuickEntryView's root, which renders the
         // pill there via .cavnarHeroForecastRibbon(...).
         .cavnarRibbonHeroAnchor()
+        .onAppear { viewModel.markHeroIntroPlayed() }
+    }
+
+    /// Count-up-once hero number — same treatment and same reasoning as
+    /// LaborAnalyticsSection's SavingsTile, just without the label/sublabel/
+    /// card chrome those tiles carry (heroCard already lays that out
+    /// around it). The standard cavnarNumberGlow() (a faint 0.5pt shadow +
+    /// a soft 6pt colored glow) reads fine on the app's usual near-black
+    /// surfaces, but sitting on this card's own warm orange gradient
+    /// background it had nothing to separate from — same warm hue on both
+    /// sides of the number. A real drop shadow underneath (not just a
+    /// glow) gives it something to sit ON TOP OF instead of blending into
+    /// the card.
+    private struct HeroAnimatedNumber: View {
+        let numericValue: Double
+        let tone: Color
+        let startFromZero: Bool
+
+        @State private var animatedValue: Double = 0
+
+        var body: some View {
+            CavnarAnimatableNumber(value: animatedValue, format: { "$\($0.commaFormatted)" })
+                .font(.cavnarNumber(27, weight: 700))
+                .foregroundStyle(tone)
+                .shadow(color: .black.opacity(0.5), radius: 5, x: 0, y: 3)
+                .cavnarNumberGlow(tone)
+                .onAppear {
+                    if startFromZero {
+                        withAnimation(.easeOut(duration: 1.2)) { animatedValue = numericValue }
+                    } else {
+                        animatedValue = numericValue
+                    }
+                }
+                .onChange(of: numericValue) { _, newValue in
+                    animatedValue = newValue
+                }
+        }
     }
 
     // MARK: - Stat strip — borderless, hairline dividers instead of tiles

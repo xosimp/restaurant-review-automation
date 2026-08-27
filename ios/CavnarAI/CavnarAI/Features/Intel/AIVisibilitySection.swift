@@ -442,6 +442,22 @@ struct AIVisibilitySection: View {
             ),
         ]
 
+        // Was always rendered in the same fixed order regardless of which
+        // restaurant was looking at it — reviews, respond, gbp, social,
+        // every time — which didn't actually match this section's own
+        // "RANKED, concrete next steps for YOUR restaurant" promise (see
+        // preCheckHero above). A restaurant with strong reviews but a bare
+        // GBP profile would still see "Get more Google reviews" listed
+        // first even though it's done and irrelevant, with their real
+        // biggest gap (GBP) buried third. Not-done items now sort ahead of
+        // done ones, and within each group by impact tier — an actual
+        // ranking driven by this restaurant's own computed state instead
+        // of a static list order.
+        let sortedCards = cards.sorted { a, b in
+            if a.done != b.done { return !a.done }
+            return impactRank(a.impact) < impactRank(b.impact)
+        }
+
         let pointsLeft = cards.filter { !$0.done }.count
 
         return VStack(alignment: .leading, spacing: 12) {
@@ -456,13 +472,24 @@ struct AIVisibilitySection: View {
                     .foregroundStyle(Color.cavnarEmber)
             }
             VStack(spacing: 0) {
-                ForEach(Array(cards.enumerated()), id: \.element.id) { index, card in
+                ForEach(Array(sortedCards.enumerated()), id: \.element.id) { index, card in
                     roadmapRow(card)
-                    if index < cards.count - 1 {
+                    if index < sortedCards.count - 1 {
                         Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
                     }
                 }
             }
+        }
+    }
+
+    /// Ordinal for sorting the roadmap by urgency/payoff — matches the
+    /// actual impact tiers used across the 4 cards above, not alphabetical.
+    private func impactRank(_ impact: String) -> Int {
+        switch impact {
+        case "Highest impact": return 0
+        case "High impact": return 1
+        case "Fast win": return 2
+        default: return 3
         }
     }
 
