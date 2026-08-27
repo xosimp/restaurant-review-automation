@@ -130,15 +130,25 @@ struct RoleDonutChart: View {
         }
     }
 
+    private static let ringStrokeWidth: CGFloat = 16
+
+    /// A stroked Circle renders half its line width OUTSIDE its own layout
+    /// frame (SwiftUI doesn't clip shapes to their frame by default) — at
+    /// 16pt this bled 8pt past the ring's nominal 148pt frame on every
+    /// side, unclipped, visually shifting the ring away from whatever sits
+    /// flush against the same leading edge above it. Insetting by half the
+    /// stroke width keeps the stroke's rendered bleed inside the ring's
+    /// own frame. Mirrors the identical fix in Food Cost's own donut
+    /// (FoodCostDonutChart's `ring`), which shares this exact construction.
     private var ring: some View {
         ZStack {
             Circle()
-                .stroke(Color.cavnarPaper3.opacity(0.5), style: StrokeStyle(lineWidth: 16))
+                .stroke(Color.cavnarPaper3.opacity(0.5), style: StrokeStyle(lineWidth: Self.ringStrokeWidth))
             ForEach(Array(sortedRoles.enumerated()), id: \.element.id) { index, _ in
                 let (start, end) = segment(at: index)
                 Circle()
                     .trim(from: start, to: end)
-                    .stroke(color(at: index), style: StrokeStyle(lineWidth: 16, lineCap: .butt))
+                    .stroke(color(at: index), style: StrokeStyle(lineWidth: Self.ringStrokeWidth, lineCap: .butt))
                     .rotationEffect(.degrees(-90))
                     .shadow(color: color(at: index).opacity(0.5), radius: 3)
             }
@@ -152,6 +162,7 @@ struct RoleDonutChart: View {
                     .foregroundStyle(Color.cavnarInk3)
             }
         }
+        .padding(Self.ringStrokeWidth / 2)
     }
 
     private var legend: some View {
