@@ -323,14 +323,44 @@ struct IntelView: View {
             }
             .frame(height: isYou ? 14 : 10)
             .animation(.easeOut(duration: 0.7).delay(0.4), value: contentAppeared)
+            // Bar fill already counted up from 0 on load; the number next
+            // to it just appeared at full value instantly, which read as
+            // inconsistent once you were watching the bar animate right
+            // beside it. Same trigger, same timing as the bar above so
+            // they land together.
             Group {
                 if isYou {
-                    ratingText(rating, numberSize: 15, tone: tone).cavnarNumberGlow(tone)
+                    AnimatedRatingText(rating: contentAppeared ? rating : 0, numberSize: 15, tone: tone).cavnarNumberGlow(tone)
                 } else {
-                    ratingText(rating, numberSize: 12, tone: tone)
+                    AnimatedRatingText(rating: contentAppeared ? rating : 0, numberSize: 12, tone: tone)
                 }
             }
             .frame(width: 42, alignment: .trailing)
+            .animation(.easeOut(duration: 0.7).delay(0.4), value: contentAppeared)
+        }
+    }
+
+    /// Same count-up-once technique as DesignSystem's CavnarAnimatableNumber,
+    /// but building ratingText's own two-segment Text (bigger digits,
+    /// smaller star) each frame instead of a single formatted string — that
+    /// dual-font-size treatment needs to survive every intermediate
+    /// animated frame, not just the final value, which a String-based
+    /// formatter can't carry. Kept local to this one call site rather than
+    /// generalizing CavnarAnimatableNumber itself, since nowhere else needs
+    /// a two-segment animated number.
+    private struct AnimatedRatingText: View, Animatable {
+        var rating: Double
+        let numberSize: CGFloat
+        let tone: Color
+
+        var animatableData: Double {
+            get { rating }
+            set { rating = newValue }
+        }
+
+        var body: some View {
+            Text(String(format: "%.1f", rating)).font(.cavnarNumber(numberSize, weight: 700)).foregroundStyle(tone)
+                + Text(" ★").font(.cavnarNumber(numberSize * 0.55, weight: 700)).foregroundStyle(tone)
         }
     }
 
