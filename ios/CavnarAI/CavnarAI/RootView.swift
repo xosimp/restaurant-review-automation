@@ -219,8 +219,7 @@ private struct AskCavnarFAB: View {
                 if !collapsed {
                     Text("Ask Cavnar AI")
                         .font(.cavnarBody(13, weight: 700))
-                        .foregroundStyle(.white)
-                        .shadow(color: .black.opacity(0.28), radius: 1, x: 0, y: 1)
+                        .foregroundStyle(Color.cavnarInk)
                         .fixedSize()
                         .transition(.opacity.combined(with: .scale(scale: 0.01, anchor: .leading)))
                 }
@@ -228,21 +227,24 @@ private struct AskCavnarFAB: View {
             .padding(.leading, 6)
             .padding(.trailing, collapsed ? 6 : 14)
             .padding(.vertical, 6)
-            // This is the app's one genuinely primary icon-only action —
-            // the Filled treatment from the icon-button design preview
-            // (same CavnarPremiumButtonSurface the big CTA buttons use,
-            // floor reflection off since a FAB pinned to the corner has
-            // no open space below it for one to read as intentional).
-            // Previously a plain material pill that faded to fully
-            // invisible background once collapsed, leaving just the bare
-            // icon + its own ambient halo with nothing solid behind it —
-            // now the gradient surface stays present in both states, with
-            // the ambient halo still pulsing on top of it.
-            // Explicit Capsule — the shared surface's default shape is now
-            // a moderate rounded-rect tuned for text CTAs, which would
-            // look like a rounded square rather than a circle on this
-            // near-square icon button once collapsed.
-            .cavnarPremiumButtonSurface(showFloorReflection: false, shape: AnyShape(Capsule()))
+            // Faded out (not removed) as `collapsed` flips, in the same
+            // container as the text above — keeps the pill's shrink and the
+            // chrome's fade as one continuous collapse instead of a jump
+            // cut, ending with nothing left behind the icon but its own
+            // built-in glow, per the "just the icon itself" ask.
+            //
+            // Deliberately NOT using CavnarPremiumButtonSurface/the shared
+            // button system — this is a one-of-one custom-animated control
+            // (GlowBadge rotation, ambient halo pulse, expand/collapse),
+            // not a generic button, and doesn't need to track the shared
+            // style's changes.
+            .background(Capsule().fill(.ultraThinMaterial).opacity(collapsed ? 0 : 1))
+            .overlay(
+                Capsule()
+                    .strokeBorder(Color.cavnarEmber.opacity(0.35), lineWidth: 1)
+                    .opacity(collapsed ? 0 : 1)
+            )
+            .shadow(color: .black.opacity(collapsed ? 0 : 0.25), radius: 8, y: 4)
         }
         .buttonStyle(FABPressStyle())
         // Same opacity/offset curve as HomeView's hero, driven by the same
