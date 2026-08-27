@@ -151,6 +151,7 @@ struct AIVisibilitySection: View {
                 )
                 Rectangle().fill(Color.cavnarEmber.opacity(0.3)).frame(width: 1).padding(.vertical, 6)
                 Button {
+                    Haptic.light()
                     withAnimation(.easeOut(duration: 0.2)) { showGbpChecklist.toggle() }
                 } label: {
                     heroStat(
@@ -163,7 +164,7 @@ struct AIVisibilitySection: View {
             }
             if let insight = heroInsightText(result) {
                 Rectangle().fill(Color.cavnarEmber.opacity(0.25)).frame(height: 1).padding(.top, 16)
-                Text(insight)
+                insight
                     .font(.cavnarBody(12.5))
                     .foregroundStyle(Color.cavnarInk2)
                     .lineSpacing(3)
@@ -218,18 +219,36 @@ struct AIVisibilitySection: View {
     /// checklist) — there's no AI-written summary sentence in the API
     /// response the way Intel's competitor insight has one, so this reads
     /// straight off the actual numbers rather than inventing prose.
-    private func heroInsightText(_ result: AIVisibilityResult) -> String? {
+    ///
+    /// Returns Text (not String) so the two numbers — how many queries
+    /// appeared in, out of how many total — can carry their own bigger,
+    /// ember-colored style and stay visually distinct from the surrounding
+    /// prose. Per-segment .font()/.foregroundStyle() set here survives the
+    /// blanket .font()/.foregroundStyle() the call site still applies to
+    /// the whole composed Text — same technique platformCard/contactsGrid
+    /// elsewhere in this app already rely on for "make this number pop."
+    private func heroInsightText(_ result: AIVisibilityResult) -> Text? {
         let appeared = result.appearedCount ?? 0
         let total = result.totalQueries ?? 0
         guard total > 0 else { return nil }
         if appeared == 0 {
-            return "Not yet appearing in AI search — normal for independent restaurants this early. More reviews and a complete Google Business Profile are what get you there."
+            return Text("Not yet appearing in AI search — normal for independent restaurants this early. More reviews and a complete Google Business Profile are what get you there.")
         }
-        var text = "Appears in \(appeared) of \(total) AI search queries."
+        var text = Text("Appears in ")
+            + highlightedNumber(appeared)
+            + Text(" of ")
+            + highlightedNumber(total)
+            + Text(" AI search queries.")
         if let topGap = (result.checklist ?? []).filter({ !$0.done }).max(by: { $0.pts < $1.pts }) {
-            text += " \(topGap.action) is the fastest way to close the gap."
+            text = text + Text(" \(topGap.action) is the fastest way to close the gap.")
         }
         return text
+    }
+
+    private func highlightedNumber(_ value: Int) -> Text {
+        Text("\(value)")
+            .font(.cavnarNumber(16, weight: 700))
+            .foregroundStyle(Color.cavnarEmber)
     }
 
     private func aiScoreLabel(_ score: Int) -> String {
@@ -367,8 +386,24 @@ struct AIVisibilitySection: View {
     // MARK: - Roadmap
 
     private func roadmapSection(_ result: AIVisibilityResult, checklist: [AIVisibilityChecklistItem]) -> some View {
-        let reviewsDone = checklist.contains { $0.label.localizedCaseInsensitiveContains("review") && $0.done }
-        let responseDone = checklist.contains { $0.label.localizedCaseInsensitiveContains("respond") && $0.done }
+        // Matched against client_api.py's checklist copy directly (verified,
+        // not guessed) — two real bugs found here:
+        //   "review" alone also matches the done=true label for the
+        //   RESPONSE-rate item ("Excellent review response rate (X%)"),
+        //   so a restaurant with a great response rate but under 50
+        //   reviews could false-positive this card as done. "google
+        //   review" only appears on the review-COUNT item's own two
+        //   labels ("50+ Google reviews" / "Build to 50+ Google reviews
+        //   (...)"), never on the response-rate item's.
+        //   "respond" never matches at all: the only done=true label for
+        //   that category is "Excellent review response rate (X%)", which
+        //   contains "response" but not "respond" as a substring (they
+        //   diverge at the 7th letter — checked directly, not assumed) —
+        //   so this card could never auto-complete regardless of actual
+        //   response rate. "response rate" appears on that category's
+        //   done=true label and doesn't collide with any other category.
+        let reviewsDone = checklist.contains { $0.label.localizedCaseInsensitiveContains("google review") && $0.done }
+        let responseDone = checklist.contains { $0.label.localizedCaseInsensitiveContains("response rate") && $0.done }
         let gbpDone = (result.gbpScore ?? 0) >= 80
 
         let cards: [RoadmapCard] = [

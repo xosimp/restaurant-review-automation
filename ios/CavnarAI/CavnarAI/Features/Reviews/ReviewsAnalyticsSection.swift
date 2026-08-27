@@ -42,7 +42,6 @@ struct ReviewsAnalyticsSection: View {
                 }
 
                 if !viewModel.sentimentWeeks.isEmpty {
-                    overallRatingSummary
                     trendChartCard
                 } else if viewModel.isLoading {
                     trendChartSkeleton
@@ -381,35 +380,18 @@ struct ReviewsAnalyticsSection: View {
 
     // MARK: - Sentiment trend chart
 
+    // Star rating (avgRating) deliberately isn't surfaced anywhere on this
+    // chart or this screen — it's a genuinely different metric (Intel's own
+    // "4.3★" is the live, all-time average across every processed review
+    // ever fetched, via get_review_stats' unfiltered AVG(rating)) from what
+    // this chart plots (review COUNTS, and only across an 8-week window at
+    // that). A weighted average of just the visible weeks' avgRating landed
+    // at a different number ("4.4") purely from that narrower window, which
+    // read as contradicting Intel's number rather than as a different,
+    // legitimate metric — removed rather than reconciled, since Intel
+    // already owns showing the restaurant's overall rating.
     private var totalReviewsInWindow: Int {
         viewModel.sentimentWeeks.reduce(0) { $0 + $1.total }
-    }
-
-    private var overallAvgRating: Double {
-        guard totalReviewsInWindow > 0 else { return 0 }
-        let weightedSum = viewModel.sentimentWeeks.reduce(0.0) { $0 + $1.avgRating * Double($1.total) }
-        return weightedSum / Double(totalReviewsInWindow)
-    }
-
-    /// Deliberately its own line above trendChartCard, not inside that
-    /// card's header the way it used to be ("Avg 4.4★" sitting beside
-    /// "SENTIMENT TREND"). That placement read as a value plotted on the
-    /// same axis as the chart below it — it isn't: the chart's bars, its
-    /// Y-axis, and its dotted reference line are all review COUNTS: this
-    /// is a STAR rating, a different unit entirely. Same underlying
-    /// number, just no longer implying it's part of what the chart plots.
-    private var overallRatingSummary: some View {
-        HStack(spacing: 5) {
-            Text(String(format: "%.1f", overallAvgRating))
-                .font(.cavnarNumber(15, weight: 700))
-                .foregroundStyle(Color.cavnarAmber)
-            Image(systemName: "star.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(Color.cavnarAmber)
-            Text("overall · \(totalReviewsInWindow) reviews in the last 8 weeks")
-                .font(.cavnarBody(11))
-                .foregroundStyle(Color.cavnarInk3)
-        }
     }
 
     /// Average weekly review volume across the visible window — a neutral
@@ -604,6 +586,13 @@ struct ReviewsAnalyticsSection: View {
                         guard let plotFrame = proxy.plotFrame else { return }
                         let originX = geo[plotFrame].origin.x
                         guard let label: String = proxy.value(atX: value.location.x - originX) else { return }
+                        // Same pattern as FoodCostTrendChart's own week-select
+                        // haptic — fire only when the finger actually lands on
+                        // a NEW week, not on every drag-move event within the
+                        // same bar's hit region.
+                        if let week = viewModel.sentimentWeeks.first(where: { $0.label == label }), week.id != selectedWeek?.id {
+                            Haptic.selection()
+                        }
                         selectedWeek = viewModel.sentimentWeeks.first { $0.label == label }
                     }
                     .onEnded { _ in selectedWeek = nil }
