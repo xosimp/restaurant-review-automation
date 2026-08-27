@@ -3160,6 +3160,7 @@ def _do_ai_visibility_inner(rid):
         ]
 
     import requests as _pplx_req
+    import time as _pplx_time
     from concurrent.futures import ThreadPoolExecutor, as_completed
     _pplx_key = os.getenv("PERPLEXITY_API_KEY", "")
     appeared_count = 0
@@ -3169,7 +3170,14 @@ def _do_ai_visibility_inner(rid):
 
     norm_name = _norm(name)
 
-    def _run_query(q):
+    # Firing all 3 queries at once via the ThreadPoolExecutor below
+    # reliably trips Perplexity's rate limit on this key's tier — verified
+    # directly: the same 3 queries run sequentially all succeed, but
+    # 2 of 3 silently come back empty when fired simultaneously, every
+    # time. One retry after a short delay (letting whatever per-second
+    # window the limit uses clear) recovers those without giving up the
+    # speed of parallelizing the common case where the limit isn't hit.
+    def _run_query(q, _retry=True):
         try:
             resp = _pplx_req.post(
                 "https://api.perplexity.ai/chat/completions",
@@ -3185,15 +3193,31 @@ def _do_ai_visibility_inner(rid):
                 timeout=10
             )
             answer = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") if resp.status_code == 200 else ""
+            if not answer and _retry:
+                _pplx_time.sleep(2)
+                return _run_query(q, _retry=False)
             appeared = bool(norm_name) and bool(answer) and norm_name in _norm(answer)
             return {"query": q, "answer": answer[:400], "appeared": appeared}
         except Exception:
+            if _retry:
+                _pplx_time.sleep(2)
+                return _run_query(q, _retry=False)
             return {"query": q, "answer": "Could not fetch answer.", "appeared": False}
 
-    # Run all queries in parallel — caps total time at ~10s instead of 30s+
+    # Run all queries in parallel, but staggered — caps total time at ~10s
+    # instead of 30s+, while avoiding the true root cause of the rate-limit
+    # failures: all 3 requests landing in the same instant. The retry
+    # inside _run_query alone wasn't reliable enough (retries can still
+    # collide with each other); starting each submission 0.6s after the
+    # last spreads the burst without giving up most of the parallel-speed
+    # benefit (~1.2s of stagger vs ~3-4s per request either way).
     query_results = [None] * len(queries)
     with ThreadPoolExecutor(max_workers=3) as _pool:
-        _futures = {_pool.submit(_run_query, q): i for i, q in enumerate(queries)}
+        _futures = {}
+        for _i, _q in enumerate(queries):
+            if _i > 0:
+                _pplx_time.sleep(0.6)
+            _futures[_pool.submit(_run_query, _q)] = _i
         for _fut in as_completed(_futures):
             i = _futures[_fut]
             try:
