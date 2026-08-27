@@ -148,7 +148,7 @@ struct IntelView: View {
         return Group {
             if let nameRange {
                 (Text(String(intro[intro.startIndex..<nameRange.lowerBound])).foregroundStyle(Color.cavnarInk)
-                    + Text(String(intro[nameRange])).foregroundStyle(Color.cavnarEmber2)
+                    + Text(String(intro[nameRange])).foregroundStyle(Color.cavnarEmber)
                     + Text(String(intro[nameRange.upperBound...])).foregroundStyle(Color.cavnarInk))
             } else {
                 Text(intro).foregroundStyle(Color.cavnarInk)
@@ -172,7 +172,7 @@ struct IntelView: View {
                     .font(.cavnarBody(10, weight: 700))
                     .tracking(1.1)
             }
-            .foregroundStyle(Color.cavnarEmber2)
+            .foregroundStyle(Color.cavnarEmber)
 
             ForEach(summary.sections) { section in
                 marketSection(section)
@@ -271,9 +271,9 @@ struct IntelView: View {
             Text("RATING COMPARISON")
                 .font(.cavnarBody(10, weight: 700))
                 .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
+                .foregroundStyle(Color.cavnarEmber)
             VStack(spacing: 16) {
-                ratingBar(name: summary.restaurantName ?? "Your restaurant", rating: ownRating, tone: Color.cavnarEmber2, isYou: true)
+                ratingBar(name: summary.restaurantName ?? "Your restaurant", rating: ownRating, tone: Color.cavnarEmber, isYou: true)
                 ForEach(summary.competitors) { c in
                     let diff = ((ownRating - c.rating) * 10).rounded() / 10
                     ratingBar(
@@ -342,7 +342,7 @@ struct IntelView: View {
             Text(section.name.uppercased())
                 .font(.cavnarBody(10, weight: 700))
                 .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
+                .foregroundStyle(Color.cavnarEmber)
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(section.bullets, id: \.self) { bullet in
                     HStack(alignment: .top, spacing: 10) {
@@ -370,7 +370,7 @@ struct IntelView: View {
             Text("HOW TO IMPROVE")
                 .font(.cavnarBody(10, weight: 700))
                 .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
+                .foregroundStyle(Color.cavnarEmber)
             VStack(alignment: .leading, spacing: 14) {
                 ForEach(Array(recommendations.enumerated()), id: \.offset) { index, rec in
                     HStack(alignment: .top, spacing: 10) {
@@ -398,7 +398,7 @@ struct IntelView: View {
                 Text("NEARBY COMPETITORS")
                     .font(.cavnarBody(10, weight: 700))
                     .tracking(1.2)
-                    .foregroundStyle(Color.cavnarEmber2)
+                    .foregroundStyle(Color.cavnarEmber)
                 Spacer()
                 refreshLink
             }
@@ -428,7 +428,7 @@ struct IntelView: View {
         // block of praise followed by one clean block of complaints
         // instead of bouncing between green and red stars line to line.
         let sortedReviews = c.reviews.sorted { $0.rating > $1.rating }
-        let visibleReviews = isExpanded ? sortedReviews : Array(sortedReviews.prefix(2))
+        let visibleReviews = isExpanded ? sortedReviews : Array(sortedReviews.prefix(1))
         let remaining = c.reviews.count - visibleReviews.count
         let diff = ownRating.map { ((($0) - c.rating) * 10).rounded() / 10 }
         let accent: Color = {
@@ -478,7 +478,7 @@ struct IntelView: View {
                     }
                     .padding(.top, 2)
                 }
-                if c.reviews.count > 2 {
+                if c.reviews.count > 1 {
                     Button {
                         if isExpanded {
                             expandedCompetitors.remove(c.id)
