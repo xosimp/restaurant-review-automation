@@ -35,6 +35,7 @@ struct Competitor: Decodable, Identifiable {
 struct IntelSummary: Decodable {
     let ok: Bool
     let hasData: Bool
+    let restaurantName: String?
     let intro: String?
     let recommendations: [String]
     let sections: [IntelSection]
@@ -45,6 +46,7 @@ struct IntelSummary: Decodable {
     enum CodingKeys: String, CodingKey {
         case ok, intro, recommendations, sections, competitors
         case hasData = "has_data"
+        case restaurantName = "restaurant_name"
         case updatedAt = "updated_at"
         case ownRating = "own_rating"
     }

@@ -57,7 +57,12 @@ struct IntelView: View {
         .refreshable { await viewModel.load() }
         .navigationTitle("Intel")
         .navigationBarTitleDisplayMode(.inline)
-        .cavnarEmberBackButton()
+        // Replaces the plain cavnarEmberBackButton() — owns the back
+        // chevron itself (tap dismisses on Competitors, returns to
+        // Competitors first from AI Visibility) so it can also add the
+        // swipe gesture, same convention as Food Cost/Labor/Marketing's
+        // own sub-tabs.
+        .cavnarTabSwipeNavigation($subTab, primaryTab: .competitors, secondaryTab: .aiVisibility)
         .task { await viewModel.load() }
     }
 
@@ -87,10 +92,7 @@ struct IntelView: View {
         statRow(summary)
 
         if let intro = summary.intro, !intro.isEmpty {
-            Text(intro)
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk2)
-                .lineSpacing(4)
+            aiIntroCallout(intro)
         }
 
         if let ownRating = summary.ownRating, !summary.competitors.isEmpty {
@@ -110,46 +112,93 @@ struct IntelView: View {
         }
     }
 
+    // MARK: - AI intro (this is Cavnar AI talking — needs its own identity,
+    // not plain unattributed body copy sitting at the top of the page)
+
+    private func aiIntroCallout(_ intro: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 5) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("CAVNAR AI")
+                    .font(.cavnarBody(10, weight: 700))
+                    .tracking(1.2)
+            }
+            .foregroundStyle(Color.cavnarEmber2)
+            Text(intro)
+                .font(.cavnarBody(14))
+                .foregroundStyle(Color.cavnarInk2)
+                .lineSpacing(4)
+        }
+        .padding(.leading, 13)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(Color.cavnarEmber.opacity(0.55)).frame(width: 2.5)
+        }
+    }
+
     // MARK: - Summary stat row (bare — no card, just numbers + hairline dividers)
 
     private func statRow(_ summary: IntelSummary) -> some View {
         let count = summary.competitors.count
         let avgRating = count > 0 ? summary.competitors.reduce(0.0) { $0 + $1.rating } / Double(count) : 0
-        let delta = summary.ownRating.map { (($0 - avgRating) * 10).rounded() / 10 }
 
         return HStack(spacing: 0) {
-            statTile(value: "\(count)", label: "Tracked")
+            statTile(value: plainStatValue("\(count)"), label: "Tracked")
             Rectangle().fill(Color.cavnarPaper3).frame(width: 1, height: 28)
-            statTile(value: count > 0 ? String(format: "%.1f★", avgRating) : "—", label: "Market avg")
+            statTile(
+                value: count > 0 ? ratingText(avgRating, numberSize: 20, tone: Color.cavnarInk) : plainStatValue("—"),
+                label: "Market avg"
+            )
             Rectangle().fill(Color.cavnarPaper3).frame(width: 1, height: 28)
-            if let own = summary.ownRating, let delta {
-                VStack(spacing: 5) {
-                    Text(String(format: "%.1f★", own))
-                        .font(.cavnarNumber(20, weight: 700))
-                        .foregroundStyle(own >= 4.0 ? Color.cavnarGreen : (own >= 3.0 ? Color.cavnarAmber : Color.cavnarRed))
-                    Text(delta == 0 ? "TIED" : (delta > 0 ? "▲\(String(format: "%.1f", delta)) ahead" : "▼\(String(format: "%.1f", abs(delta))) behind"))
-                        .font(.cavnarBody(8.5, weight: 700))
-                        .tracking(0.4)
-                        .foregroundStyle(Color.cavnarInk3)
-                }
-                .frame(maxWidth: .infinity)
+            if let own = summary.ownRating {
+                // Colored relative to the competitor average, not an
+                // absolute threshold — a 4.1 that's genuinely ahead of a
+                // weak local market should read as good news exactly as
+                // much as a 4.1 that's behind a strong one should read as
+                // a gap to close. An absolute >=4.0-is-green cutoff doesn't
+                // know which of those it's looking at, and the competitor
+                // row accents below already use this same relative logic —
+                // this tile was the one place on the page disagreeing
+                // with itself.
+                statTile(
+                    value: ratingText(own, numberSize: 20, tone: own >= avgRating ? Color.cavnarGreen : (own >= avgRating - 0.3 ? Color.cavnarAmber : Color.cavnarRed)),
+                    label: summary.restaurantName ?? "Your rating"
+                )
             } else {
-                statTile(value: "\(summary.recommendations.count)", label: "Action items")
+                statTile(value: plainStatValue("\(summary.recommendations.count)"), label: "Action items")
             }
         }
     }
 
-    private func statTile(value: String, label: String) -> some View {
+    /// value arrives already fully styled (font + color on every segment)
+    /// — this only lays it out, it never applies its own font/color on
+    /// top, since a later blanket modifier here would silently win over
+    /// per-segment styling set by ratingText below (SwiftUI resolves
+    /// Text-concatenation styling closest-to-the-literal-segment-wins, so
+    /// stacking a second, outer style call is never safe to rely on).
+    private func statTile(value: Text, label: String) -> some View {
         VStack(spacing: 5) {
-            Text(value)
-                .font(.cavnarNumber(20, weight: 700))
-                .foregroundStyle(Color.cavnarInk)
+            value
             Text(label.uppercased())
                 .font(.cavnarBody(8.5, weight: 700))
                 .tracking(0.4)
                 .foregroundStyle(Color.cavnarInk3)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private func plainStatValue(_ s: String) -> Text {
+        Text(s).font(.cavnarNumber(20, weight: 700)).foregroundStyle(Color.cavnarInk)
+    }
+
+    /// Number at the given size, star noticeably smaller — was one Text
+    /// with "%.1f★" formatting into a single font/size, which made the
+    /// star render as big as the digits next to it.
+    private func ratingText(_ rating: Double, numberSize: CGFloat, tone: Color) -> Text {
+        Text(String(format: "%.1f", rating)).font(.cavnarNumber(numberSize, weight: 700)).foregroundStyle(tone)
+            + Text(" ★").font(.cavnarNumber(numberSize * 0.55, weight: 700)).foregroundStyle(tone)
     }
 
     // MARK: - Rating comparison
@@ -227,7 +276,7 @@ struct IntelView: View {
 
     private func recommendationsSection(_ recommendations: [String]) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("WHAT TO DO ABOUT IT")
+            Text("HOW TO IMPROVE")
                 .font(.cavnarBody(10, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
@@ -307,9 +356,7 @@ struct IntelView: View {
                     }
                 }
                 HStack(spacing: 6) {
-                    Text("\(String(format: "%.1f", c.rating))★")
-                        .font(.cavnarNumber(11, weight: 700))
-                        .foregroundStyle(Color.cavnarAmber)
+                    ratingText(c.rating, numberSize: 11, tone: Color.cavnarAmber)
                     Text("\(c.reviewCount) reviews")
                         .font(.cavnarBody(11))
                         .foregroundStyle(Color.cavnarInk3)
@@ -353,15 +400,17 @@ struct IntelView: View {
         let datePart = String(updatedAt.prefix(10))
         let parts = datePart.split(separator: "-").compactMap { Int($0) }
         var daysOld: Int? = nil
+        var display = datePart
         if parts.count == 3 {
             var comps = DateComponents()
             comps.year = parts[0]; comps.month = parts[1]; comps.day = parts[2]
             if let date = Calendar.current.date(from: comps) {
                 daysOld = Calendar.current.dateComponents([.day], from: date, to: Date()).day
+                display = "\(parts[1])/\(parts[2])/\(parts[0])"
             }
         }
         return HStack(spacing: 8) {
-            Text("Last updated \(datePart)")
+            Text("Last updated \(display)")
                 .font(.cavnarBody(11))
                 .foregroundStyle(Color.cavnarInk3)
             if let daysOld, daysOld >= 7 {
@@ -395,9 +444,9 @@ struct IntelView: View {
         .disabled(viewModel.isRefreshing)
     }
 
-    /// Quiet inline text action next to the "NEARBY COMPETITORS" kicker —
-    /// a full button here would fight the unboxed page for attention;
-    /// matches "Show N more reviews" below it in weight.
+    /// Small pill next to the "NEARBY COMPETITORS" kicker — quiet enough
+    /// not to compete with the unboxed page for attention, but still
+    /// reads as a tappable control rather than plain text sitting there.
     private var refreshLink: some View {
         Button {
             Task { await viewModel.refreshCompetitors() }
@@ -408,11 +457,18 @@ struct IntelView: View {
                     Text("Refreshing…")
                 }
             } else {
-                Text("Refresh")
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 9, weight: .bold))
+                    Text("Refresh")
+                }
             }
         }
-        .font(.cavnarBody(11, weight: 700))
+        .font(.cavnarBody(10.5, weight: 700))
         .foregroundStyle(Color.cavnarEmber2)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 5)
+        .overlay(Capsule().strokeBorder(Color.cavnarEmber2.opacity(0.4), lineWidth: 1))
         .disabled(viewModel.isRefreshing)
     }
 }

@@ -9,9 +9,37 @@ import Charts
 /// does, so there's no mode-pill row here, just the 8-week trend directly.
 struct FoodCostTrendChart: View {
     let weeks: [FoodCostTrendWeek]
+    // Waste-vs-industry-benchmark readout — used to be its own standalone
+    // section on the Analytics tab (FoodCostAnalyticsSection's old
+    // benchmarkBar), floating between the stat strip and the donut charts
+    // with no real connection to either. "Waste rate vs. target" is the
+    // same underlying story this chart already tells, just as a
+    // percentage instead of a dollar total, so it's folded in here as a
+    // header badge + footer caption instead of announced separately.
+    var benchmarkLabel: String?
+    var wasteRatePct: Double?
 
     @State private var barsVisible = false
     @State private var selectedWeek: FoodCostTrendWeek?
+
+    private static let industryLow = 4.0
+    private static let industryHigh = 5.0
+    // A fixed light yellow, not a translucent white overlay — .white.opacity
+    // blended with whatever fill tone sits underneath it (green/amber/red
+    // depending on this restaurant's current bucket) would read as a
+    // DIFFERENT color depending on which bucket a restaurant happened to
+    // be in, and never match the legend swatch sitting on plain black
+    // beside it. This is the one color used for both, always.
+    private static let industryBandColor = Color(red: 0.95, green: 0.85, blue: 0.45)
+
+    private func benchmarkColor(_ label: String) -> Color {
+        switch label {
+        case "Excellent", "On Track": return .cavnarGreen
+        case "Above Average", "Concerning": return .cavnarAmber
+        case "Needs Attention": return .cavnarRed
+        default: return .cavnarInk3
+        }
+    }
 
     private var average: Double {
         guard !weeks.isEmpty else { return 0 }
@@ -36,10 +64,24 @@ struct FoodCostTrendChart: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("WASTE — LAST 8 WEEKS")
-                .font(.cavnarBody(10, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
+            HStack(alignment: .firstTextBaseline) {
+                Text("WASTE — LAST 8 WEEKS")
+                    .font(.cavnarBody(10, weight: 700))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.cavnarEmber2)
+                if let benchmarkLabel, let wasteRatePct, benchmarkLabel != "—" {
+                    Spacer()
+                    HStack(spacing: 5) {
+                        Circle().fill(benchmarkColor(benchmarkLabel)).frame(width: 6, height: 6)
+                        Text(String(format: "%.1f%%", wasteRatePct))
+                            .font(.cavnarNumber(11, weight: 700))
+                            .foregroundStyle(benchmarkColor(benchmarkLabel))
+                        Text("vs. industry")
+                            .font(.cavnarBody(9))
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
+                }
+            }
 
             if weeks.count < 2 {
                 Text("Not enough history yet — check back after a couple more weekly submissions.")
@@ -86,6 +128,17 @@ struct FoodCostTrendChart: View {
                 }
                 .onAppear {
                     withAnimation(.easeOut(duration: 0.75)) { barsVisible = true }
+                }
+
+                if let benchmarkLabel, let wasteRatePct, benchmarkLabel != "—" {
+                    HStack(spacing: 5) {
+                        Rectangle().fill(Self.industryBandColor).frame(width: 8, height: 8)
+                        Text("Industry target: 4–5% of purchases")
+                        Text("· you're \(benchmarkLabel.lowercased())")
+                            .foregroundStyle(benchmarkColor(benchmarkLabel))
+                    }
+                    .font(.cavnarBody(9.5))
+                    .foregroundStyle(Color.cavnarInk3)
                 }
             }
         }

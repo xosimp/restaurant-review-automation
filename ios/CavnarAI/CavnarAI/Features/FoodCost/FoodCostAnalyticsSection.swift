@@ -16,15 +16,15 @@ struct FoodCostAnalyticsSection: View {
 
     var body: some View {
         ScrollView {
-            // 36pt between top-level sections — was 28, which read as
-            // "crammed" once every section lost its own card border (a
-            // border used to do double duty as visual separation; without
-            // one, the gap between sections has to carry that job alone).
-            // Matches the wider rhythm SaaS dashboards (Stripe, Linear)
-            // lean on between distinct content blocks specifically because
-            // there's no box to signal "new section" otherwise — only
-            // whitespace and the kicker label are left to do it.
-            VStack(alignment: .leading, spacing: 36) {
+            // 44pt between top-level sections — was 28, then 36, still
+            // read as crammed once every section lost its own card border
+            // (a border used to do double duty as visual separation;
+            // without one, the gap between sections has to carry that job
+            // alone). Matches the wider rhythm SaaS dashboards (Stripe,
+            // Linear) lean on between distinct content blocks specifically
+            // because there's no box to signal "new section" otherwise —
+            // only whitespace and the kicker label are left to do it.
+            VStack(alignment: .leading, spacing: 44) {
                 if let analytics = viewModel.analytics {
                     // The AI strip lives INSIDE the hero card itself (see
                     // heroCard's own comment) when there's a hero to embed
@@ -42,9 +42,6 @@ struct FoodCostAnalyticsSection: View {
                         )
                     }
                     statStrip(analytics)
-                    if let label = analytics.benchmarkLabel, let pct = analytics.wasteRatePct, label != "—" {
-                        benchmarkBar(label: label, pct: pct)
-                    }
                     if !analytics.wasteItems.isEmpty {
                         FoodCostDonutChart(
                             title: "TOP WASTE OFFENDERS",
@@ -79,7 +76,11 @@ struct FoodCostAnalyticsSection: View {
                     if !analytics.priceWatch.isEmpty {
                         priceWatchDetail(analytics.priceWatch)
                     }
-                    FoodCostTrendChart(weeks: viewModel.trend)
+                    FoodCostTrendChart(
+                        weeks: viewModel.trend,
+                        benchmarkLabel: analytics.benchmarkLabel,
+                        wasteRatePct: analytics.wasteRatePct
+                    )
                 } else if viewModel.isLoading {
                     FoodCostAnalyticsSkeleton()
                 }
@@ -210,73 +211,14 @@ struct FoodCostAnalyticsSection: View {
         }
     }
 
-    // MARK: - Benchmark — a bar, not a badge; no card wrapper
-
-    private static let benchmarkScaleMax = 15.0
-    private static let industryLow = 4.0
-    private static let industryHigh = 5.0
-    // A fixed light yellow, not a translucent white overlay — .white.opacity
-    // blended with whatever fill tone sits underneath it (green/amber/red
-    // depending on this restaurant's current bucket), so the band read as a
-    // DIFFERENT color depending on which bucket a restaurant happened to be
-    // in, and never matched the legend swatch sitting on plain black beside
-    // it. This is the one color used for both, always, regardless of tone.
-    private static let industryBandColor = Color(red: 0.95, green: 0.85, blue: 0.45)
-
-    private func benchmarkBar(label: String, pct: Double) -> some View {
-        let tone = benchmarkColor(label)
-        let fill = min(pct / Self.benchmarkScaleMax, 1)
-        let industryStart = Self.industryLow / Self.benchmarkScaleMax
-        let industryWidth = (Self.industryHigh - Self.industryLow) / Self.benchmarkScaleMax
-
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("WASTE VS. INDUSTRY BENCHMARK")
-                    .font(.cavnarBody(10, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarEmber2)
-                Spacer()
-                Text(String(format: "%.1f%%", pct))
-                    .font(.cavnarNumber(12, weight: 700))
-                    .foregroundStyle(tone)
-                Text(label)
-                    .font(.cavnarBody(9, weight: 700))
-                    .foregroundStyle(tone)
-            }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.cavnarPaper3.opacity(0.6))
-                    Capsule().fill(tone)
-                        .frame(width: geo.size.width * fill)
-                    // Drawn LAST (was second, under the fill capsule) — a
-                    // waste rate above 5% is exactly the case worth
-                    // flagging, and the fill for anything above 5% already
-                    // extends past this band's position, painting over it
-                    // when it's drawn first. Solid enough to stay legible
-                    // regardless of what's under it.
-                    Rectangle().fill(Self.industryBandColor.opacity(0.85))
-                        .frame(width: max(geo.size.width * industryWidth, 2))
-                        .offset(x: geo.size.width * industryStart)
-                }
-            }
-            .frame(height: 8)
-            HStack(spacing: 4) {
-                Rectangle().fill(Self.industryBandColor).frame(width: 8, height: 8)
-                Text("Industry target: 4–5% of purchases")
-            }
-            .font(.cavnarBody(9.5))
-            .foregroundStyle(Color.cavnarInk3)
-        }
-    }
-
-    private func benchmarkColor(_ label: String) -> Color {
-        switch label {
-        case "Excellent", "On Track": return .cavnarGreen
-        case "Above Average", "Concerning": return .cavnarAmber
-        case "Needs Attention": return .cavnarRed
-        default: return .cavnarInk3
-        }
-    }
+    // The waste-vs-industry-benchmark readout now lives inside
+    // FoodCostTrendChart itself (see its own header + footer caption) —
+    // it used to be a fully separate section here, floating between the
+    // stat strip and the donut charts with no real connection to either;
+    // "waste rate vs. target" is fundamentally the same story the trend
+    // chart at the bottom of the page already tells, just a different
+    // slice of it (a rate instead of a dollar total), so it reads better
+    // folded into that one chart than announced as its own standalone block.
 
     // MARK: - Action lists — one flowing list, colored accent bars, no boxes
 
