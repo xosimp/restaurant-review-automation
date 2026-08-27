@@ -6889,15 +6889,58 @@ function renderAIVisibility(d) {
   var ptsEl = document.getElementById('aiv-roadmap-pts');
   if (!roadmapEl) return;
 
+  // Matched against client_api.py's own checklist copy directly (same fix
+  // already shipped on iOS, ported here for parity): plain 'review' also
+  // matched the done=true RESPONSE-rate label ("Excellent review response
+  // rate"), so a restaurant with a great response rate but under 50
+  // reviews could false-positive the reviews card as done. Plain 'respond'
+  // never matched at all — the only done=true label for that category is
+  // "Excellent review response rate", which contains "response" not
+  // "respond" (they diverge at the 7th letter), so that card could never
+  // auto-complete regardless of actual response rate. 'google review' /
+  // 'response rate' are the precise, verified-unique phrases for each.
   var gbpDone = d.gbp_score >= 80;
   var reviewsDone = false;
   var responseDone = false;
+  var missingGbpCount = 0;
   if (d.checklist) {
     for (var ci = 0; ci < d.checklist.length; ci++) {
-      if (d.checklist[ci].label.indexOf('review') > -1 && d.checklist[ci].done) reviewsDone = true;
-      if (d.checklist[ci].label.indexOf('respond') > -1 && d.checklist[ci].done) responseDone = true;
+      var lbl = (d.checklist[ci].label || '').toLowerCase();
+      if (lbl.indexOf('google review') > -1 && d.checklist[ci].done) reviewsDone = true;
+      if (lbl.indexOf('response rate') > -1 && d.checklist[ci].done) responseDone = true;
+      if (!d.checklist[ci].done) missingGbpCount++;
     }
   }
+  var socialPosts = d.social_posts_30d || 0;
+  var socialDone = socialPosts >= 8;
+  var reviewTotal = d.review_total || 0;
+  var respRate = Math.round(d.resp_rate || 0);
+
+  // detail/why below used to be 4 fully static strings identical for every
+  // restaurant (one of them — reviews' own why — even hardcoded a
+  // different restaurant's name and review count, "Mio Modo has 270+
+  // reviews", into every single restaurant's card). Built from this
+  // restaurant's own real numbers now, same fields/thresholds/phrasing as
+  // the iOS app's roadmap so the two platforms actually agree.
+  var reviewsDetail = reviewsDone
+    ? (reviewTotal + ' reviews — past the 50-review AI threshold')
+    : (reviewTotal + ' of 50 reviews — ' + Math.max(50 - reviewTotal, 0) + ' more to go');
+  var reviewsWhy = 'You have ' + reviewTotal + ' review' + (reviewTotal === 1 ? '' : 's') + ' right now. AI search tools rank restaurants by review volume and recency — the more you have, the more AI systems trust you.';
+
+  var responseDetail = responseDone
+    ? (respRate + '% response rate — excellent')
+    : (respRate + '% response rate — ' + Math.max(75 - respRate, 0) + '% more gets you to 75%');
+  var responseWhy = 'You\'re currently responding to ' + respRate + '% of your reviews. Response rate signals to Google that your listing is actively managed — active listings rank higher in local search and are more likely to be cited by AI tools that pull from Google data.';
+
+  var gbpDetail = missingGbpCount > 0
+    ? (d.gbp_score + '% complete — ' + missingGbpCount + ' item' + (missingGbpCount === 1 ? '' : 's') + ' left')
+    : (d.gbp_score + '% complete');
+  var gbpWhy = 'Your Google Business Profile is ' + d.gbp_score + '% complete. Perplexity, ChatGPT, and Google AI all pull directly from GBP data — hours, photos, menu, description. A complete profile is the single fastest way to become indexable by AI search.';
+
+  var socialDetail = socialDone
+    ? (socialPosts + ' posts this month — great pace')
+    : (socialPosts === 0 ? 'No marketing pieces logged this month yet' : (socialPosts + ' post' + (socialPosts === 1 ? '' : 's') + ' this month — aim for 8+'));
+  var socialWhy = 'You\'ve logged ' + socialPosts + ' marketing piece' + (socialPosts === 1 ? '' : 's') + ' this month. Food blogs and social content get indexed by search engines, which AI tools then pull from — regular posts with your restaurant name, neighborhood, and cuisine type build the online footprint AI needs to find you.';
 
   var cards = [
     {
@@ -6905,50 +6948,61 @@ function renderAIVisibility(d) {
       color: '#d97706',
       bg: '#fefce8',
       title: 'Get more Google reviews',
-      why: 'AI search tools rank restaurants by review volume and recency. Mio Modo has 270+ reviews — that\'s why it leads every query. The more reviews you have, the more AI systems trust you.',
+      why: reviewsWhy,
       action: 'Send a review request',
       actionFn: 'switchTab(\'reviews\', document.getElementById(\'tab-reviews\')); setTimeout(function(){ var c=document.getElementById(\'rr-card\'); if(c){ c.scrollIntoView({behavior:\'smooth\',block:\'start\'}); } var e=document.getElementById(\'rr-email\'); if(e) e.focus(); }, 150);',
       impact: 'Highest impact',
       done: reviewsDone,
-      timeframe: 'Ongoing'
+      detail: reviewsDetail
     },
     {
       svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2 3.5A1.5 1.5 0 013.5 2h9A1.5 1.5 0 0114 3.5V10a1.5 1.5 0 01-1.5 1.5H6.2l-3.2 2V3.5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>',
       color: '#2d6a4f',
       bg: '#eaf4ee',
       title: 'Respond to every review',
-      why: 'Response rate signals to Google that your listing is actively managed. Active listings rank higher in local search and are more likely to be cited by AI tools that pull from Google data.',
+      why: responseWhy,
       action: 'Go to review queue',
       actionFn: 'document.getElementById(\'tab-reviews\') && document.getElementById(\'tab-reviews\').click()',
       impact: 'High impact',
       done: responseDone,
-      timeframe: '24–48 hrs each'
+      detail: responseDetail
     },
     {
       svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="6.5" r="2" stroke="currentColor" stroke-width="1.4"/><path d="M8 2C5.79 2 4 3.79 4 6c0 3.5 4 9 4 9s4-5.5 4-9c0-2.21-1.79-4-4-4z" stroke="currentColor" stroke-width="1.4"/></svg>',
       color: '#8a5a3a',
       bg: '#f5ece3',
       title: 'Complete your Google Business Profile',
-      why: 'Perplexity, ChatGPT, and Google AI all pull directly from GBP data — hours, photos, menu, description. A complete profile is the single fastest way to become indexable by AI search.',
+      why: gbpWhy,
       action: 'Open GBP settings',
       actionFn: 'switchTab(\'competitor\', document.getElementById(\'tab-competitor\'))',
       impact: 'Fast win',
       done: gbpDone,
-      timeframe: '15 min one-time'
+      detail: gbpDetail
     },
     {
       svg: '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M2.5 6h2.8l5.2-3v10L5.3 10H2.5A1 1 0 011.5 9V7a1 1 0 011-1z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.3 10v3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
       color: '#c84b2f',
       bg: '#fff5f2',
       title: 'Post consistently on social',
-      why: 'Food blogs and social content get indexed by search engines, which AI tools then pull from. Regular posts with your restaurant name, neighborhood, and cuisine type build the online footprint AI needs to find you.',
+      why: socialWhy,
       action: 'Go to marketing',
       actionFn: 'document.getElementById(\'tab-marketing\') && document.getElementById(\'tab-marketing\').click()',
       impact: 'Long-term',
-      done: false,
-      timeframe: '2–3x per week'
+      done: socialDone,
+      detail: socialDetail
     }
   ];
+
+  // Was always rendered in this same fixed order for every restaurant —
+  // same "ranked for your restaurant" gap the iOS app had, fixed the same
+  // way: not-done cards first, then by impact tier, so a restaurant's own
+  // real gaps surface at the top instead of a static list order.
+  var _impactRank = { 'Highest impact': 0, 'High impact': 1, 'Fast win': 2 };
+  function _rankOf(c) { return _impactRank.hasOwnProperty(c.impact) ? _impactRank[c.impact] : 3; }
+  cards.sort(function(a, b) {
+    if (a.done !== b.done) return a.done ? 1 : -1;
+    return _rankOf(a) - _rankOf(b);
+  });
 
   // Inject CSS for animations once
   if (!document.getElementById('aiv-anim-style')) {
@@ -6982,7 +7036,7 @@ function renderAIVisibility(d) {
     html += '<span style="font-size:13px;font-weight:600;color:var(--ink)">' + c.title + '</span>';
     html += doneBadge;
     html += '</div>';
-    html += '<div style="font-size:11px;color:var(--ink3);margin-bottom:10px">' + c.timeframe + '</div>';
+    html += '<div style="font-size:11px;color:var(--ink3);margin-bottom:10px">' + c.detail + '</div>';
     html += '<div class="aiv-why-text" id="aiv-why-' + k + '" style="font-size:12px;color:var(--ink2);line-height:1.65;margin-bottom:10px;display:none">' + c.why + '</div>';
     html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
     if (!c.done) {
