@@ -367,28 +367,7 @@ struct AIVisibilitySection: View {
     }
 
     private func queryRow(_ q: AIVisibilityQuery) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\u{201C}\(q.query)\u{201D}")
-                    .font(.cavnarBody(12.5, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
-                Text(q.answer)
-                    .font(.cavnarBody(11))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            Spacer(minLength: 8)
-            Text(q.appeared ? "Appeared" : "Missed")
-                .font(.cavnarBody(9.5, weight: 700))
-                .foregroundStyle(q.appeared ? Color.cavnarGreen : Color.cavnarInk3)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(q.appeared ? Color.cavnarGreenBg : Color.cavnarPaper2)
-                .overlay(Capsule().strokeBorder(q.appeared ? Color.clear : Color.cavnarPaper3, lineWidth: 1))
-                .clipShape(Capsule())
-        }
-        .padding(.vertical, 11)
+        QueryResultRow(q: q)
     }
 
     // MARK: - Roadmap
@@ -629,5 +608,65 @@ struct AIVisibilitySection: View {
         }
         .padding(.vertical, 14)
         .opacity(card.done ? 0.55 : 1)
+    }
+}
+
+/// A query result's answer is truncated to one line by default — most of
+/// it gets cut off. Press and hold to read the full thing; release to
+/// collapse back. @GestureState (not plain @State) is what gives the
+/// "release collapses it" behavior for free: it automatically resets to
+/// its initial value the instant the gesture ends, whether that's a
+/// clean lift, a cancel, or the view disappearing — no separate onEnded
+/// handler needed to remember to reset anything. Needs its own View
+/// struct (not a plain function like the rest of this file's rows) since
+/// @GestureState requires real per-instance storage, one independent
+/// press-state per row rather than one shared across all of them.
+private struct QueryResultRow: View {
+    let q: AIVisibilityQuery
+
+    @GestureState private var isPressed = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\u{201C}\(q.query)\u{201D}")
+                    .font(.cavnarBody(12.5, weight: 600))
+                    .foregroundStyle(Color.cavnarInk)
+                Text(q.answer)
+                    .font(.cavnarBody(11))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .lineLimit(isPressed ? nil : 1)
+                    .truncationMode(.tail)
+                    .animation(.easeOut(duration: 0.18), value: isPressed)
+            }
+            Spacer(minLength: 8)
+            Text(q.appeared ? "Appeared" : "Missed")
+                .font(.cavnarBody(9.5, weight: 700))
+                .foregroundStyle(q.appeared ? Color.cavnarGreen : Color.cavnarInk3)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(q.appeared ? Color.cavnarGreenBg : Color.cavnarPaper2)
+                .overlay(Capsule().strokeBorder(q.appeared ? Color.clear : Color.cavnarPaper3, lineWidth: 1))
+                .clipShape(Capsule())
+        }
+        .padding(.vertical, 11)
+        .padding(.horizontal, 10)
+        // A visible surface while pressed — same "read as elevated/popped
+        // into focus" cue press-and-hold affordances use elsewhere in this
+        // app (chart tooltips), just expanding in place here rather than
+        // floating a separate overlay above the row, since this list has
+        // no existing geometry-tracking layer to position one against.
+        .background(isPressed ? Color.cavnarPaper2.opacity(0.7) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+        .scaleEffect(isPressed ? 1.015 : 1)
+        .animation(.easeOut(duration: 0.18), value: isPressed)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .updating($isPressed) { _, state, _ in
+                    if !state { Haptic.light() }
+                    state = true
+                }
+        )
     }
 }
