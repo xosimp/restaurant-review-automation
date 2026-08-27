@@ -114,9 +114,21 @@ struct SendReviewRequestSheet: View {
                         .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSend))
                         .disabled(!canSend)
 
+                        // .frame(maxWidth: .infinity) on Cancel (not Send)
+                        // makes it stretch to match Send's hug-content
+                        // width — a VStack sizes to its widest non-greedy
+                        // child, so the shorter "Cancel" filling that same
+                        // resolved width is what makes the pair match
+                        // instead of Cancel staying pill-tight around its
+                        // own shorter text.
                         Button("Cancel") { dismiss() }
                             .buttonStyle(CavnarSecondaryButtonStyle())
+                            .frame(maxWidth: .infinity)
                     }
+                    // Centers the whole (now equal-width) button pair
+                    // within the form — without this the group still
+                    // hugs the .leading-aligned outer VStack's left edge.
+                    .frame(maxWidth: .infinity)
                     .padding(.top, 6)
                 }
                 .padding(20)

@@ -80,7 +80,10 @@ private struct KeyboardDoneToolbarModifier: ViewModifier {
 /// pixel-identical to every other keyboard toolbar in the app.
 @ViewBuilder
 func keyboardIconButton(systemName: String, enabled: Bool, action: @escaping () -> Void) -> some View {
-    Button(action: action) {
+    Button {
+        Haptic.light()
+        action()
+    } label: {
         Image(systemName: systemName)
             .font(.system(size: 13, weight: .semibold))
     }

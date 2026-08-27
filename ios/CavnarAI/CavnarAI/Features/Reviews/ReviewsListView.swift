@@ -39,6 +39,7 @@ struct ReviewsListView: View {
         .toolbar {
             cavnarToolbarItem(placement: .navigationBarTrailing) {
                 Button {
+                    Haptic.light()
                     showingSendRequest = true
                 } label: {
                     // envelope.badge's glyph reserves extra bounding-box

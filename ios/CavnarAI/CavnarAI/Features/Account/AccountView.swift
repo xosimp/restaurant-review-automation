@@ -459,7 +459,9 @@ private struct ChangePasswordSheet: View {
 
                         Button("Cancel") { dismiss() }
                             .buttonStyle(CavnarSecondaryButtonStyle())
+                            .frame(maxWidth: .infinity)
                     }
+                    .frame(maxWidth: .infinity)
                     .padding(.top, 6)
                 }
                 .padding(20)
@@ -519,7 +521,9 @@ private struct TwoFactorSetupSheet: View {
 
                             Button("Cancel") { dismiss() }
                                 .buttonStyle(CavnarSecondaryButtonStyle())
+                                .frame(maxWidth: .infinity)
                         }
+                        .frame(maxWidth: .infinity)
                         .padding(.top, 6)
                     } else {
                         Text("We'll text a 6-digit code to the phone number on file to confirm two-factor sign-in works before turning it on.")
@@ -545,7 +549,9 @@ private struct TwoFactorSetupSheet: View {
 
                             Button("Cancel") { dismiss() }
                                 .buttonStyle(CavnarSecondaryButtonStyle())
+                                .frame(maxWidth: .infinity)
                         }
+                        .frame(maxWidth: .infinity)
                         .padding(.top, 6)
                     }
                 }

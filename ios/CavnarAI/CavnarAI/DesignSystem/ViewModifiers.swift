@@ -671,6 +671,7 @@ private struct CavnarEmberBackButton: ViewModifier {
             .toolbar {
                 cavnarToolbarItem(placement: .navigation) {
                     Button {
+                        Haptic.light()
                         dismiss()
                     } label: {
                         Image(systemName: "chevron.left")
