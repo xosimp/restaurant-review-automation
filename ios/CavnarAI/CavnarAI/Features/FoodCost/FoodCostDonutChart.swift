@@ -148,7 +148,15 @@ struct FoodCostDonutChart: View {
     /// regardless of how many legend rows are currently visible, same
     /// reasoning as RoleDonutChart's own segment(at:).
     private func segment(at index: Int) -> (Double, Double) {
-        guard total > 0, !slices.isEmpty else { return (0, 0) }
+        // index normally always falls inside slices (ring's ForEach derives
+        // it from slices.enumerated() directly), but this is the one spot
+        // in the whole Food Cost module that subscripts an array by a raw
+        // Int rather than going through a safe .first(where:)/id-based
+        // lookup like everywhere else here — guarding it costs nothing and
+        // removes it as a possible crash vector if slices and this call
+        // ever do go out of sync (e.g. a stale closure from a view update
+        // mid-flight).
+        guard total > 0, !slices.isEmpty, slices.indices.contains(index) else { return (0, 0) }
         let gapFraction = 0.012
         var cumulative = 0.0
         for i in 0..<index { cumulative += slices[i].value / total }
