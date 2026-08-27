@@ -3260,11 +3260,9 @@ def _do_ai_visibility_inner(rid):
             pass
 
     checklist = []
-    gbp_score = 0
 
     # 1. Google Place ID — lets AI tools index the right location
     if bool(r.google_place_id):
-        gbp_score += 10
         checklist.append({"label": "Google Place ID connected", "done": True, "pts": 10,
                           "action": "Done — AI tools can find your location", "needs_gmb": False})
     else:
@@ -3274,7 +3272,6 @@ def _do_ai_visibility_inner(rid):
 
     # 2. Yelp profile linked — Perplexity and ChatGPT pull heavily from Yelp
     if bool(r.yelp_business_id):
-        gbp_score += 10
         checklist.append({"label": "Yelp profile linked", "done": True, "pts": 10,
                           "action": "Done — Perplexity indexes Yelp heavily", "needs_gmb": False})
     else:
@@ -3282,16 +3279,14 @@ def _do_ai_visibility_inner(rid):
                           "action": "Go to Account → add your Yelp business ID (find it in your Yelp URL)",
                           "needs_gmb": False})
 
-    # 3. Menu URL — admin sets this; silently award pts if present, hide if not
+    # 3. Menu URL — admin sets this; silently included if present, hidden if not
     if bool(r.menu_url):
-        gbp_score += 10
         checklist.append({"label": "Menu URL added", "done": True, "pts": 10,
                           "action": "Done — AI tools can surface your menu in results", "needs_gmb": False})
 
     # 4. Restaurant profile — vibe + known_for + neighborhood power all AI queries
     has_full_profile = bool(r.neighborhood and r.vibe and r.known_for)
     if has_full_profile:
-        gbp_score += 10
         checklist.append({"label": "Restaurant profile fully filled in", "done": True, "pts": 10,
                           "action": "Done — neighborhood, vibe, and specialties all set", "needs_gmb": False})
     else:
@@ -3305,11 +3300,9 @@ def _do_ai_visibility_inner(rid):
     resp_rate = rstats.get("response_rate", 0) if rstats else 0
     review_total = rstats.get("total", 0) if rstats else 0
     if review_total >= 50:
-        gbp_score += 10
         checklist.append({"label": "50+ Google reviews", "done": True, "pts": 10,
                           "action": "Done — strong review volume boosts AI ranking", "needs_gmb": False})
     elif review_total >= 20:
-        gbp_score += 5
         checklist.append({"label": "Build to 50+ Google reviews (" + str(review_total) + " so far)", "done": False, "pts": 10,
                           "action": "Send review requests to recent customers — 50+ reviews is the AI visibility threshold",
                           "needs_gmb": False})
@@ -3320,11 +3313,9 @@ def _do_ai_visibility_inner(rid):
 
     # 6. Review response rate — active engagement signals a healthy business to AI tools
     if resp_rate >= 75:
-        gbp_score += 10
         checklist.append({"label": "Excellent review response rate (" + str(resp_rate) + "%)", "done": True, "pts": 10,
                           "action": "Done — responding to reviews signals an active, trusted business", "needs_gmb": False})
     elif resp_rate >= 40:
-        gbp_score += 5
         checklist.append({"label": "Increase response rate to 75%+ (currently " + str(resp_rate) + "%)", "done": False, "pts": 10,
                           "action": "Use the Reviews tab to draft and post responses — AI tools reward active owner engagement",
                           "needs_gmb": False})
@@ -3335,7 +3326,6 @@ def _do_ai_visibility_inner(rid):
 
     # 7. GBP OAuth connected — unlocks real-time profile data and future auto-posting
     if gbp_connected:
-        gbp_score += 10
         checklist.append({"label": "Google Business Profile connected", "done": True, "pts": 10,
                           "action": "Done — real-time GBP data is active", "needs_gmb": False})
     else:
@@ -3346,11 +3336,9 @@ def _do_ai_visibility_inner(rid):
     # 8. Business description — keyword-rich descriptions are indexed by every AI search tool
     desc = gbp_data.get("description", "")
     if desc and len(desc) >= 150:
-        gbp_score += 10
         checklist.append({"label": "Business description written (" + str(len(desc)) + " chars)", "done": True, "pts": 10,
                           "action": "Done — description feeds AI search results directly", "needs_gmb": False})
     elif desc:
-        gbp_score += 4
         checklist.append({"label": "Expand GBP description to 150+ chars (currently " + str(len(desc)) + ")", "done": False, "pts": 10,
                           "action": "In Google Business Profile → Info → Description: add cuisine type, atmosphere, and signature dishes",
                           "needs_gmb": True})
@@ -3362,7 +3350,6 @@ def _do_ai_visibility_inner(rid):
     # 9. Phone number in GBP — basic trust signal; missing phone = incomplete listing
     has_phone = bool(gbp_data.get("phone"))
     if gbp_connected and has_phone:
-        gbp_score += 10
         checklist.append({"label": "Phone number in GBP", "done": True, "pts": 10,
                           "action": "Done", "needs_gmb": False})
     elif gbp_connected and not has_phone:
@@ -3377,7 +3364,6 @@ def _do_ai_visibility_inner(rid):
     # 10. Website linked in GBP — AI tools follow the website link to gather more context
     has_website = bool(gbp_data.get("website"))
     if gbp_connected and has_website:
-        gbp_score += 10
         checklist.append({"label": "Website linked in GBP", "done": True, "pts": 10,
                           "action": "Done — AI tools crawl your website for menu and about content", "needs_gmb": False})
     elif gbp_connected and not has_website:
@@ -3396,7 +3382,6 @@ def _do_ai_visibility_inner(rid):
     # regularHours alongside the fields it already fetched (gmb.py).
     has_hours = bool(gbp_data.get("has_hours"))
     if gbp_connected and has_hours:
-        gbp_score += 10
         checklist.append({"label": "Hours listed in GBP", "done": True, "pts": 10,
                           "action": "Done — AI tools can answer \"is it open now\" directly", "needs_gmb": False})
     elif gbp_connected and not has_hours:
@@ -3408,16 +3393,42 @@ def _do_ai_visibility_inner(rid):
                           "action": "In Google Business Profile → Info → Hours: set your regular hours",
                           "needs_gmb": True})
 
-    # gbp_score's own "10 items x 10 pts = 100" comment predates this file
-    # adding a silent bonus item (#3, menu_url — no else branch, so it can
-    # add 10 without ever being one of the 10 "always shown" items) plus
-    # this new hours item — both genuinely optional/bonus-shaped rather
-    # than restructuring every item's point value to keep re-summing to
-    # exactly 100. Clamped here since this is displayed as a literal "X%"
-    # on the hero panel (AIVisibilitySection.heroPanel) — a restaurant
-    # that's hit every single item, including the bonus one, is 100%
-    # complete, not 110%.
-    gbp_score = min(gbp_score, 100)
+    # 12. Recent review activity — volume (#5) and response rate (#6) alone
+    # don't catch a restaurant that's stopped getting NEW reviews; a
+    # steady, current review stream is its own distinct signal AI systems
+    # weigh over one that simply peaked at some point in the past. Pulled
+    # from our own reviews table — no GMB dependency, same as items
+    # 1/2/4/5/6.
+    _rconn = get_conn()
+    recent_reviews = _rconn.execute(
+        "SELECT COUNT(*) FROM reviews WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL AND fetched_at >= datetime('now','-30 days')",
+        (rid,)
+    ).fetchone()[0] or 0
+    _rconn.close()
+    if recent_reviews >= 3:
+        checklist.append({"label": "Active review stream (" + str(recent_reviews) + " in last 30 days)", "done": True, "pts": 10,
+                          "action": "Done — a steady, current review stream signals an active business", "needs_gmb": False})
+    elif recent_reviews >= 1:
+        checklist.append({"label": "Build a steadier review stream (" + str(recent_reviews) + " in last 30 days)", "done": False, "pts": 10,
+                          "action": "Send review requests regularly — a handful of new reviews each month keeps your listing looking active",
+                          "needs_gmb": False})
+    else:
+        checklist.append({"label": "No reviews in the last 30 days", "done": False, "pts": 10,
+                          "action": "Send review requests to recent customers — an active, current stream matters as much as total volume",
+                          "needs_gmb": False})
+
+    # gbp_score is a straight doneCount/totalCount percentage, not a
+    # weighted point sum — the old scheme (raw points per item, uneven
+    # partial-credit branches, clamped to 100 to guard against the silent
+    # bonus items) was exactly why this could disagree with the checklist
+    # grid's own "X/Y done" count (reported directly: 5/11 done showing as
+    # 50%, which was the old 5/10 math, stale the moment an 11th item
+    # existed). This is always self-consistent with whatever the checklist
+    # actually ends up being for this restaurant — currently 11 or 12 items
+    # depending on whether menu_url is set — with no special-casing needed
+    # for that; a new item just changes the denominator automatically.
+    _gbp_done = sum(1 for item in checklist if item["done"])
+    gbp_score = round(_gbp_done / len(checklist) * 100) if checklist else 0
 
     # Social posting cadence — deliberately NOT a checklist item / part of
     # gbp_score (this isn't a Google Business Profile field, it's marketing
