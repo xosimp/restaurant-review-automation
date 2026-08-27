@@ -131,17 +131,19 @@ struct CavnarPremiumButtonSurface: ViewModifier {
             // gradient fill).
             .overlay(shape.stroke(Color.cavnarEmber.opacity(isDisabled ? 0 : 0.7), lineWidth: 1.5))
             // True inner border — inset further within the shape than the
-            // outer ember one, not centered on the edge. AnyShape can't
-            // use strokeBorder (needs InsettableShape), so the inset is
-            // done by hand: a shape view resizes to fill whatever frame
-            // it's given, so padding the stroked view shrinks its
-            // rendered geometry by that amount on every side, landing the
-            // visible line fully inside the button rather than straddling
-            // an edge.
+            // outer ember one, not centered on the edge. Ember2 (the
+            // brighter/lighter accent), same as the outer border's darker
+            // Ember reads on CavnarSegmentedControl — was flat black.
+            // AnyShape can't use strokeBorder (needs InsettableShape), so
+            // the inset is done by hand: a shape view resizes to fill
+            // whatever frame it's given, so padding the stroked view
+            // shrinks its rendered geometry by that amount on every side,
+            // landing the visible line fully inside the button rather
+            // than straddling an edge.
             .overlay(
                 shape
-                    .stroke(Color.black.opacity(isDisabled ? 0 : 0.45), lineWidth: 1.5)
-                    .padding(2.5)
+                    .stroke(Color.cavnarEmber2.opacity(isDisabled ? 0 : 0.6), lineWidth: 1.5)
+                    .padding(1.5)
             )
             .shadow(color: .black.opacity(isDisabled ? 0 : 0.55), radius: 8, x: 0, y: 0)
             .shadow(color: Color.cavnarEmber.opacity(isDisabled ? 0 : 0.4), radius: Self.glowRadius, x: 0, y: 0)
@@ -235,6 +237,33 @@ struct CavnarSecondaryButtonStyle: ButtonStyle {
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
             .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in
                 new && !isDisabled
+            }
+    }
+}
+
+/// Small solid-color action chip (roadmap items' "Send a review
+/// request"/"Go to review queue" style buttons) — was a plain colored
+/// Text with no ButtonStyle at all, so it had no press feedback of any
+/// kind and no haptic, reading as a colored label rather than something
+/// tappable. A colored shadow that recedes on press (rather than a
+/// scale-only change) is what actually sells "this is a physical button"
+/// at this small a size.
+struct CavnarChipButtonStyle: ButtonStyle {
+    var tone: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.cavnarBody(11, weight: 600))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 6)
+            .background(tone)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .shadow(color: tone.opacity(configuration.isPressed ? 0.1 : 0.45), radius: configuration.isPressed ? 1 : 4, x: 0, y: configuration.isPressed ? 0 : 2)
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in
+                new
             }
     }
 }

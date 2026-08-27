@@ -444,25 +444,34 @@ struct AIVisibilitySection: View {
                     if !card.done {
                         Button(action: card.action) {
                             Text(card.actionLabel)
-                                .font(.cavnarBody(11, weight: 600))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 13)
-                                .padding(.vertical, 6)
-                                .background(card.color)
-                                .clipShape(RoundedRectangle(cornerRadius: 6))
                         }
+                        .buttonStyle(CavnarChipButtonStyle(tone: card.color))
                     }
                     Spacer()
                     Button {
-                        if isExpanded { expandedWhy.remove(card.id) } else { expandedWhy.insert(card.id) }
+                        // Same fix as the "show more reviews" animation
+                        // glitch — .animation(nil, value:) alone wasn't
+                        // enough to stop the "why" text from visibly
+                        // dropping/fading in as it appears (ScrollView's
+                        // own implicit content-resize animation leaking
+                        // in); disablesAnimations is the actual override.
+                        var transaction = Transaction(animation: nil)
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            if isExpanded { expandedWhy.remove(card.id) } else { expandedWhy.insert(card.id) }
+                        }
                     } label: {
-                        Text("Why this matters")
-                            .font(.cavnarBody(11))
-                            .foregroundStyle(Color.cavnarInk3)
-                            .underline()
+                        HStack(spacing: 3) {
+                            Text("Why this matters")
+                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                        .font(.cavnarBody(11))
+                        .foregroundStyle(Color.cavnarInk3)
                     }
                 }
             }
+            .animation(nil, value: isExpanded)
         }
         .padding(.vertical, 14)
         .opacity(card.done ? 0.55 : 1)
