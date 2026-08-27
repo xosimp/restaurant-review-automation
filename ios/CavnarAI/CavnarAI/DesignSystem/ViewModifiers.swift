@@ -360,6 +360,29 @@ extension View {
     }
 }
 
+/// The app's standing "quick async action, no spinner" convention — a
+/// gentle breathing opacity on the loading label instead of a spinner.
+/// Same exact curve as AIConsultantView's own private PulsingAnalyzingText
+/// and LaborView's PulsingSparkleIcon, pulled out here so any button-style
+/// loading state (not just AI-insight text) can reuse it instead of a bare
+/// ProgressView().
+struct PulsingText: View {
+    let text: String
+    @State private var pulse = false
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .opacity(pulse ? 1 : 0.45)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                    pulse = true
+                }
+            }
+    }
+}
+
 /// Gradient-tinted stat cell — ports the web dashboard's .rv-stat-cell: a
 /// diagonal brand-color wash, translucent border, and a 1px top highlight
 /// line, instead of a flat solid card fill. Use for hero/primary stat

@@ -184,14 +184,16 @@ struct IntelView: View {
         }
         .padding(.vertical, 18)
         .padding(.horizontal, 22)
-        // 0.06 read as barely-there — bumped for real presence, plus a
-        // soft all-around border (on top of the left accent bar, which
-        // stays the stronger of the two) so the panel reads as a distinct
-        // zone even at a glance, not just a faint tint.
-        .background(Color.cavnarEmber.opacity(0.12))
+        // Was 0.12 — at that strength the panel's own orange wash blended
+        // into the "doing poorly" section's red row tint right on top of
+        // it, making the two hard to tell apart. Dimmed so the panel reads
+        // as a quiet backdrop again and the red/green row tints do the
+        // actual contrast work, with the left accent bar (unchanged, still
+        // the strongest of the three) as the panel's own visual anchor.
+        .background(Color.cavnarEmber.opacity(0.07))
         .overlay(
             RoundedRectangle(cornerRadius: CavnarRadius.card)
-                .strokeBorder(Color.cavnarEmber.opacity(0.28), lineWidth: 1)
+                .strokeBorder(Color.cavnarEmber.opacity(0.2), lineWidth: 1)
         )
         .overlay(alignment: .leading) {
             Rectangle().fill(Color.cavnarEmber.opacity(0.6)).frame(width: 2.5)
@@ -511,10 +513,24 @@ struct IntelView: View {
                 }
                 if c.reviews.count > 1 {
                     Button {
-                        if isExpanded {
-                            expandedCompetitors.remove(c.id)
-                        } else {
-                            expandedCompetitors.insert(c.id)
+                        // .animation(nil, value:) below wasn't enough on its
+                        // own — the button's own label was still visibly
+                        // dropping and fading as the newly-revealed review
+                        // rows pushed it down. disablesAnimations is the
+                        // actual hard override: it suppresses animation for
+                        // this state mutation regardless of any ambient/
+                        // inherited transaction (e.g. ScrollView's own
+                        // implicit content-resize animation), where
+                        // .animation(nil, value:) alone only overrides
+                        // animation attributed to this one value's own change.
+                        var transaction = Transaction(animation: nil)
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            if isExpanded {
+                                expandedCompetitors.remove(c.id)
+                            } else {
+                                expandedCompetitors.insert(c.id)
+                            }
                         }
                     } label: {
                         Text(isExpanded ? "Show less" : "Show \(remaining) more review\(remaining == 1 ? "" : "s")")
@@ -582,13 +598,11 @@ struct IntelView: View {
     /// reads as a tappable control rather than plain text sitting there.
     private var refreshLink: some View {
         Button {
+            Haptic.light()
             Task { await viewModel.refreshCompetitors() }
         } label: {
             if viewModel.isRefreshing {
-                HStack(spacing: 6) {
-                    ProgressView().tint(Color.cavnarEmber2)
-                    Text("Refreshing…")
-                }
+                PulsingText("Refreshing…")
             } else {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.clockwise")
