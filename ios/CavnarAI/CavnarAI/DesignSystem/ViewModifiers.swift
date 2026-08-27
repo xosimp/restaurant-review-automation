@@ -102,32 +102,46 @@ struct CavnarPremiumButtonSurface: ViewModifier {
                         )
                     )
                 // Dark vignette at both edges instead of a bright glossy
-                // sheen — matte/embossed rather than glass-like.
+                // sheen — matte/embossed rather than glass-like. Six
+                // stops, not four — a short, steep ramp straight from
+                // fully-transparent to its darkest value was reading as a
+                // visible seam (a hard-edged line, not a blend); easing
+                // through an intermediate stop on each end, over more of
+                // the button's height, is what actually blends.
                 shape
                     .fill(
                         LinearGradient(
                             stops: [
-                                .init(color: Color.black.opacity(isDisabled ? 0 : 0.22), location: 0),
-                                .init(color: Color.black.opacity(0), location: 0.28),
-                                .init(color: Color.black.opacity(0), location: 0.72),
-                                .init(color: Color.black.opacity(isDisabled ? 0 : 0.3), location: 1),
+                                .init(color: Color.black.opacity(isDisabled ? 0 : 0.32), location: 0),
+                                .init(color: Color.black.opacity(isDisabled ? 0 : 0.1), location: 0.18),
+                                .init(color: Color.black.opacity(0), location: 0.38),
+                                .init(color: Color.black.opacity(0), location: 0.62),
+                                .init(color: Color.black.opacity(isDisabled ? 0 : 0.14), location: 0.82),
+                                .init(color: Color.black.opacity(isDisabled ? 0 : 0.42), location: 1),
                             ],
                             startPoint: .top, endPoint: .bottom
                         )
                     )
             }
             .clipShape(shape)
-            // True inner border — inset within the shape rather than
-            // centered on its edge. AnyShape can't use strokeBorder
-            // (needs InsettableShape), so the inset is done by hand: a
-            // shape view resizes to fill whatever frame it's given, so
-            // padding the stroked view shrinks its rendered geometry by
-            // that amount on every side, landing the visible line fully
-            // inside the button's edge instead of straddling it.
+            // Thin ember border at the true outer edge — the same accent
+            // CavnarSegmentedControl's selected tab reads as having (its
+            // own real/fallback glass material renders that edge
+            // implicitly; this is the explicit equivalent for a plain
+            // gradient fill).
+            .overlay(shape.stroke(Color.cavnarEmber.opacity(isDisabled ? 0 : 0.7), lineWidth: 1.5))
+            // True inner border — inset further within the shape than the
+            // outer ember one, not centered on the edge. AnyShape can't
+            // use strokeBorder (needs InsettableShape), so the inset is
+            // done by hand: a shape view resizes to fill whatever frame
+            // it's given, so padding the stroked view shrinks its
+            // rendered geometry by that amount on every side, landing the
+            // visible line fully inside the button rather than straddling
+            // an edge.
             .overlay(
                 shape
                     .stroke(Color.black.opacity(isDisabled ? 0 : 0.45), lineWidth: 1.5)
-                    .padding(0.75)
+                    .padding(2.5)
             )
             .shadow(color: .black.opacity(isDisabled ? 0 : 0.55), radius: 8, x: 0, y: 0)
             .shadow(color: Color.cavnarEmber.opacity(isDisabled ? 0 : 0.4), radius: Self.glowRadius, x: 0, y: 0)
