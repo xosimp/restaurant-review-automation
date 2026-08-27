@@ -1627,6 +1627,14 @@ def _do_mobile_intel(restaurant_id):
                     "review_count": c.get("review_count", 0),
                     "vicinity": c.get("vicinity", ""),
                     "reviews": c.get("reviews", []),
+                    # place_id/custom weren't passed through before — the
+                    # client had no way to identify which competitor to
+                    # remove, or to know which ones were owner-added at all
+                    # (competitor.py's run_competitor_analysis already
+                    # tags custom ones with "custom": True, this just
+                    # surfaces both fields instead of dropping them here).
+                    "place_id": c.get("place_id", ""),
+                    "custom": c.get("custom", False),
                 }
                 for c in blob.get("competitors", [])
             ],
@@ -1686,6 +1694,74 @@ def mobile_refresh_competitors_status(job_id, current_user):
         return jsonify(**result)
     except Exception as e:
         return jsonify(ok=False, status="error", error=str(e)), 500
+
+
+@mobile_bp.route("/intel/search-places")
+@mobile_login_required
+def mobile_search_places(current_user):
+    """Owner-facing competitor search — Google Places Text Search biased
+    toward this restaurant's own location. Lets an owner add a real
+    competitor the automatic type-filtered nearby search wouldn't surface
+    on its own (see competitor.py's search_places_near docstring), by
+    typing a name and picking the right result rather than needing a raw
+    Google Place ID (that's what the admin-only custom_competitors field
+    already handles)."""
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify(ok=True, results=[])
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not (restaurant and restaurant.module_reviews and restaurant.module_labor
+            and restaurant.module_inventory and restaurant.module_marketing):
+        return jsonify(ok=False, error="Competitor intelligence is available on the Full System plan only."), 403
+    from competitor import search_places_near
+    results = search_places_near(q, restaurant.latitude, restaurant.longitude)
+    return jsonify(ok=True, results=results)
+
+
+@mobile_bp.route("/intel/add-competitor", methods=["POST"])
+@mobile_login_required
+def mobile_add_competitor(current_user):
+    """Appends a Place ID to custom_competitors (same comma-separated field
+    the admin panel's own competitor text field writes to — this is just a
+    client-facing, search-driven way to write the same field) so the next
+    refresh-competitors run picks it up permanently, same as any admin-
+    added one already does."""
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not (restaurant and restaurant.module_reviews and restaurant.module_labor
+            and restaurant.module_inventory and restaurant.module_marketing):
+        return jsonify(ok=False, error="Competitor intelligence is available on the Full System plan only."), 403
+    data = request.get_json(silent=True) or {}
+    place_id = (data.get("place_id") or "").strip()
+    if not place_id:
+        return jsonify(ok=False, error="Missing place_id"), 400
+    existing = [pid.strip() for pid in (restaurant.custom_competitors or "").split(",") if pid.strip()]
+    if place_id not in existing:
+        existing.append(place_id)
+        update_restaurant(rid, {"custom_competitors": ",".join(existing)})
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/intel/remove-competitor", methods=["POST"])
+@mobile_login_required
+def mobile_remove_competitor(current_user):
+    """Only ever removes from custom_competitors — an auto-discovered
+    competitor (get_nearby_competitors' own results) was never in this
+    field to begin with, so there's nothing here for the client to
+    accidentally remove that it didn't add itself."""
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    data = request.get_json(silent=True) or {}
+    place_id = (data.get("place_id") or "").strip()
+    if not place_id:
+        return jsonify(ok=False, error="Missing place_id"), 400
+    existing = [pid.strip() for pid in (restaurant.custom_competitors or "").split(",") if pid.strip()]
+    existing = [pid for pid in existing if pid != place_id]
+    update_restaurant(rid, {"custom_competitors": ",".join(existing)})
+    return jsonify(ok=True)
 
 
 @mobile_bp.route("/intel/ai-visibility")

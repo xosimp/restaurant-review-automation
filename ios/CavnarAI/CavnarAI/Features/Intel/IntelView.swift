@@ -18,6 +18,7 @@ struct IntelView: View {
     @State private var aiVisibilityViewModel = AIVisibilityViewModel()
     @State private var subTab: IntelSubTab = .competitors
     @State private var expandedCompetitors: Set<String> = []
+    @State private var showAddCompetitor = false
     // Drives the initial-load reveal — stats fade/rise into place first,
     // the AI insight follows a beat after (see content(_:)'s two .delay
     // values below). Tied to the data load finishing, not view-appear, so
@@ -61,6 +62,9 @@ struct IntelView: View {
         }
         .cavnarModuleBackground()
         .refreshable { await viewModel.load() }
+        .sheet(isPresented: $showAddCompetitor) {
+            AddCompetitorSheet(viewModel: viewModel)
+        }
         .navigationTitle("Intel")
         .navigationBarTitleDisplayMode(.inline)
         // Replaces the plain cavnarEmberBackButton() — owns the back
@@ -476,6 +480,7 @@ struct IntelView: View {
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber)
                 Spacer()
+                addCompetitorLink
                 refreshLink
             }
             if let error = viewModel.refreshError {
@@ -526,6 +531,23 @@ struct IntelView: View {
                     Text(c.name)
                         .font(.cavnarBody(13.5, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
+                    // Only ever shown for an owner-added competitor — an
+                    // auto-discovered one was never in custom_competitors,
+                    // so there's nothing here for the client to remove
+                    // that it didn't add itself (mirrors mobile_api.py's
+                    // own remove-competitor route, which only ever
+                    // touches that field).
+                    if c.isCustom {
+                        Button {
+                            Haptic.light()
+                            Task { await viewModel.removeCompetitor(placeId: c.placeId) }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color.cavnarInk3)
+                        }
+                        .buttonStyle(.plain)
+                    }
                     Spacer()
                     if let diff {
                         Text(diff == 0 ? "tied" : (diff > 0 ? "▲\(String(format: "%.1f", diff)) ahead" : "▼\(String(format: "%.1f", abs(diff))) behind"))
@@ -543,6 +565,11 @@ struct IntelView: View {
                             .font(.cavnarBody(11))
                             .foregroundStyle(Color.cavnarInk3)
                             .lineLimit(1)
+                    }
+                    if c.isCustom {
+                        Text("· Added by you")
+                            .font(.cavnarBody(11, weight: 600))
+                            .foregroundStyle(Color.cavnarEmber2)
                     }
                 }
                 ForEach(visibleReviews) { r in
@@ -639,6 +666,28 @@ struct IntelView: View {
         }
         .buttonStyle(CavnarPrimaryButtonStyle())
         .disabled(viewModel.isRefreshing)
+    }
+
+    /// Same small-pill language as refreshLink right beside it — this is
+    /// the one new control this feature needed, so it reuses an already-
+    /// established visual pattern on this exact page rather than
+    /// introducing a new button style or a separate section just for it.
+    private var addCompetitorLink: some View {
+        Button {
+            Haptic.light()
+            showAddCompetitor = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "plus")
+                    .font(.system(size: 9, weight: .bold))
+                Text("Add")
+            }
+        }
+        .font(.cavnarBody(10.5, weight: 700))
+        .foregroundStyle(Color.cavnarEmber2)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 5)
+        .overlay(Capsule().strokeBorder(Color.cavnarEmber2.opacity(0.4), lineWidth: 1))
     }
 
     /// Small pill next to the "NEARBY COMPETITORS" kicker — quiet enough

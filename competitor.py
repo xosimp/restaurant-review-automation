@@ -197,6 +197,53 @@ def _is_pure_beverage_spot(types) -> bool:
     return bool(type_set & _PURE_BEVERAGE_TYPES) and not (type_set & _FOOD_SIGNAL_TYPES)
 
 
+def search_places_near(query: str, lat: float = None, lng: float = None, max_results: int = 6) -> list:
+    """Text-search Google Places for a restaurant by name, biased toward
+    (lat, lng) when available — powers the owner-facing "add a competitor"
+    search in the app (mobile_api.py's /intel/search-places), so an owner
+    can type a name and pick from real nearby candidates instead of the
+    admin-only custom_competitors field's raw Place ID text entry.
+
+    Deliberately a broad name search with a location BIAS, not the
+    type/keyword-filtered search get_nearby_competitors runs — that filter
+    is exactly why a genuine neighbor can be invisible to the automatic
+    discovery: it biases toward restaurants sharing the same Google
+    "types" as this restaurant's own listing, so a fine-dining place next
+    door to a casual spot may never surface in get_nearby_competitors'
+    own results even at 2000m, purely because their types don't overlap.
+    This function exists specifically so an owner can add that exact case
+    themselves.
+    """
+    if not PLACES_API_KEY or not query:
+        return []
+    try:
+        params = {"query": f"{query} restaurant", "key": PLACES_API_KEY}
+        if lat is not None and lng is not None:
+            params["location"] = f"{lat},{lng}"
+            params["radius"] = 8000
+        r = requests.get(
+            "https://maps.googleapis.com/maps/api/place/textsearch/json",
+            params=params, timeout=8,
+        )
+        data = r.json()
+        if data.get("status") not in ("OK", "ZERO_RESULTS"):
+            return []
+        return [
+            {
+                "place_id": item.get("place_id", ""),
+                "name": item.get("name", ""),
+                "address": item.get("formatted_address", ""),
+                "rating": item.get("rating", 0),
+                "review_count": item.get("user_ratings_total", 0),
+            }
+            for item in data.get("results", [])[:max_results]
+            if item.get("place_id") and item.get("name")
+        ]
+    except Exception as e:
+        print(f"[Competitor] search_places_near error: {e}")
+        return []
+
+
 def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_results: int = 5) -> list:
     """Find nearby restaurants using the Google Places API."""
     if not PLACES_API_KEY or not google_place_id:

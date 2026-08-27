@@ -1352,9 +1352,14 @@ def test_intel_endpoint_parses_real_json_blob_shape(client, db_path):
         {"name": "What competitors are doing poorly", "bullets": ["Inconsistent hours"]},
     ]
     assert data["recommendations"] == ["Speed up weekend service", "Post updated hours"]
+    # place_id/custom weren't in this fixture's blob — asserting the
+    # endpoint's own documented defaults ("" / False) for a competitor
+    # entry that predates those two fields, same as a restaurant whose
+    # competitor_intel was generated before this change would have.
     assert data["competitors"] == [{
         "name": "Mio Modo", "rating": 4.5, "review_count": 270, "vicinity": "123 Main St",
         "reviews": [{"author": "Sam", "rating": 5, "text": "Great!", "time": "a week ago"}],
+        "place_id": "", "custom": False,
     }]
     assert data["updated_at"] == "2026-08-01 12:00:00"
 

@@ -23,11 +23,35 @@ struct Competitor: Decodable, Identifiable {
     let reviewCount: Int
     let vicinity: String
     let reviews: [CompetitorReview]
+    let placeId: String
+    // True for a competitor the owner added themselves (custom_competitors
+    // on the backend) rather than one Google's own nearby-search surfaced —
+    // drives the delete affordance in competitorRow, which only makes
+    // sense for something the owner actually chose to add.
+    let isCustom: Bool
 
     var id: String { name }
 
     enum CodingKeys: String, CodingKey {
         case name, rating, vicinity, reviews
+        case reviewCount = "review_count"
+        case placeId = "place_id"
+        case isCustom = "custom"
+    }
+}
+
+struct PlaceSearchResult: Decodable, Identifiable {
+    let placeId: String
+    let name: String
+    let address: String
+    let rating: Double
+    let reviewCount: Int
+
+    var id: String { placeId }
+
+    enum CodingKeys: String, CodingKey {
+        case placeId = "place_id"
+        case name, address, rating
         case reviewCount = "review_count"
     }
 }
@@ -166,5 +190,60 @@ final class IntelViewModel {
         }
         refreshError = "Competitor refresh is taking longer than expected — check back in a bit."
         isRefreshing = false
+    }
+
+    private struct SearchPlacesResponse: Decodable {
+        let ok: Bool
+        let results: [PlaceSearchResult]?
+    }
+
+    /// hapticOnError: false — a search that comes back empty because the
+    /// name doesn't exist yet mid-typing isn't a "failure" the way a login
+    /// error is; this just quietly returns nothing for AddCompetitorSheet
+    /// to render as "no matches" rather than buzzing an error haptic on
+    /// every few keystrokes of a normal search.
+    func searchPlaces(query: String) async -> [PlaceSearchResult] {
+        do {
+            let response: SearchPlacesResponse = try await client.send(
+                "/mobile/api/intel/search-places", query: ["q": query], hapticOnError: false
+            )
+            return response.results ?? []
+        } catch {
+            return []
+        }
+    }
+
+    private struct PlaceIdBody: Encodable {
+        let placeId: String
+        enum CodingKeys: String, CodingKey { case placeId = "place_id" }
+    }
+
+    /// Saves the Place ID, then immediately kicks off the same refresh job
+    /// refreshLink/refreshButton already trigger — so the newly-added
+    /// competitor's reviews get pulled in and the AI insight regenerates
+    /// to reflect them without the owner needing to separately remember to
+    /// hit "Refresh" right after adding one.
+    @discardableResult
+    func addCompetitor(placeId: String) async -> Bool {
+        do {
+            let _: APIClient.EmptyResponse = try await client.send(
+                "/mobile/api/intel/add-competitor", method: .post, body: PlaceIdBody(placeId: placeId)
+            )
+            await refreshCompetitors()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func removeCompetitor(placeId: String) async {
+        do {
+            let _: APIClient.EmptyResponse = try await client.send(
+                "/mobile/api/intel/remove-competitor", method: .post, body: PlaceIdBody(placeId: placeId)
+            )
+            await refreshCompetitors()
+        } catch {
+            refreshError = "Couldn't remove that competitor — try again."
+        }
     }
 }
