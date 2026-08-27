@@ -69,6 +69,10 @@ struct AIVisibilitySection: View {
         }
         .buttonStyle(CavnarPrimaryButtonStyle())
         .disabled(viewModel.isChecking)
+        // The button itself stays hug-content sized — this centers that
+        // hug-content button within the full width instead of letting the
+        // parent's .leading-aligned VStack pin it to the left edge.
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Pre-check hero — this screen used to be one bare button

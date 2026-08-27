@@ -54,41 +54,37 @@ extension View {
     }
 }
 
-/// The button treatment from the design preview, tuned twice since the
-/// first shipped version: "way too glowy" (the original two large
-/// stacked shadows) collapsed to one moderate glow, and then that glow
-/// was still offset downward (y: 4) rather than surrounding the button
-/// evenly — fixed by centering it (y: 0) so it reads as ambient bloom on
-/// every side, not a bottom-heavy smear. The dark elevation shadow is a
-/// SEPARATE layer, bigger now too, applied BEFORE the glow in the
-/// modifier chain — SwiftUI shadows each wrap everything above them, so
-/// the shadow applied first stays the crisp, close-to-the-edge layer,
-/// and the ambient glow applied after it is the one that reads as the
-/// softer outer halo — which is what actually gives "lifting off the
-/// page" instead of just glowing. Corner radius is a deliberate,
-/// moderate round (not a full capsule/pill) — reuses CavnarRadius.card
-/// rather than a stadium shape, which read as more rounded than wanted
-/// once buttons stopped being forced full-width (see
-/// CavnarPrimaryButtonStyle below). Shared by CavnarPrimaryButtonStyle,
-/// CavnarSplitButton, and the Filled small icon-button treatment.
+/// The button treatment from the design preview, tuned several times
+/// since the first shipped version. Current state: a three-stop
+/// gradient fill (bright top, ember mid, deep burnt base); NO glossy
+/// white sheen anymore (that read as an unwanted "glass effect") —
+/// replaced with a subtle dark vignette at the top and bottom edges for
+/// a matte, embossed feel instead of a shiny one; a true inner border
+/// (inset within the shape, not centered on its edge); and two
+/// perfectly symmetric shadow layers, both centered (x: 0, y: 0) so
+/// neither reads as bottom-heavy — a tight, darker elevation shadow
+/// applied BEFORE a wider, softer ember glow in the modifier chain.
+/// SwiftUI shadows each wrap everything above them, so the shadow
+/// applied first stays the crisp layer sitting close to the edge, and
+/// the glow applied after it is what extends further out from behind
+/// that tight shadow — "shadow in front, glow behind it" was the ask,
+/// and this ordering is what actually produces that read. No floor
+/// reflection anymore either — it was its own asymmetric glow sitting
+/// only below the button, which directly fought the "equal on all
+/// sides" requirement. Shared by CavnarPrimaryButtonStyle and
+/// CavnarSplitButton.
 struct CavnarPremiumButtonSurface: ViewModifier {
     var isDisabled: Bool = false
-    // Off for small/dense contexts (icon buttons) where a floor
-    // reflection either looks disproportionate or has no open space
-    // below it to read as intentional — on by default for standalone
-    // CTAs, which is every existing call site as of this change.
-    var showFloorReflection: Bool = true
-    // Overridable per call site — AskCavnarFAB is a near-square icon
-    // button that needs a true Capsule (reads as circular at that aspect
-    // ratio) even though the default here is the app's own moderate
-    // rounded-rect for text CTAs.
+    // Overridable per call site — CavnarSplitButton's own reference
+    // match was a true pill, unlike the moderate rounded-rect default
+    // tuned for text CTAs.
     var shape: AnyShape = CavnarPremiumButtonSurface.defaultShape
 
     // #F0946B / #D4583A (brand Ember) / #9E3B24 — bright-to-deep three
     // stop gradient, not evenly spaced (48%, not 50%, matches reference).
     private static let gradientTop = Color(red: 0.941, green: 0.580, blue: 0.420)
     private static let gradientBase = Color(red: 0.620, green: 0.231, blue: 0.141)
-    static let glowRadius: CGFloat = 16
+    static let glowRadius: CGFloat = 20
     static let defaultShape = AnyShape(RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous))
 
     func body(content: Content) -> some View {
@@ -105,57 +101,45 @@ struct CavnarPremiumButtonSurface: ViewModifier {
                             startPoint: .top, endPoint: .bottom
                         )
                     )
+                // Dark vignette at both edges instead of a bright glossy
+                // sheen — matte/embossed rather than glass-like.
                 shape
                     .fill(
                         LinearGradient(
                             stops: [
-                                .init(color: Color.white.opacity(isDisabled ? 0 : 0.32), location: 0),
-                                .init(color: Color.white.opacity(isDisabled ? 0 : 0.08), location: 0.42),
-                                .init(color: Color.white.opacity(0), location: 0.62),
+                                .init(color: Color.black.opacity(isDisabled ? 0 : 0.22), location: 0),
+                                .init(color: Color.black.opacity(0), location: 0.28),
+                                .init(color: Color.black.opacity(0), location: 0.72),
+                                .init(color: Color.black.opacity(isDisabled ? 0 : 0.3), location: 1),
                             ],
                             startPoint: .top, endPoint: .bottom
                         )
                     )
-                shape.stroke(Color.white.opacity(isDisabled ? 0 : 0.18), lineWidth: 1)
             }
             .clipShape(shape)
-            .shadow(color: .black.opacity(isDisabled ? 0 : 0.6), radius: 14, x: 0, y: 7)
-            .shadow(color: Color.cavnarEmber.opacity(isDisabled ? 0 : 0.42), radius: Self.glowRadius, x: 0, y: 0)
-            // Added AFTER clipShape/shadow so it isn't clipped to the
-            // button's own shape — a second, independent background
-            // layer whose GeometryReader reads this view's own
-            // (already-shaped) size, then positions a blurred glow just
-            // below it.
-            .background {
-                if showFloorReflection {
-                    GeometryReader { geo in
-                        Ellipse()
-                            .fill(
-                                RadialGradient(
-                                    colors: [
-                                        Color.cavnarEmber.opacity(isDisabled ? 0 : 0.32),
-                                        Color.cavnarEmber.opacity(0),
-                                    ],
-                                    center: .center, startRadius: 0, endRadius: geo.size.width * 0.35
-                                )
-                            )
-                            .frame(width: geo.size.width * 0.7, height: 18)
-                            .position(x: geo.size.width / 2, y: geo.size.height + 13)
-                            .blur(radius: 7)
-                    }
-                    .allowsHitTesting(false)
-                }
-            }
+            // True inner border — inset within the shape rather than
+            // centered on its edge. AnyShape can't use strokeBorder
+            // (needs InsettableShape), so the inset is done by hand: a
+            // shape view resizes to fill whatever frame it's given, so
+            // padding the stroked view shrinks its rendered geometry by
+            // that amount on every side, landing the visible line fully
+            // inside the button's edge instead of straddling it.
+            .overlay(
+                shape
+                    .stroke(Color.black.opacity(isDisabled ? 0 : 0.45), lineWidth: 1.5)
+                    .padding(0.75)
+            )
+            .shadow(color: .black.opacity(isDisabled ? 0 : 0.55), radius: 8, x: 0, y: 0)
+            .shadow(color: Color.cavnarEmber.opacity(isDisabled ? 0 : 0.4), radius: Self.glowRadius, x: 0, y: 0)
     }
 }
 
 extension View {
     func cavnarPremiumButtonSurface(
         isDisabled: Bool = false,
-        showFloorReflection: Bool = true,
         shape: AnyShape = CavnarPremiumButtonSurface.defaultShape
     ) -> some View {
-        modifier(CavnarPremiumButtonSurface(isDisabled: isDisabled, showFloorReflection: showFloorReflection, shape: shape))
+        modifier(CavnarPremiumButtonSurface(isDisabled: isDisabled, shape: shape))
     }
 }
 
