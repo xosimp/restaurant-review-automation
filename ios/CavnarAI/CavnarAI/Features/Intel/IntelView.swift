@@ -6,6 +6,13 @@ private enum IntelSubTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Competitors tab is deliberately unboxed — no .cavnarCard() walls anywhere
+/// on this screen — matching the same direction Food Cost/Labor's own
+/// Analytics tabs already took (see FoodCostAnalyticsSection's doc comment:
+/// "built around whitespace and typography instead of stacking bordered
+/// card after bordered card"). Sections signal themselves with a kicker
+/// label and generous vertical spacing; grouped items use a hairline
+/// divider or a colored left-edge accent bar instead of a box.
 struct IntelView: View {
     @State private var viewModel = IntelViewModel()
     @State private var aiVisibilityViewModel = AIVisibilityViewModel()
@@ -20,7 +27,7 @@ struct IntelView: View {
                 .padding(.bottom, 16)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 32) {
                     if subTab == .competitors {
                         if let summary = viewModel.summary {
                             if !summary.hasData {
@@ -42,7 +49,8 @@ struct IntelView: View {
                         AIVisibilitySection(viewModel: aiVisibilityViewModel)
                     }
                 }
-                .padding(20)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 24)
             }
         }
         .cavnarModuleBackground()
@@ -82,43 +90,19 @@ struct IntelView: View {
             Text(intro)
                 .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk2)
-        }
-
-        ForEach(summary.sections) { section in
-            VStack(alignment: .leading, spacing: 8) {
-                Text(section.name)
-                    .font(.cavnarBody(13, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
-                ForEach(section.bullets, id: \.self) { bullet in
-                    Text("• \(bullet)")
-                        .font(.cavnarBody(13))
-                        .foregroundStyle(Color.cavnarInk2)
-                }
-            }
-            .cavnarCard()
+                .lineSpacing(4)
         }
 
         if let ownRating = summary.ownRating, !summary.competitors.isEmpty {
-            ratingComparisonChart(summary, ownRating: ownRating)
+            ratingComparisonSection(summary, ownRating: ownRating)
+        }
+
+        ForEach(summary.sections) { section in
+            marketSection(section)
         }
 
         if !summary.recommendations.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Recommendations")
-                    .font(.cavnarBody(13, weight: 700))
-                    .foregroundStyle(Color.cavnarEmber)
-                ForEach(summary.recommendations, id: \.self) { rec in
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "lightbulb.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color.cavnarEmber)
-                        Text(rec)
-                            .font(.cavnarBody(13))
-                            .foregroundStyle(Color.cavnarInk)
-                    }
-                }
-            }
-            .cavnarCard()
+            recommendationsSection(summary.recommendations)
         }
 
         if !summary.competitors.isEmpty {
@@ -126,7 +110,7 @@ struct IntelView: View {
         }
     }
 
-    // MARK: - Summary stat row
+    // MARK: - Summary stat row (bare — no card, just numbers + hairline dividers)
 
     private func statRow(_ summary: IntelSummary) -> some View {
         let count = summary.competitors.count
@@ -134,36 +118,35 @@ struct IntelView: View {
         let delta = summary.ownRating.map { (($0 - avgRating) * 10).rounded() / 10 }
 
         return HStack(spacing: 0) {
-            statTile(value: "\(count)", label: "Competitors tracked", tone: Color.cavnarInk)
-            Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(width: 1, height: 30)
-            statTile(value: count > 0 ? String(format: "%.1f★", avgRating) : "—", label: "Avg competitor rating", tone: Color.cavnarInk)
-            Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(width: 1, height: 30)
+            statTile(value: "\(count)", label: "Tracked")
+            Rectangle().fill(Color.cavnarPaper3).frame(width: 1, height: 28)
+            statTile(value: count > 0 ? String(format: "%.1f★", avgRating) : "—", label: "Market avg")
+            Rectangle().fill(Color.cavnarPaper3).frame(width: 1, height: 28)
             if let own = summary.ownRating, let delta {
-                VStack(spacing: 4) {
+                VStack(spacing: 5) {
                     Text(String(format: "%.1f★", own))
-                        .font(.cavnarNumber(18, weight: 700))
+                        .font(.cavnarNumber(20, weight: 700))
                         .foregroundStyle(own >= 4.0 ? Color.cavnarGreen : (own >= 3.0 ? Color.cavnarAmber : Color.cavnarRed))
-                    Text(delta == 0 ? "TIED" : (delta > 0 ? "▲\(String(format: "%.1f", delta)) ABOVE AVG" : "▼\(String(format: "%.1f", abs(delta))) BELOW AVG"))
-                        .font(.cavnarBody(8, weight: 700))
-                        .tracking(0.6)
+                    Text(delta == 0 ? "TIED" : (delta > 0 ? "▲\(String(format: "%.1f", delta)) ahead" : "▼\(String(format: "%.1f", abs(delta))) behind"))
+                        .font(.cavnarBody(8.5, weight: 700))
+                        .tracking(0.4)
                         .foregroundStyle(Color.cavnarInk3)
                 }
                 .frame(maxWidth: .infinity)
             } else {
-                statTile(value: "\(summary.recommendations.count)", label: "Action items", tone: Color.cavnarInk)
+                statTile(value: "\(summary.recommendations.count)", label: "Action items")
             }
         }
-        .cavnarCard()
     }
 
-    private func statTile(value: String, label: String, tone: Color) -> some View {
-        VStack(spacing: 4) {
+    private func statTile(value: String, label: String) -> some View {
+        VStack(spacing: 5) {
             Text(value)
-                .font(.cavnarNumber(18, weight: 700))
-                .foregroundStyle(tone)
+                .font(.cavnarNumber(20, weight: 700))
+                .foregroundStyle(Color.cavnarInk)
             Text(label.uppercased())
-                .font(.cavnarBody(8, weight: 700))
-                .tracking(0.6)
+                .font(.cavnarBody(8.5, weight: 700))
+                .tracking(0.4)
                 .foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity)
@@ -171,29 +154,28 @@ struct IntelView: View {
 
     // MARK: - Rating comparison
 
-    private func ratingComparisonChart(_ summary: IntelSummary, ownRating: Double) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func ratingComparisonSection(_ summary: IntelSummary, ownRating: Double) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
             Text("RATING COMPARISON")
                 .font(.cavnarBody(10, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
-            VStack(spacing: 8) {
-                ratingBar(name: "Your restaurant", rating: ownRating, tone: Color.cavnarEmber, boldName: true)
+            VStack(spacing: 12) {
+                ratingBar(name: "Your restaurant", rating: ownRating, tone: Color.cavnarEmber2, boldName: true)
                 ForEach(summary.competitors) { c in
-                    ratingBar(name: c.name, rating: c.rating, tone: Color.cavnarEmber.opacity(0.45), boldName: false)
+                    ratingBar(name: c.name, rating: c.rating, tone: Color.cavnarPaper3, boldName: false)
                 }
             }
         }
-        .cavnarCard()
     }
 
     private func ratingBar(name: String, rating: Double, tone: Color, boldName: Bool) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Text(name)
                 .font(.cavnarBody(12, weight: boldName ? 700 : 400))
                 .foregroundStyle(boldName ? Color.cavnarInk : Color.cavnarInk2)
                 .lineLimit(1)
-                .frame(width: 100, alignment: .leading)
+                .frame(width: 96, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.cavnarPaper3.opacity(0.6))
@@ -201,31 +183,96 @@ struct IntelView: View {
                         .frame(width: geo.size.width * min(rating / 5, 1))
                 }
             }
-            .frame(height: 10)
+            .frame(height: 7)
             Text(String(format: "%.1f", rating))
                 .font(.cavnarNumber(12, weight: 700))
-                .foregroundStyle(boldName ? Color.cavnarEmber : Color.cavnarInk2)
-                .frame(width: 30, alignment: .trailing)
+                .foregroundStyle(boldName ? Color.cavnarEmber2 : Color.cavnarInk2)
+                .frame(width: 28, alignment: .trailing)
         }
     }
 
-    // MARK: - Competitor cards
+    // MARK: - What the market's doing (well/poorly sections)
+
+    private func marketSection(_ section: IntelSection) -> some View {
+        let isGood = section.name.localizedCaseInsensitiveContains("well")
+        let tone = isGood ? Color.cavnarGreen : Color.cavnarRed
+        let icon = isGood ? "checkmark" : "xmark"
+
+        return VStack(alignment: .leading, spacing: 14) {
+            Text(section.name.uppercased())
+                .font(.cavnarBody(10, weight: 700))
+                .tracking(1.2)
+                .foregroundStyle(Color.cavnarEmber2)
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(section.bullets, id: \.self) { bullet in
+                    HStack(alignment: .top, spacing: 10) {
+                        ZStack {
+                            Circle().fill(tone.opacity(0.16)).frame(width: 16, height: 16)
+                            Image(systemName: icon)
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(tone)
+                        }
+                        .padding(.top, 1)
+                        Text(bullet)
+                            .font(.cavnarBody(13))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .lineSpacing(3)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Recommendations
+
+    private func recommendationsSection(_ recommendations: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("WHAT TO DO ABOUT IT")
+                .font(.cavnarBody(10, weight: 700))
+                .tracking(1.2)
+                .foregroundStyle(Color.cavnarEmber2)
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(Array(recommendations.enumerated()), id: \.offset) { index, rec in
+                    HStack(alignment: .top, spacing: 10) {
+                        Text("\(index + 1)")
+                            .font(.cavnarNumber(11, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber)
+                            .frame(width: 18, height: 18)
+                            .background(Color.cavnarEmber.opacity(0.14))
+                            .clipShape(Circle())
+                        Text(rec)
+                            .font(.cavnarBody(13))
+                            .foregroundStyle(Color.cavnarInk)
+                            .lineSpacing(3)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Competitor list (hairline dividers + colored accent bar, no cards)
 
     private func competitorsSection(_ summary: IntelSummary) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("NEARBY COMPETITORS")
                     .font(.cavnarBody(10, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
                 Spacer()
-                refreshButton(label: "Refresh")
+                refreshLink
             }
             if let error = viewModel.refreshError {
                 Text(error).font(.cavnarBody(11)).foregroundStyle(Color.cavnarRed)
             }
-            ForEach(summary.competitors) { c in
-                competitorCard(c, ownRating: summary.ownRating)
+            VStack(spacing: 0) {
+                ForEach(Array(summary.competitors.enumerated()), id: \.element.id) { index, c in
+                    competitorRow(c, ownRating: summary.ownRating)
+                    if index < summary.competitors.count - 1 {
+                        Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1)
+                            .padding(.leading, 14)
+                    }
+                }
             }
             if let updatedAt = summary.updatedAt {
                 updatedLabel(updatedAt)
@@ -233,63 +280,73 @@ struct IntelView: View {
         }
     }
 
-    private func competitorCard(_ c: Competitor, ownRating: Double?) -> some View {
+    private func competitorRow(_ c: Competitor, ownRating: Double?) -> some View {
         let isExpanded = expandedCompetitors.contains(c.id)
         let visibleReviews = isExpanded ? c.reviews : Array(c.reviews.prefix(2))
         let remaining = c.reviews.count - visibleReviews.count
+        let diff = ownRating.map { ((($0) - c.rating) * 10).rounded() / 10 }
+        let accent: Color = {
+            guard let diff else { return Color.cavnarPaper3 }
+            if diff > 0 { return Color.cavnarGreen }
+            if diff < 0 { return Color.cavnarRed }
+            return Color.cavnarInk3
+        }()
 
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top) {
-                Text(c.name)
-                    .font(.cavnarBody(13, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
-                Spacer()
-                if let ownRating {
-                    let diff = ((ownRating - c.rating) * 10).rounded() / 10
-                    if diff != 0 {
-                        Text(diff > 0 ? "▲\(String(format: "%.1f", diff)) ahead" : "▼\(String(format: "%.1f", abs(diff))) behind")
+        return HStack(alignment: .top, spacing: 12) {
+            Rectangle().fill(accent).frame(width: 2.5)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(c.name)
+                        .font(.cavnarBody(13.5, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                    Spacer()
+                    if let diff {
+                        Text(diff == 0 ? "tied" : (diff > 0 ? "▲\(String(format: "%.1f", diff)) ahead" : "▼\(String(format: "%.1f", abs(diff))) behind"))
                             .font(.cavnarBody(9, weight: 700))
-                            .foregroundStyle(diff > 0 ? Color.cavnarGreen : Color.cavnarAmber)
-                    } else {
-                        Text("tied")
-                            .font(.cavnarBody(9, weight: 700))
-                            .foregroundStyle(Color.cavnarInk3)
+                            .foregroundStyle(diff > 0 ? Color.cavnarGreen : (diff < 0 ? Color.cavnarRed : Color.cavnarInk3))
                     }
                 }
-                Text("\(String(format: "%.1f", c.rating))★ \(c.reviewCount) reviews")
-                    .font(.cavnarNumber(11))
-                    .foregroundStyle(Color.cavnarAmber)
-            }
-            if !c.vicinity.isEmpty {
-                Text(c.vicinity).font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
-            }
-            ForEach(visibleReviews) { r in
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(r.rating >= 4 ? Color.cavnarGreen : Color.cavnarRed)
-                    Text(r.text)
+                HStack(spacing: 6) {
+                    Text("\(String(format: "%.1f", c.rating))★")
+                        .font(.cavnarNumber(11, weight: 700))
+                        .foregroundStyle(Color.cavnarAmber)
+                    Text("\(c.reviewCount) reviews")
                         .font(.cavnarBody(11))
                         .foregroundStyle(Color.cavnarInk3)
-                        .lineLimit(2)
+                    if !c.vicinity.isEmpty {
+                        Text("· \(c.vicinity)")
+                            .font(.cavnarBody(11))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .lineLimit(1)
+                    }
                 }
-                .padding(.top, 4)
-                .overlay(alignment: .top) {
-                    Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                ForEach(visibleReviews) { r in
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 8))
+                            .foregroundStyle(r.rating >= 4 ? Color.cavnarGreen : Color.cavnarRed)
+                            .padding(.top, 2)
+                        Text(r.text)
+                            .font(.cavnarBody(11.5))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .lineLimit(2)
+                            .lineSpacing(2)
+                    }
+                    .padding(.top, 2)
                 }
-            }
-            if remaining > 0 {
-                Button {
-                    expandedCompetitors.insert(c.id)
-                } label: {
-                    Text("Show \(remaining) more review\(remaining == 1 ? "" : "s")")
-                        .font(.cavnarBody(11, weight: 600))
-                        .foregroundStyle(Color.cavnarEmber)
+                if remaining > 0 {
+                    Button {
+                        expandedCompetitors.insert(c.id)
+                    } label: {
+                        Text("Show \(remaining) more review\(remaining == 1 ? "" : "s")")
+                            .font(.cavnarBody(11, weight: 600))
+                            .foregroundStyle(Color.cavnarEmber2)
+                    }
+                    .padding(.top, 1)
                 }
-                .padding(.top, 2)
             }
         }
-        .cavnarCard()
+        .padding(.vertical, 14)
     }
 
     private func updatedLabel(_ updatedAt: String) -> some View {
@@ -304,7 +361,7 @@ struct IntelView: View {
             }
         }
         return HStack(spacing: 8) {
-            Text("Last updated: \(datePart)")
+            Text("Last updated \(datePart)")
                 .font(.cavnarBody(11))
                 .foregroundStyle(Color.cavnarInk3)
             if let daysOld, daysOld >= 7 {
@@ -313,12 +370,14 @@ struct IntelView: View {
                     .foregroundStyle(Color.cavnarAmber)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
-                    .background(Color.cavnarAmber.opacity(0.18))
+                    .background(Color.cavnarAmberBg)
                     .clipShape(Capsule())
             }
         }
+        .padding(.top, 4)
     }
 
+    /// Prominent CTA — the empty state's only action on screen.
     private func refreshButton(label: String) -> some View {
         Button {
             Task { await viewModel.refreshCompetitors() }
@@ -333,6 +392,27 @@ struct IntelView: View {
             }
         }
         .buttonStyle(CavnarPrimaryButtonStyle())
+        .disabled(viewModel.isRefreshing)
+    }
+
+    /// Quiet inline text action next to the "NEARBY COMPETITORS" kicker —
+    /// a full button here would fight the unboxed page for attention;
+    /// matches "Show N more reviews" below it in weight.
+    private var refreshLink: some View {
+        Button {
+            Task { await viewModel.refreshCompetitors() }
+        } label: {
+            if viewModel.isRefreshing {
+                HStack(spacing: 6) {
+                    ProgressView().tint(Color.cavnarEmber2)
+                    Text("Refreshing…")
+                }
+            } else {
+                Text("Refresh")
+            }
+        }
+        .font(.cavnarBody(11, weight: 700))
+        .foregroundStyle(Color.cavnarEmber2)
         .disabled(viewModel.isRefreshing)
     }
 }

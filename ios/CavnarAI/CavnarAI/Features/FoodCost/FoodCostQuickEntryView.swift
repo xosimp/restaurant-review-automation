@@ -44,10 +44,11 @@ struct FoodCostQuickEntryView: View {
         // screen since the anchor itself is only present then.
         .cavnarHeroForecastRibbon(
             isExpanded: $analyticsViewModel.forecastExpanded,
-            tone: Color.cavnarEmber
+            tone: Color.cavnarEmber,
+            icon: "calendar"
         ) {
             CavnarForecastPanel(
-                title: "Food cost forecast", tone: Color.cavnarEmber,
+                title: "Food cost forecast", tone: Color.cavnarEmber, icon: "calendar",
                 isExpanded: $analyticsViewModel.forecastExpanded
             ) {
                 Text(analyticsViewModel.analytics?.insight?.forecast ?? "No forecast yet — check back once this week's numbers are in.")

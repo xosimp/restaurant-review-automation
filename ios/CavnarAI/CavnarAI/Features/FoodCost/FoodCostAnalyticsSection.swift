@@ -16,7 +16,15 @@ struct FoodCostAnalyticsSection: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+            // 36pt between top-level sections — was 28, which read as
+            // "crammed" once every section lost its own card border (a
+            // border used to do double duty as visual separation; without
+            // one, the gap between sections has to carry that job alone).
+            // Matches the wider rhythm SaaS dashboards (Stripe, Linear)
+            // lean on between distinct content blocks specifically because
+            // there's no box to signal "new section" otherwise — only
+            // whitespace and the kicker label are left to do it.
+            VStack(alignment: .leading, spacing: 36) {
                 if let analytics = viewModel.analytics {
                     // The AI strip lives INSIDE the hero card itself (see
                     // heroCard's own comment) when there's a hero to embed
@@ -76,7 +84,8 @@ struct FoodCostAnalyticsSection: View {
                     FoodCostAnalyticsSkeleton()
                 }
             }
-            .padding(20)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 26)
         }
     }
 
@@ -93,8 +102,8 @@ struct FoodCostAnalyticsSection: View {
     // surface, not two adjacent ones with a small gap between them.
     private func heroCard(_ a: FoodCostAnalytics, isLoading: Bool) -> some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 18) {
-                VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text("PROJECTED ANNUAL WASTE")
                         .font(.cavnarBody(9, weight: 700))
                         .tracking(1.4)
@@ -108,7 +117,7 @@ struct FoodCostAnalyticsSection: View {
                         .foregroundStyle(Color.cavnarInk.opacity(0.55))
                 }
                 Spacer(minLength: 12)
-                VStack(alignment: .trailing, spacing: 6) {
+                VStack(alignment: .trailing, spacing: 8) {
                     Text("RECOVERABLE / YEAR")
                         .font(.cavnarBody(9, weight: 700))
                         .tracking(1.4)
@@ -123,7 +132,7 @@ struct FoodCostAnalyticsSection: View {
                         .multilineTextAlignment(.trailing)
                 }
             }
-            .padding(18)
+            .padding(22)
 
             Rectangle().fill(Color.cavnarEmber.opacity(0.35)).frame(height: 1)
 
@@ -133,8 +142,8 @@ struct FoodCostAnalyticsSection: View {
                 isLoading: isLoading,
                 showForecastInSheet: false
             )
-            .padding(.horizontal, 18)
-            .padding(.top, 12)
+            .padding(.horizontal, 22)
+            .padding(.top, 14)
             // The forecast ribbon straddles this card's bottom edge (see
             // .cavnarRibbonHeroAnchor() below) — matches Labor's own
             // identical fix (LaborView's heroCard) so the ribbon's
@@ -165,7 +174,7 @@ struct FoodCostAnalyticsSection: View {
     // MARK: - Stat strip — borderless, hairline dividers instead of tiles
 
     private func statStrip(_ a: FoodCostAnalytics) -> some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 20) {
             statRow([
                 ("$\((a.totalWasteCostWeek ?? 0).commaFormatted)", "Waste / wk", Color.cavnarRed),
                 ("$\((a.monthlyWasteProjection ?? 0).commaFormatted)", "Proj. / mo", Color.cavnarAmber),
@@ -184,7 +193,7 @@ struct FoodCostAnalyticsSection: View {
         HStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.offset) { index, entry in
                 let (value, label, tone) = entry
-                VStack(spacing: 4) {
+                VStack(spacing: 6) {
                     Text(value)
                         .font(.cavnarNumber(18, weight: 700))
                         .foregroundStyle(tone)
@@ -195,7 +204,7 @@ struct FoodCostAnalyticsSection: View {
                 }
                 .frame(maxWidth: .infinity)
                 if index < items.count - 1 {
-                    Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(width: 1, height: 30)
+                    Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(width: 1, height: 32)
                 }
             }
         }
@@ -220,7 +229,7 @@ struct FoodCostAnalyticsSection: View {
         let industryStart = Self.industryLow / Self.benchmarkScaleMax
         let industryWidth = (Self.industryHigh - Self.industryLow) / Self.benchmarkScaleMax
 
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("WASTE VS. INDUSTRY BENCHMARK")
                     .font(.cavnarBody(10, weight: 700))
@@ -274,7 +283,7 @@ struct FoodCostAnalyticsSection: View {
     @ViewBuilder
     private func actionSection(_ a: FoodCostAnalytics) -> some View {
         if !a.criticalLow.isEmpty || !a.reorderSoon.isEmpty || !a.orderReduction.isEmpty {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 26) {
                 // Matches dashboard.html's "Order List — Recommended
                 // Quantities" heading — without it, the ORDER caption on
                 // each row's right-side number (below) reads correctly on
@@ -297,7 +306,7 @@ struct FoodCostAnalyticsSection: View {
     }
 
     private func actionGroup(title: String, color: Color, items: [InventoryActionItem], showDays: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 6) {
                 Text(title)
                     .font(.cavnarBody(10, weight: 700))
@@ -320,9 +329,9 @@ struct FoodCostAnalyticsSection: View {
     }
 
     private func actionRow(_ item: InventoryActionItem, color: Color, showDays: Bool) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             Rectangle().fill(color).frame(width: 2.5)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(item.item)
                     .font(.cavnarBody(13, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
@@ -331,7 +340,7 @@ struct FoodCostAnalyticsSection: View {
                     .foregroundStyle(Color.cavnarInk3)
             }
             Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 3) {
+            VStack(alignment: .trailing, spacing: 4) {
                 Text(item.orderCaption)
                     .font(.cavnarBody(7.5, weight: 700))
                     .tracking(0.8)
@@ -346,7 +355,7 @@ struct FoodCostAnalyticsSection: View {
                 }
             }
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, 13)
     }
 
     // "last order" (not bare "last") — the number itself is always a past
@@ -367,7 +376,7 @@ struct FoodCostAnalyticsSection: View {
     // second banner sitting right above these same rows).
 
     private func priceWatchDetail(_ items: [PriceWatchItem]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("PRICE WATCH")
                 .font(.cavnarBody(10, weight: 700))
                 .tracking(1.2)
@@ -385,9 +394,9 @@ struct FoodCostAnalyticsSection: View {
 
     private func priceWatchRow(_ item: PriceWatchItem) -> some View {
         let accent = item.isTrend ? Color.cavnarRed : Color.cavnarAmber
-        return HStack(alignment: .top, spacing: 12) {
+        return HStack(alignment: .top, spacing: 14) {
             Rectangle().fill(accent).frame(width: 2.5)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(item.item)
                     .font(.cavnarBody(13, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
@@ -409,7 +418,7 @@ struct FoodCostAnalyticsSection: View {
                     .foregroundStyle(Color.cavnarInk3)
             }
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, 14)
     }
 }
 

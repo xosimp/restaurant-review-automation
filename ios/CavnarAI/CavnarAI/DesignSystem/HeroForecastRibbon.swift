@@ -230,7 +230,14 @@ struct CavnarForecastPanel<Body: View>: View {
             }
             .foregroundStyle(tone)
 
+            // Without this, a caller's Text sizes to its own unconstrained
+            // single-line ideal width FIRST and only then gets clipped down
+            // to the 250pt frame below, truncating after a handful of words
+            // instead of wrapping — same fix as LaborView's
+            // dataFreshnessPopoverContent for the identical symptom. Forces
+            // wrap-not-clip within whatever width this panel actually gives it.
             content()
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(16)
         .frame(width: 250, alignment: .leading)
