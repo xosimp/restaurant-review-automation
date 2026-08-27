@@ -429,7 +429,9 @@ CRITICAL RULES:
 - Only recommend actions that fit {restaurant_name}'s actual concept and cuisine
 - NEVER recommend menu items or food categories outside their concept (e.g. don't suggest a burger promotion to a breakfast cafe)
 - Focus on service quality, marketing angles, atmosphere, timing, and operational strengths
-- Recommendations must be something {restaurant_name} can realistically act on given what they already are
+- Recommendations must be something a manager could literally start THIS SHIFT with the staff, menu, and equipment {restaurant_name} already has
+- NEVER recommend creating a new dish, adding a menu item, running a "promotion" or "campaign" with no specifics, redesigning the space, buying equipment, or hiring — these take weeks restaurants don't have and are not real advice
+- Every recommendation must name a specific, existing lever: a service script change, a staffing/timing adjustment, promoting an EXISTING dish or existing strength on social/signage, a direct fix to a named complaint from the competitor reviews above, or a specific way to win over customers unhappy with a named competitor
 
 Nearby competitors and their recent customer reviews:
 {comp_summary}
@@ -448,9 +450,9 @@ PRICE POSITIONING:
 One sentence, 15 words or fewer. Based on price-related language in competitor reviews ("overpriced", "great value", "worth it", "too expensive", "affordable"), state whether competitors read as overpriced or good value. Skip this section entirely if no price signals appear in the reviews.
 
 Recommendations:
-1. [One concrete action {restaurant_name} can take this week, 15 words or fewer]
-2. [One specific differentiator to emphasize — service, atmosphere, value, or a strength competitors lack — 15 words or fewer]
-3. [One tactical move to capture dissatisfied competitor customers this week, 15 words or fewer]
+1. [One operational or service fix using only what {restaurant_name} already has — a specific script, timing, or staffing change, 15 words or fewer]
+2. [One specific EXISTING dish, deal, or strength to push harder in marketing/signage this week — never a new item, 15 words or fewer]
+3. [One specific tactic to win a named competitor's dissatisfied customers, tied to an actual complaint quoted above, 15 words or fewer]
 
 Tone: sharp, direct, trusted business advisor. Every line is a single punchy sentence, not a paragraph — cut qualifiers, cut context, cut anything that isn't the point itself. Name specific competitors and cite specific review themes anyway, just in fewer words. Always use $ signs before dollar amounts."""
 

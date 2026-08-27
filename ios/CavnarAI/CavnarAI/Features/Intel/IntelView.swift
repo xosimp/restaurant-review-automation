@@ -333,23 +333,32 @@ struct IntelView: View {
 
     // MARK: - What the market's doing (well/poorly sections)
 
+    /// Well/poorly used to share one flat treatment — ember kicker, gray
+    /// body text, and only a tiny checkmark/xmark icon told them apart.
+    /// Now each carries its own color end to end (kicker, icon, per-row
+    /// tint) so "doing well" reads unmistakably positive and "doing
+    /// poorly" unmistakably negative at a glance, not just on close read.
     private func marketSection(_ section: IntelSection) -> some View {
         let isGood = section.name.localizedCaseInsensitiveContains("well")
         let tone = isGood ? Color.cavnarGreen : Color.cavnarRed
         let icon = isGood ? "checkmark" : "xmark"
 
         return VStack(alignment: .leading, spacing: 14) {
-            Text(section.name.uppercased())
-                .font(.cavnarBody(10, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber)
-            VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: isGood ? "arrow.up.right" : "arrow.down.right")
+                    .font(.system(size: 9, weight: .bold))
+                Text(section.name.uppercased())
+                    .font(.cavnarBody(10, weight: 700))
+                    .tracking(1.2)
+            }
+            .foregroundStyle(tone)
+            VStack(alignment: .leading, spacing: 10) {
                 ForEach(section.bullets, id: \.self) { bullet in
                     HStack(alignment: .top, spacing: 10) {
                         ZStack {
-                            Circle().fill(tone.opacity(0.16)).frame(width: 16, height: 16)
+                            Circle().fill(tone.opacity(0.2)).frame(width: 18, height: 18)
                             Image(systemName: icon)
-                                .font(.system(size: 8, weight: .bold))
+                                .font(.system(size: 8.5, weight: .bold))
                                 .foregroundStyle(tone)
                         }
                         .padding(.top, 1)
@@ -358,6 +367,10 @@ struct IntelView: View {
                             .foregroundStyle(Color.cavnarInk2)
                             .lineSpacing(3)
                     }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 10)
+                    .background(tone.opacity(0.07))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
         }
@@ -365,26 +378,39 @@ struct IntelView: View {
 
     // MARK: - Recommendations
 
+    /// Deliberately the loudest of the three market-analysis sections — a
+    /// solid (not outlined) glowing number badge and a stronger row tint
+    /// than well/poorly's bullets, so these read as the actionable next
+    /// steps rather than more descriptive analysis in the same voice.
     private func recommendationsSection(_ recommendations: [String]) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("HOW TO IMPROVE")
-                .font(.cavnarBody(10, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber)
-            VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 6) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 9, weight: .bold))
+                Text("HOW TO IMPROVE")
+                    .font(.cavnarBody(10, weight: 700))
+                    .tracking(1.2)
+            }
+            .foregroundStyle(Color.cavnarEmber)
+            VStack(alignment: .leading, spacing: 10) {
                 ForEach(Array(recommendations.enumerated()), id: \.offset) { index, rec in
                     HStack(alignment: .top, spacing: 10) {
                         Text("\(index + 1)")
                             .font(.cavnarNumber(11, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber)
-                            .frame(width: 18, height: 18)
-                            .background(Color.cavnarEmber.opacity(0.14))
+                            .foregroundStyle(.white)
+                            .frame(width: 20, height: 20)
+                            .background(Color.cavnarEmber)
                             .clipShape(Circle())
+                            .shadow(color: Color.cavnarEmber.opacity(0.55), radius: 4, x: 0, y: 0)
                         Text(rec)
-                            .font(.cavnarBody(13))
+                            .font(.cavnarBody(13, weight: 500))
                             .foregroundStyle(Color.cavnarInk)
                             .lineSpacing(3)
                     }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 10)
+                    .background(Color.cavnarEmber.opacity(0.09))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
         }
@@ -440,6 +466,11 @@ struct IntelView: View {
 
         return HStack(alignment: .top, spacing: 12) {
             Rectangle().fill(accent).frame(width: 2.5)
+            // Explicitly kills animation on this subtree for isExpanded
+            // changes — without this, ScrollView's own implicit content-
+            // resize animation was leaking in, making the "show more"
+            // button's label visibly drop and fade as the new review rows
+            // pushed it down instead of just instantly relaying out.
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(c.name)
@@ -493,6 +524,7 @@ struct IntelView: View {
                     .padding(.top, 1)
                 }
             }
+            .animation(nil, value: isExpanded)
         }
         .padding(.vertical, 14)
     }
