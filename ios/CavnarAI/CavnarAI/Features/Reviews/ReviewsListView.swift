@@ -41,15 +41,17 @@ struct ReviewsListView: View {
                 Button {
                     showingSendRequest = true
                 } label: {
-                    Image(systemName: "envelope.badge")
-                        // 17pt (matching the back button's own icon size)
-                        // was still spilling toward the circle's edge —
-                        // envelope.badge's glyph is naturally much wider
-                        // than a chevron's at the same point size, so
-                        // matching size numerically doesn't match visual
-                        // fill. Sized down instead to land at the same
-                        // proportional inset the back button has.
-                        .font(.system(size: 14, weight: .semibold))
+                    // envelope.badge's glyph reserves extra bounding-box
+                    // space for the notification dot, off to one side —
+                    // that's what made it look both oversized AND
+                    // off-center no matter how it was framed, since the
+                    // frame centers the glyph's reported bounding box, not
+                    // its visual weight. Plain envelope has no such
+                    // reserved space (and reads better semantically too —
+                    // this button composes/sends a request, it isn't
+                    // indicating unread mail).
+                    Image(systemName: "envelope")
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Color.cavnarEmber)
                         .cavnarToolbarIconGlass()
                 }

@@ -1072,6 +1072,7 @@ def _seed_gia_mia_background():
         conn2.close()
         if _gia_mia_row and _gia_mia_is_demo:
             _refresh_gia_mia_reviews(_gia_mia_row["id"])
+            _refresh_gia_mia_value_history(_gia_mia_row["id"])
     except Exception as _bg_gm_e:
         print(f"  Gia Mia seed background error: {_bg_gm_e}")
     # Seed Gia Mia demo data after seed completes (avoids concurrent DB writes)
@@ -1255,6 +1256,70 @@ def _refresh_gia_mia_reviews(gia_mia_rid):
         print("  Gia Mia reviews refreshed with real content (90 reviews).\n")
     except Exception as _rr_e:
         print(f"  Gia Mia review refresh error: {_rr_e}")
+
+
+def _refresh_gia_mia_value_history(gia_mia_rid):
+    """Backfills 90 days of value_snapshots with an organic upward trend.
+
+    record_value_snapshot() (value_delivered.py) only ever records TODAY's
+    live-computed total, opportunistically, whenever the mobile Home tab
+    loads — there's no historical backfill. For a demo restaurant tested
+    repeatedly in a single day, compute_total_value_delivered() barely
+    moves day to day (reviews_value only grows when reviews actually get
+    responded to), so the real accumulated history ends up nearly flat —
+    confirmed directly: 9 straight days at the same value before this fix.
+    That's what made the Home tab's "value delivered" sparkline look like
+    a flat/straight line instead of a real trend.
+
+    Walks backward from today's actual live total in strictly positive,
+    varying steps (never a backward dip — the real metric is genuinely
+    close to monotonic, since past review responses/months-active-marketing
+    never un-count), so the rightmost point always matches whatever
+    compute_total_value_delivered() returns live elsewhere on the same
+    screen. Wipes and reseeds every deploy, same as _refresh_gia_mia_reviews.
+    """
+    try:
+        import random as _rand_vh
+        from datetime import date as _date_vh, timedelta as _td_vh
+        from value_delivered import compute_total_value_delivered as _ctvd
+
+        conn = get_conn()
+        conn.execute("DELETE FROM value_snapshots WHERE restaurant_id=?", (gia_mia_rid,))
+
+        current_total = _ctvd(gia_mia_rid) or 0
+        if current_total <= 0:
+            conn.commit()
+            conn.close()
+            return
+
+        rng = _rand_vh.Random(20260827)
+        today = _date_vh.today()
+        points = []
+        value = current_total
+        d = today
+        while (today - d).days < 90:
+            points.append((d, value))
+            step_back = rng.choice([2, 2, 3, 3, 4])
+            d = d - _td_vh(days=step_back)
+            # Strictly positive and widely varying — a real restaurant's
+            # cumulative value grows in uneven bursts (a batch of review
+            # responses, a month of active marketing ticking over), not a
+            # smooth ramp, but it never runs backward.
+            growth = rng.choice([0, 0, 5, 10, 15, 25, 40, 60, 90, 130, 180, 240])
+            value = max(30, value - growth)
+        points.reverse()
+
+        for pd, pv in points:
+            conn.execute("""
+                INSERT INTO value_snapshots (restaurant_id, snapshot_date, total_value)
+                VALUES (?, ?, ?)
+                ON CONFLICT(restaurant_id, snapshot_date) DO UPDATE SET total_value = excluded.total_value
+            """, (gia_mia_rid, pd.isoformat(), pv))
+        conn.commit()
+        conn.close()
+        print(f"  Gia Mia value history backfilled ({len(points)} points, ${points[0][1]} -> ${points[-1][1]}).\n")
+    except Exception as _vh_e:
+        print(f"  Gia Mia value history refresh error: {_vh_e}")
 
 
 import threading as _t_gm_seed
