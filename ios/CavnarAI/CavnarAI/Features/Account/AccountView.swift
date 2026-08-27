@@ -441,7 +441,7 @@ private struct ChangePasswordSheet: View {
                         Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
                     }
 
-                    VStack(spacing: 10) {
+                    CavnarFormButtonPair {
                         Button {
                             Task {
                                 await viewModel.changePassword(current: current, newPassword: newPassword)
@@ -456,15 +456,9 @@ private struct ChangePasswordSheet: View {
                         }
                         .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSubmit))
                         .disabled(!canSubmit)
-
-                        Button {
-                            dismiss()
-                        } label: {
-                            Text("Cancel").frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(CavnarSecondaryButtonStyle())
+                    } cancelAction: {
+                        dismiss()
                     }
-                    .frame(maxWidth: .infinity)
                     .padding(.top, 6)
                 }
                 .padding(20)
@@ -507,7 +501,7 @@ private struct TwoFactorSetupSheet: View {
                             Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
                         }
 
-                        VStack(spacing: 10) {
+                        CavnarFormButtonPair {
                             Button {
                                 Task {
                                     if await viewModel.verify2FA(code: code) { dismiss() }
@@ -521,15 +515,9 @@ private struct TwoFactorSetupSheet: View {
                             }
                             .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy || code.count != 6))
                             .disabled(viewModel.is2FABusy || code.count != 6)
-
-                            Button {
-                                dismiss()
-                            } label: {
-                                Text("Cancel").frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(CavnarSecondaryButtonStyle())
+                        } cancelAction: {
+                            dismiss()
                         }
-                        .frame(maxWidth: .infinity)
                         .padding(.top, 6)
                     } else {
                         Text("We'll text a 6-digit code to the phone number on file to confirm two-factor sign-in works before turning it on.")
@@ -540,7 +528,7 @@ private struct TwoFactorSetupSheet: View {
                             Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
                         }
 
-                        VStack(spacing: 10) {
+                        CavnarFormButtonPair {
                             Button {
                                 Task { await viewModel.send2FATest() }
                             } label: {
@@ -552,15 +540,9 @@ private struct TwoFactorSetupSheet: View {
                             }
                             .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy))
                             .disabled(viewModel.is2FABusy)
-
-                            Button {
-                                dismiss()
-                            } label: {
-                                Text("Cancel").frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(CavnarSecondaryButtonStyle())
+                        } cancelAction: {
+                            dismiss()
                         }
-                        .frame(maxWidth: .infinity)
                         .padding(.top, 6)
                     }
                 }

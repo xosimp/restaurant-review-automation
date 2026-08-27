@@ -181,7 +181,7 @@ private struct AddGuestContactSheet: View {
                         focus: $focusedField, field: .phone
                     )
 
-                    VStack(spacing: 10) {
+                    CavnarFormButtonPair {
                         Button {
                             Task {
                                 isAdding = true
@@ -198,15 +198,9 @@ private struct AddGuestContactSheet: View {
                         }
                         .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canAdd))
                         .disabled(!canAdd)
-
-                        Button {
-                            dismiss()
-                        } label: {
-                            Text("Cancel").frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(CavnarSecondaryButtonStyle())
+                    } cancelAction: {
+                        dismiss()
                     }
-                    .frame(maxWidth: .infinity)
                     .padding(.top, 6)
                 }
                 .padding(20)

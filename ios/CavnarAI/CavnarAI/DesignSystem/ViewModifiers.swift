@@ -149,6 +149,20 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
             // text a slight embossed lift instead of looking pasted flat
             // on top, the same text-shadow the approved reference preview
             // itself used.
+            //
+            // .compositingGroup() before that shadow matters once the label
+            // isn't plain Text: the AI Visibility loading state's label is
+            // CavnarShimmerText + CavnarShimmerLine stacked, each itself a
+            // masked gradient over a translucent base layer. Without
+            // flattening first, SwiftUI's .shadow() draws a shadow PER
+            // sublayer rather than one shadow for the whole composited
+            // shape — with several overlapping semi-transparent layers that
+            // stacks into a diffuse gray haze sitting over the shimmer
+            // instead of a clean, barely-there text shadow. compositingGroup
+            // renders the label to one flattened layer first so the shadow
+            // that follows sees a single opaque silhouette, same as it
+            // always did for plain Text.
+            .compositingGroup()
             .shadow(color: .black.opacity(0.28), radius: 1, x: 0, y: 1)
             .cavnarPremiumButtonSurface(isDisabled: isDisabled)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
@@ -492,6 +506,68 @@ struct CavnarNumberGlow: ViewModifier {
 extension View {
     func cavnarNumberGlow(_ tint: Color = .cavnarEmber) -> some View {
         modifier(CavnarNumberGlow(tint: tint))
+    }
+}
+
+private struct CavnarWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private extension View {
+    func cavnarReportWidth() -> some View {
+        background(
+            GeometryReader { geo in
+                Color.clear.preference(key: CavnarWidthKey.self, value: geo.size.width)
+            }
+        )
+    }
+}
+
+/// A primary action + "Cancel" pair, sized to genuinely match each
+/// other (both equal to the wider of the two — in practice always the
+/// primary button, since "Cancel" is short) and centered within their
+/// container.
+///
+/// Real width-matching via PreferenceKey, not a frame trick — two prior
+/// attempts at "give Cancel .frame(maxWidth: .infinity) and let the
+/// VStack cap it at the primary button's width" both failed, and for a
+/// real reason: a child requesting infinite width doesn't just expand
+/// itself, it makes the WHOLE containing VStack report an unbounded
+/// ideal width up to ITS OWN parent — which is why Cancel ended up
+/// spanning the full form instead of matching the button above it, not
+/// just staying narrow. There's no shortcut around measuring: each
+/// button reports its actual rendered width via a hidden GeometryReader
+/// or a first pass, the parent takes the max, then re-applies that
+/// exact width to both on the next render.
+struct CavnarFormButtonPair<Primary: View>: View {
+    // cancelLabel comes first (a plain String, not a closure) so both
+    // `primary` and `cancelAction` can be used as trailing closures —
+    // Swift's multi-trailing-closure syntax needs the closure params
+    // grouped at the end, with any non-closure params passed normally
+    // in the parens before them:
+    //   CavnarFormButtonPair(cancelLabel: "Cancel") { ... } cancelAction: { ... }
+    var cancelLabel: String = "Cancel"
+    @ViewBuilder var primary: () -> Primary
+    let cancelAction: () -> Void
+
+    @State private var matchedWidth: CGFloat?
+
+    var body: some View {
+        VStack(spacing: 10) {
+            primary()
+                .frame(width: matchedWidth)
+                .cavnarReportWidth()
+
+            Button(cancelLabel, action: cancelAction)
+                .buttonStyle(CavnarSecondaryButtonStyle())
+                .frame(width: matchedWidth)
+                .cavnarReportWidth()
+        }
+        .onPreferenceChange(CavnarWidthKey.self) { matchedWidth = $0 }
+        .frame(maxWidth: .infinity)
     }
 }
 

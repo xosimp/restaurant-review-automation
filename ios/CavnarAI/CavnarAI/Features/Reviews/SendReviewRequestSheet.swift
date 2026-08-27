@@ -98,7 +98,7 @@ struct SendReviewRequestSheet: View {
                         Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
                     }
 
-                    VStack(spacing: 10) {
+                    CavnarFormButtonPair {
                         Button {
                             Task {
                                 await viewModel.send(name: name, email: email, phone: phone, message: message)
@@ -113,32 +113,9 @@ struct SendReviewRequestSheet: View {
                         }
                         .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSend))
                         .disabled(!canSend)
-
-                        // .frame(maxWidth: .infinity) on Cancel (not Send)
-                        // makes it stretch to match Send's hug-content
-                        // width — a VStack sizes to its widest non-greedy
-                        // child, so the shorter "Cancel" filling that same
-                        // resolved width is what makes the pair match
-                        // instead of Cancel staying pill-tight around its
-                        // own shorter text.
-                        // .frame(maxWidth: .infinity) has to sit on the
-                        // label itself, INSIDE the button, not after
-                        // .buttonStyle() — the style draws its background
-                        // sized to whatever the label already is at that
-                        // point in the chain, so applying the frame
-                        // afterward only widened the invisible tap target,
-                        // not the visible pill.
-                        Button {
-                            dismiss()
-                        } label: {
-                            Text("Cancel").frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(CavnarSecondaryButtonStyle())
+                    } cancelAction: {
+                        dismiss()
                     }
-                    // Centers the whole (now equal-width) button pair
-                    // within the form — without this the group still
-                    // hugs the .leading-aligned outer VStack's left edge.
-                    .frame(maxWidth: .infinity)
                     .padding(.top, 6)
                 }
                 .padding(20)
