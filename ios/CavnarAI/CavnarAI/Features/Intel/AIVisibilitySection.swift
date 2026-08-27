@@ -443,7 +443,17 @@ struct AIVisibilitySection: View {
                 HStack {
                     if !card.done {
                         Button(action: card.action) {
-                            Text(card.actionLabel)
+                            HStack(spacing: 5) {
+                                Text(card.actionLabel)
+                                // Same external-link arrow the "doing
+                                // well" heading uses (marketSection) —
+                                // these buttons route the owner
+                                // somewhere else in the app, same as
+                                // that heading's own "things trending
+                                // outward" meaning.
+                                Image(systemName: "arrow.up.right")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
                         }
                         .buttonStyle(CavnarChipButtonStyle(tone: card.color))
                     }

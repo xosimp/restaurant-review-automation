@@ -55,24 +55,23 @@ extension View {
 }
 
 /// The button treatment from the design preview, tuned several times
-/// since the first shipped version. Current state: a three-stop
-/// gradient fill (bright top, ember mid, deep burnt base); NO glossy
-/// white sheen anymore (that read as an unwanted "glass effect") —
-/// replaced with a subtle dark vignette at the top and bottom edges for
-/// a matte, embossed feel instead of a shiny one; a true inner border
-/// (inset within the shape, not centered on its edge); and two
-/// perfectly symmetric shadow layers, both centered (x: 0, y: 0) so
-/// neither reads as bottom-heavy — a tight, darker elevation shadow
-/// applied BEFORE a wider, softer ember glow in the modifier chain.
-/// SwiftUI shadows each wrap everything above them, so the shadow
-/// applied first stays the crisp layer sitting close to the edge, and
-/// the glow applied after it is what extends further out from behind
-/// that tight shadow — "shadow in front, glow behind it" was the ask,
-/// and this ordering is what actually produces that read. No floor
-/// reflection anymore either — it was its own asymmetric glow sitting
-/// only below the button, which directly fought the "equal on all
-/// sides" requirement. Shared by CavnarPrimaryButtonStyle and
-/// CavnarSplitButton.
+/// since the first shipped version. Current state: a plain three-stop
+/// gradient fill (bright top, ember mid, deep burnt base) — no glossy
+/// white sheen (that read as an unwanted "glass effect") and no dark
+/// vignette either (tried as a replacement for the sheen, but asked to
+/// go too); an ember outer border at the true edge plus a brighter
+/// Ember2 inner border inset within it; and two perfectly symmetric
+/// shadow layers, both centered (x: 0, y: 0) so neither reads as
+/// bottom-heavy — a tight, darker elevation shadow applied BEFORE a
+/// wider, softer ember glow in the modifier chain. SwiftUI shadows each
+/// wrap everything above them, so the shadow applied first stays the
+/// crisp layer sitting close to the edge, and the glow applied after it
+/// is what extends further out from behind that tight shadow — "shadow
+/// in front, glow behind it" was the ask, and this ordering is what
+/// actually produces that read. No floor reflection either — it was
+/// its own asymmetric glow sitting only below the button, which
+/// directly fought an "equal on all sides" requirement. Shared by
+/// CavnarPrimaryButtonStyle and CavnarSplitButton.
 struct CavnarPremiumButtonSurface: ViewModifier {
     var isDisabled: Bool = false
     // Overridable per call site — CavnarSplitButton's own reference
@@ -97,27 +96,6 @@ struct CavnarPremiumButtonSurface: ViewModifier {
                                 .init(color: Self.gradientTop.opacity(isDisabled ? 0.35 : 1), location: 0),
                                 .init(color: Color.cavnarEmber.opacity(isDisabled ? 0.32 : 1), location: 0.48),
                                 .init(color: Self.gradientBase.opacity(isDisabled ? 0.28 : 1), location: 1),
-                            ],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                    )
-                // Dark vignette at both edges instead of a bright glossy
-                // sheen — matte/embossed rather than glass-like. Six
-                // stops, not four — a short, steep ramp straight from
-                // fully-transparent to its darkest value was reading as a
-                // visible seam (a hard-edged line, not a blend); easing
-                // through an intermediate stop on each end, over more of
-                // the button's height, is what actually blends.
-                shape
-                    .fill(
-                        LinearGradient(
-                            stops: [
-                                .init(color: Color.black.opacity(isDisabled ? 0 : 0.32), location: 0),
-                                .init(color: Color.black.opacity(isDisabled ? 0 : 0.1), location: 0.18),
-                                .init(color: Color.black.opacity(0), location: 0.38),
-                                .init(color: Color.black.opacity(0), location: 0.62),
-                                .init(color: Color.black.opacity(isDisabled ? 0 : 0.14), location: 0.82),
-                                .init(color: Color.black.opacity(isDisabled ? 0 : 0.42), location: 1),
                             ],
                             startPoint: .top, endPoint: .bottom
                         )
