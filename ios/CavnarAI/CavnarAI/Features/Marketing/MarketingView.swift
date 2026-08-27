@@ -90,36 +90,47 @@ struct MarketingView: View {
         .frame(maxWidth: .infinity)
     }
 
+    private var selectedTypeLabel: String {
+        viewModel.contentTypes.first { $0.0 == viewModel.selectedType }?.1 ?? "Content"
+    }
+
     @ViewBuilder
     private var generatorSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("Generate content")
                 .font(.cavnarBody(13, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
-
-            Picker("Type", selection: $viewModel.selectedType) {
-                ForEach(viewModel.contentTypes, id: \.0) { key, label in
-                    Text(label).tag(key)
-                }
-            }
-            .pickerStyle(.menu)
-            .tint(Color.cavnarEmber)
 
             TextField("Topic (optional)", text: $viewModel.topic)
                 .cavnarTextFieldStyle()
                 .focused($focusedField, equals: .topic)
 
-            Button {
-                Task { await viewModel.generate() }
-            } label: {
-                if viewModel.isGenerating {
-                    ProgressView().tint(.white)
-                } else {
-                    Text("Generate")
+            // Was a separate Picker(.menu) above a plain "Generate"
+            // button — two controls for one decision ("what kind, then
+            // go"). One split button now: the left side generates
+            // whatever type is currently selected, the chevron opens the
+            // same type list to change it — the exact "New ▾" pattern
+            // from the design reference, applied to a real pick-a-type-
+            // then-act flow instead of the earlier bolted-on preview.
+            CavnarSplitButton(
+                icon: "sparkles",
+                label: "Generate \(selectedTypeLabel)",
+                isLoading: viewModel.isGenerating,
+                loadingText: "Generating…",
+                action: { Task { await viewModel.generate() } }
+            ) {
+                ForEach(viewModel.contentTypes, id: \.0) { key, label in
+                    Button {
+                        viewModel.selectedType = key
+                    } label: {
+                        if viewModel.selectedType == key {
+                            Label(label, systemImage: "checkmark")
+                        } else {
+                            Text(label)
+                        }
+                    }
                 }
             }
-            .buttonStyle(CavnarPrimaryButtonStyle())
-            .disabled(viewModel.isGenerating)
 
             if let error = viewModel.generateError {
                 Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)

@@ -54,17 +54,90 @@ extension View {
     }
 }
 
-/// Was a completely flat solid ember fill — every primary CTA app-wide
-/// (Save, Send, Approve, Check my AI visibility, Login, ...) read as the
-/// same one-note rectangle. Now: a top-to-bottom gradient so the fill has
-/// real depth instead of one flat hue, a soft diagonal glass highlight
-/// across the upper half (the same light-hitting-glossy-plastic cue
-/// CavnarGlassButtonStyle already uses), a hairline light-catching top
-/// edge, and a colored ember glow underneath that lifts the button off
-/// the page instead of sitting flush against it — the same "gradient +
-/// glow + depth, never flat" language this app already applies to bars
-/// and charts (see feedback_visual_punch in memory), just brought to
-/// buttons for the first time.
+/// The exact button treatment approved from the design preview (matched
+/// point-for-point to a reference screenshot): a three-stop vertical
+/// gradient (bright top, ember mid, deep burnt base — not just a
+/// two-color fade), a glossy white sheen across the upper half, a
+/// hairline light-catching edge, a stacked pair of ember glows (tight +
+/// wide, not one shadow — that's what gives real bloom instead of a
+/// hard-edged halo), and a soft floor-reflection glow that sits BELOW
+/// the button on whatever's behind it, simulating light spilling onto
+/// the surface underneath. Always a full capsule/pill — the earlier
+/// version used the app's normal 12pt control radius, which is exactly
+/// what read as a "weird outline" next to this glow treatment; the
+/// glow/sheen recipe here was built for a fully rounded pill shape.
+/// Shared by CavnarPrimaryButtonStyle and CavnarSplitButton so both stay
+/// visually identical rather than two hand-tuned near-matches.
+struct CavnarPremiumButtonSurface: ViewModifier {
+    var isDisabled: Bool = false
+
+    // #F0946B / #D4583A (brand Ember) / #9E3B24 — bright-to-deep three
+    // stop gradient, not evenly spaced (48%, not 50%, matches reference).
+    private static let gradientTop = Color(red: 0.941, green: 0.580, blue: 0.420)
+    private static let gradientBase = Color(red: 0.620, green: 0.231, blue: 0.141)
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            stops: [
+                                .init(color: Self.gradientTop.opacity(isDisabled ? 0.35 : 1), location: 0),
+                                .init(color: Color.cavnarEmber.opacity(isDisabled ? 0.32 : 1), location: 0.48),
+                                .init(color: Self.gradientBase.opacity(isDisabled ? 0.28 : 1), location: 1),
+                            ],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            stops: [
+                                .init(color: Color.white.opacity(isDisabled ? 0 : 0.32), location: 0),
+                                .init(color: Color.white.opacity(isDisabled ? 0 : 0.08), location: 0.42),
+                                .init(color: Color.white.opacity(0), location: 0.62),
+                            ],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
+                Capsule().strokeBorder(Color.white.opacity(isDisabled ? 0 : 0.18), lineWidth: 1)
+            }
+            .clipShape(Capsule())
+            .shadow(color: Color.cavnarEmber.opacity(isDisabled ? 0 : 0.55), radius: 20, x: 0, y: 6)
+            .shadow(color: Color.cavnarEmber.opacity(isDisabled ? 0 : 0.3), radius: 40, x: 0, y: 10)
+            .shadow(color: .black.opacity(isDisabled ? 0 : 0.35), radius: 8, x: 0, y: 4)
+            // Added AFTER clipShape/shadow so it isn't clipped to the
+            // capsule — a second, independent background layer whose
+            // GeometryReader reads this view's own (already-capsule-
+            // shaped) size, then positions a blurred glow just below it.
+            .background {
+                GeometryReader { geo in
+                    Ellipse()
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    Color.cavnarEmber.opacity(isDisabled ? 0 : 0.5),
+                                    Color.cavnarEmber.opacity(0),
+                                ],
+                                center: .center, startRadius: 0, endRadius: geo.size.width * 0.35
+                            )
+                        )
+                        .frame(width: geo.size.width * 0.7, height: 18)
+                        .position(x: geo.size.width / 2, y: geo.size.height + 13)
+                        .blur(radius: 7)
+                }
+                .allowsHitTesting(false)
+            }
+    }
+}
+
+extension View {
+    func cavnarPremiumButtonSurface(isDisabled: Bool = false) -> some View {
+        modifier(CavnarPremiumButtonSurface(isDisabled: isDisabled))
+    }
+}
+
 struct CavnarPrimaryButtonStyle: ButtonStyle {
     var isDisabled: Bool = false
 
@@ -73,31 +146,8 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
             .font(.cavnarBody(16, weight: 600))
             .frame(maxWidth: .infinity)
             .padding(14)
-            .foregroundStyle(Color.cavnarInk)
-            .background {
-                RoundedRectangle(cornerRadius: CavnarRadius.control)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.cavnarEmber.opacity(isDisabled ? 0.4 : 1),
-                                Color.cavnarEmber.opacity(isDisabled ? 0.32 : 0.8),
-                            ],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                    )
-                RoundedRectangle(cornerRadius: CavnarRadius.control)
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.white.opacity(isDisabled ? 0 : 0.28), Color.white.opacity(0)],
-                            startPoint: .topLeading, endPoint: .bottom
-                        )
-                    )
-                RoundedRectangle(cornerRadius: CavnarRadius.control)
-                    .strokeBorder(Color.white.opacity(isDisabled ? 0 : 0.16), lineWidth: 1)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-            .shadow(color: Color.cavnarEmber.opacity(isDisabled ? 0 : 0.45), radius: 12, x: 0, y: 5)
-            .shadow(color: .black.opacity(isDisabled ? 0 : 0.2), radius: 3, x: 0, y: 1)
+            .foregroundStyle(.white)
+            .cavnarPremiumButtonSurface(isDisabled: isDisabled)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
             // .sensoryFeedback instead of manually firing a generator off
@@ -127,15 +177,18 @@ struct CavnarSecondaryButtonStyle: ButtonStyle {
             .padding(14)
             .foregroundStyle(isDisabled ? Color.cavnarEmber.opacity(0.4) : Color.cavnarEmber)
             .background(
-                RoundedRectangle(cornerRadius: CavnarRadius.control)
+                Capsule()
                     .fill(Color.cavnarEmber.opacity(isDisabled ? 0.03 : 0.09))
             )
             .overlay(
                 // A flat single-tone border read thin next to the new
                 // gradient-filled primary style — a top-brighter/bottom-
                 // dimmer border gives it the same "light hitting an edge"
-                // depth cue without filling the button in.
-                RoundedRectangle(cornerRadius: CavnarRadius.control)
+                // depth cue without filling the button in. Capsule, not
+                // the old 12pt radius, to match the primary style's pill
+                // shape — the two sitting side by side with different
+                // corner treatments was its own inconsistency.
+                Capsule()
                     .strokeBorder(
                         LinearGradient(
                             colors: [
@@ -147,7 +200,7 @@ struct CavnarSecondaryButtonStyle: ButtonStyle {
                         lineWidth: 1.5
                     )
             )
-            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+            .clipShape(Capsule())
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
             .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in
