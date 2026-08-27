@@ -439,20 +439,20 @@ Write a competitive intelligence report for {restaurant_name} in this EXACT form
 {greeting}, here is your competitive landscape snapshot.
 
 WHAT COMPETITORS ARE DOING WELL:
-Write 2-3 short bullet points (starting with -) about what nearby competitors are genuinely excelling at based on their reviews. Be specific — name the restaurant and the specific strength.
+Write 2-3 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific strength — no parenthetical asides, no stacked examples, no explaining why it matters.
 
 WHAT COMPETITORS ARE DOING POORLY:
-Write 2-3 short bullet points (starting with -) about real weaknesses or complaints in competitor reviews that {restaurant_name} could exploit. Be specific — name the restaurant and the specific complaint.
+Write 2-3 bullet points (starting with -). EACH BULLET IS ONE SENTENCE, 12 WORDS OR FEWER. Name the restaurant and the one specific complaint — no parenthetical asides, no stacked examples, no explaining why it matters.
 
 PRICE POSITIONING:
-Write 1-2 sentences only. Based on price-related language in competitor reviews ("overpriced", "great value", "worth it", "too expensive", "affordable"), identify whether competitors are perceived as overpriced or good value — and what pricing angle {restaurant_name} should lean into. Skip this section entirely if no price signals appear in the reviews.
+One sentence, 15 words or fewer. Based on price-related language in competitor reviews ("overpriced", "great value", "worth it", "too expensive", "affordable"), state whether competitors read as overpriced or good value. Skip this section entirely if no price signals appear in the reviews.
 
 Recommendations:
-1. [First concrete action {restaurant_name} can take this week based on the gaps above]
-2. [Second specific differentiator to emphasize — could be service, atmosphere, value, or a specific strength competitors lack]
-3. [Third tactical move to capture dissatisfied competitor customers this week]
+1. [One concrete action {restaurant_name} can take this week, 15 words or fewer]
+2. [One specific differentiator to emphasize — service, atmosphere, value, or a strength competitors lack — 15 words or fewer]
+3. [One tactical move to capture dissatisfied competitor customers this week, 15 words or fewer]
 
-Tone: sharp, direct, trusted business advisor. No generic advice. Name specific competitors and cite specific review themes. Always use $ signs before dollar amounts."""
+Tone: sharp, direct, trusted business advisor. Every line is a single punchy sentence, not a paragraph — cut qualifiers, cut context, cut anything that isn't the point itself. Name specific competitors and cite specific review themes anyway, just in fewer words. Always use $ signs before dollar amounts."""
 
         msg = create_with_retry(
             client,

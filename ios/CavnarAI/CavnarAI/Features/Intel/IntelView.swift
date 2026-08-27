@@ -184,9 +184,17 @@ struct IntelView: View {
         }
         .padding(.vertical, 18)
         .padding(.horizontal, 22)
-        .background(Color.cavnarEmber.opacity(0.06))
+        // 0.06 read as barely-there — bumped for real presence, plus a
+        // soft all-around border (on top of the left accent bar, which
+        // stays the stronger of the two) so the panel reads as a distinct
+        // zone even at a glance, not just a faint tint.
+        .background(Color.cavnarEmber.opacity(0.12))
+        .overlay(
+            RoundedRectangle(cornerRadius: CavnarRadius.card)
+                .strokeBorder(Color.cavnarEmber.opacity(0.28), lineWidth: 1)
+        )
         .overlay(alignment: .leading) {
-            Rectangle().fill(Color.cavnarEmber.opacity(0.55)).frame(width: 2.5)
+            Rectangle().fill(Color.cavnarEmber.opacity(0.6)).frame(width: 2.5)
         }
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
@@ -436,11 +444,15 @@ struct IntelView: View {
                     }
                     .padding(.top, 2)
                 }
-                if remaining > 0 {
+                if c.reviews.count > 2 {
                     Button {
-                        expandedCompetitors.insert(c.id)
+                        if isExpanded {
+                            expandedCompetitors.remove(c.id)
+                        } else {
+                            expandedCompetitors.insert(c.id)
+                        }
                     } label: {
-                        Text("Show \(remaining) more review\(remaining == 1 ? "" : "s")")
+                        Text(isExpanded ? "Show less" : "Show \(remaining) more review\(remaining == 1 ? "" : "s")")
                             .font(.cavnarBody(11, weight: 600))
                             .foregroundStyle(Color.cavnarEmber2)
                     }
