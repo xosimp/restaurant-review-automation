@@ -441,7 +441,7 @@ private struct ChangePasswordSheet: View {
                         Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
                     }
 
-                    CavnarFormButtonPair {
+                    CavnarFormButtonPair { matchedWidth in
                         Button {
                             Task {
                                 await viewModel.changePassword(current: current, newPassword: newPassword)
@@ -454,7 +454,7 @@ private struct ChangePasswordSheet: View {
                                 Text("Change password")
                             }
                         }
-                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSubmit))
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSubmit, matchedWidth: matchedWidth))
                         .disabled(!canSubmit)
                     } cancelAction: {
                         dismiss()
@@ -501,7 +501,7 @@ private struct TwoFactorSetupSheet: View {
                             Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
                         }
 
-                        CavnarFormButtonPair {
+                        CavnarFormButtonPair { matchedWidth in
                             Button {
                                 Task {
                                     if await viewModel.verify2FA(code: code) { dismiss() }
@@ -513,7 +513,7 @@ private struct TwoFactorSetupSheet: View {
                                     Text("Verify and enable")
                                 }
                             }
-                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy || code.count != 6))
+                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy || code.count != 6, matchedWidth: matchedWidth))
                             .disabled(viewModel.is2FABusy || code.count != 6)
                         } cancelAction: {
                             dismiss()
@@ -528,7 +528,7 @@ private struct TwoFactorSetupSheet: View {
                             Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
                         }
 
-                        CavnarFormButtonPair {
+                        CavnarFormButtonPair { matchedWidth in
                             Button {
                                 Task { await viewModel.send2FATest() }
                             } label: {
@@ -538,7 +538,7 @@ private struct TwoFactorSetupSheet: View {
                                     Text("Send test code")
                                 }
                             }
-                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy))
+                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy, matchedWidth: matchedWidth))
                             .disabled(viewModel.is2FABusy)
                         } cancelAction: {
                             dismiss()

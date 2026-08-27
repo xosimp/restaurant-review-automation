@@ -42,6 +42,7 @@ struct ReviewsAnalyticsSection: View {
                 }
 
                 if !viewModel.sentimentWeeks.isEmpty {
+                    overallRatingSummary
                     trendChartCard
                 } else if viewModel.isLoading {
                     trendChartSkeleton
@@ -137,7 +138,9 @@ struct ReviewsAnalyticsSection: View {
                 CavnarSkeletonBar(height: 9, widthFraction: 0.15)
             }
         }
-        .cavnarCard()
+        // Unboxed, matching trendChartCard's own now-unboxed container —
+        // otherwise the skeleton pops from boxed to unboxed the instant
+        // real data arrives.
     }
 
     // MARK: - AI insight (emoji lines → branded icon rows)
@@ -378,33 +381,35 @@ struct ReviewsAnalyticsSection: View {
 
     // MARK: - Sentiment trend chart
 
+    private var totalReviewsInWindow: Int {
+        viewModel.sentimentWeeks.reduce(0) { $0 + $1.total }
+    }
+
     private var overallAvgRating: Double {
-        let totalReviews = viewModel.sentimentWeeks.reduce(0) { $0 + $1.total }
-        guard totalReviews > 0 else { return 0 }
+        guard totalReviewsInWindow > 0 else { return 0 }
         let weightedSum = viewModel.sentimentWeeks.reduce(0.0) { $0 + $1.avgRating * Double($1.total) }
-        return weightedSum / Double(totalReviews)
+        return weightedSum / Double(totalReviewsInWindow)
     }
 
-    /// Single hue per bar, same as Food Cost's barColor(waste) and Labor's
-    /// barColor(pct) — a week's rating relative to the window's own average
-    /// decides the tier, matching Food Cost's "relative to its own average"
-    /// threshold (there's no restaurant-set target rating the way Labor has
-    /// a labor-% target). A 0.3★ buffer avoids flipping color on noise from
-    /// week to week; a review-free week stays neutral gray, same as before.
-    private func barColor(_ week: SentimentWeek) -> Color {
-        guard week.total > 0 else { return Color.cavnarPaper3 }
-        return week.avgRating < overallAvgRating - 0.3 ? Color.cavnarRed : Color.cavnarGreen
-    }
-
-    /// Bright at the base, fading to a dark shadow at the top — identical
-    /// two-stop treatment to Food Cost/Labor's trend bars, built from
-    /// whichever hue barColor already picked for this bar.
-    private func barGradient(for week: SentimentWeek) -> LinearGradient {
-        let hue = barColor(week)
-        return LinearGradient(
-            colors: [hue.opacity(0.9), hue.opacity(0.35)],
-            startPoint: .bottom, endPoint: .top
-        )
+    /// Deliberately its own line above trendChartCard, not inside that
+    /// card's header the way it used to be ("Avg 4.4★" sitting beside
+    /// "SENTIMENT TREND"). That placement read as a value plotted on the
+    /// same axis as the chart below it — it isn't: the chart's bars, its
+    /// Y-axis, and its dotted reference line are all review COUNTS: this
+    /// is a STAR rating, a different unit entirely. Same underlying
+    /// number, just no longer implying it's part of what the chart plots.
+    private var overallRatingSummary: some View {
+        HStack(spacing: 5) {
+            Text(String(format: "%.1f", overallAvgRating))
+                .font(.cavnarNumber(15, weight: 700))
+                .foregroundStyle(Color.cavnarAmber)
+            Image(systemName: "star.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.cavnarAmber)
+            Text("overall · \(totalReviewsInWindow) reviews in the last 8 weeks")
+                .font(.cavnarBody(11))
+                .foregroundStyle(Color.cavnarInk3)
+        }
     }
 
     /// Average weekly review volume across the visible window — a neutral
@@ -415,7 +420,7 @@ struct ReviewsAnalyticsSection: View {
     /// there for the same "is this week typical" context at a glance.
     private var averageWeeklyVolume: Double {
         guard !viewModel.sentimentWeeks.isEmpty else { return 0 }
-        return viewModel.sentimentWeeks.reduce(0.0) { $0 + Double($1.total) } / Double(viewModel.sentimentWeeks.count)
+        return Double(totalReviewsInWindow) / Double(viewModel.sentimentWeeks.count)
     }
 
     // Swift Charts auto-scales its Y-domain tight to the data's own max with
@@ -423,36 +428,57 @@ struct ReviewsAnalyticsSection: View {
     // bars, where that auto max naturally lands well above the tallest bar,
     // but review VOLUME is small integers (a typical week is single digits),
     // so the auto domain sits right at the data ceiling and every bar reads
-    // as maxed-out with almost no headroom. An explicit domain with real
-    // padding above the tallest week fixes that — same "bars sit at a
-    // comfortable fraction of the chart height" proportion the other two
-    // charts get for free from their larger dollar magnitudes.
+    // as maxed-out with almost no headroom. An explicit domain with modest
+    // padding above the tallest week fixes that. This used to be
+    // maxTotal * 2 — literally double the tallest bar's own height, so even
+    // the busiest week in the window only ever reached the halfway mark of
+    // the chart with the entire top half sitting empty for every week.
+    // 25% headroom is enough to keep the axis label clear of the tallest
+    // bar's top edge without wasting most of the chart on nothing.
     private var chartYMax: Double {
         let maxTotal = viewModel.sentimentWeeks.map { Double($0.total) }.max() ?? 0
-        return max(maxTotal * 2, 4)
+        return max(maxTotal * 1.25, 4)
     }
 
+    /// Three stacked segments per week — positive/neutral/negative counts,
+    /// the same fields weekTooltip below already breaks a week down by.
+    /// Used to be a single solid-color bar per week (week.total, colored
+    /// red or green by whether that week's avg rating dipped below the
+    /// window average) — which is why the "Positive/Neutral/Negative"
+    /// legend never actually matched what was on screen: amber never
+    /// appeared, and real weeks in this restaurant's own data mix all
+    /// three every week (checked against the live database directly — e.g.
+    /// one real week is 18 positive + 1 neutral + 1 negative), but the old
+    /// single-color bar only ever rendered solid green or solid red, so
+    /// the neutral/negative reviews sitting right there in the data were
+    /// simply invisible. Swift Charts stacks multiple BarMarks
+    /// automatically when they share an x value; positive is declared
+    /// first so it anchors the stack at the bottom (it's the largest
+    /// segment most weeks), with neutral/negative as thinner segments on
+    /// top — flat legend-matching colors rather than the old bright-to-
+    /// dark gradient, which was a magnitude cue that made sense for one
+    /// tall bar but reads as noise across several thin stacked slivers.
     @ChartContentBuilder
     private func trendBars() -> some ChartContent {
         ForEach(viewModel.sentimentWeeks) { week in
-            BarMark(x: .value("Week", week.label), y: .value("Reviews", week.total))
-                .foregroundStyle(barGradient(for: week))
-                .cornerRadius(3)
+            BarMark(x: .value("Week", week.label), y: .value("Reviews", week.positive))
+                .foregroundStyle(Color.cavnarGreen.opacity(0.9))
+                .cornerRadius(2)
+            BarMark(x: .value("Week", week.label), y: .value("Reviews", week.neutral))
+                .foregroundStyle(Color.cavnarAmber.opacity(0.9))
+                .cornerRadius(2)
+            BarMark(x: .value("Week", week.label), y: .value("Reviews", week.negative))
+                .foregroundStyle(Color.cavnarRed.opacity(0.9))
+                .cornerRadius(2)
         }
     }
 
     private var trendChartCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("SENTIMENT TREND — LAST 8 WEEKS")
-                    .font(.cavnarBody(10, weight: 700))
-                    .tracking(1.2)
-                    .foregroundStyle(Color.cavnarEmber2)
-                Spacer()
-                (Text("Avg ") + Text(String(format: "%.1f★", overallAvgRating)).font(.cavnarNumber(11, weight: 700)))
-                    .font(.cavnarBody(11, weight: 700))
-                    .foregroundStyle(Color.cavnarAmber)
-            }
+            Text("SENTIMENT TREND — LAST 8 WEEKS")
+                .font(.cavnarBody(10, weight: 700))
+                .tracking(1.2)
+                .foregroundStyle(Color.cavnarEmber2)
 
             // Chart marks aren't Views, so they can't take .shadow() — a
             // blurred, non-interactive duplicate of the same bars sitting
@@ -550,7 +576,9 @@ struct ReviewsAnalyticsSection: View {
                 legendItem(color: .cavnarRed, label: "Negative")
             }
         }
-        .cavnarCard()
+        // No .cavnarCard() — unboxed, matching Food Cost's own waste chart
+        // (FoodCostTrendChart), which floats directly on the module
+        // background with no bordered container either.
     }
 
     /// Press-and-hold-to-inspect, the touch equivalent of a desktop hover

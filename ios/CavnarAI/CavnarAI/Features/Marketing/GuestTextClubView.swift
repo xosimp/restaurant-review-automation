@@ -181,7 +181,7 @@ private struct AddGuestContactSheet: View {
                         focus: $focusedField, field: .phone
                     )
 
-                    CavnarFormButtonPair {
+                    CavnarFormButtonPair { matchedWidth in
                         Button {
                             Task {
                                 isAdding = true
@@ -196,7 +196,7 @@ private struct AddGuestContactSheet: View {
                                 Text("Add guest")
                             }
                         }
-                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canAdd))
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canAdd, matchedWidth: matchedWidth))
                         .disabled(!canAdd)
                     } cancelAction: {
                         dismiss()

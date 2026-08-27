@@ -131,6 +131,18 @@ extension View {
 
 struct CavnarPrimaryButtonStyle: ButtonStyle {
     var isDisabled: Bool = false
+    // Set by CavnarFormButtonPair so this button's VISUAL surface can be
+    // forced to match a sibling's width. Has to be applied HERE, inside
+    // makeBody before .cavnarPremiumButtonSurface draws the background/
+    // border/clipShape — not as a plain .frame() bolted on from outside
+    // .buttonStyle() at the call site. That outside-the-style placement is
+    // exactly what silently broke both earlier attempts at this: a .frame()
+    // applied after .buttonStyle() only resizes Button's abstract layout/
+    // hit-test box, while the actual painted background is already sized
+    // to the label's own hugged width inside makeBody and doesn't stretch
+    // to match it. Applying the width in here, before the surface is
+    // composed, means the surface itself is what gets drawn wide.
+    var matchedWidth: CGFloat? = nil
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -143,27 +155,8 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
             // .frame(maxWidth: .infinity) to its own label content.
             .padding(.horizontal, 22)
             .padding(.vertical, 14)
+            .frame(width: matchedWidth)
             .foregroundStyle(.white)
-            // Flat white read as lifeless against the gradient — a tight,
-            // low-opacity drop shadow directly under the glyphs gives the
-            // text a slight embossed lift instead of looking pasted flat
-            // on top, the same text-shadow the approved reference preview
-            // itself used.
-            //
-            // .compositingGroup() before that shadow matters once the label
-            // isn't plain Text: the AI Visibility loading state's label is
-            // CavnarShimmerText + CavnarShimmerLine stacked, each itself a
-            // masked gradient over a translucent base layer. Without
-            // flattening first, SwiftUI's .shadow() draws a shadow PER
-            // sublayer rather than one shadow for the whole composited
-            // shape — with several overlapping semi-transparent layers that
-            // stacks into a diffuse gray haze sitting over the shimmer
-            // instead of a clean, barely-there text shadow. compositingGroup
-            // renders the label to one flattened layer first so the shadow
-            // that follows sees a single opaque silhouette, same as it
-            // always did for plain Text.
-            .compositingGroup()
-            .shadow(color: .black.opacity(0.28), radius: 1, x: 0, y: 1)
             .cavnarPremiumButtonSurface(isDisabled: isDisabled)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
@@ -186,12 +179,16 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
 /// gesture-driven primary one is worth avoiding here.
 struct CavnarSecondaryButtonStyle: ButtonStyle {
     var isDisabled: Bool = false
+    // See CavnarPrimaryButtonStyle's matchedWidth doc comment — same
+    // mechanism, same reason it has to live inside makeBody.
+    var matchedWidth: CGFloat? = nil
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.cavnarBody(16, weight: 600))
             .padding(.horizontal, 22)
             .padding(.vertical, 14)
+            .frame(width: matchedWidth)
             .foregroundStyle(isDisabled ? Color.cavnarEmber.opacity(0.4) : Color.cavnarEmber)
             .background(
                 CavnarPremiumButtonSurface.defaultShape
@@ -531,39 +528,51 @@ private extension View {
 /// primary button, since "Cancel" is short) and centered within their
 /// container.
 ///
-/// Real width-matching via PreferenceKey, not a frame trick — two prior
-/// attempts at "give Cancel .frame(maxWidth: .infinity) and let the
-/// VStack cap it at the primary button's width" both failed, and for a
-/// real reason: a child requesting infinite width doesn't just expand
-/// itself, it makes the WHOLE containing VStack report an unbounded
-/// ideal width up to ITS OWN parent — which is why Cancel ended up
-/// spanning the full form instead of matching the button above it, not
-/// just staying narrow. There's no shortcut around measuring: each
-/// button reports its actual rendered width via a hidden GeometryReader
-/// or a first pass, the parent takes the max, then re-applies that
-/// exact width to both on the next render.
+/// Real width-matching via PreferenceKey, measured AND applied correctly —
+/// this took three attempts to get right, worth recording all three so the
+/// mistake doesn't get repeated a fourth time:
+///   1. Cancel's label got .frame(maxWidth: .infinity) applied AFTER
+///      .buttonStyle(). Only the invisible tap target grew; the visible
+///      pill stayed narrow, because CavnarSecondaryButtonStyle's own
+///      background/border/clipShape are composed inside makeBody, sized to
+///      the label BEFORE that outside .frame() ever applies.
+///   2. Moved .frame(maxWidth: .infinity) onto the label itself, before
+///      .buttonStyle() sees it. That stretched the visual pill correctly,
+///      but .frame(maxWidth: .infinity) is a greedy/unbounded request —
+///      having it anywhere inside a VStack's child makes the WHOLE VStack
+///      report unbounded ideal width to ITS OWN parent, so Cancel ended up
+///      spanning the full form width instead of matching the button above.
+///   3. Switched to PreferenceKey-measured widths (this version) — but
+///      still applied the resulting `.frame(width:)` from OUTSIDE
+///      .buttonStyle(), i.e. attempt 1's exact mistake with a smarter
+///      number. Same result: Cancel's hit target matched, its visible
+///      pill didn't.
+/// The actual fix needed BOTH halves at once: measure the real widths via
+/// PreferenceKey (this struct), AND feed the result INTO each ButtonStyle
+/// so `matchedWidth` is applied inside makeBody, before the surface is
+/// drawn — see CavnarPrimaryButtonStyle/CavnarSecondaryButtonStyle's own
+/// matchedWidth property. That's why `primary` takes the measured width as
+/// a parameter instead of building itself with no knowledge of it.
 struct CavnarFormButtonPair<Primary: View>: View {
     // cancelLabel comes first (a plain String, not a closure) so both
     // `primary` and `cancelAction` can be used as trailing closures —
     // Swift's multi-trailing-closure syntax needs the closure params
     // grouped at the end, with any non-closure params passed normally
     // in the parens before them:
-    //   CavnarFormButtonPair(cancelLabel: "Cancel") { ... } cancelAction: { ... }
+    //   CavnarFormButtonPair(cancelLabel: "Cancel") { width in ... } cancelAction: { ... }
     var cancelLabel: String = "Cancel"
-    @ViewBuilder var primary: () -> Primary
+    @ViewBuilder var primary: (CGFloat?) -> Primary
     let cancelAction: () -> Void
 
     @State private var matchedWidth: CGFloat?
 
     var body: some View {
         VStack(spacing: 10) {
-            primary()
-                .frame(width: matchedWidth)
+            primary(matchedWidth)
                 .cavnarReportWidth()
 
             Button(cancelLabel, action: cancelAction)
-                .buttonStyle(CavnarSecondaryButtonStyle())
-                .frame(width: matchedWidth)
+                .buttonStyle(CavnarSecondaryButtonStyle(matchedWidth: matchedWidth))
                 .cavnarReportWidth()
         }
         .onPreferenceChange(CavnarWidthKey.self) { matchedWidth = $0 }

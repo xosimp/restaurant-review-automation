@@ -98,7 +98,7 @@ struct SendReviewRequestSheet: View {
                         Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
                     }
 
-                    CavnarFormButtonPair {
+                    CavnarFormButtonPair { matchedWidth in
                         Button {
                             Task {
                                 await viewModel.send(name: name, email: email, phone: phone, message: message)
@@ -111,7 +111,7 @@ struct SendReviewRequestSheet: View {
                                 Text("Send review request")
                             }
                         }
-                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSend))
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSend, matchedWidth: matchedWidth))
                         .disabled(!canSend)
                     } cancelAction: {
                         dismiss()
