@@ -3389,6 +3389,36 @@ def _do_ai_visibility_inner(rid):
                           "action": "In Google Business Profile → Info → Website: add your restaurant's website",
                           "needs_gmb": True})
 
+    # 11. Business hours in GBP — AI tools answer "is it open right now"
+    # directly from this field; without it, that whole class of query can't
+    # be answered about this restaurant at all, regardless of how complete
+    # everything else is. get_gbp_listing's readMask now requests
+    # regularHours alongside the fields it already fetched (gmb.py).
+    has_hours = bool(gbp_data.get("has_hours"))
+    if gbp_connected and has_hours:
+        gbp_score += 10
+        checklist.append({"label": "Hours listed in GBP", "done": True, "pts": 10,
+                          "action": "Done — AI tools can answer \"is it open now\" directly", "needs_gmb": False})
+    elif gbp_connected and not has_hours:
+        checklist.append({"label": "Add hours to GBP", "done": False, "pts": 10,
+                          "action": "In Google Business Profile → Info → Hours: set your regular hours",
+                          "needs_gmb": False})
+    else:
+        checklist.append({"label": "Add hours to GBP", "done": False, "pts": 10,
+                          "action": "In Google Business Profile → Info → Hours: set your regular hours",
+                          "needs_gmb": True})
+
+    # gbp_score's own "10 items x 10 pts = 100" comment predates this file
+    # adding a silent bonus item (#3, menu_url — no else branch, so it can
+    # add 10 without ever being one of the 10 "always shown" items) plus
+    # this new hours item — both genuinely optional/bonus-shaped rather
+    # than restructuring every item's point value to keep re-summing to
+    # exactly 100. Clamped here since this is displayed as a literal "X%"
+    # on the hero panel (AIVisibilitySection.heroPanel) — a restaurant
+    # that's hit every single item, including the bonus one, is 100%
+    # complete, not 110%.
+    gbp_score = min(gbp_score, 100)
+
     # Social posting cadence — deliberately NOT a checklist item / part of
     # gbp_score (this isn't a Google Business Profile field, it's marketing
     # activity within this app), returned as its own field so the roadmap's
@@ -3423,6 +3453,16 @@ def _do_ai_visibility_inner(rid):
         "checklist": checklist,
         "gbp_connected": gbp_connected,
         "social_posts_30d": social_posts_30d,
+        # review_total/resp_rate were already computed above (item 5/6's own
+        # thresholds use them) but never left this function — the roadmap
+        # only ever saw a boolean done flag per checklist item, which is why
+        # its copy could only ever be generic done/not-done text instead of
+        # this restaurant's own actual numbers. Exposed directly so the
+        # roadmap can build copy like "38 of 50 reviews" instead of a
+        # static "get more reviews" for every restaurant regardless of
+        # where they actually stand.
+        "review_total": review_total,
+        "resp_rate": resp_rate,
     }, 200
 
 

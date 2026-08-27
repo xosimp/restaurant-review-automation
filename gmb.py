@@ -283,7 +283,7 @@ def is_connected(restaurant_id: int) -> bool:
 def get_gbp_listing(restaurant_id: int) -> dict:
     """
     Fetch current business info from GBP.
-    Returns dict with primaryPhone, websiteUri, description, title.
+    Returns dict with primaryPhone, websiteUri, description, title, has_hours.
     """
     from models import get_restaurant
     r = get_restaurant(restaurant_id)
@@ -296,7 +296,10 @@ def get_gbp_listing(restaurant_id: int) -> dict:
         resp = requests.get(
             f"https://mybusinessbusinessinformation.googleapis.com/v1/{r.gmb_location_id}",
             headers={"Authorization": f"Bearer {token}"},
-            params={"readMask": "name,title,phoneNumbers,websiteUri,profile"},
+            # regularHours added for the AI Visibility checklist's own
+            # "hours listed" item (client_api.py) — same endpoint, same
+            # scope this call already had, just one more field on the mask.
+            params={"readMask": "name,title,phoneNumbers,websiteUri,profile,regularHours"},
             timeout=10,
         )
         if resp.status_code != 200:
@@ -308,6 +311,7 @@ def get_gbp_listing(restaurant_id: int) -> dict:
             "phone":       data.get("phoneNumbers", {}).get("primaryPhone", ""),
             "website":     data.get("websiteUri", ""),
             "description": data.get("profile", {}).get("description", ""),
+            "has_hours":   bool(data.get("regularHours", {}).get("periods")),
         }
     except Exception as e:
         return {"ok": False, "error": str(e)}

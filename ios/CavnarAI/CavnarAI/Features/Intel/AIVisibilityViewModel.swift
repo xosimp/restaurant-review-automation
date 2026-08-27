@@ -38,6 +38,14 @@ struct AIVisibilityResult: Decodable {
     // so it rides along outside gbp_score/checklist as its own count. Powers
     // the roadmap's "Post consistently on social" auto-done detection.
     let socialPosts30d: Int?
+    // Real per-restaurant numbers behind the review-volume and response-rate
+    // checklist items — previously computed server-side but never left
+    // client_api.py, so the roadmap could only ever show a boolean done
+    // flag instead of this restaurant's own actual counts. Now used to
+    // build roadmap copy like "38 of 50 reviews" instead of identical
+    // boilerplate for every restaurant.
+    let reviewTotal: Int?
+    let respRate: Double?
     let error: String?
 
     enum CodingKeys: String, CodingKey {
@@ -49,6 +57,8 @@ struct AIVisibilityResult: Decodable {
         case gbpScore = "gbp_score"
         case gbpConnected = "gbp_connected"
         case socialPosts30d = "social_posts_30d"
+        case reviewTotal = "review_total"
+        case respRate = "resp_rate"
     }
 }
 

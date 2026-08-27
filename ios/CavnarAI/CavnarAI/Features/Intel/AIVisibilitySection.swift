@@ -1,18 +1,26 @@
 import SwiftUI
 
-/// One roadmap action card — copy matches the web dashboard's own
-/// aiv-roadmap-cards array exactly (renderAIVisibility in dashboard.html),
-/// so the guidance an owner reads is identical on both platforms; only the
-/// destinations differ where iOS's navigation shape doesn't match web's
-/// scroll-to-element behavior (see actions below).
+/// One roadmap action card. `title`/`actionLabel`/`impact` stay fixed —
+/// which 4 categories exist and how they rank against each other is
+/// legitimate general product guidance, not something that needs to vary
+/// per restaurant. `detail` and `why` are now built per-restaurant from
+/// this restaurant's own real numbers (see roadmapSection's detail/why
+/// builder functions) — this used to be 4 fully static strings identical
+/// for every restaurant regardless of where they actually stood, which is
+/// exactly what read as "generic SEO advice" rather than a real roadmap.
+///
+/// NOTE: dashboard.html's own renderAIVisibility (aiv-roadmap-cards) still
+/// shows the old static copy — this personalization is iOS-only so far.
+/// An owner comparing web and mobile side by side will see different text
+/// for the same restaurant until web gets the same treatment.
 private struct RoadmapCard: Identifiable {
     let id: String
     let color: Color
     let title: String
+    let detail: String
     let why: String
     let actionLabel: String
     let impact: String
-    let timeframe: String
     let done: Bool
     let action: () -> Void
 }
@@ -415,29 +423,33 @@ struct AIVisibilitySection: View {
             RoadmapCard(
                 id: "reviews", color: .cavnarAmber,
                 title: "Get more Google reviews",
-                why: "AI search tools rank restaurants by review volume and recency. The more reviews you have, the more AI systems trust you.",
-                actionLabel: "Send a review request", impact: "Highest impact", timeframe: "Ongoing", done: reviewsDone,
+                detail: reviewsDetail(result, done: reviewsDone),
+                why: reviewsWhy(result),
+                actionLabel: "Send a review request", impact: "Highest impact", done: reviewsDone,
                 action: { deepLinkRouter.pendingTab = .modules; deepLinkRouter.pendingModuleKey = "reviews" }
             ),
             RoadmapCard(
                 id: "respond", color: .cavnarGreen,
                 title: "Respond to every review",
-                why: "Response rate signals to Google that your listing is actively managed. Active listings rank higher in local search and are more likely to be cited by AI tools that pull from Google data.",
-                actionLabel: "Go to review queue", impact: "High impact", timeframe: "24–48 hrs each", done: responseDone,
+                detail: responseDetail(result, done: responseDone),
+                why: responseWhy(result),
+                actionLabel: "Go to review queue", impact: "High impact", done: responseDone,
                 action: { deepLinkRouter.pendingTab = .modules; deepLinkRouter.pendingModuleKey = "reviews" }
             ),
             RoadmapCard(
                 id: "gbp", color: .cavnarBlue,
                 title: "Complete your Google Business Profile",
-                why: "Perplexity, ChatGPT, and Google AI all pull directly from GBP data — hours, photos, menu, description. A complete profile is the single fastest way to become indexable by AI search.",
-                actionLabel: "See what's missing", impact: "Fast win", timeframe: "15 min one-time", done: gbpDone,
+                detail: gbpDetail(result, checklist: checklist),
+                why: gbpWhy(result),
+                actionLabel: "See what's missing", impact: "Fast win", done: gbpDone,
                 action: { withAnimation(.easeOut(duration: 0.2)) { showGbpChecklist = true } }
             ),
             RoadmapCard(
                 id: "social", color: .cavnarEmber,
                 title: "Post consistently on social",
-                why: "Food blogs and social content get indexed by search engines, which AI tools then pull from. Regular posts with your restaurant name, neighborhood, and cuisine type build the online footprint AI needs to find you.",
-                actionLabel: "Go to marketing", impact: "Long-term", timeframe: "2–3x per week", done: socialDone,
+                detail: socialDetail(result, done: socialDone),
+                why: socialWhy(result),
+                actionLabel: "Go to marketing", impact: "Long-term", done: socialDone,
                 action: { deepLinkRouter.pendingTab = .modules; deepLinkRouter.pendingModuleKey = "marketing" }
             ),
         ]
@@ -493,6 +505,64 @@ struct AIVisibilitySection: View {
         }
     }
 
+    // MARK: - Per-restaurant roadmap copy
+    //
+    // Every function below reads directly off this restaurant's own real
+    // numbers (review_total/resp_rate/gbp_score/social_posts_30d, all
+    // computed server-side from live data — none of it invented client-side)
+    // rather than returning a fixed string. "detail" is the always-visible
+    // line under each title; "why" is the fuller explanation revealed on
+    // tap. Two restaurants in genuinely different situations now read
+    // genuinely different guidance instead of the same 4 sentences with a
+    // checkmark toggled on or off.
+
+    private func reviewsDetail(_ result: AIVisibilityResult, done: Bool) -> String {
+        let total = result.reviewTotal ?? 0
+        if done { return "\(total) reviews — past the 50-review AI threshold" }
+        let remaining = max(50 - total, 0)
+        return "\(total) of 50 reviews — \(remaining) more to go"
+    }
+
+    private func reviewsWhy(_ result: AIVisibilityResult) -> String {
+        let total = result.reviewTotal ?? 0
+        return "You have \(total) review\(total == 1 ? "" : "s") right now. AI search tools rank restaurants by review volume and recency — the more you have, the more AI systems trust you."
+    }
+
+    private func responseDetail(_ result: AIVisibilityResult, done: Bool) -> String {
+        let rate = Int((result.respRate ?? 0).rounded())
+        if done { return "\(rate)% response rate — excellent" }
+        let gap = max(75 - rate, 0)
+        return "\(rate)% response rate — \(gap)% more gets you to 75%"
+    }
+
+    private func responseWhy(_ result: AIVisibilityResult) -> String {
+        let rate = Int((result.respRate ?? 0).rounded())
+        return "You're currently responding to \(rate)% of your reviews. Response rate signals to Google that your listing is actively managed — active listings rank higher in local search and are more likely to be cited by AI tools that pull from Google data."
+    }
+
+    private func gbpDetail(_ result: AIVisibilityResult, checklist: [AIVisibilityChecklistItem]) -> String {
+        let score = result.gbpScore ?? 0
+        let missingCount = checklist.filter { !$0.done }.count
+        guard missingCount > 0 else { return "\(score)% complete" }
+        return "\(score)% complete — \(missingCount) item\(missingCount == 1 ? "" : "s") left"
+    }
+
+    private func gbpWhy(_ result: AIVisibilityResult) -> String {
+        "Your Google Business Profile is \(result.gbpScore ?? 0)% complete. Perplexity, ChatGPT, and Google AI all pull directly from GBP data — hours, photos, menu, description. A complete profile is the single fastest way to become indexable by AI search."
+    }
+
+    private func socialDetail(_ result: AIVisibilityResult, done: Bool) -> String {
+        let posts = result.socialPosts30d ?? 0
+        if done { return "\(posts) posts this month — great pace" }
+        if posts == 0 { return "No marketing pieces logged this month yet" }
+        return "\(posts) post\(posts == 1 ? "" : "s") this month — aim for 8+"
+    }
+
+    private func socialWhy(_ result: AIVisibilityResult) -> String {
+        let posts = result.socialPosts30d ?? 0
+        return "You've logged \(posts) marketing piece\(posts == 1 ? "" : "s") this month. Food blogs and social content get indexed by search engines, which AI tools then pull from — regular posts with your restaurant name, neighborhood, and cuisine type build the online footprint AI needs to find you."
+    }
+
     /// Was a fully bordered/backgrounded box per card, each with its own
     /// icon badge — the same "container everywhere" problem the rest of
     /// this screen had. Now an accent-bar row with a hairline divider,
@@ -510,7 +580,7 @@ struct AIVisibilitySection: View {
                         Text(card.impact.uppercased()).font(.cavnarBody(10, weight: 600)).tracking(0.4).foregroundStyle(card.color)
                     }
                 }
-                Text(card.timeframe).font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                Text(card.detail).font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
                 if isExpanded {
                     Text(card.why).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk2).lineSpacing(3)
                 }
