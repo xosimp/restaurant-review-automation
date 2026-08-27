@@ -71,7 +71,24 @@ struct IntelView: View {
         .cavnarTabSwipeNavigation($subTab, primaryTab: .competitors, secondaryTab: .aiVisibility)
         .task {
             await viewModel.load()
-            contentAppeared = true
+            // viewModel.summary becoming non-nil (which is what mounts
+            // content(summary) into the tree for the very first time,
+            // since it's behind `if let summary = viewModel.summary`) and
+            // contentAppeared flipping true used to happen back-to-back in
+            // the same continuation. SwiftUI could then give content(summary)
+            // its FIRST-EVER render already at contentAppeared == true, with
+            // no prior "hidden/collapsed" frame ever rendered to animate
+            // away from — .animation(value:) only animates a transition it
+            // can observe between two states of an already-mounted view, so
+            // every reveal below (stat row, hero insight, rating bars AND
+            // their numbers) just appeared at final value instantly despite
+            // being wired correctly. Deferring this flip to the next run
+            // loop turn lets content(summary)'s real first frame commit at
+            // contentAppeared == false before this changes it, which is
+            // what gives SwiftUI something to actually animate from.
+            DispatchQueue.main.async {
+                contentAppeared = true
+            }
         }
     }
 
