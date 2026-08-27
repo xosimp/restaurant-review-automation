@@ -19,6 +19,12 @@ private struct RoadmapCard: Identifiable {
 
 struct AIVisibilitySection: View {
     let viewModel: AIVisibilityViewModel
+    // Comes from the sibling Competitors tab's own already-loaded summary
+    // (IntelView shares one restaurant across both sub-tabs) — nil only in
+    // the brief window before that load completes, in which case the
+    // pre-check headline falls back to "your restaurant" rather than
+    // showing a blank or broken sentence.
+    var restaurantName: String?
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
     @State private var showGbpChecklist = false
     @State private var expandedWhy: Set<String> = []
@@ -75,7 +81,7 @@ struct AIVisibilitySection: View {
     private var preCheckHero: some View {
         VStack(alignment: .leading, spacing: 26) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Is your restaurant visible to AI search?")
+                Text("Is \(restaurantName ?? "your restaurant") visible to AI search?")
                     .font(.cavnarHeadline(21))
                     .foregroundStyle(Color.cavnarInk)
                     .lineSpacing(3)

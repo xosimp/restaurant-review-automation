@@ -52,7 +52,7 @@ struct IntelView: View {
                             .frame(maxWidth: .infinity)
                         }
                     } else {
-                        AIVisibilitySection(viewModel: aiVisibilityViewModel)
+                        AIVisibilitySection(viewModel: aiVisibilityViewModel, restaurantName: viewModel.summary?.restaurantName)
                     }
                 }
                 .padding(.horizontal, 20)
