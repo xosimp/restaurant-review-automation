@@ -267,39 +267,67 @@ struct IntelView: View {
     // MARK: - Rating comparison
 
     private func ratingComparisonSection(_ summary: IntelSummary, ownRating: Double) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 18) {
             Text("RATING COMPARISON")
                 .font(.cavnarBody(10, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
-            VStack(spacing: 12) {
-                ratingBar(name: "Your restaurant", rating: ownRating, tone: Color.cavnarEmber2, boldName: true)
+            VStack(spacing: 16) {
+                ratingBar(name: summary.restaurantName ?? "Your restaurant", rating: ownRating, tone: Color.cavnarEmber2, isYou: true)
                 ForEach(summary.competitors) { c in
-                    ratingBar(name: c.name, rating: c.rating, tone: Color.cavnarPaper3, boldName: false)
+                    let diff = ((ownRating - c.rating) * 10).rounded() / 10
+                    ratingBar(
+                        name: c.name, rating: c.rating,
+                        tone: diff > 0 ? Color.cavnarGreen : (diff < 0 ? Color.cavnarRed : Color.cavnarInk3),
+                        isYou: false
+                    )
                 }
             }
         }
+        .opacity(contentAppeared ? 1 : 0)
+        .offset(y: contentAppeared ? 0 : 20)
+        .animation(.easeOut(duration: 0.5).delay(0.3), value: contentAppeared)
     }
 
-    private func ratingBar(name: String, rating: Double, tone: Color, boldName: Bool) -> some View {
+    /// Was a flat gray capsule for every competitor regardless of how they
+    /// actually compare — no color, no depth, nothing to look at twice.
+    /// Now: a real gradient fill with a matching glow (green/red by
+    /// whether you're ahead of THIS specific competitor, same logic the
+    /// competitor rows below already use), a thicker/brighter treatment
+    /// for your own bar so it reads as the anchor of the comparison, and
+    /// the fill animates in from zero width on load instead of just
+    /// appearing static.
+    private func ratingBar(name: String, rating: Double, tone: Color, isYou: Bool) -> some View {
         HStack(spacing: 12) {
             Text(name)
-                .font(.cavnarBody(12, weight: boldName ? 700 : 400))
-                .foregroundStyle(boldName ? Color.cavnarInk : Color.cavnarInk2)
+                .font(.cavnarBody(isYou ? 13 : 12, weight: isYou ? 700 : 500))
+                .foregroundStyle(isYou ? Color.cavnarInk : Color.cavnarInk2)
                 .lineLimit(1)
-                .frame(width: 96, alignment: .leading)
+                .frame(width: 104, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Color.cavnarPaper3.opacity(0.6))
-                    Capsule().fill(tone)
-                        .frame(width: geo.size.width * min(rating / 5, 1))
+                    Capsule().fill(Color.cavnarPaper3.opacity(0.5))
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [tone.opacity(0.6), tone],
+                                startPoint: .leading, endPoint: .trailing
+                            )
+                        )
+                        .frame(width: geo.size.width * (contentAppeared ? min(rating / 5, 1) : 0))
+                        .shadow(color: tone.opacity(0.65), radius: isYou ? 7 : 4, x: 0, y: 0)
                 }
             }
-            .frame(height: 7)
-            Text(String(format: "%.1f", rating))
-                .font(.cavnarNumber(12, weight: 700))
-                .foregroundStyle(boldName ? Color.cavnarEmber2 : Color.cavnarInk2)
-                .frame(width: 28, alignment: .trailing)
+            .frame(height: isYou ? 14 : 10)
+            .animation(.easeOut(duration: 0.7).delay(0.4), value: contentAppeared)
+            Group {
+                if isYou {
+                    ratingText(rating, numberSize: 15, tone: tone).cavnarNumberGlow(tone)
+                } else {
+                    ratingText(rating, numberSize: 12, tone: tone)
+                }
+            }
+            .frame(width: 42, alignment: .trailing)
         }
     }
 
@@ -394,7 +422,13 @@ struct IntelView: View {
 
     private func competitorRow(_ c: Competitor, ownRating: Double?) -> some View {
         let isExpanded = expandedCompetitors.contains(c.id)
-        let visibleReviews = isExpanded ? c.reviews : Array(c.reviews.prefix(2))
+        // Google returns these in its own "most relevant" order, which
+        // mixes positive and negative reviews together — grouping by
+        // rating (highest first, stable within a tie) reads as one clean
+        // block of praise followed by one clean block of complaints
+        // instead of bouncing between green and red stars line to line.
+        let sortedReviews = c.reviews.sorted { $0.rating > $1.rating }
+        let visibleReviews = isExpanded ? sortedReviews : Array(sortedReviews.prefix(2))
         let remaining = c.reviews.count - visibleReviews.count
         let diff = ownRating.map { ((($0) - c.rating) * 10).rounded() / 10 }
         let accent: Color = {
