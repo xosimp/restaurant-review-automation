@@ -118,7 +118,7 @@ struct FoodCostTrendChart: View {
                         .foregroundStyle(Color.cavnarInk.opacity(0.8))
                         .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                         .annotation(position: .top, alignment: .trailing) {
-                            Text("avg $\(Int(average))")
+                            Text("your avg $\(Int(average))")
                                 .font(.cavnarBody(9, weight: 700))
                                 .foregroundStyle(Color.black)
                                 .padding(.horizontal, 6)
@@ -131,7 +131,7 @@ struct FoodCostTrendChart: View {
                             .foregroundStyle(Self.industryBandColor)
                             .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
                             .annotation(position: .top, alignment: .leading) {
-                                Text("target ~$\(Int(industryTargetDollar))")
+                                Text("your target ~$\(Int(industryTargetDollar))")
                                     .font(.cavnarBody(9, weight: 700))
                                     .foregroundStyle(Color.black)
                                     .padding(.horizontal, 6)
@@ -143,9 +143,15 @@ struct FoodCostTrendChart: View {
                 }
                 .frame(height: 160)
                 .chartYAxis {
-                    AxisMarks(position: .leading) { _ in
+                    AxisMarks(position: .leading) { value in
                         AxisGridLine().foregroundStyle(Color.cavnarPaper3.opacity(0.4))
-                        AxisValueLabel().font(.system(size: 9)).foregroundStyle(Color.cavnarInk3)
+                        AxisValueLabel {
+                            if let d = value.as(Double.self) {
+                                Text("$\(Int(d))")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(Color.cavnarInk3)
+                            }
+                        }
                     }
                 }
                 .chartXAxis {
