@@ -137,10 +137,21 @@ struct IntelView: View {
 
         if !summary.sections.isEmpty || !summary.recommendations.isEmpty {
             marketAnalysisGroup(summary)
+                // Continues the same fade/rise sequence statRow (0s) and
+                // heroInsight (.15s delay) already use — this and
+                // competitorsSection below never had it at all, which is
+                // why everything from here down just appeared instantly
+                // while the sections above it were still visibly animating.
+                .opacity(contentAppeared ? 1 : 0)
+                .offset(y: contentAppeared ? 0 : 20)
+                .animation(.easeOut(duration: 0.5).delay(0.45), value: contentAppeared)
         }
 
         if !summary.competitors.isEmpty {
             competitorsSection(summary)
+                .opacity(contentAppeared ? 1 : 0)
+                .offset(y: contentAppeared ? 0 : 20)
+                .animation(.easeOut(duration: 0.5).delay(0.6), value: contentAppeared)
         }
     }
 
