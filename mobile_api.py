@@ -1594,7 +1594,8 @@ def _do_mobile_intel(restaurant_id):
     if not restaurant:
         return {"ok": False, "error": "Restaurant not found"}, 404
     empty = {"ok": True, "has_data": False, "intro": None, "recommendations": [], "sections": [],
-             "competitors": [], "updated_at": None, "own_rating": None, "restaurant_name": restaurant.name}
+             "competitors": [], "updated_at": None, "own_rating": None,
+             "restaurant_name": restaurant.name, "owner_name": restaurant.owner_name}
     if not getattr(restaurant, "competitor_intel", None):
         return empty, 200
     try:
@@ -1615,6 +1616,7 @@ def _do_mobile_intel(restaurant_id):
             "ok": True,
             "has_data": True,
             "restaurant_name": restaurant.name,
+            "owner_name": restaurant.owner_name,
             "intro": parsed.get("intro"),
             "recommendations": extract_recs(insight),
             "sections": [{"name": name, "bullets": bullets} for name, bullets in parsed.get("sections", [])],

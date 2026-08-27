@@ -18,6 +18,12 @@ struct IntelView: View {
     @State private var aiVisibilityViewModel = AIVisibilityViewModel()
     @State private var subTab: IntelSubTab = .competitors
     @State private var expandedCompetitors: Set<String> = []
+    // Drives the initial-load reveal — stats fade/rise into place first,
+    // the AI insight follows a beat after (see content(_:)'s two .delay
+    // values below). Tied to the data load finishing, not view-appear, so
+    // it plays once per real load rather than replaying every time you
+    // swipe back to this sub-tab.
+    @State private var contentAppeared = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -63,7 +69,10 @@ struct IntelView: View {
         // swipe gesture, same convention as Food Cost/Labor/Marketing's
         // own sub-tabs.
         .cavnarTabSwipeNavigation($subTab, primaryTab: .competitors, secondaryTab: .aiVisibility)
-        .task { await viewModel.load() }
+        .task {
+            await viewModel.load()
+            contentAppeared = true
+        }
     }
 
     private var emptyState: some View {
@@ -90,21 +99,23 @@ struct IntelView: View {
     @ViewBuilder
     private func content(_ summary: IntelSummary) -> some View {
         statRow(summary)
+            .opacity(contentAppeared ? 1 : 0)
+            .offset(y: contentAppeared ? 0 : 20)
+            .animation(.easeOut(duration: 0.5), value: contentAppeared)
 
         if let intro = summary.intro, !intro.isEmpty {
-            aiIntroCallout(intro)
+            heroInsight(intro, ownerName: summary.ownerName)
+                .opacity(contentAppeared ? 1 : 0)
+                .offset(y: contentAppeared ? 0 : 20)
+                .animation(.easeOut(duration: 0.5).delay(0.15), value: contentAppeared)
         }
 
         if let ownRating = summary.ownRating, !summary.competitors.isEmpty {
             ratingComparisonSection(summary, ownRating: ownRating)
         }
 
-        ForEach(summary.sections) { section in
-            marketSection(section)
-        }
-
-        if !summary.recommendations.isEmpty {
-            recommendationsSection(summary.recommendations)
+        if !summary.sections.isEmpty || !summary.recommendations.isEmpty {
+            marketAnalysisGroup(summary)
         }
 
         if !summary.competitors.isEmpty {
@@ -112,28 +123,57 @@ struct IntelView: View {
         }
     }
 
-    // MARK: - AI intro (this is Cavnar AI talking — needs its own identity,
-    // not plain unattributed body copy sitting at the top of the page)
+    // MARK: - Hero insight — this is the AI's own opening line, and it's
+    // meant to be the one sentence on this page that actually grabs you,
+    // not unattributed body copy sitting quietly at the top. No kicker,
+    // no icon, no accent bar — just size and the owner's name in the
+    // brand's own ember, same treatment Home's own greeting headline uses
+    // for the exact same reason (HomeView.heroHeadline).
 
-    private func aiIntroCallout(_ intro: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 5) {
+    private func heroInsight(_ intro: String, ownerName: String?) -> some View {
+        Group {
+            if let ownerName, !ownerName.isEmpty, intro.hasPrefix(ownerName) {
+                (Text(ownerName).foregroundStyle(Color.cavnarEmber2)
+                    + Text(String(intro.dropFirst(ownerName.count))).foregroundStyle(Color.cavnarInk))
+            } else {
+                Text(intro).foregroundStyle(Color.cavnarInk)
+            }
+        }
+        .font(.cavnarHeadline(22))
+        .lineSpacing(5)
+    }
+
+    // MARK: - Market analysis — well/poorly/recommendations read as one
+    // continuous AI narrative, not three independent page sections, so
+    // they share one soft ember-tinted panel and one continuous accent
+    // bar down the left edge instead of each getting its own kicker.
+
+    private func marketAnalysisGroup(_ summary: IntelSummary) -> some View {
+        VStack(alignment: .leading, spacing: 22) {
+            HStack(spacing: 6) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 10, weight: .semibold))
-                Text("CAVNAR AI")
+                Text("CAVNAR AI COMPETITIVE ANALYSIS")
                     .font(.cavnarBody(10, weight: 700))
-                    .tracking(1.2)
+                    .tracking(1.1)
             }
             .foregroundStyle(Color.cavnarEmber2)
-            Text(intro)
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk2)
-                .lineSpacing(4)
+
+            ForEach(summary.sections) { section in
+                marketSection(section)
+            }
+
+            if !summary.recommendations.isEmpty {
+                recommendationsSection(summary.recommendations)
+            }
         }
-        .padding(.leading, 13)
+        .padding(.vertical, 18)
+        .padding(.horizontal, 22)
+        .background(Color.cavnarEmber.opacity(0.06))
         .overlay(alignment: .leading) {
             Rectangle().fill(Color.cavnarEmber.opacity(0.55)).frame(width: 2.5)
         }
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
 
     // MARK: - Summary stat row (bare — no card, just numbers + hairline dividers)

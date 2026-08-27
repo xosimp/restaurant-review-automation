@@ -178,6 +178,25 @@ def fetch_menu_from_url(menu_url: str, restaurant_id: int = None) -> str:
         return ""
 
 
+# A coffee shop or bar with no real food-service classification isn't a
+# genuine dining competitor, even though Google's nearby-restaurant search
+# sometimes surfaces one — the `type` request param is a strong hint, not
+# an ironclad filter, especially once the `keyword` param broadens the
+# match (e.g. a restaurant whose own types include "bar" builds a "bar
+# pub" keyword, which can pull in places matched mostly on that keyword
+# text rather than a true restaurant classification). Excluded only if
+# beverage/nightlife types are ALL it has — a food-serving brewery or
+# gastropub (bar + restaurant, or bar + meal_takeaway) still competes on
+# food and stays.
+_PURE_BEVERAGE_TYPES = {"cafe", "bar", "night_club"}
+_FOOD_SIGNAL_TYPES = {"restaurant", "meal_takeaway", "meal_delivery", "bakery"}
+
+
+def _is_pure_beverage_spot(types) -> bool:
+    type_set = set(types or [])
+    return bool(type_set & _PURE_BEVERAGE_TYPES) and not (type_set & _FOOD_SIGNAL_TYPES)
+
+
 def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_results: int = 5) -> list:
     """Find nearby restaurants using the Google Places API."""
     if not PLACES_API_KEY or not google_place_id:
@@ -245,55 +264,74 @@ def get_nearby_competitors(google_place_id: str, radius_meters: int = 2000, max_
                 print(f"[Competitor] Fallback search error: {r2_data.get('status')} {r2_data.get('error_message','')}")
             places = r2_data.get("results", [])
 
-        # Filter: skip self, skip fast food chains, prefer similar price level
+        # Filter: skip self, skip fast food chains, skip pure beverage
+        # spots, prefer similar price level
         fast_food_chains = {"mcdonald", "burger king", "wendy", "taco bell", "subway",
                            "kfc", "domino", "pizza hut", "little caesar", "papa john",
                            "chipotle", "panera", "dunkin", "starbucks", "popeyes", "chick-fil-a"}
 
-        competitors = []
-        for p in places:
-            name = p.get("name", "")
-            if name == own_name:
-                continue
-            if p.get("business_status") != "OPERATIONAL":
-                continue
-            # Skip obvious fast food chains
-            if any(chain in name.lower() for chain in fast_food_chains):
-                continue
-            # Prefer similar price level if known
-            p_price = p.get("price_level")
-            if own_price and p_price and abs(own_price - p_price) > 2:
-                continue
-            competitors.append({
-                "place_id": p["place_id"],
-                "name": name,
-                "rating": p.get("rating", 0),
-                "review_count": p.get("user_ratings_total", 0),
-                "vicinity": p.get("vicinity", ""),
-            })
-            if len(competitors) >= max_results:
-                break
-
-        # If still too few after filtering, relax price filter
-        if len(competitors) < 3:
-            competitors = []
-            for p in places:
+        def _filter(candidates, enforce_price):
+            out = []
+            seen_ids = set()
+            for p in candidates:
                 name = p.get("name", "")
-                if name == own_name:
+                pid = p.get("place_id")
+                if not pid or pid in seen_ids or name == own_name:
                     continue
                 if p.get("business_status") != "OPERATIONAL":
                     continue
                 if any(chain in name.lower() for chain in fast_food_chains):
                     continue
-                competitors.append({
-                    "place_id": p["place_id"],
+                if _is_pure_beverage_spot(p.get("types", [])):
+                    continue
+                if enforce_price:
+                    p_price = p.get("price_level")
+                    if own_price and p_price and abs(own_price - p_price) > 2:
+                        continue
+                seen_ids.add(pid)
+                out.append({
+                    "place_id": pid,
                     "name": name,
                     "rating": p.get("rating", 0),
                     "review_count": p.get("user_ratings_total", 0),
                     "vicinity": p.get("vicinity", ""),
                 })
-                if len(competitors) >= max_results:
+                if len(out) >= max_results:
                     break
+            return out
+
+        competitors = _filter(places, enforce_price=True)
+
+        # If still too few after filtering, relax the price-level match
+        if len(competitors) < 3:
+            competitors = _filter(places, enforce_price=False)
+
+        # Still short of a reasonable minimum — the initial radius may
+        # just not have enough comparable restaurants in it (suburban/
+        # low-density areas especially). One broader retry, doubled
+        # radius and no keyword/price constraints, merging in anything
+        # new rather than starting over — an owner should see a real
+        # competitive picture, not two results because the first pass
+        # happened to be narrow.
+        if len(competitors) < 3:
+            try:
+                wider = requests.get(nearby_url, params={
+                    "location": f"{lat},{lng}",
+                    "radius": min(radius_meters * 2, 8000),
+                    "type": "restaurant",
+                    "key": PLACES_API_KEY,
+                    "rankby": "prominence",
+                }, timeout=8).json()
+                more_places = wider.get("results", []) if wider.get("status") in ("OK", "ZERO_RESULTS") else []
+                existing_ids = {c["place_id"] for c in competitors}
+                for extra in _filter(more_places, enforce_price=False):
+                    if extra["place_id"] not in existing_ids:
+                        competitors.append(extra)
+                        existing_ids.add(extra["place_id"])
+                    if len(competitors) >= max_results:
+                        break
+            except Exception as e:
+                print(f"[Competitor] Wider-radius retry failed: {e}")
 
         return competitors
     except Exception as e:
