@@ -238,7 +238,11 @@ private struct AskCavnarFAB: View {
             // icon + its own ambient halo with nothing solid behind it —
             // now the gradient surface stays present in both states, with
             // the ambient halo still pulsing on top of it.
-            .cavnarPremiumButtonSurface(showFloorReflection: false)
+            // Explicit Capsule — the shared surface's default shape is now
+            // a moderate rounded-rect tuned for text CTAs, which would
+            // look like a rounded square rather than a circle on this
+            // near-square icon button once collapsed.
+            .cavnarPremiumButtonSurface(showFloorReflection: false, shape: AnyShape(Capsule()))
         }
         .buttonStyle(FABPressStyle())
         // Same opacity/offset curve as HomeView's hero, driven by the same

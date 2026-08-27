@@ -17,9 +17,19 @@ struct CavnarSplitButton<MenuContent: View>: View {
     var action: () -> Void
     @ViewBuilder var menuContent: () -> MenuContent
 
+    // Plain Button + Menu here have no ButtonStyle of their own to hang
+    // .sensoryFeedback off configuration.isPressed the way
+    // CavnarPrimaryButtonStyle does — these had no haptic at all before.
+    // A toggled trigger tied to the tap itself gets the same effect.
+    @State private var actionTapTrigger = false
+    @State private var menuTapTrigger = false
+
     var body: some View {
         HStack(spacing: 0) {
-            Button(action: action) {
+            Button {
+                actionTapTrigger.toggle()
+                action()
+            } label: {
                 HStack(spacing: 10) {
                     if let icon {
                         iconChip(icon)
@@ -35,10 +45,10 @@ struct CavnarSplitButton<MenuContent: View>: View {
                 .padding(.leading, icon != nil ? 10 : 18)
                 .padding(.trailing, 14)
                 .padding(.vertical, 12)
-                .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .sensoryFeedback(.impact(weight: .light), trigger: actionTapTrigger)
 
             Rectangle()
                 .fill(Color.white.opacity(0.22))
@@ -55,8 +65,15 @@ struct CavnarSplitButton<MenuContent: View>: View {
                     .padding(.vertical, 12)
                     .contentShape(Rectangle())
             }
+            // .simultaneousGesture, not a wrapping tap gesture, so this
+            // doesn't compete with Menu's own gesture for opening it.
+            .simultaneousGesture(TapGesture().onEnded { menuTapTrigger.toggle() })
+            .sensoryFeedback(.impact(weight: .light), trigger: menuTapTrigger)
         }
-        .cavnarPremiumButtonSurface(isDisabled: isDisabled)
+        // Explicit Capsule — this component's own reference match was a
+        // full pill, unlike CavnarPrimaryButtonStyle's newer moderate
+        // rounded-rect, and nothing since has said to change it.
+        .cavnarPremiumButtonSurface(isDisabled: isDisabled, shape: AnyShape(Capsule()))
         .opacity(isDisabled || isLoading ? 0.75 : 1)
         .disabled(isDisabled || isLoading)
     }

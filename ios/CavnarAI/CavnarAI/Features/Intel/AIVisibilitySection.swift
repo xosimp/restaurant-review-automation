@@ -62,10 +62,9 @@ struct AIVisibilitySection: View {
             Task { await viewModel.check() }
         } label: {
             if viewModel.isChecking {
-                PulsingText("Checking…").frame(maxWidth: .infinity)
+                PulsingText("Checking…")
             } else {
                 Text(viewModel.result == nil ? "Check my AI visibility" : "Re-run")
-                    .frame(maxWidth: .infinity)
             }
         }
         .buttonStyle(CavnarPrimaryButtonStyle())
@@ -136,7 +135,7 @@ struct AIVisibilitySection: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 0) {
                 heroStat(
-                    value: "\(result.aiScore ?? 0)%", tone: Color.cavnarEmber2,
+                    value: "\(result.aiScore ?? 0)%", tone: aiScoreTone(result.aiScore ?? 0),
                     label: "AI APPEARANCE", sub: aiScoreLabel(result.aiScore ?? 0)
                 )
                 Rectangle().fill(Color.cavnarEmber.opacity(0.3)).frame(width: 1).padding(.vertical, 6)
@@ -226,6 +225,14 @@ struct AIVisibilitySection: View {
         if score >= 67 { return "Strong AI presence" }
         if score >= 34 { return "Moderate presence" }
         return "Not yet indexed by AI search"
+    }
+
+    // Same breakpoints as aiScoreLabel above (34/67) — was a flat
+    // Ember2 regardless of score, so a 0% and a 100% read identically.
+    private func aiScoreTone(_ score: Int) -> Color {
+        if score >= 67 { return .cavnarGreen }
+        if score >= 34 { return .cavnarAmber }
+        return .cavnarRed
     }
 
     private func gbpScoreLabel(_ score: Int) -> String {

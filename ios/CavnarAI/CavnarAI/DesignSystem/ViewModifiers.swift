@@ -54,24 +54,23 @@ extension View {
     }
 }
 
-/// The button treatment from the design preview, tuned down one round
-/// after "way too glowy" feedback on the shipped version: a three-stop
-/// vertical gradient (bright top, ember mid, deep burnt base — not just
-/// a two-color fade), a glossy white sheen across the upper half, a
-/// hairline light-catching edge. The ember glow itself is now ONE
-/// moderate layer (`Self.glowRadius`, reused by the small Filled icon-
-/// button treatment so both share the same recipe) instead of the
-/// original's two large stacked shadows. A separate, darker, tighter
-/// elevation shadow is applied BEFORE the glow in the modifier chain —
-/// SwiftUI shadows each wrap everything above them, so the shadow
-/// applied first stays the crisp, close-to-the-edge layer, and the glow
-/// applied after it is the one that reads as the softer outer halo —
-/// which is what actually gives "lifting off the page" instead of just
-/// glowing. Always a full capsule/pill — the app's normal 12pt control
-/// radius is exactly what read as a "weird outline" next to this
-/// gradient/glow combination; the recipe was built for a fully rounded
-/// pill shape. Shared by CavnarPrimaryButtonStyle, CavnarSplitButton,
-/// and the Filled small icon-button treatment.
+/// The button treatment from the design preview, tuned twice since the
+/// first shipped version: "way too glowy" (the original two large
+/// stacked shadows) collapsed to one moderate glow, and then that glow
+/// was still offset downward (y: 4) rather than surrounding the button
+/// evenly — fixed by centering it (y: 0) so it reads as ambient bloom on
+/// every side, not a bottom-heavy smear. The dark elevation shadow is a
+/// SEPARATE layer, bigger now too, applied BEFORE the glow in the
+/// modifier chain — SwiftUI shadows each wrap everything above them, so
+/// the shadow applied first stays the crisp, close-to-the-edge layer,
+/// and the ambient glow applied after it is the one that reads as the
+/// softer outer halo — which is what actually gives "lifting off the
+/// page" instead of just glowing. Corner radius is a deliberate,
+/// moderate round (not a full capsule/pill) — reuses CavnarRadius.card
+/// rather than a stadium shape, which read as more rounded than wanted
+/// once buttons stopped being forced full-width (see
+/// CavnarPrimaryButtonStyle below). Shared by CavnarPrimaryButtonStyle,
+/// CavnarSplitButton, and the Filled small icon-button treatment.
 struct CavnarPremiumButtonSurface: ViewModifier {
     var isDisabled: Bool = false
     // Off for small/dense contexts (icon buttons) where a floor
@@ -79,17 +78,23 @@ struct CavnarPremiumButtonSurface: ViewModifier {
     // below it to read as intentional — on by default for standalone
     // CTAs, which is every existing call site as of this change.
     var showFloorReflection: Bool = true
+    // Overridable per call site — AskCavnarFAB is a near-square icon
+    // button that needs a true Capsule (reads as circular at that aspect
+    // ratio) even though the default here is the app's own moderate
+    // rounded-rect for text CTAs.
+    var shape: AnyShape = CavnarPremiumButtonSurface.defaultShape
 
     // #F0946B / #D4583A (brand Ember) / #9E3B24 — bright-to-deep three
     // stop gradient, not evenly spaced (48%, not 50%, matches reference).
     private static let gradientTop = Color(red: 0.941, green: 0.580, blue: 0.420)
     private static let gradientBase = Color(red: 0.620, green: 0.231, blue: 0.141)
-    static let glowRadius: CGFloat = 12
+    static let glowRadius: CGFloat = 16
+    static let defaultShape = AnyShape(RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous))
 
     func body(content: Content) -> some View {
         content
             .background {
-                Capsule()
+                shape
                     .fill(
                         LinearGradient(
                             stops: [
@@ -100,7 +105,7 @@ struct CavnarPremiumButtonSurface: ViewModifier {
                             startPoint: .top, endPoint: .bottom
                         )
                     )
-                Capsule()
+                shape
                     .fill(
                         LinearGradient(
                             stops: [
@@ -111,15 +116,16 @@ struct CavnarPremiumButtonSurface: ViewModifier {
                             startPoint: .top, endPoint: .bottom
                         )
                     )
-                Capsule().strokeBorder(Color.white.opacity(isDisabled ? 0 : 0.18), lineWidth: 1)
+                shape.stroke(Color.white.opacity(isDisabled ? 0 : 0.18), lineWidth: 1)
             }
-            .clipShape(Capsule())
-            .shadow(color: .black.opacity(isDisabled ? 0 : 0.55), radius: 10, x: 0, y: 6)
-            .shadow(color: Color.cavnarEmber.opacity(isDisabled ? 0 : 0.4), radius: Self.glowRadius, x: 0, y: 4)
+            .clipShape(shape)
+            .shadow(color: .black.opacity(isDisabled ? 0 : 0.6), radius: 14, x: 0, y: 7)
+            .shadow(color: Color.cavnarEmber.opacity(isDisabled ? 0 : 0.42), radius: Self.glowRadius, x: 0, y: 0)
             // Added AFTER clipShape/shadow so it isn't clipped to the
-            // capsule — a second, independent background layer whose
-            // GeometryReader reads this view's own (already-capsule-
-            // shaped) size, then positions a blurred glow just below it.
+            // button's own shape — a second, independent background
+            // layer whose GeometryReader reads this view's own
+            // (already-shaped) size, then positions a blurred glow just
+            // below it.
             .background {
                 if showFloorReflection {
                     GeometryReader { geo in
@@ -144,8 +150,12 @@ struct CavnarPremiumButtonSurface: ViewModifier {
 }
 
 extension View {
-    func cavnarPremiumButtonSurface(isDisabled: Bool = false, showFloorReflection: Bool = true) -> some View {
-        modifier(CavnarPremiumButtonSurface(isDisabled: isDisabled, showFloorReflection: showFloorReflection))
+    func cavnarPremiumButtonSurface(
+        isDisabled: Bool = false,
+        showFloorReflection: Bool = true,
+        shape: AnyShape = CavnarPremiumButtonSurface.defaultShape
+    ) -> some View {
+        modifier(CavnarPremiumButtonSurface(isDisabled: isDisabled, showFloorReflection: showFloorReflection, shape: shape))
     }
 }
 
@@ -155,8 +165,14 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.cavnarBody(16, weight: 600))
-            .frame(maxWidth: .infinity)
-            .padding(14)
+            // Was .frame(maxWidth: .infinity) — every primary button
+            // stretched to fill its container regardless of how short its
+            // label was, which is exactly what read as "way too long
+            // horizontally." Buttons now hug their own text; a call site
+            // that genuinely wants full width can still add
+            // .frame(maxWidth: .infinity) to its own label content.
+            .padding(.horizontal, 22)
+            .padding(.vertical, 14)
             .foregroundStyle(.white)
             // Flat white read as lifeless against the gradient — a tight,
             // low-opacity drop shadow directly under the glyphs gives the
@@ -190,23 +206,22 @@ struct CavnarSecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.cavnarBody(16, weight: 600))
-            .frame(maxWidth: .infinity)
-            .padding(14)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 14)
             .foregroundStyle(isDisabled ? Color.cavnarEmber.opacity(0.4) : Color.cavnarEmber)
             .background(
-                Capsule()
+                CavnarPremiumButtonSurface.defaultShape
                     .fill(Color.cavnarEmber.opacity(isDisabled ? 0.03 : 0.09))
             )
             .overlay(
                 // A flat single-tone border read thin next to the new
                 // gradient-filled primary style — a top-brighter/bottom-
                 // dimmer border gives it the same "light hitting an edge"
-                // depth cue without filling the button in. Capsule, not
-                // the old 12pt radius, to match the primary style's pill
-                // shape — the two sitting side by side with different
-                // corner treatments was its own inconsistency.
-                Capsule()
-                    .strokeBorder(
+                // depth cue without filling the button in. Same shape
+                // token as the primary style (moderate round, not a full
+                // pill) so the two sitting side by side don't disagree.
+                CavnarPremiumButtonSurface.defaultShape
+                    .stroke(
                         LinearGradient(
                             colors: [
                                 Color.cavnarEmber.opacity(isDisabled ? 0.3 : 0.95),
@@ -217,7 +232,7 @@ struct CavnarSecondaryButtonStyle: ButtonStyle {
                         lineWidth: 1.5
                     )
             )
-            .clipShape(Capsule())
+            .clipShape(CavnarPremiumButtonSurface.defaultShape)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
             .sensoryFeedback(.impact(weight: .light), trigger: configuration.isPressed) { old, new in

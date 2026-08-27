@@ -161,7 +161,7 @@ struct AvailabilityManagerSection: View {
                 }
             } label: {
                 if viewModel.isSavingAvailability {
-                    ProgressView().tint(.white).frame(maxWidth: .infinity)
+                    PulsingText("Saving…")
                 } else {
                     Text("Save")
                 }
