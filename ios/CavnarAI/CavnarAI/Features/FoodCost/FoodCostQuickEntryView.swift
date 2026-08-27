@@ -124,17 +124,26 @@ struct FoodCostQuickEntryView: View {
                             .font(.cavnarBody(12))
                             .foregroundStyle(Color.cavnarInk3)
                     }
-                    .id("foodCostIntro")
 
+                    // Scroll target is the CAROUSEL's own top, not the intro
+                    // text above it — anchoring the intro block to .top (the
+                    // previous target) still left its own ~3 lines of text
+                    // sitting above the carousel, eating into exactly the
+                    // headroom this scroll exists to reclaim from the
+                    // keyboard. Scrolling the carousel itself to .top pushes
+                    // the intro text fully off-screen instead, so the
+                    // carousel's fixed-height window gets the maximum
+                    // available clearance.
                     IngredientCarousel(
                         items: $viewModel.items,
                         onAddRow: { viewModel.addCustomRow() },
                         scrollOuterToTop: {
                             withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
-                                outerProxy.scrollTo("foodCostIntro", anchor: .top)
+                                outerProxy.scrollTo("foodCostCarousel", anchor: .top)
                             }
                         }
                     )
+                    .id("foodCostCarousel")
 
                 if let error = viewModel.errorMessage {
                     Text(error)
