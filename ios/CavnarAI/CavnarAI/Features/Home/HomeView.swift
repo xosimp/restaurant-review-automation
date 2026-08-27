@@ -175,6 +175,7 @@ struct HomeView: View {
                         // past that icon's own bounds, so it needs to
                         // composite outside that clip, not get cut off by it.
                         Image(systemName: "bell")
+                            .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(Color.cavnarEmber)
                             .cavnarToolbarIconGlass()
                             .overlay(alignment: .topTrailing) {
@@ -201,6 +202,7 @@ struct HomeView: View {
                             showingLocationSwitcher = true
                         } label: {
                             Image(systemName: "building.2")
+                                .font(.system(size: 17, weight: .semibold))
                                 .foregroundStyle(Color.cavnarEmber)
                                 .cavnarToolbarIconGlass()
                         }

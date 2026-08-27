@@ -276,13 +276,14 @@ struct IntelView: View {
                 .foregroundStyle(Color.cavnarEmber)
             VStack(spacing: 16) {
                 ratingBar(name: summary.restaurantName ?? "Your restaurant", rating: ownRating, tone: Color.cavnarEmber, isYou: true)
+                // Was green/red per competitor based on ahead-or-behind —
+                // stacked next to the client's own ember bar, that read as
+                // too many colors at once ("kiddish"). Every competitor
+                // bar is the same neutral gray now; only the client's own
+                // restaurant keeps the brand color, so it's the one thing
+                // that actually stands out.
                 ForEach(summary.competitors) { c in
-                    let diff = ((ownRating - c.rating) * 10).rounded() / 10
-                    ratingBar(
-                        name: c.name, rating: c.rating,
-                        tone: diff > 0 ? Color.cavnarGreen : (diff < 0 ? Color.cavnarRed : Color.cavnarInk3),
-                        isYou: false
-                    )
+                    ratingBar(name: c.name, rating: c.rating, tone: Color.cavnarInk3, isYou: false)
                 }
             }
         }

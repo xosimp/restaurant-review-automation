@@ -42,7 +42,14 @@ struct ReviewsListView: View {
                     showingSendRequest = true
                 } label: {
                     Image(systemName: "envelope.badge")
-                        .font(.system(size: 17, weight: .medium))
+                        // 17pt (matching the back button's own icon size)
+                        // was still spilling toward the circle's edge —
+                        // envelope.badge's glyph is naturally much wider
+                        // than a chevron's at the same point size, so
+                        // matching size numerically doesn't match visual
+                        // fill. Sized down instead to land at the same
+                        // proportional inset the back button has.
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Color.cavnarEmber)
                         .cavnarToolbarIconGlass()
                 }

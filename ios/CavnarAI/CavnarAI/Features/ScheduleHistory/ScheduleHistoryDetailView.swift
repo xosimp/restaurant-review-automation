@@ -129,7 +129,7 @@ struct ScheduleHistoryDetailView: View {
                 if let csv = viewModel.detail?.scheduleCsv {
                     ShareLink(item: csv, preview: SharePreview("Schedule — \(weekLabel).csv")) {
                         Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(Color.cavnarEmber)
                             .cavnarToolbarIconGlass()
                     }
@@ -140,7 +140,7 @@ struct ScheduleHistoryDetailView: View {
                     // resize once loading finishes — only the icon's
                     // opacity and function change.
                     Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(Color.cavnarEmber.opacity(0.3))
                         .cavnarToolbarIconGlass()
                 }
