@@ -80,12 +80,6 @@ struct AIVisibilitySection: View {
     private var preCheckHero: some View {
         VStack(alignment: .leading, spacing: 26) {
             VStack(alignment: .leading, spacing: 10) {
-                ZStack {
-                    Circle().fill(Color.cavnarEmber.opacity(0.16)).frame(width: 52, height: 52)
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(Color.cavnarEmber)
-                }
                 Text("Is your restaurant visible to AI search?")
                     .font(.cavnarHeadline(21))
                     .foregroundStyle(Color.cavnarInk)
