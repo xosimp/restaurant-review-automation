@@ -54,6 +54,17 @@ extension View {
     }
 }
 
+/// Was a completely flat solid ember fill — every primary CTA app-wide
+/// (Save, Send, Approve, Check my AI visibility, Login, ...) read as the
+/// same one-note rectangle. Now: a top-to-bottom gradient so the fill has
+/// real depth instead of one flat hue, a soft diagonal glass highlight
+/// across the upper half (the same light-hitting-glossy-plastic cue
+/// CavnarGlassButtonStyle already uses), a hairline light-catching top
+/// edge, and a colored ember glow underneath that lifts the button off
+/// the page instead of sitting flush against it — the same "gradient +
+/// glow + depth, never flat" language this app already applies to bars
+/// and charts (see feedback_visual_punch in memory), just brought to
+/// buttons for the first time.
 struct CavnarPrimaryButtonStyle: ButtonStyle {
     var isDisabled: Bool = false
 
@@ -62,9 +73,31 @@ struct CavnarPrimaryButtonStyle: ButtonStyle {
             .font(.cavnarBody(16, weight: 600))
             .frame(maxWidth: .infinity)
             .padding(14)
-            .background(isDisabled ? Color.cavnarEmber.opacity(0.4) : Color.cavnarEmber)
             .foregroundStyle(Color.cavnarInk)
+            .background {
+                RoundedRectangle(cornerRadius: CavnarRadius.control)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.cavnarEmber.opacity(isDisabled ? 0.4 : 1),
+                                Color.cavnarEmber.opacity(isDisabled ? 0.32 : 0.8),
+                            ],
+                            startPoint: .top, endPoint: .bottom
+                        )
+                    )
+                RoundedRectangle(cornerRadius: CavnarRadius.control)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.white.opacity(isDisabled ? 0 : 0.28), Color.white.opacity(0)],
+                            startPoint: .topLeading, endPoint: .bottom
+                        )
+                    )
+                RoundedRectangle(cornerRadius: CavnarRadius.control)
+                    .strokeBorder(Color.white.opacity(isDisabled ? 0 : 0.16), lineWidth: 1)
+            }
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+            .shadow(color: Color.cavnarEmber.opacity(isDisabled ? 0 : 0.45), radius: 12, x: 0, y: 5)
+            .shadow(color: .black.opacity(isDisabled ? 0 : 0.2), radius: 3, x: 0, y: 1)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
             // .sensoryFeedback instead of manually firing a generator off
@@ -93,9 +126,26 @@ struct CavnarSecondaryButtonStyle: ButtonStyle {
             .frame(maxWidth: .infinity)
             .padding(14)
             .foregroundStyle(isDisabled ? Color.cavnarEmber.opacity(0.4) : Color.cavnarEmber)
-            .overlay(
+            .background(
                 RoundedRectangle(cornerRadius: CavnarRadius.control)
-                    .strokeBorder(isDisabled ? Color.cavnarEmber.opacity(0.35) : Color.cavnarEmber, lineWidth: 1.5)
+                    .fill(Color.cavnarEmber.opacity(isDisabled ? 0.03 : 0.09))
+            )
+            .overlay(
+                // A flat single-tone border read thin next to the new
+                // gradient-filled primary style — a top-brighter/bottom-
+                // dimmer border gives it the same "light hitting an edge"
+                // depth cue without filling the button in.
+                RoundedRectangle(cornerRadius: CavnarRadius.control)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.cavnarEmber.opacity(isDisabled ? 0.3 : 0.95),
+                                Color.cavnarEmber.opacity(isDisabled ? 0.18 : 0.55),
+                            ],
+                            startPoint: .top, endPoint: .bottom
+                        ),
+                        lineWidth: 1.5
+                    )
             )
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
             .scaleEffect(configuration.isPressed ? 0.98 : 1)

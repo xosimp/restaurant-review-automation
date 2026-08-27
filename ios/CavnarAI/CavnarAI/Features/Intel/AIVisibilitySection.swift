@@ -26,22 +26,11 @@ struct AIVisibilitySection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Button {
-                Task { await viewModel.check() }
-            } label: {
-                if viewModel.isChecking {
-                    HStack(spacing: 8) {
-                        ProgressView().tint(.white)
-                        Text("Checking…")
-                    }
-                    .frame(maxWidth: .infinity)
-                } else {
-                    Text(viewModel.result == nil ? "Check my AI visibility" : "Re-run")
-                        .frame(maxWidth: .infinity)
-                }
+            if viewModel.result == nil {
+                preCheckHero
             }
-            .buttonStyle(CavnarPrimaryButtonStyle())
-            .disabled(viewModel.isChecking)
+
+            checkButton
 
             if let result = viewModel.result {
                 if !result.ok {
@@ -63,6 +52,79 @@ struct AIVisibilitySection: View {
                         roadmapSection(result, checklist: checklist)
                     }
                 }
+            }
+        }
+    }
+
+    private var checkButton: some View {
+        Button {
+            Task { await viewModel.check() }
+        } label: {
+            if viewModel.isChecking {
+                PulsingText("Checking…").frame(maxWidth: .infinity)
+            } else {
+                Text(viewModel.result == nil ? "Check my AI visibility" : "Re-run")
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .buttonStyle(CavnarPrimaryButtonStyle())
+        .disabled(viewModel.isChecking)
+    }
+
+    // MARK: - Pre-check hero — this screen used to be one bare button
+    // floating over a black void until the first check ran. Explains what
+    // the check actually does and previews the three things it returns,
+    // so there's something to read/anticipate before tapping, not just an
+    // unexplained button with no context for what it's about to do.
+
+    private var preCheckHero: some View {
+        VStack(alignment: .leading, spacing: 26) {
+            VStack(alignment: .leading, spacing: 10) {
+                ZStack {
+                    Circle().fill(Color.cavnarEmber.opacity(0.16)).frame(width: 52, height: 52)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(Color.cavnarEmber)
+                }
+                Text("Is your restaurant visible to AI search?")
+                    .font(.cavnarHeadline(21))
+                    .foregroundStyle(Color.cavnarInk)
+                    .lineSpacing(3)
+                Text("More guests are asking ChatGPT, Perplexity, and Google AI where to eat before they ever open Maps. This checks whether you actually show up in those answers — and exactly what to fix if you don't.")
+                    .font(.cavnarBody(13))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .lineSpacing(4)
+            }
+
+            VStack(alignment: .leading, spacing: 16) {
+                previewRow(
+                    icon: "text.bubble.fill", tone: Color.cavnarEmber,
+                    title: "AI query results",
+                    detail: "The exact questions real guests ask AI tools, and whether your restaurant came up."
+                )
+                previewRow(
+                    icon: "checklist", tone: Color.cavnarGreen,
+                    title: "GBP completeness score",
+                    detail: "What's missing from your Google Business Profile that AI tools pull answers from."
+                )
+                previewRow(
+                    icon: "map.fill", tone: Color.cavnarBlue,
+                    title: "A personalized roadmap",
+                    detail: "Ranked, concrete next steps for your restaurant — not generic SEO advice."
+                )
+            }
+        }
+    }
+
+    private func previewRow(icon: String, tone: Color, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8).fill(tone.opacity(0.16)).frame(width: 32, height: 32)
+                Image(systemName: icon).font(.system(size: 13, weight: .semibold)).foregroundStyle(tone)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
+                Text(detail).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3).lineSpacing(2)
             }
         }
     }
