@@ -79,7 +79,8 @@ struct FoodCostAnalyticsSection: View {
                     FoodCostTrendChart(
                         weeks: viewModel.trend,
                         benchmarkLabel: analytics.benchmarkLabel,
-                        wasteRatePct: analytics.wasteRatePct
+                        wasteRatePct: analytics.wasteRatePct,
+                        totalWasteCostWeek: analytics.totalWasteCostWeek
                     )
                 } else if viewModel.isLoading {
                     FoodCostAnalyticsSkeleton()
@@ -92,6 +93,22 @@ struct FoodCostAnalyticsSection: View {
 
     private func hasHeroData(_ a: FoodCostAnalytics) -> Bool {
         (a.annualWasteProjection ?? 0) > 0 || (a.annualRecoverable ?? 0) > 0
+    }
+
+    /// The standard cavnarNumberGlow() (a faint 0.5pt shadow + a soft
+    /// 6pt colored glow) reads fine on the app's usual near-black
+    /// surfaces, but sitting on this card's own warm orange gradient
+    /// background it had nothing to separate from — same warm hue on
+    /// both sides of the number. A real drop shadow underneath (not just
+    /// a glow) gives it something to sit ON TOP OF instead of blending
+    /// into the card, so it's layered in here rather than changed on the
+    /// shared modifier itself, which other screens still use as-is.
+    private func heroNumber(_ text: String, tone: Color) -> some View {
+        Text(text)
+            .font(.cavnarNumber(27, weight: 700))
+            .foregroundStyle(tone)
+            .shadow(color: .black.opacity(0.5), radius: 5, x: 0, y: 3)
+            .cavnarNumberGlow(tone)
     }
 
     // MARK: - Hero (the one real container on this page)
@@ -109,10 +126,7 @@ struct FoodCostAnalyticsSection: View {
                         .font(.cavnarBody(9, weight: 700))
                         .tracking(1.4)
                         .foregroundStyle(Color.cavnarInk.opacity(0.6))
-                    Text("$\((a.annualWasteProjection ?? 0).commaFormatted)")
-                        .font(.cavnarNumber(26, weight: 700))
-                        .foregroundStyle(Color.cavnarRed)
-                        .cavnarNumberGlow(Color.cavnarRed)
+                    heroNumber("$\((a.annualWasteProjection ?? 0).commaFormatted)", tone: Color.cavnarRed)
                     Text("$\((a.monthlyWasteProjection ?? 0).commaFormatted)/mo at current rate")
                         .font(.cavnarBody(10))
                         .foregroundStyle(Color.cavnarInk.opacity(0.55))
@@ -123,10 +137,7 @@ struct FoodCostAnalyticsSection: View {
                         .font(.cavnarBody(9, weight: 700))
                         .tracking(1.4)
                         .foregroundStyle(Color.cavnarInk.opacity(0.6))
-                    Text("$\((a.annualRecoverable ?? 0).commaFormatted)")
-                        .font(.cavnarNumber(26, weight: 700))
-                        .foregroundStyle(Color.cavnarGreen)
-                        .cavnarNumberGlow(Color.cavnarGreen)
+                    heroNumber("$\((a.annualRecoverable ?? 0).commaFormatted)", tone: Color.cavnarGreen)
                     Text("$\((a.recoverableMonthly ?? 0).commaFormatted)/mo with better ordering")
                         .font(.cavnarBody(10))
                         .foregroundStyle(Color.cavnarInk.opacity(0.55))

@@ -1118,7 +1118,14 @@ def _ensure_gia_mia_vibe():
 
 
 def _refresh_gia_mia_reviews(gia_mia_rid):
-    """Always re-seed the 32 real Gia Mia reviews on every deploy so content stays current."""
+    """Always re-seed the 90 real Gia Mia reviews on every deploy so content stays current.
+
+    Weekly volume is deliberately uneven (5-20 reviews/week) — real review
+    inflow is bursty (weekend rushes, a good night that gets talked about,
+    a slow week), not a flat constant. An earlier version of this seed had
+    exactly 4 reviews every single week, which made the Reviews chart's
+    weekly trend look fake/flat regardless of what the chart itself did.
+    """
     try:
         import json as _json_r
         from zoneinfo import ZoneInfo as _ZI_r
@@ -1128,49 +1135,107 @@ def _refresh_gia_mia_reviews(gia_mia_rid):
         conn.execute("DELETE FROM reviews WHERE restaurant_id=? AND external_id LIKE 'rr_%'", (gia_mia_rid,))
         conn.commit()
 
-        # Rating distribution: 21×5★, 7×4★, 2×3★, 2×1★ → avg 4.41 (matches real 4.5 Google rating)
+        # Rating distribution: 61×5★, 19×4★, 5×3★, 5×1★ → avg 4.46 (matches real 4.5 Google rating)
         # Real complaints kept — just corrected star ratings to match TripAdvisor actuals (3-4★ for issues, 1★ only for phone rudeness)
         sample_reviews = [
-                # Week 8 (oldest, -49 days)
+                # Week 8 (oldest, -49 days) — 5 reviews
                 ("google","rr_w8a",5,"The quattro formaggi pizza here is extraordinary — perfectly balanced with an extra crispy wood-fired crust. Sat on the patio on a Friday evening and the vibe was fantastic. Will be back weekly if I could.","positive","Karen B.",["food_quality","ambiance"],"normal"),
                 ("google","rr_w8b",5,"I LOVE their Margherita Pizza and beet salad! Simple, fresh, and done right. Great spot downtown St. Charles.","positive","Jenna L.",["food_quality"],"normal"),
                 ("yelp",  "rr_w8c",3,"The food was great — really enjoyed the pizza and the patio. But the music inside is so loud you can't hold a conversation. Would only sit outside. Still worth going for the food, just know what you're walking into noise-wise.","neutral","Patricia M.",["ambiance","food_quality"],"normal"),
                 ("google","rr_w8d",5,"Solid wood-fired pizza and great atmosphere downtown. The pasta was excellent — really fresh. Love this spot for a casual dinner or date night. One of the best in St. Charles.","positive","Steven R.",["food_quality","ambiance"],"normal"),
-                # Week 7 (-42 days)
+                ("google","rr_w8e",5,"Wood-fired pizza and a cozy patio — exactly what we wanted for a Friday date night. The pear pizza is incredible.","positive","Megan P.",["food_quality","ambiance"],"normal"),
+                # Week 7 (-42 days) — 12 reviews
                 ("google","rr_w7a",5,"The meatballs al forno are AMAZING — five stars on their own. Served on polenta with tomato sauce, just perfect. The chef was also willing to modify dishes for our vegan friend which we really appreciated.","positive","Michelle H.",["food_quality","service"],"normal"),
                 ("google","rr_w7b",5,"Pear pizza with caramelized onions is one of the best things I've eaten. Came in for wine Wednesday half-price deal and left very happy. The craft cocktails are also excellent.","positive","Donald C.",["food_quality","value"],"normal"),
                 ("yelp",  "rr_w7c",1,"Tried calling to ask about a reservation — called five times over three days. No answer. When someone finally picked up they were short and rude. Won't be making a reservation there.","negative","Sandra W.",["service"],"high"),
                 ("google","rr_w7d",4,"Really enjoyed our dinner here. The shrimp and polenta appetizer had incredible flavor and a very generous portion. Service was a little slow to start but attentive once they found us. Good spot for a date night.","positive","Gary L.",["food_quality","ambiance","service"],"normal"),
-                # Week 6 (-35 days)
+                ("google","rr_w7e",5,"The meatballs al forno alone are worth the trip. Polenta base is perfect, sauce is rich without being heavy.","positive","Chris D.",["food_quality"],"normal"),
+                ("yelp",  "rr_w7f",5,"Wine Wednesday is the best deal in St. Charles. Half-price bottles and the pear pizza is unbeatable.","positive","Ashley N.",["value","food_quality"],"normal"),
+                ("google","rr_w7g",5,"Consistently great pizza night after night. The quattro formaggi never disappoints.","positive","Brandon K.",["food_quality"],"normal"),
+                ("google","rr_w7h",4,"Good food, good patio, a little pricey for the portion sizes but I'd still recommend it.","positive","Nicole F.",["food_quality","value"],"normal"),
+                ("yelp",  "rr_w7i",5,"Took my in-laws here and they were blown away by the wood-fired crust. Will be back for sure.","positive","Justin R.",["food_quality"],"normal"),
+                ("google","rr_w7j",3,"Food was good but we waited almost 20 minutes just to get water after being seated. Kitchen seemed backed up.","neutral","Katie S.",["service","wait_time"],"normal"),
+                ("google","rr_w7k",5,"Best patio in downtown St. Charles, hands down. Perfect spot for a warm evening with friends.","positive","Ryan B.",["ambiance"],"normal"),
+                ("yelp",  "rr_w7l",5,"The beet salad is way better than it sounds — go in with an open mind. Paired perfectly with the margherita.","positive","Emily V.",["food_quality"],"normal"),
+                # Week 6 (-35 days) — 8 reviews
                 ("google","rr_w6a",5,"Our go-to in St. Charles. Came with a group of 8 and we were seated quickly, food came out fast, and every pizza was spot on. Great for larger parties.","positive","Nancy P.",["food_quality","service"],"normal"),
                 ("yelp",  "rr_w6b",4,"Really solid Italian. The fresh pasta dishes are excellent and the wood-fired pizza has the perfect char. Wine Wednesday is a steal. Love sitting on the patio. Music inside is a bit loud but the food more than makes up for it.","positive","Kevin S.",["food_quality","value","ambiance"],"normal"),
                 ("google","rr_w6c",3,"Had a rough night — order came out wrong and the utensils weren't clean when they arrived. Staff replaced everything without much fuss. The pizza itself was great, but the service execution left something to be desired.","neutral","Betty A.",["service","cleanliness","food_quality"],"normal"),
                 ("yelp",  "rr_w6d",5,"The food here is just really good Italian — wood-fired pizza with great char, fresh pasta, solid small plates. It's a set menu so no customization, but everything on it is worth ordering. Patio is beautiful.","positive","Brian N.",["food_quality","ambiance"],"normal"),
-                # Week 5 (-28 days)
+                ("google","rr_w6e",5,"Everything about this place screams quality — the crust, the sauce, the service. A neighborhood favorite for good reason.","positive","Jason T.",["food_quality","service"],"normal"),
+                ("yelp",  "rr_w6f",5,"Had the pear pizza and a bottle of wine on the patio — genuinely one of our best dinners this year.","positive","Laura M.",["food_quality","ambiance"],"normal"),
+                ("google","rr_w6g",4,"Great pizza as always. Wish they took reservations for smaller parties too, we had a short wait on a Saturday.","positive","Eric H.",["food_quality","wait_time"],"normal"),
+                ("google","rr_w6h",5,"Fresh pasta was a standout — didn't expect it to be as good as the pizza, but it was.","positive","Amber C.",["food_quality"],"normal"),
+                # Week 5 (-28 days) — 20 reviews
                 ("google","rr_w5a",5,"Really great food and incredibly fast for a Friday night. Came with 8 people, had a time schedule, and they got us in and out in under 30 minutes without rushing us. Impressive.","positive","Dorothy K.",["food_quality","service"],"normal"),
                 ("google","rr_w5b",5,"Perfect patio dining — beautiful summer evening, excellent wood-fired pizza, strong cocktail list. The kind of spot you bring out-of-town guests. Can't recommend enough.","positive","Charles V.",["food_quality","ambiance"],"normal"),
                 ("yelp",  "rr_w5c",5,"Slow start getting seated but the meatballs al forno absolutely made up for it — one of the best bites I've had in St. Charles. Pizza was also excellent. Worth every minute of the wait.","positive","Helen J.",["food_quality","service"],"normal"),
                 ("google","rr_w5d",5,"The wood-fired pizza here is the real deal — charred perfectly, fresh toppings, light and delicious. The patio is the move in summer. Solid cocktail program too. A genuine neighborhood gem.","positive","Frank M.",["food_quality","ambiance"],"normal"),
-                # Week 4 (-21 days)
+                ("google","rr_w5e",5,"The quattro formaggi is genuinely one of the best pizzas I've had anywhere, not just St. Charles.","positive","Tyler J.",["food_quality"],"normal"),
+                ("yelp",  "rr_w5f",5,"Patio was full and lively but they still got our food out fast. Impressed with how well they handle a packed house.","positive","Stephanie L.",["food_quality","service"],"normal"),
+                ("google","rr_w5g",5,"Came for wine Wednesday and stayed for three hours. Great food, great wine list, great people watching from the patio.","positive","Brett O.",["value","ambiance"],"normal"),
+                ("google","rr_w5h",4,"Really good overall. Docking one star only because the inside gets loud — sit on the patio if you can.","positive","Danielle W.",["ambiance","food_quality"],"normal"),
+                ("yelp",  "rr_w5i",5,"Meatballs al forno are a must-order. My whole table agreed it was the best dish of the night.","positive","Kyle P.",["food_quality"],"normal"),
+                ("google","rr_w5j",5,"This is our go-to for celebrations. Never had a bad meal here in two years of coming.","positive","Melissa G.",["food_quality"],"normal"),
+                ("google","rr_w5k",3,"Solid food but the AC seemed to be struggling on a hot night — pretty warm inside. Patio was fine though.","neutral","Sean R.",["ambiance"],"normal"),
+                ("yelp",  "rr_w5l",5,"The pear and caramelized onion pizza is unreal. Ordered a second one to take home.","positive","Christina B.",["food_quality"],"normal"),
+                ("google","rr_w5m",5,"Downtown St. Charles doesn't get better than this for a casual Italian night out.","positive","Adam F.",["food_quality","ambiance"],"normal"),
+                ("google","rr_w5n",4,"Great pizza, solid cocktails, service was a touch slow but everyone was clearly working hard on a busy night.","positive","Rebecca T.",["food_quality","service"],"normal"),
+                ("yelp",  "rr_w5o",5,"Brought the whole extended family for a birthday dinner and they nailed it for a group of ten.","positive","Jacob N.",["food_quality","service"],"normal"),
+                ("google","rr_w5p",5,"Perfect summer patio spot. Great wine list, even better pizza.","positive","Vanessa D.",["ambiance","food_quality"],"normal"),
+                ("google","rr_w5q",5,"The shrimp and polenta appetizer is criminally underrated — order it before it sells out.","positive","Ian S.",["food_quality"],"normal"),
+                ("yelp",  "rr_w5r",1,"Sat outside for 15 minutes with no menus and no acknowledgment. Left and went elsewhere. Disappointing given how good I remember the food being.","negative","Courtney M.",["service"],"high"),
+                ("google","rr_w5s",5,"Fresh, flavorful, and the patio at sunset is unbeatable. Highly recommend for date night.","positive","Marcus H.",["food_quality","ambiance"],"normal"),
+                ("google","rr_w5t",4,"Very good pizza and a nice wine selection. Would've given 5 stars if the wait for a table were shorter on a Friday.","positive","Renee A.",["food_quality","wait_time"],"normal"),
+                # Week 4 (-21 days) — 6 reviews
                 ("google","rr_w4a",5,"Celebrated my wife's birthday here and the whole experience was wonderful. Staff was warm, food was incredible — the wood-fired Neapolitan pizza is the real deal. This place is special.","positive","Ruth C.",["food_quality","service","ambiance"],"normal"),
                 ("yelp",  "rr_w4b",5,"Best Italian pizza bar in the Fox Valley, no contest. The quattro formaggi and the pear caramelized onion pizza are both outstanding. Outdoor patio is gorgeous. We come every month.","positive","Edward H.",["food_quality","ambiance"],"normal"),
                 ("google","rr_w4c",4,"Very busy Valentine's Day — server was stretched thin all night but doing their best. The food was absolutely delicious as always. The kitchen delivered even under pressure. Food 5/5, service takes the hit on a night like that.","positive","Carol D.",["food_quality","service","wait_time"],"normal"),
                 ("yelp",  "rr_w4d",5,"Wine Wednesday half-price is a genuine deal — came with three friends, had a fantastic evening. Small plates are perfect for sharing, bar scene is lively, patio was beautiful. One of the best midweek dinner spots around.","positive","Mark S.",["food_quality","value","ambiance"],"normal"),
-                # Week 3 (-14 days)
+                ("google","rr_w4e",5,"The quattro formaggi pizza is the best in the Fox Valley, hands down. Perfect char every time.","positive","Todd B.",["food_quality"],"normal"),
+                ("yelp",  "rr_w4f",4,"Good date night spot. A little loud inside but the patio more than makes up for it.","positive","Heather L.",["ambiance"],"normal"),
+                # Week 3 (-14 days) — 16 reviews
                 ("google","rr_w3a",5,"Fresh pasta, meatballs al forno, wood-fired pizza — everything we ordered was outstanding. Service was attentive and the patio vibe on a warm evening is unbeatable. One of the best restaurants in St. Charles.","positive","Linda F.",["food_quality","service","ambiance"],"normal"),
                 ("google","rr_w3b",5,"Downtown location is perfect and the food backs it up completely. The pizza is always excellent — crispy crust, fresh ingredients, not too heavy. Patio in the summer is wonderful. A true gem.","positive","Paul B.",["food_quality","ambiance"],"normal"),
                 ("yelp",  "rr_w3c",4,"Service was a bit slow — took a while to get water and our server was handling too many tables. But the food absolutely made up for it. Pizza was incredible and the patio atmosphere is hard to beat. We'll definitely be back.","positive","Barbara G.",["food_quality","service","ambiance"],"normal"),
                 ("google","rr_w3d",4,"Reliable and generally excellent. The pizza is always on point — my go-to is the quattro formaggi. Some pasta dishes can be inconsistent but when they're on, they're really good. Great patio and atmosphere.","positive","Thomas E.",["food_quality","ambiance"],"normal"),
-                # Week 2 (-7 days)
+                ("google","rr_w3e",5,"Every visit is consistent — great pizza, great patio, friendly staff. Never had a bad experience here.","positive","Victor M.",["food_quality","service"],"normal"),
+                ("yelp",  "rr_w3f",5,"The pear pizza with caramelized onions might be the best pizza I've had in Illinois.","positive","Samantha C.",["food_quality"],"normal"),
+                ("google","rr_w3g",5,"Fantastic spot for a group dinner. They handled our party of six without any issues.","positive","Wesley P.",["food_quality","service"],"normal"),
+                ("google","rr_w3h",4,"Really solid meal. Wish the cocktail menu had a bit more variety but everything we tried was well made.","positive","Diane R.",["food_quality"],"normal"),
+                ("yelp",  "rr_w3i",5,"Wine Wednesday plus the meatballs al forno is the perfect combo. Can't recommend it enough.","positive","Grant S.",["value","food_quality"],"normal"),
+                ("google","rr_w3j",5,"This is the best pizza in downtown St. Charles, full stop. Patio seating makes it even better.","positive","Monica T.",["food_quality","ambiance"],"normal"),
+                ("google","rr_w3k",1,"Called three separate times trying to book a table for a birthday and never got a callback. Ended up going elsewhere.","negative","Phillip D.",["reservation","service"],"high"),
+                ("yelp",  "rr_w3l",5,"The fresh pasta specials rotate and they're always excellent. Ask your server what's on that night.","positive","Erin K.",["food_quality"],"normal"),
+                ("google","rr_w3m",5,"Great neighborhood Italian spot. The wood-fired oven really makes a difference in the crust.","positive","Bruce N.",["food_quality"],"normal"),
+                ("google","rr_w3n",4,"Good overall experience. Service was attentive, food came out quickly, just wish portions were a bit bigger for the price.","positive","Jasmine V.",["food_quality","value"],"normal"),
+                ("yelp",  "rr_w3o",5,"Sat on the patio for two hours and never felt rushed. Exactly the kind of relaxed dinner we wanted.","positive","Colin F.",["ambiance","service"],"normal"),
+                ("google","rr_w3p",5,"The quattro formaggi and a glass of red wine is basically a perfect evening. Highly recommend.","positive","Natalie H.",["food_quality"],"normal"),
+                # Week 2 (-7 days) — 10 reviews
                 ("google","rr_w2a",5,"The wood-fired Neapolitan pizza here is extraordinary — literally a 10/10. Love the location, love the service, love the atmosphere. Sat outside on the patio and it was a perfect evening. Highly, highly recommend.","positive","Jennifer M.",["food_quality","service","ambiance"],"normal"),
                 ("google","rr_w2b",4,"Took a bit to get acknowledged after being seated — no menus for a while. Once our server arrived everything was great. The pizza and pasta were both excellent. Worth the slightly slow start, will return.","positive","David K.",["food_quality","service","wait_time"],"normal"),
                 ("yelp",  "rr_w2c",5,"Came for our anniversary dinner and it was perfect. The shrimp and polenta appetizer is rich and delicious — generous portion too. Patio was stunning. This is our new favorite spot in St. Charles.","positive","Sarah T.",["food_quality","ambiance"],"normal"),
                 ("google","rr_w2d",5,"Great spot for a weeknight dinner. The beet salad and margherita pizza combo is simple and delicious. Friendly staff, beautiful patio, solid cocktails. Exactly what you want from a neighborhood Italian.","positive","Mike R.",["food_quality","ambiance","service"],"normal"),
-                # Week 1 (most recent)
+                ("google","rr_w2e",5,"Great weeknight dinner spot. The pizza is consistently excellent and the staff is always friendly.","positive","Douglas M.",["food_quality","service"],"normal"),
+                ("yelp",  "rr_w2f",5,"The patio is gorgeous in the evening and the food matches the setting. Will be back soon.","positive","Alicia P.",["ambiance","food_quality"],"normal"),
+                ("google","rr_w2g",4,"Good pizza, solid service. Would've been 5 stars but we waited a bit for our check at the end.","positive","Marcus B.",["food_quality","service"],"normal"),
+                ("google","rr_w2h",5,"Best Italian in St. Charles. The meatballs al forno are a must-try if you haven't already.","positive","Kimberly R.",["food_quality"],"normal"),
+                ("yelp",  "rr_w2i",3,"Food was good but it was very loud inside on a Saturday night — hard to hold a conversation. Patio would've been better.","neutral","Trevor S.",["ambiance"],"normal"),
+                ("google","rr_w2j",5,"Perfect spot for a casual date night. Great wine list and even better pizza.","positive","Olivia K.",["food_quality","ambiance"],"normal"),
+                # Week 1 (most recent) — 13 reviews
                 ("yelp",  "rr_w1a",1,"Called to make a reservation and finally got through on my fifth attempt over three days. The person who answered was short and borderline rude. Won't bother — plenty of other Italian restaurants that actually want our business.","negative","Amanda L.",["service"],"high"),
                 ("google","rr_w1b",5,"Gia Mia is consistently excellent. The wood-fired crust is perfect every single time — charred just right, never soggy. Patio dining in the summer is the move. Our family's go-to for special occasions and casual Wednesdays alike.","positive","Robert H.",["food_quality","ambiance"],"normal"),
                 ("google","rr_w1c",4,"Pizza is genuinely outstanding — no complaints there at all. It gets loud inside so sit outside when weather allows. The patio is lovely. Would recommend for anyone who loves good wood-fired Neapolitan pizza.","positive","Lisa C.",["food_quality","ambiance"],"normal"),
                 ("yelp",  "rr_w1d",5,"Outdoor patio is absolutely stunning, especially on a warm evening. Had the meatballs al forno and the quattro formaggi pizza — both incredible. Fresh pasta was also excellent. One of the best Italian spots in the western suburbs.","positive","Tom W.",["food_quality","ambiance"],"normal"),
+                ("google","rr_w1e",5,"Consistently the best pizza in the area. We come at least twice a month and it's never disappointed.","positive","Patrick N.",["food_quality"],"normal"),
+                ("yelp",  "rr_w1f",5,"The patio is my favorite in downtown St. Charles. Great food to match a great setting.","positive","Angela F.",["ambiance","food_quality"],"normal"),
+                ("google","rr_w1g",4,"Really good dinner. Only complaint is it can get loud inside — ask for patio seating if the weather's nice.","positive","Bradley H.",["ambiance"],"normal"),
+                ("google","rr_w1h",5,"The quattro formaggi is worth the visit alone. Perfectly crisp crust every single time.","positive","Cassandra L.",["food_quality"],"normal"),
+                ("yelp",  "rr_w1i",5,"Wine Wednesday is a genuinely great deal. We plan our week around it sometimes.","positive","Nathaniel P.",["value"],"normal"),
+                ("google","rr_w1j",4,"Solid meal, friendly staff. Wish they took reservations for parties under six, we had a short wait.","positive","Jacqueline D.",["service","wait_time"],"normal"),
+                ("google","rr_w1k",5,"Best pizza in the Fox Valley area, no debate. The pear pizza is a revelation.","positive","Corey M.",["food_quality"],"normal"),
+                ("yelp",  "rr_w1l",1,"Reservation line went unanswered again — third time this has happened to us. Food is great but the phone situation needs fixing.","negative","Miranda T.",["reservation","service"],"high"),
+                ("google","rr_w1m",4,"Good experience overall. The patio was full so we sat inside, which was fine but noticeably louder.","positive","Shane K.",["ambiance"],"normal"),
         ]
         _now_r = _dt_r.now(_ZI_r('America/Chicago'))
         _wk_map = {"w8":-49,"w7":-42,"w6":-35,"w5":-28,"w4":-21,"w3":-14,"w2":-7,"w1":0}
@@ -1187,7 +1252,7 @@ def _refresh_gia_mia_reviews(gia_mia_rid):
                         _json_r.dumps(cats), urgency, _rev_dt, _rev_dt, "pending", 1, name))
         conn.commit()
         conn.close()
-        print("  Gia Mia reviews refreshed with real content (32 reviews).\n")
+        print("  Gia Mia reviews refreshed with real content (90 reviews).\n")
     except Exception as _rr_e:
         print(f"  Gia Mia review refresh error: {_rr_e}")
 

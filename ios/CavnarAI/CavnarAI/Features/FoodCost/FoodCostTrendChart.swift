@@ -18,6 +18,7 @@ struct FoodCostTrendChart: View {
     // header badge + footer caption instead of announced separately.
     var benchmarkLabel: String?
     var wasteRatePct: Double?
+    var totalWasteCostWeek: Double?
 
     @State private var barsVisible = false
     @State private var selectedWeek: FoodCostTrendWeek?
@@ -44,6 +45,23 @@ struct FoodCostTrendChart: View {
     private var average: Double {
         guard !weeks.isEmpty else { return 0 }
         return weeks.reduce(0) { $0 + $1.waste } / Double(weeks.count)
+    }
+
+    /// The "Industry target: 4–5% of purchases" caption below the chart
+    /// had a yellow legend swatch pointing at nothing — no line on the
+    /// chart actually used industryLow/industryHigh. There's no dollar
+    /// figure for "purchases" in the API response to plot directly, so
+    /// it's backed out from the two numbers we do have: this week's waste
+    /// dollars and what percentage of purchases that waste represents.
+    /// Flat across all 8 weeks (purchases aren't tracked per-week here)
+    /// rather than precisely accurate per week — same simplification the
+    /// caption's own single flat percentage already made.
+    private var industryTargetDollar: Double? {
+        guard let wasteRatePct, wasteRatePct > 0,
+              let totalWasteCostWeek, totalWasteCostWeek > 0 else { return nil }
+        let impliedWeeklyPurchases = totalWasteCostWeek / (wasteRatePct / 100)
+        let targetMidPct = (Self.industryLow + Self.industryHigh) / 2
+        return impliedWeeklyPurchases * (targetMidPct / 100)
     }
 
     private func barColor(_ waste: Double) -> Color {
@@ -108,6 +126,20 @@ struct FoodCostTrendChart: View {
                                 .background(Color.cavnarInk)
                                 .clipShape(Capsule())
                         }
+                    if let industryTargetDollar {
+                        RuleMark(y: .value("Industry target", industryTargetDollar))
+                            .foregroundStyle(Self.industryBandColor)
+                            .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+                            .annotation(position: .top, alignment: .leading) {
+                                Text("target ~$\(Int(industryTargetDollar))")
+                                    .font(.cavnarBody(9, weight: 700))
+                                    .foregroundStyle(Color.black)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(Self.industryBandColor)
+                                    .clipShape(Capsule())
+                            }
+                    }
                 }
                 .frame(height: 160)
                 .chartYAxis {
@@ -132,7 +164,7 @@ struct FoodCostTrendChart: View {
 
                 if let benchmarkLabel, let wasteRatePct, benchmarkLabel != "—" {
                     HStack(spacing: 5) {
-                        Rectangle().fill(Self.industryBandColor).frame(width: 8, height: 8)
+                        Rectangle().fill(Self.industryBandColor).frame(width: 12, height: 2)
                         Text("Industry target: 4–5% of purchases")
                         Text("· you're \(benchmarkLabel.lowercased())")
                             .foregroundStyle(benchmarkColor(benchmarkLabel))

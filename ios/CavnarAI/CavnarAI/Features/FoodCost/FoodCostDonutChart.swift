@@ -77,15 +77,26 @@ struct FoodCostDonutChart: View {
         }
     }
 
+    private static let ringStrokeWidth: CGFloat = 13
+
+    /// A stroked Circle renders half its line width OUTSIDE its own layout
+    /// frame (SwiftUI doesn't clip shapes to their frame by default) — at
+    /// 13pt this bled 6.5pt past the ring's nominal 92pt frame on every
+    /// side, unclipped, which is exactly why the ring visually sat further
+    /// toward the screen edge than the "TOP WASTE OFFENDERS"/"OVERSTOCKED"
+    /// kicker directly above it, even though both share the same leading
+    /// edge in layout terms. Insetting by half the stroke width keeps the
+    /// stroke's rendered bleed inside the ring's own 92pt frame, so it
+    /// lines up flush with the heading again.
     private var ring: some View {
         ZStack {
             Circle()
-                .stroke(Color.cavnarPaper3.opacity(0.5), style: StrokeStyle(lineWidth: 13))
+                .stroke(Color.cavnarPaper3.opacity(0.5), style: StrokeStyle(lineWidth: Self.ringStrokeWidth))
             ForEach(Array(slices.enumerated()), id: \.element.id) { index, _ in
                 let (start, end) = segment(at: index)
                 Circle()
                     .trim(from: start, to: end)
-                    .stroke(color(at: index), style: StrokeStyle(lineWidth: 13, lineCap: .butt))
+                    .stroke(color(at: index), style: StrokeStyle(lineWidth: Self.ringStrokeWidth, lineCap: .butt))
                     .rotationEffect(.degrees(-90))
                     .shadow(color: color(at: index).opacity(0.45), radius: 2)
             }
@@ -99,6 +110,7 @@ struct FoodCostDonutChart: View {
                     .foregroundStyle(Color.cavnarInk3)
             }
         }
+        .padding(Self.ringStrokeWidth / 2)
     }
 
     private var legend: some View {
