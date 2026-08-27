@@ -199,9 +199,12 @@ private struct AddGuestContactSheet: View {
                         .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canAdd))
                         .disabled(!canAdd)
 
-                        Button("Cancel") { dismiss() }
-                            .buttonStyle(CavnarSecondaryButtonStyle())
-                            .frame(maxWidth: .infinity)
+                        Button {
+                            dismiss()
+                        } label: {
+                            Text("Cancel").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.top, 6)

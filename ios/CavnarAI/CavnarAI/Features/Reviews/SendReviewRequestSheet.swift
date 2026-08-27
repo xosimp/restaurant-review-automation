@@ -121,9 +121,19 @@ struct SendReviewRequestSheet: View {
                         // resolved width is what makes the pair match
                         // instead of Cancel staying pill-tight around its
                         // own shorter text.
-                        Button("Cancel") { dismiss() }
-                            .buttonStyle(CavnarSecondaryButtonStyle())
-                            .frame(maxWidth: .infinity)
+                        // .frame(maxWidth: .infinity) has to sit on the
+                        // label itself, INSIDE the button, not after
+                        // .buttonStyle() — the style draws its background
+                        // sized to whatever the label already is at that
+                        // point in the chain, so applying the frame
+                        // afterward only widened the invisible tap target,
+                        // not the visible pill.
+                        Button {
+                            dismiss()
+                        } label: {
+                            Text("Cancel").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
                     }
                     // Centers the whole (now equal-width) button pair
                     // within the form — without this the group still

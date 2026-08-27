@@ -62,7 +62,14 @@ struct AIVisibilitySection: View {
             Task { await viewModel.check() }
         } label: {
             if viewModel.isChecking {
-                PulsingText("Checking…")
+                VStack(spacing: 6) {
+                    CavnarShimmerText(text: "Checking…")
+                    // Ember2 (the brighter accent), not white — stays on
+                    // brand as an orange line while still reading clearly
+                    // against the button's own solid Ember background.
+                    CavnarShimmerLine(color: .cavnarEmber2)
+                        .frame(width: 120)
+                }
             } else {
                 Text(viewModel.result == nil ? "Check my AI visibility" : "Re-run")
             }

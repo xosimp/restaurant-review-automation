@@ -457,9 +457,12 @@ private struct ChangePasswordSheet: View {
                         .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSubmit))
                         .disabled(!canSubmit)
 
-                        Button("Cancel") { dismiss() }
-                            .buttonStyle(CavnarSecondaryButtonStyle())
-                            .frame(maxWidth: .infinity)
+                        Button {
+                            dismiss()
+                        } label: {
+                            Text("Cancel").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.top, 6)
@@ -519,9 +522,12 @@ private struct TwoFactorSetupSheet: View {
                             .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy || code.count != 6))
                             .disabled(viewModel.is2FABusy || code.count != 6)
 
-                            Button("Cancel") { dismiss() }
-                                .buttonStyle(CavnarSecondaryButtonStyle())
-                                .frame(maxWidth: .infinity)
+                            Button {
+                                dismiss()
+                            } label: {
+                                Text("Cancel").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(CavnarSecondaryButtonStyle())
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.top, 6)
@@ -547,9 +553,12 @@ private struct TwoFactorSetupSheet: View {
                             .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy))
                             .disabled(viewModel.is2FABusy)
 
-                            Button("Cancel") { dismiss() }
-                                .buttonStyle(CavnarSecondaryButtonStyle())
-                                .frame(maxWidth: .infinity)
+                            Button {
+                                dismiss()
+                            } label: {
+                                Text("Cancel").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(CavnarSecondaryButtonStyle())
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.top, 6)

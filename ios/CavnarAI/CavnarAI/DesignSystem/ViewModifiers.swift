@@ -55,9 +55,10 @@ extension View {
 }
 
 /// The button treatment from the design preview, tuned several times
-/// since the first shipped version. Current state: a plain three-stop
-/// gradient fill (bright top, ember mid, deep burnt base) — no glossy
-/// white sheen (that read as an unwanted "glass effect") and no dark
+/// since the first shipped version. Current state: a flat, fully-opaque
+/// Ember fill (same color the tab switcher's selected segment uses) —
+/// no gradient (was a 3-stop bright-to-deep fade), no glossy white
+/// sheen (that read as an unwanted "glass effect"), and no dark
 /// vignette either (tried as a replacement for the sheen, but asked to
 /// go too); an ember outer border at the true edge plus a brighter
 /// Ember2 inner border inset within it; and two perfectly symmetric
@@ -79,27 +80,18 @@ struct CavnarPremiumButtonSurface: ViewModifier {
     // tuned for text CTAs.
     var shape: AnyShape = CavnarPremiumButtonSurface.defaultShape
 
-    // #F0946B / #D4583A (brand Ember) / #9E3B24 — bright-to-deep three
-    // stop gradient, not evenly spaced (48%, not 50%, matches reference).
-    private static let gradientTop = Color(red: 0.941, green: 0.580, blue: 0.420)
-    private static let gradientBase = Color(red: 0.620, green: 0.231, blue: 0.141)
     static let glowRadius: CGFloat = 20
     static let defaultShape = AnyShape(RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous))
 
     func body(content: Content) -> some View {
         content
             .background {
-                shape
-                    .fill(
-                        LinearGradient(
-                            stops: [
-                                .init(color: Self.gradientTop.opacity(isDisabled ? 0.35 : 1), location: 0),
-                                .init(color: Color.cavnarEmber.opacity(isDisabled ? 0.32 : 1), location: 0.48),
-                                .init(color: Self.gradientBase.opacity(isDisabled ? 0.28 : 1), location: 1),
-                            ],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                    )
+                // Flat, fully-opaque Ember — same color the tab switcher's
+                // selected segment uses, with none of that segment's own
+                // glass/material or gradient sheen (both tried here in
+                // earlier rounds and asked to go). No gradient stops
+                // either — this used to be a 3-stop bright-to-deep fade.
+                shape.fill(Color.cavnarEmber.opacity(isDisabled ? 0.4 : 1))
             }
             .clipShape(shape)
             // Thin ember border at the true outer edge — the same accent
@@ -523,6 +515,79 @@ struct PulsingText: View {
                     pulse = true
                 }
             }
+    }
+}
+
+/// A bright band sweeping left-to-right across the text, masked to its
+/// own glyph shape — the same shimmer LaborView's own ShimmerText uses
+/// for its hero banner's rotating status line, pulled out here as a
+/// reusable, single-message version (no message rotation) for anywhere
+/// else that wants this specific effect instead of PulsingText's plain
+/// opacity breathe. Driven by TimelineView (real wall-clock time)
+/// rather than a toggled @State + withAnimation(.repeatForever) — the
+/// latter is vulnerable to an ambient parent transaction silently
+/// overriding/replacing the repeat-forever animation (documented at
+/// length on LaborView's own ShimmerText); computing the sweep position
+/// directly from timeline.date sidesteps SwiftUI's animation/transaction
+/// system entirely, so nothing from a parent update can interrupt it.
+struct CavnarShimmerText: View {
+    let text: String
+    var color: Color = .white
+
+    private static let period: Double = 1.6
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let elapsed = timeline.date.timeIntervalSinceReferenceDate
+            let phase = (elapsed.truncatingRemainder(dividingBy: Self.period)) / Self.period
+
+            Text(text)
+                .foregroundStyle(color.opacity(0.4))
+                .overlay(
+                    GeometryReader { geo in
+                        LinearGradient(
+                            colors: [.clear, color, .clear],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                        .frame(width: geo.size.width * 0.6)
+                        .offset(x: -geo.size.width * 0.6 + phase * geo.size.width * 1.6)
+                    }
+                    .mask(Text(text))
+                )
+        }
+    }
+}
+
+/// A thin capsule track with a bright segment sweeping left to right on
+/// a loop — the same TimelineView-driven sweep technique as
+/// CavnarShimmerText above, just filling a bar instead of masked to
+/// text glyphs. For "still working" loading states that want a visible
+/// progress-style line under/near a label, not just breathing text.
+struct CavnarShimmerLine: View {
+    var color: Color = .cavnarEmber
+    var height: CGFloat = 3
+
+    private static let period: Double = 1.6
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let elapsed = timeline.date.timeIntervalSinceReferenceDate
+            let phase = (elapsed.truncatingRemainder(dividingBy: Self.period)) / Self.period
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(color.opacity(0.2))
+                    LinearGradient(
+                        colors: [.clear, color, .clear],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                    .frame(width: geo.size.width * 0.5)
+                    .offset(x: -geo.size.width * 0.5 + phase * geo.size.width * 1.5)
+                }
+                .clipShape(Capsule())
+            }
+            .frame(height: height)
+        }
     }
 }
 
