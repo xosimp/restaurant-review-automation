@@ -131,10 +131,25 @@ struct IntelView: View {
     // for the exact same reason (HomeView.heroHeadline).
 
     private func heroInsight(_ intro: String, ownerName: String?) -> some View {
-        Group {
-            if let ownerName, !ownerName.isEmpty, intro.hasPrefix(ownerName) {
-                (Text(ownerName).foregroundStyle(Color.cavnarEmber2)
-                    + Text(String(intro.dropFirst(ownerName.count))).foregroundStyle(Color.cavnarInk))
+        // The real AI prompt opens with "Hi {name}, here is your..." — a
+        // plain hasPrefix(ownerName) check misses it since the sentence
+        // starts with "Hi ", not the name itself. Search a short leading
+        // window instead of anchoring to the very first character, so
+        // "Hi Brian," and a bare "Brian," (this screen's demo copy before
+        // real API access) both highlight correctly — capped at 20 chars
+        // so a name that happens to reappear later in a long insight
+        // doesn't get matched instead.
+        let leadingWindow = intro.prefix(20)
+        let nameRange = ownerName.flatMap { name -> Range<String.Index>? in
+            guard !name.isEmpty else { return nil }
+            return leadingWindow.range(of: name)
+        }
+
+        return Group {
+            if let nameRange {
+                (Text(String(intro[intro.startIndex..<nameRange.lowerBound])).foregroundStyle(Color.cavnarInk)
+                    + Text(String(intro[nameRange])).foregroundStyle(Color.cavnarEmber2)
+                    + Text(String(intro[nameRange.upperBound...])).foregroundStyle(Color.cavnarInk))
             } else {
                 Text(intro).foregroundStyle(Color.cavnarInk)
             }
