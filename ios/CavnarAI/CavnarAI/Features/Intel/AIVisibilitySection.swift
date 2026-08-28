@@ -701,7 +701,17 @@ private struct QueryResultRow: View {
         // isPressed — genuinely true for the whole hold, only resetting
         // when the finger actually lifts.
         .gesture(
-            LongPressGesture(minimumDuration: 0.5)
+            // 0.3s, not the 0.5s UIKit default — that reads as stiff for a
+            // quick "peek at the answer" interaction specifically (as
+            // opposed to something heavier like drag-to-reorder, which is
+            // what the 0.5s default is really tuned for). This doesn't
+            // reopen the original scroll-sensitivity bug: what actually
+            // disambiguates a hold from a scroll is LongPressGesture's own
+            // movement-tolerance check (it fails to recognize once the
+            // touch moves past a small threshold), not the duration — a
+            // real scroll starts moving immediately regardless of how
+            // short this number is.
+            LongPressGesture(minimumDuration: 0.3)
                 .sequenced(before: DragGesture(minimumDistance: 0))
                 .updating($isPressed) { value, state, _ in
                     switch value {
@@ -742,9 +752,22 @@ private struct QueryResultRow: View {
                 .font(.cavnarBody(11.5))
                 .foregroundStyle(Color.cavnarInk2)
                 .lineSpacing(3)
+                // .overlay proposes this card the BASE row's own compact,
+                // single-line height — without this, a VStack asked to fit
+                // into a proposal smaller than it needs will compress its
+                // flexible children to match rather than grow past it, so
+                // this Text was silently losing lines to that compression
+                // (not to any lineLimit, which was never set) instead of
+                // reporting its own true multi-line height. This forces it
+                // to keep its real ideal height regardless of what's proposed.
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Same reasoning one level up — the whole card needs to report ITS
+        // real ideal size too, not just the Text inside it, or the outer
+        // VStack this is an overlay on top of would still cap it.
+        .fixedSize(horizontal: false, vertical: true)
         .background(Color.cavnarPaper2)
         .overlay(
             RoundedRectangle(cornerRadius: CavnarRadius.control)

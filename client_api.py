@@ -3216,7 +3216,15 @@ def _do_ai_visibility_inner(rid):
                 _pplx_time.sleep(2)
                 return _run_query(q, _retry=False)
             appeared = bool(norm_name) and bool(answer) and norm_name in _norm(answer)
-            return {"query": q, "answer": answer[:400], "appeared": appeared}
+            # Was answer[:400] — the system prompt already asks for "under
+            # 80 words" (~440 chars including spaces), so a 400-char cap
+            # sat BELOW what a compliant response typically needs and was
+            # cutting real content off before iOS's own press-and-hold
+            # "read the full answer" feature ever saw it. max_tokens: 300
+            # on the API call above already bounds the raw response size —
+            # this extra truncation was redundant on top of that, not a
+            # real safety net.
+            return {"query": q, "answer": answer, "appeared": appeared}
         except Exception:
             if _retry:
                 _pplx_time.sleep(2)
