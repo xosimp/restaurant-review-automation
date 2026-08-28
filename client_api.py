@@ -3189,6 +3189,51 @@ def _do_ai_visibility_inner(rid):
 
     norm_name = _norm(name)
 
+    # LEADING patterns ported from dashboard.html's own client-side cleanup
+    # (renderAIVisibility) — ONLY handled the start of the answer, never the
+    # end, and only existed on web at all, not here or on iOS. Moved server-
+    # side so both platforms get clean text from the same source instead of
+    # duplicating this regex list in two languages, and extended with
+    # TRAILING patterns for the specific complaint this was missing: a
+    # chatty offer tacked onto the end ("I can check others if you want?")
+    # that makes no sense to show — the user never typed this query
+    # themselves, it's generated server-side, so there's no "you" for the
+    # model to be replying to.
+    _leading_ai_patterns = [
+        re.compile(r"^If you (?:mean|are (?:looking|referring|asking))[^,.]{0,80}[,.]\s*", re.I),
+        re.compile(r"^Based on (?:the |my )?(?:search results?|available (?:information|sources?|data)|results)[,.]\s*", re.I),
+        re.compile(r"^According to (?:the |my )?(?:search results?|available (?:information|sources?|data)|sources?)[,.]\s*", re.I),
+        re.compile(r"^From (?:the |my )?(?:search results?|available (?:information|sources?|data)|results)[,.]\s*", re.I),
+        re.compile(r"^The (?:search )?results? (?:show|indicate|suggest|reveal)s?\s+", re.I),
+        re.compile(r"^(?:Looking at|Reviewing) (?:the )?(?:search )?results?[,.]\s*", re.I),
+        re.compile(r"^I (?:found|can see|notice|see) that\s+", re.I),
+        re.compile(r"^While .{5,80} is (?:a suburb|located|situated|part of)[^.]+\.\s*", re.I),
+        re.compile(r"^Note that\s+", re.I),
+    ]
+    # Trailing: a whole final sentence that's the model offering to do more
+    # rather than answering — "I can check others if you'd like", "Let me
+    # know if you want more options", "Would you like me to look into it
+    # further?". Applied in a loop since the model sometimes stacks two.
+    _trailing_ai_pattern = re.compile(
+        r"\s*(?:I can|I could|I'd be happy to|I'm happy to|Would you like me to|"
+        r"Let me know if|Just let me know if|Feel free to)\b[^.!?]*[.!?]?\s*$",
+        re.I,
+    )
+
+    def _clean_ai_answer(text):
+        cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", text or "")
+        cleaned = re.sub(r"\*([^*]+)\*", r"\1", cleaned)
+        cleaned = re.sub(r"\[\d+\]", "", cleaned)
+        for pat in _leading_ai_patterns:
+            cleaned = pat.sub("", cleaned)
+        while True:
+            trimmed = _trailing_ai_pattern.sub("", cleaned)
+            if trimmed == cleaned or not trimmed.strip():
+                break
+            cleaned = trimmed
+        cleaned = cleaned.strip()
+        return cleaned[0].upper() + cleaned[1:] if cleaned else cleaned
+
     # Firing all 3 queries at once via the ThreadPoolExecutor below
     # reliably trips Perplexity's rate limit on this key's tier — verified
     # directly: the same 3 queries run sequentially all succeed, but
@@ -3224,7 +3269,7 @@ def _do_ai_visibility_inner(rid):
             # on the API call above already bounds the raw response size —
             # this extra truncation was redundant on top of that, not a
             # real safety net.
-            return {"query": q, "answer": answer, "appeared": appeared}
+            return {"query": q, "answer": _clean_ai_answer(answer), "appeared": appeared}
         except Exception:
             if _retry:
                 _pplx_time.sleep(2)

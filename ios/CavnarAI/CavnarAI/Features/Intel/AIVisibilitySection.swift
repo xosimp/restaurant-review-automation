@@ -54,7 +54,26 @@ struct AIVisibilitySection: View {
                         gbpChecklistGrid(checklist)
                     }
                     if let queries = result.queries {
+                        // Each row's own .zIndex(isPressed ? 1 : 0) only
+                        // controls paint order among ITS siblings inside
+                        // queriesSection's own inner VStack — it has no
+                        // effect on queriesSection's paint order relative
+                        // to roadmapSection, an entirely separate sibling
+                        // section right after it in THIS outer VStack.
+                        // Only the last query row sits close enough to
+                        // queriesSection's own bottom edge that its
+                        // popped-up card can overflow into where
+                        // roadmapSection begins — and since roadmapSection
+                        // is declared after queriesSection with no zIndex
+                        // difference, it was painting on top of that
+                        // overflow, which is what made the "YOUR AI
+                        // VISIBILITY ROADMAP" heading look like it was
+                        // sitting inside the popup. queriesSection always
+                        // sits above roadmapSection in normal layout, so
+                        // this has zero effect on the non-pressed state —
+                        // it only matters for exactly this overflow case.
                         queriesSection(queries)
+                            .zIndex(1)
                     }
                     if let checklist = result.checklist {
                         roadmapSection(result, checklist: checklist)
