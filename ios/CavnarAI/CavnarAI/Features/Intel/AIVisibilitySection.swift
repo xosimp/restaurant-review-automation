@@ -561,7 +561,20 @@ struct AIVisibilitySection: View {
                 }
                 Text(card.detail).font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
                 if isExpanded {
-                    Text(card.why).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk2).lineSpacing(3)
+                    // The surrounding VStack's own spacing (6) is shared
+                    // uniformly by every row here — title, detail, why,
+                    // actions — so dropping the why text straight into it
+                    // squeezed it to that same tight 6pt on both sides as
+                    // everything else, which is what read as crammed.
+                    // Extra padding here (only on this element) gives it
+                    // real breathing room without loosening the rest of
+                    // the card's normally-tighter rhythm.
+                    Text(card.why)
+                        .font(.cavnarBody(12))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .lineSpacing(5)
+                        .padding(.top, 6)
+                        .padding(.bottom, 8)
                 }
                 HStack {
                     if !card.done {
@@ -663,20 +676,41 @@ private struct QueryResultRow: View {
         .animation(.spring(response: 0.32, dampingFraction: 0.75), value: isPressed)
         .contentShape(Rectangle())
         // LongPressGesture, not DragGesture(minimumDistance: 0) — that
-        // was the actual "too sensitive, fires on scroll" bug. A zero-
+        // was the ORIGINAL "too sensitive, fires on scroll" bug. A zero-
         // distance DragGesture recognizes the instant a finger touches
-        // down, which is indistinguishable from the very start of a
-        // scroll. LongPressGesture requires the touch to stay put for
+        // down, indistinguishable from the very start of a scroll.
+        // LongPressGesture requires the touch to stay put for
         // minimumDuration before it succeeds at all (0.5s — the same
         // default UIKit's own UILongPressGestureRecognizer uses); a
         // scroll's own movement makes the gesture fail to recognize
-        // rather than firing early, which is exactly how every native
-        // long-press-to-preview interaction in iOS avoids this.
+        // rather than firing early.
+        //
+        // But a BARE LongPressGesture + @GestureState turned out to have
+        // its own separate, independently-documented problem (confirmed
+        // against multiple reports, not guessed): it only reports its
+        // value ONCE, at the instant it succeeds — it never reports again
+        // while the finger stays down. With nothing else arriving,
+        // @GestureState reads that silence as "the gesture must be over"
+        // and resets to false almost immediately, which is exactly why
+        // the card was flashing and collapsing instead of staying up
+        // for the hold. Sequencing a zero-distance DragGesture AFTER the
+        // long press (Apple's own documented composition for this) fixes
+        // it: once the long press succeeds, that drag keeps reporting
+        // continuously for as long as the touch is down (even with zero
+        // movement), which is what keeps .second(true, _) — and so
+        // isPressed — genuinely true for the whole hold, only resetting
+        // when the finger actually lifts.
         .gesture(
             LongPressGesture(minimumDuration: 0.5)
+                .sequenced(before: DragGesture(minimumDistance: 0))
                 .updating($isPressed) { value, state, _ in
-                    if !state { Haptic.light() }
-                    state = value
+                    switch value {
+                    case .second(true, _):
+                        if !state { Haptic.light() }
+                        state = true
+                    default:
+                        state = false
+                    }
                 }
         )
     }
