@@ -88,6 +88,11 @@ struct AlertSettings: Codable {
     var urgentViaEmail: Bool
     var digestEnabled: Bool
     var digestDay: String
+    // "HH:MM" 24h strings, or nil when quiet hours are off — backend has
+    // supported this since notify.py's own is_in_quiet_hours(), but
+    // neither client ever exposed a way to actually set it.
+    var alertQuietStart: String?
+    var alertQuietEnd: String?
 
     enum CodingKeys: String, CodingKey {
         case alert1star = "alert_1star"
@@ -102,6 +107,8 @@ struct AlertSettings: Codable {
         case urgentViaEmail = "urgent_via_email"
         case digestEnabled = "digest_enabled"
         case digestDay = "digest_day"
+        case alertQuietStart = "alert_quiet_start"
+        case alertQuietEnd = "alert_quiet_end"
     }
 }
 
@@ -140,6 +147,20 @@ struct AccountSession: Decodable, Identifiable {
     }
 }
 
+struct BillingInvoice: Decodable, Identifiable {
+    let date: String
+    let amount: String
+    let status: String
+    let pdfURL: String?
+
+    var id: String { date + amount }
+
+    enum CodingKeys: String, CodingKey {
+        case date, amount, status
+        case pdfURL = "pdf_url"
+    }
+}
+
 struct BillingSummary: Decodable {
     let ok: Bool
     let reason: String?
@@ -149,9 +170,10 @@ struct BillingSummary: Decodable {
     let paymentMethod: String?
     let portalURL: String?
     let message: String?
+    let invoices: [BillingInvoice]?
 
     enum CodingKeys: String, CodingKey {
-        case ok, reason, status, message
+        case ok, reason, status, message, invoices
         case nextDate = "next_date"
         case amount
         case paymentMethod = "payment_method"

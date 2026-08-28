@@ -214,6 +214,8 @@ final class AccountViewModel {
         let urgentViaEmail: Bool
         let digestEnabled: Bool
         let digestDay: String
+        let alertQuietStart: String?
+        let alertQuietEnd: String?
         let contacts: [AlertContactBody]
 
         enum CodingKeys: String, CodingKey {
@@ -230,6 +232,8 @@ final class AccountViewModel {
             case urgentViaEmail = "urgent_via_email"
             case digestEnabled = "digest_enabled"
             case digestDay = "digest_day"
+            case alertQuietStart = "alert_quiet_start"
+            case alertQuietEnd = "alert_quiet_end"
             case contacts
         }
     }
@@ -252,6 +256,8 @@ final class AccountViewModel {
             urgentViaEmail: settings.urgentViaEmail,
             digestEnabled: settings.digestEnabled,
             digestDay: settings.digestDay,
+            alertQuietStart: settings.alertQuietStart,
+            alertQuietEnd: settings.alertQuietEnd,
             contacts: contacts.map { AlertContactBody(name: $0.name, phone: $0.phone) }
         )
         do {
@@ -267,6 +273,44 @@ final class AccountViewModel {
             saveAlertsError = error.message
         } catch {
             saveAlertsError = "Couldn't save alert settings."
+        }
+    }
+
+    // Update email
+
+    var isUpdatingEmail = false
+    var updateEmailError: String?
+    var updateEmailSucceeded = false
+
+    private struct UpdateEmailBody: Encodable {
+        let newEmail: String
+        let currentPassword: String
+        enum CodingKeys: String, CodingKey {
+            case newEmail = "new_email"
+            case currentPassword = "current_password"
+        }
+    }
+
+    func updateEmail(newEmail: String, currentPassword: String) async {
+        isUpdatingEmail = true
+        updateEmailError = nil
+        updateEmailSucceeded = false
+        defer { isUpdatingEmail = false }
+        do {
+            let response: OKErrorResponse = try await client.send(
+                "/mobile/api/account/update-email", method: .post,
+                body: UpdateEmailBody(newEmail: newEmail, currentPassword: currentPassword)
+            )
+            if response.ok {
+                updateEmailSucceeded = true
+                await load()
+            } else {
+                updateEmailError = response.error ?? "Couldn't update your email."
+            }
+        } catch let error as APIClient.APIError {
+            updateEmailError = error.message
+        } catch {
+            updateEmailError = "Couldn't update your email."
         }
     }
 }

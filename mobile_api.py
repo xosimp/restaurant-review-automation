@@ -1871,6 +1871,11 @@ def _do_mobile_account(current_user):
             "urgent_via_email": bool(getattr(restaurant, "urgent_via_email", 0)),
             "digest_enabled": bool(getattr(restaurant, "digest_enabled", 1)),
             "digest_day": getattr(restaurant, "digest_day", "monday"),
+            # Backend has fully supported this since notify.py's own
+            # is_in_quiet_hours() — restaurants could never actually set it
+            # themselves from either client. "HH:MM" 24h strings or None.
+            "alert_quiet_start": getattr(restaurant, "alert_quiet_start", None),
+            "alert_quiet_end": getattr(restaurant, "alert_quiet_end", None),
         },
     }
     return {
@@ -1911,6 +1916,38 @@ def mobile_change_password(current_user):
     if len(new_pw) < 8:
         return jsonify(ok=False, error="Password must be at least 8 characters"), 400
     update_password(current_user["id"], new_pw)
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/update-email", methods=["POST"])
+@mobile_login_required
+def mobile_update_email(current_user):
+    """Mirrors auth_routes.py's own /api/update-email exactly (verify
+    current password, validate format, check uniqueness, dual-update
+    users.email + restaurants.owner_email so notifications/digest keep
+    working) — that route is @login_required (web session cookie), which
+    the app has no way to authenticate as, so this is the same logic under
+    mobile_login_required (bearer token) instead."""
+    data = request.get_json() or {}
+    new_email = (data.get("new_email") or "").strip().lower()
+    current_pw = data.get("current_password", "")
+    if not new_email:
+        return jsonify(ok=False, error="Email address is required"), 400
+    import re as _re_email
+    if not _re_email.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", new_email):
+        return jsonify(ok=False, error="Enter a valid email address"), 400
+    user = verify_password(current_user["username"], current_pw)
+    if not user:
+        return jsonify(ok=False, error="Current password is incorrect"), 400
+    conn = get_conn()
+    existing = conn.execute("SELECT id FROM users WHERE email=? AND id!=?", (new_email, current_user["id"])).fetchone()
+    if existing:
+        conn.close()
+        return jsonify(ok=False, error="That email is already in use"), 400
+    conn.execute("UPDATE users SET email=? WHERE id=?", (new_email, current_user["id"]))
+    conn.execute("UPDATE restaurants SET owner_email=? WHERE id=?", (new_email, current_user["restaurant_id"]))
+    conn.commit()
+    conn.close()
     return jsonify(ok=True)
 
 
@@ -2015,6 +2052,12 @@ def mobile_save_alert_settings(current_user):
         "urgent_via_email": int(bool(data.get("urgent_via_email"))),
         "digest_enabled": int(bool(data.get("digest_enabled"))),
         "digest_day": data.get("digest_day", "monday"),
+        # "HH:MM" 24h strings, or None to turn quiet hours off entirely —
+        # is_in_quiet_hours() (models.py) already treats either field being
+        # empty as "no quiet window", so an empty string from the client
+        # correctly disables it rather than needing a separate flag.
+        "alert_quiet_start": data.get("alert_quiet_start") or None,
+        "alert_quiet_end": data.get("alert_quiet_end") or None,
     })
     return jsonify(ok=True)
 
@@ -2078,6 +2121,23 @@ def _do_mobile_billing(restaurant_id):
         except Exception:
             portal_url = None
 
+        # Recent invoices — same customer/key this whole function already
+        # uses, just a second Stripe call. Failing independently of the
+        # subscription/portal lookups above (own try/except, same as those)
+        # so a Stripe hiccup here doesn't take down next-charge/payment
+        # method too; an empty list just means the client shows no history.
+        invoices = []
+        try:
+            for inv in _stripe.Invoice.list(customer=restaurant.stripe_customer_id, limit=6).data:
+                invoices.append({
+                    "date": datetime.fromtimestamp(inv.created).strftime("%-m/%-d/%Y"),
+                    "amount": f"${(inv.amount_paid or inv.amount_due) / 100:,.0f}",
+                    "status": inv.status,
+                    "pdf_url": inv.invoice_pdf,
+                })
+        except Exception:
+            pass
+
         return {
             "ok": True,
             "status": sub.status,
@@ -2086,6 +2146,7 @@ def _do_mobile_billing(restaurant_id):
             "payment_method": pm_desc,
             "portal_url": portal_url,
             "trial_end": datetime.fromtimestamp(sub.trial_end).strftime("%-m/%-d/%Y") if sub.trial_end else None,
+            "invoices": invoices,
         }, 200
     except Exception as e:
         return {"ok": False, "reason": "stripe_error", "error": str(e)}, 200
