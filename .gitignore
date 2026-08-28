@@ -3,6 +3,8 @@ reviews.db
 __pycache__/
 *.pyc
 *.db
+*.db-shm
+*.db-wal
 *.pem
 hosted_dashboard_condensed_backup.py
 hosted_dashboard_recovered.py
