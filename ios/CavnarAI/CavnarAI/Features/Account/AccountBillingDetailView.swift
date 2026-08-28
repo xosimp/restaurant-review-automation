@@ -7,7 +7,17 @@ import SwiftUI
 struct AccountBillingDetailView: View {
     let billing: BillingSummary?
 
+    // Own NavigationStack — presented as a sheet from AccountView, matching
+    // every other Account detail screen (see ScheduleHistoryView's comment
+    // for why). The explicit maxWidth on the outer VStack below matters
+    // here specifically: the "no active subscription" branch is a single
+    // short Text with nothing else to stretch it, and a ScrollView proposes
+    // its content its own ideal width rather than the screen's — without
+    // the frame, that one narrow Text made the whole VStack (and therefore
+    // cavnarModuleBackground()'s wash) hug to text-width instead of filling
+    // the sheet, which read as "the sheet is miniaturized."
     var body: some View {
+        NavigationStack {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 if let billing, billing.ok, billing.status != "inactive" {
@@ -53,11 +63,13 @@ struct AccountBillingDetailView: View {
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
         }
         .cavnarModuleBackground()
         .navigationTitle("Billing")
         .navigationBarTitleDisplayMode(.inline)
+        }
     }
 
     private func row(_ label: String, _ value: String, isNumber: Bool = false) -> some View {

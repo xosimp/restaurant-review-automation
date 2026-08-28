@@ -1,8 +1,12 @@
 import SwiftUI
 
-/// Pushed from Account's "Security & devices" row — merges what used to be
-/// three separate top-level cards (Security, Active Sessions) into one
-/// screen, matching Option A's own "Security & devices" grouping.
+/// Opened from Account's "Security & devices" row. Was four cards of
+/// unrelated heights (Sign-in, 2FA, a single-toggle Alerts card, Active
+/// Devices) with no visual relationship between them — collapsed to two:
+/// everything about how you authenticate in one "Sign-in & security" card
+/// (username, password, 2FA, sign-in notifications), device management
+/// in the other. A lone toggle in its own full-width card was most of
+/// the "zero flow" feeling on its own.
 struct AccountSecurityDetailView: View {
     let viewModel: AccountViewModel
     let account: AccountInfo
@@ -10,11 +14,12 @@ struct AccountSecurityDetailView: View {
     @State private var showing2FASetup = false
 
     var body: some View {
+        NavigationStack {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 4) {
-                    sectionHeader("Sign-in")
-                    VStack(alignment: .leading, spacing: 12) {
+                    sectionHeader("Sign-in & security")
+                    VStack(alignment: .leading, spacing: 14) {
                         HStack {
                             Text("Username").font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
                             Spacer()
@@ -23,16 +28,12 @@ struct AccountSecurityDetailView: View {
                         Button("Change password") { Haptic.light(); showingChangePassword = true }
                             .font(.cavnarBody(13, weight: 600))
                             .foregroundStyle(Color.cavnarEmber)
-                    }
-                    .cavnarCard()
-                }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    sectionHeader("Two-factor authentication")
-                    VStack(alignment: .leading, spacing: 12) {
+                        divider()
+
                         if account.twoFAEnabled {
                             HStack {
-                                Text("Status").font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                                Text("Two-factor authentication").font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
                                 Spacer()
                                 Text("On").font(.cavnarBody(12, weight: 700)).foregroundStyle(Color.cavnarGreen)
                             }
@@ -41,36 +42,35 @@ struct AccountSecurityDetailView: View {
                             }
                             .font(.cavnarBody(13, weight: 600))
                         } else {
-                            Text("Adds an email code on new sign-ins.")
-                                .font(.cavnarBody(12))
-                                .foregroundStyle(Color.cavnarInk3)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Two-factor authentication").font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                Text("Adds an email code on new sign-ins.").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                            }
                             Button("Enable two-factor authentication") { Haptic.light(); showing2FASetup = true }
                                 .font(.cavnarBody(13, weight: 600))
                                 .foregroundStyle(Color.cavnarEmber)
                         }
-                    }
-                    .cavnarCard()
-                }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    sectionHeader("Alerts")
-                    // No manual Haptic.selection() — Toggle/UISwitch already
-                    // fires its own automatic system haptic on every flip.
-                    Toggle(isOn: Binding(
-                        get: { account.loginNotify },
-                        set: { newValue in Task { await viewModel.toggleLoginNotify(newValue) } }
-                    )) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Sign-in notifications").font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            Text("Get notified of new sign-ins to your account").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                        divider()
+
+                        // No manual Haptic.selection() — Toggle/UISwitch
+                        // already fires its own automatic system haptic.
+                        Toggle(isOn: Binding(
+                            get: { account.loginNotify },
+                            set: { newValue in Task { await viewModel.toggleLoginNotify(newValue) } }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Sign-in notifications").font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                Text("Get notified of new sign-ins to your account").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                            }
                         }
+                        .tint(Color.cavnarEmber)
                     }
-                    .tint(Color.cavnarEmber)
                     .cavnarCard()
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    sectionHeader("Active Devices")
+                    sectionHeader("Active devices")
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(viewModel.sessions) { session in
                             VStack(alignment: .leading, spacing: 2) {
@@ -87,7 +87,7 @@ struct AccountSecurityDetailView: View {
                                     .foregroundStyle(Color.cavnarInk3)
                             }
                             if session.id != viewModel.sessions.last?.id {
-                                Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                                divider()
                             }
                         }
                         Button("Sign out all other devices", role: .destructive) {
@@ -98,6 +98,7 @@ struct AccountSecurityDetailView: View {
                     .cavnarCard()
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
         }
         .cavnarModuleBackground()
@@ -109,12 +110,17 @@ struct AccountSecurityDetailView: View {
         .sheet(isPresented: $showing2FASetup) {
             TwoFactorSetupSheet(viewModel: viewModel)
         }
+        }
     }
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
             .font(.cavnarBody(11, weight: 700))
             .foregroundStyle(Color.cavnarInk3)
+    }
+
+    private func divider() -> some View {
+        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
     }
 }
 

@@ -1876,6 +1876,15 @@ def _do_mobile_account(current_user):
             # themselves from either client. "HH:MM" 24h strings or None.
             "alert_quiet_start": getattr(restaurant, "alert_quiet_start", None),
             "alert_quiet_end": getattr(restaurant, "alert_quiet_end", None),
+            # Per-category push — notify.py's blast()/check_no_response_alerts()
+            # have read these for real routing since the al_* matrix was added;
+            # this is the first client UI to expose them for editing.
+            "al_1star_push": bool(getattr(restaurant, "al_1star_push", 1)),
+            "al_2star_push": bool(getattr(restaurant, "al_2star_push", 1)),
+            "al_5star_push": bool(getattr(restaurant, "al_5star_push", 1)),
+            "al_health_push": bool(getattr(restaurant, "al_health_push", 1)),
+            "al_spike_push": bool(getattr(restaurant, "al_spike_push", 1)),
+            "al_unres_push": bool(getattr(restaurant, "al_unres_push", 1)),
         },
     }
     return {
@@ -1948,6 +1957,104 @@ def mobile_update_email(current_user):
     conn.execute("UPDATE restaurants SET owner_email=? WHERE id=?", (new_email, current_user["restaurant_id"]))
     conn.commit()
     conn.close()
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/update-profile", methods=["POST"])
+@mobile_login_required
+def mobile_update_profile(current_user):
+    """Self-service edit for the profile fields that are pure contact info
+    or freeform AI-voice notes, with no dependency on exact string
+    matching elsewhere. restaurant_name/location_name/neighborhood/vibe/
+    known_for are deliberately NOT here — those feed string-matching in
+    client_api.py's AI query construction and competitor lookups, so they
+    stay admin-set-only (see AccountProfileDetailView for why those are
+    shown grayed out instead of editable)."""
+    import re as _re_profile
+
+    def _clean(value, max_len=1000):
+        if not value:
+            return None
+        value = _re_profile.sub(r'<[^>]+>', '', str(value))
+        value = _re_profile.sub(r'(?i)javascript\s*:', '', value)
+        return value[:max_len].strip() or None
+
+    data = request.get_json() or {}
+    updates = {
+        "owner_name":  _clean(data.get("owner_name"), 200),
+        "owner_phone": (data.get("owner_phone") or "").strip()[:30] or None,
+        "voice_notes": _clean(data.get("voice_notes"), 1000),
+        "never_say":   _clean(data.get("never_say"), 1000),
+        "menu_notes":  _clean(data.get("menu_notes"), 2000),
+    }
+    update_restaurant(current_user["restaurant_id"], updates)
+    return jsonify(ok=True)
+
+
+# ── Connections ──────────────────────────────────────────────────────────
+
+@mobile_bp.route("/connections/toast", methods=["POST"])
+@mobile_login_required
+def mobile_connect_toast(current_user):
+    """Saves Toast API credentials and immediately tries a token fetch so
+    a typo shows up now instead of at the next sync — same 3 fields the
+    admin panel sets, just self-service."""
+    import toast as _toast
+    data = request.get_json() or {}
+    rid = current_user["restaurant_id"]
+    client_id     = (data.get("toast_client_id") or "").strip()
+    client_secret = (data.get("toast_client_secret") or "").strip()
+    restaurant_guid = (data.get("toast_restaurant_guid") or "").strip()
+    if not client_id or not client_secret or not restaurant_guid:
+        return jsonify(ok=False, error="All three fields are required"), 400
+
+    update_restaurant(rid, {
+        "toast_client_id": client_id,
+        "toast_client_secret": client_secret,
+        "toast_restaurant_guid": restaurant_guid,
+        "toast_sync_error": None,
+    })
+    try:
+        _toast.get_toast_token(rid)
+    except Exception as e:
+        update_restaurant(rid, {"toast_sync_error": str(e)})
+        return jsonify(ok=False, error=f"Saved, but couldn't connect: {e}")
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/connections/toast", methods=["DELETE"])
+@mobile_login_required
+def mobile_disconnect_toast(current_user):
+    update_restaurant(current_user["restaurant_id"], {
+        "toast_client_id": None, "toast_client_secret": None,
+        "toast_restaurant_guid": None, "toast_access_token": None,
+        "toast_token_expires": None, "toast_sync_error": None,
+    })
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/connections/google/authorize", methods=["GET"])
+@mobile_login_required
+def mobile_google_authorize(current_user):
+    """Returns a Google OAuth URL for the app to open in an
+    ASWebAuthenticationSession. See gmb.get_mobile_auth_url/
+    verify_mobile_state for why mobile signs its own state instead of
+    reusing the web flow's cookie-bound nonce, and auth_routes.py's
+    google_mobile_callback for the other half of this flow."""
+    from gmb import get_mobile_auth_url
+    if not os.getenv("GOOGLE_CLIENT_ID"):
+        return jsonify(ok=False, error="Google OAuth not configured"), 500
+    return jsonify(ok=True, url=get_mobile_auth_url(current_user["restaurant_id"]))
+
+
+@mobile_bp.route("/connections/google", methods=["DELETE"])
+@mobile_login_required
+def mobile_disconnect_google(current_user):
+    """Mirrors auth_routes.py's /auth/google/disconnect under bearer auth."""
+    update_restaurant(current_user["restaurant_id"], {
+        "gmb_access_token": "", "gmb_refresh_token": "",
+        "gmb_account_id": "", "gmb_location_id": "",
+    })
     return jsonify(ok=True)
 
 
@@ -2058,6 +2165,12 @@ def mobile_save_alert_settings(current_user):
         # correctly disables it rather than needing a separate flag.
         "alert_quiet_start": data.get("alert_quiet_start") or None,
         "alert_quiet_end": data.get("alert_quiet_end") or None,
+        "al_1star_push": int(bool(data.get("al_1star_push"))),
+        "al_2star_push": int(bool(data.get("al_2star_push"))),
+        "al_5star_push": int(bool(data.get("al_5star_push"))),
+        "al_health_push": int(bool(data.get("al_health_push"))),
+        "al_spike_push": int(bool(data.get("al_spike_push"))),
+        "al_unres_push": int(bool(data.get("al_unres_push"))),
     })
     return jsonify(ok=True)
 

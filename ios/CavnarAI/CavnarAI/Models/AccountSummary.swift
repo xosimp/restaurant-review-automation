@@ -93,6 +93,15 @@ struct AlertSettings: Codable {
     // neither client ever exposed a way to actually set it.
     var alertQuietStart: String?
     var alertQuietEnd: String?
+    // Per-category push — independent of urgentViaSms/urgentViaEmail,
+    // which only gate SMS/email (push has no per-owner cost, so there's
+    // no matching global kill switch; see notify.py's blast()).
+    var al1starPush: Bool
+    var al2starPush: Bool
+    var al5starPush: Bool
+    var alHealthPush: Bool
+    var alSpikePush: Bool
+    var alUnresPush: Bool
 
     enum CodingKeys: String, CodingKey {
         case alert1star = "alert_1star"
@@ -109,6 +118,12 @@ struct AlertSettings: Codable {
         case digestDay = "digest_day"
         case alertQuietStart = "alert_quiet_start"
         case alertQuietEnd = "alert_quiet_end"
+        case al1starPush = "al_1star_push"
+        case al2starPush = "al_2star_push"
+        case al5starPush = "al_5star_push"
+        case alHealthPush = "al_health_push"
+        case alSpikePush = "al_spike_push"
+        case alUnresPush = "al_unres_push"
     }
 }
 

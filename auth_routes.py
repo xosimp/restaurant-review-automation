@@ -701,6 +701,64 @@ def gmb_callback(current_user):
         )
 
 
+@auth_bp.route("/auth/google/mobile-callback")
+def gmb_mobile_callback():
+    """Mobile equivalent of gmb_callback above. No @login_required — the
+    app has a bearer token, not a browser session cookie, so there's
+    nothing for a decorator to check on this redirect; state itself
+    (gmb.verify_mobile_state) is what proves which restaurant this
+    belongs to. Finishes via the same cavnarai:// deep link
+    google_sso_callback already uses for mobile login, so no new URL
+    scheme registration is needed — GMBConnectCoordinator.swift just
+    listens for a different path on it."""
+    from gmb import exchange_code, get_gmb_account_id, get_gmb_location_id, verify_mobile_state, MOBILE_REDIRECT_URI
+    from models import update_restaurant, get_restaurant
+    from datetime import datetime, timezone, timedelta
+    import urllib.parse
+
+    def _finish(status, msg=None):
+        query = {"status": status}
+        if msg:
+            query["msg"] = msg
+        return redirect("cavnarai://gmb-callback?" + urllib.parse.urlencode(query))
+
+    code  = request.args.get("code")
+    state = request.args.get("state", "")
+    error = request.args.get("error")
+
+    if error or not code or not state:
+        return _finish("error", error or "No code returned")
+
+    restaurant_id = verify_mobile_state(state)
+    if restaurant_id is None:
+        return _finish("error", "Connection expired — please try again")
+
+    try:
+        tokens        = exchange_code(code, redirect_uri=MOBILE_REDIRECT_URI)
+        access_token  = tokens["access_token"]
+        refresh_token = tokens.get("refresh_token", "")
+        expires_in    = tokens.get("expires_in", 3600)
+        expires_at    = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
+
+        account_id  = get_gmb_account_id(access_token)
+        location_id = None
+        if account_id:
+            r = get_restaurant(restaurant_id)
+            location_id = get_gmb_location_id(access_token, account_id, r.google_place_id or "")
+
+        update_restaurant(restaurant_id, {
+            "gmb_access_token":  access_token,
+            "gmb_refresh_token": refresh_token,
+            "gmb_token_expires": expires_at,
+            "gmb_account_id":    account_id or "",
+            "gmb_location_id":   location_id or "",
+        })
+        return _finish("connected")
+    except Exception as e:
+        print(f"[GMB] Mobile OAuth callback error: {e}")
+        return _finish("error", "Connection error")
+
+
 @auth_bp.route("/auth/google-sso")
 def google_sso_start():
     """Kick off Google Sign-In OAuth flow for dashboard login. ?mobile=1

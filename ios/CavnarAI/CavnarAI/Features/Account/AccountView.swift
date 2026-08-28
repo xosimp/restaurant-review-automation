@@ -1,9 +1,9 @@
 import SwiftUI
 
 /// Rebuilt around Option A from the Account design review — a hero
-/// identity block, then settings collapsed into 5 labelled groups (was 9
-/// flat, visually-identical cards), each row pushing to its own detail
-/// screen rather than every setting living inline on one long scroll.
+/// identity block, then settings collapsed into labelled groups (was 9
+/// flat, visually-identical cards), each row opening its own detail sheet
+/// rather than every setting living inline on one long scroll.
 struct AccountView: View {
     @State private var viewModel = AccountViewModel()
     @Environment(SessionStore.self) private var sessionStore
@@ -43,8 +43,6 @@ struct AccountView: View {
     private func content(_ summary: AccountSummary) -> some View {
         heroIdentity(summary)
         groupedSettings(summary)
-        scheduleHistorySection
-        changelogSection
         signOutSection
     }
 
@@ -97,31 +95,44 @@ struct AccountView: View {
 
     // MARK: - Grouped settings
 
+    @State private var showingProfile = false
+    @State private var showingSecurity = false
+    @State private var showingAlerts = false
+    @State private var showingConnections = false
+    @State private var showingBilling = false
+    @State private var showingScheduleHistory = false
+    @State private var showingChangelog = false
+    @State private var changelogBadge = ChangelogBadgeViewModel()
+
     private func groupedSettings(_ summary: AccountSummary) -> some View {
         VStack(alignment: .leading, spacing: 24) {
             group("Restaurant") {
-                NavigationLink {
-                    AccountProfileDetailView(viewModel: viewModel, profile: summary.profile)
-                } label: {
+                settingsRow {
                     row("Profile & details", systemImage: "building.2")
+                } action: {
+                    showingProfile = true
                 }
+            }
+            .sheet(isPresented: $showingProfile) {
+                AccountProfileDetailView(viewModel: viewModel, profile: summary.profile)
             }
 
             group("Security") {
-                NavigationLink {
-                    AccountSecurityDetailView(viewModel: viewModel, account: summary.account)
-                } label: {
+                settingsRow {
                     row(
                         "Security & devices", systemImage: "lock.shield",
                         trailing: viewModel.sessions.isEmpty ? nil : "\(viewModel.sessions.count)"
                     )
+                } action: {
+                    showingSecurity = true
                 }
+            }
+            .sheet(isPresented: $showingSecurity) {
+                AccountSecurityDetailView(viewModel: viewModel, account: summary.account)
             }
 
             group("Alerts") {
-                NavigationLink {
-                    AccountAlertsDetailView(viewModel: viewModel, alerts: summary.alerts)
-                } label: {
+                settingsRow {
                     let onCount = [
                         summary.alerts.settings.alert1star, summary.alerts.settings.alert2star,
                         summary.alerts.settings.alert5star, summary.alerts.settings.alertHealth,
@@ -129,29 +140,74 @@ struct AccountView: View {
                         summary.alerts.settings.alertNoResponse, summary.alerts.settings.alertLaborOver,
                     ].filter { $0 }.count
                     row("Alerts & digest", systemImage: "bell", trailing: "\(onCount) on")
+                } action: {
+                    showingAlerts = true
                 }
+            }
+            .sheet(isPresented: $showingAlerts) {
+                AccountAlertsDetailView(viewModel: viewModel, alerts: summary.alerts)
             }
 
             group("Connections") {
-                NavigationLink {
-                    AccountConnectionsDetailView(connections: summary.connections)
-                } label: {
+                settingsRow {
                     let connectedCount = [
                         summary.connections.googleBusiness, summary.connections.instagram,
                         summary.connections.toast, summary.connections.square, summary.connections.clover,
                     ].filter(\.connected).count
                     row("Connected apps", systemImage: "link", trailing: "\(connectedCount) of 5")
+                } action: {
+                    showingConnections = true
                 }
+            }
+            .sheet(isPresented: $showingConnections) {
+                AccountConnectionsDetailView(viewModel: viewModel, connections: summary.connections)
             }
 
             group("Billing") {
-                NavigationLink {
-                    AccountBillingDetailView(billing: viewModel.billing)
-                } label: {
+                settingsRow {
                     row("Plan & payment", systemImage: "creditcard", trailing: viewModel.billing?.amount)
+                } action: {
+                    showingBilling = true
                 }
             }
+            .sheet(isPresented: $showingBilling) {
+                AccountBillingDetailView(billing: viewModel.billing)
+            }
+
+            group("More") {
+                settingsRow {
+                    row("Schedule History", systemImage: "clock.arrow.circlepath")
+                } action: {
+                    showingScheduleHistory = true
+                }
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                settingsRow {
+                    row(
+                        "What's New", systemImage: "sparkles",
+                        trailing: changelogBadge.unreadCount > 0 ? "\(changelogBadge.unreadCount)" : nil
+                    )
+                } action: {
+                    showingChangelog = true
+                }
+            }
+            .task { await changelogBadge.refresh() }
+            .sheet(isPresented: $showingScheduleHistory) {
+                ScheduleHistoryView()
+            }
+            .sheet(isPresented: $showingChangelog) {
+                ChangelogView()
+            }
         }
+    }
+
+    private func settingsRow<Content: View>(@ViewBuilder _ label: () -> Content, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptic.light()
+            action()
+        } label: {
+            label()
+        }
+        .foregroundStyle(Color.cavnarInk)
     }
 
     private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
@@ -189,58 +245,6 @@ struct AccountView: View {
         .padding(.horizontal, 16)
         .frame(height: 54)
         .contentShape(Rectangle())
-    }
-
-    // MARK: - Schedule History
-
-    // A durable server-side record of every generated schedule, reachable
-    // here independent of the Labor tab's own client-side caching — see
-    // ScheduleHistoryView's doc comment. Kept as a sheet, not folded into
-    // the grouped NavigationLink list above — it's its own whole flow
-    // (like What's New below it), not a settings group.
-    @State private var showingScheduleHistory = false
-
-    @ViewBuilder
-    private var scheduleHistorySection: some View {
-        Button {
-            Haptic.light()
-            showingScheduleHistory = true
-        } label: {
-            row("Schedule History", systemImage: "clock.arrow.circlepath")
-        }
-        .foregroundStyle(Color.cavnarInk)
-        .background(Color.cavnarPaper2)
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.cavnarPaper3, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .sheet(isPresented: $showingScheduleHistory) {
-            ScheduleHistoryView()
-        }
-    }
-
-    // MARK: - Changelog
-
-    @State private var changelogBadge = ChangelogBadgeViewModel()
-    @State private var showingChangelog = false
-
-    @ViewBuilder
-    private var changelogSection: some View {
-        Button {
-            Haptic.light()
-            showingChangelog = true
-        } label: {
-            row(
-                "What's New", systemImage: "sparkles",
-                trailing: changelogBadge.unreadCount > 0 ? "\(changelogBadge.unreadCount)" : nil
-            )
-        }
-        .foregroundStyle(Color.cavnarInk)
-        .background(Color.cavnarPaper2)
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.cavnarPaper3, lineWidth: 1))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .task { await changelogBadge.refresh() }
-        .sheet(isPresented: $showingChangelog) {
-            ChangelogView()
-        }
     }
 
     // MARK: - Sign out

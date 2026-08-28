@@ -7,6 +7,12 @@ from datetime import datetime, timezone, timedelta
 GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 REDIRECT_URI         = os.getenv("GMB_REDIRECT_URI", "https://dashboard.cavnar.ai/auth/google/callback")
+# A separate, dedicated redirect URI for the mobile connect flow (see
+# get_mobile_auth_url/verify_mobile_state below) — this exact URL must
+# also be added as an Authorized redirect URI on the Google Cloud Console
+# OAuth client, alongside the existing web one, or Google will reject the
+# exchange with redirect_uri_mismatch.
+MOBILE_REDIRECT_URI  = os.getenv("GMB_MOBILE_REDIRECT_URI", "https://dashboard.cavnar.ai/auth/google/mobile-callback")
 
 SCOPES = "https://www.googleapis.com/auth/business.manage"
 
@@ -30,17 +36,71 @@ def get_auth_url(restaurant_id: int, nonce: str) -> str:
     )
 
 
-def exchange_code(code: str) -> dict:
-    """Exchange auth code for access + refresh tokens."""
+def get_mobile_auth_url(restaurant_id: int) -> str:
+    """Mobile equivalent of get_auth_url — the app has no session cookie to
+    bind a CSRF nonce to (see verify_mobile_state), so state here is a
+    signed, self-verifying token instead of a bare nonce."""
+    state = sign_mobile_state(restaurant_id)
+    return (
+        "https://accounts.google.com/o/oauth2/v2/auth"
+        f"?client_id={GOOGLE_CLIENT_ID}"
+        f"&redirect_uri={MOBILE_REDIRECT_URI}"
+        f"&response_type=code"
+        f"&scope={SCOPES}"
+        f"&state={state}"
+        f"&access_type=offline"
+        f"&prompt=consent"
+    )
+
+
+def exchange_code(code: str, redirect_uri: str = None) -> dict:
+    """Exchange auth code for access + refresh tokens. redirect_uri must
+    match whatever was used to build the authorize URL exactly, or Google
+    rejects the exchange — defaults to the web flow's REDIRECT_URI."""
     resp = requests.post("https://oauth2.googleapis.com/token", data={
         "code":          code,
         "client_id":     GOOGLE_CLIENT_ID,
         "client_secret": GOOGLE_CLIENT_SECRET,
-        "redirect_uri":  REDIRECT_URI,
+        "redirect_uri":  redirect_uri or REDIRECT_URI,
         "grant_type":    "authorization_code",
     }, timeout=10)
     resp.raise_for_status()
     return resp.json()
+
+
+def sign_mobile_state(restaurant_id: int) -> str:
+    """Self-contained, storage-free CSRF token for the mobile GMB connect
+    flow. Encodes restaurant_id plus a 10-minute expiry, HMAC-signed with
+    the app's SECRET_KEY. The web flow binds its nonce to a gmb_oauth_state
+    cookie because a browser session already carries one; the mobile app
+    authenticates with a bearer token instead, so there's no cookie for an
+    unauthenticated callback redirect to present — the signature itself is
+    what proves this callback traces back to a request this server issued,
+    for this restaurant, recently."""
+    import hmac, hashlib, time
+    secret  = os.getenv("SECRET_KEY", "cavnar-dev-secret").encode()
+    expires = int(time.time()) + 600
+    payload = f"{restaurant_id}:{expires}"
+    sig = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{payload}:{sig}"
+
+
+def verify_mobile_state(state: str) -> int | None:
+    """Returns the restaurant_id if state is a valid, unexpired token from
+    sign_mobile_state(); None if it's missing, tampered with, or expired."""
+    import hmac, hashlib, time
+    try:
+        rid_s, expires_s, sig = state.split(":")
+        secret   = os.getenv("SECRET_KEY", "cavnar-dev-secret").encode()
+        payload  = f"{rid_s}:{expires_s}"
+        expected = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()[:32]
+        if not hmac.compare_digest(sig, expected):
+            return None
+        if int(expires_s) < int(time.time()):
+            return None
+        return int(rid_s)
+    except (ValueError, AttributeError):
+        return None
 
 
 def refresh_access_token(refresh_token: str) -> dict:

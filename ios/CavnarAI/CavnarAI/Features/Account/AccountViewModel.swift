@@ -216,6 +216,12 @@ final class AccountViewModel {
         let digestDay: String
         let alertQuietStart: String?
         let alertQuietEnd: String?
+        let al1starPush: Bool
+        let al2starPush: Bool
+        let al5starPush: Bool
+        let alHealthPush: Bool
+        let alSpikePush: Bool
+        let alUnresPush: Bool
         let contacts: [AlertContactBody]
 
         enum CodingKeys: String, CodingKey {
@@ -234,6 +240,12 @@ final class AccountViewModel {
             case digestDay = "digest_day"
             case alertQuietStart = "alert_quiet_start"
             case alertQuietEnd = "alert_quiet_end"
+            case al1starPush = "al_1star_push"
+            case al2starPush = "al_2star_push"
+            case al5starPush = "al_5star_push"
+            case alHealthPush = "al_health_push"
+            case alSpikePush = "al_spike_push"
+            case alUnresPush = "al_unres_push"
             case contacts
         }
     }
@@ -258,6 +270,12 @@ final class AccountViewModel {
             digestDay: settings.digestDay,
             alertQuietStart: settings.alertQuietStart,
             alertQuietEnd: settings.alertQuietEnd,
+            al1starPush: settings.al1starPush,
+            al2starPush: settings.al2starPush,
+            al5starPush: settings.al5starPush,
+            alHealthPush: settings.alHealthPush,
+            alSpikePush: settings.alSpikePush,
+            alUnresPush: settings.alUnresPush,
             contacts: contacts.map { AlertContactBody(name: $0.name, phone: $0.phone) }
         )
         do {
@@ -311,6 +329,151 @@ final class AccountViewModel {
             updateEmailError = error.message
         } catch {
             updateEmailError = "Couldn't update your email."
+        }
+    }
+
+    // Update profile (owner contact info + AI-voice notes only — the
+    // fields client_api.py parses by exact string match, like
+    // restaurant name/location/neighborhood/vibe/known-for, stay
+    // admin-set and aren't part of this body)
+
+    var isSavingProfile = false
+    var saveProfileError: String?
+    var saveProfileSucceeded = false
+
+    private struct UpdateProfileBody: Encodable {
+        let ownerName: String
+        let ownerPhone: String
+        let voiceNotes: String
+        let neverSay: String
+        let menuNotes: String
+        enum CodingKeys: String, CodingKey {
+            case ownerName = "owner_name"
+            case ownerPhone = "owner_phone"
+            case voiceNotes = "voice_notes"
+            case neverSay = "never_say"
+            case menuNotes = "menu_notes"
+        }
+    }
+
+    func updateProfile(ownerName: String, ownerPhone: String, voiceNotes: String, neverSay: String, menuNotes: String) async {
+        isSavingProfile = true
+        saveProfileError = nil
+        saveProfileSucceeded = false
+        defer { isSavingProfile = false }
+        do {
+            let response: OKErrorResponse = try await client.send(
+                "/mobile/api/account/update-profile", method: .post,
+                body: UpdateProfileBody(
+                    ownerName: ownerName, ownerPhone: ownerPhone,
+                    voiceNotes: voiceNotes, neverSay: neverSay, menuNotes: menuNotes
+                )
+            )
+            if response.ok {
+                saveProfileSucceeded = true
+                await load()
+            } else {
+                saveProfileError = response.error ?? "Couldn't save your profile."
+            }
+        } catch let error as APIClient.APIError {
+            saveProfileError = error.message
+        } catch {
+            saveProfileError = "Couldn't save your profile."
+        }
+    }
+
+    // Connections — Google Business
+
+    var isConnectingGoogle = false
+    var connectGoogleError: String?
+
+    private struct GoogleAuthorizeResponse: Decodable {
+        let ok: Bool
+        let url: String?
+        let error: String?
+    }
+
+    func connectGoogleBusiness() async {
+        isConnectingGoogle = true
+        connectGoogleError = nil
+        defer { isConnectingGoogle = false }
+        do {
+            let response: GoogleAuthorizeResponse = try await client.send("/mobile/api/connections/google/authorize")
+            guard response.ok, let urlString = response.url, let url = URL(string: urlString) else {
+                connectGoogleError = response.error ?? "Couldn't start Google connect."
+                return
+            }
+            try await GMBConnectCoordinator().connect(authorizeURL: url)
+            await load()
+        } catch let error as GMBConnectError {
+            switch error {
+            case .cancelled: break
+            case .server(let msg): connectGoogleError = msg
+            }
+        } catch let error as APIClient.APIError {
+            connectGoogleError = error.message
+        } catch {
+            connectGoogleError = "Couldn't connect Google Business."
+        }
+    }
+
+    func disconnectGoogleBusiness() async {
+        do {
+            let _: APIClient.EmptyResponse = try await client.send("/mobile/api/connections/google", method: .delete)
+            await load()
+        } catch {
+            // Same low-stakes fallback as disconnectToast() below.
+        }
+    }
+
+    // Connections — Toast
+
+    var isConnectingToast = false
+    var connectToastError: String?
+    var connectToastSucceeded = false
+
+    private struct ConnectToastBody: Encodable {
+        let toastClientId: String
+        let toastClientSecret: String
+        let toastRestaurantGuid: String
+        enum CodingKeys: String, CodingKey {
+            case toastClientId = "toast_client_id"
+            case toastClientSecret = "toast_client_secret"
+            case toastRestaurantGuid = "toast_restaurant_guid"
+        }
+    }
+
+    func connectToast(clientId: String, clientSecret: String, restaurantGuid: String) async {
+        isConnectingToast = true
+        connectToastError = nil
+        connectToastSucceeded = false
+        defer { isConnectingToast = false }
+        do {
+            let response: OKErrorResponse = try await client.send(
+                "/mobile/api/connections/toast", method: .post,
+                body: ConnectToastBody(toastClientId: clientId, toastClientSecret: clientSecret, toastRestaurantGuid: restaurantGuid)
+            )
+            if response.ok {
+                connectToastSucceeded = true
+                await load()
+            } else {
+                connectToastError = response.error ?? "Couldn't connect Toast."
+            }
+        } catch let error as APIClient.APIError {
+            connectToastError = error.message
+        } catch {
+            connectToastError = "Couldn't connect Toast."
+        }
+    }
+
+    func disconnectToast() async {
+        do {
+            let _: APIClient.EmptyResponse = try await client.send("/mobile/api/connections/toast", method: .delete)
+            await load()
+        } catch {
+            // Low-stakes background action from a status row — a failed
+            // disconnect just leaves the existing connected state showing,
+            // which is a safe, obvious fallback with no separate UI for it.
         }
     }
 }

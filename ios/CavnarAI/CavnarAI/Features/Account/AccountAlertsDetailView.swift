@@ -38,6 +38,7 @@ struct AccountAlertsDetailView: View {
     }
 
     var body: some View {
+        NavigationStack {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -65,12 +66,29 @@ struct AccountAlertsDetailView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
+                    sectionHeader("Push notifications")
+                    VStack(alignment: .leading, spacing: 12) {
+                        pushToggle("1-star reviews", $draft.al1starPush, on: draft.alert1star)
+                        pushToggle("2-star reviews", $draft.al2starPush, on: draft.alert2star)
+                        pushToggle("5-star reviews", $draft.al5starPush, on: draft.alert5star)
+                        pushToggle("Health or safety mention", $draft.alHealthPush, on: draft.alertHealth)
+                        pushToggle("Negative review spike", $draft.alSpikePush, on: draft.alertNegSpike)
+                        pushToggle("Unresponded review (48h)", $draft.alUnresPush, on: draft.alertNoResponse)
+                        Text("Push doesn't need text/email alerts turned on — it's free to send, so it's gated per-alert-type here instead. Trend and labor alerts above push automatically once enabled; there's no separate switch for those two yet.")
+                            .font(.cavnarBody(11))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .padding(.top, 2)
+                    }
+                    .cavnarCard()
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
                     sectionHeader("Quiet hours")
                     VStack(alignment: .leading, spacing: 12) {
                         Toggle(isOn: $quietHoursEnabled) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Pause overnight").font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                Text("Urgent alerts wait until your quiet window ends").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                                Text("Text, email, and push all wait until your quiet window ends").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
                             }
                         }
                         .tint(Color.cavnarEmber)
@@ -175,17 +193,28 @@ struct AccountAlertsDetailView: View {
                 .disabled(viewModel.isSavingAlerts)
                 .frame(maxWidth: .infinity)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
         }
         .cavnarModuleBackground()
         .navigationTitle("Alerts")
         .navigationBarTitleDisplayMode(.inline)
+        }
     }
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
             .font(.cavnarBody(11, weight: 700))
             .foregroundStyle(Color.cavnarInk3)
+    }
+
+    private func pushToggle(_ label: String, _ binding: Binding<Bool>, on: Bool) -> some View {
+        Toggle(isOn: binding) {
+            Text(label).font(.cavnarBody(13)).foregroundStyle(on ? Color.cavnarInk : Color.cavnarInk3)
+        }
+        .tint(Color.cavnarEmber)
+        .disabled(!on)
+        .opacity(on ? 1 : 0.5)
     }
 
     private func toggle(_ label: String, _ binding: Binding<Bool>) -> some View {
