@@ -635,38 +635,89 @@ private struct QueryResultRow: View {
                 Text(q.answer)
                     .font(.cavnarBody(11))
                     .foregroundStyle(Color.cavnarInk3)
-                    .lineLimit(isPressed ? nil : 1)
+                    .lineLimit(1)
                     .truncationMode(.tail)
-                    .animation(.easeOut(duration: 0.18), value: isPressed)
             }
             Spacer(minLength: 8)
-            Text(q.appeared ? "Appeared" : "Missed")
-                .font(.cavnarBody(9.5, weight: 700))
-                .foregroundStyle(q.appeared ? Color.cavnarGreen : Color.cavnarInk3)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(q.appeared ? Color.cavnarGreenBg : Color.cavnarPaper2)
-                .overlay(Capsule().strokeBorder(q.appeared ? Color.clear : Color.cavnarPaper3, lineWidth: 1))
-                .clipShape(Capsule())
+            badge
         }
         .padding(.vertical, 11)
-        .padding(.horizontal, 10)
-        // A visible surface while pressed — same "read as elevated/popped
-        // into focus" cue press-and-hold affordances use elsewhere in this
-        // app (chart tooltips), just expanding in place here rather than
-        // floating a separate overlay above the row, since this list has
-        // no existing geometry-tracking layer to position one against.
-        .background(isPressed ? Color.cavnarPaper2.opacity(0.7) : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-        .scaleEffect(isPressed ? 1.015 : 1)
-        .animation(.easeOut(duration: 0.18), value: isPressed)
+        // .overlay (not inline lineLimit(nil)) — the base row's own
+        // reported height never changes with press state, so nothing
+        // below it in the list shifts. The full-text card floats above
+        // it instead, matching how Apple's own long-press previews work
+        // (Messages, Mail): the row underneath doesn't grow, a separate
+        // elevated surface appears over it.
+        .overlay {
+            if isPressed {
+                expandedCard
+                    .transition(.scale(scale: 0.92, anchor: .center).combined(with: .opacity))
+            }
+        }
+        // Paints above the next row's own divider/content once its card
+        // is taller than one line — zIndex has to live on this row itself
+        // (not just inside expandedCard) since paint order between
+        // sibling rows is decided at the outer ForEach's level, not
+        // inside any one row's own subtree.
+        .zIndex(isPressed ? 1 : 0)
+        .animation(.spring(response: 0.32, dampingFraction: 0.75), value: isPressed)
         .contentShape(Rectangle())
+        // LongPressGesture, not DragGesture(minimumDistance: 0) — that
+        // was the actual "too sensitive, fires on scroll" bug. A zero-
+        // distance DragGesture recognizes the instant a finger touches
+        // down, which is indistinguishable from the very start of a
+        // scroll. LongPressGesture requires the touch to stay put for
+        // minimumDuration before it succeeds at all (0.5s — the same
+        // default UIKit's own UILongPressGestureRecognizer uses); a
+        // scroll's own movement makes the gesture fail to recognize
+        // rather than firing early, which is exactly how every native
+        // long-press-to-preview interaction in iOS avoids this.
         .gesture(
-            DragGesture(minimumDistance: 0)
-                .updating($isPressed) { _, state, _ in
+            LongPressGesture(minimumDuration: 0.5)
+                .updating($isPressed) { value, state, _ in
                     if !state { Haptic.light() }
-                    state = true
+                    state = value
                 }
         )
+    }
+
+    private var badge: some View {
+        Text(q.appeared ? "Appeared" : "Missed")
+            .font(.cavnarBody(9.5, weight: 700))
+            .foregroundStyle(q.appeared ? Color.cavnarGreen : Color.cavnarInk3)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(q.appeared ? Color.cavnarGreenBg : Color.cavnarPaper2)
+            .overlay(Capsule().strokeBorder(q.appeared ? Color.clear : Color.cavnarPaper3, lineWidth: 1))
+            .clipShape(Capsule())
+    }
+
+    // Bigger shadow + a slight scale-up is the standard "lifted off the
+    // surface toward the viewer" cue — the same visual language Apple's
+    // own long-press previews use — rather than a flat in-place cross-fade.
+    private var expandedCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                Text("\u{201C}\(q.query)\u{201D}")
+                    .font(.cavnarBody(12.5, weight: 600))
+                    .foregroundStyle(Color.cavnarInk)
+                Spacer(minLength: 8)
+                badge
+            }
+            Text(q.answer)
+                .font(.cavnarBody(11.5))
+                .foregroundStyle(Color.cavnarInk2)
+                .lineSpacing(3)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cavnarPaper2)
+        .overlay(
+            RoundedRectangle(cornerRadius: CavnarRadius.control)
+                .strokeBorder(Color.cavnarPaper3.opacity(0.7), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+        .shadow(color: .black.opacity(0.5), radius: 20, x: 0, y: 10)
+        .scaleEffect(1.04)
     }
 }
