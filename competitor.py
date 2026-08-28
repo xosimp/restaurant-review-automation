@@ -197,6 +197,43 @@ def _is_pure_beverage_spot(types) -> bool:
     return bool(type_set & _PURE_BEVERAGE_TYPES) and not (type_set & _FOOD_SIGNAL_TYPES)
 
 
+def remove_competitor_from_cache(restaurant_id: int, place_id: str) -> bool:
+    """Drops one competitor from the already-cached competitor_intel blob
+    (restaurant.competitor_intel — written by run_competitor_analysis)
+    without re-running the full pipeline. A removal doesn't need fresh
+    Google Places calls or a new Claude generation for the competitors
+    that are staying — it only needs the one that's leaving gone from the
+    list. mobile_api.py's own remove-competitor route was previously
+    calling the SAME async refresh job add-competitor uses (20-40s,
+    Google Places + Claude), which is why deleting a competitor visibly
+    lagged for several seconds even though the underlying change is a
+    one-line filter on an already-cached JSON blob.
+
+    Deliberately leaves the cached insight text untouched rather than
+    regenerating it — a small chance the prose still names the removed
+    competitor until the next real refresh, traded against every deletion
+    finishing in under a second instead of tens of seconds.
+
+    Returns False (no-op) if there's no cached blob yet or the place_id
+    wasn't actually in it — both harmless, nothing to remove either way.
+    """
+    from models import get_restaurant, update_restaurant
+    restaurant = get_restaurant(restaurant_id)
+    if not restaurant or not restaurant.competitor_intel:
+        return False
+    try:
+        blob = json.loads(restaurant.competitor_intel)
+    except Exception:
+        return False
+    competitors = blob.get("competitors", [])
+    new_competitors = [c for c in competitors if c.get("place_id") != place_id]
+    if len(new_competitors) == len(competitors):
+        return False
+    blob["competitors"] = new_competitors
+    update_restaurant(restaurant_id, {"competitor_intel": json.dumps(blob)})
+    return True
+
+
 def search_places_near(query: str, lat: float = None, lng: float = None, max_results: int = 6) -> list:
     """Text-search Google Places for a restaurant by name, biased toward
     (lat, lng) when available — powers the owner-facing "add a competitor"

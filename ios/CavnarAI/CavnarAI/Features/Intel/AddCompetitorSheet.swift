@@ -57,7 +57,9 @@ struct AddCompetitorSheet: View {
                     }
                 }
 
-                if isSearching {
+                if let addingPlaceId, let addingResult = results.first(where: { $0.placeId == addingPlaceId }) {
+                    addingStatus(addingResult)
+                } else if isSearching {
                     ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
                 } else if hasSearchedOnce && results.isEmpty {
                     Text("No matches found")
@@ -133,18 +135,43 @@ struct AddCompetitorSheet: View {
                     }
                 }
                 Spacer(minLength: 8)
-                if addingPlaceId == result.placeId {
-                    ProgressView()
-                } else {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundStyle(Color.cavnarEmber)
-                }
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Color.cavnarEmber)
             }
             .padding(.vertical, 12)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(addingPlaceId != nil)
+    }
+
+    /// Replaces the whole results list (not just the tapped row) once a
+    /// selection is made — addCompetitor's own save is quick, but it then
+    /// kicks off the same 20-40s Google Places + Claude job the "Refresh"
+    /// button uses, genuinely needed here (unlike removal) since a brand
+    /// new competitor has no reviews cached yet for the AI insight to
+    /// consider. A tiny trailing spinner on one row gave zero indication
+    /// of that, which is what read as a bare, unexplained "generic
+    /// spinner" — this uses the house shimmer loading convention (same
+    /// treatment as the AI Visibility check button) plus an actual
+    /// explanation of what's happening and how long it reasonably takes,
+    /// so a 20-40s wait doesn't feel like the app hung.
+    private func addingStatus(_ result: PlaceSearchResult) -> some View {
+        VStack(spacing: 14) {
+            Spacer(minLength: 48)
+            CavnarShimmerText(text: "Adding \(result.name)…", color: Color.cavnarInk)
+                .font(.cavnarBody(14, weight: 600))
+            CavnarShimmerLine(color: .cavnarEmber2)
+                .frame(width: 140)
+            Text("Fetching reviews and updating your competitive analysis — this usually takes 20–40 seconds.")
+                .font(.cavnarBody(12))
+                .foregroundStyle(Color.cavnarInk3)
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+                .padding(.horizontal, 36)
+            Spacer(minLength: 48)
+        }
+        .frame(maxWidth: .infinity)
     }
 }

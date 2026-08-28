@@ -236,12 +236,20 @@ final class IntelViewModel {
         }
     }
 
+    /// load(), not refreshCompetitors() — the backend route now drops the
+    /// competitor from the already-cached analysis blob directly (see
+    /// remove_competitor_from_cache in competitor.py), so a plain re-fetch
+    /// of /intel already reflects the removal. Calling refreshCompetitors()
+    /// here used to mean every deletion waited on the SAME 20-40s Google
+    /// Places + Claude job add-competitor genuinely needs — a removal
+    /// never needed fresh data at all, just a smaller list, which is why
+    /// it visibly lagged for several seconds for no real reason.
     func removeCompetitor(placeId: String) async {
         do {
             let _: APIClient.EmptyResponse = try await client.send(
                 "/mobile/api/intel/remove-competitor", method: .post, body: PlaceIdBody(placeId: placeId)
             )
-            await refreshCompetitors()
+            await load()
         } catch {
             refreshError = "Couldn't remove that competitor — try again."
         }

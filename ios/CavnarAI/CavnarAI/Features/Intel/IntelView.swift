@@ -19,6 +19,11 @@ struct IntelView: View {
     @State private var subTab: IntelSubTab = .competitors
     @State private var expandedCompetitors: Set<String> = []
     @State private var showAddCompetitor = false
+    // Removal is fast now (a cached-blob filter, not the full refresh job
+    // add uses — see removeCompetitor's own doc comment), but even a ~1s
+    // wait with zero feedback reads as "did my tap register?" — swaps the
+    // tapped row's own xmark for a small spinner for that brief window.
+    @State private var removingPlaceId: String?
     // Drives the initial-load reveal — stats fade/rise into place first,
     // the AI insight follows a beat after (see content(_:)'s two .delay
     // values below). Tied to the data load finishing, not view-appear, so
@@ -551,12 +556,23 @@ struct IntelView: View {
                     if c.isCustom {
                         Button {
                             Haptic.light()
-                            Task { await viewModel.removeCompetitor(placeId: c.placeId) }
+                            Task {
+                                removingPlaceId = c.placeId
+                                await viewModel.removeCompetitor(placeId: c.placeId)
+                                removingPlaceId = nil
+                            }
                         } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 12))
-                                .foregroundStyle(Color.cavnarInk3)
+                            if removingPlaceId == c.placeId {
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                                    .frame(width: 12, height: 12)
+                            } else {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Color.cavnarInk3)
+                            }
                         }
+                        .disabled(removingPlaceId != nil)
                         .buttonStyle(.plain)
                     }
                     Spacer()

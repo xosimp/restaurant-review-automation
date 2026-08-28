@@ -1761,6 +1761,15 @@ def mobile_remove_competitor(current_user):
     existing = [pid.strip() for pid in (restaurant.custom_competitors or "").split(",") if pid.strip()]
     existing = [pid for pid in existing if pid != place_id]
     update_restaurant(rid, {"custom_competitors": ",".join(existing)})
+    # Also drop it from the already-cached analysis blob directly — the
+    # client used to have to trigger a full refresh-competitors job (same
+    # 20-40s Google Places + Claude pipeline add-competitor uses) just to
+    # make a removal show up, which is why deleting visibly lagged for
+    # several seconds. custom_competitors above only affects the NEXT full
+    # analysis run; this is what makes the removal appear immediately on
+    # the very next plain GET /intel.
+    from competitor import remove_competitor_from_cache
+    remove_competitor_from_cache(rid, place_id)
     return jsonify(ok=True)
 
 
