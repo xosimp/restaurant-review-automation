@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap">
+  <style>
+    body { margin: 0; }
+    .jk { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
+    .fr { font-family: 'Fraunces', Georgia, serif; }
+    .sg { font-family: 'Space Grotesk', 'SF Mono', monospace; }
+  </style>
+</helmet>
+
+<div class="jk" style="width:1000px;height:720px;background:linear-gradient(165deg,#141110 0%,#0b0908 55%,#120c09 100%);position:relative;overflow:hidden">
+
+  <svg width="0" height="0" style="position:absolute"><defs>
+    <radialGradient id="c-ed" cx="42%" cy="38%" r="72%">
+      <stop offset="0%" stop-color="#F2B183"/><stop offset="45%" stop-color="#E8956A"/><stop offset="100%" stop-color="#C74E33"/>
+    </radialGradient>
+    <radialGradient id="c-eg">
+      <stop offset="0%" stop-color="rgba(212,88,58,0.25)"/><stop offset="100%" stop-color="rgba(212,88,58,0)"/>
+    </radialGradient>
+    <path id="c-ring" d="M99.5,45 V44.5 A24,24 0 0 0 75.5,20.5 H44.5 A24,24 0 0 0 20.5,44.5 V75.5 A24,24 0 0 0 44.5,99.5 H75.5 A24,24 0 0 0 99.5,75.5 V75" fill="none"/>
+    <g id="c-wm">
+      <polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/>
+      <polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/>
+      <polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/>
+      <polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/>
+      <polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/>
+      <polygon points="391,0 412,0 412,100 391,100"/>
+      <path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/>
+      <polygon points="425,58 446,58 457,100 436,100"/>
+    </g>
+  </defs></svg>
+
+  <div class="sg" style="position:absolute;top:40px;left:52px;font-size:10px;font-weight:600;letter-spacing:2.6px;color:#9E9790">CAVNAR AI &mdash; BRAND SYSTEM &middot; 05 STATIONERY</div>
+
+  <!-- warm pool of light -->
+  <div style="position:absolute;left:14%;top:16%;width:72%;height:70%;background:radial-gradient(ellipse at 50% 45%, rgba(212,140,90,0.10) 0%, rgba(0,0,0,0) 60%);pointer-events:none"></div>
+
+  <!-- FRONT card — black, seal only -->
+  <div style="position:absolute;left:110px;top:170px;width:470px;height:266px;border-radius:14px;background:linear-gradient(150deg,#0e0e0e,#050505);border:1px solid #232120;transform:rotate(-4deg);box-shadow:0 34px 70px rgba(0,0,0,0.72), 0 8px 22px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center">
+    <svg width="94" height="94" viewBox="0 0 120 120">
+      <use href="#c-ring" stroke="#EDE7DB" stroke-width="19"/>
+      <circle cx="99.5" cy="60" r="21" fill="url(#c-eg)"/>
+      <circle cx="99.5" cy="60" r="10" fill="url(#c-ed)"/>
+    </svg>
+    <div style="position:absolute;bottom:22px;left:0;right:0;display:flex;justify-content:center">
+      <svg width="92" height="24" viewBox="-8 -20 485 128"><use href="#c-wm" fill="#3b3733"/><circle cx="177" cy="13" r="8.5" fill="#6b4534"/></svg>
+    </div>
+  </div>
+
+  <!-- BACK card — cream, details -->
+  <div style="position:absolute;left:430px;top:300px;width:470px;height:266px;border-radius:14px;background:linear-gradient(160deg,#F3EEE2,#E9E2D2);transform:rotate(2.5deg);box-shadow:0 30px 60px rgba(0,0,0,0.66), 0 6px 18px rgba(0,0,0,0.45);box-sizing:border-box;padding:34px 38px">
+    <svg width="44" height="44" viewBox="0 0 120 120" style="position:absolute;top:30px;right:34px">
+      <use href="#c-ring" stroke="#161311" stroke-width="19"/>
+      <circle cx="99.5" cy="60" r="10" fill="#D4583A"/>
+    </svg>
+    <div class="fr" style="font-size:23px;font-weight:600;color:#161311;margin-top:74px">Will Cavnar</div>
+    <div class="sg" style="font-size:10px;font-weight:700;letter-spacing:2.6px;color:#D4583A;margin-top:5px">FOUNDER</div>
+    <div style="position:absolute;bottom:30px;left:38px;right:38px;display:flex;justify-content:space-between;align-items:flex-end">
+      <div class="sg" style="font-size:11.5px;line-height:1.8;color:#4d463d">will@cavnar.ai<br>cavnar.ai</div>
+      <div class="sg" style="font-size:10px;letter-spacing:2px;color:#8a8172">GENEVA, IL</div>
+    </div>
+  </div>
+
+  <div style="position:absolute;bottom:38px;left:52px;right:52px;display:flex;justify-content:space-between;align-items:center">
+    <div class="jk" style="font-size:12px;color:#9E9790;max-width:600px;line-height:1.6">Soft-touch black stock, blind-debossed seal, the ember foiled in one spot color. The front says nothing &mdash; the seal is the introduction.</div>
+    <div class="sg" style="font-size:10px;letter-spacing:2px;color:#5c5751">600GSM &middot; DUPLEX</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

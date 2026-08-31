@@ -1,0 +1,83 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap">
+  <style>
+    body { margin: 0; }
+    .jk { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
+    .fr { font-family: 'Fraunces', Georgia, serif; }
+    .sg { font-family: 'Space Grotesk', 'SF Mono', monospace; }
+  </style>
+</helmet>
+
+<div class="jk" style="width:1000px;height:760px;background:linear-gradient(170deg,#161210 0%,#0a0807 60%,#0f0a08 100%);position:relative;overflow:hidden">
+
+  <svg width="0" height="0" style="position:absolute"><defs>
+    <radialGradient id="p-ed" cx="42%" cy="38%" r="72%">
+      <stop offset="0%" stop-color="#F2B183"/><stop offset="45%" stop-color="#E8956A"/><stop offset="100%" stop-color="#C74E33"/>
+    </radialGradient>
+    <radialGradient id="p-eg">
+      <stop offset="0%" stop-color="rgba(212,88,58,0.22)"/><stop offset="100%" stop-color="rgba(212,88,58,0)"/>
+    </radialGradient>
+    <path id="p-ring" d="M99.5,45 V44.5 A24,24 0 0 0 75.5,20.5 H44.5 A24,24 0 0 0 20.5,44.5 V75.5 A24,24 0 0 0 44.5,99.5 H75.5 A24,24 0 0 0 99.5,75.5 V75" fill="none"/>
+    <g id="p-wm">
+      <polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/>
+      <polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/>
+      <polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/>
+      <polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/>
+      <polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/>
+      <polygon points="391,0 412,0 412,100 391,100"/>
+      <path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/>
+      <polygon points="425,58 446,58 457,100 436,100"/>
+    </g>
+  </defs></svg>
+
+  <div class="sg" style="position:absolute;top:40px;left:52px;font-size:10px;font-weight:600;letter-spacing:2.6px;color:#9E9790">CAVNAR AI &mdash; BRAND SYSTEM &middot; 06 THE WELCOME KIT</div>
+
+  <div style="position:absolute;left:10%;top:12%;width:80%;height:76%;background:radial-gradient(ellipse at 46% 42%, rgba(212,140,90,0.09) 0%, rgba(0,0,0,0) 58%);pointer-events:none"></div>
+
+  <!-- BOX LID -->
+  <div style="position:absolute;left:120px;top:130px;width:600px;height:410px;border-radius:10px;background:linear-gradient(155deg,#101010,#070707);border:1px solid #262320;transform:rotate(-2deg);box-shadow:0 40px 80px rgba(0,0,0,0.75), 0 10px 26px rgba(0,0,0,0.5);display:flex;flex-direction:column;align-items:center;justify-content:center">
+    <!-- lid seam -->
+    <div style="position:absolute;inset:16px;border:1px solid #1c1a18;border-radius:6px;pointer-events:none"></div>
+    <svg width="104" height="104" viewBox="0 0 120 120" style="margin-bottom:30px">
+      <use href="#p-ring" stroke="#EDE7DB" stroke-width="19"/>
+      <circle cx="99.5" cy="60" r="21" fill="url(#p-eg)"/>
+      <circle cx="99.5" cy="60" r="10" fill="url(#p-ed)"/>
+    </svg>
+    <svg width="164" height="43" viewBox="-8 -20 485 128" style="margin-bottom:18px">
+      <use href="#p-wm" fill="#EDE7DB"/>
+      <circle cx="177" cy="13" r="8.5" fill="#E8956A"/>
+    </svg>
+    <div class="sg" style="font-size:9.5px;font-weight:600;letter-spacing:3.4px;color:#8a8172">WELCOME TO THE HOUSE</div>
+  </div>
+
+  <!-- MATCHBOOK -->
+  <div style="position:absolute;left:660px;top:390px;width:172px;height:236px;border-radius:8px;background:linear-gradient(165deg,#F3EEE2,#E7DFCE);transform:rotate(7deg);box-shadow:0 26px 54px rgba(0,0,0,0.7), 0 6px 16px rgba(0,0,0,0.45);box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:22px 18px">
+    <svg width="52" height="52" viewBox="0 0 120 120" style="margin-bottom:16px">
+      <use href="#p-ring" stroke="#161311" stroke-width="19"/>
+      <circle cx="99.5" cy="60" r="10" fill="#D4583A"/>
+    </svg>
+    <svg width="104" height="28" viewBox="-8 -20 485 128" style="margin-bottom:8px">
+      <use href="#p-wm" fill="#161311"/>
+      <circle cx="177" cy="13" r="8.5" fill="#D4583A"/>
+    </svg>
+    <div class="sg" style="font-size:7.5px;font-weight:600;letter-spacing:2.4px;color:#8a8172;margin-bottom:14px">KEEP IT LIT</div>
+    <div style="position:absolute;bottom:0;left:0;right:0;height:26px;border-radius:0 0 8px 8px;background:linear-gradient(90deg,#c9502f,#a83e22)"></div>
+  </div>
+
+  <div style="position:absolute;bottom:38px;left:52px;right:52px;display:flex;justify-content:space-between;align-items:center">
+    <div class="jk" style="font-size:12px;color:#9E9790;max-width:640px;line-height:1.6">Every new client&rsquo;s first shipment: matte-black kit box with the seal blind-debossed, and a matchbook that carries the whole brand at pocket scale &mdash; the ember rule surviving on a two-inch object.</div>
+    <div class="sg" style="font-size:10px;letter-spacing:2px;color:#5c5751">ONBOARDING &middot; MERCH</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

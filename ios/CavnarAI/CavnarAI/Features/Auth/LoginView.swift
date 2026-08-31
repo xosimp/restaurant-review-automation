@@ -20,10 +20,11 @@ struct LoginView: View {
                 VStack(spacing: 28) {
                     Spacer()
 
-                    VStack(spacing: 6) {
-                        (Text("Cavnar ").foregroundStyle(Color.cavnarInk)
-                            + Text("AI").foregroundStyle(Color.cavnarEmber2).italic())
-                            .font(.cavnarHeadline(36))
+                    VStack(spacing: 14) {
+                        Image("BrandLockup")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 220)
                         Text("Sign in to your restaurant")
                             .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk3)

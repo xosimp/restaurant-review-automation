@@ -289,9 +289,10 @@ struct LockedView: View {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 40))
                     .foregroundStyle(Color.cavnarEmber)
-                Text("Cavnar AI")
-                    .font(.cavnarHeadline(24))
-                    .foregroundStyle(Color.cavnarInk)
+                Image("BrandLockup")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 160)
                 Button("Unlock") {
                     Task { await sessionStore.unlockWithBiometrics() }
                 }

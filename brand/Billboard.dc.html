@@ -1,0 +1,84 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap">
+  <style>
+    body { margin: 0; }
+    .jk { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
+    .fr { font-family: 'Fraunces', Georgia, serif; }
+    .sg { font-family: 'Space Grotesk', 'SF Mono', monospace; }
+  </style>
+</helmet>
+
+<div class="jk" style="width:1240px;height:760px;background:linear-gradient(180deg,#191219 0%,#2b1a20 34%,#57302a 62%,#7d452e 74%,#0b0808 74.2%,#080606 100%);position:relative;overflow:hidden">
+
+  <svg width="0" height="0" style="position:absolute"><defs>
+    <radialGradient id="b-ed" cx="42%" cy="38%" r="72%">
+      <stop offset="0%" stop-color="#F2B183"/><stop offset="45%" stop-color="#E8956A"/><stop offset="100%" stop-color="#C74E33"/>
+    </radialGradient>
+    <radialGradient id="b-eg">
+      <stop offset="0%" stop-color="rgba(212,88,58,0.28)"/><stop offset="100%" stop-color="rgba(212,88,58,0)"/>
+    </radialGradient>
+    <path id="b-ring" d="M99.5,45 V44.5 A24,24 0 0 0 75.5,20.5 H44.5 A24,24 0 0 0 20.5,44.5 V75.5 A24,24 0 0 0 44.5,99.5 H75.5 A24,24 0 0 0 99.5,75.5 V75" fill="none"/>
+  </defs></svg>
+
+  <div class="sg" style="position:absolute;top:38px;left:52px;font-size:10px;font-weight:600;letter-spacing:2.6px;color:rgba(240,235,224,0.5);z-index:5">CAVNAR AI &mdash; BRAND SYSTEM &middot; 08 OUT-OF-HOME</div>
+
+  <!-- dusk haze + low sun -->
+  <div style="position:absolute;left:18%;top:46%;width:380px;height:200px;background:radial-gradient(ellipse, rgba(240,160,90,0.30) 0%, rgba(240,160,90,0) 65%);pointer-events:none"></div>
+
+  <!-- distant skyline (behind board) -->
+  <div style="position:absolute;bottom:26%;left:0;right:0;height:64px;display:flex;align-items:flex-end;gap:3px;opacity:0.85">
+    <div style="width:70px;height:34px;background:#150f0d"></div><div style="width:44px;height:52px;background:#120d0b"></div><div style="width:90px;height:26px;background:#150f0d"></div><div style="width:38px;height:44px;background:#100c0a"></div><div style="width:120px;height:20px;background:#150f0d"></div><div style="width:52px;height:38px;background:#120d0b"></div><div style="flex:1"></div><div style="width:60px;height:40px;background:#120d0b"></div><div style="width:100px;height:24px;background:#150f0d"></div><div style="width:42px;height:56px;background:#100c0a"></div><div style="width:76px;height:30px;background:#150f0d"></div>
+  </div>
+
+  <!-- billboard structure -->
+  <div style="position:absolute;left:50%;top:110px;transform:translateX(-50%)">
+    <!-- board -->
+    <div style="width:840px;height:320px;background:#050505;border:10px solid #1a1815;border-radius:4px;box-shadow:0 30px 80px rgba(0,0,0,0.8), 0 0 90px rgba(212,88,58,0.10);position:relative;display:flex;align-items:center;box-sizing:border-box;padding:0 60px;gap:56px">
+      <!-- lamp glow from below -->
+      <div style="position:absolute;left:0;right:0;bottom:0;height:150px;background:linear-gradient(0deg, rgba(240,190,140,0.08), rgba(0,0,0,0));pointer-events:none"></div>
+      <svg width="150" height="150" viewBox="0 0 120 120" style="flex-shrink:0">
+        <use href="#b-ring" stroke="#F0EBE0" stroke-width="19"/>
+        <circle cx="99.5" cy="60" r="23" fill="url(#b-eg)"/>
+        <circle cx="99.5" cy="60" r="10" fill="url(#b-ed)"/>
+      </svg>
+      <div>
+        <div class="fr" style="font-size:47px;font-weight:600;line-height:1.14;color:#F0EBE0;letter-spacing:-0.5px">It runs the numbers.<br><span style="color:#E8956A">You run the room.</span></div>
+        <div class="sg" style="font-size:14px;font-weight:600;letter-spacing:3.6px;color:#9E9790;margin-top:20px">CAVNAR.AI</div>
+      </div>
+      <!-- lamps -->
+      <div style="position:absolute;bottom:-18px;left:120px;width:52px;height:12px;border-radius:3px;background:#242019"></div>
+      <div style="position:absolute;bottom:-18px;left:50%;transform:translateX(-50%);width:52px;height:12px;border-radius:3px;background:#242019"></div>
+      <div style="position:absolute;bottom:-18px;right:120px;width:52px;height:12px;border-radius:3px;background:#242019"></div>
+    </div>
+    <!-- posts -->
+    <div style="display:flex;justify-content:center;gap:340px">
+      <div style="width:26px;height:230px;background:linear-gradient(180deg,#17130f,#0a0807)"></div>
+      <div style="width:26px;height:230px;background:linear-gradient(180deg,#17130f,#0a0807)"></div>
+    </div>
+  </div>
+
+  <!-- road hint -->
+  <div style="position:absolute;bottom:0;left:0;right:0;height:118px;background:linear-gradient(180deg,#0b0908,#060505)">
+    <div style="position:absolute;top:52px;left:8%;width:120px;height:5px;background:#2a2118;transform:skewX(-38deg)"></div>
+    <div style="position:absolute;top:52px;left:34%;width:120px;height:5px;background:#2a2118;transform:skewX(-38deg)"></div>
+    <div style="position:absolute;top:52px;left:60%;width:120px;height:5px;background:#2a2118;transform:skewX(-38deg)"></div>
+    <div style="position:absolute;top:52px;left:86%;width:120px;height:5px;background:#2a2118;transform:skewX(-38deg)"></div>
+  </div>
+
+  <div style="position:absolute;bottom:32px;left:52px;right:52px;display:flex;justify-content:space-between;align-items:center;z-index:5">
+    <div class="jk" style="font-size:12px;color:#8a827a;max-width:640px;line-height:1.6">Seven words at seventy miles an hour. The dark board owns dusk the way the product owns the after-close hour &mdash; and the ember is the only point of color on the highway.</div>
+    <div class="sg" style="font-size:10px;letter-spacing:2px;color:#5c5751">14&times;48 BULLETIN</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

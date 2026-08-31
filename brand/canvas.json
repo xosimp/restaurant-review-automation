@@ -1,0 +1,17 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html",      "title": "01 · Primary lockup",  "x": 0,    "y": 0,    "w": 1100, "h": 780 },
+    { "file": "Wordmark.dc.html",  "title": "02 · Wordmark",        "x": 1220, "y": 0,    "w": 1160, "h": 1000 },
+    { "file": "Rationale.dc.html", "title": "03 · Rationale",       "x": 2500, "y": 0,    "w": 900,  "h": 1150 },
+    { "file": "Scale.dc.html",     "title": "04 · Scale & icons",   "x": 0,    "y": 1300, "w": 1100, "h": 780 },
+    { "file": "Card.dc.html",      "title": "05 · Stationery",      "x": 1220, "y": 1300, "w": 1000, "h": 720 },
+    { "file": "Packaging.dc.html", "title": "06 · Welcome kit",     "x": 2350, "y": 1300, "w": 1000, "h": 760 },
+    { "file": "Web.dc.html",       "title": "07 · Web",             "x": 0,    "y": 2230, "w": 1240, "h": 820 },
+    { "file": "Billboard.dc.html", "title": "08 · Out-of-home",     "x": 1360, "y": 2230, "w": 1240, "h": 760 }
+  ],
+  "annotations": [
+    { "id": "intro", "x": 0, "y": -210, "w": 560, "text": "CAVNAR AI — LOGO & IDENTITY\n\nThe Seal: a square ring, flat-cut like a branding iron, with one live ember banked in the gap. The wordmark is drawn geometry, not a font — and it hides the same ember in the V.\n\nOne rule everywhere: paper and ink, plus a single point of ember. No appetite-orange lowercase (the restaurant-tech uniform), no purple gradient or sparkle (the AI uniform).\n\nBoards 01–04: the system. Boards 05–08: the campaign — stationery, welcome kit, web, out-of-home." },
+    { "id": "note-wordmark", "x": 1220, "y": 1060, "w": 480, "text": "The typography-only answer: CAVNAR stands alone. Custom stencil-cut caps, one 15° lean shared by every diagonal, the A·V pair kerned into a constant 12-unit channel, and the ember living in the V's negative space — the name carries its own symbol." }
+  ],
+  "launch": { "view": "canvas" }
+}
