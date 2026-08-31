@@ -249,7 +249,7 @@ private struct ChatBubble: View {
     // side) — the width actually available to the text itself.
     private static let maxBubbleWidth: CGFloat = 260
     private static let maxTextWidth: CGFloat = maxBubbleWidth - 30
-    private static let textFont = cavnarUIFont(family: "Plus Jakarta Sans", weight: 400, size: 14)
+    private static let textFont = UIFont(name: "ApfelGrotezk-Regular", size: 14)!
 
     // Fourth attempt at the bubble-hugging bug. The first three all relied
     // on SwiftUI's own implicit sizing (fixedSize, frame(maxWidth:)

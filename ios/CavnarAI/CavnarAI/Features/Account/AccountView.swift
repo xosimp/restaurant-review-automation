@@ -57,7 +57,7 @@ struct AccountView: View {
     private func heroIdentity(_ summary: AccountSummary) -> some View {
         HStack(spacing: 14) {
             Text(initials(summary.profile.restaurantName))
-                .font(.cavnarHeadline(21, weight: .semiBold))
+                .font(.cavnarHeadline(21))
                 .foregroundStyle(Color.cavnarEmber2)
                 .frame(width: 54, height: 54)
                 .background(Color.cavnarEmber.opacity(0.16))

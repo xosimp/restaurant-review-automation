@@ -21,8 +21,12 @@ targets:
         CFBundleDisplayName: Cavnar AI
         UILaunchScreen: {}
         UIAppFonts:
-          - Fraunces.ttf
-          - PlusJakartaSans.ttf
+          - ApfelGrotezk-Regular.ttf
+          - ApfelGrotezk-Fett.ttf
+          - ClashDisplay-Regular.ttf
+          - ClashDisplay-Medium.ttf
+          - ClashDisplay-Semibold.ttf
+          - ClashDisplay-Bold.ttf
           - SpaceGrotesk.ttf
         UIBackgroundModes:
           - remote-notification

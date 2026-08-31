@@ -12,7 +12,8 @@
 <script>(function(){var _v=localStorage.getItem('cavnar_theme');var d=_v===null?true:_v==='dark';if(d)document.documentElement.setAttribute('data-theme','dark');document.documentElement.style.background=d?'radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.45) 0%,rgba(200,75,47,.18) 40%,transparent 70%),linear-gradient(180deg,#0a0806 0%,#0e0c0a 100%)':'radial-gradient(ellipse 100% 55% at 50% 0%,rgba(200,75,47,.32) 0%,rgba(200,75,47,.10) 45%,transparent 70%),linear-gradient(180deg,#f7f4ef 0%,#faf7f2 100%)';}());</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=block" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Bricolage+Grotesque:opsz,wght@12..96,700&display=block" rel="stylesheet">
+<link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
 {% if restaurant.brand_color %}<style>:root{--ember:{{ restaurant.brand_color | e }};--ember2:{{ restaurant.brand_color | e }}cc}</style>{% endif %}
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -287,11 +288,11 @@ html:not([data-theme="dark"]) .skeleton{background:rgba(20,15,10,.12)!important}
 /* Platform breakdown badges */
 [data-theme="dark"] [style*="background:#fde8e8"]{background:#2a1010!important;color:#e07055!important}
 [data-theme="dark"] [style*="background:#e8f5ee"]{background:#0c2318!important;color:#4ead7a!important}
-body{font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink);font-size:14px;line-height:1.6;min-height:100vh}
+body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink);font-size:14px;line-height:1.6;min-height:100vh}
 html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d4 100%);background-attachment:fixed;min-height:100%}
 .hdr{background:var(--ink);height:56px;display:flex;align-items:center;padding:0 28px;justify-content:space-between;position:sticky;top:0;z-index:100}
 .hdr-left{display:flex;align-items:center;gap:16px}
-.hdr-logo{font-family:'Fraunces',serif;font-size:16px;color:var(--paper)}
+.hdr-logo{font-family:'Clash Display',sans-serif;font-size:16px;color:var(--paper)}
 .hdr-logo em{color:var(--ember2);font-style:italic}
 .hdr-restaurant{font-size:12px;color:var(--ink3);padding-left:16px;border-left:1px solid #2a2520}
 .hdr-right{display:flex;align-items:center;gap:16px}
@@ -309,7 +310,7 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .calc-tip-light .tip-text{background:#fff;color:var(--ink2);border-color:var(--paper3);box-shadow:0 4px 12px rgba(0,0,0,.12)}
 .calc-tip-super{position:absolute;top:-2px;right:-17px;margin-top:0}
 .tabs{display:flex;gap:2px;padding:0 28px;background:var(--ink);border-top:1px solid #1a1714;position:relative}
-.tab{padding:8px 16px;border-radius:0;border:none;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:500;cursor:pointer;color:rgba(250,248,245,.45);background:transparent;transition:color .2s;border-bottom:2px solid transparent;position:relative}
+.tab{padding:8px 16px;border-radius:0;border:none;font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:500;cursor:pointer;color:rgba(250,248,245,.45);background:transparent;transition:color .2s;border-bottom:2px solid transparent;position:relative}
 .tab:hover{color:var(--paper)}
 .tab.active{color:var(--paper);border-bottom-color:transparent}
 #tab-indicator{position:absolute;bottom:0;left:0;width:0;height:2px;background:var(--ember);transition:left .22s cubic-bezier(.4,0,.2,1),width .22s cubic-bezier(.4,0,.2,1);pointer-events:none;border-radius:1px 1px 0 0}
@@ -340,7 +341,7 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .card.approved{border-left:3px solid var(--green)}
 .card.posted{border-left:3px solid #1a56cc;opacity:.85}
 .card-hd{display:flex;align-items:flex-start;gap:10px;padding:12px 14px 8px}
-.avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Fraunces',serif;font-size:13px;color:white;flex-shrink:0}
+.avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Clash Display',sans-serif;font-size:13px;color:white;flex-shrink:0}
 .card-meta{flex:1;min-width:0}
 .card-author{font-weight:500;font-size:13px}
 .card-sub{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink3);margin-top:1px;flex-wrap:wrap}
@@ -361,7 +362,7 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .draft-lbl{font-size:9px;font-weight:500;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}
 .draft-txt{font-size:12px;color:var(--ink);line-height:1.55;font-style:italic}
 .draft-actions{display:flex;gap:6px;margin-top:7px}
-.btn{padding:6px 14px;border-radius:6px;border:none;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s;display:inline-flex;align-items:center;gap:4px}
+.btn{padding:6px 14px;border-radius:6px;border:none;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s;display:inline-flex;align-items:center;gap:4px}
 .btn-approve{background:var(--green);color:white}
 .btn-approve:hover{background:#1f5c40;box-shadow:0 2px 8px rgba(31,92,64,.15);transform:translateY(-1px)}
 .btn-approve:active{transform:scale(.97)}
@@ -372,15 +373,15 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .toolbar{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
 .search-wrap{position:relative;max-width:260px}
 .search-ico{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--ink3);pointer-events:none;width:12px;height:12px}
-.search-input{width:100%;padding:7px 10px 7px 28px;border:1px solid var(--paper3);border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;background:white;outline:none}
+.search-input{width:100%;padding:7px 10px 7px 28px;border:1px solid var(--paper3);border-radius:var(--r);font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:white;outline:none}
 .search-input:focus{border-color:var(--ember)}
 .filter-pills{display:flex;gap:4px;flex-wrap:wrap}
-.fpill{padding:4px 10px;border-radius:20px;border:1px solid var(--paper3);font-size:11px;cursor:pointer;background:white;font-family:'Plus Jakarta Sans',sans-serif;transition:all .15s}
+.fpill{padding:4px 10px;border-radius:20px;border:1px solid var(--paper3);font-size:11px;cursor:pointer;background:white;font-family:'Apfel Grotezk',sans-serif;transition:all .15s}
 .fpill:hover{background:var(--paper2)}
 .fpill.active{background:var(--ink);color:white;border-color:var(--ink)}
 .fpill.active-red{background:var(--red);color:white;border-color:var(--red)}
 .count-lbl{margin-left:auto;font-size:11px;color:var(--ink3)}
-.no-data{text-align:center;padding:40px;color:var(--ink3);font-family:'Fraunces',serif;font-style:italic;font-size:15px}
+.no-data{text-align:center;padding:40px;color:var(--ink3);font-family:'Clash Display',sans-serif;font-style:italic;font-size:15px}
 .empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 24px;text-align:center;color:var(--ink3)}
 .empty-state svg{width:40px;height:40px;stroke:var(--paper3);margin-bottom:16px;flex-shrink:0}
 .empty-state-title{font-size:14px;font-weight:600;color:var(--ink2);margin-bottom:6px}
@@ -489,7 +490,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .ct-label{font-weight:600;font-size:12px;margin-bottom:2px;color:var(--ink)}
 .ct-desc{font-size:10px;color:var(--ink3);line-height:1.4}
 .topic-row{display:flex;gap:8px;margin-bottom:12px;align-items:center}
-.topic-input{flex:1;padding:9px 14px;border:1px solid var(--paper3);border-radius:10px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;background:var(--paper2);outline:none;transition:border-color .15s,box-shadow .15s}
+.topic-input{flex:1;padding:9px 14px;border:1px solid var(--paper3);border-radius:10px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;background:var(--paper2);outline:none;transition:border-color .15s,box-shadow .15s}
 .topic-input:focus{border-color:var(--ember);box-shadow:0 0 0 3px rgba(200,75,47,.12)}
 /* .output-box is the generator's actual result — the one thing on this tab
    that should read as "primary." A solid surface + a colored glow shadow
@@ -521,7 +522,7 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .cal-day{background:white;border:1px solid var(--paper3);border-radius:8px;padding:8px 6px;font-size:10px}
 .cal-day-name{font-weight:700;font-size:14px;color:var(--ink);margin-bottom:6px}
 .cal-platform{font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);margin-bottom:2px}
-.btn-primary{background:var(--ember);color:white;padding:0 16px;height:34px;display:inline-flex;align-items:center;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
+.btn-primary{background:var(--ember);color:white;padding:0 16px;height:34px;display:inline-flex;align-items:center;border-radius:var(--r);font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:600;border:none;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
 .btn-primary:hover{background:#a83d25;box-shadow:0 2px 8px rgba(200,75,47,.18);transform:translateY(-1px)}
 .btn-primary:active{transform:scale(.97)}
 /* Uniform AI/loading indicator — a thin bar with an ember highlight sliding
@@ -552,11 +553,11 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .btn-instagram:hover,[data-theme="dark"] .btn-instagram:hover{filter:brightness(1.08);box-shadow:0 2px 8px rgba(220,39,67,.3)!important}
 .btn-facebook,[data-theme="dark"] .btn-facebook{background:#1877f2!important}
 .btn-facebook:hover,[data-theme="dark"] .btn-facebook:hover{background:#125fc4!important;box-shadow:0 2px 8px rgba(24,119,242,.3)!important}
-.btn-secondary{background:white;color:var(--ink2);border:1px solid var(--paper3);padding:8px 16px;border-radius:var(--r);font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
+.btn-secondary{background:white;color:var(--ink2);border:1px solid var(--paper3);padding:8px 16px;border-radius:var(--r);font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:500;cursor:pointer;transition:background .15s,box-shadow .15s,transform .15s}
 .btn-secondary:hover{background:var(--paper2);box-shadow:0 2px 10px rgba(14,12,10,.1);transform:translateY(-1px)}
 .btn-secondary:active{transform:scale(.97)}
 /* Blue action buttons (Send request, Save to Google) */
-.btn-blue{background:#1a56cc;color:white;border:none;border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s,box-shadow .15s,transform .15s;display:inline-flex;align-items:center;gap:5px}
+.btn-blue{background:#1a56cc;color:white;border:none;border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s,box-shadow .15s,transform .15s;display:inline-flex;align-items:center;gap:5px}
 .btn-blue:hover{background:#1344a8;box-shadow:0 2px 8px rgba(26,86,204,.16);transform:translateY(-1px)}
 .btn-blue:active{transform:scale(.97)}
 /* Link-buttons (<a> tags styled as buttons) */
@@ -581,7 +582,7 @@ button:not(.tab):not(.logout-btn):not([disabled]):active{transform:scale(.97)}
 .change-pw-section{background:white;border:1px solid var(--paper3);border-radius:var(--r);padding:18px;margin-bottom:16px;max-width:400px}
 .form-group{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
 .form-label{font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink3)}
-.form-input{padding:9px 12px;border:1px solid var(--paper3);border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;color:var(--ink);background:white;outline:none;transition:border .15s}
+.form-input{padding:9px 12px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:white;outline:none;transition:border .15s}
 .form-input:focus{border-color:var(--ember)}
 
 /* ── Mobile responsive ────────────────────────────────────────────────────── */
@@ -879,7 +880,7 @@ document.documentElement.classList.add('pjs-loading');
 <!-- Branded upload loading overlay -->
 <div id="upload-loading-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(14,12,10,0.85);align-items:center;justify-content:center;flex-direction:column">
   <div style="text-align:center">
-    <div style="font-family:'Fraunces',serif;font-size:32px;font-weight:400;color:#f0ebe0;margin-bottom:4px">
+    <div style="font-family:'Clash Display',sans-serif;font-size:32px;font-weight:400;color:#f0ebe0;margin-bottom:4px">
       <svg viewBox="-8 -20 477 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/><polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/><polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/><polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/><polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/><polygon points="391,0 412,0 412,100 391,100"/><path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/><polygon points="425,58 446,58 457,100 436,100"/><circle cx="177" cy="13" r="8.5" fill="#D4583A"/></svg><span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span>
     </div>
     <div style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#7a736a;margin-bottom:32px">Restaurant Intelligence</div>
@@ -1057,7 +1058,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 <!-- Hero — content pre-rendered; JS grabs innerHTML and re-types it -->
 <div style="text-align:center;padding:48px 0 36px">
   <div id="home-tw-date" style="font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--ember);margin-bottom:18px;visibility:hidden">{% if now %}{{ now }}{% endif %}</div>
-  <div id="home-tw-headline" style="font-family:'Fraunces',serif;font-size:clamp(40px,5vw,66px);font-weight:500;color:var(--ink);line-height:1.06;letter-spacing:-.01em;margin-bottom:16px;text-shadow:0 2px 12px rgba(14,10,6,.18),0 1px 3px rgba(14,10,6,.12);visibility:hidden;min-height:2.2em"><span style="color:var(--ember)">{% if current_user.username %}{{ current_user.username|title }}{% else %}Welcome back{% endif %}</span> — your restaurant<br>is running on AI.</div>
+  <div id="home-tw-headline" style="font-family:'Clash Display',sans-serif;font-size:clamp(40px,5vw,66px);font-weight:500;color:var(--ink);line-height:1.06;letter-spacing:-.01em;margin-bottom:16px;text-shadow:0 2px 12px rgba(14,10,6,.18),0 1px 3px rgba(14,10,6,.12);visibility:hidden;min-height:2.2em"><span style="color:var(--ember)">{% if current_user.username %}{{ current_user.username|title }}{% else %}Welcome back{% endif %}</span> — your restaurant<br>is running on AI.</div>
   <div id="home-tw-sub" style="font-size:14px;color:var(--ink3);letter-spacing:.01em;visibility:hidden">{{ restaurant.name }}{% if restaurant.location_name %} &mdash; {{ restaurant.location_name }}{% endif %}{% if rstats.awaiting_approval > 0 %} &nbsp;·&nbsp; <span style="color:var(--ember);font-weight:600">{{ rstats.awaiting_approval }} review{% if rstats.awaiting_approval != 1 %}s{% endif %} awaiting approval</span>{% endif %}</div>
   {% if _sb.total and _sb.total > 0 %}
   <div id="home-tw-dollar" style="margin-top:20px;display:none;align-items:baseline;gap:8px;visibility:hidden"><span style="font-family:'Space Grotesk',sans-serif;font-size:clamp(28px,3.5vw,46px);font-weight:600;color:var(--ink);letter-spacing:-.02em">${{(_sb.total or 0)|format_num}}</span><span style="font-size:12px;color:var(--ink3);letter-spacing:.06em;text-transform:uppercase;font-weight:500;margin-left:8px">delivered since launch</span></div>
@@ -1346,7 +1347,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" stroke-width="2.5" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         Latest reviews
       </div>
-      <button onclick="switchTab('reviews',document.getElementById('tab-reviews'))" style="font-size:11px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;font-family:'Plus Jakarta Sans',sans-serif;padding:0">View all →</button>
+      <button onclick="switchTab('reviews',document.getElementById('tab-reviews'))" style="font-size:11px;color:var(--ember);background:none;border:none;cursor:pointer;font-weight:600;font-family:'Apfel Grotezk',sans-serif;padding:0">View all →</button>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px">
       {% set _colors = ['#c84b2f','#2d6a4f','#7c3aed','#b89650','#1a56cc'] %}
@@ -1392,7 +1393,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
     <button onclick="dismissOnboarding()" aria-label="Dismiss getting started checklist" style="position:absolute;top:10px;right:12px;background:none;border:none;font-size:16px;cursor:pointer;color:rgba(240,235,224,.4);line-height:1;padding:4px">&#x2715;</button>
     <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:4px;padding-left:6px">
-      <div style="font-family:'Fraunces',serif;font-size:19px;color:#f0ebe0">Let&#8217;s get {{ restaurant.name }} set up</div>
+      <div style="font-family:'Clash Display',sans-serif;font-size:19px;color:#f0ebe0">Let&#8217;s get {{ restaurant.name }} set up</div>
       <div style="font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;color:var(--ember)">{{ ob_done }}/{{ onboarding_steps | length }}</div>
     </div>
     <div style="font-size:12px;color:rgba(240,235,224,.55);margin-bottom:14px;padding-left:6px">A few minutes each — every step makes the AI noticeably smarter about your restaurant.</div>
@@ -1431,8 +1432,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Reviews sub-tab toggle (segmented pill, top-right) -->
   <div style="display:flex;justify-content:flex-end;margin-bottom:20px">
     <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-      <button id="rv-tab-inbox"     onclick="switchReviewsTab('inbox')"     class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Inbox</button>
-      <button id="rv-tab-analytics" onclick="switchReviewsTab('analytics')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
+      <button id="rv-tab-inbox"     onclick="switchReviewsTab('inbox')"     class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;transition:background .15s,color .15s">Inbox</button>
+      <button id="rv-tab-analytics" onclick="switchReviewsTab('analytics')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
     </div>
   </div>
 </div><!-- /content-wrapper-top -->
@@ -1722,7 +1723,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         </div>
         <!-- Response editor (hidden by default) -->
         <div class="response-editor" id="editor-{{r.id}}" style="display:none;margin-top:10px">
-          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your own response…">{{r.draft_response|e}}</textarea>
+          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your own response…">{{r.draft_response|e}}</textarea>
           <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center">
             <button class="btn btn-approve" onclick="saveDraft({{r.id}})">Save & approve</button>
             <button class="btn btn-skip" onclick="regenDraft({{r.id}})">↻ Regenerate AI draft</button>
@@ -1742,7 +1743,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           <button class="btn btn-skip" data-tmpl-btn="1" onclick="toggleTmplPicker({{r.id}},this)">📋 Templates ▾</button>
         </div>
         <div class="response-editor" id="editor-{{r.id}}" style="display:none;margin-top:10px">
-          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your response here…"></textarea>
+          <textarea id="editor-text-{{r.id}}" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none" placeholder="Write your response here…"></textarea>
           <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center">
             <button class="btn btn-approve" onclick="saveDraft({{r.id}})">Save & approve</button>
             <button class="btn btn-skip" data-tmpl-btn="1" onclick="toggleTmplPicker({{r.id}},this)">📋 Templates ▾</button>
@@ -1771,12 +1772,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 <div id="rr-modal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(14,12,10,.72);align-items:center;justify-content:center" onclick="if(event.target===this)this.style.display='none'">
   <div style="background:var(--paper);border-radius:14px;padding:32px;max-width:460px;width:90%;position:relative;border:1.5px solid var(--ember);box-shadow:0 8px 40px rgba(0,0,0,.45)">
     <button aria-label="Close" onclick="document.getElementById('rr-modal').style.display='none'" style="position:absolute;top:12px;right:14px;background:none;border:none;font-size:18px;cursor:pointer;color:var(--ink3);line-height:1">&#x2715;</button>
-    <div style="font-family:'Fraunces',serif;font-size:22px;color:var(--ink);margin-bottom:4px">Request a review</div>
+    <div style="font-family:'Clash Display',sans-serif;font-size:22px;color:var(--ink);margin-bottom:4px">Request a review</div>
     <div style="font-size:12px;color:var(--ink3);margin-bottom:20px">Send a customer a direct link to leave a Google review — takes 60 seconds for them.</div>
     <div style="display:flex;flex-direction:column;gap:10px">
-      <input id="rr-name"  type="text"  placeholder="Customer name" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
-      <input id="rr-email" type="email" placeholder="Email address" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
-      <input id="rr-phone" type="tel"   placeholder="Phone number for SMS (optional)" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
+      <input id="rr-name"  type="text"  placeholder="Customer name" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
+      <input id="rr-email" type="email" placeholder="Email address" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
+      <input id="rr-phone" type="tel"   placeholder="Phone number for SMS (optional)" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;padding:10px 13px;border:1px solid var(--paper3);border-radius:8px;width:100%;outline:none;color:var(--ink);background:white">
     </div>
     <div style="font-size:11px;color:var(--ink3);margin:10px 0 4px">Sent this month: <strong id="rr-sent-mo">—</strong> &nbsp;·&nbsp; All time: <strong id="rr-sent-total">—</strong></div>
     <button onclick="sendReviewRequest(this)" class="btn-primary" style="width:100%;padding:11px;margin-top:14px;font-size:13px">Send request<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:6px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -1843,8 +1844,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </label>
       {% endif %}
       <div style="display:inline-flex;box-shadow:0 0 0 1px var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-        <button id="lb-tab-schedule"  onclick="switchLaborTab('schedule')"  class="rv-tab-active" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Schedule</button>
-        <button id="lb-tab-analytics" onclick="switchLaborTab('analytics')" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
+        <button id="lb-tab-schedule"  onclick="switchLaborTab('schedule')"  class="rv-tab-active" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;transition:background .15s,color .15s">Schedule</button>
+        <button id="lb-tab-analytics" onclick="switchLaborTab('analytics')" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
       </div>
     </div>
   </div>
@@ -1899,7 +1900,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           <span style="font-size:13px;color:var(--ink3);margin-left:4px">target</span>
         </div>
       </div>
-      <div id="gap-dollar" style="font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;color:var(--ember2);margin-top:6px;font-weight:500">{% if labor.overall_labor_pct > labor.labor_target|default(30.0) %}Your labor is at {{labor.overall_labor_pct}}% vs {{labor.labor_target|default(30.0)}}% target — loading gap calculation…{% else %}Your labor is on target at {{labor.overall_labor_pct}}% — great work.{% endif %}</div>
+      <div id="gap-dollar" style="font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ember2);margin-top:6px;font-weight:500">{% if labor.overall_labor_pct > labor.labor_target|default(30.0) %}Your labor is at {{labor.overall_labor_pct}}% vs {{labor.labor_target|default(30.0)}}% target — loading gap calculation…{% else %}Your labor is on target at {{labor.overall_labor_pct}}% — great work.{% endif %}</div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
         <span style="font-size:11px;color:var(--ink3);background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:3px 10px">Revenue (2 wks) &nbsp;<strong style="font-family:'Space Grotesk',sans-serif;color:var(--paper)">${{labor.total_sales|int|format_num}}</strong></span>
         <span style="font-size:11px;color:var(--ink3);background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:3px 10px">Labor cost (2 wks) &nbsp;<strong style="font-family:'Space Grotesk',sans-serif;color:{% if labor.overall_labor_pct > (labor.labor_target|default(30.0)) + 5 %}#ff9b8a{% elif labor.overall_labor_pct > (labor.labor_target|default(30.0)) %}#ef9f27{% else %}#6fcf97{% endif %}">${{labor.total_labor_cost|int|format_num}}</strong></span>
@@ -2315,8 +2316,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div id="perf-period-label" style="font-size:11px;color:rgba(255,255,255,.35)">{% if labor.date_range and labor.date_range.start %}{{labor.date_range.start[5:7]|int}}/{{labor.date_range.start[8:10]|int}}/{{labor.date_range.start[2:4]}} – {{labor.date_range.end[5:7]|int}}/{{labor.date_range.end[8:10]|int}}/{{labor.date_range.end[2:4]}}{% else %}Loading…{% endif %}</div>
       </div>
       <div style="display:inline-flex;box-shadow:0 0 0 1px rgba(200,75,47,.4);border-radius:8px;overflow:hidden;background:rgba(200,75,47,.1)">
-        <button id="perf-tab-trend" onclick="switchPerfTab('trend')" style="border:none;height:32px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:var(--ember);color:white;transition:background .15s,color .15s">8-Week Trend</button>
-        <button id="perf-tab-dow"   onclick="switchPerfTab('dow')"   style="border:none;height:32px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:rgba(255,255,255,.45);transition:background .15s,color .15s">By Day</button>
+        <button id="perf-tab-trend" onclick="switchPerfTab('trend')" style="border:none;height:32px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:var(--ember);color:white;transition:background .15s,color .15s">8-Week Trend</button>
+        <button id="perf-tab-dow"   onclick="switchPerfTab('dow')"   style="border:none;height:32px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:rgba(255,255,255,.45);transition:background .15s,color .15s">By Day</button>
       </div>
     </div>
 
@@ -2333,7 +2334,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div id="perf-bars" style="height:200px;display:flex;align-items:flex-end;gap:5px;position:relative;z-index:1">
           <div style="color:rgba(255,255,255,.3);font-size:12px;font-style:italic;align-self:center;padding:16px">Loading…</div>
         </div>
-        <div id="perf-labels" style="display:flex;gap:5px;margin-top:6px;font-size:9px;color:rgba(255,255,255,.35);font-family:'Plus Jakarta Sans',sans-serif"></div>
+        <div id="perf-labels" style="display:flex;gap:5px;margin-top:6px;font-size:9px;color:rgba(255,255,255,.35);font-family:'Apfel Grotezk',sans-serif"></div>
       </div>
     </div>
 
@@ -2375,8 +2376,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </label>
       {% endif %}
       <div style="display:inline-flex;box-shadow:0 0 0 1px var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-        <button id="fc-tab-tracker"   onclick="switchFcTab('tracker')"   class="rv-tab-active" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Tracker</button>
-        <button id="fc-tab-analytics" onclick="switchFcTab('analytics')" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
+        <button id="fc-tab-tracker"   onclick="switchFcTab('tracker')"   class="rv-tab-active" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;transition:background .15s,color .15s">Tracker</button>
+        <button id="fc-tab-analytics" onclick="switchFcTab('analytics')" style="border:none;height:34px;padding:0 16px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
       </div>
     </div>
   </div>
@@ -2491,7 +2492,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         </div>
         <script>var _fcPrevSaved='{{food_cost_data.current.submitted_at if food_cost_data and food_cost_data.current and food_cost_data.current.submitted_at else ""}}';</script>
       </div>
-      <button onclick="addCustomFoodItem()" style="background:#166534;color:white;border:none;border-radius:6px;height:36px;padding:0 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;display:inline-flex;align-items:center;gap:6px;transition:background .15s" onmouseover="this.style.background='#14532d'" onmouseout="this.style.background='#166534'"><span style="font-size:17px;line-height:1;margin-top:-1px">+</span> Add Custom Item</button>
+      <button onclick="addCustomFoodItem()" style="background:#166534;color:white;border:none;border-radius:6px;height:36px;padding:0 18px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;display:inline-flex;align-items:center;gap:6px;transition:background .15s" onmouseover="this.style.background='#14532d'" onmouseout="this.style.background='#166534'"><span style="font-size:17px;line-height:1;margin-top:-1px">+</span> Add Custom Item</button>
     </div>
   </div>
 
@@ -2779,7 +2780,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div id="inv-trend-bars" style="height:200px;display:flex;align-items:flex-end;gap:5px;position:relative;z-index:1">
           <div style="color:rgba(255,255,255,.3);font-size:12px;font-style:italic;align-self:center;padding:16px">Loading…</div>
         </div>
-        <div id="inv-trend-labels" style="display:flex;gap:5px;margin-top:6px;font-size:9px;color:rgba(255,255,255,.35);font-family:'Plus Jakarta Sans',sans-serif"></div>
+        <div id="inv-trend-labels" style="display:flex;gap:5px;margin-top:6px;font-size:9px;color:rgba(255,255,255,.35);font-family:'Apfel Grotezk',sans-serif"></div>
       </div>
     </div>
     <div style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,.06);display:flex;gap:16px;flex-wrap:wrap;font-size:10px;color:rgba(255,255,255,.38);position:relative;z-index:1;align-items:center">
@@ -2801,7 +2802,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Posting overlay -->
   <div id="posting-overlay" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.88);align-items:center;justify-content:center">
     <div style="text-align:center;width:220px">
-      <div style="font-family:'Fraunces',serif;font-size:32px;color:#f0ebe0;margin-bottom:6px;letter-spacing:-.5px"><svg viewBox="-8 -20 477 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/><polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/><polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/><polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/><polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/><polygon points="391,0 412,0 412,100 391,100"/><path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/><polygon points="425,58 446,58 457,100 436,100"/><circle cx="177" cy="13" r="8.5" fill="#D4583A"/></svg><span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></div>
+      <div style="font-family:'Clash Display',sans-serif;font-size:32px;color:#f0ebe0;margin-bottom:6px;letter-spacing:-.5px"><svg viewBox="-8 -20 477 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/><polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/><polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/><polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/><polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/><polygon points="391,0 412,0 412,100 391,100"/><path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/><polygon points="425,58 446,58 457,100 436,100"/><circle cx="177" cy="13" r="8.5" fill="#D4583A"/></svg><span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></div>
       <div id="posting-overlay-msg" style="font-size:15px;color:#c0b8b0;margin-bottom:8px;font-weight:500">Posting your content…</div>
       <div style="position:relative;height:3px;border-radius:2px;background:rgba(200,75,47,.18);overflow:hidden">
         <div style="position:absolute;top:0;left:-30%;height:100%;width:30%;background:linear-gradient(90deg,transparent,var(--ember),transparent);animation:aiv-scan 1.4s linear infinite"></div>
@@ -2812,8 +2813,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Marketing sub-tab toggle (segmented pill, top-right) -->
   <div style="display:flex;justify-content:flex-end;margin-bottom:20px">
     <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-      <button id="mkt-tab-content-btn"   onclick="switchMktTab('content')"   class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Content</button>
-      <button id="mkt-tab-analytics-btn" onclick="switchMktTab('analytics')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
+      <button id="mkt-tab-content-btn"   onclick="switchMktTab('content')"   class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;transition:background .15s,color .15s">Content</button>
+      <button id="mkt-tab-analytics-btn" onclick="switchMktTab('analytics')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
     </div>
   </div>
 
@@ -2925,7 +2926,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--paper3)">
       <div id="guest-contacts-summary" style="font-size:12px;color:var(--ink3)">Loading&hellip;</div>
-      <button onclick="openGuestContactsModal()" style="background:none;border:none;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button onclick="openGuestContactsModal()" style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
     </div>
 
     <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">Send a campaign</div>
@@ -2939,7 +2940,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <input type="text" id="guest-campaign-topic" class="topic-input" placeholder="Optional details (e.g. half-price wine Wednesdays)" style="flex:2;min-width:200px">
       <button onclick="generateGuestCampaign()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-generate-btn">Generate</button>
     </div>
-    <textarea id="guest-campaign-message" rows="3" placeholder="Generated message will appear here — edit before sending" maxlength="300" style="width:100%;padding:10px 12px;border:1px solid var(--paper3);border-radius:8px;font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;color:var(--ink);background:var(--paper2);outline:none;resize:vertical;margin-bottom:10px;box-sizing:border-box"></textarea>
+    <textarea id="guest-campaign-message" rows="3" placeholder="Generated message will appear here — edit before sending" maxlength="300" style="width:100%;padding:10px 12px;border:1px solid var(--paper3);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:var(--paper2);outline:none;resize:vertical;margin-bottom:10px;box-sizing:border-box"></textarea>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <button onclick="sendGuestCampaign()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-send-btn">Send to consented guests</button>
       <span id="guest-campaign-status" style="font-size:12px;display:none"></span>
@@ -2951,7 +2952,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Analytics sub-tab: real Meta post performance, unlocked now that the app is Meta-approved -->
   <div id="mkt-tab-analytics" style="display:none">
     <div style="text-align:center;padding:8px 0 24px">
-      <div class="name-underlined-slow" style="font-family:'Fraunces',serif;font-size:36px;color:var(--ink)">How your posts are performing</div>
+      <div class="name-underlined-slow" style="font-family:'Clash Display',sans-serif;font-size:36px;color:var(--ink)">How your posts are performing</div>
     </div>
 
     <div id="mkt-perf-loading" class="intel-stat-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
@@ -3016,8 +3017,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Intel sub-tab toggle (segmented pill, top-right) -->
   <div style="display:flex;justify-content:flex-end;margin-bottom:20px">
     <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
-      <button id="intel-tab-competitors-btn" onclick="switchIntelTab('competitors')" class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;transition:background .15s,color .15s">Competitors</button>
-      <button id="intel-tab-visibility-btn" onclick="switchIntelTab('visibility')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">AI Visibility</button>
+      <button id="intel-tab-competitors-btn" onclick="switchIntelTab('competitors')" class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;transition:background .15s,color .15s">Competitors</button>
+      <button id="intel-tab-visibility-btn" onclick="switchIntelTab('visibility')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">AI Visibility</button>
     </div>
   </div>
 
@@ -3105,7 +3106,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div id="intel-tab-competitors">
 
   <div style="text-align:center;padding:8px 0 24px">
-    <div class="name-underlined-slow" style="font-family:'Fraunces',serif;font-size:36px;color:var(--ink)">What your neighbors are doing</div>
+    <div class="name-underlined-slow" style="font-family:'Clash Display',sans-serif;font-size:36px;color:var(--ink)">What your neighbors are doing</div>
   </div>
 
   {% if not competitor_data %}
@@ -3215,7 +3216,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
               {% if diff > 0 %}▲{{diff}} ahead{% elif diff < 0 %}▼{{diff|abs}} behind{% else %}tied{% endif %}
             </span>
             {% endif %}
-            <div style="font-family:'Space Grotesk',sans-serif;font-size:12px;color:#f59e0b">{{c.rating}}★ <span style="font-family:'Plus Jakarta Sans',sans-serif;color:var(--ink3)">{{c.review_count}} reviews</span></div>
+            <div style="font-family:'Space Grotesk',sans-serif;font-size:12px;color:#f59e0b">{{c.rating}}★ <span style="font-family:'Apfel Grotezk',sans-serif;color:var(--ink3)">{{c.review_count}} reviews</span></div>
           </div>
         </div>
         <div style="font-size:11px;color:var(--ink3);margin-bottom:8px">{{c.vicinity}}</div>
@@ -3234,7 +3235,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           </div>
           {% endfor %}
         </div>
-        <button onclick="toggleExtraReviews({{loop.index}}, this)" style="margin-top:6px;background:transparent;border:none;font-size:11px;color:var(--ember);cursor:pointer;padding:0;font-family:'Plus Jakarta Sans',sans-serif">Show {{c.reviews|length - 2}} more review{{'s' if c.reviews|length - 2 > 1 else ''}}</button>
+        <button onclick="toggleExtraReviews({{loop.index}}, this)" style="margin-top:6px;background:transparent;border:none;font-size:11px;color:var(--ember);cursor:pointer;padding:0;font-family:'Apfel Grotezk',sans-serif">Show {{c.reviews|length - 2}} more review{{'s' if c.reviews|length - 2 > 1 else ''}}</button>
         {% endif %}
       </div>
       {% endfor %}
@@ -3283,7 +3284,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <img src="/static/will.png" style="width:100%;height:110%;object-fit:cover;object-position:center 20%">
       </div>
       <div style="flex:1">
-        <div class="acct-name" style="font-family:'Fraunces',serif;font-size:20px;color:var(--ink);margin-bottom:3px">Will Cavnar</div>
+        <div class="acct-name" style="font-family:'Clash Display',sans-serif;font-size:20px;color:var(--ink);margin-bottom:3px">Will Cavnar</div>
         <div style="font-size:12px;color:#7a736a;margin-bottom:14px">Founder, Cavnar AI &middot; Your dedicated restaurant intelligence consultant</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
           <a href="mailto:will@cavnar.ai" class="btn-link-ember">&#9993; Email Will</a>
@@ -3383,7 +3384,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <tr>
           <td style="color:var(--ink3);padding:4px 0;width:70px;font-size:12px;white-space:nowrap">Email:</td>
           <td style="font-weight:500;font-size:12px;width:100%;padding-left:8px" id="acct-email-display">{{restaurant.owner_email}}</td>
-          <td style="text-align:right;padding:4px 0;white-space:nowrap"><button onclick="document.getElementById('email-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Update<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></td>
+          <td style="text-align:right;padding:4px 0;white-space:nowrap"><button onclick="document.getElementById('email-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Update<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button></td>
         </tr>
         <tr><td style="color:var(--ink3);padding:4px 0;font-size:12px;white-space:nowrap">Username:</td><td style="font-weight:500;font-size:12px;padding-left:8px" colspan="2">{{current_user.username}}</td></tr>
       </table>
@@ -3446,7 +3447,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         </div>
         <!-- Change password link — inside security section -->
         <div style="padding-top:10px;margin-top:2px">
-          <button onclick="document.getElementById('pw-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:4px">Change password<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button onclick="document.getElementById('pw-modal').style.display='flex'" style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:4px">Change password<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
       </div>
 
@@ -3477,7 +3478,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           {% endif %}
         </div>
         {% if restaurant.gmb_refresh_token %}
-        <button onclick="gmbDisconnect()" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
+        <button onclick="gmbDisconnect()" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
         {% else %}
         <button onclick="gmbConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         {% endif %}
@@ -3500,7 +3501,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           {% endif %}
         </div>
         {% if restaurant.ig_token %}
-        <button onclick="disconnectInstagram(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
+        <button onclick="disconnectInstagram(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
         {% else %}
         <button onclick="igConnect()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         {% endif %}
@@ -3525,7 +3526,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div style="display:flex;gap:6px;flex-shrink:0">
           {% if restaurant.toast_restaurant_guid %}
           <button onclick="toastSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
-          <button onclick="toastDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
+          <button onclick="toastDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
           {% else %}
           <button onclick="openToastClientModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           {% endif %}
@@ -3552,7 +3553,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div style="display:flex;gap:6px;flex-shrink:0">
           {% if restaurant.square_location_id %}
           <button onclick="squareSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
-          <button onclick="squareDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
+          <button onclick="squareDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
           {% else %}
           <button onclick="openSquareModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           {% endif %}
@@ -3579,7 +3580,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div style="display:flex;gap:6px;flex-shrink:0">
           {% if restaurant.clover_merchant_id %}
           <button onclick="cloverSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
-          <button onclick="cloverDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif">Disconnect</button>
+          <button onclick="cloverDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
           {% else %}
           <button onclick="openCloverModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
           {% endif %}
@@ -3590,7 +3591,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--paper3)">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
           <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)">Alert Contacts</div>
-          <button onclick="openAlertsModal()" style="background:none;border:none;cursor:pointer;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <button onclick="openAlertsModal()" style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0;display:flex;align-items:center;gap:3px">Manage<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
         <div id="alerts-contacts-summary" style="font-size:12px;color:var(--ink3)">Loading&hellip;</div>
         <div id="alerts-types-summary" style="font-size:11px;color:var(--ink3);margin-top:6px"></div>
@@ -3632,10 +3633,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <div style="font-size:12px;color:var(--ink3);margin-bottom:10px;line-height:1.5">Send them an intro &mdash; get <strong style="color:var(--ember)">one free month ($300)</strong> if they sign up.</div>
       <div style="display:flex;flex-direction:column;gap:7px">
         <div style="display:flex;gap:6px">
-          <input type="text" id="referral-name" placeholder="Restaurant name" style="flex:1;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none">
-          <input type="email" id="referral-email" placeholder="Owner email" style="flex:1;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none">
+          <input type="text" id="referral-name" placeholder="Restaurant name" style="flex:1;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none">
+          <input type="email" id="referral-email" placeholder="Owner email" style="flex:1;padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none">
         </div>
-        <textarea id="referral-note" rows="2" placeholder="Optional personal note&hellip;" style="padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;resize:vertical"></textarea>
+        <textarea id="referral-note" rows="2" placeholder="Optional personal note&hellip;" style="padding:7px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;resize:vertical"></textarea>
         <div style="display:flex;align-items:center;gap:8px">
           <button onclick="sendReferral()" class="btn-primary" style="padding:7px 16px">Send referral</button>
           <span id="referral-status" style="font-size:11px;display:none"></span>
@@ -3770,7 +3771,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div style="padding:14px 16px;border-bottom:1px solid rgba(200,75,47,.3);display:flex;align-items:center;justify-content:space-between;background:#1a1410;flex-shrink:0">
     <div style="display:flex;align-items:center;gap:8px">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="4" class="ask-cavnar-accent-fill"/><path d="M8.5 17l-3.5 4v-4h3.5z" class="ask-cavnar-accent-fill"/><path d="M18 2l.75 2.25L21 5l-2.25.75L18 8l-.75-2.25L15 5l2.25-.75L18 2z" class="ask-cavnar-accent-fill" opacity=".85"/></svg>
-      <span style="font-family:'Fraunces',serif;font-size:14px;color:#f0ebe0">Ask Cavnar AI</span>
+      <span style="font-family:'Clash Display',sans-serif;font-size:14px;color:#f0ebe0">Ask Cavnar AI</span>
     </div>
     <button aria-label="Close" onclick="toggleAskCavnar()" style="background:none;border:none;cursor:pointer;color:#f0ebe0;font-size:15px;line-height:1;padding:0">&#x2715;</button>
   </div>
@@ -3779,7 +3780,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div>
   <div style="padding:12px 14px;border-top:1px solid var(--paper3);display:flex;gap:8px;flex-shrink:0">
     <input type="text" id="ask-cavnar-input" placeholder="e.g. How's my labor cost trending?" maxlength="500"
-      style="flex:1;padding:9px 12px;border:1px solid var(--paper3);border-radius:8px;font-size:12px;font-family:'Plus Jakarta Sans',sans-serif;outline:none;background:var(--paper2);color:var(--ink)"
+      style="flex:1;padding:9px 12px;border:1px solid var(--paper3);border-radius:8px;font-size:12px;font-family:'Apfel Grotezk',sans-serif;outline:none;background:var(--paper2);color:var(--ink)"
       onkeydown="if(event.key==='Enter'){event.preventDefault();sendAskCavnar();}">
     <button onclick="sendAskCavnar()" class="btn-primary" id="ask-cavnar-send-btn" style="padding:0 14px;font-size:12px">Ask</button>
   </div>
@@ -3900,7 +3901,7 @@ function regenDraft(id) {
             '<button class="btn btn-skip" onclick="skipR('+id+')">Skip</button>' +
           '</div>' +
           '<div class="response-editor" id="editor-'+id+'" style="display:none;margin-top:10px">' +
-            '<textarea id="editor-text-'+id+'" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:\'Plus Jakarta Sans\',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none">'+data.draft+'</textarea>' +
+            '<textarea id="editor-text-'+id+'" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:6px;font-family:\'Apfel Grotezk\',sans-serif;font-size:12px;color:var(--ink);background:white;resize:vertical;min-height:90px;outline:none">'+data.draft+'</textarea>' +
             '<div style="display:flex;gap:6px;margin-top:6px">' +
               '<button class="btn btn-approve" onclick="saveDraft('+id+')">Save & approve</button>' +
               '<button class="btn btn-skip" onclick="regenDraft('+id+')">↻ Regenerate AI draft</button>' +
@@ -5775,7 +5776,7 @@ function loadLaborInsight(){
       if(msgEl) msgEl.textContent='You are at '+d.current_pct+'% vs your '+_laborTarget+'% target — that gap is costing around $'+Math.round(d.monthly_gap).toLocaleString()+'/mo. An optimized schedule can help close it.';
       if(pctEl) pctEl.style.color='#ef9f27';
     } else {
-      if(gapEl){ gapEl.textContent='On target ✓'; gapEl.style.color='#6fcf97'; gapEl.style.fontFamily="'Fraunces',serif"; gapEl.style.fontStyle='normal'; }
+      if(gapEl){ gapEl.textContent='On target ✓'; gapEl.style.color='#6fcf97'; gapEl.style.fontFamily="'Clash Display',sans-serif"; gapEl.style.fontStyle='normal'; }
       if(msgEl) msgEl.textContent='Your labor is at '+d.current_pct+'% — at or below your '+_laborTarget+'% target. Great work. Keep an eye on individual days that spike.';
       if(pctEl) pctEl.style.color='#6fcf97';
     }
@@ -7753,8 +7754,8 @@ function _loadGuestContactsList() {
         + '<div style="font-size:10.5px;color:var(--ink3);margin-top:1px">' + visitLabel + '</div>'
         + '</div>'
         + '<div style="display:flex;gap:10px;flex-shrink:0;align-items:center">'
-        + '<button onclick="markGuestVisit(' + c.id + ',this)" style="background:none;border:none;cursor:pointer;color:var(--ember);font-size:11px;font-weight:600;font-family:\'Plus Jakarta Sans\',sans-serif">Mark visit</button>'
-        + '<button onclick="deleteGuestContactRow(' + c.id + ')" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:11px;font-weight:600;font-family:\'Plus Jakarta Sans\',sans-serif">Remove</button>'
+        + '<button onclick="markGuestVisit(' + c.id + ',this)" style="background:none;border:none;cursor:pointer;color:var(--ember);font-size:11px;font-weight:600;font-family:\'Apfel Grotezk\',sans-serif">Mark visit</button>'
+        + '<button onclick="deleteGuestContactRow(' + c.id + ')" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:11px;font-weight:600;font-family:\'Apfel Grotezk\',sans-serif">Remove</button>'
         + '</div>'
         + '</div>';
     }
@@ -8158,11 +8159,11 @@ document.addEventListener('click', function(e) {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
       <div>
         <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Name</div>
-        <input id="alert-c1-name" type="text" placeholder="e.g. Owner" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+        <input id="alert-c1-name" type="text" placeholder="e.g. Owner" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
       </div>
       <div>
         <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Mobile number</div>
-        <input id="alert-c1-phone" type="tel" placeholder="+1 (555) 000-0000" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+        <input id="alert-c1-phone" type="tel" placeholder="+1 (555) 000-0000" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
       </div>
     </div>
 
@@ -8171,11 +8172,11 @@ document.addEventListener('click', function(e) {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:20px">
       <div>
         <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Name</div>
-        <input id="alert-c2-name" type="text" placeholder="e.g. Manager" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+        <input id="alert-c2-name" type="text" placeholder="e.g. Manager" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
       </div>
       <div>
         <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Mobile number</div>
-        <input id="alert-c2-phone" type="tel" placeholder="+1 (555) 000-0000" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+        <input id="alert-c2-phone" type="tel" placeholder="+1 (555) 000-0000" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
       </div>
     </div>
 
@@ -8206,7 +8207,7 @@ document.addEventListener('click', function(e) {
       <div style="font-size:11px;font-weight:600;color:var(--ink3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Wins</div>
       <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-5star" style="accent-color:var(--ember)"> 5&#9733; review received</label>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-rating-thresh" style="accent-color:var(--ember)"> Rating climbs above <input type="number" id="al-rating-floor" min="1" max="5" step="0.1" style="width:46px;padding:2px 5px;border:1px solid var(--paper3);border-radius:5px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);text-align:center"> stars</label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--ink)"><input type="checkbox" id="al-rating-thresh" style="accent-color:var(--ember)"> Rating climbs above <input type="number" id="al-rating-floor" min="1" max="5" step="0.1" style="width:46px;padding:2px 5px;border:1px solid var(--paper3);border-radius:5px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);text-align:center"> stars</label>
       </div>
 
       {% if mod_labor %}
@@ -8225,7 +8226,7 @@ document.addEventListener('click', function(e) {
         <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--ink)">
           <input type="checkbox" id="al-digest-enabled" style="accent-color:var(--ember)"> Send weekly review summary email every
         </label>
-        <select id="al-digest-day" style="padding:4px 8px;border:1px solid var(--paper3);border-radius:6px;font-family:'Plus Jakarta Sans',sans-serif;font-size:11px;background:var(--paper);color:var(--ink)">
+        <select id="al-digest-day" style="padding:4px 8px;border:1px solid var(--paper3);border-radius:6px;font-family:'Apfel Grotezk',sans-serif;font-size:11px;background:var(--paper);color:var(--ink)">
           {% for d in ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"] %}
           <option value="{{d}}">{{d|title}}</option>
           {% endfor %}
@@ -8256,15 +8257,15 @@ document.addEventListener('click', function(e) {
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:end">
         <div>
           <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Quiet start</div>
-          <input id="al-quiet-start" type="time" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+          <input id="al-quiet-start" type="time" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
         </div>
         <div>
           <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Quiet end</div>
-          <input id="al-quiet-end" type="time" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+          <input id="al-quiet-end" type="time" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
         </div>
         <div>
           <div style="font-size:11px;color:var(--ink3);margin-bottom:4px">Max alerts/day</div>
-          <select id="al-max-per-day" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+          <select id="al-max-per-day" style="width:100%;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
             <option value="0">Unlimited</option>
             {% for n in [1,2,3,5,10] %}
             <option value="{{n}}">{{n}} per day</option>
@@ -8290,8 +8291,8 @@ document.addEventListener('click', function(e) {
     </div>
     <p style="font-size:11px;color:var(--ink3);line-height:1.6;margin:0 0 14px">Add a number here for your own reference — it will show in this list, but can't receive texts until that guest opts in themselves at your join link. Tap "Mark visit" after serving a consented guest and they'll automatically get a review-request text a few hours later — joining via your link already does this for you.</p>
     <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
-      <input type="text" id="guest-add-name" placeholder="Name" style="flex:1;min-width:120px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
-      <input type="tel" id="guest-add-phone" placeholder="Phone number" style="flex:1;min-width:140px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Plus Jakarta Sans',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+      <input type="text" id="guest-add-name" placeholder="Name" style="flex:1;min-width:120px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
+      <input type="tel" id="guest-add-phone" placeholder="Phone number" style="flex:1;min-width:140px;padding:8px 10px;border:1px solid var(--paper3);border-radius:7px;font-family:'Apfel Grotezk',sans-serif;font-size:12px;outline:none;background:var(--paper);color:var(--ink);box-sizing:border-box">
       <button onclick="addGuestContact()" class="btn-primary" style="padding:8px 14px;font-size:12px">Add</button>
     </div>
     <div id="guest-contacts-list" style="display:flex;flex-direction:column;gap:2px">Loading&hellip;</div>

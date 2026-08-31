@@ -569,7 +569,7 @@ private struct IngredientCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
                         TextField("Ingredient name", text: $item.name)
-                            .font(.cavnarHeadline(17, weight: .semiBold))
+                            .font(.cavnarHeadline(17))
                             .foregroundStyle(Color.cavnarInk)
                             .lineLimit(1)
                             .focused(focusedField, equals: .name(item.id))

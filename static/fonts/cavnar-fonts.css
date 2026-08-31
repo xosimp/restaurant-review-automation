@@ -1,0 +1,47 @@
+/* Self-hosted — Apfel Grotezk and Clash Display aren't on Google Fonts,
+   distributed directly by Fontsource/Fontshare. Space Grotesk stays a
+   Google Fonts <link> in each template (unchanged). */
+
+@font-face {
+  font-family: 'Apfel Grotezk';
+  src: url('/static/fonts/ApfelGrotezk-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Apfel Grotezk';
+  src: url('/static/fonts/ApfelGrotezk-Fett.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Clash Display';
+  src: url('/static/fonts/ClashDisplay-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Clash Display';
+  src: url('/static/fonts/ClashDisplay-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Clash Display';
+  src: url('/static/fonts/ClashDisplay-Semibold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Clash Display';
+  src: url('/static/fonts/ClashDisplay-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}

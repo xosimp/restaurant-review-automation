@@ -2,41 +2,40 @@ import SwiftUI
 import UIKit
 import CoreText
 
-/// The web app's typography system (per project convention): Fraunces for
-/// headlines/words, Plus Jakarta Sans for UI chrome, Space Grotesk for
-/// numbers. All three are bundled as variable fonts (single .ttf per family,
-/// see CavnarAI/Fonts/ + Info.plist's UIAppFonts) rather than one static
-/// file per weight — smaller app bundle, same visual range.
-///
-/// Fraunces ships proper named-instance PostScript names (e.g.
-/// "Fraunces-SemiBold"), so Font.custom addresses those directly. Plus
-/// Jakarta Sans and Space Grotesk do NOT — their variable font has only one
-/// PostScript name for the whole file, so selecting a specific weight needs
-/// a UIFontDescriptor variation-axis dictionary (the `variableFont` helper
-/// below), not a plain Font.custom(name:) string.
+/// The web app's typography system (per project convention): Clash Display
+/// for headlines/words, Apfel Grotezk for UI chrome, Space Grotesk for
+/// numbers. Clash Display and Apfel Grotezk ship as static per-weight .ttf
+/// files (not variable fonts — Fontshare/Fontsource only distribute them
+/// that way), see CavnarAI/Fonts/ + Info.plist's UIAppFonts. Space Grotesk
+/// is still a true variable font, so it alone still goes through the
+/// `variableFont` wght-axis helper below.
 extension Font {
-    /// Fraunces — serif, for headlines and standalone words (matches the
-    /// dashboard's `--headline` usage of Fraunces at various weights).
-    static func cavnarHeadline(_ size: CGFloat, weight: FrauncesWeight = .semiBold) -> Font {
+    /// Clash Display — headlines and standalone words (matches the
+    /// dashboard's `--headline` usage).
+    static func cavnarHeadline(_ size: CGFloat, weight: ClashWeight = .semibold) -> Font {
         .custom(weight.postScriptName, size: size)
     }
 
-    enum FrauncesWeight {
-        case regular, semiBold, bold, black
+    enum ClashWeight {
+        case regular, medium, semibold, bold
 
         var postScriptName: String {
             switch self {
-            case .regular:  return "Fraunces-Regular"
-            case .semiBold: return "Fraunces-SemiBold"
-            case .bold:     return "Fraunces-Bold"
-            case .black:    return "Fraunces-Black"
+            case .regular:  return "ClashDisplay-Regular"
+            case .medium:   return "ClashDisplay-Medium"
+            case .semibold: return "ClashDisplay-Semibold"
+            case .bold:     return "ClashDisplay-Bold"
             }
         }
     }
 
-    /// Plus Jakarta Sans — UI chrome (labels, buttons, body text).
+    /// Apfel Grotezk — UI chrome (labels, buttons, body text). Only ships
+    /// Regular/Fett (Bold) as real weights, unlike the variable font this
+    /// replaced — call sites still pass a CGFloat weight (400...800, same
+    /// as before, so none of ~400 existing call sites needed to change),
+    /// snapped to whichever of the two real weights it's closer to.
     static func cavnarBody(_ size: CGFloat, weight: CGFloat = 400) -> Font {
-        Font(cavnarUIFont(family: "Plus Jakarta Sans", weight: weight, size: size))
+        .custom(weight >= 550 ? "ApfelGrotezk-Fett" : "ApfelGrotezk-Regular", size: size)
     }
 
     /// Space Grotesk — numbers and stats (KPI tiles, dollar figures).
@@ -55,8 +54,9 @@ extension Font {
 /// Returns the raw UIFont (not wrapped as a SwiftUI Font) and is not
 /// private — UIKit-level text measurement (NSString.boundingRect, see
 /// `cavnarMeasuredTextWidth` below) needs to measure against the exact same
-/// font instance `.cavnarBody`/`.cavnarNumber` render with, not an
-/// approximation of it.
+/// font instance `.cavnarNumber` renders with, not an approximation of it.
+/// Only Space Grotesk still uses this — Clash Display/Apfel Grotezk are
+/// static per-weight files now, addressed via Font.custom(name:) above.
 func cavnarUIFont(family: String, weight: CGFloat, size: CGFloat) -> UIFont {
     let wghtAxis = fourCharCode("wght")
     let variationKey = kCTFontVariationAttribute as String

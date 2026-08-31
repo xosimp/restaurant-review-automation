@@ -677,20 +677,20 @@ def forbidden(e):
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Access Denied — Cavnar AI</title>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
   <style>
-    body{margin:0;background:#f7f4ef;font-family:'DM Sans',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}
+    body{margin:0;background:#f7f4ef;font-family:'Apfel Grotezk',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}
     .wrap{max-width:420px;padding:40px 24px}
-    .logo{font-family:'DM Serif Display',serif;font-size:28px;color:#0e0c0a;margin-bottom:32px}
-    .logo span{color:#c84b2f;font-style:italic}
-    h1{font-family:'DM Serif Display',serif;font-size:64px;color:#0e0c0a;margin:0 0 8px;line-height:1}
+    .logo{font-family:'Clash Display',sans-serif;font-size:28px;color:#0e0c0a;margin-bottom:32px}
+    
+    h1{font-family:'Clash Display',sans-serif;font-size:64px;color:#0e0c0a;margin:0 0 8px;line-height:1}
     p{font-size:15px;color:#7a736a;line-height:1.6;margin:0 0 24px}
     a.btn{display:inline-block;background:#c84b2f;color:white;padding:10px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="logo">Cavnar <span>AI</span></div>
+    <div class="logo"><svg viewBox="-8 -20 477 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/><polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/><polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/><polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/><polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/><polygon points="391,0 412,0 412,100 391,100"/><path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/><polygon points="425,58 446,58 457,100 436,100"/><circle cx="177" cy="13" r="8.5" fill="#D4583A"/></svg> <span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></div>
     <h1>403</h1>
     <p>You don't have permission to view this page.</p>
     <a href="/login" class="btn">Back to dashboard</a>
@@ -710,20 +710,20 @@ def page_not_found(e):
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Page Not Found — Cavnar AI</title>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
   <style>
-    body{margin:0;background:#f7f4ef;font-family:'DM Sans',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}
+    body{margin:0;background:#f7f4ef;font-family:'Apfel Grotezk',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}
     .wrap{max-width:420px;padding:40px 24px}
-    .logo{font-family:'DM Serif Display',serif;font-size:28px;color:#0e0c0a;margin-bottom:32px}
-    .logo span{color:#c84b2f;font-style:italic}
-    h1{font-family:'DM Serif Display',serif;font-size:64px;color:#0e0c0a;margin:0 0 8px;line-height:1}
+    .logo{font-family:'Clash Display',sans-serif;font-size:28px;color:#0e0c0a;margin-bottom:32px}
+    
+    h1{font-family:'Clash Display',sans-serif;font-size:64px;color:#0e0c0a;margin:0 0 8px;line-height:1}
     p{font-size:15px;color:#7a736a;line-height:1.6;margin:0 0 24px}
     a.btn{display:inline-block;background:#c84b2f;color:white;padding:10px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="logo">Cavnar <span>AI</span></div>
+    <div class="logo"><svg viewBox="-8 -20 477 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/><polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/><polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/><polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/><polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/><polygon points="391,0 412,0 412,100 391,100"/><path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/><polygon points="425,58 446,58 457,100 436,100"/><circle cx="177" cy="13" r="8.5" fill="#D4583A"/></svg> <span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></div>
     <h1>404</h1>
     <p>This page doesn't exist. If you think something's wrong, email <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a>.</p>
     <a href="/login" class="btn">Back to dashboard</a>
@@ -743,20 +743,20 @@ def server_error(e):
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Something went wrong — Cavnar AI</title>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/fonts/cavnar-fonts.css">
   <style>
-    body{margin:0;background:#f7f4ef;font-family:'DM Sans',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}
+    body{margin:0;background:#f7f4ef;font-family:'Apfel Grotezk',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}
     .wrap{max-width:420px;padding:40px 24px}
-    .logo{font-family:'DM Serif Display',serif;font-size:28px;color:#0e0c0a;margin-bottom:32px}
-    .logo span{color:#c84b2f;font-style:italic}
-    h1{font-family:'DM Serif Display',serif;font-size:40px;color:#0e0c0a;margin:0 0 8px}
+    .logo{font-family:'Clash Display',sans-serif;font-size:28px;color:#0e0c0a;margin-bottom:32px}
+    
+    h1{font-family:'Clash Display',sans-serif;font-size:40px;color:#0e0c0a;margin:0 0 8px}
     p{font-size:15px;color:#7a736a;line-height:1.6;margin:0 0 24px}
     a.btn{display:inline-block;background:#c84b2f;color:white;padding:10px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="logo">Cavnar <span>AI</span></div>
+    <div class="logo"><svg viewBox="-8 -20 477 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/><polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/><polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/><polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/><polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/><polygon points="391,0 412,0 412,100 391,100"/><path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/><polygon points="425,58 446,58 457,100 436,100"/><circle cx="177" cy="13" r="8.5" fill="#D4583A"/></svg> <span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></div>
     <h1>Something went wrong</h1>
     <p>The server ran into an issue. It's been logged automatically. Email <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a> if it keeps happening.</p>
     <a href="/login" class="btn">Back to dashboard</a>
