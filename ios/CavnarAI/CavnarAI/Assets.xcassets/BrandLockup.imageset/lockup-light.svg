@@ -1,4 +1,4 @@
-<svg viewBox="0 0 640 148" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 720 148" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <radialGradient id="ember-dot" cx="42%" cy="38%" r="72%">
       <stop offset="0%" stop-color="#F2B183"/><stop offset="45%" stop-color="#E8956A"/><stop offset="100%" stop-color="#C74E33"/>
@@ -29,6 +29,8 @@
     <circle cx="177" cy="13" r="20" fill="url(#ember-glow)"/>
     <circle cx="177" cy="13" r="8.5" fill="url(#ember-dot)"/>
   </g>
-  <!-- AI tag -->
-  <text x="628" y="38" text-anchor="end" font-family="'Space Grotesk',monospace" font-weight="700" font-size="17" letter-spacing="5" fill="#D4583A">AI</text>
+  <!-- AI tag — sized so it stays legible once the whole lockup gets scaled
+       down to typical on-screen widths (220pt login header, 160pt lock
+       screen), not just at hero/print scale -->
+  <text x="710" y="36" text-anchor="end" font-family="'Space Grotesk',monospace" font-weight="700" font-size="30" letter-spacing="6" fill="#D4583A">AI</text>
 </svg>
