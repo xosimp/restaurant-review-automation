@@ -151,11 +151,7 @@ struct HomeView: View {
                 // here matches the everyday-logo-in-the-corner convention
                 // most apps use, on the one screen every session opens on.
                 cavnarToolbarItem(placement: .topBarLeading) {
-                    Image("SealRing")
-                        .renderingMode(.template)
-                        .resizable()
-                        .frame(width: 17, height: 17)
-                        .foregroundStyle(Color.cavnarEmber)
+                    CavnarSealMark(size: 18)
                         .cavnarToolbarIconGlass()
                 }
                 cavnarToolbarItem(placement: .topBarTrailing) {

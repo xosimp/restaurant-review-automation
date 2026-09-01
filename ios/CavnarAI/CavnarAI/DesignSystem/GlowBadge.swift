@@ -3,12 +3,14 @@ import SwiftUI
 /// Premium glow-badge icon — ports a well-known 5-layer badge-glow
 /// technique (outer blurred bloom → crisp badge shape → white inset plate
 /// → tight inner glow → icon on top) onto Cavnar's own brand colors
-/// instead of generic gold. The badge silhouette is the real seal mark
-/// (Assets/SealRing, a template-rendered vector asset) rather than SF
-/// Symbols' generic "seal.fill" scallop — this component was always
-/// drawing a stand-in for exactly this shape, so every place it's used
-/// (Ask Cavnar's header/FAB/empty state) now shows the actual brand seal
-/// instead of a placeholder that merely evoked one.
+/// instead of generic gold. Uses SF Symbols' "seal.fill" for the badge's
+/// rounded scalloped silhouette rather than hand-built star geometry —
+/// same soft "sunburst" read, crisp at any size, zero custom path math.
+/// (Tried swapping this for the real seal ring once — it's an open shape
+/// with a gap, not a filled scallop, so blurred/rotated it just read as a
+/// spinning "C" instead of a badge. Reverted; the real seal mark lives
+/// elsewhere now — see CavnarSealMark — this component stays its own
+/// custom thing, not a stand-in for the brand mark.)
 struct GlowBadge: View {
     var systemImage: String
     var size: CGFloat = 56
@@ -29,8 +31,7 @@ struct GlowBadge: View {
     var body: some View {
         ZStack {
             // Outer bloom — same silhouette, heavily blurred, extends past the badge edge.
-            Image("SealRing")
-                .renderingMode(.template)
+            Image(systemName: "seal.fill")
                 .resizable()
                 .frame(width: size, height: size)
                 .foregroundStyle(badgeGradient)
@@ -40,8 +41,7 @@ struct GlowBadge: View {
                 .rotationEffect(rotation)
 
             // Crisp badge shape.
-            Image("SealRing")
-                .renderingMode(.template)
+            Image(systemName: "seal.fill")
                 .resizable()
                 .frame(width: size, height: size)
                 .foregroundStyle(badgeGradient)

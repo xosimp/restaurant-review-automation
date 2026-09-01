@@ -22,6 +22,14 @@ struct RootView: View {
     @State private var fabIconSpun = false
     @State private var fabCollapsed = false
 
+    // Every color token already ships a real, designed light variant
+    // (mirrors the web dashboard's own light theme exactly — Paper
+    // #F7F4EF, Ink #0E0C0A, Ember #C84B2F) that .preferredColorScheme(.dark)
+    // below simply never let show. Persisted here rather than a separate
+    // settings singleton since it's the one app-wide toggle; AccountView's
+    // "More" section reads/writes the same key.
+    @AppStorage("cavnarLightMode") private var isLightMode = false
+
     var body: some View {
         Group {
             if !sessionStore.isAuthenticated {
@@ -33,9 +41,11 @@ struct RootView: View {
             }
         }
         .environment(deepLinkRouter)
-        // Mobile is dark-only by design — the light/dark toggle stays a
-        // desktop-only feature (see the web dashboard's theme switcher).
-        .preferredColorScheme(.dark)
+        // Was hardcoded .dark — every color token already had a full,
+        // designed light variant sitting unused underneath it (see
+        // isLightMode's own comment above). Now follows the user's own
+        // Account > More toggle instead of forcing dark unconditionally.
+        .preferredColorScheme(isLightMode ? .light : .dark)
         // Single app-wide source for tint — covers button/control tint AND
         // text field cursor color (a TextField's blinking caret follows the
         // environment's tint, not a color you set on the field itself).
@@ -218,7 +228,7 @@ private struct AskCavnarFAB: View {
                 }
                 if !collapsed {
                     Text("Ask Cavnar AI")
-                        .font(.cavnarBody(13, weight: 700))
+                        .font(.cavnarBody(14.5, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
                         .fixedSize()
                         .transition(.opacity.combined(with: .scale(scale: 0.01, anchor: .leading)))

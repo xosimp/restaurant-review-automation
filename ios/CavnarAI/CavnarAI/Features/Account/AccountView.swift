@@ -103,6 +103,9 @@ struct AccountView: View {
     @State private var showingScheduleHistory = false
     @State private var showingChangelog = false
     @State private var changelogBadge = ChangelogBadgeViewModel()
+    // Same key RootView reads for .preferredColorScheme — this row is the
+    // only place that ever writes it.
+    @AppStorage("cavnarLightMode") private var isLightMode = false
 
     private func groupedSettings(_ summary: AccountSummary) -> some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -189,6 +192,8 @@ struct AccountView: View {
                 } action: {
                     showingChangelog = true
                 }
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                lightModeRow
             }
             .task { await changelogBadge.refresh() }
             .sheet(isPresented: $showingScheduleHistory) {
@@ -208,6 +213,28 @@ struct AccountView: View {
             label()
         }
         .foregroundStyle(Color.cavnarInk)
+    }
+
+    // Black-with-cream-seal vs. white-with-black-seal — every color token
+    // already ships both (see RootView's isLightMode comment); this is the
+    // only place that flips which one is live. No manual Haptic.selection()
+    // — Toggle/UISwitch already fires its own.
+    private var lightModeRow: some View {
+        HStack(spacing: 13) {
+            Image(systemName: "circle.lefthalf.filled")
+                .font(.system(size: 15))
+                .foregroundStyle(Color.cavnarInk3)
+                .frame(width: 18)
+            Text("Light appearance")
+                .font(.cavnarBody(15.5, weight: 600))
+                .foregroundStyle(Color.cavnarInk)
+            Spacer()
+            Toggle("", isOn: $isLightMode)
+                .labelsHidden()
+                .tint(Color.cavnarEmber)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 54)
     }
 
     private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
