@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 private enum LaborSubTab: String, CaseIterable, Identifiable {
     case overview = "Overview"
@@ -194,15 +195,11 @@ struct LaborView: View {
                 TonePill(text: stats.onTrack ? "On track" : "Over target", tone: tone)
             }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                // Colored and sized to the same on-track/over-target read
-                // the card's own tint, progress bar, and pill already
-                // carry — was flat Color.cavnarInk regardless of tone, the
-                // one thing on this card NOT saying whether the number
-                // it's showing is actually good or bad.
-                Text(String(format: "%.1f%%", stats.overallLaborPct))
-                    .font(.cavnarNumber(38, weight: 600))
-                    .foregroundStyle(tone.foreground)
-                    .cavnarNumberGlow(tone.foreground)
+                // Colored to the same on-track/over-target read the card's
+                // own tint, progress bar, and pill already carry, and lit
+                // from within so it isn't flat green-on-green (or red-on-
+                // red) — see LaborHeroPercent.
+                LaborHeroPercent(value: stats.overallLaborPct, tone: tone)
                 (Text("/ ") + Text("\(Int(stats.target))%").font(.cavnarNumber(14, weight: 600)) + Text(" target"))
                     .font(.cavnarBody(14.5))
                     .foregroundStyle(Color.cavnarInk3)
@@ -863,6 +860,50 @@ struct LaborView: View {
                 }
                 .padding(.vertical, 4)
             }
+        }
+    }
+}
+
+/// The hero card's headline number. Three things keep it from reading as a
+/// flat tone-colored figure sitting on a card of the same tone: it counts
+/// up from zero the first time it appears (same treatment as Food Cost's
+/// hero and the Labor Analytics tiles), its fill is a top-lit gradient of
+/// the tone (a lighter, less saturated tint fading to the true color)
+/// over a hard dark drop shadow so it sits ON the card rather than in it,
+/// and its colored glow breathes on a slow ~2.6s cycle — the one piece of
+/// ambient motion on the card, kept subtle.
+private struct LaborHeroPercent: View {
+    let value: Double
+    let tone: CavnarTone
+
+    @State private var animatedValue: Double = 0
+    @State private var start = Date()
+
+    private var lightenedTone: Color {
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard UIColor(tone.foreground).getHue(&h, saturation: &s, brightness: &b, alpha: &a) else {
+            return tone.foreground
+        }
+        return Color(hue: Double(h), saturation: Double(max(s - 0.38, 0)), brightness: Double(min(b + 0.3, 1)))
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            let t = timeline.date.timeIntervalSince(start)
+            let glow = 0.4 + 0.4 * (0.5 + 0.5 * sin(t * 2 * .pi / 2.6))
+            CavnarAnimatableNumber(value: animatedValue, format: { String(format: "%.1f%%", $0) })
+                .font(.cavnarNumber(40, weight: 700))
+                .foregroundStyle(
+                    LinearGradient(colors: [lightenedTone, tone.foreground], startPoint: .top, endPoint: .bottom)
+                )
+                .shadow(color: .black.opacity(0.55), radius: 4, x: 0, y: 3)
+                .shadow(color: tone.foreground.opacity(glow), radius: 16, x: 0, y: 0)
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 1.1)) { animatedValue = value }
+        }
+        .onChange(of: value) { _, newValue in
+            animatedValue = newValue
         }
     }
 }

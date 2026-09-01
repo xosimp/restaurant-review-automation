@@ -1,10 +1,23 @@
 import SwiftUI
+import UIKit
+import LocalAuthentication
 
 struct RootView: View {
     @Environment(SessionStore.self) private var sessionStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var deepLinkRouter = DeepLinkRouter()
     @State private var selectedTab: AppTab = .home
+    // Cold-launch handoff. iOS draws the launch screen itself (UILaunchScreen
+    // in project.yml: the 128pt LaunchSeal on Paper) and it can't animate —
+    // so the app's own first frame redraws that exact seal in that exact
+    // spot, breathes the ember, and fades out over whatever screen is
+    // underneath. Only ever true on process start: RootView persists across
+    // foreground returns, so the Face ID gate never sees this.
+    @State private var showLaunchSplash = true
+    // Home's landing intro asked to start while the splash was still
+    // covering it — replayed the moment the splash lifts instead of being
+    // wasted underneath it.
+    @State private var introWaitingOnSplash = false
     // Owned here rather than by HomeView/ModulesGridView themselves — see
     // ModulesGridView.path's doc comment for why: these need to survive
     // the LockedView swap in body below, which discards and recreates
@@ -47,6 +60,18 @@ struct RootView: View {
         // elsewhere (like Ask Cavnar's compose field) still showed the
         // system's default blue.
         .tint(Color.cavnarEmber)
+        .overlay {
+            if showLaunchSplash {
+                LaunchSplashView {
+                    withAnimation(.easeOut(duration: 0.45)) { showLaunchSplash = false }
+                    if introWaitingOnSplash {
+                        introWaitingOnSplash = false
+                        startIntroSequence()
+                    }
+                }
+                .transition(.opacity)
+            }
+        }
         .onAppear {
             PushManager.shared.router = deepLinkRouter
         }
@@ -138,6 +163,12 @@ struct RootView: View {
             introAppeared = true
             fabIconSpun = true
             fabCollapsed = true
+            return
+        }
+        // Don't burn the one-time landing reveal while the launch splash is
+        // still sitting on top of it — the splash's onFinished replays this.
+        guard !showLaunchSplash else {
+            introWaitingOnSplash = true
             return
         }
         sessionStore.hasShownHomeIntro = true
@@ -277,48 +308,161 @@ private struct FABPressStyle: ButtonStyle {
     }
 }
 
-/// Face ID re-entry gate shown whenever the app returns to the foreground
-/// with an active session — see SessionStore's doc comment for why iOS
-/// sessions rely on this instead of the web's 8-hour inactivity timeout.
-///
-/// Deliberately NOT the multi-second seal-draws-in/letters-stamp-in entrance
-/// LoginView uses — Face ID fires the instant this appears (see .task below)
-/// and can resolve in well under a second, tearing this whole view back down
-/// before a ~2s one-shot animation ever finishes. That's why the seal draw-in
-/// never visibly played on a real device: the screen was gone before it got
-/// there. This uses CavnarLoadingSeal's continuous breathing loop instead —
-/// it starts immediately and reads correctly no matter how long the screen
-/// is actually up for, a few frames or several seconds. Simplified overall
-/// (one mark, one wordmark, one button, generous vertical rhythm) — the
-/// previous version stacked a separate SF Symbol lock glyph above a full
-/// seal+wordmark lockup, two different "this is secured" cues competing for
-/// the same read.
-struct LockedView: View {
-    @Environment(SessionStore.self) private var sessionStore
+/// The app's own first frame after the static launch image — the same
+/// 128pt seal, centered on Paper, exactly where UILaunchScreen drew it, so
+/// the handoff is invisible. Then the ember breathes twice and the whole
+/// thing fades out over whatever screen is underneath.
+private struct LaunchSplashView: View {
+    var onFinished: () -> Void
+
+    @State private var start = Date()
 
     var body: some View {
         ZStack {
             Color.cavnarPaper.ignoresSafeArea()
-            VStack(spacing: 32) {
-                Spacer()
-                VStack(spacing: 22) {
-                    CavnarLoadingSeal(size: 84)
-                    Image("BrandLockup")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 172)
-                }
-                Spacer()
-                Button("Unlock") {
-                    Task { await sessionStore.unlockWithBiometrics() }
-                }
-                .buttonStyle(CavnarPrimaryButtonStyle())
-                .padding(.horizontal, 60)
-                .padding(.bottom, 56)
+            TimelineView(.animation) { timeline in
+                let t = timeline.date.timeIntervalSince(start)
+                // Starts at rest (matching the launch image), then two full
+                // breaths — halo swelling, core going hot — before the fade.
+                let intensity = CGFloat(max(0, sin(t * .pi / 0.78)))
+                CavnarSealMark(size: 128, ringOpacity: 1, emberIntensity: intensity)
             }
+            .frame(width: 128, height: 128)
         }
         .task {
-            _ = await sessionStore.unlockWithBiometrics()
+            try? await Task.sleep(for: .seconds(1.6))
+            onFinished()
         }
+    }
+}
+
+/// Face ID re-entry gate shown whenever the app returns to the foreground
+/// with an active session — see SessionStore's doc comment for why iOS
+/// sessions rely on this instead of the web's 8-hour inactivity timeout.
+///
+/// Biometrics are NOT fired automatically on appear anymore — the owner
+/// taps Unlock. That's what lets this screen actually play its entrance
+/// (the same seal-draws-in / letters-stamp-in the login screen uses, over
+/// the Home hero's own moving ember aurora) instead of Face ID resolving
+/// in under a second and tearing the view down mid-animation, which is
+/// why the previous auto-firing version never visibly animated at all.
+/// The copy, the button glyph, and the caption all name the device's real
+/// biometry (Face ID vs Touch ID) rather than assuming.
+struct LockedView: View {
+    @Environment(SessionStore.self) private var sessionStore
+    @State private var isUnlocking = false
+    @State private var unlockFailed = false
+    // Staggered reveal after the lockup has drawn itself in: 1 headline,
+    // 2 subtitle, 3 button, 4 caption.
+    @State private var stage = 0
+
+    private var biometry: (name: String, symbol: String) {
+        let context = LAContext()
+        _ = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+        switch context.biometryType {
+        case .faceID: return ("Face ID", "faceid")
+        case .touchID: return ("Touch ID", "touchid")
+        default: return ("your passcode", "lock.fill")
+        }
+    }
+
+    var body: some View {
+        let biometry = biometry
+        ZStack(alignment: .top) {
+            Color.cavnarPaper.ignoresSafeArea()
+            // The same moving ember aurora Home's hero sits on — ambient
+            // brand motion behind the lockup, fading to flat Paper below.
+            HomeHeroBackground()
+                .frame(height: 440)
+                .opacity(0.8)
+                .ignoresSafeArea(edges: .top)
+
+            VStack(spacing: 0) {
+                Spacer(minLength: 0)
+
+                CavnarLockupIntro(width: 300)
+                    .padding(.bottom, 48)
+
+                VStack(spacing: 12) {
+                    Text("Welcome back")
+                        .font(.cavnarHeadline(28))
+                        .foregroundStyle(Color.cavnarInk)
+                        .lockReveal(stage >= 1)
+                    Text("Unlock with \(biometry.name) to pick up right where you left off.")
+                        .font(.cavnarBody(16))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(3)
+                        .lockReveal(stage >= 2)
+                }
+                .padding(.horizontal, 40)
+
+                Spacer(minLength: 0)
+
+                VStack(spacing: 18) {
+                    if unlockFailed {
+                        Text("Couldn't verify you — try again.")
+                            .font(.cavnarBody(14, weight: 600))
+                            .foregroundStyle(Color.cavnarRed)
+                            .transition(.opacity)
+                    }
+                    Button {
+                        Haptic.light()
+                        Task { await unlock() }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: biometry.symbol)
+                                .font(.system(size: 21, weight: .semibold))
+                            if isUnlocking {
+                                CavnarShimmerText(text: "Verifying…")
+                            } else {
+                                Text("Unlock")
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: isUnlocking))
+                    .disabled(isUnlocking)
+                    .padding(.horizontal, 44)
+                    .lockReveal(stage >= 3)
+
+                    HStack(spacing: 7) {
+                        Image(systemName: "checkmark.shield.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Unlock with biometrics · secured with \(biometry.name)")
+                    }
+                    .font(.cavnarBody(14, weight: 600))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .lockReveal(stage >= 4)
+                }
+                .padding(.bottom, 54)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .animation(.easeOut(duration: 0.3), value: unlockFailed)
+        .task {
+            // Let the lockup draw itself in first (seal ~1.1s, letters
+            // stamping through ~1.3s), then bring the rest up in order.
+            try? await Task.sleep(for: .seconds(1.1))
+            for step in 1...4 {
+                withAnimation(.easeOut(duration: 0.45)) { stage = step }
+                try? await Task.sleep(for: .seconds(0.14))
+            }
+        }
+    }
+
+    private func unlock() async {
+        isUnlocking = true
+        unlockFailed = false
+        let unlocked = await sessionStore.unlockWithBiometrics()
+        isUnlocking = false
+        if !unlocked { unlockFailed = true }
+    }
+}
+
+private extension View {
+    /// One step of LockedView's staggered reveal — fades and rises in.
+    func lockReveal(_ shown: Bool) -> some View {
+        opacity(shown ? 1 : 0).offset(y: shown ? 0 : 14)
     }
 }

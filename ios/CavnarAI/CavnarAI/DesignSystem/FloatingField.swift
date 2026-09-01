@@ -63,7 +63,11 @@ struct CavnarFloatingTextArea<Field: Hashable>: View {
     let caption: String
     let placeholder: String
     @Binding var text: String
-    var minHeight: CGFloat = 60
+    // One line's worth, not a fixed 60pt box — the editor now grows with
+    // its own content (scrollDisabled + fixedSize below), so the underline
+    // hugs the last line of text instead of sitting a blank ~40pt below
+    // the caret on an empty/one-line note.
+    var minHeight: CGFloat = 34
     // See CavnarFloatingField's matching comment — externalized for the
     // same shared-FocusState/keyboardNavToolbar reason.
     var focus: FocusState<Field?>.Binding
@@ -92,9 +96,16 @@ struct CavnarFloatingTextArea<Field: Hashable>: View {
                         .font(.cavnarBody(15))
                         .foregroundStyle(Color.cavnarInk)
                         .scrollContentBackground(.hidden)
+                        // Sizes to its content (one line minimum) and hands
+                        // scrolling to the enclosing ScrollView, so the
+                        // underline follows the text down as it wraps
+                        // instead of the editor reserving a tall empty box.
+                        .scrollDisabled(true)
+                        .fixedSize(horizontal: false, vertical: true)
                         .frame(minHeight: minHeight)
                         .focused(focus, equals: field)
                 }
+                .padding(.bottom, 4)
                 Rectangle()
                     .fill(isFocused ? Color.cavnarEmber : Color.cavnarPaper3)
                     .frame(height: isFocused ? 1.5 : 1)
