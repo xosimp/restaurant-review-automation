@@ -82,12 +82,12 @@ struct ReviewDetailView: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 7) {
                 Text(viewModel.review.author ?? "Anonymous")
-                    .font(.cavnarBody(16, weight: 600))
+                    .font(.cavnarBody(17.5, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                 HStack(spacing: 6) {
                     StarRatingView(rating: viewModel.review.rating ?? 0)
                     Text(viewModel.review.platformDisplayName)
-                        .font(.cavnarBody(11, weight: 700))
+                        .font(.cavnarBody(12.5, weight: 700))
                         .tracking(0.4)
                         .textCase(.uppercase)
                         .foregroundStyle(Color.cavnarInk3)
@@ -100,7 +100,7 @@ struct ReviewDetailView: View {
 
     private var reviewText: some View {
         Text(viewModel.review.text ?? "")
-            .font(.cavnarBody(15))
+            .font(.cavnarBody(17))
             .foregroundStyle(Color.cavnarInk2)
             .lineSpacing(6)
     }
@@ -116,7 +116,7 @@ struct ReviewDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("AI-drafted response")
-                    .font(.cavnarBody(12, weight: 700))
+                    .font(.cavnarBody(13, weight: 700))
                     .foregroundStyle(Color.cavnarInk3)
                 Spacer()
                 if !isFinal {
@@ -145,7 +145,7 @@ struct ReviewDetailView: View {
                     .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
             } else {
                 TextEditor(text: $viewModel.editedDraft)
-                    .font(.cavnarBody(15))
+                    .font(.cavnarBody(17))
                     .lineSpacing(5)
                     .focused($isDraftFocused)
                     // TextEditor keeps its own opaque system background by

@@ -135,12 +135,12 @@ struct ReviewRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(review.author ?? "Anonymous")
-                        .font(.cavnarBody(13, weight: 600))
+                        .font(.cavnarBody(14.5, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                     StatusPill(status: review.responseStatus)
                     if let date = review.formattedDate {
                         Text(date)
-                            .font(.cavnarBody(11))
+                            .font(.cavnarBody(12.5))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                     if review.isUrgent {
@@ -150,7 +150,7 @@ struct ReviewRow: View {
                     }
                 }
                 Text(review.text ?? "")
-                    .font(.cavnarBody(12))
+                    .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
                     .lineLimit(2)
             }

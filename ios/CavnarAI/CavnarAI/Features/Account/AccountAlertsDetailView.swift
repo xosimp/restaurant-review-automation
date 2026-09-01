@@ -204,13 +204,13 @@ struct AccountAlertsDetailView: View {
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
-            .font(.cavnarBody(11, weight: 700))
+            .font(.cavnarBody(12.5, weight: 700))
             .foregroundStyle(Color.cavnarInk3)
     }
 
     private func pushToggle(_ label: String, _ binding: Binding<Bool>, on: Bool) -> some View {
         Toggle(isOn: binding) {
-            Text(label).font(.cavnarBody(13)).foregroundStyle(on ? Color.cavnarInk : Color.cavnarInk3)
+            Text(label).font(.cavnarBody(14.5)).foregroundStyle(on ? Color.cavnarInk : Color.cavnarInk3)
         }
         .tint(Color.cavnarEmber)
         .disabled(!on)
@@ -219,7 +219,7 @@ struct AccountAlertsDetailView: View {
 
     private func toggle(_ label: String, _ binding: Binding<Bool>) -> some View {
         Toggle(isOn: binding) {
-            Text(label).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk)
+            Text(label).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk)
         }
         .tint(Color.cavnarEmber)
     }

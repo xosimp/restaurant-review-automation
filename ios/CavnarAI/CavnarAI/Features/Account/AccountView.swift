@@ -213,7 +213,7 @@ struct AccountView: View {
     private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title.uppercased())
-                .font(.cavnarBody(10, weight: 700))
+                .font(.cavnarBody(11.5, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
             VStack(spacing: 0) { content() }
@@ -230,12 +230,12 @@ struct AccountView: View {
                 .foregroundStyle(Color.cavnarInk3)
                 .frame(width: 18)
             Text(label)
-                .font(.cavnarBody(14, weight: 600))
+                .font(.cavnarBody(15.5, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
             Spacer()
             if let trailing {
                 Text(trailing)
-                    .font(.cavnarNumber(13, weight: 600))
+                    .font(.cavnarNumber(14, weight: 600))
                     .foregroundStyle(Color.cavnarInk3)
             }
             Image(systemName: "chevron.right")

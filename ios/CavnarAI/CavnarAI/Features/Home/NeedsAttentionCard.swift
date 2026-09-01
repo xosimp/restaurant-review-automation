@@ -15,7 +15,7 @@ struct NeedsAttentionCarousel: View {
     let items: [NeedsAttentionItem]
     let onTap: (NeedsAttentionItem) -> Void
 
-    private let cardWidth: CGFloat = 168
+    private let cardWidth: CGFloat = 184
 
     @State private var centeredID: String?
 
@@ -93,7 +93,7 @@ struct NeedsAttentionCarousel: View {
                     old != nil && new != nil && old != new
                 }
             }
-            .frame(height: 190)
+            .frame(height: 208)
 
             if items.count > 1 {
                 PulsingSwipeArrow()
@@ -121,18 +121,18 @@ struct NeedsAttentionFloatCard: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
-                    .font(.cavnarBody(12.5, weight: 700))
+                    .font(.cavnarBody(14, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(item.detail)
-                    .font(.cavnarBody(10.5))
+                    .font(.cavnarBody(12))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.vertical, 16)
         .padding(.horizontal, 14)
-        .frame(width: 168, alignment: .leading)
+        .frame(width: 184, alignment: .leading)
         .background(
             LinearGradient(
                 colors: [Color.cavnarEmber.opacity(0.16), Color.cavnarEmber.opacity(0.04)],
@@ -168,10 +168,10 @@ struct AllClearRow: View {
                     .foregroundStyle(Color.cavnarGreen)
             }
             Text("All clear")
-                .font(.cavnarBody(14, weight: 600))
+                .font(.cavnarBody(15, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
             Text("Nothing needs your attention right now")
-                .font(.cavnarBody(11))
+                .font(.cavnarBody(12.5))
                 .foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity)

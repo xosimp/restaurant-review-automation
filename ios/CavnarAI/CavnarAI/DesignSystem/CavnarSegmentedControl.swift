@@ -65,7 +65,7 @@ struct CavnarSegmentedControl<T: Hashable>: View {
     @ViewBuilder
     private func segment(_ option: T, isSelected: Bool) -> some View {
         let text = Text(label(option))
-            .font(.cavnarBody(13, weight: 600))
+            .font(.cavnarBody(14.5, weight: 600))
             .foregroundStyle(isSelected ? Color.cavnarInk : Color.cavnarInk2)
             .frame(maxWidth: .infinity)
             .frame(height: 34)

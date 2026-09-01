@@ -115,7 +115,7 @@ struct AccountSecurityDetailView: View {
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
-            .font(.cavnarBody(11, weight: 700))
+            .font(.cavnarBody(12.5, weight: 700))
             .foregroundStyle(Color.cavnarInk3)
     }
 

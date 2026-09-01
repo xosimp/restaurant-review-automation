@@ -144,11 +144,11 @@ struct AccountConnectionsDetailView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 11))
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(label).font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarInk)
+                Text(label).font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
                 if status.connected, let lastSynced = status.lastSynced {
-                    Text("Last synced \(lastSynced)").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                    Text("Last synced \(lastSynced)").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
                 } else if !status.connected {
-                    Text("Not connected").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                    Text("Not connected").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
                 }
             }
 

@@ -44,7 +44,7 @@ struct AccountBillingDetailView: View {
                     if let invoices = billing.invoices, !invoices.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("RECENT INVOICES")
-                                .font(.cavnarBody(11, weight: 700))
+                                .font(.cavnarBody(12.5, weight: 700))
                                 .foregroundStyle(Color.cavnarInk3)
                             VStack(alignment: .leading, spacing: 0) {
                                 ForEach(Array(invoices.enumerated()), id: \.element.id) { index, invoice in
@@ -74,10 +74,10 @@ struct AccountBillingDetailView: View {
 
     private func row(_ label: String, _ value: String, isNumber: Bool = false) -> some View {
         HStack {
-            Text(label).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+            Text(label).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
             Spacer()
             Text(value)
-                .font(isNumber ? .cavnarNumber(13, weight: 600) : .cavnarBody(13, weight: 600))
+                .font(isNumber ? .cavnarNumber(14.5, weight: 600) : .cavnarBody(14.5, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
         }
     }
@@ -96,8 +96,8 @@ struct AccountBillingDetailView: View {
     private func invoiceRowContent(_ invoice: BillingInvoice) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(invoice.date).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
-                Text(invoice.status.capitalized).font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                Text(invoice.date).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                Text(invoice.status.capitalized).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
             }
             Spacer()
             Text(invoice.amount).font(.cavnarNumber(13, weight: 600)).foregroundStyle(Color.cavnarInk)
