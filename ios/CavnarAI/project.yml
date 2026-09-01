@@ -19,7 +19,9 @@ targets:
       path: Generated/Info.plist
       properties:
         CFBundleDisplayName: Cavnar AI
-        UILaunchScreen: {}
+        UILaunchScreen:
+          UIColorName: Paper
+          UIImageName: LaunchSeal
         UIAppFonts:
           - ApfelGrotezk-Regular.ttf
           - ApfelGrotezk-Fett.ttf

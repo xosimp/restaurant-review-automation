@@ -716,7 +716,7 @@ struct LaborView: View {
                 // the table it actually exports reads far more directly
                 // than floating next to an unrelated "hours scheduled" line.
                 if let csv {
-                    ShareLink(item: csv, preview: SharePreview("Schedule.csv")) {
+                    ShareLink(item: csv, preview: SharePreview("Schedule.csv", image: Image("LaunchSeal"))) {
                         Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(Color.cavnarEmber)

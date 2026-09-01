@@ -3,9 +3,12 @@ import SwiftUI
 /// Premium glow-badge icon — ports a well-known 5-layer badge-glow
 /// technique (outer blurred bloom → crisp badge shape → white inset plate
 /// → tight inner glow → icon on top) onto Cavnar's own brand colors
-/// instead of generic gold. Uses SF Symbols' "seal.fill" for the badge's
-/// rounded scalloped silhouette rather than hand-built star geometry —
-/// same soft "sunburst" read, crisp at any size, zero custom path math.
+/// instead of generic gold. The badge silhouette is the real seal mark
+/// (Assets/SealRing, a template-rendered vector asset) rather than SF
+/// Symbols' generic "seal.fill" scallop — this component was always
+/// drawing a stand-in for exactly this shape, so every place it's used
+/// (Ask Cavnar's header/FAB/empty state) now shows the actual brand seal
+/// instead of a placeholder that merely evoked one.
 struct GlowBadge: View {
     var systemImage: String
     var size: CGFloat = 56
@@ -26,7 +29,8 @@ struct GlowBadge: View {
     var body: some View {
         ZStack {
             // Outer bloom — same silhouette, heavily blurred, extends past the badge edge.
-            Image(systemName: "seal.fill")
+            Image("SealRing")
+                .renderingMode(.template)
                 .resizable()
                 .frame(width: size, height: size)
                 .foregroundStyle(badgeGradient)
@@ -36,7 +40,8 @@ struct GlowBadge: View {
                 .rotationEffect(rotation)
 
             // Crisp badge shape.
-            Image(systemName: "seal.fill")
+            Image("SealRing")
+                .renderingMode(.template)
                 .resizable()
                 .frame(width: size, height: size)
                 .foregroundStyle(badgeGradient)

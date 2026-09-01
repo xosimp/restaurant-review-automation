@@ -15,7 +15,7 @@ struct AccountView: View {
                     if let summary = viewModel.summary {
                         content(summary)
                     } else if viewModel.isLoading {
-                        ProgressView()
+                        CavnarLoadingSeal()
                             .padding(.top, 60)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if let error = viewModel.errorMessage {

@@ -112,7 +112,7 @@ struct HomeView: View {
                             .padding(.bottom, 120)
                             .padding(.top, -10)
                         } else if viewModel.isLoading {
-                            ProgressView().padding(.top, 80).frame(maxWidth: .infinity)
+                            CavnarLoadingSeal().padding(.top, 80).frame(maxWidth: .infinity)
                         } else if let error = viewModel.errorMessage {
                             VStack(spacing: 8) {
                                 Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
@@ -145,6 +145,19 @@ struct HomeView: View {
             // building icons instead of a flat bar sitting over it.
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
+                // The leading side was empty — .navigationTitle("") on
+                // purpose (see above), so this reserved space never showed
+                // anything at all. A static, non-interactive seal mark
+                // here matches the everyday-logo-in-the-corner convention
+                // most apps use, on the one screen every session opens on.
+                cavnarToolbarItem(placement: .topBarLeading) {
+                    Image("SealRing")
+                        .renderingMode(.template)
+                        .resizable()
+                        .frame(width: 17, height: 17)
+                        .foregroundStyle(Color.cavnarEmber)
+                        .cavnarToolbarIconGlass()
+                }
                 cavnarToolbarItem(placement: .topBarTrailing) {
                     Button {
                         Haptic.light()

@@ -75,10 +75,10 @@ struct ModulesGridView: View {
                 if viewModel.isLoading && viewModel.modules.isEmpty && viewModel.errorMessage == nil {
                     // See AccountView's identical fix for why the frame
                     // matters, not just centering: .cavnarModuleBackground()
-                    // sizes to this Group, and a bare ProgressView hugging
-                    // its own tiny size made the wash flash as a narrow
-                    // rectangle instead of full-screen.
-                    ProgressView()
+                    // sizes to this Group, and a bare ProgressView (now
+                    // CavnarLoadingSeal) hugging its own tiny size made the
+                    // wash flash as a narrow rectangle instead of full-screen.
+                    CavnarLoadingSeal()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if let error = viewModel.errorMessage, viewModel.modules.isEmpty {
                     VStack(spacing: 8) {

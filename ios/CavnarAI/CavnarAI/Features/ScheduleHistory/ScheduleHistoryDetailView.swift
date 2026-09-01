@@ -127,7 +127,7 @@ struct ScheduleHistoryDetailView: View {
             // loading finishes; only the icon's opacity and function do.
             cavnarToolbarItem(placement: .topBarTrailing) {
                 if let csv = viewModel.detail?.scheduleCsv {
-                    ShareLink(item: csv, preview: SharePreview("Schedule — \(weekLabel).csv")) {
+                    ShareLink(item: csv, preview: SharePreview("Schedule — \(weekLabel).csv", image: Image("LaunchSeal"))) {
                         Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(Color.cavnarEmber)
