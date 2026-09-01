@@ -290,10 +290,10 @@ struct LockedView: View {
                 Image(systemName: "lock.fill")
                     .font(.system(size: 40))
                     .foregroundStyle(Color.cavnarEmber)
-                Image("BrandLockup")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 160)
+                // Same seal-draws-in / letters-stamp-in entrance as the
+                // login screen — the gate re-introduces the brand each
+                // time it comes up rather than showing a static image.
+                CavnarLockupIntro(width: 160)
                 Button("Unlock") {
                     Task { await sessionStore.unlockWithBiometrics() }
                 }

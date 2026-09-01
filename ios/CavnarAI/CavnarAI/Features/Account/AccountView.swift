@@ -31,7 +31,7 @@ struct AccountView: View {
                 .padding(20)
             }
             .cavnarModuleBackground()
-            .refreshable { await viewModel.load() }
+            .cavnarEmberRefreshable { await viewModel.load() }
             .navigationTitle("Account")
             .task {
                 await viewModel.load()

@@ -12,11 +12,21 @@ import SwiftUI
 /// as drawn in the brand assets; 1 swells the glow halo, brightens it, and
 /// lights a hotter Ember2 core — a coal being breathed on. Static call
 /// sites leave it at 0; CavnarLoadingSeal animates it.
-struct CavnarSealMark: View {
+struct CavnarSealMark: View, Animatable {
     var size: CGFloat = 24
     var ringColor: Color = Color.cavnarInk
     var ringOpacity: Double = 1
     var emberIntensity: CGFloat = 0
+    /// 1 is the real ember; 0 is a cold gray coal with no glow at all —
+    /// the "nothing here yet" hearth in CavnarEmptyHearth. Animatable
+    /// (together with emberIntensity) so a warmth change interpolates per
+    /// frame instead of snapping between the two colors.
+    var emberWarmth: CGFloat = 1
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(emberIntensity, emberWarmth) }
+        set { emberIntensity = newValue.first; emberWarmth = newValue.second }
+    }
 
     // Fractions of the seal's own 120x120 source geometry — same ratios
     // as the SVG the mark was built from (brand/assets/seal-color.svg),
@@ -44,11 +54,19 @@ struct CavnarSealMark: View {
             Circle()
                 .fill(
                     RadialGradient(
-                        colors: [Color.cavnarEmber.opacity(glowPeakOpacity), Color.cavnarEmber.opacity(0)],
+                        colors: [Color.cavnarEmber.opacity(glowPeakOpacity * Double(emberWarmth)), Color.cavnarEmber.opacity(0)],
                         center: .center, startRadius: 0, endRadius: glowDiameter / 2
                     )
                 )
                 .frame(width: glowDiameter, height: glowDiameter)
+                .position(emberCenter)
+
+            // The cold coal underneath — only ever visible as the warm one
+            // above it fades out (emberWarmth < 1).
+            Circle()
+                .fill(Color.cavnarInk3.opacity(0.38))
+                .frame(width: emberDiameter, height: emberDiameter)
+                .scaleEffect(emberScale)
                 .position(emberCenter)
 
             // The coal itself.
@@ -73,6 +91,7 @@ struct CavnarSealMark: View {
                 )
                 .frame(width: emberDiameter, height: emberDiameter)
                 .scaleEffect(emberScale)
+                .opacity(Double(emberWarmth))
                 .position(emberCenter)
         }
         .frame(width: size, height: size)

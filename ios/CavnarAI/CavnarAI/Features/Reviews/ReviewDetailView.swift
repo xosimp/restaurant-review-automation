@@ -5,6 +5,7 @@ struct ReviewDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showingTemplates = false
     @State private var showingRetractConfirm = false
+    @State private var postedOverlayLabel: String?
     @FocusState private var isDraftFocused: Bool
     var onCompleted: (String) -> Void
 
@@ -36,11 +37,37 @@ struct ReviewDetailView: View {
         .cavnarEmberBackButton()
         .keyboardDoneToolbar { isDraftFocused = false }
         .onChange(of: viewModel.didComplete) { _, completed in
-            if completed, let status = viewModel.finalStatus {
+            guard completed, let status = viewModel.finalStatus else { return }
+            if status == "posted" || status == "approved" {
+                // "Posted" — the ember leaves the draft, travels the wire,
+                // and lands as a checkmark before this screen goes away.
+                // Only ever on the real 200 (didComplete), never optimistic.
+                postedOverlayLabel = status == "posted"
+                    ? "Reply posted to \(viewModel.review.platformDisplayName)"
+                    : "Reply approved"
+            } else {
                 onCompleted(status)
                 dismiss()
             }
         }
+        .overlay {
+            if let label = postedOverlayLabel {
+                ZStack {
+                    Color.cavnarPaper.opacity(0.84).ignoresSafeArea()
+                    CavnarPostedCheck(label: label) {
+                        if let status = viewModel.finalStatus { onCompleted(status) }
+                        dismiss()
+                    }
+                    .padding(.horizontal, 26)
+                    .padding(.vertical, 24)
+                    .background(Color.cavnarPaper2)
+                    .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card).strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+                }
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: postedOverlayLabel != nil)
         .task {
             await viewModel.loadTemplates()
         }
@@ -138,7 +165,9 @@ struct ReviewDetailView: View {
                 }
             }
             if viewModel.isLoadingInitialDraft {
-                CavnarSkeletonLines(widths: [1.0, 0.95, 0.9, 0.97, 0.8, 0.88, 0.5], lineHeight: 12, spacing: 10)
+                // "Composing" — an ember caret writing each line into place
+                // while Claude drafts the reply (see CavnarMotion).
+                CavnarComposingLines(widths: [1.0, 0.95, 0.9, 0.97, 0.8, 0.88, 0.5], lineHeight: 12, spacing: 10)
                     .frame(minHeight: 130)
                     .padding(14)
                     .background(Color.cavnarEmber.opacity(0.20))

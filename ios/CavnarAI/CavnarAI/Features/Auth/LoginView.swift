@@ -21,10 +21,10 @@ struct LoginView: View {
                     Spacer()
 
                     VStack(spacing: 14) {
-                        Image("BrandLockup")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 220)
+                        // The seal draws itself while the letters stamp in
+                        // beside it — the one-time entrance for the first
+                        // screen a session ever sees (see CavnarMotion).
+                        CavnarLockupIntro(width: 220)
                         Text("Sign in to your restaurant")
                             .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk3)

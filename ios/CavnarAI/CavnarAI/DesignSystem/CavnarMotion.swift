@@ -1,0 +1,988 @@
+import SwiftUI
+import UIKit
+
+// The Cavnar motion language — every animation here follows the same four
+// rules the preview page was built on (brand/motion): one point of color per
+// surface and it's always the ember; illustrations are hairline Ink3, never
+// filled shapes; ease-in-out only, nothing bounces or springs; and each
+// animation only ever plays where the app is genuinely working or a state
+// genuinely changed. Looping "working" states are driven by TimelineView
+// (real wall-clock time) rather than a toggled @State + repeatForever, for
+// the reason documented at length on LaborView's ShimmerText: an ambient
+// parent transaction silently overrides a repeat-forever animation, and a
+// wall-clock phase can't be interrupted by anything.
+
+// MARK: - Seal geometry
+
+/// The seal ring as a real Path — the SealRing asset is a template image,
+/// which can be tinted but never trimmed, so anything that needs to DRAW the
+/// ring (draw-in, stroke tricks) builds from this instead. Same 120x120
+/// source geometry as brand/assets/seal-color.svg: a rounded square with
+/// its right edge open between y=45 and y=75, where the ember sits.
+struct CavnarSealRingShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let s = min(rect.width, rect.height) / 120
+        let ox = rect.minX + (rect.width - 120 * s) / 2
+        let oy = rect.minY + (rect.height - 120 * s) / 2
+        func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: ox + x * s, y: oy + y * s) }
+        var p = Path()
+        // Starts at the top lip of the gap and travels the whole ring
+        // counter-clockwise on screen, ending at the gap's bottom lip —
+        // so a trim(from: 0, to: x) reads as the ring drawing itself
+        // around from the ember and back to it.
+        p.move(to: pt(99.5, 45))
+        p.addArc(tangent1End: pt(99.5, 20.5), tangent2End: pt(20.5, 20.5), radius: 24 * s)
+        p.addArc(tangent1End: pt(20.5, 20.5), tangent2End: pt(20.5, 99.5), radius: 24 * s)
+        p.addArc(tangent1End: pt(20.5, 99.5), tangent2End: pt(99.5, 99.5), radius: 24 * s)
+        p.addArc(tangent1End: pt(99.5, 99.5), tangent2End: pt(99.5, 20.5), radius: 24 * s)
+        p.addLine(to: pt(99.5, 75))
+        return p
+    }
+}
+
+/// The "hot core" highlight color the ember reaches at full intensity —
+/// #F2B183, the same top stop the brand SVGs' ember-dot gradient uses.
+let cavnarEmberHot = Color(red: 0.95, green: 0.69, blue: 0.51)
+
+// MARK: - 02 · Seal Draw-in
+
+/// One-shot entrance: the ring draws itself from the gap around and back,
+/// then the ember drops in last to close the loop. For a screen's first
+/// appearance (login, Face ID gate) — never looped in the real app.
+struct CavnarSealDrawIn: View {
+    var size: CGFloat = 96
+    var ringColor: Color = .cavnarInk
+    var delay: Double = 0
+    var onFinished: (() -> Void)? = nil
+
+    @State private var ringProgress: CGFloat = 0
+    @State private var emberOn = false
+
+    private var emberDiameter: CGFloat { size * (20.0 / 120.0) }
+    private var glowDiameter: CGFloat { size * (54.0 / 120.0) }
+    private var emberCenter: CGPoint { CGPoint(x: size * (99.5 / 120.0), y: size * (60.0 / 120.0)) }
+
+    var body: some View {
+        ZStack {
+            CavnarSealRingShape()
+                .trim(from: 0, to: ringProgress)
+                .stroke(ringColor, style: StrokeStyle(lineWidth: size * (19.0 / 120.0), lineCap: .butt))
+                .frame(width: size, height: size)
+
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Color.cavnarEmber.opacity(0.5), Color.cavnarEmber.opacity(0)],
+                        center: .center, startRadius: 0, endRadius: glowDiameter / 2
+                    )
+                )
+                .frame(width: glowDiameter, height: glowDiameter)
+                .opacity(emberOn ? 1 : 0)
+                .position(emberCenter)
+
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Color.cavnarEmber2, Color.cavnarEmber],
+                        center: UnitPoint(x: 0.42, y: 0.38), startRadius: 0, endRadius: emberDiameter * 0.6
+                    )
+                )
+                .frame(width: emberDiameter, height: emberDiameter)
+                .scaleEffect(emberOn ? 1 : 0.01)
+                .opacity(emberOn ? 1 : 0)
+                .position(emberCenter)
+        }
+        .frame(width: size, height: size)
+        .task {
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+            withAnimation(.easeInOut(duration: 1.1)) { ringProgress = 1 }
+            try? await Task.sleep(for: .seconds(1.0))
+            withAnimation(.easeOut(duration: 0.4)) { emberOn = true }
+            try? await Task.sleep(for: .seconds(0.4))
+            onFinished?()
+        }
+    }
+}
+
+// MARK: - 03 · Wordmark Stamp-in
+
+/// One letter of the CAVNAR wordmark as a Shape, in the wordmark's own
+/// 461x100 letter box — the exact polygon geometry every other
+/// implementation site reuses (brand/assets/wordmark-*.svg), so this and
+/// the static BrandLockup asset are pixel-identical at rest. Nonzero
+/// winding throughout: the N's three overlapping bars all wind the same
+/// way (so they union), and the R's counter is drawn reversed (so it
+/// punches a hole) — that's why the R isn't the SVG's even-odd path.
+struct CavnarWordmarkLetterShape: Shape {
+    let index: Int
+
+    static let boxWidth: CGFloat = 461
+    static let boxHeight: CGFloat = 100
+    /// Horizontal center of each letter within the box — the anchor the
+    /// stamp-in scales around, so a letter settles in place instead of
+    /// sliding sideways toward the box's own center.
+    static let centers: [CGFloat] = [32, 116, 177, 260, 343, 426]
+
+    func path(in rect: CGRect) -> Path {
+        let s = rect.width / Self.boxWidth
+        func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: rect.minX + x * s, y: rect.minY + y * s) }
+        var p = Path()
+        func poly(_ pts: [(CGFloat, CGFloat)]) {
+            guard let first = pts.first else { return }
+            p.move(to: pt(first.0, first.1))
+            for q in pts.dropFirst() { p.addLine(to: pt(q.0, q.1)) }
+            p.closeSubpath()
+        }
+        switch index {
+        case 0:
+            poly([(0, 0), (64, 0), (64, 21), (21, 21), (21, 79), (64, 79), (64, 100), (0, 100)])
+        case 1:
+            poly([(78, 100), (99, 100), (126, 0), (105, 0)])
+            poly([(154, 100), (133, 100), (106, 0), (127, 0)])
+            poly([(108.2, 66), (123.8, 66), (129.5, 87), (102.5, 87)])
+        case 2:
+            poly([(139, 0), (160, 0), (187, 100), (166, 100)])
+            poly([(215, 0), (194, 0), (167, 100), (188, 100)])
+        case 3:
+            poly([(225, 0), (246, 0), (246, 100), (225, 100)])
+            poly([(274, 0), (295, 0), (295, 100), (274, 100)])
+            poly([(225, 0), (246, 0), (295, 100), (274, 100)])
+        case 4:
+            poly([(305, 100), (326, 100), (353, 0), (332, 0)])
+            poly([(381, 100), (360, 100), (333, 0), (354, 0)])
+            poly([(335.2, 66), (350.8, 66), (356.5, 87), (329.5, 87)])
+        default:
+            poly([(391, 0), (412, 0), (412, 100), (391, 100)])
+            poly([(412, 0), (447, 0), (461, 14), (461, 44), (447, 58), (412, 58)])
+            poly([(412, 21), (412, 37), (435, 37), (440, 32), (440, 26), (435, 21)])
+            poly([(425, 58), (446, 58), (457, 100), (436, 100)])
+        }
+        return p
+    }
+}
+
+/// Six letters stamp in like a branding iron, one after another, then the
+/// ember drops into the V. Plays once on appear. `width` is the wordmark's
+/// own width (the AI tag sits outside it, to the right).
+struct CavnarWordmarkStampIn: View {
+    var width: CGFloat
+    var color: Color = .cavnarInk
+    var delay: Double = 0
+    var showsAITag: Bool = true
+
+    @State private var shown: [Bool] = Array(repeating: false, count: 6)
+    @State private var emberDropped = false
+    @State private var tagShown = false
+
+    private var scale: CGFloat { width / CavnarWordmarkLetterShape.boxWidth }
+    private var height: CGFloat { CavnarWordmarkLetterShape.boxHeight * scale }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 54 * scale) {
+            ZStack(alignment: .topLeading) {
+                ForEach(0..<6, id: \.self) { i in
+                    CavnarWordmarkLetterShape(index: i)
+                        .fill(color)
+                        .frame(width: width, height: height)
+                        .opacity(shown[i] ? 1 : 0)
+                        .scaleEffect(
+                            shown[i] ? 1 : 1.06,
+                            anchor: UnitPoint(x: CavnarWordmarkLetterShape.centers[i] / CavnarWordmarkLetterShape.boxWidth, y: 0.5)
+                        )
+                        .offset(y: shown[i] ? 0 : 8 * scale)
+                }
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [Color.cavnarEmber2, Color.cavnarEmber],
+                            center: UnitPoint(x: 0.42, y: 0.38), startRadius: 0, endRadius: 10 * scale
+                        )
+                    )
+                    .frame(width: 17 * scale, height: 17 * scale)
+                    .opacity(emberDropped ? 1 : 0)
+                    .offset(y: emberDropped ? 0 : -22 * scale)
+                    .position(x: 177 * scale, y: 13 * scale)
+            }
+            .frame(width: width, height: height)
+
+            if showsAITag {
+                // Same size/tracking ratio as the BrandLockup asset's own tag
+                // (font-size 30, letter-spacing 6, in the same 100-unit box).
+                Text("AI")
+                    .font(.cavnarNumber(30 * scale, weight: 700))
+                    .tracking(6 * scale)
+                    .foregroundStyle(Color.cavnarEmber)
+                    .padding(.top, 6 * scale)
+                    .opacity(tagShown ? 1 : 0)
+            }
+        }
+        .task {
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+            for i in 0..<6 {
+                withAnimation(.easeOut(duration: 0.32)) { shown[i] = true }
+                try? await Task.sleep(for: .seconds(0.09))
+            }
+            try? await Task.sleep(for: .seconds(0.25))
+            withAnimation(.easeOut(duration: 0.35)) { emberDropped = true }
+            try? await Task.sleep(for: .seconds(0.2))
+            withAnimation(.easeOut(duration: 0.4)) { tagShown = true }
+        }
+    }
+}
+
+/// The full lockup (seal + wordmark + AI tag) as one choreographed
+/// entrance — seal draws itself while the letters stamp in beside it.
+/// Same 720x148 proportions as the BrandLockup asset so it drops in at the
+/// same `width` wherever that static image was used.
+struct CavnarLockupIntro: View {
+    var width: CGFloat
+
+    private var s: CGFloat { width / 720 }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 30 * s) {
+            CavnarSealDrawIn(size: 120 * s)
+                .padding(.top, 14 * s)
+            CavnarWordmarkStampIn(width: 461 * s, delay: 0.45)
+                .padding(.top, 4 * s)
+        }
+        .frame(width: width, height: 148 * s, alignment: .topLeading)
+    }
+}
+
+// MARK: - 04 · Composing
+
+/// The wait BEFORE an AI-written paragraph arrives: an ember caret writes
+/// each line into place, one after another, then holds and starts over.
+/// Replaces the neutral skeleton bars for any Claude call that returns
+/// prose (review reply draft, Ask Cavnar, marketing copy). TypewriterText
+/// still handles the reveal once the words are actually here.
+struct CavnarComposingLines: View {
+    var widths: [CGFloat] = [1.0, 0.82, 0.93, 0.6]
+    var lineHeight: CGFloat = 10
+    var spacing: CGFloat = 12
+    var tint: Color = .cavnarEmber
+
+    @State private var start = Date()
+
+    private static let grow: Double = 0.85
+    private static let hold: Double = 1.1
+    private static let fade: Double = 0.3
+
+    private var totalHeight: CGFloat {
+        CGFloat(widths.count) * lineHeight + CGFloat(max(widths.count - 1, 0)) * spacing
+    }
+
+    private func progress(_ local: Double, _ i: Int) -> CGFloat {
+        let x = min(max((local - Double(i) * Self.grow) / Self.grow, 0), 1)
+        return CGFloat(1 - pow(1 - x, 3))
+    }
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let t = timeline.date.timeIntervalSince(start)
+            let n = Double(widths.count)
+            let cycle = n * Self.grow + Self.hold + Self.fade
+            let local = t.truncatingRemainder(dividingBy: cycle)
+            let fadeOut = min(max((local - (n * Self.grow + Self.hold)) / Self.fade, 0), 1)
+            let active = min(Int(local / Self.grow), widths.count - 1)
+            let holding = local >= n * Self.grow
+            let blinkOn = !holding || (t.truncatingRemainder(dividingBy: 0.7) < 0.38)
+
+            GeometryReader { geo in
+                ZStack(alignment: .topLeading) {
+                    VStack(alignment: .leading, spacing: spacing) {
+                        ForEach(widths.indices, id: \.self) { i in
+                            RoundedRectangle(cornerRadius: lineHeight / 2)
+                                .fill(tint.opacity(0.28))
+                                .frame(width: max(2, geo.size.width * widths[i] * progress(local, i)), height: lineHeight)
+                        }
+                    }
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(Color.cavnarEmber2)
+                        .frame(width: 2.5, height: lineHeight + 5)
+                        .opacity(blinkOn ? 1 : 0)
+                        .offset(
+                            x: geo.size.width * widths[active] * progress(local, active) + 3,
+                            y: CGFloat(active) * (lineHeight + spacing) - 2.5
+                        )
+                }
+                .opacity(1 - fadeOut)
+            }
+        }
+        .frame(height: totalHeight)
+    }
+}
+
+// MARK: - 05 · Reading the Room
+
+/// The 20–40s competitor-intel / AI-visibility wait as a picture of what it
+/// is doing: a radar centered on the restaurant (the square) with ripples
+/// going out and competitors appearing as ember blips. No sweep wedge —
+/// just the ripples and the blips.
+struct CavnarRadarSweep: View {
+    var size: CGFloat = 170
+    var caption: String? = nil
+
+    @State private var start = Date()
+
+    // (dx, dy) as fractions of `size` from center, plus each blip's delay
+    // into the 6s cycle.
+    private static let blips: [(CGFloat, CGFloat, Double)] = [
+        (0.26, -0.2, 0.6), (-0.24, 0.16, 1.9), (0.3, 0.22, 3.1), (-0.17, -0.26, 4.2),
+    ]
+
+    private func blipState(_ phase: Double) -> (scale: CGFloat, opacity: Double) {
+        switch phase {
+        case ..<0.0: return (0, 0)
+        case ..<0.08: let x = phase / 0.08; return (CGFloat(1.3 * x), x)
+        case ..<0.14: let x = (phase - 0.08) / 0.06; return (CGFloat(1.3 - 0.3 * x), 1)
+        case ..<0.7: return (1, 1)
+        case ..<0.82: let x = (phase - 0.7) / 0.12; return (CGFloat(1 - 0.4 * x), 1 - x)
+        default: return (0, 0)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            TimelineView(.animation) { timeline in
+                let t = timeline.date.timeIntervalSince(start)
+                ZStack {
+                    ForEach([0.12, 0.3, 0.48], id: \.self) { r in
+                        Circle()
+                            .stroke(Color.cavnarPaper3.opacity(r == 0.12 ? 0.9 : 0.55), lineWidth: 1)
+                            .frame(width: size * 2 * r, height: size * 2 * r)
+                    }
+                    Rectangle().fill(Color.cavnarPaper3.opacity(0.45)).frame(width: size * 0.96, height: 1)
+                    Rectangle().fill(Color.cavnarPaper3.opacity(0.45)).frame(width: 1, height: size * 0.96)
+
+                    ForEach(0..<3, id: \.self) { k in
+                        let raw = ((t + 3.0 - Double(k)).truncatingRemainder(dividingBy: 3.0)) / 3.0
+                        let eased = 1 - pow(1 - raw, 2)
+                        Circle()
+                            .stroke(Color.cavnarEmber.opacity(0.9 * (1 - raw)), lineWidth: 1.2)
+                            .frame(width: size * (0.06 + 0.9 * eased), height: size * (0.06 + 0.9 * eased))
+                    }
+
+                    ForEach(Self.blips.indices, id: \.self) { i in
+                        let b = Self.blips[i]
+                        let phase = ((t + 6.0 - b.2).truncatingRemainder(dividingBy: 6.0)) / 6.0
+                        let state = blipState(phase)
+                        ZStack {
+                            Circle().fill(Color.cavnarEmber.opacity(0.25)).frame(width: 18, height: 18)
+                            Circle().fill(Color.cavnarEmber2).frame(width: 9, height: 9)
+                        }
+                        .scaleEffect(state.scale)
+                        .opacity(state.opacity)
+                        .offset(x: size * b.0, y: size * b.1)
+                    }
+
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(Color.cavnarInk)
+                        .frame(width: size * 0.07, height: size * 0.07)
+                }
+                .frame(width: size, height: size)
+            }
+            .frame(width: size, height: size)
+
+            if let caption {
+                Text(caption.uppercased())
+                    .font(.cavnarNumber(10, weight: 600))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - 06 · Building the Week
+
+/// The schedule-generation wait: shifts fill a 7-day grid row by row while
+/// an ember dash travels the header line. Ember blocks are the ones the AI
+/// is "still deciding." Fills whatever width it's given.
+struct CavnarWeekBuilder: View {
+    var caption: String? = nil
+
+    @State private var start = Date()
+
+    private static let days = ["S", "M", "T", "W", "T", "F", "S"]
+    private static let blocks: [(row: Int, col: Int, ember: Bool)] = [
+        (0, 0, false), (0, 1, false), (0, 3, false), (0, 5, false), (0, 6, false),
+        (1, 1, false), (1, 2, false), (1, 4, false), (1, 5, false),
+        (2, 0, false), (2, 2, false), (2, 3, false), (2, 6, false),
+        (2, 4, true), (3, 6, true), (3, 1, false), (3, 3, true),
+    ]
+    private static let stagger: Double = 0.16
+    private static let grow: Double = 0.45
+    private static let hold: Double = 1.6
+    private static let fade: Double = 0.3
+    private static let rowHeight: CGFloat = 24
+    private static let gridTop: CGFloat = 34
+
+    private var contentHeight: CGFloat { Self.gridTop + 4 * Self.rowHeight + (caption == nil ? 0 : 20) }
+
+    private func blockProgress(_ local: Double, _ i: Int) -> CGFloat {
+        let x = min(max((local - Double(i) * Self.stagger) / Self.grow, 0), 1)
+        return CGFloat(1 - pow(1 - x, 3))
+    }
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let t = timeline.date.timeIntervalSince(start)
+            let blocksDone = Double(Self.blocks.count - 1) * Self.stagger + Self.grow
+            let cycle = blocksDone + Self.hold + Self.fade
+            let local = t.truncatingRemainder(dividingBy: cycle)
+            let fadeOut = min(max((local - (blocksDone + Self.hold)) / Self.fade, 0), 1)
+            let dashPhase = (t / 2.2).truncatingRemainder(dividingBy: 1)
+
+            GeometryReader { geo in
+                let colWidth = geo.size.width / 7
+                let blockWidth = colWidth * 0.7
+                let dashLength = geo.size.width * 0.16
+                ZStack(alignment: .topLeading) {
+                    Capsule().fill(Color.cavnarPaper3.opacity(0.8)).frame(height: 1.5)
+                    Capsule()
+                        .fill(LinearGradient(colors: [.clear, Color.cavnarEmber2, .clear], startPoint: .leading, endPoint: .trailing))
+                        .frame(width: dashLength, height: 2.5)
+                        .offset(x: -dashLength + CGFloat(dashPhase) * (geo.size.width + dashLength), y: -0.5)
+
+                    HStack(spacing: 0) {
+                        ForEach(Self.days.indices, id: \.self) { i in
+                            Text(Self.days[i])
+                                .font(.cavnarNumber(10, weight: 600))
+                                .foregroundStyle(Color.cavnarInk3)
+                                .frame(width: colWidth)
+                        }
+                    }
+                    .offset(y: 10)
+
+                    ForEach(Self.blocks.indices, id: \.self) { i in
+                        let b = Self.blocks[i]
+                        let p = blockProgress(local, i)
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(b.ember ? Color.cavnarEmber : Color.cavnarInk3.opacity(0.35))
+                            .frame(width: blockWidth, height: 16)
+                            .offset(
+                                x: colWidth * CGFloat(b.col) + (colWidth - blockWidth) / 2 - 14 * (1 - p),
+                                y: Self.gridTop + CGFloat(b.row) * Self.rowHeight
+                            )
+                            .opacity(p)
+                    }
+
+                    if let caption {
+                        Text(caption.uppercased())
+                            .font(.cavnarNumber(9.5, weight: 600))
+                            .tracking(1)
+                            .foregroundStyle(Color.cavnarInk3)
+                            .offset(y: Self.gridTop + 4 * Self.rowHeight + 2)
+                    }
+                }
+                .opacity(1 - fadeOut)
+            }
+        }
+        .frame(height: contentHeight)
+        .clipped()
+    }
+}
+
+// MARK: - 07 · Counting the Pantry
+
+/// The inventory-analysis wait as a ledger filling in category by category,
+/// with the over-budget one in ember and a sheen sweep as the audit pass.
+struct CavnarLedgerFill: View {
+    struct Row {
+        let label: String
+        let fraction: CGFloat
+        let ember: Bool
+        init(_ label: String, _ fraction: CGFloat, ember: Bool = false) {
+            self.label = label; self.fraction = fraction; self.ember = ember
+        }
+    }
+
+    var rows: [Row] = [
+        Row("PRODUCE", 0.82), Row("PROTEIN", 0.94), Row("DAIRY", 0.55), Row("DRY", 0.69), Row("BAR", 0.38, ember: true),
+    ]
+
+    @State private var start = Date()
+
+    private static let stagger: Double = 0.3
+    private static let grow: Double = 0.9
+    private static let hold: Double = 2.9
+    private static let fade: Double = 0.3
+
+    private func rowProgress(_ local: Double, _ i: Int) -> CGFloat {
+        let x = min(max((local - Double(i) * Self.stagger) / Self.grow, 0), 1)
+        return CGFloat(1 - pow(1 - x, 3))
+    }
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let t = timeline.date.timeIntervalSince(start)
+            let barsDone = Double(rows.count - 1) * Self.stagger + Self.grow
+            let cycle = barsDone + Self.hold + Self.fade
+            let local = t.truncatingRemainder(dividingBy: cycle)
+            let fadeOut = min(max((local - (barsDone + Self.hold)) / Self.fade, 0), 1)
+            // Sheen starts once the first bars are up and sweeps every 2.6s.
+            let sheen = local < 1.6 ? -1.0 : ((local - 1.6).truncatingRemainder(dividingBy: 2.6)) / 1.1
+
+            VStack(spacing: 14) {
+                ForEach(rows.indices, id: \.self) { i in
+                    HStack(spacing: 14) {
+                        Text(rows[i].label)
+                            .font(.cavnarNumber(10, weight: 600))
+                            .tracking(1)
+                            .foregroundStyle(Color.cavnarInk3)
+                            .frame(width: 64, alignment: .leading)
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.cavnarPaper3.opacity(0.35))
+                                Capsule()
+                                    .fill(rows[i].ember ? Color.cavnarEmber : Color.cavnarInk3.opacity(0.45))
+                                    .frame(width: geo.size.width * rows[i].fraction * rowProgress(local, i))
+                            }
+                        }
+                        .frame(height: 10)
+                    }
+                }
+            }
+            .overlay {
+                GeometryReader { geo in
+                    if sheen >= 0, sheen <= 1 {
+                        LinearGradient(
+                            colors: [.clear, Color.cavnarInk.opacity(0.12), .clear],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                        .frame(width: 34)
+                        .offset(x: 64 + 14 - 34 + CGFloat(sheen) * (geo.size.width - 64 - 14 + 34))
+                    }
+                }
+                .clipped()
+                .allowsHitTesting(false)
+            }
+            .opacity(1 - fadeOut)
+        }
+    }
+}
+
+// MARK: - 11 · Posted
+
+private struct CavnarCheckShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX + rect.width * 0.28, y: rect.minY + rect.height * 0.52))
+        p.addLine(to: CGPoint(x: rect.minX + rect.width * 0.44, y: rect.minY + rect.height * 0.68))
+        p.addLine(to: CGPoint(x: rect.minX + rect.width * 0.73, y: rect.minY + rect.height * 0.36))
+        return p
+    }
+}
+
+/// The confirmation moment for a real POST that succeeded: the ember leaves
+/// the draft, travels the wire, and lands as a checkmark that draws itself.
+/// Plays once on appear; `onFinished` fires ~1.6s in, once the check has
+/// fully drawn, for a caller that wants to dismiss afterward.
+struct CavnarPostedCheck: View {
+    var label: String
+    var onFinished: (() -> Void)? = nil
+
+    @State private var travel: CGFloat = 0
+    @State private var landed = false
+    @State private var checkTrim: CGFloat = 0
+    @State private var labelShown = false
+
+    private let trackWidth: CGFloat = 110
+
+    var body: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 0) {
+                // The draft — three hairlines on a plate.
+                VStack(alignment: .leading, spacing: 5) {
+                    Capsule().fill(Color.cavnarInk3.opacity(0.5)).frame(width: 30, height: 2.5)
+                    Capsule().fill(Color.cavnarInk3.opacity(0.5)).frame(width: 20, height: 2.5)
+                    Capsule().fill(Color.cavnarInk3.opacity(0.5)).frame(width: 26, height: 2.5)
+                }
+                .padding(.horizontal, 12)
+                .frame(width: 56, height: 40, alignment: .leading)
+                .background(Color.cavnarPaper2)
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.cavnarPaper3).frame(width: trackWidth, height: 2)
+                    Capsule().fill(Color.cavnarEmber).frame(width: trackWidth * travel, height: 2)
+                    ZStack {
+                        Circle().fill(Color.cavnarEmber.opacity(0.3)).frame(width: 22, height: 22)
+                        Circle().fill(Color.cavnarEmber2).frame(width: 10, height: 10)
+                    }
+                    .offset(x: -11 + trackWidth * travel)
+                    .opacity(landed ? 0 : 1)
+                }
+                .frame(width: trackWidth, height: 22)
+
+                ZStack {
+                    Circle()
+                        .fill(Color.cavnarPaper2)
+                        .overlay(Circle().strokeBorder(landed ? Color.cavnarEmber : Color.cavnarPaper3, lineWidth: 1.5))
+                    CavnarCheckShape()
+                        .trim(from: 0, to: checkTrim)
+                        .stroke(Color.cavnarInk, style: StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round))
+                }
+                .frame(width: 40, height: 40)
+                .scaleEffect(landed ? 1 : 0.96)
+            }
+
+            Text(label.uppercased())
+                .font(.cavnarNumber(10, weight: 600))
+                .tracking(1.2)
+                .foregroundStyle(Color.cavnarInk3)
+                .opacity(labelShown ? 1 : 0)
+        }
+        .task {
+            withAnimation(.easeInOut(duration: 0.75)) { travel = 1 }
+            try? await Task.sleep(for: .seconds(0.72))
+            withAnimation(.easeOut(duration: 0.2)) { landed = true }
+            withAnimation(.easeInOut(duration: 0.4).delay(0.05)) { checkTrim = 1 }
+            withAnimation(.easeOut(duration: 0.3).delay(0.2)) { labelShown = true }
+            try? await Task.sleep(for: .seconds(0.9))
+            onFinished?()
+        }
+    }
+}
+
+// MARK: - 12 · Handshake
+
+enum CavnarHandshakeState {
+    case connecting, connected, failed
+}
+
+private struct CavnarHorizontalLine: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX, y: rect.midY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+        return p
+    }
+}
+
+/// A credential check / OAuth round trip in flight: dashes march between
+/// the seal and the provider tile while the token is verified; the line
+/// goes solid ember and both tiles light on success. A failed handshake just
+/// stops marching.
+struct CavnarHandshake: View {
+    var providerSymbol: String
+    var providerTint: Color
+    var state: CavnarHandshakeState
+    var caption: String? = nil
+
+    @State private var start = Date()
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 0) {
+                tile { CavnarSealMark(size: 26) }
+
+                ZStack {
+                    TimelineView(.animation(paused: state != .connecting)) { timeline in
+                        let phase = timeline.date.timeIntervalSince(start).truncatingRemainder(dividingBy: 0.6) / 0.6
+                        CavnarHorizontalLine()
+                            .stroke(
+                                Color.cavnarInk3.opacity(0.6),
+                                style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [6, 6], dashPhase: -12 * CGFloat(phase))
+                            )
+                    }
+                    .opacity(state == .connecting ? 1 : 0)
+
+                    CavnarHorizontalLine()
+                        .stroke(state == .failed ? Color.cavnarRed.opacity(0.5) : Color.cavnarEmber, lineWidth: 2)
+                        .opacity(state == .connecting ? 0 : 1)
+
+                    if state != .connecting {
+                        ZStack {
+                            Circle()
+                                .fill(state == .connected ? Color.cavnarEmber : Color.cavnarRed)
+                                .frame(width: 22, height: 22)
+                            Image(systemName: state == .connected ? "checkmark" : "xmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                        .transition(.scale(scale: 0.4).combined(with: .opacity))
+                    }
+                }
+                .frame(height: 22)
+                .padding(.horizontal, 4)
+
+                tile {
+                    Image(systemName: providerSymbol)
+                        .font(.system(size: 17))
+                        .foregroundStyle(providerTint)
+                }
+            }
+            .animation(.easeOut(duration: 0.35), value: state)
+
+            if let caption {
+                Text(caption.uppercased())
+                    .font(.cavnarNumber(10, weight: 600))
+                    .tracking(1.2)
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func tile<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .frame(width: 52, height: 52)
+            .background(Color.cavnarPaper2)
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(state == .connected ? Color.cavnarEmber : Color.cavnarPaper3, lineWidth: 1.5)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+// MARK: - 13 · Alert Fired
+
+/// One or two ember rings expanding outward from a point, once, on appear —
+/// the "something just landed here" cue behind a badge or an alert icon.
+struct CavnarRippleBurst: View {
+    var color: Color = .cavnarEmber
+    var fromDiameter: CGFloat = 14
+    var toDiameter: CGFloat = 52
+    var rings: Int = 2
+    var stagger: Double = 0.45
+    var duration: Double = 1.1
+    var delay: Double = 0
+
+    @State private var fired = false
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<rings, id: \.self) { i in
+                Circle()
+                    .stroke(color, lineWidth: 1.4)
+                    .frame(width: fired ? toDiameter : fromDiameter, height: fired ? toDiameter : fromDiameter)
+                    .opacity(fired ? 0 : 0.85)
+                    .animation(.easeOut(duration: duration).delay(delay + Double(i) * stagger), value: fired)
+            }
+        }
+        .allowsHitTesting(false)
+        .onAppear {
+            // Deferred one run-loop turn so the collapsed frame commits
+            // first and there's an observable change to animate from.
+            DispatchQueue.main.async { fired = true }
+        }
+    }
+}
+
+/// The unread dot on the bell — pops in with a single ripple the moment it
+/// appears, instead of just being there.
+struct CavnarAlertBadge: View {
+    var diameter: CGFloat = 8
+
+    @State private var shown = false
+
+    var body: some View {
+        ZStack {
+            CavnarRippleBurst(fromDiameter: diameter, toDiameter: diameter * 4, rings: 1, duration: 0.9, delay: 0.1)
+            Circle()
+                .fill(Color.cavnarEmber)
+                .frame(width: diameter, height: diameter)
+                .scaleEffect(shown ? 1 : 0.01)
+        }
+        .frame(width: diameter, height: diameter)
+        .onAppear {
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.35)) { shown = true }
+            }
+        }
+    }
+}
+
+// MARK: - 14 · Cold Hearth
+
+/// The one empty state for the whole app: a gray seal with a cold ember —
+/// "nothing here yet" — that the CTA is what lights. Replaces the scattered
+/// per-screen SF Symbol ContentUnavailableViews. With no CTA it just keeps
+/// a slow, faint breath so it never reads as dead.
+struct CavnarEmptyHearth: View {
+    var title: String
+    var message: String? = nil
+    var ctaLabel: String? = nil
+    var action: (() -> Void)? = nil
+
+    @State private var pressed = false
+    @State private var start = Date()
+
+    var body: some View {
+        VStack(spacing: 14) {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                let t = timeline.date.timeIntervalSince(start)
+                let breath = CGFloat(max(0, sin(t * 2 * .pi / 5.0))) * 0.28
+                CavnarSealMark(
+                    size: 64,
+                    ringColor: Color.cavnarInk3.opacity(0.32),
+                    emberWarmth: pressed ? 1 : breath
+                )
+                .animation(.easeOut(duration: pressed ? 0.3 : 0.9), value: pressed)
+            }
+            .frame(width: 64, height: 64)
+            .padding(.bottom, 4)
+
+            Text(title)
+                .font(.cavnarBody(15, weight: 700))
+                .foregroundStyle(Color.cavnarInk)
+                .multilineTextAlignment(.center)
+
+            if let message {
+                Text(message)
+                    .font(.cavnarBody(12.5))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+                    .frame(maxWidth: 300)
+            }
+
+            if let ctaLabel, let action {
+                Button {
+                    Haptic.light()
+                    action()
+                } label: {
+                    Text(ctaLabel)
+                }
+                .buttonStyle(CavnarHearthButtonStyle { isPressed in pressed = isPressed })
+                .padding(.top, 6)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 44)
+        .padding(.horizontal, 24)
+    }
+}
+
+/// Outlined ember CTA for the hearth — reports its press state up so the
+/// seal above it can warm while the finger is down.
+struct CavnarHearthButtonStyle: ButtonStyle {
+    var onPress: (Bool) -> Void
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.cavnarBody(14, weight: 700))
+            .foregroundStyle(configuration.isPressed ? Color.cavnarEmber2 : Color.cavnarEmber)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: CavnarRadius.control)
+                    .fill(Color.cavnarEmber.opacity(configuration.isPressed ? 0.16 : 0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: CavnarRadius.control)
+                    .strokeBorder(Color.cavnarEmber.opacity(configuration.isPressed ? 0.9 : 0.5), lineWidth: 1.5)
+            )
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, isPressed in onPress(isPressed) }
+    }
+}
+
+// MARK: - 15 · Pull-to-Refresh Ember
+
+/// Replaces the system spinner on every .refreshable list with the one
+/// shape the app already owns: an ember that stretches with the pull like a
+/// drop of molten metal, snaps back, and flares once as the refresh fires.
+/// The system UIRefreshControl still drives the gesture and the refresh
+/// semantics — its own spinner is just tinted clear app-wide (see
+/// CavnarAIApp) so only this shows. Pull distance comes from
+/// onScrollGeometryChange on iOS 18+; on 17 the drop can't track the finger
+/// and only appears for the refresh itself.
+struct CavnarEmberRefreshable: ViewModifier {
+    let action: () async -> Void
+
+    @State private var pull: CGFloat = 0
+    @State private var isRefreshing = false
+    @State private var flareID = 0
+
+    func body(content: Content) -> some View {
+        Group {
+            if #available(iOS 18.0, *) {
+                content.onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    -(geometry.contentOffset.y + geometry.contentInsets.top)
+                } action: { _, newValue in
+                    pull = max(0, newValue)
+                }
+            } else {
+                content
+            }
+        }
+        .refreshable {
+            flareID += 1
+            isRefreshing = true
+            await action()
+            isRefreshing = false
+        }
+        .overlay(alignment: .top) {
+            CavnarEmberPullIndicator(pull: pull, isRefreshing: isRefreshing, flareID: flareID)
+                .allowsHitTesting(false)
+        }
+    }
+}
+
+extension View {
+    func cavnarEmberRefreshable(_ action: @escaping () async -> Void) -> some View {
+        modifier(CavnarEmberRefreshable(action: action))
+    }
+}
+
+struct CavnarEmberPullIndicator: View {
+    var pull: CGFloat
+    var isRefreshing: Bool
+    var flareID: Int
+
+    @State private var flare = false
+    @State private var start = Date()
+
+    var body: some View {
+        let stretch = min(pull / 90, 1)
+        let visible = isRefreshing || pull > 6
+
+        TimelineView(.animation(paused: !isRefreshing)) { timeline in
+            let t = timeline.date.timeIntervalSince(start)
+            let breathe = isRefreshing ? 1 + 0.14 * CGFloat(sin(t * 2 * .pi / 1.4)) : 1
+            ZStack {
+                Circle()
+                    .stroke(Color.cavnarEmber, lineWidth: 1.5)
+                    .frame(width: flare ? 46 : 12, height: flare ? 46 : 12)
+                    .opacity(flare ? 0 : 0.9)
+
+                Capsule()
+                    .fill(LinearGradient(colors: [Color.cavnarEmber2.opacity(0.75), .clear], startPoint: .top, endPoint: .bottom))
+                    .frame(width: 4, height: 28 * stretch)
+                    .offset(y: -14 * stretch - 4)
+                    .opacity(isRefreshing ? 0 : Double(stretch))
+
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [cavnarEmberHot, Color.cavnarEmber2, Color.cavnarEmber],
+                            center: UnitPoint(x: 0.42, y: 0.38), startRadius: 0, endRadius: 8
+                        )
+                    )
+                    .frame(width: 12, height: 12)
+                    .scaleEffect(
+                        x: isRefreshing ? breathe : 1 - 0.18 * stretch,
+                        y: isRefreshing ? breathe : 1 + 0.55 * stretch,
+                        anchor: .top
+                    )
+                    .shadow(color: Color.cavnarEmber.opacity(isRefreshing ? 0.9 : 0.5 * Double(stretch)), radius: isRefreshing ? 10 : 6)
+            }
+        }
+        .frame(height: 30)
+        .offset(y: isRefreshing ? 18 : min(pull * 0.45, 30) - 4)
+        .opacity(visible ? 1 : 0)
+        .animation(.easeOut(duration: 0.25), value: isRefreshing)
+        .onChange(of: flareID) { _, _ in
+            flare = false
+            withAnimation(.easeOut(duration: 0.7)) { flare = true }
+        }
+    }
+}

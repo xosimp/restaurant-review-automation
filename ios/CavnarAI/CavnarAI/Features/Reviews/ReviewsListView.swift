@@ -82,7 +82,10 @@ struct ReviewsListView: View {
     private var inboxContent: some View {
         Group {
             if viewModel.reviews.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
-                ContentUnavailableView("No reviews", systemImage: "star.bubble")
+                CavnarEmptyHearth(
+                    title: "No reviews yet",
+                    message: "New reviews land here automatically once your platforms are connected."
+                )
             } else {
                 List(viewModel.reviews) { review in
                     NavigationLink {
@@ -107,9 +110,9 @@ struct ReviewsListView: View {
             }
         }
         .overlay {
-            if viewModel.isLoading && viewModel.reviews.isEmpty { ProgressView() }
+            if viewModel.isLoading && viewModel.reviews.isEmpty { CavnarLoadingSeal() }
         }
-        .refreshable { await viewModel.load() }
+        .cavnarEmberRefreshable { await viewModel.load() }
     }
 
     /// Reads directly from the shared DeepLinkRouter (injected via

@@ -336,7 +336,9 @@ private struct LoadingBubble: View {
                     .font(.cavnarBody(9, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
-                CavnarSkeletonLines(widths: [0.8, 0.45], lineHeight: 10, spacing: 8)
+                // "Composing" — an ember caret writing lines into place
+                // while Cavnar thinks (see CavnarMotion).
+                CavnarComposingLines(widths: [0.8, 0.45, 0.65], lineHeight: 8, spacing: 8)
                     .frame(width: 150)
             }
             .padding(.horizontal, 15)

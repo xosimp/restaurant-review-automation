@@ -44,7 +44,7 @@ struct MarketingView: View {
                                 calendarSection
                             }
                         } else if viewModel.isLoading {
-                            ProgressView().padding(.top, 60)
+                            CavnarLoadingSeal().padding(.top, 60).frame(maxWidth: .infinity)
                         } else if let error = viewModel.errorMessage {
                             VStack(spacing: 8) {
                                 Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
@@ -59,9 +59,9 @@ struct MarketingView: View {
                 }
                 .padding(20)
             }
+            .cavnarEmberRefreshable { await viewModel.load() }
         }
         .cavnarModuleBackground()
-        .refreshable { await viewModel.load() }
         .navigationTitle("Marketing")
         .navigationBarTitleDisplayMode(.inline)
         .cavnarTabSwipeNavigation($subTab, primaryTab: .content, secondaryTab: .analytics)
@@ -132,6 +132,14 @@ struct MarketingView: View {
                 }
             }
 
+            // "Composing" — an ember caret writing lines into place while
+            // Claude drafts the post (see CavnarMotion).
+            if viewModel.isGenerating {
+                CavnarComposingLines(widths: [1.0, 0.86, 0.94, 0.7, 0.5], lineHeight: 9, spacing: 11)
+                    .padding(.vertical, 6)
+                    .transition(.opacity)
+            }
+
             if let error = viewModel.generateError {
                 Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
             }
@@ -171,15 +179,17 @@ struct MarketingView: View {
                 }
 
                 if let posted = viewModel.postedPlatform {
-                    Label("Posted to \(posted)", systemImage: "checkmark.circle.fill")
-                        .font(.cavnarBody(12, weight: 600))
-                        .foregroundStyle(Color.cavnarGreen)
+                    // "Posted" — plays once when the real POST comes back ok.
+                    CavnarPostedCheck(label: "Posted to \(posted)")
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 6)
                 }
                 if let error = viewModel.postError {
                     Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
                 }
             }
         }
+        .animation(.easeOut(duration: 0.3), value: viewModel.isGenerating)
         .cavnarCard()
     }
 

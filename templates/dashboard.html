@@ -438,6 +438,79 @@ html:not([data-theme="dark"]) .empty-state-sm.on-dark .es-sub{color:var(--ink3)}
 @keyframes btnShimmer{from{background-position:-100% 0}to{background-position:250% 0}}
 @keyframes spin{to{transform:rotate(360deg)}}
 .skeleton{background:rgba(255,255,255,.22);animation:skeletonPulse 1.1s ease-in-out infinite;border-radius:5px;color:transparent!important}
+/* ── Cavnar motion language (mirrors iOS DesignSystem/CavnarMotion.swift) ──
+   One accent (the ember), hairline illustrations, ease-in-out only, and
+   every animation tied to the app genuinely working or a state changing. */
+@keyframes cmBreatheRing{0%,100%{opacity:.35}50%{opacity:1}}
+@keyframes cmBreatheGlow{0%,100%{transform:scale(1);opacity:.5}50%{transform:scale(1.7);opacity:.95}}
+@keyframes cmBreatheDot{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}
+.cm-seal .cm-ring{animation:cmBreatheRing 1.8s ease-in-out infinite}
+.cm-seal .cm-glow{transform-box:fill-box;transform-origin:center;animation:cmBreatheGlow 1.8s ease-in-out infinite}
+.cm-seal .cm-dot{transform-box:fill-box;transform-origin:center;animation:cmBreatheDot 1.8s ease-in-out infinite}
+.cm-cap{font-family:'Space Grotesk',sans-serif;font-size:10px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;color:var(--ink3);margin-top:10px}
+/* 04 Composing — line widths + caret are driven per-frame by _cmComposeFrame() */
+.cm-compose{position:relative;width:100%}
+.cm-compose .cm-l{width:2px;border-radius:99px;background:rgba(200,75,47,.28)}
+.cm-compose .cm-caret{position:absolute;left:0;top:0;width:2.5px;background:#e8956a;border-radius:1px}
+/* 05 Reading the Room */
+@keyframes cmRipple{0%{r:6;opacity:.9}100%{r:96;opacity:0}}
+@keyframes cmBlip{0%,100%{transform:scale(0);opacity:0}8%{transform:scale(1.3);opacity:1}14%{transform:scale(1)}70%{transform:scale(1);opacity:1}82%{opacity:0;transform:scale(.6)}}
+.cm-radar .cm-rip{fill:none;stroke:var(--ember);stroke-width:1.2;animation:cmRipple 3s ease-out infinite}
+.cm-radar .cm-blip{transform-box:fill-box;transform-origin:center;animation:cmBlip 6s ease-out infinite}
+/* 06 Building the Week — [data-cycle] elements get .cm-run re-applied every cycle by _cmCycleFrame() */
+@keyframes cmBlock{from{transform:translateX(-14px);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes cmDash{to{stroke-dashoffset:-200}}
+.cm-week .cm-blk{opacity:0}
+.cm-week.cm-run .cm-blk{animation:cmBlock .5s cubic-bezier(.2,.9,.3,1) forwards}
+.cm-week .cm-dash{stroke:#e8956a;stroke-width:2;stroke-dasharray:18 182;stroke-linecap:round;animation:cmDash 2.4s linear infinite}
+/* 07 Counting the Pantry */
+@keyframes cmBar{to{transform:scaleX(1)}}
+@keyframes cmSheen{0%{transform:translateX(-120%)}100%{transform:translateX(560%)}}
+.cm-ledger .cm-bar{transform:scaleX(0);transform-origin:left center}
+.cm-ledger.cm-run .cm-bar{animation:cmBar 1s cubic-bezier(.4,0,.2,1) forwards}
+.cm-ledger .cm-sheen{animation:cmSheen 2.6s ease-in-out infinite 1.6s}
+/* 11 Posted */
+@keyframes cmPDot{0%{transform:translateX(0)}55%,100%{transform:translateX(110px)}}
+@keyframes cmPDotFade{0%,55%{opacity:1}64%,100%{opacity:0}}
+@keyframes cmTrail{0%{stroke-dashoffset:100}55%,100%{stroke-dashoffset:0}}
+@keyframes cmCheck{0%,58%{stroke-dashoffset:100}78%,100%{stroke-dashoffset:0}}
+@keyframes cmCRing{0%,55%{stroke:var(--paper3)}66%,100%{stroke:var(--ember)}}
+@keyframes cmPLabel{0%,70%{opacity:0}92%,100%{opacity:1}}
+.cm-posted .cm-pdot{animation:cmPDot 1.4s cubic-bezier(.4,0,.2,1) forwards,cmPDotFade 1.4s linear forwards}
+.cm-posted .cm-trail{stroke:var(--ember);stroke-width:2;stroke-dasharray:100;stroke-dashoffset:100;animation:cmTrail 1.4s cubic-bezier(.4,0,.2,1) forwards}
+.cm-posted .cm-check{stroke:var(--ink);stroke-width:2.4;fill:none;stroke-dasharray:100;stroke-dashoffset:100;stroke-linecap:round;stroke-linejoin:round;animation:cmCheck 1.4s cubic-bezier(.4,0,.2,1) forwards}
+.cm-posted .cm-cring{fill:var(--paper2);stroke:var(--paper3);stroke-width:1.5;animation:cmCRing 1.4s linear forwards}
+.cm-posted .cm-plabel{opacity:0;animation:cmPLabel 1.6s linear forwards}
+/* 12 Handshake */
+@keyframes cmMarch{to{stroke-dashoffset:-24}}
+.cm-hs .cm-dashl{stroke:var(--ink3);stroke-opacity:.7;stroke-width:2;stroke-dasharray:6 6;animation:cmMarch .6s linear infinite}
+.cm-hs .cm-solid{stroke:var(--ember);stroke-width:2;opacity:0;transition:opacity .35s}
+.cm-hs .cm-tile{fill:var(--paper2);stroke:var(--paper3);stroke-width:1.5;transition:stroke .35s}
+.cm-hs .cm-ok{transform-box:fill-box;transform-origin:center;transform:scale(0);opacity:0;transition:transform .3s cubic-bezier(.2,.9,.3,1),opacity .3s}
+.cm-hs.is-connected .cm-dashl{opacity:0}
+.cm-hs.is-connected .cm-solid{opacity:1}
+.cm-hs.is-connected .cm-tile{stroke:var(--ember)}
+.cm-hs.is-connected .cm-ok,.cm-hs.is-failed .cm-ok{transform:scale(1);opacity:1}
+.cm-hs.is-failed .cm-dashl{animation-play-state:paused;stroke:var(--red)}
+.cm-hs.is-failed .cm-ok circle{fill:var(--red)}
+#cm-float{position:fixed;bottom:64px;right:20px;z-index:998;background:var(--paper2);border:1px solid var(--paper3);border-radius:12px;padding:12px 14px 10px;box-shadow:0 8px 28px rgba(0,0,0,.28);opacity:0;transform:translateY(8px);transition:opacity .3s,transform .3s;pointer-events:none}
+#cm-float.show{opacity:1;transform:translateY(0)}
+/* 13 Alert Fired */
+@keyframes cmBadgePop{0%{transform:scale(0)}60%{transform:scale(1.25)}100%{transform:scale(1)}}
+@keyframes cmBadgeRing{0%{transform:scale(1);opacity:.85}100%{transform:scale(4.5);opacity:0}}
+#notif-badge.cm-pop{animation:cmBadgePop .35s cubic-bezier(.2,.9,.3,1)}
+#notif-badge.cm-pop::after{content:'';position:absolute;inset:-1.5px;border-radius:50%;border:1px solid #c84b2f;animation:cmBadgeRing .9s ease-out .1s forwards}
+/* 14 Cold Hearth — gray seal, cold coal; the CTA is what lights it */
+svg.cm-hearth{width:56px;height:56px;overflow:visible}
+.cm-hearth .cm-hring{stroke:var(--ink3);stroke-opacity:.35;fill:none}
+@keyframes cmHearthBreath{0%,25%{fill:var(--paper3)}55%,75%{fill:#a8563e}100%{fill:var(--paper3)}}
+.cm-hearth .cm-hdot{fill:var(--paper3);animation:cmHearthBreath 5s ease-in-out infinite;transition:fill .4s}
+.cm-hearth .cm-hglow{fill:rgba(212,88,58,.4);filter:blur(5px);opacity:0;transition:opacity .4s}
+.empty-state:has(button:hover) .cm-hearth .cm-hdot,.empty-state:has(.btn-primary:hover) .cm-hearth .cm-hdot{animation:none;fill:#e8956a}
+.empty-state:has(button:hover) .cm-hearth .cm-hglow,.empty-state:has(.btn-primary:hover) .cm-hearth .cm-hglow{opacity:1}
+.empty-state svg.cm-hearth{width:56px;height:56px;stroke:none;margin-bottom:14px}
+.empty-state-sm svg.cm-hearth{width:30px;height:30px;stroke:none;opacity:1;margin-bottom:8px}
+@media (prefers-reduced-motion:reduce){[class*="cm-"],[class*="cm-"] *{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}}
 *:focus-visible{outline:2px solid var(--ember);outline-offset:2px;border-radius:3px}
 input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
 .data-card{transition:box-shadow .15s,transform .15s}
@@ -1519,7 +1592,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div class="dark-insight-card" style="border-radius:10px;padding:16px 20px;margin-bottom:20px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Review Intelligence</div>
-    <div class="insight-text insight-loading" id="review-insight" style="font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:88%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:72%">&nbsp;</div><div class="skeleton" style="height:13px;width:60%">&nbsp;</div></div>
+    <div class="insight-text insight-loading" id="review-insight" style="font-size:13px;line-height:1.7;padding-left:4px"><div class="cm-compose" data-w=".88,.72,.6"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div>
   </div>
 
   </div><!-- /padded-content -->
@@ -2041,7 +2114,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div class="dark-insight-card" style="border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Labor Consultant</div>
-    <div class="insight-text insight-loading" id="labor-insight" style="font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:88%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:72%">&nbsp;</div><div class="skeleton" style="height:13px;width:60%">&nbsp;</div></div>
+    <div class="insight-text insight-loading" id="labor-insight" style="font-size:13px;line-height:1.7;padding-left:4px"><div class="cm-compose" data-w=".88,.72,.6"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div>
   </div>
 
   <!-- Two col: overstaffed table + overtime alerts -->
@@ -2281,10 +2354,13 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       var col=_roleColors[i%_roleColors.length];
       var segLen=total>0?(d.cost/total)*circ-gap:0;
       if(segLen<0)segLen=0;
-      circles+='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+col+'" stroke-width="'+sw+'" stroke-dasharray="'+segLen+' '+(circ-segLen)+'" stroke-dashoffset="'+(-cumOffset)+'" transform="rotate(-90 '+cx+' '+cy+')" style="filter:drop-shadow(0 0 7px '+col+'99)"></circle>';
+      // "Donut Sweep" — each segment starts at zero length and sweeps in, one
+      // after another (inline style so the stroke-dasharray change transitions).
+      circles+='<circle class="cm-seg" data-da="'+segLen+' '+(circ-segLen)+'" cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+col+'" stroke-width="'+sw+'" stroke-dashoffset="'+(-cumOffset)+'" transform="rotate(-90 '+cx+' '+cy+')" style="filter:drop-shadow(0 0 7px '+col+'99);stroke-dasharray:0 '+circ+';transition:stroke-dasharray .9s cubic-bezier(.4,0,.2,1) '+(0.2+i*0.3).toFixed(2)+'s"></circle>';
       cumOffset+=segLen+gap;
     }
     svgEl.innerHTML=circles;
+    requestAnimationFrame(function(){requestAnimationFrame(function(){var segs=svgEl.querySelectorAll('.cm-seg');for(var s=0;s<segs.length;s++){segs[s].style.strokeDasharray=segs[s].getAttribute('data-da');}});});
     if(totalEl)totalEl.textContent=_fmtK(total);
     var lhtml='';
     for(var i=0;i<_roleData.length;i++){
@@ -2562,7 +2638,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         <div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:1px">Last updated: {{inv.last_updated}}</div>
       </div>
     </div>
-    <div class="insight-text insight-loading" id="inv-insight" style="font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:88%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:72%">&nbsp;</div><div class="skeleton" style="height:13px;width:60%">&nbsp;</div></div>
+    <div class="insight-text insight-loading" id="inv-insight" style="font-size:13px;line-height:1.7;padding-left:4px"><div class="cm-compose" data-w=".88,.72,.6"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div>
   </div>
 
   <!-- Waste offenders + Overstocked as side-by-side donut ring charts -->
@@ -2630,10 +2706,12 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     for(var i=0;i<data.length;i++){
       var d=data[i];var col=_invDonutColors[i%_invDonutColors.length];
       var segLen=total>0?(d[costKey]/total)*circ-gap:0;if(segLen<0)segLen=0;
-      circles+='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+col+'" stroke-width="'+sw+'" stroke-dasharray="'+segLen+' '+(circ-segLen)+'" stroke-dashoffset="'+(-cumOffset)+'" transform="rotate(-90 '+cx+' '+cy+')" style="filter:drop-shadow(0 0 6px '+col+'99)"></circle>';
+      // "Donut Sweep" — same staggered sweep-in as the Labor role donut.
+      circles+='<circle class="cm-seg" data-da="'+segLen+' '+(circ-segLen)+'" cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+col+'" stroke-width="'+sw+'" stroke-dashoffset="'+(-cumOffset)+'" transform="rotate(-90 '+cx+' '+cy+')" style="filter:drop-shadow(0 0 6px '+col+'99);stroke-dasharray:0 '+circ+';transition:stroke-dasharray .9s cubic-bezier(.4,0,.2,1) '+(0.2+i*0.3).toFixed(2)+'s"></circle>';
       cumOffset+=segLen+gap;
     }
     svgEl.innerHTML=circles;
+    requestAnimationFrame(function(){requestAnimationFrame(function(){var segs=svgEl.querySelectorAll('.cm-seg');for(var s=0;s<segs.length;s++){segs[s].style.strokeDasharray=segs[s].getAttribute('data-da');}});});
     if(totalEl)totalEl.textContent='$'+Math.round(total);
     var lhtml='';
     for(var i=0;i<data.length;i++){
@@ -2802,11 +2880,10 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <!-- Posting overlay -->
   <div id="posting-overlay" style="display:none;position:fixed;inset:0;z-index:999;background:rgba(14,12,10,0.88);align-items:center;justify-content:center">
     <div style="text-align:center;width:220px">
-      <div style="font-family:'Clash Display',sans-serif;font-size:32px;color:#f0ebe0;margin-bottom:6px;letter-spacing:-.5px"><svg viewBox="-8 -20 477 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/><polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/><polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/><polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/><polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/><polygon points="391,0 412,0 412,100 391,100"/><path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/><polygon points="425,58 446,58 457,100 436,100"/><circle cx="177" cy="13" r="8.5" fill="#D4583A"/></svg><span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></div>
-      <div id="posting-overlay-msg" style="font-size:15px;color:#c0b8b0;margin-bottom:8px;font-weight:500">Posting your content…</div>
-      <div style="position:relative;height:3px;border-radius:2px;background:rgba(200,75,47,.18);overflow:hidden">
-        <div style="position:absolute;top:0;left:-30%;height:100%;width:30%;background:linear-gradient(90deg,transparent,var(--ember),transparent);animation:aiv-scan 1.4s linear infinite"></div>
-      </div>
+      <!-- "Banked Ember" — the same breathing seal iOS shows on a first load,
+           in place of a static wordmark over a progress bar -->
+      <div style="margin-bottom:14px"><svg class="cm-seal" width="56" height="56" viewBox="0 0 120 120" style="overflow:visible"><defs><radialGradient id="cmg-dot-ov" cx="42%" cy="38%" r="72%"><stop offset="0" stop-color="#F2B183"/><stop offset=".45" stop-color="#E8956A"/><stop offset="1" stop-color="#C74E33"/></radialGradient><radialGradient id="cmg-glow-ov"><stop offset="0" stop-color="#D4583A" stop-opacity=".55"/><stop offset="1" stop-color="#D4583A" stop-opacity="0"/></radialGradient></defs><path class="cm-ring" d="M99.5,45 V44.5 A24,24 0 0 0 75.5,20.5 H44.5 A24,24 0 0 0 20.5,44.5 V75.5 A24,24 0 0 0 44.5,99.5 H75.5 A24,24 0 0 0 99.5,75.5 V75" fill="none" stroke="#F0EBE0" stroke-width="19"/><circle class="cm-glow" cx="99.5" cy="60" r="26" fill="url(#cmg-glow-ov)"/><circle class="cm-dot" cx="99.5" cy="60" r="10" fill="url(#cmg-dot-ov)"/></svg></div>
+      <div id="posting-overlay-msg" style="font-size:15px;color:#c0b8b0;font-weight:500">Posting your content…</div>
     </div>
   </div>
 
@@ -2824,7 +2901,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div class="dark-insight-card" style="border-radius:10px;padding:16px 20px;margin-bottom:14px;position:relative;overflow:hidden">
     <div style="position:absolute;top:0;left:0;width:3px;height:100%;background:var(--ember)"></div>
     <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:10px;padding-left:4px">Cavnar AI Marketing Brief</div>
-    <div class="insight-text insight-loading" id="mkt-insight" style="font-size:13px;line-height:1.7;padding-left:4px"><div class="skeleton" style="height:13px;margin-bottom:8px;width:90%">&nbsp;</div><div class="skeleton" style="height:13px;margin-bottom:8px;width:75%">&nbsp;</div><div class="skeleton" style="height:13px;width:55%">&nbsp;</div></div>
+    <div class="insight-text insight-loading" id="mkt-insight" style="font-size:13px;line-height:1.7;padding-left:4px"><div class="cm-compose" data-w=".9,.75,.55"><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px;margin-bottom:9px"></div><div class="cm-l" style="height:11px"></div><div class="cm-caret" style="height:16px"></div></div></div>
     <div style="margin-top:12px;padding-top:10px;border-top:1px solid #3d2e1e;font-size:11px;color:var(--ember2);padding-left:4px;display:flex;align-items:flex-start;gap:7px">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;margin-top:2px" aria-hidden="true"><rect x="1" y="9" width="3" height="6" rx="1" fill="var(--ember)"/><rect x="6.5" y="5" width="3" height="10" rx="1" fill="var(--ember)"/><rect x="12" y="1" width="3" height="14" rx="1" fill="var(--ember)"/></svg>
       <span>Restaurants posting weekly Google Business updates get <strong style="color:var(--ember)">3–7× more direction requests</strong> — use the content calendar below to stay consistent.</span>
@@ -3047,7 +3124,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div id="aiv-loading" style="display:none;text-align:center;padding:28px 0">
       <div class="aiv-pulse" style="font-size:13px;font-weight:600;color:var(--ember)" id="aiv-loading-text">Querying AI assistants...</div>
       <div class="aiv-pulse" style="font-size:11px;color:var(--ink3);margin-top:5px;animation-delay:0.3s">Running 3 local search queries</div>
-      <div id="aiv-scan-track"><div id="aiv-scan-bar"></div></div>
+      <div id="aiv-radar" style="margin-top:14px"></div>
     </div>
 
     <div id="aiv-results" style="display:none">
@@ -3111,7 +3188,8 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
   {% if not competitor_data %}
     <div class="card empty-state" style="padding:52px 24px">
-      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5"/><circle cx="17" cy="15" r="4" opacity=".4"/><path d="M14 9h6M17 6v6" opacity=".4"/></svg>
+      <!-- "Cold Hearth" — gray seal, cold coal; hovering the CTA warms it -->
+      <svg class="cm-hearth" viewBox="0 0 120 120" aria-hidden="true"><path class="cm-hring" d="M99.5,45 V44.5 A24,24 0 0 0 75.5,20.5 H44.5 A24,24 0 0 0 20.5,44.5 V75.5 A24,24 0 0 0 44.5,99.5 H75.5 A24,24 0 0 0 99.5,75.5 V75" stroke-width="19"/><circle class="cm-hglow" cx="99.5" cy="60" r="22"/><circle class="cm-hdot" cx="99.5" cy="60" r="10"/></svg>
       <div class="empty-state-title">No competitor data yet</div>
       <div class="empty-state-sub">See how your ratings, review volume, and reputation stack up against nearby restaurants. Takes about 30 seconds.</div>
       <button onclick="refreshCompetitorIntel(this)" class="btn-primary" style="padding:8px 20px">Fetch competitor data</button>
@@ -3820,8 +3898,10 @@ function _appendAskCavnarMessage(text, isUser) {
 function _appendAskCavnarLoadingBubble() {
   var messages = document.getElementById('ask-cavnar-messages');
   var bubble = document.createElement('div');
-  bubble.style.cssText = 'align-self:flex-start;background:var(--paper3);padding:11px 14px;border-radius:12px 12px 12px 2px;width:64px';
-  bubble.innerHTML = '<div class="pulse-bar-track"><div class="pulse-bar"></div></div>';
+  bubble.style.cssText = 'align-self:flex-start;background:var(--paper3);padding:12px 14px;border-radius:12px 12px 12px 2px;width:170px';
+  // "Composing" — an ember caret writing lines into place while Cavnar
+  // thinks (mirrors iOS AskCavnarView's LoadingBubble).
+  bubble.innerHTML = cavnarComposingHtml([.8,.45,.65],7,8);
   messages.appendChild(bubble);
   messages.scrollTop = messages.scrollHeight;
   return bubble;
@@ -3965,6 +4045,41 @@ function toggleRows(tbodyId, btnId, total) {
   }
 }
 function toast(msg,type){var t=document.getElementById('toast');t.textContent=msg;t.className='toast';if(type)t.classList.add('toast-'+type);void t.offsetWidth;t.classList.add('show');if(_toastTimer)clearTimeout(_toastTimer);_toastTimer=setTimeout(function(){t.classList.remove('show');_toastTimer=null;},3600);}
+
+/* ── Cavnar motion language: markup builders + the per-frame engine ──
+   Same seal geometry as brand/assets/seal-color.svg and the iOS
+   CavnarSealRingShape. Every builder returns markup; anything that needs
+   per-frame math (Composing) or a restart every cycle (Week, Ledger) is
+   picked up automatically by the MutationObserver at the bottom. */
+var CM_RING='M99.5,45 V44.5 A24,24 0 0 0 75.5,20.5 H44.5 A24,24 0 0 0 20.5,44.5 V75.5 A24,24 0 0 0 44.5,99.5 H75.5 A24,24 0 0 0 99.5,75.5 V75';
+var CM_DEFS='<defs><radialGradient id="cmg-dot" cx="42%" cy="38%" r="72%"><stop offset="0" stop-color="#F2B183"/><stop offset=".45" stop-color="#E8956A"/><stop offset="1" stop-color="#C74E33"/></radialGradient><radialGradient id="cmg-glow"><stop offset="0" stop-color="#D4583A" stop-opacity=".55"/><stop offset="1" stop-color="#D4583A" stop-opacity="0"/></radialGradient></defs>';
+var CM_GLYPH_TOAST='<path d="M7,3 v6 M4,3 v4 a3,3 0 0 0 6,0 v-4 M7,13 v8 M17,3 c-2,0-3,3-3,6 v3 h3 v9" fill="none" stroke="#f9592a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>';
+var CM_GLYPH_GOOGLE='<path d="M3,21 h18 M5,21 v-11 h6 v11 M13,21 v-16 h6 v16 M7,13 h2 M7,16 h2 M15,8 h2 M15,11 h2 M15,14 h2 M15,17 h2" fill="none" stroke="#4285F4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>';
+function cavnarSealSvg(size,opts){opts=opts||{};var ring=opts.ring||'currentColor';return '<svg class="'+(opts.breathe?'cm-seal':'')+'" width="'+size+'" height="'+size+'" viewBox="0 0 120 120" style="overflow:visible;vertical-align:middle">'+CM_DEFS+'<path class="cm-ring" d="'+CM_RING+'" fill="none" stroke="'+ring+'" stroke-width="19"/><circle class="cm-glow" cx="99.5" cy="60" r="26" fill="url(#cmg-glow)"/><circle class="cm-dot" cx="99.5" cy="60" r="10" fill="url(#cmg-dot)"/></svg>';}
+function cavnarHearthSvg(){return '<svg class="cm-hearth" viewBox="0 0 120 120" aria-hidden="true"><path class="cm-hring" d="'+CM_RING+'" stroke-width="19"/><circle class="cm-hglow" cx="99.5" cy="60" r="22"/><circle class="cm-hdot" cx="99.5" cy="60" r="10"/></svg>';}
+function cavnarComposingHtml(widths,lineH,gap,style){widths=widths||[1,.82,.93,.6];lineH=lineH||8;gap=gap||10;var h='';for(var i=0;i<widths.length;i++){h+='<div class="cm-l" style="height:'+lineH+'px;margin-bottom:'+(i<widths.length-1?gap:0)+'px"></div>';}return '<div class="cm-compose" data-w="'+widths.join(',')+'" style="'+(style||'')+'">'+h+'<div class="cm-caret" style="height:'+(lineH+5)+'px"></div></div>';}
+function cavnarRadarHtml(caption,size){size=size||170;var blips=[[152,77,.6],[70,135,1.9],[160,145,3.1],[82,67,4.2]],b='';for(var i=0;i<blips.length;i++){b+='<g class="cm-blip" style="animation-delay:'+blips[i][2]+'s"><circle cx="'+blips[i][0]+'" cy="'+blips[i][1]+'" r="9" fill="rgba(212,88,58,.25)"/><circle cx="'+blips[i][0]+'" cy="'+blips[i][1]+'" r="4.5" fill="#E8956A"/></g>';}return '<div class="cm-radar" style="text-align:center"><svg width="'+size+'" height="'+size+'" viewBox="0 0 220 220" style="overflow:visible"><circle cx="110" cy="110" r="80" fill="none" stroke="var(--paper3)" stroke-opacity=".55"/><circle cx="110" cy="110" r="50" fill="none" stroke="var(--paper3)" stroke-opacity=".55"/><circle cx="110" cy="110" r="20" fill="none" stroke="var(--paper3)"/><line x1="30" y1="110" x2="190" y2="110" stroke="var(--paper3)" stroke-opacity=".45"/><line x1="110" y1="30" x2="110" y2="190" stroke="var(--paper3)" stroke-opacity=".45"/><circle class="cm-rip" cx="110" cy="110"/><circle class="cm-rip" cx="110" cy="110" style="animation-delay:1s"/><circle class="cm-rip" cx="110" cy="110" style="animation-delay:2s"/>'+b+'<rect x="104" y="104" width="12" height="12" fill="var(--ink)"/></svg>'+(caption?'<div class="cm-cap">'+caption+'</div>':'')+'</div>';}
+function cavnarWeekHtml(caption){var blocks=[[0,0],[0,1],[0,3],[0,5],[0,6],[1,1],[1,2],[1,4],[1,5],[2,0],[2,2],[2,3],[2,6],[2,4,1],[3,6,1],[3,1],[3,3,1]],h='',days=['S','M','T','W','T','F','S'],d='';for(var i=0;i<7;i++){d+='<text x="'+(30+i*32)+'" y="40" font-family="Space Grotesk,sans-serif" font-size="10" fill="var(--ink3)">'+days[i]+'</text>';}for(var j=0;j<blocks.length;j++){var bl=blocks[j];h+='<rect class="cm-blk" style="animation-delay:'+(0.2+j*0.16).toFixed(2)+'s" x="'+(26+bl[1]*32)+'" y="'+(52+bl[0]*26)+'" width="22" height="18" rx="4" fill="'+(bl[2]?'var(--ember)':'rgba(122,115,106,.45)')+'"/>';}return '<div class="cm-week cm-run" data-cycle="5.5" style="text-align:center"><svg width="270" height="170" viewBox="0 0 270 170" style="overflow:visible;max-width:100%"><line x1="24" y1="18" x2="246" y2="18" stroke="var(--paper3)" stroke-width="1.5"/><line class="cm-dash" x1="24" y1="18" x2="246" y2="18"/>'+d+h+(caption?'<text x="26" y="163" font-family="Space Grotesk,sans-serif" font-size="9.5" font-weight="600" letter-spacing="1" fill="var(--ink3)">'+caption.toUpperCase()+'</text>':'')+'</svg></div>';}
+function cavnarLedgerHtml(){var rows=[['PRODUCE',132],['PROTEIN',150],['DAIRY',88],['DRY',110],['BAR',60,1]],h='';for(var i=0;i<rows.length;i++){var y=21+i*26;h+='<text x="20" y="'+(y+9)+'" font-family="Space Grotesk,sans-serif" font-size="10" letter-spacing="1" fill="var(--ink3)">'+rows[i][0]+'</text><rect x="90" y="'+y+'" width="150" height="10" rx="5" fill="rgba(122,115,106,.18)"/><rect class="cm-bar" style="animation-delay:'+(0.2+i*0.3)+'s" x="90" y="'+y+'" width="'+rows[i][1]+'" height="10" rx="5" fill="'+(rows[i][2]?'var(--ember)':'rgba(122,115,106,.5)')+'"/>';}return '<div class="cm-ledger cm-run" data-cycle="5.5"><svg width="270" height="150" viewBox="0 0 270 150" style="overflow:visible;max-width:100%"><defs><clipPath id="cm-ledger-clip"><rect x="90" y="14" width="160" height="128"/></clipPath><linearGradient id="cmg-sheen" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#F0EBE0" stop-opacity="0"/><stop offset=".5" stop-color="#F0EBE0" stop-opacity=".14"/><stop offset="1" stop-color="#F0EBE0" stop-opacity="0"/></linearGradient></defs>'+h+'<g clip-path="url(#cm-ledger-clip)"><rect class="cm-sheen" x="90" y="14" width="34" height="140" fill="url(#cmg-sheen)"/></g></svg></div>';}
+function cavnarPostedHtml(label){return '<div class="cm-posted" style="display:inline-block;text-align:center"><svg width="220" height="64" viewBox="0 0 220 64" style="overflow:visible"><rect x="0" y="12" width="56" height="40" rx="10" fill="var(--paper2)" stroke="var(--paper3)"/><line x1="12" y1="26" x2="42" y2="26" stroke="var(--ink3)" stroke-opacity=".5" stroke-width="2.5" stroke-linecap="round"/><line x1="12" y1="32" x2="32" y2="32" stroke="var(--ink3)" stroke-opacity=".5" stroke-width="2.5" stroke-linecap="round"/><line x1="12" y1="38" x2="38" y2="38" stroke="var(--ink3)" stroke-opacity=".5" stroke-width="2.5" stroke-linecap="round"/><line x1="56" y1="32" x2="166" y2="32" stroke="var(--paper3)" stroke-width="2"/><line class="cm-trail" pathLength="100" x1="56" y1="32" x2="166" y2="32"/><g class="cm-pdot"><circle cx="56" cy="32" r="11" fill="rgba(212,88,58,.3)"/><circle cx="56" cy="32" r="5" fill="#E8956A"/></g><circle class="cm-cring" cx="186" cy="32" r="20"/><path class="cm-check" pathLength="100" d="M176,32 l7,7 l13,-14"/></svg><div class="cm-cap cm-plabel">'+label+'</div></div>';}
+function cavnarHandshakeHtml(state,glyph,caption,id){var ok=state==='failed'?'<path d="M130.5,45.5 l9,9 M139.5,45.5 l-9,9" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>':'<path d="M129.5,50 l4,4 l7,-8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>';return '<div class="cm-hs is-'+state+'"'+(id?' id="'+id+'"':'')+' style="text-align:center"><svg width="270" height="100" viewBox="0 0 270 100" style="overflow:visible;max-width:100%"><line class="cm-dashl" x1="76" y1="50" x2="194" y2="50"/><line class="cm-solid" x1="76" y1="50" x2="194" y2="50"/><rect class="cm-tile" x="20" y="24" width="52" height="52" rx="14"/><g transform="translate(29,33) scale(.283)"><path d="'+CM_RING+'" fill="none" stroke="var(--ink)" stroke-width="19"/><circle cx="99.5" cy="60" r="11" fill="#E8956A"/></g><rect class="cm-tile" x="198" y="24" width="52" height="52" rx="14"/><g transform="translate(212,38)">'+glyph+'</g><g class="cm-ok"><circle cx="135" cy="50" r="11" fill="var(--ember)"/>'+ok+'</g></svg>'+(caption?'<div class="cm-cap">'+caption+'</div>':'')+'</div>';}
+/* Floating bottom-right card for a "working" or "just happened" moment that
+   has no natural home on the page (Google OAuth popup, header-button refresh). */
+var _cmFloatTimer=null;
+function cmFloat(html,autoHideMs){var f=document.getElementById('cm-float');if(!f){f=document.createElement('div');f.id='cm-float';document.body.appendChild(f);}f.innerHTML=html;void f.offsetWidth;f.classList.add('show');if(_cmFloatTimer){clearTimeout(_cmFloatTimer);_cmFloatTimer=null;}if(autoHideMs){_cmFloatTimer=setTimeout(cmFloatHide,autoHideMs);}}
+function cmFloatHide(){var f=document.getElementById('cm-float');if(f)f.classList.remove('show');}
+/* Posted: play the check, then hand the element its final content. */
+function cmPostedThen(el,label,finalHtml,ms){if(!el)return;el.innerHTML=cavnarPostedHtml(label);setTimeout(function(){el.innerHTML=finalHtml;},ms||2100);}
+/* Engine — per-frame math for Composing, and the every-cycle restart for
+   Week/Ledger (CSS fill-mode:forwards animations can't loop with a stagger, so the
+   .cm-run class is re-applied each cycle instead). */
+var _cmLive=[],_cmRunning=false;
+function _cmRegister(el){if(!el||_cmLive.indexOf(el)>=0)return;el._cmT0=performance.now();_cmLive.push(el);if(!_cmRunning){_cmRunning=true;requestAnimationFrame(_cmTick);}}
+function _cmTick(now){for(var i=_cmLive.length-1;i>=0;i--){var el=_cmLive[i];if(!el.isConnected){_cmLive.splice(i,1);continue;}if(el.classList.contains('cm-compose'))_cmComposeFrame(el,now);else _cmCycleFrame(el,now);}if(_cmLive.length){requestAnimationFrame(_cmTick);}else{_cmRunning=false;}}
+function _cmComposeFrame(el,now){var t=(now-el._cmT0)/1000;var ws=el._cmW||(el._cmW=(el.getAttribute('data-w')||'1,.82,.93,.6').split(',').map(parseFloat));var grow=.85,hold=1.1,fade=.3,n=ws.length,cycle=n*grow+hold+fade,local=t%cycle;var lines=el._cmLines||(el._cmLines=el.querySelectorAll('.cm-l'));var caret=el._cmCaret||(el._cmCaret=el.querySelector('.cm-caret'));var W=el.clientWidth;if(!W||!lines.length)return;var active=Math.min(Math.floor(local/grow),n-1),holding=local>=n*grow;for(var i=0;i<n;i++){var x=Math.min(Math.max((local-i*grow)/grow,0),1),p=1-Math.pow(1-x,3);lines[i].style.width=Math.max(2,W*ws[i]*p)+'px';}var fo=Math.min(Math.max((local-(n*grow+hold))/fade,0),1);el.style.opacity=1-fo;if(caret){var xa=Math.min(Math.max((local-active*grow)/grow,0),1),pa=1-Math.pow(1-xa,3);caret.style.left=(W*ws[active]*pa+3)+'px';caret.style.top=(lines[active].offsetTop-2.5)+'px';caret.style.opacity=(!holding||(t%0.7<0.38))?1:0;}}
+function _cmCycleFrame(el,now){var cyc=parseFloat(el.getAttribute('data-cycle')||'0');if(!cyc)return;if(el._cmNext===undefined)el._cmNext=now+cyc*1000;if(now>=el._cmNext){el._cmNext=now+cyc*1000;el.classList.remove('cm-run');void el.offsetWidth;el.classList.add('cm-run');}}
+function cavnarMotionInit(root){root=root||document;var els=root.querySelectorAll?root.querySelectorAll('.cm-compose,[data-cycle]'):[];for(var i=0;i<els.length;i++)_cmRegister(els[i]);if(root.matches&&root.matches('.cm-compose,[data-cycle]'))_cmRegister(root);}
+document.addEventListener('DOMContentLoaded',function(){cavnarMotionInit(document);if(window.MutationObserver){new MutationObserver(function(muts){for(var m=0;m<muts.length;m++){var added=muts[m].addedNodes;for(var a=0;a<added.length;a++){if(added[a].nodeType===1)cavnarMotionInit(added[a]);}}}).observe(document.body,{childList:true,subtree:true});}});
 function disconnectInstagram(btn){
   if(btn){btn.textContent='Disconnecting…';btn.style.opacity='0.6';btn.disabled=true;}
   fetch('/api/instagram-disconnect',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
@@ -3998,6 +4113,7 @@ function _setToastFormBanner(msg, type){
   if (!msg) { b.style.display = 'none'; return; }
   b.innerHTML = msg;
   b.style.display = 'block';
+  if (type === 'hs'){ b.style.background='transparent'; b.style.border='none'; b.style.color='var(--ink3)'; return; }
   if (type === 'ok'){ b.style.background='var(--green-bg)'; b.style.border='1px solid var(--green)'; b.style.color='var(--green)'; }
   else if (type === 'warn'){ b.style.background='var(--amber-bg)'; b.style.border='1px solid var(--amber)'; b.style.color='var(--amber)'; }
   else { b.style.background='var(--red-bg)'; b.style.border='1px solid var(--red)'; b.style.color='var(--red)'; }
@@ -4009,24 +4125,26 @@ function toastSaveCredentials(btn){
   if (!cid.trim()||!csec.trim()||!guid.trim()){ _setToastFormBanner('All three fields are required.','err'); return; }
   btn.disabled = true;
   btn.textContent = 'Testing connection…';
-  _setToastFormBanner('','');
+  // "Handshake" — dashes march between the seal and Toast while the
+  // credentials are verified; solid ember on success, stopped red on failure.
+  _setToastFormBanner(cavnarHandshakeHtml('connecting',CM_GLYPH_TOAST,'Verifying · Toast POS'),'hs');
   fetch('/api/toast/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({client_id:cid.trim(),client_secret:csec.trim(),restaurant_guid:guid.trim()})})
     .then(function(r){return r.json();})
     .then(function(d){
       btn.disabled = false;
       if (d.ok){
-        _setToastFormBanner('✓ Connected! Starting initial sync…','ok');
+        _setToastFormBanner(cavnarHandshakeHtml('connected',CM_GLYPH_TOAST,'Connected · starting initial sync'),'hs');
         fetch('/api/toast/sync',{method:'POST'});
-        setTimeout(function(){ window.location.reload(); }, 1200);
+        setTimeout(function(){ window.location.reload(); }, 1800);
       } else {
         btn.textContent = 'Test & Connect';
-        _setToastFormBanner('✗ '+(d.error||'Unknown error'),'err');
+        _setToastFormBanner(cavnarHandshakeHtml('failed',CM_GLYPH_TOAST,'✗ '+(d.error||'Unknown error')),'hs');
       }
     })
     .catch(function(){
       btn.disabled = false;
       btn.textContent = 'Test & Connect';
-      _setToastFormBanner('✗ Request failed — check your connection.','err');
+      _setToastFormBanner(cavnarHandshakeHtml('failed',CM_GLYPH_TOAST,'✗ Request failed — check your connection.'),'hs');
     });
 }
 function toastSyncNow(btn){
@@ -4185,13 +4303,18 @@ function igConnect(){
 
 function gmbConnect(){
   var popup = window.open('/auth/google/connect','gmb_connect','width=500,height=600,left=200,top=100');
+  // "Handshake" — the OAuth round trip happens in the popup, so the marching
+  // dashes live in a floating card here until the popup reports back.
+  cmFloat(cavnarHandshakeHtml('connecting',CM_GLYPH_GOOGLE,'Connecting · Google Business'));
   function gmbHandler(e){
     if(!e.data || !e.data.gmb) return;
     window.removeEventListener('message', gmbHandler);
     if(e.data.gmb === 'connected'){
+      cmFloat(cavnarHandshakeHtml('connected',CM_GLYPH_GOOGLE,'Connected · Google Business'),1600);
       toast('Google Business connected ✓','success');
-      setTimeout(function(){sessionStorage.setItem('_gbpReload','1');location.reload();}, 1000);
+      setTimeout(function(){sessionStorage.setItem('_gbpReload','1');location.reload();}, 1600);
     } else {
+      cmFloat(cavnarHandshakeHtml('failed',CM_GLYPH_GOOGLE,'Connection failed'),2600);
       toast('Connection failed: ' + (e.data.msg || 'unknown error'),'error');
     }
   }
@@ -5286,7 +5409,9 @@ function approveR(id){
     card.classList.add('approved');
     card.classList.remove('urgent');
     if(d.auto_posted){
-      document.querySelector('#rc-'+id+' .draft-actions').innerHTML='<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted to Google</span>';
+      // "Posted" — the ember leaves the draft, travels the wire, and lands
+      // as a checkmark; only on the real 200, never optimistic.
+      cmPostedThen(document.querySelector('#rc-'+id+' .draft-actions'),'Reply posted to Google','<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted to Google</span>');
       updateReviewStats();
       toast('Response approved and posted to Google ✓ — now live','success');
     } else {
@@ -5324,7 +5449,7 @@ function markPosted(id, btn){
   fetch('/api/mark-posted/'+id,{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(d.ok){
       var actions = document.getElementById('draft-actions-'+id);
-      if(actions) actions.innerHTML='<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>';
+      cmPostedThen(actions,'Marked as posted','<span style="font-size:11px;color:var(--green);font-weight:500">✓ Posted</span>');
       if(platform !== 'yelp') toast('Marked as posted','success');
       updateReviewStats();
     }
@@ -5468,7 +5593,7 @@ function postToInstagram(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Instagram ✓','success');markTopicPosted('IG');clearMktOutput();loadMktPerformance();}
+      if(d.ok){toast('Posted to Instagram ✓','success');markTopicPosted('IG');_cmMktPosted('Posted to Instagram');loadMktPerformance();}
       else{toast(d.error||'Post failed — try again','error');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
@@ -5491,13 +5616,21 @@ function postToFacebook(){
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
-      if(d.ok){toast('Posted to Facebook ✓','success');markTopicPosted('FB');clearMktOutput();loadMktPerformance();}
+      if(d.ok){toast('Posted to Facebook ✓','success');markTopicPosted('FB');_cmMktPosted('Posted to Facebook');loadMktPerformance();}
       else{toast(d.error||'Post failed — try again','error');}
     }).catch(function(){
       if(overlay)overlay.style.display='none';
       if(btn){btn.style.opacity='1';btn.disabled=false;}
       toast('Post failed — check connection','error');
     });
+}
+// "Posted" in the output box itself — plays the ember-to-checkmark once the
+// real POST comes back ok, then clears the box as before.
+function _cmMktPosted(label){
+  var el=document.getElementById('mkoutput');
+  if(!el){clearMktOutput();return;}
+  el.innerHTML='<div contenteditable="false" style="text-align:center;padding:10px 0;pointer-events:none;user-select:none">'+cavnarPostedHtml(label)+'</div>';
+  setTimeout(clearMktOutput,2200);
 }
 function clearMktOutput(){
   var el=document.getElementById('mkoutput');
@@ -5798,6 +5931,7 @@ function _schedReset(btnEl) {
   if (btnEl) btnEl.innerHTML = 'Generate optimized schedule<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   if (btnEl) btnEl.disabled = false;
   if (_schedPollInterval) { clearInterval(_schedPollInterval); _schedPollInterval = null; }
+  var _wk = document.getElementById('sched-week'); if (_wk) _wk.remove();
 }
 
 function _schedHandleResult(data) {
@@ -5812,6 +5946,10 @@ function _schedHandleResult(data) {
     _schedBtn.style.color = '#fff';
     _schedBtn.disabled = false;
   }
+  // "Posted" — the week grid gives way to the ember-to-checkmark for a beat,
+  // then clears, once the real result is in hand.
+  var _wkDone = document.getElementById('sched-week');
+  if (_wkDone) { _wkDone.innerHTML = cavnarPostedHtml('Schedule ready'); setTimeout(function(){ var w = document.getElementById('sched-week'); if (w) w.remove(); }, 2400); }
 
   _schedCsvCache = data.schedule_csv || '';
 
@@ -5927,6 +6065,13 @@ function generateSchedule(btn) {
   var _schedStart = Date.now();
   var _spinner = '<span style="display:inline-block;width:13px;height:13px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;vertical-align:middle;animation:spin .7s linear infinite"></span>';
   btn.innerHTML = 'Generating… ' + _spinner;
+  // "Building the Week" — shifts fill a 7-day grid while an ember dash
+  // travels the header, right under the button that started it (removed
+  // again by _schedReset / _schedHandleResult).
+  var _oldWk = document.getElementById('sched-week'); if (_oldWk) _oldWk.remove();
+  var _wk = document.createElement('div'); _wk.id = 'sched-week'; _wk.style.cssText = 'margin-top:14px';
+  _wk.innerHTML = cavnarWeekHtml("Building next week's schedule");
+  btn.insertAdjacentElement('afterend', _wk);
 
   // Update elapsed time every 5s so owner knows it's working
   var _elapsedTimer = setInterval(function() {
@@ -6077,6 +6222,9 @@ function loadInvInsight(){
   invLoaded=true;
   var el=document.getElementById('inv-insight');
   if(!el)return;
+  // "Counting the Pantry" — the Food Cost analysis wait is a ledger filling
+  // in category by category (over-budget one in ember), not anonymous bars.
+  if(el.classList.contains('insight-loading'))el.innerHTML='<div style="text-align:center">'+cavnarLedgerHtml()+'</div>';
   loadInvTrend();
   var fiveMin=5*60*1000;
   try{
@@ -6703,7 +6851,13 @@ function toggleExtraReviews(idx, btn){
 function refreshCompetitorIntel(btn){
   var _rs='<span style="display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;vertical-align:middle;animation:spin .7s linear infinite"></span>';
   btn.innerHTML='Fetching... '+_rs;btn.disabled=true;btn.style.opacity='0.7';
-  function _resetBtn(){btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';}
+  // "Reading the Room" — a radar finding competitors as ember blips for the
+  // ~30s the job runs: inside the empty-state card when that's where the
+  // button lives, otherwise as a floating card so the header stays intact.
+  var _inEmpty=btn.closest&&btn.closest('.empty-state');
+  if(_inEmpty){var _rad=document.createElement('div');_rad.id='comp-radar';_rad.style.cssText='margin-top:22px';_rad.innerHTML=cavnarRadarHtml('Scanning nearby restaurants');_inEmpty.appendChild(_rad);}
+  else{cmFloat(cavnarRadarHtml('Scanning nearby restaurants',130));}
+  function _resetBtn(){btn.textContent='Refresh';btn.disabled=false;btn.style.opacity='1';var _r=document.getElementById('comp-radar');if(_r)_r.remove();cmFloatHide();}
   fetch('/api/refresh-competitor-intel',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
     if(!d.ok){_resetBtn();toast('Error: '+(d.error||'failed'),'error');return;}
     var jobId = d.job_id;
@@ -6738,6 +6892,10 @@ function runAIVisibility(btn) {
   document.getElementById('aiv-idle').style.display = 'none';
   document.getElementById('aiv-loading').style.display = 'block';
   document.getElementById('aiv-results').style.display = 'none';
+  // "Reading the Room" — the same radar the Competitors tab uses for its
+  // fetch, here for the ~10s of live AI queries.
+  var _aivRadar = document.getElementById('aiv-radar');
+  if (_aivRadar) _aivRadar.innerHTML = cavnarRadarHtml('', 150);
   var msgs = ['Querying AI assistants...', 'Running local search queries...', 'Scoring GBP completeness...', 'Building your checklist...'];
   var mi = 0;
   var ticker = setInterval(function() {
@@ -7330,8 +7488,9 @@ function emptyStateHtml(title, sub, onDark){
   /* Shared compact empty/error state — replaces the scattered bare-text
      "No data yet" / "Analysis unavailable" strings with one consistent look. */
   var cls = 'empty-state-sm' + (onDark ? ' on-dark' : '');
-  var icon = '<svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-    + '<path d="M3 17l5-5 4 3 6-7"></path><path d="M3 21h18"></path></svg>';
+  // "Cold Hearth" — one consistent on-brand empty state instead of a
+  // generic chart glyph (see cavnarHearthSvg / the .cm-hearth styles).
+  var icon = cavnarHearthSvg();
   return '<div class="' + cls + '">' + icon
     + '<div class="es-title">' + title + '</div>'
     + (sub ? '<div class="es-sub">' + sub + '</div>' : '')
@@ -7931,7 +8090,9 @@ document.addEventListener('click', function(e) {
       // badge: any alert newer than last-read time
       var readAt = parseInt(localStorage.getItem(STORAGE_KEY) || '0', 10);
       var hasNew = _items.some(function(n){ return new Date(n.fired_at + 'Z').getTime() > readAt; });
-      if (hasNew) document.getElementById('notif-badge').style.display = 'block';
+      // "Alert Fired" — the badge pops in with one ember ripple rather than
+      // just being there.
+      if (hasNew) { var _nb = document.getElementById('notif-badge'); _nb.style.display = 'block'; _nb.classList.remove('cm-pop'); void _nb.offsetWidth; _nb.classList.add('cm-pop'); }
     }).catch(function(){
       _loaded = true;
       document.getElementById('notif-list').innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--ink3)">Could not load alerts.</div>';

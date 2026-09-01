@@ -48,7 +48,7 @@ struct IntelView: View {
                                 content(summary)
                             }
                         } else if viewModel.isLoading {
-                            ProgressView().padding(.top, 60)
+                            CavnarLoadingSeal().padding(.top, 60).frame(maxWidth: .infinity)
                         } else if let error = viewModel.errorMessage {
                             VStack(spacing: 8) {
                                 Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
@@ -64,9 +64,9 @@ struct IntelView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 24)
             }
+            .cavnarEmberRefreshable { await viewModel.load() }
         }
         .cavnarModuleBackground()
-        .refreshable { await viewModel.load() }
         .sheet(isPresented: $showAddCompetitor) {
             AddCompetitorSheet(viewModel: viewModel)
         }
@@ -101,25 +101,32 @@ struct IntelView: View {
         }
     }
 
+    /// "Cold Hearth" while there's nothing here (the CTA is what lights
+    /// the ember), swapped for "Reading the Room" — a radar finding
+    /// competitors as ember blips — for the ~30s the fetch job runs.
     private var emptyState: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "binoculars")
-                .font(.system(size: 32))
-                .foregroundStyle(Color.cavnarInk3)
-            Text("No competitor data yet")
-                .font(.cavnarBody(14, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
-            Text("See how your ratings, review volume, and reputation stack up against nearby restaurants. Takes about 30 seconds.")
-                .font(.cavnarBody(12))
-                .foregroundStyle(Color.cavnarInk3)
-                .multilineTextAlignment(.center)
-            refreshButton(label: "Fetch competitor data")
+        VStack(spacing: 10) {
+            if viewModel.isRefreshing {
+                CavnarRadarSweep(caption: "Scanning nearby restaurants")
+                    .padding(.top, 50)
+                    .transition(.opacity)
+            } else {
+                CavnarEmptyHearth(
+                    title: "No competitor data yet",
+                    message: "See how your ratings, review volume, and reputation stack up against nearby restaurants. Takes about 30 seconds.",
+                    ctaLabel: "Fetch competitor data"
+                ) {
+                    Task { await viewModel.refreshCompetitors() }
+                }
+                .padding(.top, 16)
+                .transition(.opacity)
+            }
             if let error = viewModel.refreshError {
                 Text(error).font(.cavnarBody(11)).foregroundStyle(Color.cavnarRed)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 60)
+        .animation(.easeOut(duration: 0.3), value: viewModel.isRefreshing)
     }
 
     @ViewBuilder
@@ -501,6 +508,11 @@ struct IntelView: View {
             }
             if let error = viewModel.refreshError {
                 Text(error).font(.cavnarBody(11)).foregroundStyle(Color.cavnarRed)
+            }
+            if viewModel.isRefreshing {
+                CavnarRadarSweep(size: 140, caption: "Re-reading the neighborhood")
+                    .padding(.vertical, 10)
+                    .transition(.opacity)
             }
             VStack(spacing: 0) {
                 ForEach(Array(summary.competitors.enumerated()), id: \.element.id) { index, c in

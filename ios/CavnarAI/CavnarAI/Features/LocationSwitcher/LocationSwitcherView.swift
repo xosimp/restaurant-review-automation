@@ -40,9 +40,12 @@ struct LocationSwitcherView: View {
             .scrollContentBackground(.hidden)
             .cavnarModuleBackground()
             .overlay {
-                if viewModel.isLoading { ProgressView() }
+                if viewModel.isLoading { CavnarLoadingSeal() }
                 else if viewModel.locations.isEmpty && viewModel.errorMessage == nil {
-                    ContentUnavailableView("No other locations", systemImage: "building.2")
+                    CavnarEmptyHearth(
+                        title: "No other locations",
+                        message: "Additional restaurants in your group will appear here."
+                    )
                 }
             }
             .navigationTitle(viewModel.groupName ?? "Locations")

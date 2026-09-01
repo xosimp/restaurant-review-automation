@@ -120,7 +120,11 @@ struct NotificationsListView: View {
                     .padding(.top, 60)
                     .frame(maxWidth: .infinity)
                 } else if viewModel.notifications.isEmpty {
-                    ContentUnavailableView("No alerts yet", systemImage: "bell")
+                    CavnarEmptyHearth(
+                        title: "No alerts yet",
+                        message: "Low ratings, labor overages, and anything else worth knowing about will show up here."
+                    )
+                    .padding(.top, 40)
                 } else {
                     List(viewModel.notifications) { item in
                         Button {
@@ -163,7 +167,7 @@ struct NotificationsListView: View {
             // content it has.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .cavnarModuleBackground()
-            .refreshable { await viewModel.load() }
+            .cavnarEmberRefreshable { await viewModel.load() }
             .navigationTitle("Notifications")
         }
     }

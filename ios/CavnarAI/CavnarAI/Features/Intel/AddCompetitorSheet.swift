@@ -60,7 +60,7 @@ struct AddCompetitorSheet: View {
                 if let addingPlaceId, let addingResult = results.first(where: { $0.placeId == addingPlaceId }) {
                     addingStatus(addingResult)
                 } else if isSearching {
-                    ProgressView().frame(maxWidth: .infinity).padding(.top, 40)
+                    CavnarLoadingSeal(size: 32).frame(maxWidth: .infinity).padding(.top, 40)
                 } else if hasSearchedOnce && results.isEmpty {
                     Text("No matches found")
                         .font(.cavnarBody(13))

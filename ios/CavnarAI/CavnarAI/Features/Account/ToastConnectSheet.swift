@@ -15,6 +15,11 @@ struct ToastConnectSheet: View {
     @State private var clientSecret = ""
     @State private var restaurantGuid = ""
     @FocusState private var focusedField: ToastConnectField?
+    // "Handshake" (see CavnarMotion): nil until the first attempt, then
+    // marching dashes while the credentials are verified, solid ember on
+    // success (held for a beat before the sheet dismisses itself), or a
+    // stopped red line on failure until the next attempt.
+    @State private var handshake: CavnarHandshakeState?
 
     private var canSubmit: Bool {
         !viewModel.isConnectingToast && !clientId.isEmpty && !clientSecret.isEmpty && !restaurantGuid.isEmpty
@@ -41,6 +46,14 @@ struct ToastConnectSheet: View {
                         autocapitalization: .never, focus: $focusedField, field: .restaurantGuid
                     )
 
+                    if let handshake {
+                        CavnarHandshake(
+                            providerSymbol: "fork.knife", providerTint: Color(red: 0.98, green: 0.35, blue: 0.15),
+                            state: handshake, caption: handshakeCaption(handshake)
+                        )
+                        .transition(.opacity)
+                    }
+
                     if let error = viewModel.connectToastError {
                         Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
                     }
@@ -48,14 +61,21 @@ struct ToastConnectSheet: View {
                     CavnarFormButtonPair { matchedWidth in
                         Button {
                             Task {
+                                withAnimation(.easeOut(duration: 0.25)) { handshake = .connecting }
                                 await viewModel.connectToast(
                                     clientId: clientId, clientSecret: clientSecret, restaurantGuid: restaurantGuid
                                 )
-                                if viewModel.connectToastSucceeded { dismiss() }
+                                if viewModel.connectToastSucceeded {
+                                    handshake = .connected
+                                    try? await Task.sleep(for: .seconds(1.2))
+                                    dismiss()
+                                } else {
+                                    handshake = .failed
+                                }
                             }
                         } label: {
                             if viewModel.isConnectingToast {
-                                ProgressView().tint(Color.cavnarInk)
+                                CavnarShimmerText(text: "Connecting…")
                             } else {
                                 Text("Connect Toast")
                             }
@@ -73,6 +93,14 @@ struct ToastConnectSheet: View {
             .navigationTitle("Connect Toast")
             .navigationBarTitleDisplayMode(.inline)
             .keyboardNavToolbar($focusedField)
+        }
+    }
+
+    private func handshakeCaption(_ state: CavnarHandshakeState) -> String {
+        switch state {
+        case .connecting: return "Verifying · Toast POS"
+        case .connected: return "Connected · Toast POS"
+        case .failed: return "Couldn't connect · Toast POS"
         }
     }
 }

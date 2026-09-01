@@ -105,10 +105,24 @@ body::after{
   font-size:26px;
   color:var(--ink);
   margin-bottom:4px;
-  opacity:0;
-  animation:fadeUp .38s ease .24s forwards;
 }
 .logo em{color:var(--ember);font-style:italic}
+
+/* ── Cavnar motion: the seal draws itself, then the letters stamp in
+   (mirrors the iOS login's CavnarLockupIntro) ── */
+.seal-intro{display:block;margin-bottom:10px;line-height:0;opacity:0;animation:fadeUp .3s ease .1s forwards}
+.seal-intro svg{overflow:visible}
+@keyframes sealDraw{to{stroke-dashoffset:0}}
+@keyframes sealEmber{to{opacity:1;transform:scale(1)}}
+.seal-ring{stroke-dasharray:100;stroke-dashoffset:100;animation:sealDraw 1.1s cubic-bezier(.4,0,.2,1) .2s forwards}
+.seal-glow,.seal-dot{opacity:0;transform-box:fill-box;transform-origin:center;transform:scale(0);animation:sealEmber .4s ease-out 1.2s forwards}
+@keyframes wmStamp{from{opacity:0;transform:translateY(8%) scale(1.06)}to{opacity:1;transform:none}}
+@keyframes wmDrop{from{opacity:0;transform:translateY(-22px)}to{opacity:1;transform:none}}
+.logo .wl{opacity:0;transform-box:fill-box;transform-origin:center;animation:wmStamp .32s cubic-bezier(.2,.9,.3,1) forwards}
+.logo .wl1{animation-delay:.6s}.logo .wl2{animation-delay:.69s}.logo .wl3{animation-delay:.78s}.logo .wl4{animation-delay:.87s}.logo .wl5{animation-delay:.96s}.logo .wl6{animation-delay:1.05s}
+.logo .wm-dot{opacity:0;animation:wmDrop .35s ease-out 1.35s forwards}
+.logo .ai-tag{opacity:0;animation:fadeUp .4s ease 1.55s forwards}
+@media (prefers-reduced-motion:reduce){.seal-ring,.seal-glow,.seal-dot,.logo .wl,.logo .wm-dot,.logo .ai-tag,.seal-intro{animation-duration:.001s!important;animation-delay:0s!important}}
 
 .sub{
   font-size:12px;
@@ -206,7 +220,8 @@ input:focus{
 </head>
 <body>
 <div class="card">
-  <div class="logo"><svg viewBox="-8 -20 477 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/><polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/><polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/><polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/><polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/><polygon points="391,0 412,0 412,100 391,100"/><path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/><polygon points="425,58 446,58 457,100 436,100"/><circle cx="177" cy="13" r="8.5" fill="#D4583A"/></svg><span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></div>
+  <span class="seal-intro"><svg viewBox="0 0 120 120" width="42" height="42" aria-hidden="true"><defs><radialGradient id="lg-dot" cx="42%" cy="38%" r="72%"><stop offset="0" stop-color="#F2B183"/><stop offset=".45" stop-color="#E8956A"/><stop offset="1" stop-color="#C74E33"/></radialGradient><radialGradient id="lg-glow"><stop offset="0" stop-color="#D4583A" stop-opacity=".4"/><stop offset="1" stop-color="#D4583A" stop-opacity="0"/></radialGradient></defs><path class="seal-ring" pathLength="100" d="M99.5,45 V44.5 A24,24 0 0 0 75.5,20.5 H44.5 A24,24 0 0 0 20.5,44.5 V75.5 A24,24 0 0 0 44.5,99.5 H75.5 A24,24 0 0 0 99.5,75.5 V75" fill="none" stroke="#0e0c0a" stroke-width="19"/><circle class="seal-glow" cx="99.5" cy="60" r="26" fill="url(#lg-glow)"/><circle class="seal-dot" cx="99.5" cy="60" r="10" fill="url(#lg-dot)"/></svg></span>
+  <div class="logo"><svg viewBox="-8 -20 477 128" height="0.8em" style="vertical-align:-0.08em;overflow:visible" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><g class="wl wl1"><polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/></g><g class="wl wl2"><polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/></g><g class="wl wl3"><polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/></g><g class="wl wl4"><polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/></g><g class="wl wl5"><polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/></g><g class="wl wl6"><polygon points="391,0 412,0 412,100 391,100"/><path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/><polygon points="425,58 446,58 457,100 436,100"/></g><circle class="wm-dot" cx="177" cy="13" r="8.5" fill="#D4583A"/></svg><span class="ai-tag" style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></div>
   <div class="sub">Restaurant Intelligence Dashboard</div>
   <div class="form-wrap">
     {% if error %}<div class="error">{{ error }}</div>{% endif %}

@@ -85,28 +85,38 @@ struct AIVisibilitySection: View {
     }
 
     private var checkButton: some View {
-        Button {
-            Task { await viewModel.check() }
-        } label: {
-            if viewModel.isChecking {
-                VStack(spacing: 6) {
-                    CavnarShimmerText(text: "Checking…")
-                    // Ember2 (the brighter accent), not white — stays on
-                    // brand as an orange line while still reading clearly
-                    // against the button's own solid Ember background.
-                    CavnarShimmerLine(color: .cavnarEmber2)
-                        .frame(width: 120)
+        VStack(spacing: 24) {
+            Button {
+                Task { await viewModel.check() }
+            } label: {
+                if viewModel.isChecking {
+                    VStack(spacing: 6) {
+                        CavnarShimmerText(text: "Checking…")
+                        // Ember2 (the brighter accent), not white — stays on
+                        // brand as an orange line while still reading clearly
+                        // against the button's own solid Ember background.
+                        CavnarShimmerLine(color: .cavnarEmber2)
+                            .frame(width: 120)
+                    }
+                } else {
+                    Text(viewModel.result == nil ? "Check my AI visibility" : "Re-run")
                 }
-            } else {
-                Text(viewModel.result == nil ? "Check my AI visibility" : "Re-run")
+            }
+            .buttonStyle(CavnarPrimaryButtonStyle())
+            .disabled(viewModel.isChecking)
+
+            // "Reading the Room" — the same radar the Competitors tab uses
+            // for its fetch, here for the ~10s of live AI queries.
+            if viewModel.isChecking {
+                CavnarRadarSweep(size: 150, caption: "Querying AI assistants")
+                    .transition(.opacity)
             }
         }
-        .buttonStyle(CavnarPrimaryButtonStyle())
-        .disabled(viewModel.isChecking)
         // The button itself stays hug-content sized — this centers that
         // hug-content button within the full width instead of letting the
         // parent's .leading-aligned VStack pin it to the left edge.
         .frame(maxWidth: .infinity)
+        .animation(.easeOut(duration: 0.3), value: viewModel.isChecking)
     }
 
     // MARK: - Pre-check hero — this screen used to be one bare button

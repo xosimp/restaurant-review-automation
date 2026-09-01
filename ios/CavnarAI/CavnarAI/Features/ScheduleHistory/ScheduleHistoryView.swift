@@ -42,13 +42,18 @@ struct ScheduleHistoryView: View {
         NavigationStack {
         Group {
             if viewModel.history.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
-                ContentUnavailableView("No schedules generated yet", systemImage: "calendar.badge.clock")
+                CavnarEmptyHearth(
+                    title: "No schedules generated yet",
+                    message: "Every schedule you generate in Labor is kept here."
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.top, 40)
             } else if viewModel.isLoading && viewModel.history.isEmpty {
                 // See ChangelogView/AccountView/ModulesGridView's identical
-                // fix — a bare ProgressView with no frame let
+                // fix — a bare loading view with no frame let
                 // .cavnarModuleBackground()'s wash flash as a narrow
                 // rectangle instead of full-screen.
-                ProgressView()
+                CavnarLoadingSeal()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = viewModel.errorMessage {
                 VStack(spacing: 8) {
@@ -95,7 +100,7 @@ struct ScheduleHistoryView: View {
         .navigationTitle("Schedule History")
         .navigationBarTitleDisplayMode(.inline)
         .task { await viewModel.load() }
-        .refreshable { await viewModel.load() }
+        .cavnarEmberRefreshable { await viewModel.load() }
         // A standard modal alert for a failed delete — surfaces the real
         // error without replacing the list underneath it (see
         // deleteErrorMessage's own comment on the view model).

@@ -52,6 +52,16 @@ struct AccountConnectionsDetailView: View {
         VStack(alignment: .leading, spacing: 14) {
             header("Google Business", systemImage: "building.2.fill", tint: Color(red: 0.26, green: 0.52, blue: 0.96), status: connections.googleBusiness)
 
+            // "Handshake" — dashes march between the seal and Google while
+            // the OAuth round trip is in flight (see CavnarMotion).
+            if viewModel.isConnectingGoogle {
+                CavnarHandshake(
+                    providerSymbol: "building.2.fill", providerTint: Color(red: 0.26, green: 0.52, blue: 0.96),
+                    state: .connecting, caption: "Connecting · Google Business"
+                )
+                .padding(.vertical, 4)
+            }
+
             if let error = viewModel.connectGoogleError {
                 Text(error).font(.cavnarBody(11)).foregroundStyle(Color.cavnarRed)
             }
@@ -68,7 +78,7 @@ struct AccountConnectionsDetailView: View {
                     Task { await viewModel.connectGoogleBusiness() }
                 } label: {
                     if viewModel.isConnectingGoogle {
-                        ProgressView().tint(.white)
+                        CavnarShimmerText(text: "Connecting…")
                     } else {
                         Text("Connect")
                     }

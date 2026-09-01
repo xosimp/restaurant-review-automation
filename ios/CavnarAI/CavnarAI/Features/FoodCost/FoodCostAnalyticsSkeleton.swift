@@ -20,11 +20,17 @@ struct FoodCostAnalyticsSkeleton: View {
         }
     }
 
+    /// "Counting the Pantry" — the hero's placeholder is a ledger filling in
+    /// category by category (the over-budget one in ember) instead of three
+    /// anonymous bars, so the wait reads as the audit actually happening
+    /// (see CavnarMotion).
     private var heroBlock: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            CavnarSkeletonBar(height: 14, widthFraction: 0.4)
-            CavnarSkeletonBar(height: 34, widthFraction: 0.7)
-            CavnarSkeletonBar(height: 14, widthFraction: 0.85)
+        VStack(alignment: .leading, spacing: 16) {
+            Text("COUNTING THE PANTRY")
+                .font(.cavnarNumber(9.5, weight: 600))
+                .tracking(1.4)
+                .foregroundStyle(Color.cavnarInk3)
+            CavnarLedgerFill()
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)

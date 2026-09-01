@@ -197,6 +197,18 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
 .reveal{opacity:0;transform:translateY(24px);transition:opacity .6s ease,transform .6s ease}
 .reveal.visible{opacity:1;transform:translateY(0)}
 
+/* ── Cavnar motion: the wordmark stamps in letter by letter on load, then
+   the ember drops into the V (mirrors the iOS CavnarWordmarkStampIn) ── */
+@keyframes wmStamp{from{opacity:0;transform:translateY(8%) scale(1.06)}to{opacity:1;transform:none}}
+@keyframes wmDrop{from{opacity:0;transform:translateY(-22px)}to{opacity:1;transform:none}}
+@keyframes wmTag{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.nav-logo svg{overflow:visible}
+.nav-logo .wl{opacity:0;transform-box:fill-box;transform-origin:center;animation:wmStamp .32s cubic-bezier(.2,.9,.3,1) forwards}
+.nav-logo .wl1{animation-delay:.25s}.nav-logo .wl2{animation-delay:.34s}.nav-logo .wl3{animation-delay:.43s}.nav-logo .wl4{animation-delay:.52s}.nav-logo .wl5{animation-delay:.61s}.nav-logo .wl6{animation-delay:.7s}
+.nav-logo .wm-dot{opacity:0;animation:wmDrop .35s ease-out 1s forwards}
+.nav-logo .ai-tag{display:inline-block;opacity:0;animation:wmTag .4s ease 1.2s forwards}
+@media (prefers-reduced-motion:reduce){.nav-logo .wl,.nav-logo .wm-dot,.nav-logo .ai-tag{animation-duration:.001s!important;animation-delay:0s!important}}
+
 @media(max-width:900px){
   nav{padding:16px 24px}
   .nav-links{display:none}
@@ -218,7 +230,7 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
 <body>
 
 <nav id="nav">
-  <div class="nav-logo"><svg viewBox="-8 -20 477 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/><polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/><polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/><polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/><polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/><polygon points="391,0 412,0 412,100 391,100"/><path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/><polygon points="425,58 446,58 457,100 436,100"/><circle cx="177" cy="13" r="8.5" fill="#D4583A"/></svg><span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></div>
+  <div class="nav-logo"><svg viewBox="-8 -20 477 128" height="0.8em" style="vertical-align:-0.08em" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><g class="wl wl1"><polygon points="0,0 64,0 64,21 21,21 21,79 64,79 64,100 0,100"/></g><g class="wl wl2"><polygon points="78,100 99,100 126,0 105,0"/><polygon points="154,100 133,100 106,0 127,0"/><polygon points="108.2,66 123.8,66 129.5,87 102.5,87"/></g><g class="wl wl3"><polygon points="139,0 160,0 187,100 166,100"/><polygon points="215,0 194,0 167,100 188,100"/></g><g class="wl wl4"><polygon points="225,0 246,0 246,100 225,100"/><polygon points="274,0 295,0 295,100 274,100"/><polygon points="225,0 246,0 295,100 274,100"/></g><g class="wl wl5"><polygon points="305,100 326,100 353,0 332,0"/><polygon points="381,100 360,100 333,0 354,0"/><polygon points="335.2,66 350.8,66 356.5,87 329.5,87"/></g><g class="wl wl6"><polygon points="391,0 412,0 412,100 391,100"/><path fill-rule="evenodd" d="M412,0 H447 L461,14 V44 L447,58 H412 Z M412,21 H435 L440,26 V32 L435,37 H412 Z"/><polygon points="425,58 446,58 457,100 436,100"/></g><circle class="wm-dot" cx="177" cy="13" r="8.5" fill="#D4583A"/></svg><span class="ai-tag" style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;font-weight:800;font-size:0.34em;letter-spacing:0.16em;color:#D4583A;vertical-align:0.62em;margin-left:0.12em;font-style:normal">AI</span></div>
   <div class="nav-links">
     <a href="#how">How it works</a>
     <a href="#services">Services</a>

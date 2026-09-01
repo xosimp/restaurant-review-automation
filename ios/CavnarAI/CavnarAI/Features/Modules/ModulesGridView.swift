@@ -106,7 +106,7 @@ struct ModulesGridView: View {
             // this is the grid that leads into those screens, so it reads
             // as one continuous look rather than a plain tab standing apart.
             .cavnarModuleBackground()
-            .refreshable { await viewModel.load() }
+            .cavnarEmberRefreshable { await viewModel.load() }
             .navigationTitle("Modules")
             .task {
                 await viewModel.load()

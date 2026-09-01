@@ -62,7 +62,7 @@ struct LaborView: View {
                                 }
                                 .id(Self.availabilityID)
                             } else if viewModel.isLoading {
-                                ProgressView().padding(.top, 60)
+                                CavnarLoadingSeal().padding(.top, 60).frame(maxWidth: .infinity)
                             } else if let error = viewModel.errorMessage {
                                 VStack(spacing: 8) {
                                     Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
@@ -81,6 +81,10 @@ struct LaborView: View {
                 // — the other standard half of keyboard dismissal, next to
                 // AvailabilityManagerSection's tap-to-dismiss.
                 .scrollDismissesKeyboard(.immediately)
+                .cavnarEmberRefreshable {
+                    await viewModel.load()
+                    await viewModel.loadAvailability()
+                }
             }
         }
         .cavnarModuleBackground()
@@ -132,10 +136,6 @@ struct LaborView: View {
                     }
                 }
             }
-        }
-        .refreshable {
-            await viewModel.load()
-            await viewModel.loadAvailability()
         }
         .navigationTitle("Labor")
         .navigationBarTitleDisplayMode(.inline)
@@ -215,6 +215,15 @@ struct LaborView: View {
             )
             .padding(.top, 2)
 
+            // "Building the Week" — shifts fill a 7-day grid while an ember
+            // dash travels the header, for the ~minute the generator runs
+            // (see CavnarMotion). Sits right under the button that started it.
+            if viewModel.isGeneratingSchedule {
+                CavnarWeekBuilder(caption: "Building next week's schedule")
+                    .padding(.top, 10)
+                    .transition(.opacity)
+            }
+
             // The AI strip lives inside this SAME card, as its own footer
             // row, instead of a separate card placed underneath it — reads
             // as this hero's own follow-up commentary.
@@ -232,6 +241,7 @@ struct LaborView: View {
             // pushes the strip up off that edge instead.
             Color.clear.frame(height: 10)
         }
+        .animation(.easeOut(duration: 0.3), value: viewModel.isGeneratingSchedule)
         .cavnarGlassCard(tint: tone.foreground)
         // Reports this card's bottom-center edge up to LaborView's root —
         // see CavnarRibbonAnchorKey's doc comment for why the ribbon

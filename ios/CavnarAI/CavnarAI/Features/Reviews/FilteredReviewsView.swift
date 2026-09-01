@@ -14,7 +14,10 @@ struct FilteredReviewsView: View {
     var body: some View {
         Group {
             if viewModel.reviews.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
-                ContentUnavailableView("No \(title) reviews", systemImage: "star.bubble")
+                CavnarEmptyHearth(
+                    title: "No \(title) reviews",
+                    message: "Nothing in this category yet."
+                )
             } else {
                 List(viewModel.reviews) { review in
                     NavigationLink {
@@ -33,9 +36,9 @@ struct FilteredReviewsView: View {
             }
         }
         .overlay {
-            if viewModel.isLoading && viewModel.reviews.isEmpty { ProgressView() }
+            if viewModel.isLoading && viewModel.reviews.isEmpty { CavnarLoadingSeal() }
         }
-        .refreshable { await viewModel.load(category: category, platform: platform) }
+        .cavnarEmberRefreshable { await viewModel.load(category: category, platform: platform) }
         .cavnarModuleBackground()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)

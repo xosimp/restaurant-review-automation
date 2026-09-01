@@ -123,6 +123,7 @@ struct HomeView: View {
                         }
                     }
                 }
+                .cavnarEmberRefreshable { await viewModel.load() }
             }
             .navigationDestination(for: ModuleRoute.self) { route in
                 ModuleDestinationView(moduleKey: route.key, moduleLabel: route.label)
@@ -131,7 +132,6 @@ struct HomeView: View {
             // The base color behind everything — where the background
             // layer's own bottom fade ends, and for any content below it.
             .background(Color.cavnarPaper)
-            .refreshable { await viewModel.load() }
             // No title text — "Home" was redundant with the hero's own
             // greeting right below it. Still .inline (not omitted) so the
             // bell/building toolbar icons keep a compact bar instead of
@@ -189,9 +189,10 @@ struct HomeView: View {
                             .cavnarToolbarIconGlass()
                             .overlay(alignment: .topTrailing) {
                                 if notificationsBadge.unreadCount > 0 {
-                                    Circle()
-                                        .fill(Color.cavnarEmber)
-                                        .frame(width: 8, height: 8)
+                                    // "Alert Fired" — pops in with one
+                                    // ember ripple the moment there's
+                                    // something unread (see CavnarMotion).
+                                    CavnarAlertBadge(diameter: 8)
                                         .offset(x: 2, y: -2)
                                 }
                             }

@@ -15,15 +15,20 @@ struct ChangelogView: View {
         NavigationStack {
         Group {
             if viewModel.entries.isEmpty && !viewModel.isLoading && viewModel.errorMessage == nil {
-                ContentUnavailableView("Nothing new yet", systemImage: "sparkles")
+                CavnarEmptyHearth(
+                    title: "Nothing new yet",
+                    message: "Product updates will appear here as they ship."
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.top, 40)
             } else if viewModel.isLoading && viewModel.entries.isEmpty {
                 // maxWidth/maxHeight matter here, not just centering — see
                 // AccountView/ModulesGridView's identical fix:
                 // .cavnarModuleBackground()'s wash sizes to whatever it's
-                // attached to, and a bare ProgressView hugging its own
+                // attached to, and a bare loading view hugging its own
                 // tiny size made it flash as a narrow rectangle instead of
                 // full-screen for the split second this state is visible.
-                ProgressView()
+                CavnarLoadingSeal()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = viewModel.errorMessage {
                 VStack(spacing: 8) {
