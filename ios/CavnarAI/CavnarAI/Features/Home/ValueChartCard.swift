@@ -288,29 +288,36 @@ private struct SparklineCanvas: View {
         guard let minV = values.min(), let maxV = values.max(), let lastValue = values.last,
               values.count > 1 else { return nil }
         let range = max(maxV - minV, 1)
-        let pad: CGFloat = 20
-        let stepX = (size.width - pad * 2) / CGFloat(values.count - 1)
+        let padX: CGFloat = 32
+        let padY: CGFloat = 20
+        let stepX = (size.width - padX * 2) / CGFloat(values.count - 1)
         let normalized = (lastValue - minV) / range
-        let x = pad + CGFloat(values.count - 1) * stepX
-        let y = pad + (1 - CGFloat(normalized)) * (size.height - pad * 2 - 14)
+        let x = padX + CGFloat(values.count - 1) * stepX
+        let y = padY + (1 - CGFloat(normalized)) * (size.height - padY * 2 - 14)
         return CGPoint(x: x, y: y)
     }
 
     private func draw(context: GraphicsContext, size: CGSize, progress: Double, drawEndpointMarker: Bool = true) {
         guard let minV = values.min(), let maxV = values.max() else { return }
         let range = max(maxV - minV, 1)
-        // The endpoint glow below extends 16pt past its center in every
-        // direction — a 6pt pad let the highest/rightmost point's glow
-        // (routinely both at once, since the endpoint is always the last
-        // value) clip against the canvas edge. 20pt keeps the full glow on
-        // canvas with a small buffer, on every side.
-        let pad: CGFloat = 20
-        let stepX = values.count > 1 ? (size.width - pad * 2) / CGFloat(values.count - 1) : 0
+        // Horizontal pad widened (20->32) to match the margins the rest of
+        // the home page's boxed/padded content uses — this chart has no
+        // card chrome of its own (see ValueChartCard's doc comment), so its
+        // own inset is the only thing giving the line/fill breathing room
+        // from the shared 20pt page edge. Vertical stays closer to its
+        // original value — widening it the same amount would compress the
+        // line's usable height range and flatten out real variation, which
+        // isn't what "wider margins" was asking for. The endpoint glow
+        // extends 16pt past its center in every direction; both pads clear
+        // that with room to spare.
+        let padX: CGFloat = 32
+        let padY: CGFloat = 20
+        let stepX = values.count > 1 ? (size.width - padX * 2) / CGFloat(values.count - 1) : 0
 
         let coords: [CGPoint] = values.enumerated().map { index, v in
             let normalized = (v - minV) / range
-            let x = pad + CGFloat(index) * stepX
-            let y = pad + (1 - CGFloat(normalized)) * (size.height - pad * 2 - 14)
+            let x = padX + CGFloat(index) * stepX
+            let y = padY + (1 - CGFloat(normalized)) * (size.height - padY * 2 - 14)
             return CGPoint(x: x, y: y)
         }
         guard coords.count >= 2 else { return }
