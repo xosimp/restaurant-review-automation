@@ -22,14 +22,6 @@ struct RootView: View {
     @State private var fabIconSpun = false
     @State private var fabCollapsed = false
 
-    // Every color token already ships a real, designed light variant
-    // (mirrors the web dashboard's own light theme exactly — Paper
-    // #F7F4EF, Ink #0E0C0A, Ember #C84B2F) that .preferredColorScheme(.dark)
-    // below simply never let show. Persisted here rather than a separate
-    // settings singleton since it's the one app-wide toggle; AccountView's
-    // "More" section reads/writes the same key.
-    @AppStorage("cavnarLightMode") private var isLightMode = false
-
     var body: some View {
         Group {
             if !sessionStore.isAuthenticated {
@@ -41,11 +33,10 @@ struct RootView: View {
             }
         }
         .environment(deepLinkRouter)
-        // Was hardcoded .dark — every color token already had a full,
-        // designed light variant sitting unused underneath it (see
-        // isLightMode's own comment above). Now follows the user's own
-        // Account > More toggle instead of forcing dark unconditionally.
-        .preferredColorScheme(isLightMode ? .light : .dark)
+        // Mobile's in-app interface is dark-only by design — what's
+        // switchable is the home-screen APP ICON (Account > More), not
+        // this. See AppIconManager for that.
+        .preferredColorScheme(.dark)
         // Single app-wide source for tint — covers button/control tint AND
         // text field cursor color (a TextField's blinking caret follows the
         // environment's tint, not a color you set on the field itself).

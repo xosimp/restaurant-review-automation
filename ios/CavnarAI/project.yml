@@ -42,6 +42,12 @@ targets:
           - CFBundleURLName: ai.cavnar.CavnarAI.auth
             CFBundleURLSchemes:
               - cavnarai
+        CFBundleIcons:
+          CFBundleAlternateIcons:
+            AppIconLight:
+              CFBundleIconFiles:
+                - AppIconLight
+              UIPrerenderedIcon: false
     entitlements:
       path: Generated/CavnarAI.entitlements
       properties:

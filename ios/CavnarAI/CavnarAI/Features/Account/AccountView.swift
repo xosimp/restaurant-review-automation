@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Rebuilt around Option A from the Account design review — a hero
 /// identity block, then settings collapsed into labelled groups (was 9
@@ -103,9 +104,11 @@ struct AccountView: View {
     @State private var showingScheduleHistory = false
     @State private var showingChangelog = false
     @State private var changelogBadge = ChangelogBadgeViewModel()
-    // Same key RootView reads for .preferredColorScheme — this row is the
-    // only place that ever writes it.
-    @AppStorage("cavnarLightMode") private var isLightMode = false
+    // Reflects the actual system state (UIApplication.shared.alternateIconName),
+    // not a preference of our own — this is the home-screen icon, which iOS
+    // owns, not the in-app interface (that stays dark-only, see RootView).
+    @State private var isLightAppIcon = UIApplication.shared.alternateIconName == "AppIconLight"
+    @State private var appIconError: String?
 
     private func groupedSettings(_ summary: AccountSummary) -> some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -193,7 +196,7 @@ struct AccountView: View {
                     showingChangelog = true
                 }
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
-                lightModeRow
+                appIconRow
             }
             .task { await changelogBadge.refresh() }
             .sheet(isPresented: $showingScheduleHistory) {
@@ -215,26 +218,64 @@ struct AccountView: View {
         .foregroundStyle(Color.cavnarInk)
     }
 
-    // Black-with-cream-seal vs. white-with-black-seal — every color token
-    // already ships both (see RootView's isLightMode comment); this is the
-    // only place that flips which one is live. No manual Haptic.selection()
-    // — Toggle/UISwitch already fires its own.
-    private var lightModeRow: some View {
-        HStack(spacing: 13) {
-            Image(systemName: "circle.lefthalf.filled")
-                .font(.system(size: 15))
-                .foregroundStyle(Color.cavnarInk3)
-                .frame(width: 18)
-            Text("Light appearance")
-                .font(.cavnarBody(15.5, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
-            Spacer()
-            Toggle("", isOn: $isLightMode)
+    // The HOME-SCREEN icon only — black-with-cream-seal (default) vs.
+    // white-with-black-seal (AppIconLight, registered in project.yml's
+    // CFBundleAlternateIcons). The in-app interface stays dark-only
+    // regardless (see RootView) — this is purely UIApplication's own
+    // alternate-icon mechanism, not our own preference storage, so the
+    // toggle always reflects whatever's actually active rather than
+    // trusting a stale local flag if the switch silently failed.
+    private var appIconRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 13) {
+                Image(systemName: "circle.lefthalf.filled")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .frame(width: 18)
+                Text("Light app icon")
+                    .font(.cavnarBody(15.5, weight: 600))
+                    .foregroundStyle(Color.cavnarInk)
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { isLightAppIcon },
+                    set: { newValue in setAppIcon(light: newValue) }
+                ))
                 .labelsHidden()
                 .tint(Color.cavnarEmber)
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 54)
+            if let appIconError {
+                Text(appIconError)
+                    .font(.cavnarBody(11))
+                    .foregroundStyle(Color.cavnarRed)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+            }
         }
-        .padding(.horizontal, 16)
-        .frame(height: 54)
+    }
+
+    private func setAppIcon(light: Bool) {
+        guard UIApplication.shared.supportsAlternateIcons else {
+            appIconError = "This device doesn't support switching app icons."
+            return
+        }
+        Haptic.light()
+        appIconError = nil
+        let targetName = light ? "AppIconLight" : nil
+        UIApplication.shared.setAlternateIconName(targetName) { error in
+            Task { @MainActor in
+                if let error {
+                    appIconError = error.localizedDescription
+                    // Reflect whatever's actually active, not the tap's
+                    // intent — a failed switch means the toggle should
+                    // snap back rather than show a state that didn't apply.
+                    isLightAppIcon = UIApplication.shared.alternateIconName == "AppIconLight"
+                } else {
+                    isLightAppIcon = light
+                }
+            }
+        }
     }
 
     private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {

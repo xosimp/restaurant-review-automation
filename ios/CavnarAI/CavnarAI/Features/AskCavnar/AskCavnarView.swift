@@ -103,10 +103,10 @@ struct AskCavnarView: View {
             GlowBadge(systemImage: "sparkles", size: 40)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Ask Cavnar AI")
-                    .font(.cavnarHeadline(19))
+                    .font(.cavnarHeadline(20.5))
                     .foregroundStyle(Color.cavnarInk)
                 Text("Your restaurant intelligence consultant")
-                    .font(.cavnarBody(11))
+                    .font(.cavnarBody(12.5))
                     .foregroundStyle(Color.cavnarInk3)
             }
             Spacer()
@@ -119,7 +119,7 @@ struct AskCavnarView: View {
             // keyboard up to dismiss.
             if inputFocused {
                 Button("Done") { inputFocused = false }
-                    .font(.cavnarBody(14, weight: 600))
+                    .font(.cavnarBody(15.5, weight: 600))
                     .foregroundStyle(Color.cavnarEmber)
                     .transition(.opacity)
             }
@@ -137,10 +137,10 @@ struct AskCavnarView: View {
 
             VStack(spacing: 6) {
                 Text("Ask me anything")
-                    .font(.cavnarHeadline(20))
+                    .font(.cavnarHeadline(21.5))
                     .foregroundStyle(Color.cavnarInk)
                 Text("Your numbers, or general advice on running the place — I'll pull in your real data whenever it's relevant.")
-                    .font(.cavnarBody(13))
+                    .font(.cavnarBody(14.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
@@ -156,9 +156,9 @@ struct AskCavnarView: View {
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "sparkle")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.system(size: 12, weight: .semibold))
                             Text(question)
-                                .font(.cavnarBody(13, weight: 600))
+                                .font(.cavnarBody(14.5, weight: 600))
                             Spacer()
                         }
                         .foregroundStyle(Color.cavnarEmber2)
@@ -183,7 +183,7 @@ struct AskCavnarView: View {
     private var inputBar: some View {
         HStack(alignment: .bottom, spacing: 10) {
             TextField("How can I help?", text: $viewModel.question, axis: .vertical)
-                .font(.cavnarBody(14))
+                .font(.cavnarBody(15.5))
                 .foregroundStyle(Color.cavnarInk)
                 .focused($inputFocused)
                 .lineLimit(1...5)
@@ -247,9 +247,9 @@ private struct ChatBubble: View {
 
     // Bubble's outer cap, minus its own horizontal padding (15pt each
     // side) — the width actually available to the text itself.
-    private static let maxBubbleWidth: CGFloat = 260
+    private static let maxBubbleWidth: CGFloat = 280
     private static let maxTextWidth: CGFloat = maxBubbleWidth - 30
-    private static let textFont = UIFont(name: "ApfelGrotezk-Regular", size: 14)!
+    private static let textFont = UIFont(name: "ApfelGrotezk-Regular", size: 16)!
 
     // Fourth attempt at the bubble-hugging bug. The first three all relied
     // on SwiftUI's own implicit sizing (fixedSize, frame(maxWidth:)
@@ -280,13 +280,13 @@ private struct ChatBubble: View {
             VStack(alignment: .leading, spacing: 6) {
                 if !message.isUser {
                     Text("CAVNAR AI")
-                        .font(.cavnarBody(9, weight: 700))
+                        .font(.cavnarBody(10.5, weight: 700))
                         .tracking(1.2)
                         .foregroundStyle(Color.cavnarEmber2)
                 }
                 if message.isUser {
                     Text(message.text)
-                        .font(.cavnarBody(14))
+                        .font(.cavnarBody(16))
                         .lineSpacing(5)
                         .foregroundStyle(.white)
                         .fixedSize(horizontal: false, vertical: true)
@@ -296,7 +296,7 @@ private struct ChatBubble: View {
                     // as AIConsultantView's insight boxes elsewhere in the
                     // app, instead of the answer just snapping in instantly.
                     TypewriterText(
-                        fullText: message.text, font: .cavnarBody(14), color: Color.cavnarInk, lineSpacing: 5,
+                        fullText: message.text, font: .cavnarBody(16), color: Color.cavnarInk, lineSpacing: 5,
                         maxWidth: Self.maxTextWidth, measuringFont: Self.textFont,
                         onReveal: onReveal
                     )
