@@ -43,7 +43,7 @@ struct LoginView: View {
 
                     if let error = viewModel.errorMessage {
                         Text(error)
-                            .font(.cavnarBody(13))
+                            .font(.cavnarBody(14.5))
                             .foregroundStyle(Color.cavnarRed)
                             .multilineTextAlignment(.center)
                     }
@@ -102,7 +102,7 @@ struct LoginView: View {
         HStack(spacing: 12) {
             Rectangle().fill(Color.cavnarPaper3).frame(height: 1)
             Text("or")
-                .font(.cavnarBody(12, weight: 600))
+                .font(.cavnarBody(14, weight: 600))
                 .foregroundStyle(Color.cavnarInk3)
             Rectangle().fill(Color.cavnarPaper3).frame(height: 1)
         }

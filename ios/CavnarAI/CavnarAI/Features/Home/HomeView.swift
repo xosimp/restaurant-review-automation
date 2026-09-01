@@ -262,7 +262,7 @@ struct HomeView: View {
             Spacer(minLength: 16 + Self.heroContentDownShift * 2)
             VStack(spacing: 10) {
                 Text(todayDateString)
-                    .font(.cavnarBody(12, weight: 700))
+                    .font(.cavnarBody(14, weight: 700))
                     .tracking(2)
                     .textCase(.uppercase)
                     // cavnarEmber (deep, dark-mode brand orange) was reading
@@ -327,7 +327,7 @@ struct HomeView: View {
         if let locationName = summary.locationName, !locationName.isEmpty {
             text = text + Text(" — \(locationName)").foregroundStyle(Color.cavnarInk3)
         }
-        return text.font(.cavnarBody(13))
+        return text.font(.cavnarBody(14.5))
     }
 
     // The value chart's own eyebrow/number/delta/sparkline carry no card

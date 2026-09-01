@@ -23,7 +23,7 @@ private struct AIConsultantStripContent: View {
                         Text("No analysis yet")
                     }
                 }
-                .font(.cavnarBody(13.5, weight: 500))
+                .font(.cavnarBody(15, weight: 500))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 Spacer(minLength: 8)
@@ -148,7 +148,7 @@ private struct AIConsultantSheet: View {
                     if !insight.recommendations.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Recommendations")
-                                .font(.cavnarBody(12, weight: 700))
+                                .font(.cavnarBody(14, weight: 700))
                                 .tracking(0.9)
                                 .textCase(.uppercase)
                                 .foregroundStyle(Color.cavnarEmber)
@@ -171,7 +171,7 @@ private struct AIConsultantSheet: View {
                     if showForecast, let forecast = insight.forecast, !forecast.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             Label("Forecast", systemImage: "sparkles")
-                                .font(.cavnarBody(12, weight: 700))
+                                .font(.cavnarBody(14, weight: 700))
                                 .tracking(0.9)
                                 .textCase(.uppercase)
                                 .foregroundStyle(Color.cavnarEmber)

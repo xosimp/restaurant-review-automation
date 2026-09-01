@@ -75,7 +75,7 @@ struct AccountAlertsDetailView: View {
                         pushToggle("Negative review spike", $draft.alSpikePush, on: draft.alertNegSpike)
                         pushToggle("Unresponded review (48h)", $draft.alUnresPush, on: draft.alertNoResponse)
                         Text("Push doesn't need text/email alerts turned on — it's free to send, so it's gated per-alert-type here instead. Trend and labor alerts above push automatically once enabled; there's no separate switch for those two yet.")
-                            .font(.cavnarBody(12))
+                            .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk3)
                             .padding(.top, 2)
                     }
@@ -87,17 +87,17 @@ struct AccountAlertsDetailView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Toggle(isOn: $quietHoursEnabled) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Pause overnight").font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                Text("Text, email, and push all wait until your quiet window ends").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                                Text("Pause overnight").font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                Text("Text, email, and push all wait until your quiet window ends").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                             }
                         }
                         .tint(Color.cavnarEmber)
                         if quietHoursEnabled {
                             DatePicker("From", selection: $quietStart, displayedComponents: .hourAndMinute)
-                                .font(.cavnarBody(13))
+                                .font(.cavnarBody(14.5))
                                 .tint(Color.cavnarEmber)
                             DatePicker("Until", selection: $quietEnd, displayedComponents: .hourAndMinute)
-                                .font(.cavnarBody(13))
+                                .font(.cavnarBody(14.5))
                                 .tint(Color.cavnarEmber)
                         }
                     }
@@ -110,7 +110,7 @@ struct AccountAlertsDetailView: View {
                         toggle("Weekly digest", $draft.digestEnabled)
                         if draft.digestEnabled {
                             HStack {
-                                Text("Delivered on").font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                                Text("Delivered on").font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
                                 Spacer()
                                 Picker("", selection: $draft.digestDay) {
                                     ForEach(Self.days, id: \.self) { day in
@@ -133,25 +133,25 @@ struct AccountAlertsDetailView: View {
                                 Haptic.light()
                                 contacts.append(AlertContact(id: -contacts.count - 1, name: "", phone: "", smsConsent: false))
                             } label: {
-                                Text("+ Add").font(.cavnarBody(12, weight: 700)).foregroundStyle(Color.cavnarEmber)
+                                Text("+ Add").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarEmber)
                             }
                         }
                     }
                     VStack(alignment: .leading, spacing: 16) {
                         if contacts.isEmpty {
                             Text("No contacts added — urgent alerts only go to the email/phone on your account.")
-                                .font(.cavnarBody(12))
+                                .font(.cavnarBody(14))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                         ForEach($contacts) { $contact in
                             HStack(alignment: .top, spacing: 10) {
                                 VStack(spacing: 8) {
                                     TextField("Name", text: $contact.name)
-                                        .font(.cavnarBody(13, weight: 600))
+                                        .font(.cavnarBody(14.5, weight: 600))
                                         .foregroundStyle(Color.cavnarInk)
                                     Rectangle().fill(Color.cavnarPaper3).frame(height: 1)
                                     TextField("Phone", text: $contact.phone)
-                                        .font(.cavnarBody(13))
+                                        .font(.cavnarBody(14.5))
                                         .foregroundStyle(Color.cavnarInk)
                                         .keyboardType(.phonePad)
                                 }
@@ -171,7 +171,7 @@ struct AccountAlertsDetailView: View {
                 }
 
                 if let error = viewModel.saveAlertsError {
-                    Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                 }
 
                 Button {
@@ -199,12 +199,13 @@ struct AccountAlertsDetailView: View {
         .cavnarModuleBackground()
         .navigationTitle("Alerts")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { cavnarTitleToolbar("Alerts") }
         }
     }
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
-            .font(.cavnarBody(12.5, weight: 700))
+            .font(.cavnarBody(14.5, weight: 700))
             .foregroundStyle(Color.cavnarInk3)
     }
 

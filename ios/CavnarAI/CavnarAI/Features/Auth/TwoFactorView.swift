@@ -32,12 +32,12 @@ struct TwoFactorView: View {
                     .focused($isCodeFocused)
 
                 Toggle("Remember this device for 30 days", isOn: $viewModel.rememberDevice)
-                    .font(.cavnarBody(13))
+                    .font(.cavnarBody(14.5))
                     .tint(Color.cavnarEmber)
 
                 if let error = viewModel.errorMessage {
                     Text(error)
-                        .font(.cavnarBody(13))
+                        .font(.cavnarBody(14.5))
                         .foregroundStyle(Color.cavnarRed)
                         .multilineTextAlignment(.center)
                 }

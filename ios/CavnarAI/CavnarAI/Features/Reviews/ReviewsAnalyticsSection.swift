@@ -6,6 +6,12 @@ struct ReviewsAnalyticsSection: View {
 
     @State private var selectedWeek: SentimentWeek?
     @State private var selectedPlatform: PlatformBreakdown?
+    // Drives the sentiment chart's bars growing up from zero AND the whole
+    // card fading + rising into place — matching LaborPerformanceChart's/
+    // FoodCostTrendChart's own bar-grow-in, which this screen's chart never
+    // had (its stacked bars just rendered at final height with a flat,
+    // non-gradient fill from the very first frame).
+    @State private var trendAppeared = false
 
     // Each section shows its own skeleton while it's individually still in
     // flight rather than gating the whole page behind one spinner — the 5
@@ -207,7 +213,7 @@ struct ReviewsAnalyticsSection: View {
     private var platformSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("By platform")
-                .font(.cavnarBody(12, weight: 700))
+                .font(.cavnarBody(14, weight: 700))
                 .foregroundStyle(Color.cavnarInk3)
             HStack(spacing: 12) {
                 ForEach(viewModel.platforms) { platform in
@@ -227,23 +233,23 @@ struct ReviewsAnalyticsSection: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(platform.platform.uppercased())
-                    .font(.cavnarBody(12, weight: 700))
+                    .font(.cavnarBody(14, weight: 700))
                     .tracking(0.8)
                     .foregroundStyle(Color.cavnarInk2)
                 Spacer()
                 if isStrongest {
                     Text("Strongest")
-                        .font(.cavnarBody(11, weight: 700))
+                        .font(.cavnarBody(13.5, weight: 700))
                         .foregroundStyle(Color.cavnarGreen)
                 } else if isWeakest {
                     Text("Needs attention")
-                        .font(.cavnarBody(11, weight: 700))
+                        .font(.cavnarBody(13.5, weight: 700))
                         .foregroundStyle(Color.cavnarRed)
                 }
             }
 
             Text("\(platform.total) reviews")
-                .font(.cavnarBody(12))
+                .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3)
 
             HStack(alignment: .firstTextBaseline, spacing: 3) {
@@ -258,10 +264,10 @@ struct ReviewsAnalyticsSection: View {
 
             HStack(spacing: 12) {
                 Label("\(platform.positive)", systemImage: "arrow.up")
-                    .font(.cavnarNumber(12, weight: 600))
+                    .font(.cavnarNumber(14, weight: 600))
                     .foregroundStyle(Color.cavnarGreen)
                 Label("\(platform.negative)", systemImage: "arrow.down")
-                    .font(.cavnarNumber(12, weight: 600))
+                    .font(.cavnarNumber(14, weight: 600))
                     .foregroundStyle(Color.cavnarRed)
             }
         }
@@ -284,9 +290,9 @@ struct ReviewsAnalyticsSection: View {
     private func performanceCard(_ performance: ResponsePerformance) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             (Text("Last ")
-                + Text("\(performance.days)").font(.cavnarNumber(12, weight: 700))
+                + Text("\(performance.days)").font(.cavnarNumber(14, weight: 700))
                 + Text("d"))
-                .font(.cavnarBody(12, weight: 700))
+                .font(.cavnarBody(14, weight: 700))
                 .foregroundStyle(Color.cavnarInk3)
             HStack {
                 statTile("Approved as-is", performance.approvedAsIs)
@@ -303,7 +309,7 @@ struct ReviewsAnalyticsSection: View {
                 .foregroundStyle(Color.cavnarInk)
                 .cavnarNumberGlow()
             Text(label)
-                .font(.cavnarBody(11.5))
+                .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity)
@@ -314,7 +320,7 @@ struct ReviewsAnalyticsSection: View {
     private var topicGrid: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Topic sentiment")
-                .font(.cavnarBody(12, weight: 700))
+                .font(.cavnarBody(14, weight: 700))
                 .foregroundStyle(Color.cavnarInk3)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
                 ForEach(viewModel.heatmap.filter { $0.count > 0 }) { entry in
@@ -339,7 +345,7 @@ struct ReviewsAnalyticsSection: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 4) {
                 Text(entry.label)
-                    .font(.cavnarBody(12, weight: 600))
+                    .font(.cavnarBody(14, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                     .lineLimit(1)
                 trendIcon(entry.trend)
@@ -352,11 +358,11 @@ struct ReviewsAnalyticsSection: View {
             StatProgressBar(progress: Double(entry.pctPositive) / 100, tone: topicTone(entry))
             HStack {
                 Text("\(entry.pctPositive)% pos")
-                    .font(.cavnarNumber(11, weight: 600))
+                    .font(.cavnarNumber(13.5, weight: 600))
                     .foregroundStyle(Color.cavnarGreen)
                 Spacer()
                 Text("\(entry.pctNegative)% neg")
-                    .font(.cavnarNumber(11, weight: 600))
+                    .font(.cavnarNumber(13.5, weight: 600))
                     .foregroundStyle(Color.cavnarRed)
             }
         }
@@ -440,17 +446,25 @@ struct ReviewsAnalyticsSection: View {
     /// top — flat legend-matching colors rather than the old bright-to-
     /// dark gradient, which was a magnitude cue that made sense for one
     /// tall bar but reads as noise across several thin stacked slivers.
+    /// Same bright-base/dark-shadow-top fade LaborPerformanceChart's and
+    /// FoodCostTrendChart's own barGradient(_:) use — this chart's bars
+    /// were the one trend chart in the app still using a flat, single-
+    /// opacity fill instead of that gradient.
+    private func segmentGradient(_ tone: Color) -> LinearGradient {
+        LinearGradient(colors: [tone.opacity(0.9), tone.opacity(0.35)], startPoint: .bottom, endPoint: .top)
+    }
+
     @ChartContentBuilder
     private func trendBars() -> some ChartContent {
         ForEach(viewModel.sentimentWeeks) { week in
-            BarMark(x: .value("Week", week.label), y: .value("Reviews", week.positive))
-                .foregroundStyle(Color.cavnarGreen.opacity(0.9))
+            BarMark(x: .value("Week", week.label), y: .value("Reviews", trendAppeared ? week.positive : 0))
+                .foregroundStyle(segmentGradient(.cavnarGreen))
                 .cornerRadius(2)
-            BarMark(x: .value("Week", week.label), y: .value("Reviews", week.neutral))
-                .foregroundStyle(Color.cavnarAmber.opacity(0.9))
+            BarMark(x: .value("Week", week.label), y: .value("Reviews", trendAppeared ? week.neutral : 0))
+                .foregroundStyle(segmentGradient(.cavnarAmber))
                 .cornerRadius(2)
-            BarMark(x: .value("Week", week.label), y: .value("Reviews", week.negative))
-                .foregroundStyle(Color.cavnarRed.opacity(0.9))
+            BarMark(x: .value("Week", week.label), y: .value("Reviews", trendAppeared ? week.negative : 0))
+                .foregroundStyle(segmentGradient(.cavnarRed))
                 .cornerRadius(2)
         }
     }
@@ -458,7 +472,7 @@ struct ReviewsAnalyticsSection: View {
     private var trendChartCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("SENTIMENT TREND — LAST 8 WEEKS")
-                .font(.cavnarBody(11.5, weight: 700))
+                .font(.cavnarBody(14, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
 
@@ -484,14 +498,14 @@ struct ReviewsAnalyticsSection: View {
                             AxisGridLine().foregroundStyle(.clear)
                             AxisValueLabel {
                                 if let v = value.as(Int.self) {
-                                    Text("\(v)").font(.cavnarBody(11)).foregroundStyle(.clear)
+                                    Text("\(v)").font(.cavnarBody(13.5)).foregroundStyle(.clear)
                                 }
                             }
                         }
                     }
                     .chartXAxis {
                         AxisMarks { _ in
-                            AxisValueLabel().font(.cavnarBody(11)).foregroundStyle(.clear)
+                            AxisValueLabel().font(.cavnarBody(13.5)).foregroundStyle(.clear)
                         }
                     }
                     .opacity(0.6)
@@ -516,7 +530,7 @@ struct ReviewsAnalyticsSection: View {
                             // sentiment, so this is total volume, spelled
                             // out explicitly now.
                             Text("avg \(Int(averageWeeklyVolume)) reviews/wk")
-                                .font(.cavnarBody(11, weight: 700))
+                                .font(.cavnarBody(13.5, weight: 700))
                                 .foregroundStyle(Color.black)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 3)
@@ -531,7 +545,7 @@ struct ReviewsAnalyticsSection: View {
                             AxisGridLine().foregroundStyle(Color.cavnarPaper3.opacity(0.4))
                             AxisValueLabel {
                                 if let v = value.as(Int.self) {
-                                    Text("\(v)").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                                    Text("\(v)").font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
                                 }
                             }
                         }
@@ -539,7 +553,7 @@ struct ReviewsAnalyticsSection: View {
                     .chartXAxis {
                         AxisMarks { _ in
                             AxisValueLabel()
-                                .font(.cavnarBody(11))
+                                .font(.cavnarBody(13.5))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                     }
@@ -548,6 +562,9 @@ struct ReviewsAnalyticsSection: View {
                         GeometryReader { geo in
                             weekSelectionOverlay(proxy: proxy, geo: geo)
                         }
+                    }
+                    .onAppear {
+                        withAnimation(.easeOut(duration: 0.75)) { trendAppeared = true }
                     }
             }
             .frame(height: 190)
@@ -561,6 +578,13 @@ struct ReviewsAnalyticsSection: View {
         // No .cavnarCard() — unboxed, matching Food Cost's own waste chart
         // (FoodCostTrendChart), which floats directly on the module
         // background with no bordered container either.
+        //
+        // Fades + rises on the same trendAppeared flip that grows the bars —
+        // one entrance instead of the bars growing inside an already-fully-
+        // visible, already-settled card.
+        .opacity(trendAppeared ? 1 : 0)
+        .offset(y: trendAppeared ? 0 : 24)
+        .animation(.easeOut(duration: 0.5), value: trendAppeared)
     }
 
     /// Press-and-hold-to-inspect, the touch equivalent of a desktop hover
@@ -602,7 +626,7 @@ struct ReviewsAnalyticsSection: View {
     private func weekTooltip(_ week: SentimentWeek) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(week.label)
-                .font(.cavnarBody(11.5, weight: 700))
+                .font(.cavnarBody(14, weight: 700))
                 .foregroundStyle(Color.cavnarInk3)
             HStack(spacing: 10) {
                 tooltipStat(week.positive, color: .cavnarGreen)
@@ -624,14 +648,14 @@ struct ReviewsAnalyticsSection: View {
     private func tooltipStat(_ value: Int, color: Color) -> some View {
         HStack(spacing: 3) {
             Circle().fill(color).frame(width: 6, height: 6)
-            Text("\(value)").font(.cavnarNumber(12, weight: 700)).foregroundStyle(Color.cavnarInk)
+            Text("\(value)").font(.cavnarNumber(14, weight: 700)).foregroundStyle(Color.cavnarInk)
         }
     }
 
     private func legendItem(color: Color, label: String) -> some View {
         HStack(spacing: 4) {
             Circle().fill(color).frame(width: 6, height: 6)
-            Text(label).font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+            Text(label).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
         }
     }
 }

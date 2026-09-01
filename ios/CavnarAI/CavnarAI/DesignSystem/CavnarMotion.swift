@@ -387,7 +387,7 @@ struct CavnarRadarSweep: View {
 
             if let caption {
                 Text(caption.uppercased())
-                    .font(.cavnarNumber(11.5, weight: 600))
+                    .font(.cavnarNumber(14, weight: 600))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarInk3)
             }
@@ -450,7 +450,7 @@ struct CavnarWeekBuilder: View {
                     HStack(spacing: 0) {
                         ForEach(Self.days.indices, id: \.self) { i in
                             Text(Self.days[i])
-                                .font(.cavnarNumber(11.5, weight: 600))
+                                .font(.cavnarNumber(14, weight: 600))
                                 .foregroundStyle(Color.cavnarInk3)
                                 .frame(width: colWidth)
                         }
@@ -472,7 +472,7 @@ struct CavnarWeekBuilder: View {
 
                     if let caption {
                         Text(caption.uppercased())
-                            .font(.cavnarNumber(11.5, weight: 600))
+                            .font(.cavnarNumber(14, weight: 600))
                             .tracking(1)
                             .foregroundStyle(Color.cavnarInk3)
                             .offset(y: Self.gridTop + 4 * Self.rowHeight + 2)
@@ -530,7 +530,7 @@ struct CavnarLedgerFill: View {
                 ForEach(rows.indices, id: \.self) { i in
                     HStack(spacing: 14) {
                         Text(rows[i].label)
-                            .font(.cavnarNumber(11.5, weight: 600))
+                            .font(.cavnarNumber(14, weight: 600))
                             .tracking(1)
                             .foregroundStyle(Color.cavnarInk3)
                             .frame(width: 64, alignment: .leading)
@@ -632,7 +632,7 @@ struct CavnarPostedCheck: View {
             }
 
             Text(label.uppercased())
-                .font(.cavnarNumber(11.5, weight: 600))
+                .font(.cavnarNumber(14, weight: 600))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarInk3)
                 .opacity(labelShown ? 1 : 0)
@@ -721,7 +721,7 @@ struct CavnarHandshake: View {
 
             if let caption {
                 Text(caption.uppercased())
-                    .font(.cavnarNumber(11.5, weight: 600))
+                    .font(.cavnarNumber(14, weight: 600))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarInk3)
             }
@@ -836,7 +836,7 @@ struct CavnarEmptyHearth: View {
 
             if let message {
                 Text(message)
-                    .font(.cavnarBody(12.5))
+                    .font(.cavnarBody(14.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)

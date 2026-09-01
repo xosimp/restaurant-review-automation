@@ -128,7 +128,7 @@ struct RoleDonutChart: View {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 9, weight: .semibold))
                     }
-                    .font(.cavnarBody(12, weight: 600))
+                    .font(.cavnarBody(14, weight: 600))
                     .foregroundStyle(Color.cavnarEmber)
                 }
                 .buttonStyle(.plain)
@@ -168,7 +168,7 @@ struct RoleDonutChart: View {
                     .font(.cavnarNumber(19, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Text(totalLabel)
-                    .font(.cavnarBody(11, weight: 700))
+                    .font(.cavnarBody(13.5, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarInk3)
             }
@@ -191,23 +191,23 @@ struct RoleDonutChart: View {
                         .padding(.top, 4)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(role.role)
-                            .font(.cavnarBody(13, weight: 600))
+                            .font(.cavnarBody(14.5, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
                             .lineLimit(1)
                         // Digits in Space Grotesk (cavnarNumber), same
                         // as every other numeric value in the app —
                         // this line was plain body text throughout,
                         // including the hours/headcount/cost figures.
-                        (Text(formattedHours(role.hours)).font(.cavnarNumber(11))
-                            + Text("h · ").font(.cavnarBody(11))
-                            + Text("\(role.headcount)").font(.cavnarNumber(11))
-                            + Text(" staff · $").font(.cavnarBody(11))
-                            + Text(role.laborCost.commaFormatted).font(.cavnarNumber(11)))
+                        (Text(formattedHours(role.hours)).font(.cavnarNumber(13.5))
+                            + Text("h · ").font(.cavnarBody(13.5))
+                            + Text("\(role.headcount)").font(.cavnarNumber(13.5))
+                            + Text(" staff · $").font(.cavnarBody(13.5))
+                            + Text(role.laborCost.commaFormatted).font(.cavnarNumber(13.5)))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                     Spacer(minLength: 4)
                     Text(String(format: "%.0f%%", role.laborPct))
-                        .font(.cavnarNumber(13, weight: 700))
+                        .font(.cavnarNumber(14.5, weight: 700))
                         .foregroundStyle(color(at: index))
                 }
             }

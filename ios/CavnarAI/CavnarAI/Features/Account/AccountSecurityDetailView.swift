@@ -21,33 +21,33 @@ struct AccountSecurityDetailView: View {
                     sectionHeader("Sign-in & security")
                     VStack(alignment: .leading, spacing: 14) {
                         HStack {
-                            Text("Username").font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                            Text("Username").font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
                             Spacer()
-                            Text(account.username).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            Text(account.username).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
                         }
                         Button("Change password") { Haptic.light(); showingChangePassword = true }
-                            .font(.cavnarBody(13, weight: 600))
+                            .font(.cavnarBody(14.5, weight: 600))
                             .foregroundStyle(Color.cavnarEmber)
 
                         divider()
 
                         if account.twoFAEnabled {
                             HStack {
-                                Text("Two-factor authentication").font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                                Text("Two-factor authentication").font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
                                 Spacer()
-                                Text("On").font(.cavnarBody(12, weight: 700)).foregroundStyle(Color.cavnarGreen)
+                                Text("On").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarGreen)
                             }
                             Button("Disable two-factor authentication", role: .destructive) {
                                 Task { await viewModel.disable2FA() }
                             }
-                            .font(.cavnarBody(13, weight: 600))
+                            .font(.cavnarBody(14.5, weight: 600))
                         } else {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Two-factor authentication").font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                Text("Adds an email code on new sign-ins.").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                                Text("Two-factor authentication").font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                Text("Adds an email code on new sign-ins.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                             }
                             Button("Enable two-factor authentication") { Haptic.light(); showing2FASetup = true }
-                                .font(.cavnarBody(13, weight: 600))
+                                .font(.cavnarBody(14.5, weight: 600))
                                 .foregroundStyle(Color.cavnarEmber)
                         }
 
@@ -60,8 +60,8 @@ struct AccountSecurityDetailView: View {
                             set: { newValue in Task { await viewModel.toggleLoginNotify(newValue) } }
                         )) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Sign-in notifications").font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                Text("Get notified of new sign-ins to your account").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                                Text("Sign-in notifications").font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                Text("Get notified of new sign-ins to your account").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                             }
                         }
                         .tint(Color.cavnarEmber)
@@ -75,15 +75,15 @@ struct AccountSecurityDetailView: View {
                         ForEach(viewModel.sessions) { session in
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack {
-                                    Text(session.label).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                    Text(session.label).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
                                     if session.isCurrent {
                                         Text("This device")
-                                            .font(.cavnarBody(11.5, weight: 700))
+                                            .font(.cavnarBody(14, weight: 700))
                                             .foregroundStyle(Color.cavnarEmber)
                                     }
                                 }
                                 Text("Last active \(session.lastActive)")
-                                    .font(.cavnarBody(12))
+                                    .font(.cavnarBody(14))
                                     .foregroundStyle(Color.cavnarInk3)
                             }
                             if session.id != viewModel.sessions.last?.id {
@@ -93,7 +93,7 @@ struct AccountSecurityDetailView: View {
                         Button("Sign out all other devices", role: .destructive) {
                             Task { await viewModel.revokeOtherSessions() }
                         }
-                        .font(.cavnarBody(13, weight: 600))
+                        .font(.cavnarBody(14.5, weight: 600))
                     }
                     .cavnarCard()
                 }
@@ -104,6 +104,7 @@ struct AccountSecurityDetailView: View {
         .cavnarModuleBackground()
         .navigationTitle("Security")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { cavnarTitleToolbar("Security") }
         .sheet(isPresented: $showingChangePassword) {
             ChangePasswordSheet(viewModel: viewModel)
         }
@@ -115,7 +116,7 @@ struct AccountSecurityDetailView: View {
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
-            .font(.cavnarBody(12.5, weight: 700))
+            .font(.cavnarBody(14.5, weight: 700))
             .foregroundStyle(Color.cavnarInk3)
     }
 
@@ -155,7 +156,7 @@ private struct ChangePasswordSheet: View {
                     )
 
                     if let error = viewModel.changePasswordError {
-                        Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                     }
 
                     CavnarFormButtonPair { matchedWidth in
@@ -183,6 +184,7 @@ private struct ChangePasswordSheet: View {
             .cavnarModuleBackground()
             .navigationTitle("Change Password")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { cavnarTitleToolbar("Change Password") }
             .keyboardNavToolbar($focusedField)
         }
     }
@@ -204,7 +206,7 @@ private struct TwoFactorSetupSheet: View {
                 VStack(alignment: .leading, spacing: 26) {
                     if let masked = viewModel.twoFATestMasked {
                         Text("Code sent to \(masked)")
-                            .font(.cavnarBody(12))
+                            .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk3)
                             .padding(.top, -14)
 
@@ -215,7 +217,7 @@ private struct TwoFactorSetupSheet: View {
                         )
 
                         if let error = viewModel.twoFAError {
-                            Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                            Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                         }
 
                         CavnarFormButtonPair { matchedWidth in
@@ -238,11 +240,11 @@ private struct TwoFactorSetupSheet: View {
                         .padding(.top, 6)
                     } else {
                         Text("We'll text a 6-digit code to the phone number on file to confirm two-factor sign-in works before turning it on.")
-                            .font(.cavnarBody(13))
+                            .font(.cavnarBody(14.5))
                             .foregroundStyle(Color.cavnarInk3)
 
                         if let error = viewModel.twoFAError {
-                            Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                            Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                         }
 
                         CavnarFormButtonPair { matchedWidth in
@@ -268,6 +270,7 @@ private struct TwoFactorSetupSheet: View {
             .cavnarModuleBackground()
             .navigationTitle("Enable 2FA")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { cavnarTitleToolbar("Enable 2FA") }
             // Single field, nothing to step between — checkmark only,
             // matching Apple's own single-field bar rather than showing
             // two permanently-disabled chevrons for show.

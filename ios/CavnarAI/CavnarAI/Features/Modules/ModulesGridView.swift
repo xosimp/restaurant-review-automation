@@ -108,6 +108,7 @@ struct ModulesGridView: View {
             .cavnarModuleBackground()
             .cavnarEmberRefreshable { await viewModel.load() }
             .navigationTitle("Modules")
+            .toolbar { cavnarTitleToolbar("Modules") }
             .task {
                 await viewModel.load()
                 pushToPendingModuleIfDeepLinked()

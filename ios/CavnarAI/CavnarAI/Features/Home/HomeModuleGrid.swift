@@ -14,14 +14,20 @@ struct KPITile: View {
                 .font(.cavnarNumber(26, weight: 500))
                 .foregroundStyle(Color.cavnarInk)
                 .cavnarNumberGlow()
+            // Clash Display, not Apfel — this names the module, the same
+            // heading role a screen's own centered title plays once you
+            // tap in (see cavnarTitleToolbar). Dropped the uppercase/
+            // tracking treatment that made sense for a small tracked
+            // eyebrow caption but reads oddly on a real headline face —
+            // this sits under the number as this tile's own name, not a
+            // kicker label above something else.
             Text(module.label)
-                .font(.cavnarBody(11.5, weight: 700))
-                .tracking(1.0)
-                .textCase(.uppercase)
+                .font(.cavnarHeadline(14))
                 .foregroundStyle(Color.cavnarEmber)
+                .multilineTextAlignment(.center)
             if let sublabel = module.kpi?.sublabel {
                 Text(sublabel)
-                    .font(.cavnarBody(11.5))
+                    .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
                     .multilineTextAlignment(.center)
             }
@@ -92,13 +98,11 @@ struct ComingSoonModuleTile: View {
                 .font(.cavnarNumber(26, weight: 500))
                 .foregroundStyle(Color.cavnarInk3)
             Text(module.label)
-                .font(.cavnarBody(11.5, weight: 700))
-                .tracking(1.0)
-                .textCase(.uppercase)
+                .font(.cavnarHeadline(14))
                 .foregroundStyle(Color.cavnarInk3)
                 .multilineTextAlignment(.center)
             Text("Coming Soon")
-                .font(.cavnarBody(11.5))
+                .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3.opacity(0.75))
                 .multilineTextAlignment(.center)
         }

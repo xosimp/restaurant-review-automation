@@ -90,12 +90,12 @@ struct SendReviewRequestSheet: View {
                         focus: $focusedField, field: .message
                     )
                     Text("Sent along with the review link. Leave it blank to use the default message.")
-                        .font(.cavnarBody(12))
+                        .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3)
                         .padding(.top, -14)
 
                     if let error = viewModel.errorMessage {
-                        Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                     }
 
                     CavnarFormButtonPair { matchedWidth in
@@ -123,6 +123,7 @@ struct SendReviewRequestSheet: View {
             .cavnarModuleBackground()
             .navigationTitle("Request a Review")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { cavnarTitleToolbar("Request a Review") }
             .keyboardNavToolbar($focusedField)
         }
     }

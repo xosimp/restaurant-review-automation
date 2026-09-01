@@ -32,7 +32,7 @@ struct MarketingView: View {
                                 GuestTextClubView()
                             } label: {
                                 HStack {
-                                    Text("Guest Text Club").font(.cavnarBody(13, weight: 600))
+                                    Text("Guest Text Club").font(.cavnarBody(14.5, weight: 600))
                                     Spacer()
                                     Image(systemName: "chevron.right")
                                 }
@@ -64,6 +64,7 @@ struct MarketingView: View {
         .cavnarModuleBackground()
         .navigationTitle("Marketing")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { cavnarTitleToolbar("Marketing") }
         .cavnarTabSwipeNavigation($subTab, primaryTab: .content, secondaryTab: .analytics)
         .keyboardNavToolbar($focusedField)
         .task { await viewModel.load() }
@@ -85,7 +86,7 @@ struct MarketingView: View {
     private func statTile(value: String, label: String) -> some View {
         VStack(spacing: 4) {
             Text(value).font(.cavnarNumber(22, weight: 500)).foregroundStyle(Color.cavnarInk).cavnarNumberGlow()
-            Text(label).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
+            Text(label).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity)
     }
@@ -98,7 +99,7 @@ struct MarketingView: View {
     private var generatorSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Generate content")
-                .font(.cavnarBody(13, weight: 700))
+                .font(.cavnarBody(14.5, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
 
             TextField("Topic (optional)", text: $viewModel.topic)
@@ -141,7 +142,7 @@ struct MarketingView: View {
             }
 
             if let error = viewModel.generateError {
-                Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
             }
 
             if let content = viewModel.generatedContent {
@@ -185,7 +186,7 @@ struct MarketingView: View {
                         .padding(.top, 6)
                 }
                 if let error = viewModel.postError {
-                    Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                 }
             }
         }
@@ -197,22 +198,22 @@ struct MarketingView: View {
     private var calendarSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("This week's content calendar")
-                .font(.cavnarBody(13, weight: 700))
+                .font(.cavnarBody(14.5, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
             VStack(spacing: 8) {
                 ForEach(viewModel.calendar) { idea in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text(idea.day)
-                                .font(.cavnarBody(12, weight: 700))
+                                .font(.cavnarBody(14, weight: 700))
                                 .foregroundStyle(Color.cavnarEmber)
                             Spacer()
                             Text(idea.platform)
-                                .font(.cavnarBody(11.5, weight: 600))
+                                .font(.cavnarBody(14, weight: 600))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                         Text(idea.angle)
-                            .font(.cavnarBody(13))
+                            .font(.cavnarBody(14.5))
                             .foregroundStyle(Color.cavnarInk)
                     }
                     .padding(12)

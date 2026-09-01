@@ -234,7 +234,7 @@ struct CavnarChipButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.cavnarBody(12, weight: 600))
+            .font(.cavnarBody(14, weight: 600))
             .foregroundStyle(.white)
             .padding(.horizontal, 13)
             .padding(.vertical, 6)
@@ -408,6 +408,30 @@ func cavnarToolbarItemGroup<Content: View>(
             .sharedBackgroundVisibility(.hidden)
     } else {
         ToolbarItemGroup(placement: placement, content: content)
+    }
+}
+
+/// Every screen title, styled — a real SwiftUI Text as the toolbar's
+/// `.principal` item, which visually takes over from `.navigationTitle`'s
+/// own plain system-font title view. Plain `UINavigationBar.appearance()
+/// .titleTextAttributes` was tried first (set once in CavnarAIApp.init)
+/// and didn't reliably take — SwiftUI-hosted navigation bars don't
+/// consistently defer to that legacy UIKit proxy for their title text, so
+/// this is the actually-guaranteed way to get our own font there. Still
+/// pass a real string to `.navigationTitle(_:)` alongside this at every
+/// call site (for VoiceOver, the back-swipe label, and the app switcher) —
+/// this only overrides what's drawn, not the underlying title itself.
+/// Clash Display because a screen title names a whole screen the same way
+/// an ingredient row's own name (also Clash Display) names that row — see
+/// [[project_motion_language]] for the full "what gets the heading font"
+/// rule.
+@ToolbarContentBuilder
+func cavnarTitleToolbar(_ title: String) -> some ToolbarContent {
+    cavnarToolbarItem(placement: .principal) {
+        Text(title)
+            .font(.cavnarHeadline(18))
+            .foregroundStyle(Color.cavnarInk)
+            .lineLimit(1)
     }
 }
 

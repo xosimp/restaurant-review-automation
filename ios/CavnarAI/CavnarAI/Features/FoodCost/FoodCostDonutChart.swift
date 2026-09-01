@@ -51,13 +51,13 @@ struct FoodCostDonutChart: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.cavnarBody(11.5, weight: 700))
+                .font(.cavnarBody(14, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
 
             if slices.isEmpty {
                 Text("Nothing to show this week")
-                    .font(.cavnarBody(12))
+                    .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
             } else {
                 HStack(alignment: .center, spacing: 20) {
@@ -75,7 +75,7 @@ struct FoodCostDonutChart: View {
                             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                                 .font(.system(size: 9, weight: .semibold))
                         }
-                        .font(.cavnarBody(12, weight: 600))
+                        .font(.cavnarBody(14, weight: 600))
                         .foregroundStyle(Color.cavnarEmber)
                     }
                     .buttonStyle(.plain)
@@ -117,7 +117,7 @@ struct FoodCostDonutChart: View {
                     .font(.cavnarNumber(15, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Text(centerLabel)
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(13, weight: 700))
                     .tracking(0.8)
                     .foregroundStyle(Color.cavnarInk3)
             }
@@ -135,7 +135,7 @@ struct FoodCostDonutChart: View {
                         .padding(.top, 3)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(slice.name)
-                            .font(.cavnarBody(12.5, weight: 600))
+                            .font(.cavnarBody(14.5, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
                             .lineLimit(1)
                         slice.subtitle
@@ -143,7 +143,7 @@ struct FoodCostDonutChart: View {
                     }
                     Spacer(minLength: 4)
                     Text("$\(Int(slice.value))")
-                        .font(.cavnarNumber(12, weight: 700))
+                        .font(.cavnarNumber(14, weight: 700))
                         .foregroundStyle(color(at: index))
                 }
             }

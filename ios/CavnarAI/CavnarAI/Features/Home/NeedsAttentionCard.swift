@@ -128,7 +128,7 @@ struct NeedsAttentionFloatCard: View {
                     .foregroundStyle(Color.cavnarInk)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(item.detail)
-                    .font(.cavnarBody(12))
+                    .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -174,7 +174,7 @@ struct AllClearRow: View {
                 .font(.cavnarBody(15, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
             Text("Nothing needs your attention right now")
-                .font(.cavnarBody(12.5))
+                .font(.cavnarBody(14.5))
                 .foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity)

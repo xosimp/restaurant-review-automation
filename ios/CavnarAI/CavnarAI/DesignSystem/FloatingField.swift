@@ -74,7 +74,7 @@ struct CavnarFloatingTextArea<Field: Hashable>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(caption)
-                .font(.cavnarBody(12, weight: 700))
+                .font(.cavnarBody(14, weight: 700))
                 .tracking(0.9)
                 .textCase(.uppercase)
                 .foregroundStyle(Color.cavnarEmber2)

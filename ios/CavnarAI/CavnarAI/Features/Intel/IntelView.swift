@@ -72,6 +72,7 @@ struct IntelView: View {
         }
         .navigationTitle("Intel")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { cavnarTitleToolbar("Intel") }
         // Replaces the plain cavnarEmberBackButton() — owns the back
         // chevron itself (tap dismisses on Competitors, returns to
         // Competitors first from AI Visibility) so it can also add the
@@ -104,7 +105,7 @@ struct IntelView: View {
                 .transition(.opacity)
             }
             if let error = viewModel.refreshError {
-                Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
             }
         }
         .frame(maxWidth: .infinity)
@@ -210,7 +211,7 @@ struct IntelView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 10, weight: .semibold))
                 Text("CAVNAR AI COMPETITIVE ANALYSIS")
-                    .font(.cavnarBody(11.5, weight: 700))
+                    .font(.cavnarBody(14, weight: 700))
                     .tracking(1.1)
             }
             .foregroundStyle(Color.cavnarEmber)
@@ -286,7 +287,7 @@ struct IntelView: View {
         VStack(spacing: 5) {
             value
             Text(label.uppercased())
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnarBody(13.5, weight: 700))
                 .tracking(0.4)
                 .foregroundStyle(Color.cavnarInk3)
                 .lineLimit(1)
@@ -312,7 +313,7 @@ struct IntelView: View {
     private func ratingComparisonSection(_ summary: IntelSummary, ownRating: Double) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("RATING COMPARISON")
-                .font(.cavnarBody(11.5, weight: 700))
+                .font(.cavnarBody(14, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber)
             VStack(spacing: 16) {
@@ -422,7 +423,7 @@ struct IntelView: View {
                 Image(systemName: isGood ? "arrow.up.right" : "arrow.down.right")
                     .font(.system(size: 9, weight: .bold))
                 Text(section.name.uppercased())
-                    .font(.cavnarBody(11.5, weight: 700))
+                    .font(.cavnarBody(14, weight: 700))
                     .tracking(1.2)
             }
             .foregroundStyle(tone)
@@ -437,7 +438,7 @@ struct IntelView: View {
                         }
                         .padding(.top, 1)
                         Text(bullet)
-                            .font(.cavnarBody(13))
+                            .font(.cavnarBody(14.5))
                             .foregroundStyle(Color.cavnarInk2)
                             .lineSpacing(3)
                     }
@@ -462,7 +463,7 @@ struct IntelView: View {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 9, weight: .bold))
                 Text("HOW TO IMPROVE")
-                    .font(.cavnarBody(11.5, weight: 700))
+                    .font(.cavnarBody(14, weight: 700))
                     .tracking(1.2)
             }
             .foregroundStyle(Color.cavnarEmber)
@@ -470,14 +471,14 @@ struct IntelView: View {
                 ForEach(Array(recommendations.enumerated()), id: \.offset) { index, rec in
                     HStack(alignment: .top, spacing: 10) {
                         Text("\(index + 1)")
-                            .font(.cavnarNumber(12, weight: 700))
+                            .font(.cavnarNumber(14, weight: 700))
                             .foregroundStyle(.white)
                             .frame(width: 20, height: 20)
                             .background(Color.cavnarEmber)
                             .clipShape(Circle())
                             .shadow(color: Color.cavnarEmber.opacity(0.55), radius: 4, x: 0, y: 0)
                         Text(rec)
-                            .font(.cavnarBody(13, weight: 500))
+                            .font(.cavnarBody(14.5, weight: 500))
                             .foregroundStyle(Color.cavnarInk)
                             .lineSpacing(3)
                     }
@@ -496,7 +497,7 @@ struct IntelView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("NEARBY COMPETITORS")
-                    .font(.cavnarBody(11.5, weight: 700))
+                    .font(.cavnarBody(14, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber)
                 Spacer()
@@ -504,7 +505,7 @@ struct IntelView: View {
                 refreshLink
             }
             if let error = viewModel.refreshError {
-                Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
             }
             if viewModel.isRefreshing {
                 CavnarRadarSweep(size: 140, caption: "Re-reading the neighborhood")
@@ -554,7 +555,7 @@ struct IntelView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(c.name)
-                        .font(.cavnarBody(13.5, weight: 600))
+                        .font(.cavnarBody(15, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                     // Only ever shown for an owner-added competitor — an
                     // auto-discovered one was never in custom_competitors,
@@ -587,24 +588,24 @@ struct IntelView: View {
                     Spacer()
                     if let diff {
                         Text(diff == 0 ? "tied" : (diff > 0 ? "▲\(String(format: "%.1f", diff)) ahead" : "▼\(String(format: "%.1f", abs(diff))) behind"))
-                            .font(.cavnarBody(11, weight: 700))
+                            .font(.cavnarBody(13.5, weight: 700))
                             .foregroundStyle(diff > 0 ? Color.cavnarGreen : (diff < 0 ? Color.cavnarRed : Color.cavnarInk3))
                     }
                 }
                 HStack(spacing: 6) {
                     ratingText(c.rating, numberSize: 11, tone: Color.cavnarAmber)
                     Text("\(c.reviewCount) reviews")
-                        .font(.cavnarBody(12))
+                        .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3)
                     if !c.vicinity.isEmpty {
                         Text("· \(c.vicinity)")
-                            .font(.cavnarBody(12))
+                            .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk3)
                             .lineLimit(1)
                     }
                     if c.isCustom {
                         Text("· Added by you")
-                            .font(.cavnarBody(12, weight: 600))
+                            .font(.cavnarBody(14, weight: 600))
                             .foregroundStyle(Color.cavnarEmber2)
                     }
                 }
@@ -615,7 +616,7 @@ struct IntelView: View {
                             .foregroundStyle(r.rating >= 4 ? Color.cavnarGreen : Color.cavnarRed)
                             .padding(.top, 2)
                         Text(r.text)
-                            .font(.cavnarBody(12.5))
+                            .font(.cavnarBody(14.5))
                             .foregroundStyle(Color.cavnarInk3)
                             .lineLimit(2)
                             .lineSpacing(2)
@@ -645,7 +646,7 @@ struct IntelView: View {
                         }
                     } label: {
                         Text(isExpanded ? "Show less" : "Show \(remaining) more review\(remaining == 1 ? "" : "s")")
-                            .font(.cavnarBody(12, weight: 600))
+                            .font(.cavnarBody(14, weight: 600))
                             .foregroundStyle(Color.cavnarEmber2)
                     }
                     .padding(.top, 1)
@@ -671,11 +672,11 @@ struct IntelView: View {
         }
         return HStack(spacing: 8) {
             Text("Last updated \(display)")
-                .font(.cavnarBody(12))
+                .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3)
             if let daysOld, daysOld >= 7 {
                 Text("Consider refreshing")
-                    .font(.cavnarBody(11, weight: 700))
+                    .font(.cavnarBody(13.5, weight: 700))
                     .foregroundStyle(Color.cavnarAmber)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
@@ -719,7 +720,7 @@ struct IntelView: View {
                 Text("Add")
             }
         }
-        .font(.cavnarBody(12, weight: 700))
+        .font(.cavnarBody(14, weight: 700))
         .foregroundStyle(Color.cavnarEmber2)
         .padding(.horizontal, 11)
         .padding(.vertical, 5)
@@ -744,7 +745,7 @@ struct IntelView: View {
                 }
             }
         }
-        .font(.cavnarBody(12, weight: 700))
+        .font(.cavnarBody(14, weight: 700))
         .foregroundStyle(Color.cavnarEmber2)
         .padding(.horizontal, 11)
         .padding(.vertical, 5)

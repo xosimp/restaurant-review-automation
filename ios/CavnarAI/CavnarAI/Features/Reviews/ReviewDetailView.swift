@@ -24,7 +24,7 @@ struct ReviewDetailView: View {
                 draftEditor
                 if let error = viewModel.errorMessage {
                     Text(error)
-                        .font(.cavnarBody(13))
+                        .font(.cavnarBody(14.5))
                         .foregroundStyle(Color.cavnarRed)
                 }
                 actionButtons
@@ -34,6 +34,7 @@ struct ReviewDetailView: View {
         .cavnarModuleBackground()
         .navigationTitle(reviewTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { cavnarTitleToolbar(reviewTitle) }
         .cavnarEmberBackButton()
         .keyboardDoneToolbar { isDraftFocused = false }
         .onChange(of: viewModel.didComplete) { _, completed in
@@ -114,7 +115,7 @@ struct ReviewDetailView: View {
                 HStack(spacing: 6) {
                     StarRatingView(rating: viewModel.review.rating ?? 0)
                     Text(viewModel.review.platformDisplayName)
-                        .font(.cavnarBody(12.5, weight: 700))
+                        .font(.cavnarBody(14.5, weight: 700))
                         .tracking(0.4)
                         .textCase(.uppercase)
                         .foregroundStyle(Color.cavnarInk3)
@@ -143,7 +144,7 @@ struct ReviewDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("AI-drafted response")
-                    .font(.cavnarBody(13, weight: 700))
+                    .font(.cavnarBody(14.5, weight: 700))
                     .foregroundStyle(Color.cavnarInk3)
                 Spacer()
                 if !isFinal {
@@ -152,14 +153,14 @@ struct ReviewDetailView: View {
                             showingTemplates = true
                         } label: {
                             Label("Templates", systemImage: "doc.on.doc")
-                                .font(.cavnarBody(12, weight: 600))
+                                .font(.cavnarBody(14, weight: 600))
                         }
                     }
                     Button {
                         Task { await viewModel.regenerateDraft() }
                     } label: {
                         Label("Regenerate", systemImage: "arrow.clockwise")
-                            .font(.cavnarBody(12, weight: 600))
+                            .font(.cavnarBody(14, weight: 600))
                     }
                     .disabled(viewModel.isSubmitting)
                 }
@@ -262,7 +263,7 @@ struct ReviewDetailView: View {
                 Button(undoLabel, role: isDestructiveUndo ? .destructive : nil) {
                     undo()
                 }
-                .font(.cavnarBody(13, weight: 600))
+                .font(.cavnarBody(14.5, weight: 600))
                 .foregroundStyle(isDestructiveUndo ? Color.cavnarRed : Color.cavnarInk3)
             }
         }
@@ -313,14 +314,15 @@ private struct TemplatePickerSheet: View {
                     onSelect(template)
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(template.title).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
-                        Text(template.body).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3).lineLimit(2)
+                        Text(template.title).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text(template.body).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3).lineLimit(2)
                     }
                 }
             }
             .scrollContentBackground(.hidden)
             .cavnarModuleBackground()
             .navigationTitle("Response Templates")
+            .toolbar { cavnarTitleToolbar("Response Templates") }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

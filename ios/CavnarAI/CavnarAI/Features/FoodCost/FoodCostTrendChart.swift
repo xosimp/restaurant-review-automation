@@ -84,7 +84,7 @@ struct FoodCostTrendChart: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("WASTE — LAST 8 WEEKS")
-                    .font(.cavnarBody(11.5, weight: 700))
+                    .font(.cavnarBody(14, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
                 if let benchmarkLabel, let wasteRatePct, benchmarkLabel != "—" {
@@ -92,10 +92,10 @@ struct FoodCostTrendChart: View {
                     HStack(spacing: 5) {
                         Circle().fill(benchmarkColor(benchmarkLabel)).frame(width: 6, height: 6)
                         Text(String(format: "%.1f%%", wasteRatePct))
-                            .font(.cavnarNumber(12, weight: 700))
+                            .font(.cavnarNumber(14, weight: 700))
                             .foregroundStyle(benchmarkColor(benchmarkLabel))
                         Text("vs. industry")
-                            .font(.cavnarBody(11))
+                            .font(.cavnarBody(13.5))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                 }
@@ -103,7 +103,7 @@ struct FoodCostTrendChart: View {
 
             if weeks.count < 2 {
                 Text("Not enough history yet — check back after a couple more weekly submissions.")
-                    .font(.cavnarBody(12))
+                    .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 20)
@@ -119,7 +119,7 @@ struct FoodCostTrendChart: View {
                         .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                         .annotation(position: .top, alignment: .trailing) {
                             Text("your avg $\(Int(average))")
-                                .font(.cavnarBody(11, weight: 700))
+                                .font(.cavnarBody(13.5, weight: 700))
                                 .foregroundStyle(Color.black)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 3)
@@ -132,7 +132,7 @@ struct FoodCostTrendChart: View {
                             .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
                             .annotation(position: .top, alignment: .leading) {
                                 Text("your target ~$\(Int(industryTargetDollar))")
-                                    .font(.cavnarBody(11, weight: 700))
+                                    .font(.cavnarBody(13.5, weight: 700))
                                     .foregroundStyle(Color.black)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 3)
@@ -175,11 +175,16 @@ struct FoodCostTrendChart: View {
                         Text("· you're \(benchmarkLabel.lowercased())")
                             .foregroundStyle(benchmarkColor(benchmarkLabel))
                     }
-                    .font(.cavnarBody(11.5))
+                    .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
                 }
             }
         }
+        // Fades + rises in on the same barsVisible flip that grows the
+        // bars, matching LaborPerformanceChart's identical treatment.
+        .opacity(barsVisible ? 1 : 0)
+        .offset(y: barsVisible ? 0 : 24)
+        .animation(.easeOut(duration: 0.5), value: barsVisible)
     }
 
     /// Press-and-hold-to-inspect, same pattern as LaborPerformanceChart's
@@ -216,7 +221,7 @@ struct FoodCostTrendChart: View {
     private func weekTooltip(_ week: FoodCostTrendWeek) -> some View {
         VStack(spacing: 2) {
             Text(week.label)
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnarBody(13.5, weight: 700))
                 .foregroundStyle(Color.cavnarInk3)
             Text("$\(Int(week.waste))")
                 .font(.cavnarNumber(14, weight: 700))

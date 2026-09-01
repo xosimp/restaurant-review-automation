@@ -28,12 +28,12 @@ struct ScheduleHistoryDetailView: View {
                         if let summary = detail.summary, !summary.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("WHAT CHANGED & WHY")
-                                    .font(.cavnarBody(11.5, weight: 700))
+                                    .font(.cavnarBody(14, weight: 700))
                                     .tracking(1.2)
                                     .foregroundStyle(Color.cavnarGreen)
                                 ForEach(summary, id: \.self) { line in
                                     Text("• \(line)")
-                                        .font(.cavnarBody(12))
+                                        .font(.cavnarBody(14))
                                         .foregroundStyle(Color.cavnarInk2)
                                         .lineSpacing(5)
                                 }
@@ -77,7 +77,7 @@ struct ScheduleHistoryDetailView: View {
             } else if let error = viewModel.errorMessage {
                 VStack(spacing: 10) {
                     Text("Couldn't load this schedule").font(.cavnarBody(15, weight: 700))
-                    Text(error).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk2).multilineTextAlignment(.center)
+                    Text(error).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk2).multilineTextAlignment(.center)
                     Button("Retry") { Task { await viewModel.load(id: historyId) } }
                         .buttonStyle(CavnarPrimaryButtonStyle())
                         .padding(.top, 4)
@@ -110,6 +110,7 @@ struct ScheduleHistoryDetailView: View {
         .cavnarModuleBackground()
         .navigationTitle(weekLabel)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { cavnarTitleToolbar(weekLabel) }
         .toolbar {
             // Same ShareLink(item:preview:) pattern as the Labor tab's own
             // schedule export (LaborView.fullScheduleTable) — plain-text
@@ -162,16 +163,16 @@ struct ScheduleHistoryDetailView: View {
         return HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text("PAR HOURS CHECK")
-                    .font(.cavnarBody(11, weight: 700))
+                    .font(.cavnarBody(13.5, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarGreen)
                 Text("Budgeted \(budget.commaFormatted)h for the week")
-                    .font(.cavnarBody(12))
+                    .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk2)
             }
             Spacer()
             Text(withinRange ? "On budget" : (diff > 0 ? "+\(diff.commaFormatted)h over" : "\(diff.commaFormatted)h under"))
-                .font(.cavnarBody(12, weight: 700))
+                .font(.cavnarBody(14, weight: 700))
                 .foregroundStyle(withinRange ? Color.cavnarGreen : Color.cavnarAmber)
         }
         .padding(10)
@@ -257,7 +258,7 @@ struct ScheduleHistoryDetailView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text(day.uppercased())
-                    .font(.cavnarBody(12, weight: 700))
+                    .font(.cavnarBody(14, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarEmber)
                     .padding(.horizontal, 10)
@@ -265,7 +266,7 @@ struct ScheduleHistoryDetailView: View {
                     .background(Color.cavnarEmber.opacity(0.16))
                     .clipShape(Capsule())
                 Text("\(rows.count) shift\(rows.count == 1 ? "" : "s")")
-                    .font(.cavnarBody(11.5))
+                    .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
             }
             VStack(alignment: .leading, spacing: 12) {
@@ -286,21 +287,21 @@ struct ScheduleHistoryDetailView: View {
                 Image(systemName: label == "MORNING" ? "sun.max.fill" : "moon.stars.fill")
                     .font(.system(size: 10, weight: .bold))
                 Text("\(label) · \(count)")
-                    .font(.cavnarBody(12, weight: 800))
+                    .font(.cavnarBody(14, weight: 800))
                     .tracking(1.1)
             }
             .foregroundStyle(Color.cavnarEmber)
             ForEach(Self.groupedByRole(rows)) { row in
                 HStack {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(row.employee ?? "").font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Text(row.employee ?? "").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk)
                         if let role = row.role, !role.isEmpty {
-                            Text(role).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
+                            Text(role).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                         }
                     }
                     Spacer()
                     Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
-                        .font(.cavnarNumber(12))
+                        .font(.cavnarNumber(14))
                         .foregroundStyle(Color.cavnarInk2)
                 }
                 .padding(.vertical, 4)

@@ -39,7 +39,7 @@ struct ValueChartCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("TOTAL VALUE DELIVERED")
-                .font(.cavnarBody(12, weight: 700))
+                .font(.cavnarBody(14, weight: 700))
                 .tracking(1.5)
                 .foregroundStyle(Color.cavnarEmber2)
 
@@ -78,7 +78,7 @@ struct ValueChartCard: View {
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
-            .font(.cavnarBody(12, weight: 600))
+            .font(.cavnarBody(14, weight: 600))
             .padding(.bottom, 10)
 
             // With no real trend yet, the chart still draws — just from a
@@ -92,7 +92,7 @@ struct ValueChartCard: View {
 
             if !hasRealTrend {
                 Text("Example — shows the trend a typical restaurant sees over time")
-                    .font(.cavnarBody(11.5))
+                    .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3.opacity(0.8))
                     .padding(.top, 4)
             }
@@ -109,7 +109,7 @@ struct ValueChartCard: View {
                     selectedRange = range
                 } label: {
                     Text(range.rawValue)
-                        .font(.cavnarBody(12, weight: 700))
+                        .font(.cavnarBody(14, weight: 700))
                         .foregroundStyle(range == selectedRange ? Color.cavnarEmber2 : Color.cavnarInk3)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)

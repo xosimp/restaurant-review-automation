@@ -31,7 +31,7 @@ struct AccountBillingDetailView: View {
                             divider()
                             Link(destination: url) {
                                 HStack {
-                                    Text("Manage payment method").font(.cavnarBody(13, weight: 600))
+                                    Text("Manage payment method").font(.cavnarBody(14.5, weight: 600))
                                     Spacer()
                                     Image(systemName: "arrow.up.right").font(.system(size: 11))
                                 }
@@ -44,7 +44,7 @@ struct AccountBillingDetailView: View {
                     if let invoices = billing.invoices, !invoices.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("RECENT INVOICES")
-                                .font(.cavnarBody(12.5, weight: 700))
+                                .font(.cavnarBody(14.5, weight: 700))
                                 .foregroundStyle(Color.cavnarInk3)
                             VStack(alignment: .leading, spacing: 0) {
                                 ForEach(Array(invoices.enumerated()), id: \.element.id) { index, invoice in
@@ -59,7 +59,7 @@ struct AccountBillingDetailView: View {
                     }
                 } else {
                     Text(billing?.message ?? "No active subscription. Contact will@cavnar.ai")
-                        .font(.cavnarBody(13))
+                        .font(.cavnarBody(14.5))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
@@ -69,6 +69,7 @@ struct AccountBillingDetailView: View {
         .cavnarModuleBackground()
         .navigationTitle("Billing")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { cavnarTitleToolbar("Billing") }
         }
     }
 
@@ -97,10 +98,10 @@ struct AccountBillingDetailView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(invoice.date).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-                Text(invoice.status.capitalized).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                Text(invoice.status.capitalized).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
             }
             Spacer()
-            Text(invoice.amount).font(.cavnarNumber(13, weight: 600)).foregroundStyle(Color.cavnarInk)
+            Text(invoice.amount).font(.cavnarNumber(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
             if invoice.pdfURL != nil {
                 Image(systemName: "arrow.down.circle")
                     .font(.system(size: 13))

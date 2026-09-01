@@ -45,12 +45,12 @@ struct ChangelogView: View {
                                     Spacer()
                                     if let tag = entry.tag {
                                         Text(tag.uppercased())
-                                            .font(.cavnarBody(11, weight: 700))
+                                            .font(.cavnarBody(13.5, weight: 700))
                                             .foregroundStyle(Color.cavnarEmber)
                                     }
                                 }
                                 if let body = entry.body, !body.isEmpty {
-                                    Text(body).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+                                    Text(body).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
                                 }
                             }
                             .cavnarCard()
@@ -63,6 +63,7 @@ struct ChangelogView: View {
         .cavnarModuleBackground()
         .navigationTitle("What's New")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { cavnarTitleToolbar("What's New") }
         .task { await viewModel.load() }
         }
     }

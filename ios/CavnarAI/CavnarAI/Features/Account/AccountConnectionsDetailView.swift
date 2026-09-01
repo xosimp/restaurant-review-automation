@@ -40,6 +40,7 @@ struct AccountConnectionsDetailView: View {
             .cavnarModuleBackground()
             .navigationTitle("Connections")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { cavnarTitleToolbar("Connections") }
             .sheet(isPresented: $showingToastConnect) {
                 ToastConnectSheet(viewModel: viewModel)
             }
@@ -63,7 +64,7 @@ struct AccountConnectionsDetailView: View {
             }
 
             if let error = viewModel.connectGoogleError {
-                Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
             }
 
             if connections.googleBusiness.connected {
@@ -71,7 +72,7 @@ struct AccountConnectionsDetailView: View {
                     Haptic.light()
                     Task { await viewModel.disconnectGoogleBusiness() }
                 }
-                .font(.cavnarBody(12, weight: 600))
+                .font(.cavnarBody(14, weight: 600))
             } else {
                 Button {
                     Haptic.light()
@@ -101,7 +102,7 @@ struct AccountConnectionsDetailView: View {
                     Haptic.light()
                     Task { await viewModel.disconnectToast() }
                 }
-                .font(.cavnarBody(12, weight: 600))
+                .font(.cavnarBody(14, weight: 600))
             } else {
                 Button {
                     Haptic.light()
@@ -128,7 +129,7 @@ struct AccountConnectionsDetailView: View {
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: 10))
                     }
-                    .font(.cavnarBody(12, weight: 600))
+                    .font(.cavnarBody(14, weight: 600))
                     .foregroundStyle(Color.cavnarEmber)
                 }
             }
@@ -156,9 +157,9 @@ struct AccountConnectionsDetailView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(label).font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
                 if status.connected, let lastSynced = status.lastSynced {
-                    Text("Last synced \(lastSynced)").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                    Text("Last synced \(lastSynced)").font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
                 } else if !status.connected {
-                    Text("Not connected").font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3)
+                    Text("Not connected").font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
                 }
             }
 
@@ -169,7 +170,7 @@ struct AccountConnectionsDetailView: View {
                     .fill(status.connected ? Color.cavnarGreen : Color.cavnarInk3.opacity(0.4))
                     .frame(width: 6, height: 6)
                 Text(status.connected ? "Connected" : "Off")
-                    .font(.cavnarBody(12, weight: 600))
+                    .font(.cavnarBody(14, weight: 600))
                     .foregroundStyle(status.connected ? Color.cavnarGreen : Color.cavnarInk3)
             }
         }

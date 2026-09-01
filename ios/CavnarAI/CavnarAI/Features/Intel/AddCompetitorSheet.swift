@@ -63,7 +63,7 @@ struct AddCompetitorSheet: View {
                     CavnarLoadingSeal(size: 32).frame(maxWidth: .infinity).padding(.top, 40)
                 } else if hasSearchedOnce && results.isEmpty {
                     Text("No matches found")
-                        .font(.cavnarBody(13))
+                        .font(.cavnarBody(14.5))
                         .foregroundStyle(Color.cavnarInk3)
                         .frame(maxWidth: .infinity)
                         .padding(.top, 40)
@@ -81,7 +81,7 @@ struct AddCompetitorSheet: View {
                     }
                 } else {
                     Text("Search for a nearby restaurant to track it in your competitor comparison — even ones our automatic search doesn't catch.")
-                        .font(.cavnarBody(12))
+                        .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3)
                         .lineSpacing(3)
                         .padding(.horizontal, 20)
@@ -92,6 +92,7 @@ struct AddCompetitorSheet: View {
             .cavnarModuleBackground()
             .navigationTitle("Add a Competitor")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { cavnarTitleToolbar("Add a Competitor") }
             .keyboardDoneToolbar { focusedField = nil }
             .toolbar {
                 cavnarToolbarItem(placement: .cancellationAction) {
@@ -114,12 +115,12 @@ struct AddCompetitorSheet: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(result.name)
-                        .font(.cavnarBody(13.5, weight: 600))
+                        .font(.cavnarBody(15, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                         .lineLimit(1)
                     if !result.address.isEmpty {
                         Text(result.address)
-                            .font(.cavnarBody(12))
+                            .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk3)
                             .lineLimit(1)
                     }
@@ -129,7 +130,7 @@ struct AddCompetitorSheet: View {
                                 .font(.system(size: 8))
                                 .foregroundStyle(Color.cavnarAmber)
                             Text(String(format: "%.1f", result.rating) + " · \(result.reviewCount) reviews")
-                                .font(.cavnarBody(12))
+                                .font(.cavnarBody(14))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                     }
@@ -165,7 +166,7 @@ struct AddCompetitorSheet: View {
             CavnarShimmerLine(color: .cavnarEmber2)
                 .frame(width: 140)
             Text("Fetching reviews and updating your competitive analysis — this usually takes 20–40 seconds.")
-                .font(.cavnarBody(12))
+                .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3)
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)

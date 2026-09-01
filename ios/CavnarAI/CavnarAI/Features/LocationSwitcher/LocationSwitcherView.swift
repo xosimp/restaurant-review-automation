@@ -12,7 +12,7 @@ struct LocationSwitcherView: View {
             List {
                 if let error = viewModel.errorMessage {
                     Text(error)
-                        .font(.cavnarBody(13))
+                        .font(.cavnarBody(14.5))
                         .foregroundStyle(Color.cavnarRed)
                 }
                 ForEach(viewModel.locations) { location in
@@ -50,6 +50,7 @@ struct LocationSwitcherView: View {
             }
             .navigationTitle(viewModel.groupName ?? "Locations")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { cavnarTitleToolbar(viewModel.groupName ?? "Locations") }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }

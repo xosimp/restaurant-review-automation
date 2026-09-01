@@ -42,6 +42,7 @@ struct FilteredReviewsView: View {
         .cavnarModuleBackground()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { cavnarTitleToolbar(title) }
         .cavnarEmberBackButton()
         .task { await viewModel.load(category: category, platform: platform) }
     }

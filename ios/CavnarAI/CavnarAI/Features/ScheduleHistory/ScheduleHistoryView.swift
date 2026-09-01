@@ -99,6 +99,7 @@ struct ScheduleHistoryView: View {
         .cavnarModuleBackground()
         .navigationTitle("Schedule History")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { cavnarTitleToolbar("Schedule History") }
         .task { await viewModel.load() }
         .cavnarEmberRefreshable { await viewModel.load() }
         // A standard modal alert for a failed delete — surfaces the real
@@ -132,7 +133,7 @@ struct ScheduleHistoryView: View {
                     .font(.cavnarBody(14, weight: 700))
                 if let generated = Self.generatedAtParser.date(from: entry.generatedAt) {
                     Text("Generated \(Self.generatedAtDisplayFormatter.string(from: generated))")
-                        .font(.cavnarBody(12))
+                        .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }

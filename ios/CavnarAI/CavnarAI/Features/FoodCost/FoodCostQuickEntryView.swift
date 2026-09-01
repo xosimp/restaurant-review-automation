@@ -32,6 +32,7 @@ struct FoodCostQuickEntryView: View {
         .cavnarModuleBackground()
         .navigationTitle("Food Cost")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { cavnarTitleToolbar("Food Cost") }
         // Replaces the plain cavnarEmberBackButton() — swipe left anywhere
         // jumps to Analytics; swipe right or tap back while on Analytics
         // returns to Tracker first, and only leaves the module once
@@ -53,7 +54,7 @@ struct FoodCostQuickEntryView: View {
                 isExpanded: $analyticsViewModel.forecastExpanded
             ) {
                 Text(analyticsViewModel.analytics?.insight?.forecast ?? "No forecast yet — check back once this week's numbers are in.")
-                    .font(.cavnarBody(12))
+                    .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk2)
                     .lineSpacing(3)
             }
@@ -75,7 +76,7 @@ struct FoodCostQuickEntryView: View {
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(Color.cavnarGreen)
                 Text("This week's prices submitted")
-                    .font(.cavnarBody(13, weight: 600))
+                    .font(.cavnarBody(14.5, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
             }
             .padding(.horizontal, 18)
@@ -110,11 +111,11 @@ struct FoodCostQuickEntryView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("KEY INGREDIENT PRICES")
-                            .font(.cavnarBody(11.5, weight: 700))
+                            .font(.cavnarBody(14, weight: 700))
                             .tracking(1.2)
                             .foregroundStyle(Color.cavnarEmber2)
                         Text("Fill in this week's price per unit right after an invoice arrives.")
-                            .font(.cavnarBody(12))
+                            .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk3)
                         // 8-10 is the standard food-cost-consulting sweet
                         // spot for a WEEKLY quick-price-check specifically
@@ -124,9 +125,9 @@ struct FoodCostQuickEntryView: View {
                         // real supplier price swing, without turning this
                         // into a chore nobody keeps up with every week.
                         (Text("Track your top ")
-                            + Text("8–10").font(.cavnarNumber(12, weight: 700)).foregroundStyle(Color.cavnarEmber2)
+                            + Text("8–10").font(.cavnarNumber(14, weight: 700)).foregroundStyle(Color.cavnarEmber2)
                             + Text(" highest-cost ingredients — enough to catch real swings, not busywork."))
-                            .font(.cavnarBody(12))
+                            .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk3)
                     }
 
@@ -152,7 +153,7 @@ struct FoodCostQuickEntryView: View {
 
                 if let error = viewModel.errorMessage {
                     Text(error)
-                        .font(.cavnarBody(13))
+                        .font(.cavnarBody(14.5))
                         .foregroundStyle(Color.cavnarRed)
                 }
 
@@ -177,7 +178,7 @@ struct FoodCostQuickEntryView: View {
                 if viewModel.didSubmit {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("THIS WEEK'S RESULT")
-                            .font(.cavnarBody(11.5, weight: 700))
+                            .font(.cavnarBody(14, weight: 700))
                             .tracking(1.2)
                             .foregroundStyle(Color.cavnarGreen)
                         resultSummary
@@ -201,22 +202,22 @@ struct FoodCostQuickEntryView: View {
     private var resultSummary: some View {
         if viewModel.drift.isEmpty {
             Label("Prices stable vs. last submission", systemImage: "checkmark.circle.fill")
-                .font(.cavnarBody(13))
+                .font(.cavnarBody(14.5))
                 .foregroundStyle(Color.cavnarGreen)
         } else {
             ForEach(viewModel.drift) { drift in
                 HStack {
                     Text(drift.name)
-                        .font(.cavnarBody(13, weight: 600))
+                        .font(.cavnarBody(14.5, weight: 600))
                     Spacer()
                     Text(String(format: "%@%.1f%%", drift.direction == "up" ? "↑ " : "↓ ", abs(drift.pctChange)))
-                        .font(.cavnarNumber(13))
+                        .font(.cavnarNumber(14.5))
                         .foregroundStyle(drift.direction == "up" ? Color.cavnarRed : Color.cavnarGreen)
                 }
             }
             if let total = viewModel.totalWeeklyImpact, total > 0 {
-                (Text("Est. ") + Text("+$\(Int(total))/week").font(.cavnarNumber(12, weight: 600)) + Text(" from price increases"))
-                    .font(.cavnarBody(12, weight: 600))
+                (Text("Est. ") + Text("+$\(Int(total))/week").font(.cavnarNumber(14, weight: 600)) + Text(" from price increases"))
+                    .font(.cavnarBody(14, weight: 600))
                     .foregroundStyle(Color.cavnarAmber)
             }
         }
@@ -379,7 +380,7 @@ private struct IngredientCarousel: View {
                     HStack(spacing: 4) {
                         Spacer()
                         Text("SWIPE")
-                            .font(.cavnarBody(11, weight: 700))
+                            .font(.cavnarBody(13.5, weight: 700))
                             .tracking(1.5)
                         Image(systemName: "arrow.down")
                             .font(.system(size: 10, weight: .bold))
@@ -491,7 +492,7 @@ private struct IngredientCarousel: View {
                         Image(systemName: "plus.circle.fill")
                         Text("Add ingredient")
                     }
-                    .font(.cavnarBody(13, weight: 600))
+                    .font(.cavnarBody(14.5, weight: 600))
                     .foregroundStyle(Color.cavnarEmber2)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
@@ -586,11 +587,14 @@ private struct IngredientCard: View {
                         .frame(height: isNameFocused ? 1.5 : 1)
                 }
                 TextField("unit", text: $item.unit)
-                    .font(.cavnarBody(11.5, weight: 700))
+                    .font(.cavnarBody(14, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                     .tracking(0.4)
                     .multilineTextAlignment(.center)
-                    .frame(width: 38)
+                    // Widened alongside the text growing from 10pt to
+                    // 14pt — the old 38pt frame fit a 10pt unit like
+                    // "each"/"lbs" but clipped it at the bumped size.
+                    .frame(width: 50)
                     .focused(focusedField, equals: .unit(item.id))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 5)
@@ -633,13 +637,13 @@ private struct IngredientCard: View {
     private func statField(label: String, prefix: String?, text: Binding<String>, field: CarouselField) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnarBody(13.5, weight: 700))
                 .tracking(0.6)
                 .foregroundStyle(Color.cavnarInk.opacity(0.65))
             HStack(spacing: 2) {
                 if let prefix {
                     Text(prefix)
-                        .font(.cavnarNumber(13, weight: 500))
+                        .font(.cavnarNumber(14.5, weight: 500))
                         .foregroundStyle(Color.cavnarInk.opacity(0.8))
                 }
                 TextField("0", text: text)

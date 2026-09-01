@@ -45,7 +45,7 @@ struct AccountProfileDetailView: View {
                     voiceSection
 
                     if let error = viewModel.saveProfileError {
-                        Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                     }
 
                     Button {
@@ -73,6 +73,7 @@ struct AccountProfileDetailView: View {
             .cavnarModuleBackground()
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { cavnarTitleToolbar("Profile") }
             .keyboardDoneToolbar { focusedField = nil }
             .sheet(isPresented: $showingUpdateEmail) {
                 UpdateEmailSheet(viewModel: viewModel)
@@ -113,7 +114,7 @@ struct AccountProfileDetailView: View {
                         .foregroundStyle(Color.cavnarInk3)
                         .padding(.top, 1)
                     Text("Set during setup — this is what the AI uses to describe your restaurant, so it stays admin-managed. Email will@cavnar.ai to change it.")
-                        .font(.cavnarBody(12))
+                        .font(.cavnarBody(14))
                         .foregroundStyle(Color.cavnarInk3)
                 }
                 .padding(.top, 2)
@@ -124,9 +125,9 @@ struct AccountProfileDetailView: View {
 
     private func lockedRow(_ label: String, _ value: String) -> some View {
         HStack {
-            Text(label).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
+            Text(label).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
             Spacer()
-            Text(value).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk2)
+            Text(value).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk2)
         }
     }
 
@@ -142,7 +143,7 @@ struct AccountProfileDetailView: View {
                 divider()
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Email").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                        Text("Email").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                         Text(profile.ownerEmail ?? "—").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk)
                     }
                     Spacer()
@@ -151,7 +152,7 @@ struct AccountProfileDetailView: View {
                         showingUpdateEmail = true
                     } label: {
                         Text("Update")
-                            .font(.cavnarBody(12, weight: 700))
+                            .font(.cavnarBody(14, weight: 700))
                             .foregroundStyle(Color.cavnarEmber)
                     }
                 }
@@ -194,7 +195,7 @@ struct AccountProfileDetailView: View {
 
     private func profileField(_ label: String, text: Binding<String>, field: Field, keyboardType: UIKeyboardType = .default) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+            Text(label).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
             TextField(label, text: text)
                 .font(.cavnarBody(14, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
@@ -205,17 +206,17 @@ struct AccountProfileDetailView: View {
 
     private func profileEditor(_ label: String, placeholder: String, text: Binding<String>, field: Field) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+            Text(label).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
             ZStack(alignment: .topLeading) {
                 if text.wrappedValue.isEmpty {
                     Text(placeholder)
-                        .font(.cavnarBody(13))
+                        .font(.cavnarBody(14.5))
                         .foregroundStyle(Color.cavnarInk3.opacity(0.6))
                         .padding(.top, 8)
                         .padding(.leading, 4)
                 }
                 TextEditor(text: text)
-                    .font(.cavnarBody(13, weight: 500))
+                    .font(.cavnarBody(14.5, weight: 500))
                     .foregroundStyle(Color.cavnarInk)
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 64, maxHeight: 110)
@@ -226,7 +227,7 @@ struct AccountProfileDetailView: View {
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
-            .font(.cavnarBody(12.5, weight: 700))
+            .font(.cavnarBody(14.5, weight: 700))
             .foregroundStyle(Color.cavnarInk3)
     }
 

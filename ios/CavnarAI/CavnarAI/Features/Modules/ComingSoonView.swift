@@ -18,7 +18,7 @@ struct ComingSoonView: View {
                 .foregroundStyle(Color.cavnarInk)
                 .multilineTextAlignment(.center)
             Text("This is available on desktop today — mobile support is on the way.")
-                .font(.cavnarBody(13))
+                .font(.cavnarBody(14.5))
                 .foregroundStyle(Color.cavnarInk3)
                 .multilineTextAlignment(.center)
         }
@@ -27,5 +27,6 @@ struct ComingSoonView: View {
         .background(Color.cavnarPaper)
         .navigationTitle(moduleLabel)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { cavnarTitleToolbar(moduleLabel) }
     }
 }

@@ -35,6 +35,7 @@ struct ReviewsListView: View {
         .cavnarModuleBackground()
         .navigationTitle("Reviews")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { cavnarTitleToolbar("Reviews") }
         .cavnarTabSwipeNavigation($subTab, primaryTab: .inbox, secondaryTab: .analytics)
         .toolbar {
             cavnarToolbarItem(placement: .navigationBarTrailing) {
@@ -143,7 +144,7 @@ struct ReviewRow: View {
                     StatusPill(status: review.responseStatus)
                     if let date = review.formattedDate {
                         Text(date)
-                            .font(.cavnarBody(12.5))
+                            .font(.cavnarBody(14.5))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                     if review.isUrgent {
@@ -181,7 +182,7 @@ struct StatusPill: View {
 
     var body: some View {
         Text(label)
-            .font(.cavnarBody(11, weight: 700))
+            .font(.cavnarBody(13.5, weight: 700))
             .tracking(0.4)
             .textCase(.uppercase)
             .padding(.horizontal, 6)

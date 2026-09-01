@@ -33,6 +33,7 @@ struct AccountView: View {
             .cavnarModuleBackground()
             .cavnarEmberRefreshable { await viewModel.load() }
             .navigationTitle("Account")
+            .toolbar { cavnarTitleToolbar("Account") }
             .task {
                 await viewModel.load()
                 await viewModel.loadBilling()
@@ -70,7 +71,7 @@ struct AccountView: View {
                     .font(.cavnarBody(17, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Text("\(summary.account.email) · \(sessionStore.currentUser?.isOwner == true ? "Owner" : "Manager")")
-                    .font(.cavnarBody(12))
+                    .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
                     .lineLimit(1)
             }
@@ -82,7 +83,7 @@ struct AccountView: View {
                 HStack(spacing: 5) {
                     Circle().fill(isActive ? Color.cavnarGreen : Color.cavnarAmber).frame(width: 6, height: 6)
                     Text(status.uppercased())
-                        .font(.cavnarBody(11.5, weight: 700))
+                        .font(.cavnarBody(14, weight: 700))
                         .foregroundStyle(isActive ? Color.cavnarGreen : Color.cavnarAmber)
                 }
                 .padding(.horizontal, 10)
@@ -247,7 +248,7 @@ struct AccountView: View {
             .frame(height: 54)
             if let appIconError {
                 Text(appIconError)
-                    .font(.cavnarBody(12))
+                    .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarRed)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
@@ -281,7 +282,7 @@ struct AccountView: View {
     private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title.uppercased())
-                .font(.cavnarBody(12.5, weight: 700))
+                .font(.cavnarBody(14.5, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
             VStack(spacing: 0) { content() }

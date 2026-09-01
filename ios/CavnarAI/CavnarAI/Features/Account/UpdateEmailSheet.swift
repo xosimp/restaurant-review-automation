@@ -31,7 +31,7 @@ struct UpdateEmailSheet: View {
                     )
 
                     if let error = viewModel.updateEmailError {
-                        Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                     }
 
                     CavnarFormButtonPair { matchedWidth in
@@ -59,6 +59,7 @@ struct UpdateEmailSheet: View {
             .cavnarModuleBackground()
             .navigationTitle("Update Email")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { cavnarTitleToolbar("Update Email") }
             .keyboardNavToolbar($focusedField)
         }
     }

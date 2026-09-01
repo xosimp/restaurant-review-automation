@@ -129,7 +129,7 @@ struct TonePill: View {
 
     var body: some View {
         Text(text)
-            .font(.cavnarBody(12, weight: 700))
+            .font(.cavnarBody(14, weight: 700))
             .foregroundStyle(tone.foreground)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)

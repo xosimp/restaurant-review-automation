@@ -22,6 +22,7 @@ struct GuestTextClubView: View {
         }
         .background(Color.cavnarPaper)
         .navigationTitle("Guest Text Club")
+        .toolbar { cavnarTitleToolbar("Guest Text Club") }
         .keyboardNavToolbar($focusedField)
         .task {
             await viewModel.load()
@@ -34,9 +35,9 @@ struct GuestTextClubView: View {
 
     private func joinLinkCard(_ url: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Guest join link").font(.cavnarBody(12, weight: 700)).foregroundStyle(Color.cavnarInk3)
+            Text("Guest join link").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarInk3)
             Text(url)
-                .font(.cavnarBody(12))
+                .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk)
                 .textSelection(.enabled)
         }
@@ -45,7 +46,7 @@ struct GuestTextClubView: View {
 
     private var campaignCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Send a campaign").font(.cavnarBody(13, weight: 700)).foregroundStyle(Color.cavnarInk)
+            Text("Send a campaign").font(.cavnarBody(14.5, weight: 700)).foregroundStyle(Color.cavnarInk)
 
             CavnarSegmentedControl(
                 selection: $viewModel.campaignType,
@@ -76,7 +77,7 @@ struct GuestTextClubView: View {
 
             if !viewModel.draftMessage.isEmpty {
                 TextEditor(text: $viewModel.draftMessage)
-                    .font(.cavnarBody(13))
+                    .font(.cavnarBody(14.5))
                     .frame(minHeight: 80)
                     .padding(8)
                     .background(Color.cavnarPaper2)
@@ -97,13 +98,13 @@ struct GuestTextClubView: View {
 
                 if viewModel.didSend {
                     Label("Campaign sent", systemImage: "checkmark.circle.fill")
-                        .font(.cavnarBody(12, weight: 600))
+                        .font(.cavnarBody(14, weight: 600))
                         .foregroundStyle(Color.cavnarGreen)
                 }
             }
 
             if let error = viewModel.campaignError {
-                Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
             }
         }
         .cavnarCard()
@@ -112,8 +113,8 @@ struct GuestTextClubView: View {
     private var contactsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                (Text("Guest contacts (") + Text("\(viewModel.contacts.count)").font(.cavnarNumber(13, weight: 700)) + Text(")"))
-                    .font(.cavnarBody(13, weight: 700))
+                (Text("Guest contacts (") + Text("\(viewModel.contacts.count)").font(.cavnarNumber(14.5, weight: 700)) + Text(")"))
+                    .font(.cavnarBody(14.5, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Spacer()
                 Button {
@@ -125,19 +126,19 @@ struct GuestTextClubView: View {
             if viewModel.isLoading {
                 ProgressView()
             } else if let error = viewModel.errorMessage {
-                Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
             } else {
                 ForEach(viewModel.contacts) { contact in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(contact.name?.isEmpty == false ? contact.name! : "Guest")
-                                .font(.cavnarBody(13, weight: 600))
+                                .font(.cavnarBody(14.5, weight: 600))
                                 .foregroundStyle(Color.cavnarInk)
-                            Text(contact.phone).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
+                            Text(contact.phone).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                         }
                         Spacer()
                         if contact.consent == true {
-                            Text("Consented").font(.cavnarBody(11.5, weight: 700)).foregroundStyle(Color.cavnarGreen)
+                            Text("Consented").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarGreen)
                         }
                         Button {
                             Haptic.selection()
@@ -208,6 +209,7 @@ private struct AddGuestContactSheet: View {
             .cavnarModuleBackground()
             .navigationTitle("Add Guest")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { cavnarTitleToolbar("Add Guest") }
             .keyboardNavToolbar($focusedField)
         }
     }

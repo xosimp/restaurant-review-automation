@@ -138,7 +138,7 @@ struct NotificationsListView: View {
                                         .font(.cavnarBody(14, weight: 600))
                                         .foregroundStyle(Color.cavnarInk)
                                     Text(item.relativeFiredAt)
-                                        .font(.cavnarBody(12))
+                                        .font(.cavnarBody(14))
                                         .foregroundStyle(Color.cavnarInk3)
                                 }
                                 Spacer()
@@ -169,6 +169,7 @@ struct NotificationsListView: View {
             .cavnarModuleBackground()
             .cavnarEmberRefreshable { await viewModel.load() }
             .navigationTitle("Notifications")
+            .toolbar { cavnarTitleToolbar("Notifications") }
         }
     }
 }
