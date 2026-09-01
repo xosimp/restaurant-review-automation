@@ -21,7 +21,9 @@ targets:
         CFBundleDisplayName: Cavnar AI
         UILaunchScreen:
           UIColorName: Paper
-          UIImageName: LaunchSeal
+          # A faint ghost of the ring only — RootView's LaunchSplashView
+          # draws the real ring in over this exact spot on the first frame.
+          UIImageName: LaunchGhost
         UIAppFonts:
           - ApfelGrotezk-Regular.ttf
           - ApfelGrotezk-Fett.ttf

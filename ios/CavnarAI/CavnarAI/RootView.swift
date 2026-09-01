@@ -24,6 +24,12 @@ struct RootView: View {
     // mainTabs (and everything nested in it) on every Face ID lock/unlock.
     @State private var homePath = NavigationPath()
     @State private var modulesPath = NavigationPath()
+    // Same reason as the paths above: owned here so Home's already-loaded
+    // summary survives the LockedView swap. When HomeView owned this, every
+    // unlock recreated it empty, and Home flashed its loading seal (top of
+    // the page, before the ScrollView had its width — hence "a big C in the
+    // top-left") for the reload before the hero came back.
+    @State private var homeViewModel = HomeViewModel()
     @State private var showingAskCavnar = false
     // Single shared flip that drives BOTH Home's hero fade-in and the FAB's
     // — owned up here (not by HomeView, which lives in a separate subtree
@@ -38,9 +44,12 @@ struct RootView: View {
     var body: some View {
         Group {
             if !sessionStore.isAuthenticated {
-                LoginView(sessionStore: sessionStore)
+                LoginView(sessionStore: sessionStore, introReady: !showLaunchSplash)
             } else if sessionStore.isLocked {
-                LockedView()
+                // introReady: on a cold launch this mounts UNDER the splash;
+                // without the gate its draw-in played hidden and the user
+                // only ever saw the settled end state once the splash lifted.
+                LockedView(introReady: !showLaunchSplash)
             } else {
                 mainTabs
             }
@@ -94,7 +103,7 @@ struct RootView: View {
     // control haptic convention for a discrete-choice change.
     private var mainTabs: some View {
         TabView(selection: $selectedTab) {
-            HomeView(path: $homePath, heroAppeared: introAppeared, onHeroAppear: startIntroSequence)
+            HomeView(viewModel: homeViewModel, path: $homePath, heroAppeared: introAppeared, onHeroAppear: startIntroSequence)
                 .tabItem { Label(AppTab.home.title, systemImage: AppTab.home.systemImage) }
                 .tag(AppTab.home)
 
@@ -308,29 +317,45 @@ private struct FABPressStyle: ButtonStyle {
     }
 }
 
-/// The app's own first frame after the static launch image — the same
-/// 128pt seal, centered on Paper, exactly where UILaunchScreen drew it, so
-/// the handoff is invisible. Then the ember breathes twice and the whole
-/// thing fades out over whatever screen is underneath.
+/// The app's own first frame after the static launch image. iOS draws the
+/// launch screen itself and it can't animate, so it now shows only a faint
+/// ghost of the ring (LaunchGhost, 128pt, centered on Paper) — this view
+/// draws the real ring in over that exact spot, then the ember pops in and
+/// flares once, then the whole thing fades out over whatever screen is
+/// underneath. The time BEFORE this appears (the static ghost) is the
+/// process launching — nothing in the app runs yet, and a debug build with
+/// Xcode attached spends several seconds there that a release build doesn't.
 private struct LaunchSplashView: View {
     var onFinished: () -> Void
 
-    @State private var start = Date()
+    @State private var ringProgress: CGFloat = 0
+    @State private var emberOn = false
+    @State private var flare: CGFloat = 0
 
     var body: some View {
         ZStack {
             Color.cavnarPaper.ignoresSafeArea()
-            TimelineView(.animation) { timeline in
-                let t = timeline.date.timeIntervalSince(start)
-                // Starts at rest (matching the launch image), then two full
-                // breaths — halo swelling, core going hot — before the fade.
-                let intensity = CGFloat(max(0, sin(t * .pi / 0.78)))
-                CavnarSealMark(size: 128, ringOpacity: 1, emberIntensity: intensity)
+            ZStack {
+                CavnarSealRingShape()
+                    .trim(from: 0, to: ringProgress)
+                    .stroke(Color.cavnarInk, style: StrokeStyle(lineWidth: 128 * (19.0 / 120.0), lineCap: .butt))
+                    .frame(width: 128, height: 128)
+                // Just the ember (ring hidden) — sits in the gap of the ring
+                // drawn above, flares via the mark's own emberIntensity.
+                CavnarSealMark(size: 128, ringOpacity: 0, emberIntensity: flare)
+                    .opacity(emberOn ? 1 : 0)
             }
             .frame(width: 128, height: 128)
         }
         .task {
-            try? await Task.sleep(for: .seconds(1.6))
+            withAnimation(.easeInOut(duration: 0.9)) { ringProgress = 1 }
+            try? await Task.sleep(for: .seconds(0.85))
+            withAnimation(.easeOut(duration: 0.3)) { emberOn = true }
+            try? await Task.sleep(for: .seconds(0.25))
+            withAnimation(.easeInOut(duration: 0.4)) { flare = 1 }
+            try? await Task.sleep(for: .seconds(0.4))
+            withAnimation(.easeInOut(duration: 0.45)) { flare = 0 }
+            try? await Task.sleep(for: .seconds(0.45))
             onFinished()
         }
     }
@@ -350,6 +375,10 @@ private struct LaunchSplashView: View {
 /// biometry (Face ID vs Touch ID) rather than assuming.
 struct LockedView: View {
     @Environment(SessionStore.self) private var sessionStore
+    // False while RootView's launch splash is still covering this on a cold
+    // launch — the wordmark isn't mounted (so its stamp-in doesn't start)
+    // and the stagger below waits, so nothing plays hidden.
+    var introReady: Bool = true
     @State private var isUnlocking = false
     @State private var unlockFailed = false
     // Staggered reveal after the lockup has drawn itself in: 1 headline,
@@ -380,8 +409,18 @@ struct LockedView: View {
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
 
-                CavnarLockupIntro(width: 300)
-                    .padding(.bottom, 48)
+                // Wordmark only — no seal beside it here (it read as a
+                // stray "C" off to the side of the word). Placeholder keeps
+                // the layout stable until the splash lifts and it mounts.
+                Group {
+                    if introReady {
+                        CavnarWordmarkStampIn(width: 280)
+                    } else {
+                        Color.clear
+                            .frame(width: 280 + 54 * (280 / 461) + 40, height: 280 * (100 / 461))
+                    }
+                }
+                .padding(.bottom, 48)
 
                 VStack(spacing: 12) {
                     Text("Welcome back")
@@ -440,10 +479,11 @@ struct LockedView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .animation(.easeOut(duration: 0.3), value: unlockFailed)
-        .task {
-            // Let the lockup draw itself in first (seal ~1.1s, letters
-            // stamping through ~1.3s), then bring the rest up in order.
-            try? await Task.sleep(for: .seconds(1.1))
+        .task(id: introReady) {
+            guard introReady, stage == 0 else { return }
+            // Let the wordmark stamp itself in first (~1s), then bring the
+            // rest up in order.
+            try? await Task.sleep(for: .seconds(1.0))
             for step in 1...4 {
                 withAnimation(.easeOut(duration: 0.45)) { stage = step }
                 try? await Task.sleep(for: .seconds(0.14))

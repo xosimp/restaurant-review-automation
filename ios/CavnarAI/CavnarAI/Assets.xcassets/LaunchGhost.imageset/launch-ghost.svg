@@ -1,0 +1,7 @@
+<svg width="128" height="128" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <!-- Static launch screen: only a ghost of the seal ring. The app's own
+       first frame (RootView.LaunchSplashView) draws the real ring in over
+       this exact geometry, then lights the ember. -->
+  <path d="M99.5,45 V44.5 A24,24 0 0 0 75.5,20.5 H44.5 A24,24 0 0 0 20.5,44.5 V75.5 A24,24 0 0 0 44.5,99.5 H75.5 A24,24 0 0 0 99.5,75.5 V75"
+        fill="none" stroke="#F0EBE0" stroke-opacity="0.13" stroke-width="19"/>
+</svg>

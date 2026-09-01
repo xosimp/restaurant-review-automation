@@ -127,10 +127,25 @@ struct CavnarWordmarkLetterShape: Shape {
         let s = rect.width / Self.boxWidth
         func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: rect.minX + x * s, y: rect.minY + y * s) }
         var p = Path()
-        func poly(_ pts: [(CGFloat, CGFloat)]) {
-            guard let first = pts.first else { return }
-            p.move(to: pt(first.0, first.1))
-            for q in pts.dropFirst() { p.addLine(to: pt(q.0, q.1)) }
+        // Every solid polygon is emitted with the SAME winding (normalized
+        // from its signed area) so the nonzero fill unions overlapping
+        // pieces. The two legs of each A overlap at the apex and the V's
+        // legs overlap at its point — copied verbatim from the SVG they
+        // wind in opposite directions, which was fine there (separate
+        // <polygon> elements) but in one combined Path cancelled to a hole
+        // wherever they overlapped: the "doubled"/notched letters seen on
+        // device. Only the R's counter is deliberately reversed (hole:
+        // true) so it punches through.
+        func poly(_ pts: [(CGFloat, CGFloat)], hole: Bool = false) {
+            guard pts.count >= 3 else { return }
+            var area: CGFloat = 0
+            for i in pts.indices {
+                let j = (i + 1) % pts.count
+                area += pts[i].0 * pts[j].1 - pts[j].0 * pts[i].1
+            }
+            let ordered = ((area > 0) != hole) ? pts : Array(pts.reversed())
+            p.move(to: pt(ordered[0].0, ordered[0].1))
+            for q in ordered.dropFirst() { p.addLine(to: pt(q.0, q.1)) }
             p.closeSubpath()
         }
         switch index {
@@ -154,7 +169,7 @@ struct CavnarWordmarkLetterShape: Shape {
         default:
             poly([(391, 0), (412, 0), (412, 100), (391, 100)])
             poly([(412, 0), (447, 0), (461, 14), (461, 44), (447, 58), (412, 58)])
-            poly([(412, 21), (412, 37), (435, 37), (440, 32), (440, 26), (435, 21)])
+            poly([(412, 21), (412, 37), (435, 37), (440, 32), (440, 26), (435, 21)], hole: true)
             poly([(425, 58), (446, 58), (457, 100), (436, 100)])
         }
         return p

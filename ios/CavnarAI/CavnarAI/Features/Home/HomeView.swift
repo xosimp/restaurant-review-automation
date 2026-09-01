@@ -2,7 +2,10 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(SessionStore.self) private var sessionStore
-    @State private var viewModel = HomeViewModel()
+    // Owned by RootView (see its homeViewModel) so the loaded summary
+    // survives the Face ID lock/unlock swap instead of reloading from
+    // scratch — and flashing the loading seal — on every unlock.
+    let viewModel: HomeViewModel
     @State private var showingLocationSwitcher = false
     @State private var showingNotifications = false
     @State private var notificationsBadge = NotificationsBadgeViewModel()

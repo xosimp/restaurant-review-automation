@@ -8,9 +8,14 @@ struct LoginView: View {
     @Environment(SessionStore.self) private var sessionStore
     @State private var viewModel: LoginViewModel
     @FocusState private var focusedField: LoginField?
+    // False while RootView's launch splash still covers this on a cold
+    // launch — the lockup isn't mounted until it lifts, so its draw-in
+    // doesn't play hidden underneath.
+    private let introReady: Bool
 
-    init(sessionStore: SessionStore) {
+    init(sessionStore: SessionStore, introReady: Bool = true) {
         _viewModel = State(initialValue: LoginViewModel(sessionStore: sessionStore))
+        self.introReady = introReady
     }
 
     var body: some View {
@@ -24,7 +29,11 @@ struct LoginView: View {
                         // The seal draws itself while the letters stamp in
                         // beside it — the one-time entrance for the first
                         // screen a session ever sees (see CavnarMotion).
-                        CavnarLockupIntro(width: 220)
+                        if introReady {
+                            CavnarLockupIntro(width: 220)
+                        } else {
+                            Color.clear.frame(width: 220, height: 220 * (148 / 720))
+                        }
                         Text("Sign in to your restaurant")
                             .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk3)

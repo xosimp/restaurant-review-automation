@@ -124,9 +124,15 @@ struct AIConsultantView: View {
     }
 }
 
-/// Full analysis, opened from the strip above — same intro/recommendations/
-/// forecast content the old inline-expanded state showed, just presented as
-/// its own screen instead of pushing the module's page content down. No
+/// Full analysis, opened from the strip above. Rebuilt from a plain wall of
+/// small gray/amber text into a real consultant brief: a sparkle badge and
+/// kicker up top, the opening line as a Clash Display headline with the
+/// owner's name in ember (same treatment as Intel's hero insight), each
+/// recommendation in its own ember-tinted, accent-barred card behind a
+/// glowing numbered badge, the forecast in an amber "looking ahead" panel,
+/// a seal-marked footer, and the whole thing staggering in. Every figure
+/// inside the prose renders in Space Grotesk (mixedText below), per the
+/// app-wide numbers rule. Keeps the module's own ember-wash background. No
 /// explicit close button — swipe-down-to-dismiss, same as every other sheet
 /// in this app (NotificationsListView is the established precedent).
 private struct AIConsultantSheet: View {
@@ -134,60 +140,204 @@ private struct AIConsultantSheet: View {
     let insight: AIInsight
     var showForecast: Bool = true
 
+    // Staggered reveal: 1 header, 2 opening line, 3 recommendations,
+    // 4 forecast, 5 footer.
+    @State private var stage = 0
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 30) {
+                    header
+                        .consultantReveal(stage >= 1)
                     if !insight.intro.isEmpty {
-                        Text(insight.intro)
-                            .font(.cavnarBody(15))
-                            .foregroundStyle(Color.cavnarInk2)
-                            .lineSpacing(6)
+                        openingLine
+                            .consultantReveal(stage >= 2)
                     }
-
                     if !insight.recommendations.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Recommendations")
-                                .font(.cavnarBody(14, weight: 700))
-                                .tracking(0.9)
-                                .textCase(.uppercase)
-                                .foregroundStyle(Color.cavnarEmber)
-
-                            ForEach(Array(insight.recommendations.enumerated()), id: \.offset) { index, rec in
-                                HStack(alignment: .top, spacing: 10) {
-                                    Text("\(index + 1)")
-                                        .font(.cavnarNumber(14, weight: 700))
-                                        .foregroundStyle(Color.cavnarEmber)
-                                        .frame(width: 18, alignment: .leading)
-                                    Text(rec)
-                                        .font(.cavnarBody(14, weight: 500))
-                                        .foregroundStyle(Color.cavnarAmber)
-                                        .lineSpacing(4)
-                                }
-                            }
-                        }
+                        recommendations
                     }
-
                     if showForecast, let forecast = insight.forecast, !forecast.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Label("Forecast", systemImage: "sparkles")
-                                .font(.cavnarBody(14, weight: 700))
-                                .tracking(0.9)
-                                .textCase(.uppercase)
-                                .foregroundStyle(Color.cavnarEmber)
-                            Text(forecast)
-                                .font(.cavnarBody(14))
-                                .italic()
-                                .foregroundStyle(Color.cavnarInk2)
-                                .lineSpacing(4)
-                        }
+                        forecastPanel(forecast)
+                            .consultantReveal(stage >= 4)
                     }
+                    footer
+                        .consultantReveal(stage >= 5)
                 }
-                .padding(20)
+                .padding(.horizontal, 22)
+                .padding(.top, 14)
+                .padding(.bottom, 44)
             }
             .cavnarModuleBackground()
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { cavnarTitleToolbar(title) }
+            .task {
+                for step in 1...5 {
+                    withAnimation(.easeOut(duration: 0.45)) { stage = step }
+                    try? await Task.sleep(for: .seconds(0.12))
+                }
+            }
         }
+    }
+
+    private var header: some View {
+        HStack(spacing: 14) {
+            GlowBadge(systemImage: "sparkles", size: 46)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("CAVNAR AI ANALYSIS")
+                    .font(.cavnarBody(13, weight: 700))
+                    .tracking(1.4)
+                    .foregroundStyle(Color.cavnarEmber2)
+                Text("Read straight from your latest synced numbers")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+        }
+    }
+
+    /// The AI's own opening sentence, sized and set like Intel's hero
+    /// insight: the owner's name (the leading "Brian," when there is one)
+    /// in ember, every number in Space Grotesk, the rest in ink.
+    private var openingLine: some View {
+        let (name, rest) = Self.splitLeadingName(insight.intro)
+        let numberFont = Font.cavnarNumber(22, weight: 600)
+        var text = Text("")
+        if let name {
+            text = text + Text(name).foregroundStyle(Color.cavnarEmber)
+        }
+        text = text + Self.mixedText(rest, numberFont: numberFont, color: Color.cavnarInk)
+        return text
+            .font(.cavnarHeadline(22))
+            .lineSpacing(6)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var recommendations: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 11, weight: .bold))
+                Text("WHAT TO DO THIS WEEK")
+                    .font(.cavnarBody(13, weight: 700))
+                    .tracking(1.3)
+            }
+            .foregroundStyle(Color.cavnarEmber)
+            .consultantReveal(stage >= 3)
+
+            ForEach(Array(insight.recommendations.enumerated()), id: \.offset) { index, rec in
+                HStack(alignment: .top, spacing: 14) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.cavnarEmber)
+                            .frame(width: 30, height: 30)
+                            .shadow(color: Color.cavnarEmber.opacity(0.6), radius: 7, x: 0, y: 0)
+                        Text("\(index + 1)")
+                            .font(.cavnarNumber(14, weight: 700))
+                            .foregroundStyle(.white)
+                    }
+                    Self.mixedText(rec, numberFont: .cavnarNumber(16, weight: 600), color: Color.cavnarInk)
+                        .font(.cavnarBody(16))
+                        .lineSpacing(5)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 4)
+                }
+                .padding(.vertical, 14)
+                .padding(.horizontal, 16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.cavnarEmber.opacity(0.09))
+                .overlay(
+                    RoundedRectangle(cornerRadius: CavnarRadius.control)
+                        .strokeBorder(Color.cavnarEmber.opacity(0.22), lineWidth: 1)
+                )
+                .overlay(alignment: .leading) {
+                    Rectangle().fill(Color.cavnarEmber.opacity(0.75)).frame(width: 2.5)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                .consultantReveal(stage >= 3)
+                .animation(.easeOut(duration: 0.45).delay(Double(index) * 0.08), value: stage)
+            }
+        }
+    }
+
+    private func forecastPanel(_ forecast: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.system(size: 11, weight: .bold))
+                Text("LOOKING AHEAD")
+                    .font(.cavnarBody(13, weight: 700))
+                    .tracking(1.3)
+            }
+            .foregroundStyle(Color.cavnarAmber)
+            Self.mixedText(forecast, numberFont: .cavnarNumber(16, weight: 600), color: Color.cavnarInk2)
+                .font(.cavnarBody(16))
+                .lineSpacing(5)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cavnarAmber.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: CavnarRadius.card)
+                .strokeBorder(Color.cavnarAmber.opacity(0.3), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            CavnarSealMark(size: 20)
+            Text("Cavnar AI · analysis of your latest synced data")
+                .font(.cavnarBody(13, weight: 600))
+                .foregroundStyle(Color.cavnarInk3)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 6)
+    }
+
+    /// "Brian, your 22.3% ..." -> ("Brian,", " your 22.3% ..."). Only a
+    /// short, digit-free, capitalized run ending in the first comma counts
+    /// as a name — anything else stays unsplit.
+    private static func splitLeadingName(_ s: String) -> (String?, String) {
+        guard let comma = s.firstIndex(of: ","), s.distance(from: s.startIndex, to: comma) <= 24 else { return (nil, s) }
+        let candidate = String(s[s.startIndex...comma])
+        guard let first = candidate.first, first.isUppercase,
+              !candidate.contains(where: { $0.isNumber }) else { return (nil, s) }
+        return (candidate, String(s[s.index(after: comma)...]))
+    }
+
+    /// Splits prose into runs, giving every run that carries a digit
+    /// (with any attached $ , . %) the number font — "$3,448", "43.1%",
+    /// "6/1" — and leaving the words to whatever font the caller applies
+    /// to the composed Text.
+    private static func mixedText(_ s: String, numberFont: Font, color: Color) -> Text {
+        let numberChars = Set("0123456789$,.%")
+        var pieces: [(String, Bool)] = []
+        var current = ""
+        var inNumber = false
+        func flush() {
+            guard !current.isEmpty else { return }
+            let isNumber = inNumber && current.contains(where: { $0.isNumber })
+            pieces.append((current, isNumber))
+            current = ""
+        }
+        for ch in s {
+            let isNumChar = numberChars.contains(ch)
+            if isNumChar != inNumber { flush(); inNumber = isNumChar }
+            current.append(ch)
+        }
+        flush()
+        return pieces.reduce(Text("")) { acc, piece in
+            let t = Text(piece.0).foregroundStyle(color)
+            return acc + (piece.1 ? t.font(numberFont) : t)
+        }
+    }
+}
+
+private extension View {
+    /// One step of AIConsultantSheet's staggered reveal — fades and rises.
+    func consultantReveal(_ shown: Bool) -> some View {
+        opacity(shown ? 1 : 0).offset(y: shown ? 0 : 16)
     }
 }
