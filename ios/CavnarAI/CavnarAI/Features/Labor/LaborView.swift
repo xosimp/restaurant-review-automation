@@ -124,11 +124,11 @@ struct LaborView: View {
                                         .font(.cavnarBody(13, weight: 700))
                                         .foregroundStyle(Color.cavnarInk)
                                     Text(daysAwayLabel(event.daysAway))
-                                        .font(.cavnarBody(10, weight: 600))
+                                        .font(.cavnarBody(11.5, weight: 600))
                                         .foregroundStyle(Color.cavnarEmber2)
                                 }
                                 Text(forecastCopy(daysAway: event.daysAway))
-                                    .font(.cavnarBody(11))
+                                    .font(.cavnarBody(12))
                                     .foregroundStyle(Color.cavnarInk2)
                                     .lineSpacing(3)
                             }
@@ -186,7 +186,7 @@ struct LaborView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
                 Label("Labor cost", systemImage: "person.2.fill")
-                    .font(.cavnarBody(11, weight: 700))
+                    .font(.cavnarBody(12, weight: 700))
                     .foregroundStyle(Color.cavnarInk3)
                 dataFreshnessInfoButton(stats)
                 Spacer()
@@ -308,7 +308,7 @@ struct LaborView: View {
     private func dataFreshnessPopoverContent(_ info: DataFreshness) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(info.isLive ? "Shift data window" : "Sample data")
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnarBody(12, weight: 700))
                 .foregroundStyle(Color.cavnarEmber)
             Group {
                 if !info.isLive {
@@ -433,7 +433,7 @@ struct LaborView: View {
                         .foregroundStyle(Color.cavnarInk)
                     if allowed {
                         Text("CONSTRAINT")
-                            .font(.cavnarBody(8, weight: 700))
+                            .font(.cavnarBody(10.5, weight: 700))
                             .tracking(0.4)
                             .foregroundStyle(Color.cavnarGreen)
                             .padding(.horizontal, 6)
@@ -448,7 +448,7 @@ struct LaborView: View {
                         Text("· \(String(format: "%.1f", total))h total")
                     }
                 }
-                .font(.cavnarBody(11))
+                .font(.cavnarBody(12))
                 .foregroundStyle(Color.cavnarInk3)
             }
             Spacer()
@@ -457,7 +457,7 @@ struct LaborView: View {
                     .font(.cavnarNumber(14, weight: 600))
                     .foregroundStyle(rowTone)
                 Text(allowed ? "OT allowed" : (isOvertime ? "Review pay" : "Approaching 40h"))
-                    .font(.cavnarBody(9, weight: 700))
+                    .font(.cavnarBody(11, weight: 700))
                     .foregroundStyle(rowTone)
             }
         }
@@ -493,12 +493,12 @@ struct LaborView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(day.day).font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            Text(day.date).font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
+                            Text(day.date).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
                         }
                         Spacer()
                         VStack(alignment: .trailing, spacing: 1) {
                             Text("$\(Int(day.sales))").font(.cavnarNumber(12, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            Text("\(String(format: "%.1f", day.laborPct))% labor").font(.cavnarBody(10, weight: 600)).foregroundStyle(Color.cavnarRed)
+                            Text("\(String(format: "%.1f", day.laborPct))% labor").font(.cavnarBody(11.5, weight: 600)).foregroundStyle(Color.cavnarRed)
                         }
                     }
                     .padding(10)
@@ -506,7 +506,7 @@ struct LaborView: View {
                     .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                 }
                 if days.count > 10 {
-                    Text("+ \(days.count - 10) more").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                    Text("+ \(days.count - 10) more").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
                 }
             }
         }
@@ -526,12 +526,12 @@ struct LaborView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(day.day).font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            Text(day.date).font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
+                            Text(day.date).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
                         }
                         Spacer()
                         VStack(alignment: .trailing, spacing: 1) {
                             Text("$\(Int(day.sales))").font(.cavnarNumber(12, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            Text("\(String(format: "%.1f", day.laborPct))% labor").font(.cavnarBody(10, weight: 600)).foregroundStyle(Color.cavnarAmber)
+                            Text("\(String(format: "%.1f", day.laborPct))% labor").font(.cavnarBody(11.5, weight: 600)).foregroundStyle(Color.cavnarAmber)
                         }
                     }
                     .padding(10)
@@ -539,10 +539,10 @@ struct LaborView: View {
                     .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                 }
                 if days.count > 10 {
-                    Text("+ \(days.count - 10) more").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                    Text("+ \(days.count - 10) more").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
                 }
                 Text("💡 Consider adding 1–2 staff on \(days.prefix(3).map(\.day).joined(separator: ", "))\(days.count > 3 ? " and more" : ".")")
-                    .font(.cavnarBody(11))
+                    .font(.cavnarBody(12))
                     .foregroundStyle(Color.cavnarAmber)
                     .padding(.top, 2)
             }
@@ -573,7 +573,7 @@ struct LaborView: View {
                         // looking at: the AI's own reasoning for this
                         // specific week's shifts, not generic tips.
                         Text("WHAT CHANGED & WHY")
-                            .font(.cavnarBody(10, weight: 700))
+                            .font(.cavnarBody(11.5, weight: 700))
                             .tracking(1.2)
                             .foregroundStyle(Color.cavnarGreen)
                         ForEach(summary, id: \.self) { line in
@@ -618,16 +618,16 @@ struct LaborView: View {
         return HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text("PAR HOURS CHECK")
-                    .font(.cavnarBody(9, weight: 700))
+                    .font(.cavnarBody(11, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarGreen)
                 Text("Budgeted \(budget.commaFormatted)h\(dollars.map { " ($\($0.commaFormatted))" } ?? "") for the week")
-                    .font(.cavnarBody(11))
+                    .font(.cavnarBody(12))
                     .foregroundStyle(Color.cavnarInk2)
             }
             Spacer()
             Text(withinRange ? "On budget" : (diff > 0 ? "+\(diff.commaFormatted)h over" : "\(diff.commaFormatted)h under"))
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnarBody(12, weight: 700))
                 .foregroundStyle(withinRange ? Color.cavnarGreen : Color.cavnarAmber)
         }
         .padding(10)
@@ -749,12 +749,12 @@ struct LaborView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Color.cavnarAmber)
                 Text("NEEDS REVIEW")
-                    .font(.cavnarBody(11, weight: 700))
+                    .font(.cavnarBody(12, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarAmber)
             }
             Text("These rows didn't come back with a normal weekday — double-check them before publishing.")
-                .font(.cavnarBody(10))
+                .font(.cavnarBody(11.5))
                 .foregroundStyle(Color.cavnarInk3)
             VStack(spacing: 6) {
                 ForEach(rows) { row in
@@ -764,12 +764,12 @@ struct LaborView: View {
                                 .font(.cavnarBody(12, weight: 600))
                                 .foregroundStyle(Color.cavnarInk)
                             Text("day: \(row.day ?? "—")  ·  role: \(row.role ?? "—")")
-                                .font(.cavnarBody(10))
+                                .font(.cavnarBody(11.5))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                         Spacer()
                         Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
-                            .font(.cavnarNumber(11))
+                            .font(.cavnarNumber(12))
                             .foregroundStyle(Color.cavnarInk2)
                     }
                     .padding(.vertical, 4)
@@ -809,7 +809,7 @@ struct LaborView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text(day.uppercased())
-                    .font(.cavnarBody(11, weight: 700))
+                    .font(.cavnarBody(12, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarEmber)
                     .padding(.horizontal, 10)
@@ -817,7 +817,7 @@ struct LaborView: View {
                     .background(Color.cavnarEmber.opacity(0.16))
                     .clipShape(Capsule())
                 Text("\(rows.count) shift\(rows.count == 1 ? "" : "s")")
-                    .font(.cavnarBody(10))
+                    .font(.cavnarBody(11.5))
                     .foregroundStyle(Color.cavnarInk3)
             }
             VStack(alignment: .leading, spacing: 12) {
@@ -847,12 +847,12 @@ struct LaborView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(row.employee ?? "").font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarInk)
                         if let role = row.role, !role.isEmpty {
-                            Text(role).font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
+                            Text(role).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
                         }
                     }
                     Spacer()
                     Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
-                        .font(.cavnarNumber(11))
+                        .font(.cavnarNumber(12))
                         .foregroundStyle(Color.cavnarInk2)
                 }
                 .padding(.vertical, 4)
@@ -909,7 +909,7 @@ private struct ScheduleGenerateButton: View {
                             .font(.cavnarBody(15, weight: 700))
                             .foregroundStyle(tone.foreground)
                         Text("AI-optimized from your sales & shift history")
-                            .font(.cavnarBody(10, weight: 500))
+                            .font(.cavnarBody(11.5, weight: 500))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                 }

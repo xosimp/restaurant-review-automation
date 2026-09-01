@@ -30,7 +30,7 @@ struct AvailabilityManagerSection: View {
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 Text("The AI scheduler will never schedule someone on a day marked unavailable here.")
-                    .font(.cavnarBody(11))
+                    .font(.cavnarBody(12))
                     .foregroundStyle(Color.cavnarInk3)
 
                 addForm
@@ -39,7 +39,7 @@ struct AvailabilityManagerSection: View {
                     ProgressView().frame(maxWidth: .infinity).padding(.vertical, 12)
                 } else if viewModel.availability.isEmpty {
                     Text("No availability set yet — add someone above.")
-                        .font(.cavnarBody(11))
+                        .font(.cavnarBody(12))
                         .foregroundStyle(Color.cavnarInk3)
                         .italic()
                 } else {
@@ -135,7 +135,7 @@ struct AvailabilityManagerSection: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Available days")
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(11.5, weight: 700))
                     .foregroundStyle(Color.cavnarInk3)
                 HStack(spacing: 6) {
                     ForEach(Array(zip(LaborDayOfWeek.allNames, LaborDayOfWeek.shortLabels)), id: \.0) { full, short in
@@ -170,7 +170,7 @@ struct AvailabilityManagerSection: View {
             .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || viewModel.isSavingAvailability)
 
             if let error = viewModel.availabilityError {
-                Text(error).font(.cavnarBody(11)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
             }
         }
         .padding(12)
@@ -185,7 +185,7 @@ struct AvailabilityManagerSection: View {
             if isOn { selectedDays.remove(full) } else { selectedDays.insert(full) }
         } label: {
             Text(short)
-                .font(.cavnarBody(11, weight: 600))
+                .font(.cavnarBody(12, weight: 600))
                 .foregroundStyle(isOn ? Color.cavnarInk : Color.cavnarInk3)
                 .frame(width: 38, height: 30)
                 .background(isOn ? Color.cavnarEmber.opacity(0.55) : Color.cavnarPaper3.opacity(0.5))
@@ -202,17 +202,17 @@ struct AvailabilityManagerSection: View {
                     .foregroundStyle(Color.cavnarInk)
                 if !entry.availableDays.isEmpty {
                     Text("✓ Available: \(entry.availableDays.map { String($0.prefix(3)) }.joined(separator: ", "))")
-                        .font(.cavnarBody(10))
+                        .font(.cavnarBody(11.5))
                         .foregroundStyle(Color.cavnarGreen)
                 }
                 if !entry.unavailableDays.isEmpty {
                     Text("✗ Not available: \(entry.unavailableDays.map { String($0.prefix(3)) }.joined(separator: ", "))")
-                        .font(.cavnarBody(10))
+                        .font(.cavnarBody(11.5))
                         .foregroundStyle(Color.cavnarRed)
                 }
                 if let notes = entry.notes, !notes.isEmpty {
                     Text(notes)
-                        .font(.cavnarBody(10))
+                        .font(.cavnarBody(11.5))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }

@@ -88,7 +88,7 @@ struct LaborAnalyticsSection: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Labor % vs industry benchmark")
-                    .font(.cavnarBody(11, weight: 700))
+                    .font(.cavnarBody(12, weight: 700))
                     .tracking(0.4)
                     .foregroundStyle(Color.cavnarInk)
                 Spacer()
@@ -96,7 +96,7 @@ struct LaborAnalyticsSection: View {
                     .font(.cavnarNumber(13, weight: 700))
                     .foregroundStyle(bucket.color)
                 Text(bucket.label)
-                    .font(.cavnarBody(9, weight: 700))
+                    .font(.cavnarBody(11, weight: 700))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -131,7 +131,7 @@ struct LaborAnalyticsSection: View {
                     Text("Industry range: 33–36% for full-service restaurants")
                 }
             }
-            .font(.cavnarBody(10))
+            .font(.cavnarBody(11.5))
             .foregroundStyle(Color.cavnarInk3)
 
             // Measured against the industry band's midpoint (34.5%), not
@@ -142,10 +142,10 @@ struct LaborAnalyticsSection: View {
             let diff = pct - industryMid
             let isBelow = diff <= 0
             (Text("Your restaurant is ")
-                + Text(String(format: "%.1f%%", abs(diff))).font(.cavnarNumber(11, weight: 700))
+                + Text(String(format: "%.1f%%", abs(diff))).font(.cavnarNumber(12, weight: 700))
                 + Text(isBelow ? " below" : " above")
                 + Text(" other similar restaurants in the U.S."))
-                .font(.cavnarBody(11))
+                .font(.cavnarBody(12))
                 .foregroundStyle(isBelow ? Color.cavnarGreen : Color.cavnarRed)
         }
         .cavnarCard()
@@ -190,12 +190,12 @@ private struct SavingsTile: View {
                     animatedValue = newValue
                 }
             Text(label)
-                .font(.cavnarBody(9, weight: 700))
+                .font(.cavnarBody(11, weight: 700))
                 .tracking(0.6)
                 .textCase(.uppercase)
                 .foregroundStyle(Color.cavnarInk3)
             Text(sublabel)
-                .font(.cavnarBody(9))
+                .font(.cavnarBody(11))
                 .foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

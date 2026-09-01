@@ -262,7 +262,7 @@ struct HomeView: View {
             Spacer(minLength: 16 + Self.heroContentDownShift * 2)
             VStack(spacing: 10) {
                 Text(todayDateString)
-                    .font(.cavnarBody(11, weight: 700))
+                    .font(.cavnarBody(12, weight: 700))
                     .tracking(2)
                     .textCase(.uppercase)
                     // cavnarEmber (deep, dark-mode brand orange) was reading

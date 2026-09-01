@@ -34,9 +34,9 @@ struct GuestTextClubView: View {
 
     private func joinLinkCard(_ url: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Guest join link").font(.cavnarBody(11, weight: 700)).foregroundStyle(Color.cavnarInk3)
+            Text("Guest join link").font(.cavnarBody(12, weight: 700)).foregroundStyle(Color.cavnarInk3)
             Text(url)
-                .font(.cavnarBody(11))
+                .font(.cavnarBody(12))
                 .foregroundStyle(Color.cavnarInk)
                 .textSelection(.enabled)
         }
@@ -133,11 +133,11 @@ struct GuestTextClubView: View {
                             Text(contact.name?.isEmpty == false ? contact.name! : "Guest")
                                 .font(.cavnarBody(13, weight: 600))
                                 .foregroundStyle(Color.cavnarInk)
-                            Text(contact.phone).font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                            Text(contact.phone).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
                         }
                         Spacer()
                         if contact.consent == true {
-                            Text("Consented").font(.cavnarBody(10, weight: 700)).foregroundStyle(Color.cavnarGreen)
+                            Text("Consented").font(.cavnarBody(11.5, weight: 700)).foregroundStyle(Color.cavnarGreen)
                         }
                         Button {
                             Haptic.selection()

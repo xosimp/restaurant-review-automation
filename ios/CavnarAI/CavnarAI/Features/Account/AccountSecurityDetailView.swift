@@ -44,7 +44,7 @@ struct AccountSecurityDetailView: View {
                         } else {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Two-factor authentication").font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                Text("Adds an email code on new sign-ins.").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                                Text("Adds an email code on new sign-ins.").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
                             }
                             Button("Enable two-factor authentication") { Haptic.light(); showing2FASetup = true }
                                 .font(.cavnarBody(13, weight: 600))
@@ -61,7 +61,7 @@ struct AccountSecurityDetailView: View {
                         )) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Sign-in notifications").font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                Text("Get notified of new sign-ins to your account").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                                Text("Get notified of new sign-ins to your account").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
                             }
                         }
                         .tint(Color.cavnarEmber)
@@ -78,12 +78,12 @@ struct AccountSecurityDetailView: View {
                                     Text(session.label).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
                                     if session.isCurrent {
                                         Text("This device")
-                                            .font(.cavnarBody(10, weight: 700))
+                                            .font(.cavnarBody(11.5, weight: 700))
                                             .foregroundStyle(Color.cavnarEmber)
                                     }
                                 }
                                 Text("Last active \(session.lastActive)")
-                                    .font(.cavnarBody(11))
+                                    .font(.cavnarBody(12))
                                     .foregroundStyle(Color.cavnarInk3)
                             }
                             if session.id != viewModel.sessions.last?.id {

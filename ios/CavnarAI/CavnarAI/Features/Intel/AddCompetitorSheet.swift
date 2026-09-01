@@ -119,7 +119,7 @@ struct AddCompetitorSheet: View {
                         .lineLimit(1)
                     if !result.address.isEmpty {
                         Text(result.address)
-                            .font(.cavnarBody(11))
+                            .font(.cavnarBody(12))
                             .foregroundStyle(Color.cavnarInk3)
                             .lineLimit(1)
                     }
@@ -129,7 +129,7 @@ struct AddCompetitorSheet: View {
                                 .font(.system(size: 8))
                                 .foregroundStyle(Color.cavnarAmber)
                             Text(String(format: "%.1f", result.rating) + " · \(result.reviewCount) reviews")
-                                .font(.cavnarBody(10.5))
+                                .font(.cavnarBody(12))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                     }

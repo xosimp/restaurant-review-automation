@@ -113,7 +113,7 @@ struct AccountProfileDetailView: View {
                         .foregroundStyle(Color.cavnarInk3)
                         .padding(.top, 1)
                     Text("Set during setup — this is what the AI uses to describe your restaurant, so it stays admin-managed. Email will@cavnar.ai to change it.")
-                        .font(.cavnarBody(11))
+                        .font(.cavnarBody(12))
                         .foregroundStyle(Color.cavnarInk3)
                 }
                 .padding(.top, 2)
@@ -142,7 +142,7 @@ struct AccountProfileDetailView: View {
                 divider()
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Email").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                        Text("Email").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
                         Text(profile.ownerEmail ?? "—").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk)
                     }
                     Spacer()
@@ -151,7 +151,7 @@ struct AccountProfileDetailView: View {
                         showingUpdateEmail = true
                     } label: {
                         Text("Update")
-                            .font(.cavnarBody(11, weight: 700))
+                            .font(.cavnarBody(12, weight: 700))
                             .foregroundStyle(Color.cavnarEmber)
                     }
                 }
@@ -194,7 +194,7 @@ struct AccountProfileDetailView: View {
 
     private func profileField(_ label: String, text: Binding<String>, field: Field, keyboardType: UIKeyboardType = .default) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+            Text(label).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
             TextField(label, text: text)
                 .font(.cavnarBody(14, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
@@ -205,7 +205,7 @@ struct AccountProfileDetailView: View {
 
     private func profileEditor(_ label: String, placeholder: String, text: Binding<String>, field: Field) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+            Text(label).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
             ZStack(alignment: .topLeading) {
                 if text.wrappedValue.isEmpty {
                     Text(placeholder)

@@ -280,25 +280,41 @@ private struct FABPressStyle: ButtonStyle {
 /// Face ID re-entry gate shown whenever the app returns to the foreground
 /// with an active session — see SessionStore's doc comment for why iOS
 /// sessions rely on this instead of the web's 8-hour inactivity timeout.
+///
+/// Deliberately NOT the multi-second seal-draws-in/letters-stamp-in entrance
+/// LoginView uses — Face ID fires the instant this appears (see .task below)
+/// and can resolve in well under a second, tearing this whole view back down
+/// before a ~2s one-shot animation ever finishes. That's why the seal draw-in
+/// never visibly played on a real device: the screen was gone before it got
+/// there. This uses CavnarLoadingSeal's continuous breathing loop instead —
+/// it starts immediately and reads correctly no matter how long the screen
+/// is actually up for, a few frames or several seconds. Simplified overall
+/// (one mark, one wordmark, one button, generous vertical rhythm) — the
+/// previous version stacked a separate SF Symbol lock glyph above a full
+/// seal+wordmark lockup, two different "this is secured" cues competing for
+/// the same read.
 struct LockedView: View {
     @Environment(SessionStore.self) private var sessionStore
 
     var body: some View {
         ZStack {
             Color.cavnarPaper.ignoresSafeArea()
-            VStack(spacing: 20) {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 40))
-                    .foregroundStyle(Color.cavnarEmber)
-                // Same seal-draws-in / letters-stamp-in entrance as the
-                // login screen — the gate re-introduces the brand each
-                // time it comes up rather than showing a static image.
-                CavnarLockupIntro(width: 160)
+            VStack(spacing: 32) {
+                Spacer()
+                VStack(spacing: 22) {
+                    CavnarLoadingSeal(size: 84)
+                    Image("BrandLockup")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 172)
+                }
+                Spacer()
                 Button("Unlock") {
                     Task { await sessionStore.unlockWithBiometrics() }
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle())
                 .padding(.horizontal, 60)
+                .padding(.bottom, 56)
             }
         }
         .task {

@@ -63,7 +63,7 @@ struct AccountConnectionsDetailView: View {
             }
 
             if let error = viewModel.connectGoogleError {
-                Text(error).font(.cavnarBody(11)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
             }
 
             if connections.googleBusiness.connected {
@@ -169,7 +169,7 @@ struct AccountConnectionsDetailView: View {
                     .fill(status.connected ? Color.cavnarGreen : Color.cavnarInk3.opacity(0.4))
                     .frame(width: 6, height: 6)
                 Text(status.connected ? "Connected" : "Off")
-                    .font(.cavnarBody(11, weight: 600))
+                    .font(.cavnarBody(12, weight: 600))
                     .foregroundStyle(status.connected ? Color.cavnarGreen : Color.cavnarInk3)
             }
         }

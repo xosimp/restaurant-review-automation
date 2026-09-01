@@ -387,7 +387,7 @@ struct CavnarRadarSweep: View {
 
             if let caption {
                 Text(caption.uppercased())
-                    .font(.cavnarNumber(10, weight: 600))
+                    .font(.cavnarNumber(11.5, weight: 600))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarInk3)
             }
@@ -450,7 +450,7 @@ struct CavnarWeekBuilder: View {
                     HStack(spacing: 0) {
                         ForEach(Self.days.indices, id: \.self) { i in
                             Text(Self.days[i])
-                                .font(.cavnarNumber(10, weight: 600))
+                                .font(.cavnarNumber(11.5, weight: 600))
                                 .foregroundStyle(Color.cavnarInk3)
                                 .frame(width: colWidth)
                         }
@@ -472,7 +472,7 @@ struct CavnarWeekBuilder: View {
 
                     if let caption {
                         Text(caption.uppercased())
-                            .font(.cavnarNumber(9.5, weight: 600))
+                            .font(.cavnarNumber(11.5, weight: 600))
                             .tracking(1)
                             .foregroundStyle(Color.cavnarInk3)
                             .offset(y: Self.gridTop + 4 * Self.rowHeight + 2)
@@ -530,7 +530,7 @@ struct CavnarLedgerFill: View {
                 ForEach(rows.indices, id: \.self) { i in
                     HStack(spacing: 14) {
                         Text(rows[i].label)
-                            .font(.cavnarNumber(10, weight: 600))
+                            .font(.cavnarNumber(11.5, weight: 600))
                             .tracking(1)
                             .foregroundStyle(Color.cavnarInk3)
                             .frame(width: 64, alignment: .leading)
@@ -632,7 +632,7 @@ struct CavnarPostedCheck: View {
             }
 
             Text(label.uppercased())
-                .font(.cavnarNumber(10, weight: 600))
+                .font(.cavnarNumber(11.5, weight: 600))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarInk3)
                 .opacity(labelShown ? 1 : 0)
@@ -721,7 +721,7 @@ struct CavnarHandshake: View {
 
             if let caption {
                 Text(caption.uppercased())
-                    .font(.cavnarNumber(10, weight: 600))
+                    .font(.cavnarNumber(11.5, weight: 600))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarInk3)
             }
@@ -933,56 +933,75 @@ extension View {
     }
 }
 
+/// Rebuilt from scratch after the first version read as broken on a real
+/// device: a ring sized exactly to the dot (12pt vs. the dot's own 12pt) sat
+/// permanently around it at rest — meant only to appear as part of the
+/// flare-out, but with no conditional rendering, it was just always there,
+/// reading as a stray orange outline. And the anisotropic scale on the dot
+/// (x shrinking while y grew, anchored at top, plus a separate capsule tail
+/// above it) produced a tall, uneven oval instead of a clean drop. This
+/// version is deliberately simpler: one circular dot with its own soft halo
+/// that grows and fades in with the pull (isotropic scale only, so it always
+/// stays round), breathes gently while refreshing, and gets exactly one
+/// ripple — via CavnarRippleBurst, only ever mounted for the ~0.7s it plays —
+/// on completion. Nothing persists in the tree at rest besides the dot itself.
 struct CavnarEmberPullIndicator: View {
     var pull: CGFloat
     var isRefreshing: Bool
     var flareID: Int
 
-    @State private var flare = false
     @State private var start = Date()
+    @State private var showBurst = false
+
+    private var pullProgress: CGFloat { min(pull / 70, 1) }
+    private var visible: Bool { isRefreshing || pull > 4 }
 
     var body: some View {
-        let stretch = min(pull / 90, 1)
-        let visible = isRefreshing || pull > 6
-
         TimelineView(.animation(paused: !isRefreshing)) { timeline in
             let t = timeline.date.timeIntervalSince(start)
-            let breathe = isRefreshing ? 1 + 0.14 * CGFloat(sin(t * 2 * .pi / 1.4)) : 1
+            let breathe: CGFloat = isRefreshing ? 1 + 0.16 * CGFloat(sin(t * 2 * .pi / 1.3)) : 1
+            let scale = isRefreshing ? breathe : 0.5 + 0.5 * pullProgress
+            let dotOpacity = isRefreshing ? 1.0 : Double(pullProgress)
+
             ZStack {
                 Circle()
-                    .stroke(Color.cavnarEmber, lineWidth: 1.5)
-                    .frame(width: flare ? 46 : 12, height: flare ? 46 : 12)
-                    .opacity(flare ? 0 : 0.9)
-
-                Capsule()
-                    .fill(LinearGradient(colors: [Color.cavnarEmber2.opacity(0.75), .clear], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 4, height: 28 * stretch)
-                    .offset(y: -14 * stretch - 4)
-                    .opacity(isRefreshing ? 0 : Double(stretch))
+                    .fill(
+                        RadialGradient(
+                            colors: [Color.cavnarEmber.opacity(0.5), Color.cavnarEmber.opacity(0)],
+                            center: .center, startRadius: 0, endRadius: 15
+                        )
+                    )
+                    .frame(width: 30, height: 30)
+                    .opacity(dotOpacity * 0.9)
 
                 Circle()
                     .fill(
                         RadialGradient(
                             colors: [cavnarEmberHot, Color.cavnarEmber2, Color.cavnarEmber],
-                            center: UnitPoint(x: 0.42, y: 0.38), startRadius: 0, endRadius: 8
+                            center: UnitPoint(x: 0.42, y: 0.38), startRadius: 0, endRadius: 7
                         )
                     )
-                    .frame(width: 12, height: 12)
-                    .scaleEffect(
-                        x: isRefreshing ? breathe : 1 - 0.18 * stretch,
-                        y: isRefreshing ? breathe : 1 + 0.55 * stretch,
-                        anchor: .top
-                    )
-                    .shadow(color: Color.cavnarEmber.opacity(isRefreshing ? 0.9 : 0.5 * Double(stretch)), radius: isRefreshing ? 10 : 6)
+                    .frame(width: 13, height: 13)
+                    .scaleEffect(scale)
+                    .opacity(dotOpacity)
+                    .shadow(color: Color.cavnarEmber.opacity(isRefreshing ? 0.85 : 0.5 * Double(pullProgress)), radius: isRefreshing ? 8 : 5)
+
+                if showBurst {
+                    CavnarRippleBurst(color: .cavnarEmber, fromDiameter: 13, toDiameter: 44, rings: 1, duration: 0.6)
+                }
             }
         }
         .frame(height: 30)
-        .offset(y: isRefreshing ? 18 : min(pull * 0.45, 30) - 4)
+        .offset(y: isRefreshing ? 16 : min(pull * 0.4, 24))
         .opacity(visible ? 1 : 0)
-        .animation(.easeOut(duration: 0.25), value: isRefreshing)
-        .onChange(of: flareID) { _, _ in
-            flare = false
-            withAnimation(.easeOut(duration: 0.7)) { flare = true }
+        .animation(.easeOut(duration: 0.2), value: isRefreshing)
+        .onChange(of: flareID) { _, newValue in
+            guard newValue > 0 else { return }
+            showBurst = false
+            DispatchQueue.main.async {
+                showBurst = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) { showBurst = false }
+            }
         }
     }
 }

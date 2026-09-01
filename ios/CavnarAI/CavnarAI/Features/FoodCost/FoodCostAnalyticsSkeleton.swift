@@ -27,7 +27,7 @@ struct FoodCostAnalyticsSkeleton: View {
     private var heroBlock: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("COUNTING THE PANTRY")
-                .font(.cavnarNumber(9.5, weight: 600))
+                .font(.cavnarNumber(11.5, weight: 600))
                 .tracking(1.4)
                 .foregroundStyle(Color.cavnarInk3)
             CavnarLedgerFill()

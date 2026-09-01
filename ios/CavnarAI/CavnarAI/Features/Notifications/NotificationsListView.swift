@@ -138,7 +138,7 @@ struct NotificationsListView: View {
                                         .font(.cavnarBody(14, weight: 600))
                                         .foregroundStyle(Color.cavnarInk)
                                     Text(item.relativeFiredAt)
-                                        .font(.cavnarBody(11))
+                                        .font(.cavnarBody(12))
                                         .foregroundStyle(Color.cavnarInk3)
                                 }
                                 Spacer()

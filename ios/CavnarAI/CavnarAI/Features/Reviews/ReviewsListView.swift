@@ -181,7 +181,7 @@ struct StatusPill: View {
 
     var body: some View {
         Text(label)
-            .font(.cavnarBody(9, weight: 700))
+            .font(.cavnarBody(11, weight: 700))
             .tracking(0.4)
             .textCase(.uppercase)
             .padding(.horizontal, 6)

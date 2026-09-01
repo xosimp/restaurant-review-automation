@@ -45,7 +45,7 @@ struct ChangelogView: View {
                                     Spacer()
                                     if let tag = entry.tag {
                                         Text(tag.uppercased())
-                                            .font(.cavnarBody(9, weight: 700))
+                                            .font(.cavnarBody(11, weight: 700))
                                             .foregroundStyle(Color.cavnarEmber)
                                     }
                                 }

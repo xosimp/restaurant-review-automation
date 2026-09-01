@@ -32,9 +32,16 @@ struct FoodCostDonutChart: View {
     let centerLabel: String
 
     @State private var isExpanded = false
+    // Same one-time trim-in-from-zero as RoleDonutChart's ring — see its
+    // sweepIn doc comment.
+    @State private var sweepIn = false
 
     private var total: Double { slices.reduce(0) { $0 + $1.value } }
-    private static let ringSize: CGFloat = 92
+    // Bumped from 92/13 alongside the center label text growing — the old
+    // ~66pt inner diameter was already tight for a 13pt total + 7pt label;
+    // sizing both up together keeps the ring's content from crowding its
+    // own edges.
+    private static let ringSize: CGFloat = 108
     private static let collapseThreshold = 4
 
     private var visibleSlices: [FoodCostDonutSlice] {
@@ -44,7 +51,7 @@ struct FoodCostDonutChart: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.cavnarBody(10, weight: 700))
+                .font(.cavnarBody(11.5, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
 
@@ -68,16 +75,20 @@ struct FoodCostDonutChart: View {
                             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                                 .font(.system(size: 9, weight: .semibold))
                         }
-                        .font(.cavnarBody(11, weight: 600))
+                        .font(.cavnarBody(12, weight: 600))
                         .foregroundStyle(Color.cavnarEmber)
                     }
                     .buttonStyle(.plain)
                 }
             }
         }
+        .onAppear {
+            guard !sweepIn else { return }
+            withAnimation(.easeOut(duration: 0.15)) { sweepIn = true }
+        }
     }
 
-    private static let ringStrokeWidth: CGFloat = 13
+    private static let ringStrokeWidth: CGFloat = 15
 
     /// A stroked Circle renders half its line width OUTSIDE its own layout
     /// frame (SwiftUI doesn't clip shapes to their frame by default) — at
@@ -95,17 +106,18 @@ struct FoodCostDonutChart: View {
             ForEach(Array(slices.enumerated()), id: \.element.id) { index, _ in
                 let (start, end) = segment(at: index)
                 Circle()
-                    .trim(from: start, to: end)
+                    .trim(from: start, to: sweepIn ? end : start)
                     .stroke(color(at: index), style: StrokeStyle(lineWidth: Self.ringStrokeWidth, lineCap: .butt))
                     .rotationEffect(.degrees(-90))
                     .shadow(color: color(at: index).opacity(0.45), radius: 2)
+                    .animation(.easeOut(duration: 0.7).delay(Double(index) * 0.1), value: sweepIn)
             }
             VStack(spacing: 1) {
                 Text(formattedTotal)
-                    .font(.cavnarNumber(13, weight: 700))
+                    .font(.cavnarNumber(15, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Text(centerLabel)
-                    .font(.cavnarBody(7, weight: 700))
+                    .font(.cavnarBody(10, weight: 700))
                     .tracking(0.8)
                     .foregroundStyle(Color.cavnarInk3)
             }
@@ -123,7 +135,7 @@ struct FoodCostDonutChart: View {
                         .padding(.top, 3)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(slice.name)
-                            .font(.cavnarBody(11.5, weight: 600))
+                            .font(.cavnarBody(12.5, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
                             .lineLimit(1)
                         slice.subtitle
@@ -131,7 +143,7 @@ struct FoodCostDonutChart: View {
                     }
                     Spacer(minLength: 4)
                     Text("$\(Int(slice.value))")
-                        .font(.cavnarNumber(11, weight: 700))
+                        .font(.cavnarNumber(12, weight: 700))
                         .foregroundStyle(color(at: index))
                 }
             }

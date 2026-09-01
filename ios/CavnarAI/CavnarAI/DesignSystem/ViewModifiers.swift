@@ -234,7 +234,7 @@ struct CavnarChipButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.cavnarBody(11, weight: 600))
+            .font(.cavnarBody(12, weight: 600))
             .foregroundStyle(.white)
             .padding(.horizontal, 13)
             .padding(.vertical, 6)

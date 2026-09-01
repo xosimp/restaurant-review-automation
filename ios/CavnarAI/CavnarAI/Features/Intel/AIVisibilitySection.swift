@@ -166,7 +166,7 @@ struct AIVisibilitySection: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
-                Text(detail).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3).lineSpacing(2)
+                Text(detail).font(.cavnarBody(12.5)).foregroundStyle(Color.cavnarInk3).lineSpacing(2)
             }
         }
     }
@@ -236,7 +236,7 @@ struct AIVisibilitySection: View {
                 .cavnarNumberGlow(tone)
             HStack(spacing: 3) {
                 Text(label)
-                    .font(.cavnarBody(9, weight: 700))
+                    .font(.cavnarBody(11, weight: 700))
                     .tracking(0.6)
                     .foregroundStyle(Color.cavnarInk.opacity(0.55))
                 if expandable {
@@ -246,7 +246,7 @@ struct AIVisibilitySection: View {
                 }
             }
             Text(sub)
-                .font(.cavnarBody(10))
+                .font(.cavnarBody(11.5))
                 .foregroundStyle(Color.cavnarInk.opacity(0.55))
         }
         .frame(maxWidth: .infinity)
@@ -325,12 +325,12 @@ struct AIVisibilitySection: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("GBP COMPLETENESS")
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(11.5, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
                 Spacer()
                 Text("\(doneCount)/\(checklist.count) done")
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(11.5, weight: 700))
                     .foregroundStyle(Color.cavnarInk3)
             }
             LazyVGrid(columns: [GridItem(.flexible(), alignment: .top), GridItem(.flexible(), alignment: .top)], alignment: .leading, spacing: 0) {
@@ -350,16 +350,16 @@ struct AIVisibilitySection: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     Text(item.label)
-                        .font(.cavnarBody(11.5, weight: 600))
+                        .font(.cavnarBody(12.5, weight: 600))
                         .foregroundStyle(Color.cavnarInk)
                         .lineLimit(1)
                     Text("+\(item.pts)")
-                        .font(.cavnarBody(9))
+                        .font(.cavnarBody(11))
                         .foregroundStyle(Color.cavnarInk3)
                 }
                 if !item.done {
                     Text(item.needsGmb ? item.action + " (needs GBP)" : item.action)
-                        .font(.cavnarBody(10))
+                        .font(.cavnarBody(11.5))
                         .foregroundStyle(Color.cavnarEmber)
                         .lineLimit(1)
                 }
@@ -381,7 +381,7 @@ struct AIVisibilitySection: View {
     private func queriesSection(_ queries: [AIVisibilityQuery]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("AI QUERY RESULTS")
-                .font(.cavnarBody(10, weight: 700))
+                .font(.cavnarBody(11.5, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
             VStack(spacing: 0) {
@@ -483,12 +483,12 @@ struct AIVisibilitySection: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("YOUR AI VISIBILITY ROADMAP")
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(11.5, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
                 Spacer()
                 Text(pointsLeft > 0 ? "\(pointsLeft) action\(pointsLeft == 1 ? "" : "s") to grow your score" : "All steps complete")
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(11.5, weight: 700))
                     .foregroundStyle(Color.cavnarEmber)
             }
             VStack(spacing: 0) {
@@ -583,12 +583,12 @@ struct AIVisibilitySection: View {
                 HStack(spacing: 8) {
                     Text(card.title).font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
                     if card.done {
-                        Label("Done", systemImage: "checkmark").font(.cavnarBody(10, weight: 600)).foregroundStyle(Color.cavnarGreen)
+                        Label("Done", systemImage: "checkmark").font(.cavnarBody(11.5, weight: 600)).foregroundStyle(Color.cavnarGreen)
                     } else {
-                        Text(card.impact.uppercased()).font(.cavnarBody(10, weight: 600)).tracking(0.4).foregroundStyle(card.color)
+                        Text(card.impact.uppercased()).font(.cavnarBody(11.5, weight: 600)).tracking(0.4).foregroundStyle(card.color)
                     }
                 }
-                Text(card.detail).font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                Text(card.detail).font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
                 if isExpanded {
                     // The surrounding VStack's own spacing (6) is shared
                     // uniformly by every row here — title, detail, why,
@@ -641,7 +641,7 @@ struct AIVisibilitySection: View {
                             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                                 .font(.system(size: 8, weight: .bold))
                         }
-                        .font(.cavnarBody(11))
+                        .font(.cavnarBody(12))
                         .foregroundStyle(Color.cavnarInk3)
                     }
                 }
@@ -675,7 +675,7 @@ private struct QueryResultRow: View {
                     .font(.cavnarBody(12.5, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                 Text(q.answer)
-                    .font(.cavnarBody(11))
+                    .font(.cavnarBody(12))
                     .foregroundStyle(Color.cavnarInk3)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -756,7 +756,7 @@ private struct QueryResultRow: View {
 
     private var badge: some View {
         Text(q.appeared ? "Appeared" : "Missed")
-            .font(.cavnarBody(9.5, weight: 700))
+            .font(.cavnarBody(11.5, weight: 700))
             .foregroundStyle(q.appeared ? Color.cavnarGreen : Color.cavnarInk3)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
@@ -778,7 +778,7 @@ private struct QueryResultRow: View {
                 badge
             }
             Text(q.answer)
-                .font(.cavnarBody(11.5))
+                .font(.cavnarBody(12.5))
                 .foregroundStyle(Color.cavnarInk2)
                 .lineSpacing(3)
                 // .overlay proposes this card the BASE row's own compact,

@@ -110,7 +110,7 @@ struct FoodCostQuickEntryView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("KEY INGREDIENT PRICES")
-                            .font(.cavnarBody(10, weight: 700))
+                            .font(.cavnarBody(11.5, weight: 700))
                             .tracking(1.2)
                             .foregroundStyle(Color.cavnarEmber2)
                         Text("Fill in this week's price per unit right after an invoice arrives.")
@@ -177,7 +177,7 @@ struct FoodCostQuickEntryView: View {
                 if viewModel.didSubmit {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("THIS WEEK'S RESULT")
-                            .font(.cavnarBody(10, weight: 700))
+                            .font(.cavnarBody(11.5, weight: 700))
                             .tracking(1.2)
                             .foregroundStyle(Color.cavnarGreen)
                         resultSummary
@@ -379,7 +379,7 @@ private struct IngredientCarousel: View {
                     HStack(spacing: 4) {
                         Spacer()
                         Text("SWIPE")
-                            .font(.cavnarBody(9, weight: 700))
+                            .font(.cavnarBody(11, weight: 700))
                             .tracking(1.5)
                         Image(systemName: "arrow.down")
                             .font(.system(size: 10, weight: .bold))
@@ -586,7 +586,7 @@ private struct IngredientCard: View {
                         .frame(height: isNameFocused ? 1.5 : 1)
                 }
                 TextField("unit", text: $item.unit)
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(11.5, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                     .tracking(0.4)
                     .multilineTextAlignment(.center)
@@ -633,7 +633,7 @@ private struct IngredientCard: View {
     private func statField(label: String, prefix: String?, text: Binding<String>, field: CarouselField) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
-                .font(.cavnarBody(8.5, weight: 700))
+                .font(.cavnarBody(11, weight: 700))
                 .tracking(0.6)
                 .foregroundStyle(Color.cavnarInk.opacity(0.65))
             HStack(spacing: 2) {

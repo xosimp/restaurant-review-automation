@@ -90,7 +90,7 @@ struct SendReviewRequestSheet: View {
                         focus: $focusedField, field: .message
                     )
                     Text("Sent along with the review link. Leave it blank to use the default message.")
-                        .font(.cavnarBody(11))
+                        .font(.cavnarBody(12))
                         .foregroundStyle(Color.cavnarInk3)
                         .padding(.top, -14)
 

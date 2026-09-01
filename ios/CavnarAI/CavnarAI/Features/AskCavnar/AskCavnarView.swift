@@ -280,7 +280,7 @@ private struct ChatBubble: View {
             VStack(alignment: .leading, spacing: 6) {
                 if !message.isUser {
                     Text("CAVNAR AI")
-                        .font(.cavnarBody(10.5, weight: 700))
+                        .font(.cavnarBody(12, weight: 700))
                         .tracking(1.2)
                         .foregroundStyle(Color.cavnarEmber2)
                 }
@@ -333,7 +333,7 @@ private struct LoadingBubble: View {
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 10) {
                 Text("CAVNAR AI")
-                    .font(.cavnarBody(9, weight: 700))
+                    .font(.cavnarBody(11, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
                 // "Composing" — an ember caret writing lines into place

@@ -9,6 +9,12 @@ import SwiftUI
 struct RoleDonutChart: View {
     let roles: [LaborRoleSummary]
     @Binding var isExpanded: Bool
+    // Ring segments trim in from zero, staggered, on this chart's first
+    // appearance — was previously fully static (segment(at:) computed the
+    // final trim range and nothing ever animated toward it). Guarded so a
+    // later re-render (isExpanded toggling, a pull-to-refresh reload) never
+    // replays it — this plays exactly once per chart instance.
+    @State private var sweepIn = false
     // Optional: labels the center total with the actual span it covers
     // (e.g. "2-WK TOTAL") instead of a bare "TOTAL" that reads as if it
     // matched a single week's PAR hours budget elsewhere on this screen.
@@ -91,7 +97,7 @@ struct RoleDonutChart: View {
     // row is a 12pt name line + 1pt inner spacing + a 9pt subtext line
     // (≈27pt for the two together, using this custom font family's
     // typical ~1.2x line-height), with 12pt between rows.
-    private static let collapsedRowHeight: CGFloat = 27
+    private static let collapsedRowHeight: CGFloat = 30
     private static var collapsedLegendHeight: CGFloat {
         let rows = CGFloat(collapseThreshold)
         return rows * collapsedRowHeight + (rows - 1) * 12
@@ -122,11 +128,15 @@ struct RoleDonutChart: View {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 9, weight: .semibold))
                     }
-                    .font(.cavnarBody(11, weight: 600))
+                    .font(.cavnarBody(12, weight: 600))
                     .foregroundStyle(Color.cavnarEmber)
                 }
                 .buttonStyle(.plain)
             }
+        }
+        .onAppear {
+            guard !sweepIn else { return }
+            withAnimation(.easeOut(duration: 0.15)) { sweepIn = true }
         }
     }
 
@@ -147,17 +157,18 @@ struct RoleDonutChart: View {
             ForEach(Array(sortedRoles.enumerated()), id: \.element.id) { index, _ in
                 let (start, end) = segment(at: index)
                 Circle()
-                    .trim(from: start, to: end)
+                    .trim(from: start, to: sweepIn ? end : start)
                     .stroke(color(at: index), style: StrokeStyle(lineWidth: Self.ringStrokeWidth, lineCap: .butt))
                     .rotationEffect(.degrees(-90))
                     .shadow(color: color(at: index).opacity(0.5), radius: 3)
+                    .animation(.easeOut(duration: 0.75).delay(Double(index) * 0.1), value: sweepIn)
             }
             VStack(spacing: 2) {
                 Text(formattedTotal)
                     .font(.cavnarNumber(19, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Text(totalLabel)
-                    .font(.cavnarBody(9, weight: 700))
+                    .font(.cavnarBody(11, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarInk3)
             }
@@ -180,18 +191,18 @@ struct RoleDonutChart: View {
                         .padding(.top, 4)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(role.role)
-                            .font(.cavnarBody(12, weight: 600))
+                            .font(.cavnarBody(13, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
                             .lineLimit(1)
                         // Digits in Space Grotesk (cavnarNumber), same
                         // as every other numeric value in the app —
                         // this line was plain body text throughout,
                         // including the hours/headcount/cost figures.
-                        (Text(formattedHours(role.hours)).font(.cavnarNumber(9))
-                            + Text("h · ").font(.cavnarBody(9))
-                            + Text("\(role.headcount)").font(.cavnarNumber(9))
-                            + Text(" staff · $").font(.cavnarBody(9))
-                            + Text(role.laborCost.commaFormatted).font(.cavnarNumber(9)))
+                        (Text(formattedHours(role.hours)).font(.cavnarNumber(11))
+                            + Text("h · ").font(.cavnarBody(11))
+                            + Text("\(role.headcount)").font(.cavnarNumber(11))
+                            + Text(" staff · $").font(.cavnarBody(11))
+                            + Text(role.laborCost.commaFormatted).font(.cavnarNumber(11)))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                     Spacer(minLength: 4)

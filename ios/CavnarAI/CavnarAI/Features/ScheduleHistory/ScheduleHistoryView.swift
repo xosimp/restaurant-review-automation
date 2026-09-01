@@ -132,7 +132,7 @@ struct ScheduleHistoryView: View {
                     .font(.cavnarBody(14, weight: 700))
                 if let generated = Self.generatedAtParser.date(from: entry.generatedAt) {
                     Text("Generated \(Self.generatedAtDisplayFormatter.string(from: generated))")
-                        .font(.cavnarBody(11))
+                        .font(.cavnarBody(12))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }

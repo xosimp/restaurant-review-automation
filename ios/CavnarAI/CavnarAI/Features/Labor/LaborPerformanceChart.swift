@@ -140,7 +140,7 @@ struct LaborPerformanceChart: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("LABOR % PERFORMANCE")
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnarBody(12, weight: 700))
                 .tracking(1.5)
                 .foregroundStyle(Color.cavnarEmber2)
 
@@ -155,7 +155,7 @@ struct LaborPerformanceChart: View {
             } else {
                 if let dateRangeText {
                     Text(dateRangeText)
-                        .font(.cavnarBody(10, weight: 600))
+                        .font(.cavnarBody(11.5, weight: 600))
                         .foregroundStyle(Color.cavnarInk3)
                 }
                 Chart {
@@ -178,7 +178,7 @@ struct LaborPerformanceChart: View {
                             // the page itself, with zero opacity blending
                             // either way.
                             Text("\(Int(target))% target")
-                                .font(.cavnarBody(9, weight: 700))
+                                .font(.cavnarBody(11, weight: 700))
                                 .foregroundStyle(Color.black)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 3)
@@ -230,14 +230,14 @@ struct LaborPerformanceChart: View {
                 legendDot(.cavnarAmber, "\(Int(target - 3))–\(Int(target))%")
                 legendDot(.cavnarGreen, "Under \(Int(target - 3))%")
             }
-            .font(.cavnarBody(9))
+            .font(.cavnarBody(11))
             .foregroundStyle(Color.cavnarInk3)
         case .trend:
             HStack(spacing: 14) {
                 legendDot(.cavnarGreen, "At or under target")
                 legendDot(.cavnarRed, "Over \(Int(target))% target")
             }
-            .font(.cavnarBody(9))
+            .font(.cavnarBody(11))
             .foregroundStyle(Color.cavnarInk3)
         }
     }
@@ -250,7 +250,7 @@ struct LaborPerformanceChart: View {
                     mode = m
                 } label: {
                     Text(m.rawValue)
-                        .font(.cavnarBody(11, weight: 700))
+                        .font(.cavnarBody(12, weight: 700))
                         .foregroundStyle(m == mode ? Color.cavnarEmber2 : Color.cavnarInk3)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
@@ -305,7 +305,7 @@ struct LaborPerformanceChart: View {
     private func barTooltip(_ bar: Bar) -> some View {
         VStack(spacing: 2) {
             Text(bar.rangeText ?? bar.label)
-                .font(.cavnarBody(9, weight: 700))
+                .font(.cavnarBody(11, weight: 700))
                 .foregroundStyle(Color.cavnarInk3)
             Text(String(format: "%.1f%%", bar.pct))
                 .font(.cavnarNumber(14, weight: 700))

@@ -310,7 +310,10 @@ html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d
 .calc-tip-light .tip-text{background:#fff;color:var(--ink2);border-color:var(--paper3);box-shadow:0 4px 12px rgba(0,0,0,.12)}
 .calc-tip-super{position:absolute;top:-2px;right:-17px;margin-top:0}
 .tabs{display:flex;gap:2px;padding:0 28px;background:var(--ink);border-top:1px solid #1a1714;position:relative}
-.tab{padding:8px 16px;border-radius:0;border:none;font-family:'Apfel Grotezk',sans-serif;font-size:12px;font-weight:500;cursor:pointer;color:rgba(250,248,245,.45);background:transparent;transition:color .2s;border-bottom:2px solid transparent;position:relative}
+/* Clash Display, not Apfel — a tab names a whole module/screen, the same
+   heading role an ingredient row's own name plays in the Food Cost tracker
+   (also Clash Display) or a navigationTitle now plays on iOS. */
+.tab{padding:8px 16px;border-radius:0;border:none;font-family:'Clash Display',sans-serif;font-size:13px;font-weight:600;cursor:pointer;color:rgba(250,248,245,.45);background:transparent;transition:color .2s;border-bottom:2px solid transparent;position:relative}
 .tab:hover{color:var(--paper)}
 .tab.active{color:var(--paper);border-bottom-color:transparent}
 #tab-indicator{position:absolute;bottom:0;left:0;width:0;height:2px;background:var(--ember);transition:left .22s cubic-bezier(.4,0,.2,1),width .22s cubic-bezier(.4,0,.2,1);pointer-events:none;border-radius:1px 1px 0 0}

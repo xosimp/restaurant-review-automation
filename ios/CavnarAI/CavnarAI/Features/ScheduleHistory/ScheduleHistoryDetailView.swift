@@ -28,7 +28,7 @@ struct ScheduleHistoryDetailView: View {
                         if let summary = detail.summary, !summary.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("WHAT CHANGED & WHY")
-                                    .font(.cavnarBody(10, weight: 700))
+                                    .font(.cavnarBody(11.5, weight: 700))
                                     .tracking(1.2)
                                     .foregroundStyle(Color.cavnarGreen)
                                 ForEach(summary, id: \.self) { line in
@@ -162,16 +162,16 @@ struct ScheduleHistoryDetailView: View {
         return HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text("PAR HOURS CHECK")
-                    .font(.cavnarBody(9, weight: 700))
+                    .font(.cavnarBody(11, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarGreen)
                 Text("Budgeted \(budget.commaFormatted)h for the week")
-                    .font(.cavnarBody(11))
+                    .font(.cavnarBody(12))
                     .foregroundStyle(Color.cavnarInk2)
             }
             Spacer()
             Text(withinRange ? "On budget" : (diff > 0 ? "+\(diff.commaFormatted)h over" : "\(diff.commaFormatted)h under"))
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnarBody(12, weight: 700))
                 .foregroundStyle(withinRange ? Color.cavnarGreen : Color.cavnarAmber)
         }
         .padding(10)
@@ -257,7 +257,7 @@ struct ScheduleHistoryDetailView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text(day.uppercased())
-                    .font(.cavnarBody(11, weight: 700))
+                    .font(.cavnarBody(12, weight: 700))
                     .tracking(1)
                     .foregroundStyle(Color.cavnarEmber)
                     .padding(.horizontal, 10)
@@ -265,7 +265,7 @@ struct ScheduleHistoryDetailView: View {
                     .background(Color.cavnarEmber.opacity(0.16))
                     .clipShape(Capsule())
                 Text("\(rows.count) shift\(rows.count == 1 ? "" : "s")")
-                    .font(.cavnarBody(10))
+                    .font(.cavnarBody(11.5))
                     .foregroundStyle(Color.cavnarInk3)
             }
             VStack(alignment: .leading, spacing: 12) {
@@ -295,12 +295,12 @@ struct ScheduleHistoryDetailView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(row.employee ?? "").font(.cavnarBody(12, weight: 600)).foregroundStyle(Color.cavnarInk)
                         if let role = row.role, !role.isEmpty {
-                            Text(role).font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
+                            Text(role).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
                         }
                     }
                     Spacer()
                     Text("\(row.shiftStart ?? "")–\(row.shiftEnd ?? "")")
-                        .font(.cavnarNumber(11))
+                        .font(.cavnarNumber(12))
                         .foregroundStyle(Color.cavnarInk2)
                 }
                 .padding(.vertical, 4)

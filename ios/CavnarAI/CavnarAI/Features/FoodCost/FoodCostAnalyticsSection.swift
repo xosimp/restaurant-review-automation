@@ -48,8 +48,8 @@ struct FoodCostAnalyticsSection: View {
                             slices: analytics.wasteItems.map {
                                 FoodCostDonutSlice(
                                     id: $0.id, name: $0.item, value: $0.wasteCost,
-                                    subtitle: Text(String(format: "%.0f", $0.wastePct)).font(.cavnarNumber(9))
-                                        + Text("% waste").font(.cavnarBody(9))
+                                    subtitle: Text(String(format: "%.0f", $0.wastePct)).font(.cavnarNumber(11))
+                                        + Text("% waste").font(.cavnarBody(11))
                                 )
                             },
                             centerLabel: "TOTAL"
@@ -62,10 +62,10 @@ struct FoodCostAnalyticsSection: View {
                                 FoodCostDonutSlice(
                                     id: $0.id, name: $0.item, value: $0.overstockCost,
                                     subtitle: [$0.currentStock, $0.parLevel].compactMap { $0 }.count == 2
-                                        ? Text("\(Int($0.currentStock ?? 0))").font(.cavnarNumber(9))
-                                            + Text(" / ").font(.cavnarBody(9))
-                                            + Text("\(Int($0.parLevel ?? 0))").font(.cavnarNumber(9))
-                                            + Text(" par").font(.cavnarBody(9))
+                                        ? Text("\(Int($0.currentStock ?? 0))").font(.cavnarNumber(11))
+                                            + Text(" / ").font(.cavnarBody(11))
+                                            + Text("\(Int($0.parLevel ?? 0))").font(.cavnarNumber(11))
+                                            + Text(" par").font(.cavnarBody(11))
                                         : Text("")
                                 )
                             },
@@ -108,23 +108,23 @@ struct FoodCostAnalyticsSection: View {
             HStack(alignment: .top, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("PROJECTED ANNUAL WASTE")
-                        .font(.cavnarBody(9, weight: 700))
+                        .font(.cavnarBody(11, weight: 700))
                         .tracking(1.4)
                         .foregroundStyle(Color.cavnarInk.opacity(0.6))
                     HeroAnimatedNumber(numericValue: a.annualWasteProjection ?? 0, tone: Color.cavnarRed, startFromZero: startFromZero)
                     Text("$\((a.monthlyWasteProjection ?? 0).commaFormatted)/mo at current rate")
-                        .font(.cavnarBody(10))
+                        .font(.cavnarBody(11.5))
                         .foregroundStyle(Color.cavnarInk.opacity(0.55))
                 }
                 Spacer(minLength: 12)
                 VStack(alignment: .trailing, spacing: 8) {
                     Text("RECOVERABLE / YEAR")
-                        .font(.cavnarBody(9, weight: 700))
+                        .font(.cavnarBody(11, weight: 700))
                         .tracking(1.4)
                         .foregroundStyle(Color.cavnarInk.opacity(0.6))
                     HeroAnimatedNumber(numericValue: a.annualRecoverable ?? 0, tone: Color.cavnarGreen, startFromZero: startFromZero)
                     Text("$\((a.recoverableMonthly ?? 0).commaFormatted)/mo with better ordering")
-                        .font(.cavnarBody(10))
+                        .font(.cavnarBody(11.5))
                         .foregroundStyle(Color.cavnarInk.opacity(0.55))
                         .multilineTextAlignment(.trailing)
                 }
@@ -232,7 +232,7 @@ struct FoodCostAnalyticsSection: View {
                         .font(.cavnarNumber(18, weight: 700))
                         .foregroundStyle(tone)
                     Text(label.uppercased())
-                        .font(.cavnarBody(8, weight: 700))
+                        .font(.cavnarBody(10.5, weight: 700))
                         .tracking(0.6)
                         .foregroundStyle(Color.cavnarInk3)
                 }
@@ -264,7 +264,7 @@ struct FoodCostAnalyticsSection: View {
                 // each row's right-side number (below) reads correctly on
                 // its own, but the section as a whole had no framing at all.
                 Text("ORDER LIST — RECOMMENDED QUANTITIES")
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(11.5, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
                 if !a.criticalLow.isEmpty {
@@ -284,12 +284,12 @@ struct FoodCostAnalyticsSection: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 6) {
                 Text(title)
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(11.5, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(color)
                 Spacer()
                 Text("\(items.count)")
-                    .font(.cavnarNumber(10, weight: 700))
+                    .font(.cavnarNumber(11.5, weight: 700))
                     .foregroundStyle(color)
             }
             VStack(spacing: 0) {
@@ -311,13 +311,13 @@ struct FoodCostAnalyticsSection: View {
                     .font(.cavnarBody(13, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                 Text(subtitle(for: item, showDays: showDays))
-                    .font(.cavnarBody(10))
+                    .font(.cavnarBody(11.5))
                     .foregroundStyle(Color.cavnarInk3)
             }
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 4) {
                 Text(item.orderCaption)
-                    .font(.cavnarBody(7.5, weight: 700))
+                    .font(.cavnarBody(10.5, weight: 700))
                     .tracking(0.8)
                     .foregroundStyle(Color.cavnarInk3)
                 Text(item.suggestedOrderLabel)
@@ -325,7 +325,7 @@ struct FoodCostAnalyticsSection: View {
                     .foregroundStyle(Color.cavnarInk)
                 if let savings = item.savingsVsLast, savings != 0 {
                     Text(savings > 0 ? "↓ $\(String(format: "%.2f", savings))" : "↑ $\(String(format: "%.2f", -savings))")
-                        .font(.cavnarNumber(10, weight: 700))
+                        .font(.cavnarNumber(11.5, weight: 700))
                         .foregroundStyle(savings > 0 ? Color.cavnarGreen : Color.cavnarRed)
                 }
             }
@@ -353,7 +353,7 @@ struct FoodCostAnalyticsSection: View {
     private func priceWatchDetail(_ items: [PriceWatchItem]) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("PRICE WATCH")
-                .font(.cavnarBody(10, weight: 700))
+                .font(.cavnarBody(11.5, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
             VStack(spacing: 0) {
@@ -376,10 +376,10 @@ struct FoodCostAnalyticsSection: View {
                     .font(.cavnarBody(13, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                 Text("$\(String(format: "%.2f", item.oldPrice)) → $\(String(format: "%.2f", item.newPrice))")
-                    .font(.cavnarBody(10))
+                    .font(.cavnarBody(11.5))
                     .foregroundStyle(Color.cavnarInk3)
                 Text(item.actionHint)
-                    .font(.cavnarBody(10))
+                    .font(.cavnarBody(11.5))
                     .foregroundStyle(Color.cavnarInk2)
                     .lineSpacing(2)
             }
@@ -389,7 +389,7 @@ struct FoodCostAnalyticsSection: View {
                     .font(.cavnarNumber(13, weight: 700))
                     .foregroundStyle(accent)
                 Text(item.timeframeLabel)
-                    .font(.cavnarBody(9))
+                    .font(.cavnarBody(11))
                     .foregroundStyle(Color.cavnarInk3)
             }
         }

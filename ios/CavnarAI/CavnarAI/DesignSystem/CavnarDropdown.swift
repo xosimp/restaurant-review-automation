@@ -43,7 +43,7 @@ struct CavnarDropdown<Content: View>: View {
                                 .foregroundStyle(Color.cavnarInk)
                             if let badge {
                                 Text("\(badge)")
-                                    .font(.cavnarNumber(11, weight: 700))
+                                    .font(.cavnarNumber(12, weight: 700))
                                     .foregroundStyle(tone.foreground)
                                     .padding(.horizontal, 7)
                                     .padding(.vertical, 2)
@@ -53,7 +53,7 @@ struct CavnarDropdown<Content: View>: View {
                         }
                         if let subtitle {
                             Text(subtitle)
-                                .font(.cavnarBody(11))
+                                .font(.cavnarBody(12))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                     }

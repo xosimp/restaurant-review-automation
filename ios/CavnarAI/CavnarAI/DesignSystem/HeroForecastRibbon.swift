@@ -156,11 +156,11 @@ private struct CavnarForecastPill<Panel: View>: View {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .semibold))
                 Text("FORECAST")
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(11.5, weight: 700))
                     .tracking(1.4)
                 if let badgeCount, badgeCount > 1 {
                     Text("\(badgeCount)")
-                        .font(.cavnarNumber(10, weight: 700))
+                        .font(.cavnarNumber(11.5, weight: 700))
                         .frame(width: 15, height: 15)
                         .background(Color.cavnarInk.opacity(0.18))
                         .clipShape(Circle())

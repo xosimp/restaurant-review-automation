@@ -80,24 +80,6 @@ struct IntelView: View {
         .cavnarTabSwipeNavigation($subTab, primaryTab: .competitors, secondaryTab: .aiVisibility)
         .task {
             await viewModel.load()
-            // viewModel.summary becoming non-nil (which is what mounts
-            // content(summary) into the tree for the very first time,
-            // since it's behind `if let summary = viewModel.summary`) and
-            // contentAppeared flipping true used to happen back-to-back in
-            // the same continuation. SwiftUI could then give content(summary)
-            // its FIRST-EVER render already at contentAppeared == true, with
-            // no prior "hidden/collapsed" frame ever rendered to animate
-            // away from — .animation(value:) only animates a transition it
-            // can observe between two states of an already-mounted view, so
-            // every reveal below (stat row, hero insight, rating bars AND
-            // their numbers) just appeared at final value instantly despite
-            // being wired correctly. Deferring this flip to the next run
-            // loop turn lets content(summary)'s real first frame commit at
-            // contentAppeared == false before this changes it, which is
-            // what gives SwiftUI something to actually animate from.
-            DispatchQueue.main.async {
-                contentAppeared = true
-            }
         }
     }
 
@@ -122,7 +104,7 @@ struct IntelView: View {
                 .transition(.opacity)
             }
             if let error = viewModel.refreshError {
-                Text(error).font(.cavnarBody(11)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
             }
         }
         .frame(maxWidth: .infinity)
@@ -135,6 +117,21 @@ struct IntelView: View {
             .opacity(contentAppeared ? 1 : 0)
             .offset(y: contentAppeared ? 0 : 20)
             .animation(.easeOut(duration: 0.5), value: contentAppeared)
+            // Flips once this real content has actually rendered its first
+            // (hidden) frame — onAppear fires strictly after that commit,
+            // unlike the previous DispatchQueue.main.async race against the
+            // .task's own continuation. That race could coalesce into the
+            // SAME transaction once anything else in the view tree (like
+            // CavnarEmberRefreshable's scroll-geometry tracking) added
+            // enough extra work to shift timing — collapsing the "hidden"
+            // and "shown" frames into one and silently skipping every fade/
+            // rise/bar-fill animation below (the actual regression this
+            // fixes: stat row, hero insight, and the rating comparison bars
+            // stopped animating in once refreshable was added to this screen).
+            .onAppear {
+                guard !contentAppeared else { return }
+                contentAppeared = true
+            }
 
         if let intro = summary.intro, !intro.isEmpty {
             heroInsight(intro, ownerName: summary.ownerName)
@@ -213,7 +210,7 @@ struct IntelView: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 10, weight: .semibold))
                 Text("CAVNAR AI COMPETITIVE ANALYSIS")
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(11.5, weight: 700))
                     .tracking(1.1)
             }
             .foregroundStyle(Color.cavnarEmber)
@@ -289,7 +286,7 @@ struct IntelView: View {
         VStack(spacing: 5) {
             value
             Text(label.uppercased())
-                .font(.cavnarBody(8.5, weight: 700))
+                .font(.cavnarBody(11, weight: 700))
                 .tracking(0.4)
                 .foregroundStyle(Color.cavnarInk3)
                 .lineLimit(1)
@@ -315,7 +312,7 @@ struct IntelView: View {
     private func ratingComparisonSection(_ summary: IntelSummary, ownRating: Double) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("RATING COMPARISON")
-                .font(.cavnarBody(10, weight: 700))
+                .font(.cavnarBody(11.5, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber)
             VStack(spacing: 16) {
@@ -425,7 +422,7 @@ struct IntelView: View {
                 Image(systemName: isGood ? "arrow.up.right" : "arrow.down.right")
                     .font(.system(size: 9, weight: .bold))
                 Text(section.name.uppercased())
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(11.5, weight: 700))
                     .tracking(1.2)
             }
             .foregroundStyle(tone)
@@ -465,7 +462,7 @@ struct IntelView: View {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 9, weight: .bold))
                 Text("HOW TO IMPROVE")
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(11.5, weight: 700))
                     .tracking(1.2)
             }
             .foregroundStyle(Color.cavnarEmber)
@@ -473,7 +470,7 @@ struct IntelView: View {
                 ForEach(Array(recommendations.enumerated()), id: \.offset) { index, rec in
                     HStack(alignment: .top, spacing: 10) {
                         Text("\(index + 1)")
-                            .font(.cavnarNumber(11, weight: 700))
+                            .font(.cavnarNumber(12, weight: 700))
                             .foregroundStyle(.white)
                             .frame(width: 20, height: 20)
                             .background(Color.cavnarEmber)
@@ -499,7 +496,7 @@ struct IntelView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text("NEARBY COMPETITORS")
-                    .font(.cavnarBody(10, weight: 700))
+                    .font(.cavnarBody(11.5, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber)
                 Spacer()
@@ -507,7 +504,7 @@ struct IntelView: View {
                 refreshLink
             }
             if let error = viewModel.refreshError {
-                Text(error).font(.cavnarBody(11)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(12)).foregroundStyle(Color.cavnarRed)
             }
             if viewModel.isRefreshing {
                 CavnarRadarSweep(size: 140, caption: "Re-reading the neighborhood")
@@ -590,24 +587,24 @@ struct IntelView: View {
                     Spacer()
                     if let diff {
                         Text(diff == 0 ? "tied" : (diff > 0 ? "▲\(String(format: "%.1f", diff)) ahead" : "▼\(String(format: "%.1f", abs(diff))) behind"))
-                            .font(.cavnarBody(9, weight: 700))
+                            .font(.cavnarBody(11, weight: 700))
                             .foregroundStyle(diff > 0 ? Color.cavnarGreen : (diff < 0 ? Color.cavnarRed : Color.cavnarInk3))
                     }
                 }
                 HStack(spacing: 6) {
                     ratingText(c.rating, numberSize: 11, tone: Color.cavnarAmber)
                     Text("\(c.reviewCount) reviews")
-                        .font(.cavnarBody(11))
+                        .font(.cavnarBody(12))
                         .foregroundStyle(Color.cavnarInk3)
                     if !c.vicinity.isEmpty {
                         Text("· \(c.vicinity)")
-                            .font(.cavnarBody(11))
+                            .font(.cavnarBody(12))
                             .foregroundStyle(Color.cavnarInk3)
                             .lineLimit(1)
                     }
                     if c.isCustom {
                         Text("· Added by you")
-                            .font(.cavnarBody(11, weight: 600))
+                            .font(.cavnarBody(12, weight: 600))
                             .foregroundStyle(Color.cavnarEmber2)
                     }
                 }
@@ -618,7 +615,7 @@ struct IntelView: View {
                             .foregroundStyle(r.rating >= 4 ? Color.cavnarGreen : Color.cavnarRed)
                             .padding(.top, 2)
                         Text(r.text)
-                            .font(.cavnarBody(11.5))
+                            .font(.cavnarBody(12.5))
                             .foregroundStyle(Color.cavnarInk3)
                             .lineLimit(2)
                             .lineSpacing(2)
@@ -648,7 +645,7 @@ struct IntelView: View {
                         }
                     } label: {
                         Text(isExpanded ? "Show less" : "Show \(remaining) more review\(remaining == 1 ? "" : "s")")
-                            .font(.cavnarBody(11, weight: 600))
+                            .font(.cavnarBody(12, weight: 600))
                             .foregroundStyle(Color.cavnarEmber2)
                     }
                     .padding(.top, 1)
@@ -674,11 +671,11 @@ struct IntelView: View {
         }
         return HStack(spacing: 8) {
             Text("Last updated \(display)")
-                .font(.cavnarBody(11))
+                .font(.cavnarBody(12))
                 .foregroundStyle(Color.cavnarInk3)
             if let daysOld, daysOld >= 7 {
                 Text("Consider refreshing")
-                    .font(.cavnarBody(9, weight: 700))
+                    .font(.cavnarBody(11, weight: 700))
                     .foregroundStyle(Color.cavnarAmber)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
@@ -722,7 +719,7 @@ struct IntelView: View {
                 Text("Add")
             }
         }
-        .font(.cavnarBody(10.5, weight: 700))
+        .font(.cavnarBody(12, weight: 700))
         .foregroundStyle(Color.cavnarEmber2)
         .padding(.horizontal, 11)
         .padding(.vertical, 5)
@@ -747,7 +744,7 @@ struct IntelView: View {
                 }
             }
         }
-        .font(.cavnarBody(10.5, weight: 700))
+        .font(.cavnarBody(12, weight: 700))
         .foregroundStyle(Color.cavnarEmber2)
         .padding(.horizontal, 11)
         .padding(.vertical, 5)

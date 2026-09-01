@@ -85,7 +85,7 @@ struct MarketingView: View {
     private func statTile(value: String, label: String) -> some View {
         VStack(spacing: 4) {
             Text(value).font(.cavnarNumber(22, weight: 500)).foregroundStyle(Color.cavnarInk).cavnarNumberGlow()
-            Text(label).font(.cavnarBody(10)).foregroundStyle(Color.cavnarInk3)
+            Text(label).font(.cavnarBody(11.5)).foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity)
     }
@@ -208,7 +208,7 @@ struct MarketingView: View {
                                 .foregroundStyle(Color.cavnarEmber)
                             Spacer()
                             Text(idea.platform)
-                                .font(.cavnarBody(10, weight: 600))
+                                .font(.cavnarBody(11.5, weight: 600))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                         Text(idea.angle)

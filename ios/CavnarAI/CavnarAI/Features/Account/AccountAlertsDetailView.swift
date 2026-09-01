@@ -75,7 +75,7 @@ struct AccountAlertsDetailView: View {
                         pushToggle("Negative review spike", $draft.alSpikePush, on: draft.alertNegSpike)
                         pushToggle("Unresponded review (48h)", $draft.alUnresPush, on: draft.alertNoResponse)
                         Text("Push doesn't need text/email alerts turned on — it's free to send, so it's gated per-alert-type here instead. Trend and labor alerts above push automatically once enabled; there's no separate switch for those two yet.")
-                            .font(.cavnarBody(11))
+                            .font(.cavnarBody(12))
                             .foregroundStyle(Color.cavnarInk3)
                             .padding(.top, 2)
                     }
@@ -88,7 +88,7 @@ struct AccountAlertsDetailView: View {
                         Toggle(isOn: $quietHoursEnabled) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Pause overnight").font(.cavnarBody(13, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                Text("Text, email, and push all wait until your quiet window ends").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+                                Text("Text, email, and push all wait until your quiet window ends").font(.cavnarBody(12)).foregroundStyle(Color.cavnarInk3)
                             }
                         }
                         .tint(Color.cavnarEmber)
@@ -133,7 +133,7 @@ struct AccountAlertsDetailView: View {
                                 Haptic.light()
                                 contacts.append(AlertContact(id: -contacts.count - 1, name: "", phone: "", smsConsent: false))
                             } label: {
-                                Text("+ Add").font(.cavnarBody(11, weight: 700)).foregroundStyle(Color.cavnarEmber)
+                                Text("+ Add").font(.cavnarBody(12, weight: 700)).foregroundStyle(Color.cavnarEmber)
                             }
                         }
                     }
