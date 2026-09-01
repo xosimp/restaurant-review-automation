@@ -288,7 +288,7 @@ private struct SparklineCanvas: View {
         guard let minV = values.min(), let maxV = values.max(), let lastValue = values.last,
               values.count > 1 else { return nil }
         let range = max(maxV - minV, 1)
-        let padX: CGFloat = 32
+        let padX: CGFloat = 16
         let padY: CGFloat = 20
         let stepX = (size.width - padX * 2) / CGFloat(values.count - 1)
         let normalized = (lastValue - minV) / range
@@ -300,17 +300,12 @@ private struct SparklineCanvas: View {
     private func draw(context: GraphicsContext, size: CGSize, progress: Double, drawEndpointMarker: Bool = true) {
         guard let minV = values.min(), let maxV = values.max() else { return }
         let range = max(maxV - minV, 1)
-        // Horizontal pad widened (20->32) to match the margins the rest of
-        // the home page's boxed/padded content uses — this chart has no
-        // card chrome of its own (see ValueChartCard's doc comment), so its
-        // own inset is the only thing giving the line/fill breathing room
-        // from the shared 20pt page edge. Vertical stays closer to its
-        // original value — widening it the same amount would compress the
-        // line's usable height range and flatten out real variation, which
-        // isn't what "wider margins" was asking for. The endpoint glow
-        // extends 16pt past its center in every direction; both pads clear
-        // that with room to spare.
-        let padX: CGFloat = 32
+        // Horizontal pad tightened (20->16, the floor set by the endpoint
+        // glow's own 16pt radius below — any less and the glow clips
+        // against the canvas edge) so the plotted line/fill stretches
+        // wider, closer to the chart's actual container edges, instead of
+        // reading narrower/more condensed than the rest of the home page.
+        let padX: CGFloat = 16
         let padY: CGFloat = 20
         let stepX = values.count > 1 ? (size.width - padX * 2) / CGFloat(values.count - 1) : 0
 
