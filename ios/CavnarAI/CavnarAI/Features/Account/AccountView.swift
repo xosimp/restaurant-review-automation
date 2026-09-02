@@ -139,7 +139,8 @@ struct AccountView: View {
                 settingsRow {
                     row(
                         "Security & devices", systemImage: "lock.shield",
-                        trailing: viewModel.sessions.isEmpty ? nil : "\(viewModel.sessions.count)"
+                        trailing: viewModel.sessions.isEmpty ? nil : "\(viewModel.sessions.count)",
+                        badge: summary.account.twoFAEnabled ? "2FA ON" : nil
                     )
                 } action: {
                     showingSecurity = true
@@ -303,7 +304,7 @@ struct AccountView: View {
         }
     }
 
-    private func row(_ label: String, systemImage: String, trailing: String? = nil) -> some View {
+    private func row(_ label: String, systemImage: String, trailing: String? = nil, badge: String? = nil) -> some View {
         HStack(spacing: 13) {
             Image(systemName: systemImage)
                 .font(.system(size: 15))
@@ -313,6 +314,22 @@ struct AccountView: View {
                 .font(.cavnarBody(15.5, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
             Spacer()
+            // A status pill (2FA on/off) is a different kind of signal
+            // than the plain gray count `trailing` shows elsewhere — its
+            // own tinted capsule so it reads at a glance, not just more
+            // gray text easy to skim past.
+            if let badge {
+                HStack(spacing: 4) {
+                    Circle().fill(Color.cavnarGreen).frame(width: 6, height: 6)
+                    Text(badge)
+                        .font(.cavnarBody(12.5, weight: 700))
+                        .foregroundStyle(Color.cavnarGreen)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.cavnarGreen.opacity(0.14))
+                .clipShape(Capsule())
+            }
             if let trailing {
                 Text(trailing)
                     .font(.cavnarNumber(14, weight: 600))

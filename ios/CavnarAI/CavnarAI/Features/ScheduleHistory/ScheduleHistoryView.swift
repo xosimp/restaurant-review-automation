@@ -76,12 +76,15 @@ struct ScheduleHistoryView: View {
                             ScheduleHistoryDetailView(historyId: entry.id, weekLabel: weekLabel(entry))
                         } label: {
                             // On the label, not the NavigationLink — see
-                            // ReviewsListView's identical fix. Putting the
-                            // entrance modifier on the link itself killed
-                            // the row's native tap haptic.
+                            // ReviewsListView's identical structure.
                             row(entry)
                                 .cavnarRowEntrance(index: index, clock: clock)
                         }
+                        // See ReviewsListView's identical fix/comment — a
+                        // plain List+NavigationLink row was never actually
+                        // producing a tap haptic on its own; this fires one
+                        // explicitly without touching navigation.
+                        .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
                         .foregroundStyle(Color.cavnarInk)
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)

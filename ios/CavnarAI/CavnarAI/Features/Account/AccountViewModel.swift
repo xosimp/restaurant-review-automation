@@ -169,12 +169,15 @@ final class AccountViewModel {
         }
     }
 
-    func disable2FA() async {
+    @discardableResult
+    func disable2FA() async -> Bool {
         do {
             _ = try await client.send("/mobile/api/account/2fa/disable", method: .post) as APIClient.EmptyResponse
             await load()
+            return true
         } catch {
             // Left as-is — user can retry from the toggle.
+            return false
         }
     }
 

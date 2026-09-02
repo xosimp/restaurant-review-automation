@@ -12,6 +12,7 @@ struct AccountSecurityDetailView: View {
     let account: AccountInfo
     @State private var showingChangePassword = false
     @State private var showing2FASetup = false
+    @State private var disabledLabel: String?
     @Environment(SessionStore.self) private var sessionStore
 
     var body: some View {
@@ -39,7 +40,13 @@ struct AccountSecurityDetailView: View {
                                 Text("On").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarGreen)
                             }
                             Button("Disable two-factor authentication", role: .destructive) {
-                                Task { await viewModel.disable2FA() }
+                                Haptic.light()
+                                Task {
+                                    if await viewModel.disable2FA() {
+                                        Haptic.success()
+                                        disabledLabel = "Two-factor disabled"
+                                    }
+                                }
                             }
                             .font(.cavnarBody(14.5, weight: 600))
                         } else {
@@ -114,11 +121,21 @@ struct AccountSecurityDetailView: View {
         }
         // Same resume as AccountView's own — this sheet was itself torn
         // down by the relock, so it re-presents its own child sheet too.
-        .onAppear {
-            if sessionStore.pendingTwoFactorSetupEmail != nil {
-                showing2FASetup = true
-            }
+        // Deliberately delayed, not fired synchronously in onAppear: this
+        // view is ITSELF still mid-presentation (AccountView is animating
+        // it in as a sheet) at the moment onAppear fires. Presenting a
+        // SECOND sheet from on top of that before the first transition has
+        // actually settled is what produced the garbled oversized-button
+        // render a device test caught — SwiftUI's sheet-presentation
+        // animation doesn't like being interrupted by another sheet
+        // request mid-flight. Waiting past the standard ~0.35s sheet
+        // transition lets this screen fully settle first.
+        .task {
+            guard sessionStore.pendingTwoFactorSetupEmail != nil else { return }
+            try? await Task.sleep(for: .milliseconds(450))
+            showing2FASetup = true
         }
+        .cavnarPostedOverlay(disabledLabel) { disabledLabel = nil }
         }
     }
 
@@ -203,17 +220,13 @@ private struct ChangePasswordSheet: View {
     }
 }
 
-private enum TwoFactorSetupField: Hashable, CaseIterable {
-    case code
-}
-
 private struct TwoFactorSetupSheet: View {
     let viewModel: AccountViewModel
     @Environment(\.dismiss) private var dismiss
     @Environment(SessionStore.self) private var sessionStore
     @State private var code = ""
     @State private var postedLabel: String?
-    @FocusState private var focusedField: TwoFactorSetupField?
+    @FocusState private var isCodeFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -221,18 +234,39 @@ private struct TwoFactorSetupSheet: View {
                 VStack(alignment: .leading, spacing: 26) {
                     if let masked = viewModel.twoFATestMasked {
                         Text("Code sent to \(masked)")
-                            .font(.cavnarBody(14))
+                            .font(.cavnarBody(16))
                             .foregroundStyle(Color.cavnarInk3)
                             .padding(.top, -14)
 
-                        CavnarFloatingField(
-                            icon: "lock.shield", placeholder: "6-digit code", text: $code,
-                            keyboardType: .numberPad,
-                            focus: $focusedField, field: .code
+                        // Six cells, not a bare field — each digit pops
+                        // into place, the active cell carries a blinking
+                        // ember caret, the row warms while verifying, and a
+                        // wrong code shakes it red. Submits itself the
+                        // moment the sixth digit lands, same as sign-in's
+                        // TwoFactorView; the button below stays as an
+                        // explicit fallback.
+                        CavnarCodeEntry(
+                            code: $code,
+                            isVerifying: viewModel.is2FABusy,
+                            isError: viewModel.twoFAError != nil,
+                            focus: $isCodeFocused
                         )
+                        .onChange(of: code) { _, new in
+                            if new.count < 6 { viewModel.twoFAError = nil }
+                            if new.count == 6, !viewModel.is2FABusy {
+                                Task {
+                                    if await viewModel.verify2FA(code: code) {
+                                        Haptic.success()
+                                        postedLabel = "Two-factor enabled"
+                                        sessionStore.pendingTwoFactorSetupEmail = nil
+                                    }
+                                }
+                            }
+                        }
+                        .onAppear { isCodeFocused = true }
 
                         if let error = viewModel.twoFAError {
-                            Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                            Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                         }
 
                         CavnarFormButtonPair { matchedWidth in
@@ -260,11 +294,11 @@ private struct TwoFactorSetupSheet: View {
                         .padding(.top, 6)
                     } else {
                         Text("We'll email a 6-digit code to the address on file to confirm two-factor sign-in works before turning it on.")
-                            .font(.cavnarBody(14.5))
+                            .font(.cavnarBody(16))
                             .foregroundStyle(Color.cavnarInk3)
 
                         if let error = viewModel.twoFAError {
-                            Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                            Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                         }
 
                         CavnarFormButtonPair { matchedWidth in
@@ -302,7 +336,7 @@ private struct TwoFactorSetupSheet: View {
             // Single field, nothing to step between — checkmark only,
             // matching Apple's own single-field bar rather than showing
             // two permanently-disabled chevrons for show.
-            .keyboardDoneToolbar { focusedField = nil }
+            .keyboardDoneToolbar { isCodeFocused = false }
             // Only the verify-and-enable success gets the posted moment —
             // sending the test code is a step along the way, not the
             // milestone itself.

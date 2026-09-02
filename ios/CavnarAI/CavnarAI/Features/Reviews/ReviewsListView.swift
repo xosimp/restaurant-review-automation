@@ -97,17 +97,22 @@ struct ReviewsListView: View {
                         )
                     } label: {
                         // The entrance fade/rise lives on the LABEL, not the
-                        // NavigationLink itself — putting it on the link
-                        // silently killed the List's native tap haptic (the
-                        // faint "tock" a NavigationLink row gives on
-                        // selection), almost certainly by interfering with
-                        // how List/UITableView tracks that row's selection
-                        // state under an animated opacity/offset. The label
-                        // is free to animate; the link's own hit-testing and
-                        // selection machinery stays completely untouched.
+                        // NavigationLink itself, so it can't interfere with
+                        // the link's own hit-testing.
                         ReviewRow(review: review)
                             .cavnarRowEntrance(index: index, clock: clock)
                     }
+                    // A plain List+NavigationLink row never actually fires a
+                    // system haptic on tap (verified — there's no built-in
+                    // one, unlike a Toggle/Picker; an earlier fix here
+                    // wrongly assumed one existed and had regressed). A
+                    // *simultaneous* TapGesture runs alongside the link's
+                    // own gesture rather than competing for it — unlike a
+                    // DragGesture (which this codebase already found could
+                    // swallow a Button's own tap, see HomeModuleGrid's
+                    // comment), a plain TapGesture's simultaneousGesture
+                    // never claims exclusivity, so navigation is untouched.
+                    .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
                     // List rows keep an opaque background of their own even
                     // with .scrollContentBackground(.hidden) below (that only
                     // clears the list's overall canvas) — every other module
