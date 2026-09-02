@@ -107,6 +107,10 @@ final class AccountViewModel {
             )
             if response.ok {
                 changePasswordSucceeded = true
+                // Refreshes summary.account.passwordStrength/passwordChangedAt
+                // so the Security sheet's tile reflects the new password
+                // immediately instead of waiting for the sheet to reopen.
+                await load()
             } else {
                 changePasswordError = response.error ?? "Couldn't change your password."
             }

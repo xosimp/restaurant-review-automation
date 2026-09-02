@@ -59,6 +59,8 @@ def init_auth(db_path: str = DB_PATH):
         "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'client'",
         "ALTER TABLE users ADD COLUMN google_id TEXT",
         "ALTER TABLE users ADD COLUMN apple_user_id TEXT",
+        "ALTER TABLE users ADD COLUMN password_changed_at TEXT",
+        "ALTER TABLE users ADD COLUMN password_strength TEXT",
     ]:
         try:
             import sqlite3 as _sql
@@ -140,10 +142,37 @@ def verify_password(username: str, password: str,
     conn.close()
     return user
 
+def password_strength(password: str) -> str:
+    """A rough, display-only strength label — not a security gate (the
+    8-character minimum is enforced separately at the call sites). Scored
+    from length plus how many character classes it mixes, computed once
+    here from the plaintext at set-time since the hash can't be scored
+    later."""
+    classes = sum([
+        any(c.islower() for c in password),
+        any(c.isupper() for c in password),
+        any(c.isdigit() for c in password),
+        any(not c.isalnum() for c in password),
+    ])
+    if len(password) >= 12 and classes >= 3:
+        return "strong"
+    if len(password) >= 8 and classes >= 2:
+        return "good"
+    return "weak"
+
+
 def update_password(user_id: int, new_password: str, db_path: str = DB_PATH):
     conn = get_conn(db_path)
-    conn.execute("UPDATE users SET password_hash=? WHERE id=?",
-                 (generate_password_hash(new_password), user_id))
+    from zoneinfo import ZoneInfo as _ZI_pw
+    conn.execute(
+        "UPDATE users SET password_hash=?, password_changed_at=?, password_strength=? WHERE id=?",
+        (
+            generate_password_hash(new_password),
+            datetime.now(_ZI_pw('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'),
+            password_strength(new_password),
+            user_id,
+        ),
+    )
     conn.commit()
     conn.close()
 

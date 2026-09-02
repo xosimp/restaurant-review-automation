@@ -18,6 +18,22 @@ struct AccountSecurityDetailView: View {
     private var live: AccountInfo { viewModel.summary?.account ?? account }
     private var twoFAByText: Bool { live.twoFAMethod == "sms" }
 
+    private var passwordStrengthLabel: String {
+        switch live.passwordStrength {
+        case "strong": return "Strong"
+        case "good": return "Good"
+        case "weak": return "Weak"
+        default: return "Set"
+        }
+    }
+    private var passwordStrengthTone: Color {
+        switch live.passwordStrength {
+        case "strong": return .cavnarGreen
+        case "weak": return .cavnarAmber
+        default: return .cavnarInk
+        }
+    }
+
     var body: some View {
         NavigationStack {
         ScrollView {
@@ -70,9 +86,9 @@ struct AccountSecurityDetailView: View {
     private var statusStrip: some View {
         HStack(spacing: 8) {
             AccountStatTile(
-                label: "Password", value: "Set",
-                detail: live.lastLogin == nil ? "Change anytime" : "Signed in " + AccountRelativeTime.describe(live.lastLogin).lowercased(),
-                detailIsNumber: true
+                label: "Password", value: passwordStrengthLabel,
+                tone: passwordStrengthTone,
+                detail: live.passwordChangedAt == nil ? "Never changed" : "Changed " + AccountRelativeTime.describe(live.passwordChangedAt).lowercased()
             )
             AccountStatTile(
                 label: "2FA", value: live.twoFAEnabled ? "On" : "Off",

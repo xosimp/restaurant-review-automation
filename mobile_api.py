@@ -1853,6 +1853,8 @@ def _do_mobile_account(current_user):
         "two_fa_contact_masked": _masked,
         "login_notify": bool(getattr(restaurant, "login_notify", 0)),
         "last_login": current_user.get("last_login"),
+        "password_changed_at": current_user.get("password_changed_at"),
+        "password_strength": current_user.get("password_strength"),
     }
     connections = {
         "google_business": {

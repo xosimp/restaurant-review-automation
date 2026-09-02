@@ -190,11 +190,16 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
     p = get_profile_for_restaurant(restaurant.id)
     intent = CAMPAIGN_PROMPTS.get(campaign_type, CAMPAIGN_PROMPTS["general"])
     never_clause = f" Never use these words or phrases: {p['never_say']}." if p.get("never_say") else ""
+    # Same profile dict marketing.py's own generator uses menu_notes from —
+    # this generator was silently dropping it, so a guest text campaign
+    # could never reference an actual dish or special the way a social
+    # post or review reply already can.
+    menu_clause = f" Menu & current specials: {p['menu_notes']}. Reference something specific when it fits naturally." if p.get("menu_notes") else ""
     topic_clause = f" Topic/specifics to include: {topic}." if topic else ""
 
     prompt = (
         f"Write {intent} for {p['name']}, a {p['vibe']} in {p['neighborhood']}. "
-        f"Brand voice: {p['voice']}.{never_clause}{topic_clause}\n\n"
+        f"Brand voice: {p['voice']}.{never_clause}{menu_clause}{topic_clause}\n\n"
         "Rules: under 300 characters total (this is a real text message, not an email). "
         "No markdown, no emoji spam (at most one emoji). No links or phone numbers. "
         "End naturally — no 'reply STOP to unsubscribe' (that's added automatically). "

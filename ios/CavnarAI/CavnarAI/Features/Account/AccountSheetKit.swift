@@ -239,13 +239,24 @@ struct AccountPill: View {
 
 // MARK: - Editable fields
 
+/// A caption plus a small pencil glyph — nothing else in the app marks a
+/// field as "yours to change" until you've already tapped into it and the
+/// underline lights, which read as "not obviously editable" (device
+/// feedback). The pencil is the at-rest cue every editable field in
+/// Account now carries; read-only facts (Restaurant's admin-set chips,
+/// Security's status tiles) never get one.
 private struct AccountFieldLabel: View {
     let text: String
     var body: some View {
-        Text(text.uppercased())
-            .font(.cavnarBody(12.5, weight: 700))
-            .tracking(0.8)
-            .foregroundStyle(Color.cavnarInk3)
+        HStack(spacing: 4) {
+            Text(text.uppercased())
+                .font(.cavnarBody(12.5, weight: 700))
+                .tracking(0.8)
+                .foregroundStyle(Color.cavnarInk3)
+            Image(systemName: "pencil")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.cavnarEmber.opacity(0.7))
+        }
     }
 }
 

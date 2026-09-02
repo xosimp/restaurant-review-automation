@@ -1523,7 +1523,7 @@ def resend_welcome_email(restaurant_id, current_user):
     """Reset client password and resend welcome email with new credentials."""
     import secrets, string
     from models import get_restaurant, get_conn
-    from werkzeug.security import generate_password_hash
+    from auth import update_password
 
     restaurant = get_restaurant(restaurant_id)
     if not restaurant:
@@ -1539,18 +1539,17 @@ def resend_welcome_email(restaurant_id, current_user):
         if not user:
             conn.close()
             return jsonify(ok=False, error="No client user found")
+        conn.close()
 
         # Generate a new temporary password
         alphabet = string.ascii_letters + string.digits
         new_password = "".join(secrets.choice(alphabet) for _ in range(12))
 
-        # Reset the password
-        conn.execute(
-            "UPDATE users SET password_hash=? WHERE id=?",
-            (generate_password_hash(new_password), user["id"])
-        )
-        conn.commit()
-        conn.close()
+        # update_password() (not a raw UPDATE) so this admin-issued reset
+        # also stamps password_changed_at/password_strength, same as a
+        # client's own change-password flow — the Security sheet's
+        # "changed X ago" needs to stay accurate regardless of who reset it.
+        update_password(user["id"], new_password)
 
         # Send welcome email with new credentials
         from emails import send_welcome_email

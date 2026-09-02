@@ -38,6 +38,11 @@ struct AccountInfo: Decodable {
     var loginNotify: Bool
     // users.last_login, "YYYY-MM-DD HH:MM:SS" UTC or nil.
     let lastLogin: String?
+    // "weak"/"good"/"strong", scored once at set-time (auth.py can't score
+    // a stored hash later) — and when it was last changed. Both nil for an
+    // account whose password has never been changed since creation.
+    let passwordStrength: String?
+    let passwordChangedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case username, email
@@ -46,6 +51,8 @@ struct AccountInfo: Decodable {
         case twoFAContactMasked = "two_fa_contact_masked"
         case loginNotify = "login_notify"
         case lastLogin = "last_login"
+        case passwordStrength = "password_strength"
+        case passwordChangedAt = "password_changed_at"
     }
 }
 
