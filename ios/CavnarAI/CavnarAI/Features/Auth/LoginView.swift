@@ -12,10 +12,14 @@ struct LoginView: View {
     // launch — the lockup isn't mounted until it lifts, so its draw-in
     // doesn't play hidden underneath.
     private let introReady: Bool
+    // Cold launch (fresh install): the wordmark is typed out by the ember
+    // cursor; after a sign-out in the same session it stamps in instead.
+    private let typewriter: Bool
 
-    init(sessionStore: SessionStore, introReady: Bool = true) {
+    init(sessionStore: SessionStore, introReady: Bool = true, typewriter: Bool = false) {
         _viewModel = State(initialValue: LoginViewModel(sessionStore: sessionStore))
         self.introReady = introReady
+        self.typewriter = typewriter
     }
 
     var body: some View {
@@ -30,7 +34,7 @@ struct LoginView: View {
                         // beside it — the one-time entrance for the first
                         // screen a session ever sees (see CavnarMotion).
                         if introReady {
-                            CavnarLockupIntro(width: 270)
+                            CavnarLockupIntro(width: 270, typewriter: typewriter)
                         } else {
                             Color.clear.frame(width: 270, height: 270 * (148 / 920))
                         }

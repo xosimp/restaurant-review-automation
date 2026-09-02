@@ -124,6 +124,15 @@ struct CavnarWordmarkLetterShape: Shape {
     /// stamp-in scales around, so a letter settles in place instead of
     /// sliding sideways toward the box's own center.
     static let centers: [CGFloat] = [52.24, 162.65, 250.12, 367.29, 486.70, 606.13]
+    /// Each letter's horizontal extent — the typewriter cursor parks just
+    /// past the trailing edge of whatever's been typed so far.
+    static let bounds: [(leading: CGFloat, trailing: CGFloat)] = [
+        (0, 104.48), (102.79, 222.5), (192.65, 307.58), (319.08, 415.5), (426.85, 546.55), (558, 654.27),
+    ]
+    /// The ember, cradled in the V's opening — same spot the brand SVGs
+    /// draw it (brand/assets/wordmark.json "ember").
+    static let emberCenter = CGPoint(x: 250.1, y: 28)
+    static let emberRadius: CGFloat = 11
 
     func path(in rect: CGRect) -> Path {
         let s = rect.width / Self.boxWidth
@@ -250,9 +259,37 @@ struct CavnarWordmarkLetterShape: Shape {
     }
 }
 
-/// Six letters stamp in like a branding iron, one after another, then the
-/// AI tag fades up beside them. Plays once on appear. `width` is the
-/// wordmark's own width (the AI tag sits outside it, to the right).
+/// The ember that the V cradles — the one point of color inside the
+/// wordmark itself, shared by the stamp-in and typewriter entrances.
+struct CavnarWordmarkEmber: View {
+    var scale: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Color.cavnarEmber.opacity(0.28), Color.cavnarEmber.opacity(0)],
+                        center: .center, startRadius: 0, endRadius: CavnarWordmarkLetterShape.emberRadius * 2.2 * scale
+                    )
+                )
+                .frame(width: CavnarWordmarkLetterShape.emberRadius * 4.4 * scale, height: CavnarWordmarkLetterShape.emberRadius * 4.4 * scale)
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Color.cavnarEmber2, Color.cavnarEmber],
+                        center: UnitPoint(x: 0.42, y: 0.38), startRadius: 0, endRadius: CavnarWordmarkLetterShape.emberRadius * 1.2 * scale
+                    )
+                )
+                .frame(width: CavnarWordmarkLetterShape.emberRadius * 2 * scale, height: CavnarWordmarkLetterShape.emberRadius * 2 * scale)
+        }
+    }
+}
+
+/// Six letters stamp in like a branding iron, one after another, the
+/// ember drops into the V, then the AI tag fades up beside them. Plays
+/// once on appear. `width` is the wordmark's own width (the AI tag sits
+/// outside it, to the right).
 struct CavnarWordmarkStampIn: View {
     var width: CGFloat
     var color: Color = .cavnarInk
@@ -266,6 +303,7 @@ struct CavnarWordmarkStampIn: View {
     var aiTagOverhangs: Bool = false
 
     @State private var shown: [Bool] = Array(repeating: false, count: 6)
+    @State private var emberDropped = false
     @State private var tagShown = false
 
     private var scale: CGFloat { width / CavnarWordmarkLetterShape.boxWidth }
@@ -285,14 +323,19 @@ struct CavnarWordmarkStampIn: View {
                         )
                         .offset(y: shown[i] ? 0 : 8 * scale)
                 }
+                CavnarWordmarkEmber(scale: scale)
+                    .opacity(emberDropped ? 1 : 0)
+                    .offset(y: emberDropped ? 0 : -22 * scale)
+                    .position(x: CavnarWordmarkLetterShape.emberCenter.x * scale, y: CavnarWordmarkLetterShape.emberCenter.y * scale)
             }
             .frame(width: width, height: height)
-            .overlay(alignment: .topTrailing) {
+            .overlay(alignment: .topLeading) {
                 if showsAITag && aiTagOverhangs {
-                    aiTag
-                        // Its leading edge lands one gap past the letters'
-                        // trailing edge — outside the frame, no layout width.
-                        .alignmentGuide(.trailing) { d in d[.leading] - 54 * scale }
+                    // Pinned at the frame's leading edge, then pushed past
+                    // the whole wordmark plus one gap — outside the frame,
+                    // taking no layout width. (An alignmentGuide on the
+                    // trailing edge was tried first and landed on the R.)
+                    aiTag.offset(x: width + 54 * scale)
                 }
             }
 
@@ -306,7 +349,9 @@ struct CavnarWordmarkStampIn: View {
                 withAnimation(.easeOut(duration: 0.32)) { shown[i] = true }
                 try? await Task.sleep(for: .seconds(0.09))
             }
-            try? await Task.sleep(for: .seconds(0.3))
+            try? await Task.sleep(for: .seconds(0.25))
+            withAnimation(.easeOut(duration: 0.35)) { emberDropped = true }
+            try? await Task.sleep(for: .seconds(0.2))
             withAnimation(.easeOut(duration: 0.4)) { tagShown = true }
         }
     }
@@ -323,12 +368,116 @@ struct CavnarWordmarkStampIn: View {
     }
 }
 
+/// The wordmark typed out by an ember cursor — the cold-launch entrance
+/// (a fresh process, not a return from the background). The cursor
+/// appears where the C will land, blinks once, types the six letters at
+/// a quick clip (each letter snaps in whole — no fade — the way a caret
+/// commits a character), the ember drops into the V, the cursor blinks
+/// twice at the end of the word and fades away, then the AI tag fades up.
+struct CavnarWordmarkTypewriter: View {
+    var width: CGFloat
+    var color: Color = .cavnarInk
+    var delay: Double = 0
+    var showsAITag: Bool = true
+    var aiTagOverhangs: Bool = false
+    var onFinished: (() -> Void)? = nil
+
+    @State private var typed = 0
+    @State private var cursorShown = false
+    @State private var cursorLit = true
+    @State private var emberDropped = false
+    @State private var tagShown = false
+
+    private var scale: CGFloat { width / CavnarWordmarkLetterShape.boxWidth }
+    private var height: CGFloat { CavnarWordmarkLetterShape.boxHeight * scale }
+    private var cursorX: CGFloat {
+        typed == 0 ? 0 : (CavnarWordmarkLetterShape.bounds[typed - 1].trailing + 8) * scale
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 54 * scale) {
+            ZStack(alignment: .topLeading) {
+                ForEach(0..<6, id: \.self) { i in
+                    CavnarWordmarkLetterShape(index: i)
+                        .fill(color)
+                        .frame(width: width, height: height)
+                        .opacity(i < typed ? 1 : 0)
+                }
+                CavnarWordmarkEmber(scale: scale)
+                    .opacity(emberDropped ? 1 : 0)
+                    .offset(y: emberDropped ? 0 : -22 * scale)
+                    .position(x: CavnarWordmarkLetterShape.emberCenter.x * scale, y: CavnarWordmarkLetterShape.emberCenter.y * scale)
+                // The cursor: a cap-height ember bar, one letter-stroke wide.
+                RoundedRectangle(cornerRadius: 2 * scale)
+                    .fill(Color.cavnarEmber)
+                    .frame(width: 9 * scale, height: height)
+                    .shadow(color: Color.cavnarEmber.opacity(0.6), radius: 6 * scale)
+                    .offset(x: cursorX)
+                    .opacity(cursorShown && cursorLit ? 1 : 0)
+            }
+            .frame(width: width, height: height)
+            .overlay(alignment: .topLeading) {
+                if showsAITag && aiTagOverhangs {
+                    aiTag.offset(x: width + 54 * scale)
+                }
+            }
+
+            if showsAITag && !aiTagOverhangs {
+                aiTag
+            }
+        }
+        .task {
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+            // Cursor arrives where the C will be, blinks once.
+            withAnimation(.easeOut(duration: 0.2)) { cursorShown = true }
+            try? await Task.sleep(for: .seconds(0.45))
+            cursorLit = false
+            try? await Task.sleep(for: .seconds(0.18))
+            cursorLit = true
+            try? await Task.sleep(for: .seconds(0.3))
+            // Type.
+            for i in 1...6 {
+                var t = Transaction(animation: nil)
+                t.disablesAnimations = true
+                withTransaction(t) { typed = i }
+                try? await Task.sleep(for: .seconds(0.1))
+            }
+            try? await Task.sleep(for: .seconds(0.15))
+            withAnimation(.easeOut(duration: 0.35)) { emberDropped = true }
+            // Two blinks at the end of the word, then gone.
+            for _ in 0..<2 {
+                try? await Task.sleep(for: .seconds(0.32))
+                cursorLit = false
+                try? await Task.sleep(for: .seconds(0.3))
+                cursorLit = true
+            }
+            try? await Task.sleep(for: .seconds(0.35))
+            withAnimation(.easeOut(duration: 0.55)) { cursorShown = false }
+            try? await Task.sleep(for: .seconds(0.2))
+            withAnimation(.easeOut(duration: 0.4)) { tagShown = true }
+            try? await Task.sleep(for: .seconds(0.4))
+            onFinished?()
+        }
+    }
+
+    private var aiTag: some View {
+        Text("AI")
+            .font(.cavnarNumber(30 * scale, weight: 700))
+            .tracking(6 * scale)
+            .foregroundStyle(Color.cavnarEmber)
+            .padding(.top, 6 * scale)
+            .opacity(tagShown ? 1 : 0)
+    }
+}
+
 /// The full lockup (seal + wordmark + AI tag) as one choreographed
-/// entrance — seal draws itself while the letters stamp in beside it.
-/// Same 920x148 proportions as the BrandLockup asset so it drops in at the
-/// same `width` wherever that static image was used.
+/// entrance — seal draws itself while the letters stamp in (or, on a cold
+/// launch, get typed out by the ember cursor) beside it. Same 920x148
+/// proportions as the BrandLockup asset so it drops in at the same `width`
+/// wherever that static image was used.
 struct CavnarLockupIntro: View {
     var width: CGFloat
+    var typewriter: Bool = false
 
     private var s: CGFloat { width / 920 }
 
@@ -336,8 +485,14 @@ struct CavnarLockupIntro: View {
         HStack(alignment: .top, spacing: 30 * s) {
             CavnarSealDrawIn(size: 120 * s)
                 .padding(.top, 14 * s)
-            CavnarWordmarkStampIn(width: CavnarWordmarkLetterShape.boxWidth * s, delay: 0.45)
-                .padding(.top, 4 * s)
+            Group {
+                if typewriter {
+                    CavnarWordmarkTypewriter(width: CavnarWordmarkLetterShape.boxWidth * s, delay: 0.45)
+                } else {
+                    CavnarWordmarkStampIn(width: CavnarWordmarkLetterShape.boxWidth * s, delay: 0.45)
+                }
+            }
+            .padding(.top, 4 * s)
         }
         .frame(width: width, height: 148 * s, alignment: .topLeading)
     }
