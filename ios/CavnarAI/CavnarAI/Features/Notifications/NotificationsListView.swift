@@ -169,6 +169,9 @@ struct NotificationsListView: View {
             .cavnarModuleBackground()
             .cavnarEmberRefreshable { await viewModel.load() }
             .navigationTitle("Notifications")
+            // Inline, not the default large title — with the styled
+            // principal title below, the large one doubled it up top-left.
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar("Notifications") }
         }
     }

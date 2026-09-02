@@ -140,32 +140,31 @@ private struct AIConsultantSheet: View {
     let insight: AIInsight
     var showForecast: Bool = true
 
-    // Staggered reveal: 1 header, 2 opening line, 3 recommendations,
-    // 4 forecast, 5 footer.
+    // Staggered reveal: 1 opening line, 2 recommendations, 3 forecast,
+    // 4 footer. (No header row — the sheet's title already names the
+    // consultant, a badge + kicker restating it read as redundant.)
     @State private var stage = 0
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 30) {
-                    header
-                        .consultantReveal(stage >= 1)
                     if !insight.intro.isEmpty {
                         openingLine
-                            .consultantReveal(stage >= 2)
+                            .consultantReveal(stage >= 1)
                     }
                     if !insight.recommendations.isEmpty {
                         recommendations
                     }
                     if showForecast, let forecast = insight.forecast, !forecast.isEmpty {
                         forecastPanel(forecast)
-                            .consultantReveal(stage >= 4)
+                            .consultantReveal(stage >= 3)
                     }
                     footer
-                        .consultantReveal(stage >= 5)
+                        .consultantReveal(stage >= 4)
                 }
                 .padding(.horizontal, 22)
-                .padding(.top, 14)
+                .padding(.top, 18)
                 .padding(.bottom, 44)
             }
             .cavnarModuleBackground()
@@ -173,25 +172,10 @@ private struct AIConsultantSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar(title) }
             .task {
-                for step in 1...5 {
+                for step in 1...4 {
                     withAnimation(.easeOut(duration: 0.45)) { stage = step }
                     try? await Task.sleep(for: .seconds(0.12))
                 }
-            }
-        }
-    }
-
-    private var header: some View {
-        HStack(spacing: 14) {
-            GlowBadge(systemImage: "sparkles", size: 46)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("CAVNAR AI ANALYSIS")
-                    .font(.cavnarBody(13, weight: 700))
-                    .tracking(1.4)
-                    .foregroundStyle(Color.cavnarEmber2)
-                Text("Read straight from your latest synced numbers")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
             }
         }
     }
@@ -223,7 +207,7 @@ private struct AIConsultantSheet: View {
                     .tracking(1.3)
             }
             .foregroundStyle(Color.cavnarEmber)
-            .consultantReveal(stage >= 3)
+            .consultantReveal(stage >= 2)
 
             ForEach(Array(insight.recommendations.enumerated()), id: \.offset) { index, rec in
                 HStack(alignment: .top, spacing: 14) {
@@ -254,7 +238,7 @@ private struct AIConsultantSheet: View {
                     Rectangle().fill(Color.cavnarEmber.opacity(0.75)).frame(width: 2.5)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-                .consultantReveal(stage >= 3)
+                .consultantReveal(stage >= 2)
                 .animation(.easeOut(duration: 0.45).delay(Double(index) * 0.08), value: stage)
             }
         }

@@ -419,9 +419,9 @@ struct LockedView: View {
                 // "Welcome back"; the small AI tag hangs off to the right.
                 Group {
                     if introReady {
-                        CavnarWordmarkStampIn(width: 280, aiTagOverhangs: true)
+                        CavnarWordmarkStampIn(width: 300, aiTagOverhangs: true)
                     } else {
-                        Color.clear.frame(width: 280, height: 280 * (100 / 461))
+                        Color.clear.frame(width: 300, height: 300 * (100 / CavnarWordmarkLetterShape.boxWidth))
                     }
                 }
                 .padding(.bottom, 48)

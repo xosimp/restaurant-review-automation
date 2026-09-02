@@ -30,9 +30,9 @@ struct LoginView: View {
                         // beside it — the one-time entrance for the first
                         // screen a session ever sees (see CavnarMotion).
                         if introReady {
-                            CavnarLockupIntro(width: 220)
+                            CavnarLockupIntro(width: 270)
                         } else {
-                            Color.clear.frame(width: 220, height: 220 * (148 / 720))
+                            Color.clear.frame(width: 270, height: 270 * (148 / 920))
                         }
                         Text("Sign in to your restaurant")
                             .font(.cavnarBody(14))

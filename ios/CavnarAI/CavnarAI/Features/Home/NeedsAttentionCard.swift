@@ -189,16 +189,23 @@ struct AllClearRow: View {
 /// first attempt here (a capsule shaft popping up and extending) read as
 /// busy/gimmicky; this reads closer to a native iOS coach-mark nudge.
 private struct PulsingSwipeArrow: View {
-    private enum Phase: CaseIterable { case near, far }
+    @State private var start = Date()
 
+    // Wall-clock driven (TimelineView), not a PhaseAnimator — the phase
+    // animator's own transaction could be interrupted by a tab switch or
+    // the Home tree re-rendering after a lock/unlock, after which it never
+    // resumed and the chevron sat frozen. A sine over real time can't get
+    // stuck: whatever frame this renders on, the position is just a
+    // function of the current time.
     var body: some View {
-        PhaseAnimator(Phase.allCases) { phase in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            let t = timeline.date.timeIntervalSince(start)
+            // 0 -> 1 -> 0 over one 2.3s breath, ease-in-out shaped.
+            let phase = 0.5 - 0.5 * cos(t * 2 * .pi / 2.3)
             Image(systemName: "chevron.right")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Color.cavnarEmber2.opacity(phase == .far ? 0.18 : 0.65))
-                .offset(x: phase == .far ? 5 : 0)
-        } animation: { _ in
-            .easeInOut(duration: 1.15)
+                .foregroundStyle(Color.cavnarEmber2.opacity(0.65 - 0.47 * phase))
+                .offset(x: 5 * phase)
         }
     }
 }

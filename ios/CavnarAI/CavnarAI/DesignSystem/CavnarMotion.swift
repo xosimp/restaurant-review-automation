@@ -106,79 +106,153 @@ struct CavnarSealDrawIn: View {
 
 // MARK: - 03 · Wordmark Stamp-in
 
-/// One letter of the CAVNAR wordmark as a Shape, in the wordmark's own
-/// 461x100 letter box — the exact polygon geometry every other
-/// implementation site reuses (brand/assets/wordmark-*.svg), so this and
-/// the static BrandLockup asset are pixel-identical at rest. Nonzero
-/// winding throughout: the N's three overlapping bars all wind the same
-/// way (so they union), and the R's counter is drawn reversed (so it
-/// punches a hole) — that's why the R isn't the SVG's even-odd path.
+/// One letter of the CAVNAR wordmark as a Shape. The wordmark is now the
+/// app's own headline face — Clash Display Semibold — set in caps and
+/// optically kerned, so it's literally the same type every screen title
+/// and headline uses rather than a separate custom alphabet. These are
+/// that font's real glyph outlines (extracted with fontTools, quadratic
+/// curves and all, the font's own contour winding preserved for nonzero
+/// fill), placed in a box whose height is the cap height (100 units) —
+/// the same geometry brand/assets/wordmark-*.svg and the BrandLockup
+/// asset are built from, so this and those are pixel-identical at rest.
 struct CavnarWordmarkLetterShape: Shape {
     let index: Int
 
-    static let boxWidth: CGFloat = 461
+    static let boxWidth: CGFloat = 654.27
     static let boxHeight: CGFloat = 100
     /// Horizontal center of each letter within the box — the anchor the
     /// stamp-in scales around, so a letter settles in place instead of
     /// sliding sideways toward the box's own center.
-    static let centers: [CGFloat] = [32, 116, 177, 260, 343, 426]
+    static let centers: [CGFloat] = [52.24, 162.65, 250.12, 367.29, 486.70, 606.13]
 
     func path(in rect: CGRect) -> Path {
         let s = rect.width / Self.boxWidth
         func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: rect.minX + x * s, y: rect.minY + y * s) }
         var p = Path()
-        // Every solid polygon is emitted with the SAME winding (normalized
-        // from its signed area) so the nonzero fill unions overlapping
-        // pieces. The two legs of each A overlap at the apex and the V's
-        // legs overlap at its point — copied verbatim from the SVG they
-        // wind in opposite directions, which was fine there (separate
-        // <polygon> elements) but in one combined Path cancelled to a hole
-        // wherever they overlapped: the "doubled"/notched letters seen on
-        // device. Only the R's counter is deliberately reversed (hole:
-        // true) so it punches through.
-        func poly(_ pts: [(CGFloat, CGFloat)], hole: Bool = false) {
-            guard pts.count >= 3 else { return }
-            var area: CGFloat = 0
-            for i in pts.indices {
-                let j = (i + 1) % pts.count
-                area += pts[i].0 * pts[j].1 - pts[j].0 * pts[i].1
-            }
-            let ordered = ((area > 0) != hole) ? pts : Array(pts.reversed())
-            p.move(to: pt(ordered[0].0, ordered[0].1))
-            for q in ordered.dropFirst() { p.addLine(to: pt(q.0, q.1)) }
-            p.closeSubpath()
-        }
+        // Generated from ClashDisplay-Semibold.ttf (see brand/assets and
+        // the wordmark.json the SVGs share) — do not hand-edit; regenerate.
         switch index {
         case 0:
-            poly([(0, 0), (64, 0), (64, 21), (21, 21), (21, 79), (64, 79), (64, 100), (0, 100)])
+            p.move(to: pt(53.43, 101.49))
+            p.addQuadCurve(to: pt(14.40, 87.46), control: pt(28.81, 101.49))
+            p.addQuadCurve(to: pt(0.00, 50.00), control: pt(0.00, 73.43))
+            p.addQuadCurve(to: pt(14.40, 12.54), control: pt(0.00, 26.57))
+            p.addQuadCurve(to: pt(53.43, -1.49), control: pt(28.81, -1.49))
+            p.addQuadCurve(to: pt(90.67, 9.48), control: pt(76.87, -1.49))
+            p.addQuadCurve(to: pt(104.48, 39.40), control: pt(104.48, 20.45))
+            p.addLine(to: pt(104.48, 41.64))
+            p.addLine(to: pt(79.55, 41.64))
+            p.addLine(to: pt(79.55, 39.40))
+            p.addQuadCurve(to: pt(73.43, 24.70), control: pt(79.55, 29.40))
+            p.addQuadCurve(to: pt(53.88, 20.00), control: pt(67.31, 20.00))
+            p.addQuadCurve(to: pt(30.52, 26.72), control: pt(37.31, 20.00))
+            p.addQuadCurve(to: pt(23.73, 50.00), control: pt(23.73, 33.43))
+            p.addQuadCurve(to: pt(30.52, 73.28), control: pt(23.73, 66.57))
+            p.addQuadCurve(to: pt(53.88, 80.00), control: pt(37.31, 80.00))
+            p.addQuadCurve(to: pt(73.43, 75.30), control: pt(67.31, 80.00))
+            p.addQuadCurve(to: pt(79.55, 60.60), control: pt(79.55, 70.60))
+            p.addLine(to: pt(79.55, 58.36))
+            p.addLine(to: pt(104.48, 58.36))
+            p.addLine(to: pt(104.48, 60.60))
+            p.addQuadCurve(to: pt(90.67, 90.52), control: pt(104.48, 79.55))
+            p.addQuadCurve(to: pt(53.43, 101.49), control: pt(76.87, 101.49))
+            p.closeSubpath()
         case 1:
-            poly([(78, 100), (99, 100), (126, 0), (105, 0)])
-            poly([(154, 100), (133, 100), (106, 0), (127, 0)])
-            poly([(108.2, 66), (123.8, 66), (129.5, 87), (102.5, 87)])
+            p.move(to: pt(127.87, 100.00))
+            p.addLine(to: pt(102.79, 100.00))
+            p.addLine(to: pt(146.52, 0.00))
+            p.addLine(to: pt(178.47, 0.00))
+            p.addLine(to: pt(222.50, 100.00))
+            p.addLine(to: pt(196.82, 100.00))
+            p.addLine(to: pt(187.42, 77.91))
+            p.addLine(to: pt(137.42, 77.91))
+            p.closeSubpath()
+            p.move(to: pt(155.48, 35.97))
+            p.addLine(to: pt(146.08, 57.76))
+            p.addLine(to: pt(178.76, 57.76))
+            p.addLine(to: pt(169.36, 35.97))
+            p.addLine(to: pt(163.24, 20.45))
+            p.addLine(to: pt(161.60, 20.45))
+            p.closeSubpath()
         case 2:
-            poly([(139, 0), (160, 0), (187, 100), (166, 100)])
-            poly([(215, 0), (194, 0), (167, 100), (188, 100)])
+            p.move(to: pt(266.08, 100.00))
+            p.addLine(to: pt(234.14, 100.00))
+            p.addLine(to: pt(192.65, 0.00))
+            p.addLine(to: pt(219.67, 0.00))
+            p.addLine(to: pt(249.67, 77.31))
+            p.addLine(to: pt(251.16, 77.31))
+            p.addLine(to: pt(280.71, 0.00))
+            p.addLine(to: pt(307.58, 0.00))
+            p.closeSubpath()
         case 3:
-            poly([(225, 0), (246, 0), (246, 100), (225, 100)])
-            poly([(274, 0), (295, 0), (295, 100), (274, 100)])
-            poly([(225, 0), (246, 0), (295, 100), (274, 100)])
+            p.move(to: pt(341.47, 100.00))
+            p.addLine(to: pt(319.08, 100.00))
+            p.addLine(to: pt(319.08, 0.00))
+            p.addLine(to: pt(342.96, 0.00))
+            p.addLine(to: pt(378.78, 47.31))
+            p.addLine(to: pt(392.51, 68.36))
+            p.addLine(to: pt(394.15, 68.36))
+            p.addLine(to: pt(393.11, 48.21))
+            p.addLine(to: pt(393.11, 0.00))
+            p.addLine(to: pt(415.50, 0.00))
+            p.addLine(to: pt(415.50, 100.00))
+            p.addLine(to: pt(391.61, 100.00))
+            p.addLine(to: pt(354.75, 52.24))
+            p.addLine(to: pt(342.06, 33.43))
+            p.addLine(to: pt(340.57, 33.43))
+            p.addLine(to: pt(341.47, 51.79))
+            p.closeSubpath()
         case 4:
-            poly([(305, 100), (326, 100), (353, 0), (332, 0)])
-            poly([(381, 100), (360, 100), (333, 0), (354, 0)])
-            poly([(335.2, 66), (350.8, 66), (356.5, 87), (329.5, 87)])
+            p.move(to: pt(451.92, 100.00))
+            p.addLine(to: pt(426.85, 100.00))
+            p.addLine(to: pt(470.58, 0.00))
+            p.addLine(to: pt(502.52, 0.00))
+            p.addLine(to: pt(546.55, 100.00))
+            p.addLine(to: pt(520.88, 100.00))
+            p.addLine(to: pt(511.47, 77.91))
+            p.addLine(to: pt(461.47, 77.91))
+            p.closeSubpath()
+            p.move(to: pt(479.53, 35.97))
+            p.addLine(to: pt(470.13, 57.76))
+            p.addLine(to: pt(502.82, 57.76))
+            p.addLine(to: pt(493.41, 35.97))
+            p.addLine(to: pt(487.29, 20.45))
+            p.addLine(to: pt(485.65, 20.45))
+            p.closeSubpath()
         default:
-            poly([(391, 0), (412, 0), (412, 100), (391, 100)])
-            poly([(412, 0), (447, 0), (461, 14), (461, 44), (447, 58), (412, 58)])
-            poly([(412, 21), (412, 37), (435, 37), (440, 32), (440, 26), (435, 21)], hole: true)
-            poly([(425, 58), (446, 58), (457, 100), (436, 100)])
+            p.move(to: pt(580.39, 100.00))
+            p.addLine(to: pt(558.00, 100.00))
+            p.addLine(to: pt(558.00, 0.00))
+            p.addLine(to: pt(613.22, 0.00))
+            p.addQuadCurve(to: pt(641.80, 7.84), control: pt(631.73, 0.00))
+            p.addQuadCurve(to: pt(651.88, 30.00), control: pt(651.88, 15.67))
+            p.addQuadCurve(to: pt(623.67, 57.76), control: pt(651.88, 55.07))
+            p.addLine(to: pt(623.67, 58.96))
+            p.addQuadCurve(to: pt(633.30, 63.88), control: pt(629.94, 60.60))
+            p.addQuadCurve(to: pt(639.79, 73.13), control: pt(636.65, 67.16))
+            p.addLine(to: pt(654.27, 100.00))
+            p.addLine(to: pt(628.30, 100.00))
+            p.addLine(to: pt(614.56, 74.03))
+            p.addQuadCurve(to: pt(607.55, 65.90), control: pt(611.43, 68.06))
+            p.addQuadCurve(to: pt(595.16, 63.73), control: pt(603.67, 63.73))
+            p.addLine(to: pt(580.39, 63.73))
+            p.closeSubpath()
+            p.move(to: pt(580.39, 20.15))
+            p.addLine(to: pt(580.39, 46.87))
+            p.addLine(to: pt(613.07, 46.87))
+            p.addQuadCurve(to: pt(624.86, 43.96), control: pt(621.28, 46.87))
+            p.addQuadCurve(to: pt(628.45, 33.43), control: pt(628.45, 41.04))
+            p.addQuadCurve(to: pt(624.79, 23.13), control: pt(628.45, 26.12))
+            p.addQuadCurve(to: pt(613.07, 20.15), control: pt(621.13, 20.15))
+            p.closeSubpath()
         }
         return p
     }
 }
 
 /// Six letters stamp in like a branding iron, one after another, then the
-/// ember drops into the V. Plays once on appear. `width` is the wordmark's
-/// own width (the AI tag sits outside it, to the right).
+/// AI tag fades up beside them. Plays once on appear. `width` is the
+/// wordmark's own width (the AI tag sits outside it, to the right).
 struct CavnarWordmarkStampIn: View {
     var width: CGFloat
     var color: Color = .cavnarInk
@@ -192,7 +266,6 @@ struct CavnarWordmarkStampIn: View {
     var aiTagOverhangs: Bool = false
 
     @State private var shown: [Bool] = Array(repeating: false, count: 6)
-    @State private var emberDropped = false
     @State private var tagShown = false
 
     private var scale: CGFloat { width / CavnarWordmarkLetterShape.boxWidth }
@@ -212,17 +285,6 @@ struct CavnarWordmarkStampIn: View {
                         )
                         .offset(y: shown[i] ? 0 : 8 * scale)
                 }
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [Color.cavnarEmber2, Color.cavnarEmber],
-                            center: UnitPoint(x: 0.42, y: 0.38), startRadius: 0, endRadius: 10 * scale
-                        )
-                    )
-                    .frame(width: 17 * scale, height: 17 * scale)
-                    .opacity(emberDropped ? 1 : 0)
-                    .offset(y: emberDropped ? 0 : -22 * scale)
-                    .position(x: 177 * scale, y: 13 * scale)
             }
             .frame(width: width, height: height)
             .overlay(alignment: .topTrailing) {
@@ -244,9 +306,7 @@ struct CavnarWordmarkStampIn: View {
                 withAnimation(.easeOut(duration: 0.32)) { shown[i] = true }
                 try? await Task.sleep(for: .seconds(0.09))
             }
-            try? await Task.sleep(for: .seconds(0.25))
-            withAnimation(.easeOut(duration: 0.35)) { emberDropped = true }
-            try? await Task.sleep(for: .seconds(0.2))
+            try? await Task.sleep(for: .seconds(0.3))
             withAnimation(.easeOut(duration: 0.4)) { tagShown = true }
         }
     }
@@ -265,18 +325,18 @@ struct CavnarWordmarkStampIn: View {
 
 /// The full lockup (seal + wordmark + AI tag) as one choreographed
 /// entrance — seal draws itself while the letters stamp in beside it.
-/// Same 720x148 proportions as the BrandLockup asset so it drops in at the
+/// Same 920x148 proportions as the BrandLockup asset so it drops in at the
 /// same `width` wherever that static image was used.
 struct CavnarLockupIntro: View {
     var width: CGFloat
 
-    private var s: CGFloat { width / 720 }
+    private var s: CGFloat { width / 920 }
 
     var body: some View {
         HStack(alignment: .top, spacing: 30 * s) {
             CavnarSealDrawIn(size: 120 * s)
                 .padding(.top, 14 * s)
-            CavnarWordmarkStampIn(width: 461 * s, delay: 0.45)
+            CavnarWordmarkStampIn(width: CavnarWordmarkLetterShape.boxWidth * s, delay: 0.45)
                 .padding(.top, 4 * s)
         }
         .frame(width: width, height: 148 * s, alignment: .topLeading)
@@ -566,7 +626,9 @@ struct CavnarLedgerFill: View {
                             .font(.cavnarNumber(14, weight: 600))
                             .tracking(1)
                             .foregroundStyle(Color.cavnarInk3)
-                            .frame(width: 64, alignment: .leading)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .frame(width: 92, alignment: .leading)
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
                                 Capsule().fill(Color.cavnarPaper3.opacity(0.35))
@@ -671,12 +733,14 @@ struct CavnarPostedCheck: View {
                 .opacity(labelShown ? 1 : 0)
         }
         .task {
-            withAnimation(.easeInOut(duration: 0.75)) { travel = 1 }
-            try? await Task.sleep(for: .seconds(0.72))
-            withAnimation(.easeOut(duration: 0.2)) { landed = true }
-            withAnimation(.easeInOut(duration: 0.4).delay(0.05)) { checkTrim = 1 }
-            withAnimation(.easeOut(duration: 0.3).delay(0.2)) { labelShown = true }
-            try? await Task.sleep(for: .seconds(0.9))
+            // Deliberately unhurried — the ember crossing the wire is the
+            // whole point of the moment, so it gets a real beat.
+            withAnimation(.easeInOut(duration: 1.15)) { travel = 1 }
+            try? await Task.sleep(for: .seconds(1.1))
+            withAnimation(.easeOut(duration: 0.3)) { landed = true }
+            withAnimation(.easeInOut(duration: 0.6).delay(0.08)) { checkTrim = 1 }
+            withAnimation(.easeOut(duration: 0.4).delay(0.3)) { labelShown = true }
+            try? await Task.sleep(for: .seconds(1.3))
             onFinished?()
         }
     }

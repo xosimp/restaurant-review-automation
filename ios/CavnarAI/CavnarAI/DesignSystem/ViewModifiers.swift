@@ -727,29 +727,71 @@ struct CavnarShimmerLine: View {
 struct CavnarStatCellStyle: ViewModifier {
     var tint: Color = .cavnarEmber
 
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous) }
+
     func body(content: Content) -> some View {
         content
             .padding(16)
             // Only real usage today is the Modules tab's tiles — the
             // original 0.26→0.07 wash read as barely-there against a near-
             // black page, closer to a plain dark card than a branded orange
-            // one. Bumped for real presence at a glance.
+            // one. Bumped for real presence at a glance; the tint now sits
+            // on an obsidian base (same dark-surface family as the app icon
+            // and the module badges) instead of straight over the page.
             .background(
-                LinearGradient(
-                    colors: [tint.opacity(0.42), tint.opacity(0.16)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
+                ZStack {
+                    LinearGradient(
+                        colors: [Color(red: 0.16, green: 0.16, blue: 0.17), Color(red: 0.08, green: 0.08, blue: 0.09)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    LinearGradient(
+                        colors: [tint.opacity(0.46), tint.opacity(0.14)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                    // Glossy sheen sweeping in from the top-left corner —
+                    // the "premium" cue: a surface catching light, not a
+                    // flat wash.
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color.white.opacity(0.13), location: 0),
+                            .init(color: Color.white.opacity(0.03), location: 0.38),
+                            .init(color: Color.white.opacity(0), location: 0.6),
+                        ],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                }
             )
             .overlay(alignment: .top) {
                 Rectangle()
-                    .fill(tint.opacity(0.7))
+                    .fill(tint.opacity(0.85))
                     .frame(height: 1)
             }
+            // Border brightest at the lit corner, fading down the far edge.
             .overlay(
-                RoundedRectangle(cornerRadius: CavnarRadius.card)
-                    .strokeBorder(tint.opacity(0.55), lineWidth: 1)
+                shape.strokeBorder(
+                    LinearGradient(
+                        colors: [tint.opacity(0.85), tint.opacity(0.35)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
             )
-            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+            // Inset hairline highlight just inside the border, top only.
+            .overlay(
+                shape
+                    .inset(by: 1.5)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.12), Color.white.opacity(0)],
+                            startPoint: .top, endPoint: .center
+                        ),
+                        lineWidth: 1
+                    )
+            )
+            .clipShape(shape)
+            // Real drop shadow so the tile sits up off the page.
+            .shadow(color: .black.opacity(0.55), radius: 16, x: 0, y: 10)
+            .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 2)
     }
 }
 

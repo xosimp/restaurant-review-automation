@@ -110,7 +110,7 @@ struct FoodCostDonutChart: View {
                     .stroke(color(at: index), style: StrokeStyle(lineWidth: Self.ringStrokeWidth, lineCap: .butt))
                     .rotationEffect(.degrees(-90))
                     .shadow(color: color(at: index).opacity(0.45), radius: 2)
-                    .animation(.easeOut(duration: 0.7).delay(Double(index) * 0.1), value: sweepIn)
+                    .animation(.easeOut(duration: 1.3).delay(Double(index) * 0.18), value: sweepIn)
             }
             VStack(spacing: 1) {
                 Text(formattedTotal)

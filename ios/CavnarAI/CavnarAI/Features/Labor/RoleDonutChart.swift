@@ -161,7 +161,7 @@ struct RoleDonutChart: View {
                     .stroke(color(at: index), style: StrokeStyle(lineWidth: Self.ringStrokeWidth, lineCap: .butt))
                     .rotationEffect(.degrees(-90))
                     .shadow(color: color(at: index).opacity(0.5), radius: 3)
-                    .animation(.easeOut(duration: 0.75).delay(Double(index) * 0.1), value: sweepIn)
+                    .animation(.easeOut(duration: 1.3).delay(Double(index) * 0.18), value: sweepIn)
             }
             VStack(spacing: 2) {
                 Text(formattedTotal)
