@@ -40,6 +40,14 @@ struct AccountView: View {
             .task {
                 await viewModel.load()
                 await viewModel.loadBilling()
+                // Resume an in-progress 2FA setup that a Face ID relock
+                // (e.g. backgrounding to read the emailed code) tore down —
+                // see SessionStore.pendingTwoFactorSetupEmail. Gated on
+                // load() finishing since the Security sheet needs
+                // summary.account, which only exists once that's loaded.
+                if sessionStore.pendingTwoFactorSetupEmail != nil {
+                    showingSecurity = true
+                }
             }
         }
     }

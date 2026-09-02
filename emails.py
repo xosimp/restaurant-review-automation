@@ -50,18 +50,18 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
     import requests
     greeting = f"Hi {owner_name}," if owner_name else "Hi,"
     html = f"""
-    <div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
       <div style="text-align:center;margin-bottom:24px">
-        <span style="font-family:Georgia,serif;font-size:22px;color:#0e0c0a">Cavnar</span>
-        <span style="font-family:Georgia,serif;font-size:22px;color:#c84b2f">AI</span>
+        <span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;color:#0e0c0a">Cavnar</span>
+        <span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:14px;font-weight:800;letter-spacing:0.14em;color:#c84b2f;vertical-align:3px">AI</span>
       </div>
       <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
         <p style="color:#3a3530;font-size:15px;margin:0 0 16px">{greeting}</p>
         <p style="color:#3a3530;font-size:15px;margin:0 0 24px">Your verification code for <strong>{restaurant_name}</strong>:</p>
         <div style="text-align:center;margin:24px 0">
-          <span style="font-family:monospace;font-size:36px;font-weight:700;letter-spacing:10px;color:#c84b2f;background:#fdf0ef;padding:16px 24px;border-radius:8px;display:inline-block">{code}</span>
+          <span style="font-family:ui-monospace,'SF Mono','Space Mono',Menlo,Consolas,monospace;font-size:36px;font-weight:700;letter-spacing:10px;color:#c84b2f;background:#fdf0ef;padding:16px 24px;border-radius:8px;display:inline-block">{code}</span>
         </div>
-        <p style="color:#7a736a;font-size:13px;text-align:center;margin:16px 0 0">This code expires in <strong>10 minutes</strong>. If you didn't request this, ignore this email.</p>
+        <p style="color:#7a736a;font-size:13px;text-align:center;margin:16px 0 0">This code expires in <strong>10 minutes</strong>. If you didn't request this, someone may have your password — change it immediately and contact <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a>.</p>
       </div>
       <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
     </div>
@@ -105,10 +105,10 @@ def send_login_notification(to_email: str, restaurant_name: str,
     elif "Safari/" in ua: browser = "Safari"
     else: browser = "Browser"
     html = f"""
-    <div style="font-family:'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
       <div style="text-align:center;margin-bottom:24px">
-        <span style="font-family:Georgia,serif;font-size:22px;color:#0e0c0a">Cavnar</span>
-        <span style="font-family:Georgia,serif;font-size:22px;color:#c84b2f">AI</span>
+        <span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;color:#0e0c0a">Cavnar</span>
+        <span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:14px;font-weight:800;letter-spacing:0.14em;color:#c84b2f;vertical-align:3px">AI</span>
       </div>
       <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
         <p style="color:#3a3530;font-size:15px;margin:0 0 16px">New sign-in to <strong>{restaurant_name}</strong></p>
@@ -174,14 +174,14 @@ def send_payment_email(to_email, restaurant_name, tier=None,
 <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:4px">
   <div style="flex:1;min-width:200px;background:white;border:2px solid #c84b2f;border-radius:8px;padding:16px">
     <div style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin-bottom:4px">Monthly</div>
-    <div style="font-size:20px;font-weight:600;color:#0e0c0a;font-family:Georgia,serif;margin-bottom:2px">{retainer_price}</div>
+    <div style="font-size:20px;font-weight:600;color:#0e0c0a;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;margin-bottom:2px">{retainer_price}</div>
     <div style="font-size:11px;color:#7a736a;margin-bottom:12px">Cancel anytime with 30 days written notice &nbsp;·&nbsp; No long-term contracts</div>
     <a href="{checkout_monthly}" style="display:block;text-align:center;background:#c84b2f;color:white;padding:10px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Choose monthly →</a>
   </div>
   <div style="flex:1;min-width:200px;background:#fdf8f6;border:2px solid #2d6a4f;border-radius:8px;padding:16px;position:relative">
     <div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:#2d6a4f;color:white;font-size:10px;font-weight:600;padding:3px 10px;border-radius:20px;white-space:nowrap">2 MONTHS FREE</div>
     <div style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin-bottom:4px">Annual</div>
-    <div style="font-size:20px;font-weight:600;color:#0e0c0a;font-family:Georgia,serif;margin-bottom:2px">{annual_price}</div>
+    <div style="font-size:20px;font-weight:600;color:#0e0c0a;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;margin-bottom:2px">{annual_price}</div>
     <div style="font-size:11px;color:#2d6a4f;font-weight:500;margin-bottom:12px">{annual_monthly}/mo — save ${module_count*600:,}</div>
     <a href="{checkout_annual}" style="display:block;text-align:center;background:#2d6a4f;color:white;padding:10px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Choose annual →</a>
   </div>
@@ -195,10 +195,10 @@ def send_payment_email(to_email, restaurant_name, tier=None,
             "to": [to_email],
             "subject": f"Your Cavnar AI payment link — {restaurant_name}",
             "html": f"""
-<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:Georgia,serif;font-size:22px;font-weight:400;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;margin:0 0 4px">
+      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
     </h2>
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
       Restaurant Intelligence Dashboard
@@ -217,12 +217,12 @@ def send_payment_email(to_email, restaurant_name, tier=None,
     <p style="font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#7a736a;margin:0 0 6px">{label}</p>
     <div style="display:flex;gap:20px;margin-bottom:14px;flex-wrap:wrap">
       <div>
-        <p style="font-size:18px;font-weight:600;color:#0e0c0a;margin:0;font-family:Georgia,serif">{setup_price}</p>
+        <p style="font-size:18px;font-weight:600;color:#0e0c0a;margin:0;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif">{setup_price}</p>
         <p style="font-size:11px;color:#7a736a;margin:0">today</p>
       </div>
       <div style="color:#e0dbd0;font-size:20px;line-height:1.8">+</div>
       <div>
-        <p style="font-size:18px;font-weight:600;color:#0e0c0a;margin:0;font-family:Georgia,serif">{retainer_price}</p>
+        <p style="font-size:18px;font-weight:600;color:#0e0c0a;margin:0;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif">{retainer_price}</p>
         <p style="font-size:11px;color:#7a736a;margin:0">starting day 31</p>
       </div>
     </div>
@@ -275,10 +275,10 @@ def send_welcome_email(to_email, restaurant_name, username, password,
     else:
         modules_text = f"{modules_count} modules — " + ", ".join(active_modules[:-1]) + f", and {active_modules[-1]}"
     html = f"""
-<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:Georgia,serif;font-size:22px;font-weight:400;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;margin:0 0 4px">
+      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
     </h2>
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
       Restaurant Intelligence Dashboard
@@ -486,10 +486,10 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
             "to": [to_email],
             "subject": f"Getting started with your Cavnar AI dashboard",
             "html": f"""
-<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:Georgia,serif;font-size:22px;font-weight:400;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;margin:0 0 4px">
+      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
     </h2>
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
   </div>
@@ -582,10 +582,10 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
             "to": [to_email],
             "subject": f"One week in — how's the dashboard feeling?",
             "html": f"""
-<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:Georgia,serif;font-size:22px;font-weight:400;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;margin:0 0 4px">
+      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
     </h2>
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
   </div>
@@ -627,10 +627,10 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
             "to": [to_email],
             "subject": f"Welcome back to Cavnar AI — {restaurant_name}",
             "html": f"""
-<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:Georgia,serif;font-size:22px;font-weight:400;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;margin:0 0 4px">
+      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
     </h2>
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
   </div>
@@ -642,7 +642,7 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:24px">
     Jump back into your dashboard whenever you're ready. If anything looks off or you need a refresher, just reply here.
   </p>
-  <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;font-family:-apple-system,sans-serif">Go to dashboard →</a>
+  <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif">Go to dashboard →</a>
   <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
   <p style="font-size:12px;color:#7a736a;margin:0">
     Questions? Reply to this email or reach me at
@@ -738,10 +738,10 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
             "to": [to_email],
             "subject": f"{month_name} {year} — your monthly Cavnar AI summary",
             "html": f"""
-<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:Georgia,serif;font-size:22px;font-weight:400;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;margin:0 0 4px">
+      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
     </h2>
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">{month_name} {year} Monthly Summary</p>
   </div>
@@ -754,7 +754,7 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
   <p style="font-size:14px;color:#3a3530;line-height:1.7;margin:20px 0">
     Log in to your dashboard to see full details, approve any pending review responses, and generate your content for the month ahead.
   </p>
-  <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;font-family:-apple-system,sans-serif">View dashboard →</a>
+  <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif">View dashboard →</a>
   <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
   <p style="font-size:12px;color:#7a736a;margin:0">
     Questions? Reply to this email or reach me at
@@ -819,10 +819,10 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
             "to": [to_email],
             "subject": f"30 days of Cavnar AI — a quick check-in",
             "html": f"""
-<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:Georgia,serif;font-size:22px;font-weight:400;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;margin:0 0 4px">
+      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
     </h2>
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
   </div>

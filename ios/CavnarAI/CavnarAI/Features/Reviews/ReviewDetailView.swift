@@ -150,6 +150,7 @@ struct ReviewDetailView: View {
                 if !isFinal {
                     if !viewModel.templates.isEmpty {
                         Button {
+                            Haptic.light()
                             showingTemplates = true
                         } label: {
                             Label("Templates", systemImage: "doc.on.doc")
@@ -157,6 +158,7 @@ struct ReviewDetailView: View {
                         }
                     }
                     Button {
+                        Haptic.light()
                         Task { await viewModel.regenerateDraft() }
                     } label: {
                         Label("Regenerate", systemImage: "arrow.clockwise")

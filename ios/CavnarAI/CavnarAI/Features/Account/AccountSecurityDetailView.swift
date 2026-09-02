@@ -12,6 +12,7 @@ struct AccountSecurityDetailView: View {
     let account: AccountInfo
     @State private var showingChangePassword = false
     @State private var showing2FASetup = false
+    @Environment(SessionStore.self) private var sessionStore
 
     var body: some View {
         NavigationStack {
@@ -111,6 +112,13 @@ struct AccountSecurityDetailView: View {
         .sheet(isPresented: $showing2FASetup) {
             TwoFactorSetupSheet(viewModel: viewModel)
         }
+        // Same resume as AccountView's own — this sheet was itself torn
+        // down by the relock, so it re-presents its own child sheet too.
+        .onAppear {
+            if sessionStore.pendingTwoFactorSetupEmail != nil {
+                showing2FASetup = true
+            }
+        }
         }
     }
 
@@ -202,6 +210,7 @@ private enum TwoFactorSetupField: Hashable, CaseIterable {
 private struct TwoFactorSetupSheet: View {
     let viewModel: AccountViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(SessionStore.self) private var sessionStore
     @State private var code = ""
     @State private var postedLabel: String?
     @FocusState private var focusedField: TwoFactorSetupField?
@@ -232,6 +241,7 @@ private struct TwoFactorSetupSheet: View {
                                     if await viewModel.verify2FA(code: code) {
                                         Haptic.success()
                                         postedLabel = "Two-factor enabled"
+                                        sessionStore.pendingTwoFactorSetupEmail = nil
                                     }
                                 }
                             } label: {
@@ -244,6 +254,7 @@ private struct TwoFactorSetupSheet: View {
                             .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy || code.count != 6, matchedWidth: matchedWidth))
                             .disabled(viewModel.is2FABusy || code.count != 6)
                         } cancelAction: {
+                            sessionStore.pendingTwoFactorSetupEmail = nil
                             dismiss()
                         }
                         .padding(.top, 6)
@@ -258,7 +269,15 @@ private struct TwoFactorSetupSheet: View {
 
                         CavnarFormButtonPair { matchedWidth in
                             Button {
-                                Task { await viewModel.send2FATest() }
+                                Task {
+                                    await viewModel.send2FATest()
+                                    // Recorded on SessionStore (survives a
+                                    // Face ID relock) the instant a real
+                                    // code goes out — see its doc comment.
+                                    if let masked = viewModel.twoFATestMasked {
+                                        sessionStore.pendingTwoFactorSetupEmail = masked
+                                    }
+                                }
                             } label: {
                                 if viewModel.is2FABusy {
                                     CavnarShimmerText(text: "Sending…", color: Color.cavnarInk)
@@ -288,6 +307,15 @@ private struct TwoFactorSetupSheet: View {
             // sending the test code is a step along the way, not the
             // milestone itself.
             .cavnarPostedOverlay(postedLabel) { dismiss() }
+            // A relock recreates AccountViewModel from scratch — this
+            // restores its twoFATestMasked from SessionStore so the view
+            // renders the "enter code" branch immediately instead of
+            // resetting to "send test code" and losing the masked email.
+            .onAppear {
+                if viewModel.twoFATestMasked == nil, let pending = sessionStore.pendingTwoFactorSetupEmail {
+                    viewModel.twoFATestMasked = pending
+                }
+            }
         }
     }
 }

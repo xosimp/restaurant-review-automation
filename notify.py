@@ -99,10 +99,10 @@ def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta
     body_html = "".join(f'<p style="font-size:14px;color:{text_body};line-height:1.6;margin:0 0 10px">{l}</p>' for l in body_lines)
     return f"""
 <div style="background:{page_bg};padding:24px 0">
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;background:{card_bg};border:1px solid {card_border};border-radius:12px;padding:28px;color:{text_primary}">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;background:{card_bg};border:1px solid {card_border};border-radius:12px;padding:28px;color:{text_primary}">
   <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
-    <h2 style="font-family:Georgia,serif;font-size:20px;font-weight:400;margin:0 0 4px;color:{text_primary}">
-      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
+    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:20px;font-weight:700;margin:0 0 4px;color:{text_primary}">
+      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
     </h2>
     <p style="font-size:11px;color:{header_sub};margin:0;letter-spacing:1px;text-transform:uppercase">Alert &mdash; {_safe(restaurant_name)}</p>
   </div>

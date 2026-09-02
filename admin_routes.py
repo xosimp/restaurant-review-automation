@@ -1738,8 +1738,8 @@ def send_referral(current_user):
         owner_name = restaurant.owner_name or "Your colleague"
         note_block = f"<p style=\"margin:0 0 16px 0;font-style:italic;color:#4a4540\">\"{note}\"</p>" if note else ""
         html = f"""
-<div style="font-family:-apple-system,sans-serif;max-width:540px;margin:0 auto;padding:32px 24px;background:#fdf8f4">
-  <div style="font-family:'Georgia',serif;font-size:22px;color:#0e0c0a;margin-bottom:4px">Cavnar <span style="color:#c84b2f;font-style:italic">AI</span></div>
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:540px;margin:0 auto;padding:32px 24px;background:#fdf8f4">
+  <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;color:#0e0c0a;margin-bottom:4px">Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span></div>
   <div style="font-size:10px;color:#7a736a;letter-spacing:.1em;text-transform:uppercase;margin-bottom:24px">Restaurant Intelligence</div>
   <p style="margin:0 0 16px 0;font-size:15px;color:#0e0c0a;line-height:1.7">Hi — {owner_name} from {referrer} thought you might find this useful.</p>
   {note_block}

@@ -96,7 +96,17 @@ struct ReviewsListView: View {
                             onCompleted: { status in viewModel.markCompleted(reviewID: review.id, status: status) }
                         )
                     } label: {
+                        // The entrance fade/rise lives on the LABEL, not the
+                        // NavigationLink itself — putting it on the link
+                        // silently killed the List's native tap haptic (the
+                        // faint "tock" a NavigationLink row gives on
+                        // selection), almost certainly by interfering with
+                        // how List/UITableView tracks that row's selection
+                        // state under an animated opacity/offset. The label
+                        // is free to animate; the link's own hit-testing and
+                        // selection machinery stays completely untouched.
                         ReviewRow(review: review)
+                            .cavnarRowEntrance(index: index, clock: clock)
                     }
                     // List rows keep an opaque background of their own even
                     // with .scrollContentBackground(.hidden) below (that only
@@ -106,8 +116,6 @@ struct ReviewsListView: View {
                     // gradient instead of blending into it.
                     .listRowBackground(Color.clear)
                     .listRowSeparatorTint(Color.cavnarPaper3)
-                    // Rows rise in one after another on first load.
-                    .cavnarRowEntrance(index: index, clock: clock)
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)

@@ -25,6 +25,19 @@ final class SessionStore {
     // switches back to the Home tab. Reset on logout so the next sign-in
     // (same app process or not) gets its own landing moment.
     var hasShownHomeIntro = false
+    // Set the moment AccountViewModel.send2FATest() succeeds, cleared once
+    // verify2FA() succeeds or the user backs out of the flow. Backgrounding
+    // the app to read the emailed code is exactly what triggers
+    // lockIfNeeded() below — RootView then swaps mainTabs out for
+    // LockedView, tearing down AccountView and everything sheeted under it
+    // (AccountSecurityDetailView, TwoFactorSetupSheet), discarding their
+    // local @State along with it. This survives that swap the same way
+    // hasShownHomeIntro does, because SessionStore itself is created once
+    // in CavnarAIApp and never recreated — AccountView/AccountSecurityDetailView/
+    // TwoFactorSetupSheet each check this on appear and re-present
+    // themselves so the flow resumes right where the user left off instead
+    // of just vanishing.
+    var pendingTwoFactorSetupEmail: String?
 
     var isAuthenticated: Bool { token != nil }
 
@@ -195,6 +208,7 @@ final class SessionStore {
         currentUser = nil
         isLocked = false
         hasShownHomeIntro = false
+        pendingTwoFactorSetupEmail = nil
     }
 
     // MARK: - Face ID re-entry lock

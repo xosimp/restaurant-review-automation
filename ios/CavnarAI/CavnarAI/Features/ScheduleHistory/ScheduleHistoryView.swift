@@ -75,13 +75,17 @@ struct ScheduleHistoryView: View {
                         NavigationLink {
                             ScheduleHistoryDetailView(historyId: entry.id, weekLabel: weekLabel(entry))
                         } label: {
+                            // On the label, not the NavigationLink — see
+                            // ReviewsListView's identical fix. Putting the
+                            // entrance modifier on the link itself killed
+                            // the row's native tap haptic.
                             row(entry)
+                                .cavnarRowEntrance(index: index, clock: clock)
                         }
                         .foregroundStyle(Color.cavnarInk)
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 20))
-                        .cavnarRowEntrance(index: index, clock: clock)
                         // Schedules never disappear on their own — this is
                         // the only removal path, deliberately requiring an
                         // explicit swipe, not a tap.
