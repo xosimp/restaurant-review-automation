@@ -33,6 +33,9 @@ struct AccountView: View {
             .cavnarModuleBackground()
             .cavnarEmberRefreshable { await viewModel.load() }
             .navigationTitle("Account")
+            // Inline only — the centered Clash Display title below is the
+            // one that's drawn; the system's large top-left title doubled it.
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar("Account") }
             .task {
                 await viewModel.load()

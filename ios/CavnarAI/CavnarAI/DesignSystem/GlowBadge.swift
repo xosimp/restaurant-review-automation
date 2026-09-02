@@ -10,8 +10,9 @@ import SwiftUI
 ///
 /// An earlier attempt to put the real seal ring here read as a spinning
 /// "C" once the FAB's rotation hit it — so nothing on this tile rotates:
-/// the FAB's "alive" cue is an optional thin ember halo (`halo`) that turns
-/// around the tile instead, and the tile itself stays still.
+/// the FAB's "alive" cue is an optional thin ember halo (`halo`) — a
+/// concentric rounded square around the tile whose lit arc travels around
+/// it — and the tile itself stays still.
 struct GlowBadge: View {
     var systemImage: String
     var size: CGFloat = 56
@@ -33,17 +34,22 @@ struct GlowBadge: View {
     var body: some View {
         ZStack {
             if halo {
-                Circle()
+                // The same rounded square as the tile, concentric with it
+                // (outer radius = tile radius + the gap), so the FAB is one
+                // shape, not a square inside a circle. The ring itself never
+                // turns — only the ember arc travels around it, via the
+                // gradient's own start angle.
+                RoundedRectangle(cornerRadius: size * 0.41, style: .continuous)
                     .stroke(
                         AngularGradient(
                             colors: [Color.cavnarEmber2, Color.cavnarEmber.opacity(0), Color.cavnarEmber.opacity(0), Color.cavnarEmber2],
-                            center: .center
+                            center: .center,
+                            angle: rotation
                         ),
                         lineWidth: max(1, size * 0.04)
                     )
                     .frame(width: size * 1.22, height: size * 1.22)
                     .opacity(0.7)
-                    .rotationEffect(rotation)
             }
 
             // The tile.

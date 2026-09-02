@@ -55,6 +55,15 @@ struct RootView: View {
                 // without the gate its draw-in played hidden and the user
                 // only ever saw the settled end state once the splash lifted.
                 LockedView(introReady: !showLaunchSplash, coldLaunch: coldLaunchIntroPending)
+                    // Fetch Home's summary while the gate is up (the
+                    // session is signed in, just locked), so the moment the
+                    // user unlocks, Home mounts straight onto its hero — no
+                    // loading state at all. Without this, every cold-launch
+                    // unlock landed on an empty Home whose loading seal
+                    // flashed for the length of the fetch.
+                    .task {
+                        if homeViewModel.summary == nil { await homeViewModel.load() }
+                    }
             } else {
                 mainTabs
             }
@@ -120,7 +129,9 @@ struct RootView: View {
                 .tabItem { Label(AppTab.home.title, systemImage: AppTab.home.systemImage) }
                 .tag(AppTab.home)
 
-            ModulesGridView(path: $modulesPath)
+            // Seeded with the modules Home already fetched, so the tab's
+            // first open renders the grid instead of a loading seal.
+            ModulesGridView(path: $modulesPath, initialModules: homeViewModel.summary?.modules ?? [])
                 .tabItem { Label(AppTab.modules.title, systemImage: AppTab.modules.systemImage) }
                 .tag(AppTab.modules)
 
@@ -225,8 +236,8 @@ struct RootView: View {
 /// web dashboard's own Ask Cavnar bubble (a FAB there too, not a tab), and
 /// frees a permanent tab slot as more modules ship (see the architecture plan).
 /// Lands as a labeled glass pill on the client's first landing this
-/// session (see RootView.startIntroSequence), then pops, spins its
-/// icon once, and collapses to an icon-only circle for the rest of the
+/// session (see RootView.startIntroSequence), then pops, runs its halo
+/// once, and collapses to the icon-only tile for the rest of the
 /// session — the permanently-labeled pill was wide enough to sit over tap
 /// targets on the screen behind it.
 private struct AskCavnarFAB: View {
@@ -244,6 +255,8 @@ private struct AskCavnarFAB: View {
     @State private var ambientRotation = false
     @State private var ambientGlow = false
 
+    private var pill: RoundedRectangle { RoundedRectangle(cornerRadius: 15, style: .continuous) }
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: collapsed ? 0 : 8) {
@@ -252,7 +265,7 @@ private struct AskCavnarFAB: View {
                     // collapsed (opacity rides the same pulse either way,
                     // but it's negligible while the material pill is still
                     // covering it).
-                    Circle()
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
                         .fill(Color.cavnarEmber)
                         .frame(width: 30, height: 30)
                         .blur(radius: 10)
@@ -295,9 +308,16 @@ private struct AskCavnarFAB: View {
             // (GlowBadge rotation, ambient halo pulse, expand/collapse),
             // not a generic button, and doesn't need to track the shared
             // style's changes.
-            .background(Capsule().fill(.ultraThinMaterial).opacity(collapsed ? 0 : 1))
+            //
+            // The pill is a rounded rectangle concentric with the tile
+            // (tile radius 9 + 6pt padding = 15), not a Capsule — a capsule
+            // shrinking around a rounded-square badge ended the collapse as
+            // a circle with a square inside it, two shapes fighting. Now
+            // the pill, the badge, and its halo are one family and the
+            // collapse ends on the badge's own outline.
+            .background(pill.fill(.ultraThinMaterial).opacity(collapsed ? 0 : 1))
             .overlay(
-                Capsule()
+                pill
                     .strokeBorder(Color.cavnarEmber.opacity(0.35), lineWidth: 1)
                     .opacity(collapsed ? 0 : 1)
             )

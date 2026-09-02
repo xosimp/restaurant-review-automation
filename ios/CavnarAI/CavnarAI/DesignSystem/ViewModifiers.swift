@@ -745,32 +745,42 @@ struct CavnarStatCellStyle: ViewModifier {
                         startPoint: .top, endPoint: .bottom
                     )
                     LinearGradient(
-                        colors: [tint.opacity(0.46), tint.opacity(0.14)],
+                        colors: [tint.opacity(0.6), tint.opacity(0.2)],
                         startPoint: .topLeading, endPoint: .bottomTrailing
                     )
-                    // Glossy sheen sweeping in from the top-left corner —
-                    // the "premium" cue: a surface catching light, not a
-                    // flat wash.
+                    // The ember's own light pooling in the lit corner — the
+                    // flare that makes the tile read as branded orange, not
+                    // a dark card with a faint tint. (The previous white
+                    // sheen here did the opposite: it washed the corner out.)
+                    RadialGradient(
+                        colors: [tint.opacity(0.55), tint.opacity(0.18), tint.opacity(0)],
+                        center: UnitPoint(x: 0.1, y: 0), startRadius: 0, endRadius: 190
+                    )
+                    // A faint glossy catch along the top edge only.
                     LinearGradient(
                         stops: [
-                            .init(color: Color.white.opacity(0.13), location: 0),
-                            .init(color: Color.white.opacity(0.03), location: 0.38),
-                            .init(color: Color.white.opacity(0), location: 0.6),
+                            .init(color: Color.white.opacity(0.07), location: 0),
+                            .init(color: Color.white.opacity(0), location: 0.3),
                         ],
-                        startPoint: .topLeading, endPoint: .bottomTrailing
+                        startPoint: .top, endPoint: .bottom
                     )
                 }
             )
             .overlay(alignment: .top) {
                 Rectangle()
-                    .fill(tint.opacity(0.85))
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.cavnarEmber2.opacity(0.95), tint.opacity(0.85), tint.opacity(0.6)],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                    )
                     .frame(height: 1)
             }
             // Border brightest at the lit corner, fading down the far edge.
             .overlay(
                 shape.strokeBorder(
                     LinearGradient(
-                        colors: [tint.opacity(0.85), tint.opacity(0.35)],
+                        colors: [Color.cavnarEmber2.opacity(0.95), tint.opacity(0.7), tint.opacity(0.4)],
                         startPoint: .topLeading, endPoint: .bottomTrailing
                     ),
                     lineWidth: 1
@@ -789,9 +799,11 @@ struct CavnarStatCellStyle: ViewModifier {
                     )
             )
             .clipShape(shape)
-            // Real drop shadow so the tile sits up off the page.
+            // Real drop shadow so the tile sits up off the page, plus the
+            // tint's own warm cast onto the page around it.
             .shadow(color: .black.opacity(0.55), radius: 16, x: 0, y: 10)
             .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 2)
+            .shadow(color: tint.opacity(0.22), radius: 22, x: 0, y: 6)
     }
 }
 

@@ -10,8 +10,13 @@ final class ModulesGridViewModel {
 
     private let client: APIClient
 
-    init(client: APIClient = .shared) {
+    // `initialModules`: the same list Home already fetched (both read
+    // /mobile/api/home), so the grid renders on first open and the fetch
+    // below is a silent refresh — never the loading seal for a list the
+    // app already has.
+    init(client: APIClient = .shared, initialModules: [ModuleSummary] = []) {
         self.client = client
+        self.modules = initialModules
     }
 
     func load() async {
@@ -35,7 +40,12 @@ final class ModulesGridViewModel {
 /// 2-3 column grid). This is where Reviews/Food Cost/Labor/Marketing/Intel
 /// now live instead of as separate tabs.
 struct ModulesGridView: View {
-    @State private var viewModel = ModulesGridViewModel()
+    @State private var viewModel: ModulesGridViewModel
+
+    init(path: Binding<NavigationPath>, initialModules: [ModuleSummary] = []) {
+        _path = path
+        _viewModel = State(initialValue: ModulesGridViewModel(initialModules: initialModules))
+    }
     // Bound from RootView, not owned here — RootView.body swaps this
     // entire view out for LockedView (and back) across a Face ID
     // lock/unlock cycle, which tears down and recreates ModulesGridView
@@ -108,6 +118,9 @@ struct ModulesGridView: View {
             .cavnarModuleBackground()
             .cavnarEmberRefreshable { await viewModel.load() }
             .navigationTitle("Modules")
+            // Inline only — the centered Clash Display title below is the
+            // one that's drawn; the system's large top-left title doubled it.
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar("Modules") }
             .task {
                 await viewModel.load()

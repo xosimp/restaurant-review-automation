@@ -4,7 +4,8 @@ struct HomeView: View {
     @Environment(SessionStore.self) private var sessionStore
     // Owned by RootView (see its homeViewModel) so the loaded summary
     // survives the Face ID lock/unlock swap instead of reloading from
-    // scratch — and flashing the loading seal — on every unlock.
+    // scratch on every unlock — and RootView fetches it while the lock
+    // screen is still up, so a cold launch lands straight on the hero.
     let viewModel: HomeViewModel
     @State private var showingLocationSwitcher = false
     @State private var showingNotifications = false
@@ -115,7 +116,7 @@ struct HomeView: View {
                             .padding(.bottom, 120)
                             .padding(.top, -10)
                         } else if viewModel.isLoading {
-                            CavnarLoadingSeal().padding(.top, 80).frame(maxWidth: .infinity)
+                            heroSkeleton
                         } else if let error = viewModel.errorMessage {
                             VStack(spacing: 8) {
                                 Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
@@ -241,6 +242,34 @@ struct HomeView: View {
             .task { await viewModel.load() }
             .task { await notificationsBadge.refresh() }
         }
+    }
+
+    /// What Home shows while its first summary is still in flight — only
+    /// reached when RootView's lock-screen prefetch hasn't landed yet: a
+    /// ghost of the hero's own shape (eyebrow, two headline lines, a
+    /// subtitle) with the ember line working under it. Never the seal: a
+    /// lone big "C" at the top of an empty Home read as a stray logo flash
+    /// for the length of the fetch.
+    private var heroSkeleton: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ghostLine(width: 92, height: 10)
+            ghostLine(width: 268, height: 24)
+            ghostLine(width: 214, height: 24)
+            ghostLine(width: 180, height: 12)
+                .padding(.top, 2)
+            CavnarShimmerLine(height: 3)
+                .frame(width: 120)
+                .padding(.top, 10)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.top, 16 + Self.heroContentDownShift * 2 + 24)
+    }
+
+    private func ghostLine(width: CGFloat, height: CGFloat) -> some View {
+        Capsule()
+            .fill(Color.cavnarInk.opacity(0.08))
+            .frame(width: width, height: height)
     }
 
     // Mirrors the web dashboard's Home hero (templates/dashboard.html,
