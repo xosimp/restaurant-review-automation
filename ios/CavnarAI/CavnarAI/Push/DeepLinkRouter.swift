@@ -15,6 +15,17 @@ final class DeepLinkRouter {
     var pendingReviewID: Int?
 
     func handleNotificationTap(alertType: String, reviewId: Int?) {
+        // "login" isn't a product module — it has nowhere to deep-link to
+        // inside Modules, so this switches to Account (where Security,
+        // and the sign-in notifications setting that fired it, live)
+        // instead of falling through to moduleKey's Reviews default,
+        // which would have actively mis-routed a sign-in alert.
+        guard alertType != "login" else {
+            pendingTab = .account
+            pendingModuleKey = nil
+            pendingReviewID = nil
+            return
+        }
         // Reviews now lives inside the Modules tab (no per-module tabs
         // anymore), so switch there and let ModulesGridView push into the
         // right module screen itself once pendingModuleKey is set.

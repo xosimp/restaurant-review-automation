@@ -226,13 +226,14 @@ def login():
 
         _ua = request.headers.get("User-Agent", "")
         token = create_session(user["id"], ip_address=ip, user_agent=_ua)
-        # Send login notification email if enabled
+        # Send login notification (email + push + bell) if enabled
         try:
             from models import get_restaurant as _gr_ln
-            _rest_ln = _gr_ln(user.get("restaurant_id")) if user.get("restaurant_id") else None
+            _rid_ln = user.get("restaurant_id")
+            _rest_ln = _gr_ln(_rid_ln) if _rid_ln else None
             if _rest_ln and getattr(_rest_ln, "login_notify", 0) and _rest_ln.owner_email:
-                from emails import send_login_notification
-                send_login_notification(_rest_ln.owner_email, _rest_ln.name or "", ip, _ua)
+                from notify import send_login_alert
+                send_login_alert(_rid_ln, _rest_ln.name or "", _rest_ln.owner_email, ip, _ua)
         except Exception as _ln_e:
             print(f"[LoginNotify] {_ln_e}")
         resp = make_response(redirect(next_url))
@@ -327,12 +328,12 @@ def verify_2fa():
         if not _user_for_session:
             return redirect("/login")
         token = create_session(_user_for_session["id"], ip_address=_ip_2fa, user_agent=_ua_2fa)
-        # Login notification
+        # Login notification (email + push + bell)
         try:
             _rest_ln2 = get_restaurant(uid)
             if _rest_ln2 and getattr(_rest_ln2, "login_notify", 0) and _rest_ln2.owner_email:
-                from emails import send_login_notification
-                send_login_notification(_rest_ln2.owner_email, _rest_ln2.name or "", _ip_2fa, _ua_2fa)
+                from notify import send_login_alert
+                send_login_alert(uid, _rest_ln2.name or "", _rest_ln2.owner_email, _ip_2fa, _ua_2fa)
         except Exception as _ln2_e:
             print(f"[LoginNotify2FA] {_ln2_e}")
         _on_railway = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))

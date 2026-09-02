@@ -197,7 +197,12 @@ final class AccountViewModel {
 
     private struct ToggleBody: Encodable { let enabled: Bool }
 
-    func toggleLoginNotify(_ enabled: Bool) async {
+    // Returns whether it actually succeeded — the Security sheet's posted
+    // overlay only fires on a real success (see cavnarPostedOverlay's own
+    // doc comment), never optimistically, so a caller needs this instead
+    // of just firing-and-forgetting.
+    @discardableResult
+    func toggleLoginNotify(_ enabled: Bool) async -> Bool {
         do {
             _ = try await client.send(
                 "/mobile/api/account/login-notify", method: .post, body: ToggleBody(enabled: enabled)
@@ -207,8 +212,10 @@ final class AccountViewModel {
             // pre-tap value while waiting on a round-trip that already
             // succeeded.
             summary?.account.loginNotify = enabled
+            return true
         } catch {
             await load()  // resync UI state with server if the toggle silently failed
+            return false
         }
     }
 

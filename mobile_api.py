@@ -58,8 +58,8 @@ def _send_login_notification(user, ip, user_agent):
         rid = user.get("restaurant_id")
         rest = get_restaurant(rid) if rid else None
         if rest and getattr(rest, "login_notify", 0) and rest.owner_email:
-            from emails import send_login_notification
-            send_login_notification(rest.owner_email, rest.name or "", ip, user_agent)
+            from notify import send_login_alert
+            send_login_alert(rid, rest.name or "", rest.owner_email, ip, user_agent)
     except Exception as e:
         print(f"[LoginNotify-mobile] {e}")
 

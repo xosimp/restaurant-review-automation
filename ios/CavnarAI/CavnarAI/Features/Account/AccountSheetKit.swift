@@ -128,6 +128,30 @@ struct AccountKicker: View {
 /// Kicker above a warm card. Rows inside the card draw their own
 /// dividers (see `showsDivider` on each row type), so content is a plain
 /// zero-spacing stack.
+///
+/// Uses its own card padding instead of the shared `.cavnarCard()` — every
+/// row here reserves 13pt of its own top/bottom padding, so `.cavnarCard()`'s
+/// uniform 16pt inset stacked an extra 2pt onto the FIRST row's top gap and
+/// the LAST row's bottom gap versus the gap between two middle rows (16+13
+/// at the card edge vs. 13+1(divider)+13 between rows) — exactly the "top
+/// row's heading sits lower" device feedback. 14pt vertical (16pt stays on
+/// the horizontal, unchanged) makes edge and mid-row gaps equal: 14+13 ==
+/// 13+1+13. Scoped to Account only — the shared `.cavnarCard()` used
+/// elsewhere in the app isn't touched.
+private struct AccountCardStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(Color.cavnarPaper2.opacity(0.6))
+            .overlay(
+                RoundedRectangle(cornerRadius: CavnarRadius.card)
+                    .strokeBorder(Color.cavnarPaper3.opacity(0.5), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+    }
+}
+
 struct AccountSection<Content: View>: View {
     let kicker: String
     @ViewBuilder var content: () -> Content
@@ -136,7 +160,7 @@ struct AccountSection<Content: View>: View {
         VStack(alignment: .leading, spacing: 8) {
             AccountKicker(text: kicker)
             VStack(alignment: .leading, spacing: 0) { content() }
-                .cavnarCard()
+                .modifier(AccountCardStyle())
         }
     }
 }

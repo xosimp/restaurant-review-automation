@@ -11,6 +11,10 @@ struct AccountSecurityDetailView: View {
     @State private var showingChangePassword = false
     @State private var showing2FASetup = false
     @State private var disabledLabel: String?
+    // The same posted-check overlay 2FA-disable already used, now shared
+    // with Sign-in notifications — .removed (red, a drawn bar) for turning
+    // something off, .success (ember, the checkmark) for everything else.
+    @State private var disabledTone: CavnarPostedTone = .success
     @Environment(SessionStore.self) private var sessionStore
 
     // Prefer the live summary (it refreshes after enable/disable 2FA and
@@ -77,7 +81,7 @@ struct AccountSecurityDetailView: View {
             try? await Task.sleep(for: .milliseconds(450))
             showing2FASetup = true
         }
-        .cavnarPostedOverlay(disabledLabel) { disabledLabel = nil }
+        .cavnarPostedOverlay(disabledLabel, tone: disabledTone) { disabledLabel = nil }
         }
     }
 
@@ -147,11 +151,23 @@ struct AccountSecurityDetailView: View {
             AccountKVRow(label: "Sign-in notifications", showsDivider: false) {
                 if live.loginNotify {
                     AccountLink(title: "Turn off", tone: .cavnarRed) {
-                        Task { await viewModel.toggleLoginNotify(false) }
+                        Task {
+                            if await viewModel.toggleLoginNotify(false) {
+                                Haptic.success()
+                                disabledTone = .removed
+                                disabledLabel = "Sign-in notifications off"
+                            }
+                        }
                     }
                 } else {
                     AccountLink(title: "Turn on") {
-                        Task { await viewModel.toggleLoginNotify(true) }
+                        Task {
+                            if await viewModel.toggleLoginNotify(true) {
+                                Haptic.success()
+                                disabledTone = .success
+                                disabledLabel = "Sign-in notifications on"
+                            }
+                        }
                     }
                 }
             }

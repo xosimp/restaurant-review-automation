@@ -3847,6 +3847,7 @@ _NOTIFICATION_LABELS = {
     "no_response":      "Unresponded review (48h)",
     "rating_threshold": "Rating below threshold",
     "labor_over":       "Labor % over target",
+    "login":            "New sign-in",
 }
 
 # Which module a notification's "view" action should open — every alert
@@ -3858,6 +3859,10 @@ _NOTIFICATION_MODULE = {
     "neg_spike": "reviews", "no_response": "reviews",
     "negative_trend": "reviews", "rating_threshold": "reviews",
     "labor_over": "labor",
+    # Not a product module — the web dashboard's bell dropdown reads this
+    # field directly (see its own routing); iOS's DeepLinkRouter has its
+    # own "login" special-case since it has no Account/Security "module".
+    "login": "account",
 }
 
 

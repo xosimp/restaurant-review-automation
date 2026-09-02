@@ -33,6 +33,7 @@ struct CavnarWorkingLine: View {
 /// set the label on the real success response — never optimistically.
 private struct CavnarPostedOverlay: ViewModifier {
     var label: String?
+    var tone: CavnarPostedTone = .success
     var onFinished: () -> Void
 
     func body(content: Content) -> some View {
@@ -41,7 +42,7 @@ private struct CavnarPostedOverlay: ViewModifier {
                 if let label {
                     ZStack {
                         Color.cavnarPaper.opacity(0.84).ignoresSafeArea()
-                        CavnarPostedCheck(label: label, onFinished: onFinished)
+                        CavnarPostedCheck(label: label, tone: tone, onFinished: onFinished)
                             .padding(.horizontal, 26)
                             .padding(.vertical, 24)
                             .background(Color.cavnarPaper2)
@@ -57,8 +58,13 @@ private struct CavnarPostedOverlay: ViewModifier {
 }
 
 extension View {
-    func cavnarPostedOverlay(_ label: String?, onFinished: @escaping () -> Void) -> some View {
-        modifier(CavnarPostedOverlay(label: label, onFinished: onFinished))
+    // tone defaults to .success so every existing call site (Restaurant
+    // saved, password changed, email updated, 2FA enabled/disabled, alert
+    // settings saved) keeps its current ember/checkmark look unchanged —
+    // only a call site that explicitly wants the red "turned off" mirror
+    // passes tone: .removed.
+    func cavnarPostedOverlay(_ label: String?, tone: CavnarPostedTone = .success, onFinished: @escaping () -> Void) -> some View {
+        modifier(CavnarPostedOverlay(label: label, tone: tone, onFinished: onFinished))
     }
 }
 

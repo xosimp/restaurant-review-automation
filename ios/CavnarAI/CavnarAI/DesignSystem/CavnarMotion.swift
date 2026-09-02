@@ -1044,12 +1044,42 @@ private struct CavnarCheckShape: Shape {
     }
 }
 
+/// The mirror of CavnarCheckShape for CavnarPostedTone.removed — a single
+/// bar, not an X. An X reads as "error/failed" (that meaning already
+/// belongs to CavnarHandshake's `.failed` state); a bar reads as "off,"
+/// which is what turning a setting off actually means.
+private struct CavnarMinusShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX + rect.width * 0.27, y: rect.midY))
+        p.addLine(to: CGPoint(x: rect.minX + rect.width * 0.73, y: rect.midY))
+        return p
+    }
+}
+
+/// CavnarPostedCheck's two color/glyph directions. `.success` (the
+/// original, still the default) is ember throughout with a drawn
+/// checkmark — posting, saving, connecting, turning something ON.
+/// `.removed` mirrors it in red with a drawn bar instead — a setting
+/// explicitly turned OFF. Not a failure state (CavnarHandshake's
+/// `.failed` already owns that meaning) — an intentional, successful
+/// "off," which is why it still gets the same confident travel-and-land
+/// motion rather than reading as an error.
+enum CavnarPostedTone {
+    case success
+    case removed
+
+    var accent: Color { self == .success ? .cavnarEmber : .cavnarRed }
+    var accentCore: Color { self == .success ? .cavnarEmber2 : .cavnarRed }
+}
+
 /// The confirmation moment for a real POST that succeeded: the ember leaves
 /// the draft, travels the wire, and lands as a checkmark that draws itself.
 /// Plays once on appear; `onFinished` fires ~1.6s in, once the check has
 /// fully drawn, for a caller that wants to dismiss afterward.
 struct CavnarPostedCheck: View {
     var label: String
+    var tone: CavnarPostedTone = .success
     var onFinished: (() -> Void)? = nil
 
     @State private var travel: CGFloat = 0
@@ -1079,10 +1109,10 @@ struct CavnarPostedCheck: View {
 
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.cavnarPaper3).frame(width: trackWidth, height: 2)
-                    Capsule().fill(Color.cavnarEmber).frame(width: trackWidth * travel, height: 2)
+                    Capsule().fill(tone.accent).frame(width: trackWidth * travel, height: 2)
                     ZStack {
-                        Circle().fill(Color.cavnarEmber.opacity(0.3)).frame(width: 22, height: 22)
-                        Circle().fill(Color.cavnarEmber2).frame(width: 10, height: 10)
+                        Circle().fill(tone.accent.opacity(0.3)).frame(width: 22, height: 22)
+                        Circle().fill(tone.accentCore).frame(width: 10, height: 10)
                     }
                     .offset(x: -11 + trackWidth * travel)
                     .opacity(landed ? 0 : 1)
@@ -1092,8 +1122,13 @@ struct CavnarPostedCheck: View {
                 ZStack {
                     Circle()
                         .fill(Color.cavnarPaper2)
-                        .overlay(Circle().strokeBorder(landed ? Color.cavnarEmber : Color.cavnarPaper3, lineWidth: 1.5))
-                    CavnarCheckShape()
+                        .overlay(Circle().strokeBorder(landed ? tone.accent : Color.cavnarPaper3, lineWidth: 1.5))
+                    // AnyShape, not a Group — .stroke(_:style:) is a Shape
+                    // modifier, and a Group of two Shapes is only a View,
+                    // not itself a Shape, so it can't be called there.
+                    // Erasing both branches to AnyShape first keeps one
+                    // shared .trim/.stroke call for either glyph.
+                    (tone == .success ? AnyShape(CavnarCheckShape()) : AnyShape(CavnarMinusShape()))
                         .trim(from: 0, to: checkTrim)
                         .stroke(Color.cavnarInk, style: StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round))
                 }

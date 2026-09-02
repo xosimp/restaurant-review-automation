@@ -237,6 +237,37 @@ def _log_alert(restaurant_id: int, alert_type: str, review_id: int = None, db_pa
     conn.close()
 
 
+def send_login_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
+                      ip: str, user_agent: str, db_path: str = DB_PATH):
+    """The one 'Sign-in notifications' toggle used to mean email-only —
+    audited on device feedback ("does an alert pop up? is it sent to the
+    bell? does it show on a locked phone?") and the honest answer for all
+    three was no. This gives login the same three-channel shape every
+    other alert type here already has (see fire_review_alerts): email
+    (unchanged), a push via fire_push so it actually reaches a locked
+    phone, and an alert_log row so it shows in the notifications bell.
+    All three still gate on the SAME login_notify flag the one toggle
+    controls — callers check that (and owner_email) before calling this,
+    same as they always have for the email alone."""
+    from emails import send_login_notification
+    send_login_notification(owner_email, restaurant_name, ip, user_agent)
+    try:
+        from push import fire_push
+        fire_push(
+            restaurant_id, "login",
+            "New sign-in",
+            f"{restaurant_name} — signed in from {ip}",
+            data={"alert_type": "login"},
+            db_path=db_path,
+        )
+    except Exception as e:
+        print(f"[LoginAlert] push error: {e}")
+    try:
+        _log_alert(restaurant_id, "login", db_path=db_path)
+    except Exception as e:
+        print(f"[LoginAlert] alert_log error: {e}")
+
+
 # ── Main alert dispatch ───────────────────────────────────────
 
 def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: list, db_path: str = DB_PATH):
