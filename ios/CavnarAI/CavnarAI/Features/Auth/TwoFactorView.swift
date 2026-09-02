@@ -24,12 +24,22 @@ struct TwoFactorView: View {
                         .multilineTextAlignment(.center)
                 }
 
-                TextField("6-digit code", text: $viewModel.code)
-                    .keyboardType(.numberPad)
-                    .multilineTextAlignment(.center)
-                    .font(.cavnarNumber(24, weight: 600))
-                    .cavnarTextFieldStyle()
-                    .focused($isCodeFocused)
+                // Six cells, not a bare field — each digit pops into place,
+                // the active cell carries an ember caret, the row warms
+                // while verifying, and a wrong code shakes it. Submits on
+                // its own the moment the sixth digit lands.
+                CavnarCodeEntry(
+                    code: $viewModel.code,
+                    isVerifying: viewModel.isLoading,
+                    isError: viewModel.errorMessage != nil,
+                    focus: $isCodeFocused
+                )
+                .onChange(of: viewModel.code) { _, code in
+                    if code.count < 6 { viewModel.errorMessage = nil }
+                    if code.count == 6, viewModel.canSubmit {
+                        Task { await viewModel.submit() }
+                    }
+                }
 
                 Toggle("Remember this device for 30 days", isOn: $viewModel.rememberDevice)
                     .font(.cavnarBody(14.5))
@@ -46,7 +56,7 @@ struct TwoFactorView: View {
                     Task { await viewModel.submit() }
                 } label: {
                     if viewModel.isLoading {
-                        ProgressView().tint(.white)
+                        CavnarShimmerText(text: "Verifying…")
                     } else {
                         Text("Verify")
                     }
@@ -61,5 +71,6 @@ struct TwoFactorView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .keyboardDoneToolbar { isCodeFocused = false }
+        .onAppear { isCodeFocused = true }
     }
 }

@@ -72,7 +72,7 @@ struct ScheduleHistoryDetailView: View {
                 // this state is visible (this was the "weird shape on
                 // first load" bug — also present, and also fixed, on
                 // AccountView/ModulesGridView's identical loading states).
-                ProgressView()
+                CavnarWorkingLine()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = viewModel.errorMessage {
                 VStack(spacing: 10) {

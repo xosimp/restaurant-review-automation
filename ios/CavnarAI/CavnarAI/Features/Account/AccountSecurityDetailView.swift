@@ -167,7 +167,7 @@ private struct ChangePasswordSheet: View {
                             }
                         } label: {
                             if viewModel.isChangingPassword {
-                                ProgressView().tint(Color.cavnarInk)
+                                CavnarShimmerText(text: "Changing…", color: Color.cavnarInk)
                             } else {
                                 Text("Change password")
                             }
@@ -227,7 +227,7 @@ private struct TwoFactorSetupSheet: View {
                                 }
                             } label: {
                                 if viewModel.is2FABusy {
-                                    ProgressView().tint(Color.cavnarInk)
+                                    CavnarShimmerText(text: "Verifying…", color: Color.cavnarInk)
                                 } else {
                                     Text("Verify and enable")
                                 }
@@ -252,7 +252,7 @@ private struct TwoFactorSetupSheet: View {
                                 Task { await viewModel.send2FATest() }
                             } label: {
                                 if viewModel.is2FABusy {
-                                    ProgressView().tint(Color.cavnarInk)
+                                    CavnarShimmerText(text: "Sending…", color: Color.cavnarInk)
                                 } else {
                                     Text("Send test code")
                                 }

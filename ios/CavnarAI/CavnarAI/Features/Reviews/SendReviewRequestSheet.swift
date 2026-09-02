@@ -60,6 +60,9 @@ struct SendReviewRequestSheet: View {
     @State private var phone = ""
     @State private var message = ""
     @FocusState private var focusedField: SendReviewRequestField?
+    // Set only on the real 200 — the posted check plays, then the sheet
+    // closes itself (see cavnarPostedOverlay).
+    @State private var postedLabel: String?
 
     private var canSend: Bool {
         !viewModel.isSending && !(email.isEmpty && phone.isEmpty)
@@ -102,11 +105,14 @@ struct SendReviewRequestSheet: View {
                         Button {
                             Task {
                                 await viewModel.send(name: name, email: email, phone: phone, message: message)
-                                if viewModel.didSend { dismiss() }
+                                if viewModel.didSend {
+                                    Haptic.success()
+                                    postedLabel = "Review request sent"
+                                }
                             }
                         } label: {
                             if viewModel.isSending {
-                                ProgressView().tint(Color.cavnarInk)
+                                CavnarShimmerText(text: "Sending…", color: Color.cavnarInk)
                             } else {
                                 Text("Send review request")
                             }
@@ -125,6 +131,7 @@ struct SendReviewRequestSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar("Request a Review") }
             .keyboardNavToolbar($focusedField)
+            .cavnarPostedOverlay(postedLabel) { dismiss() }
         }
     }
 }

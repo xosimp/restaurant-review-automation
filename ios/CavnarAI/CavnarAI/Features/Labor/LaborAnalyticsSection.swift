@@ -22,7 +22,7 @@ struct LaborAnalyticsSection: View {
                     onIntroPlayed: { viewModel.markBarIntroPlayed() }
                 )
             } else if viewModel.isLoading {
-                ProgressView().frame(maxWidth: .infinity).padding(.vertical, 20)
+                CavnarWorkingLine().padding(.vertical, 20)
             }
         }
     }

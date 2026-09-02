@@ -262,7 +262,7 @@ private struct HoldToSubmitButton: View {
                     Image(systemName: "checkmark.circle.fill")
                     Text("Submitted")
                 } else if isSubmitting {
-                    ProgressView().tint(Color.cavnarInk)
+                    CavnarShimmerText(text: "Submitting…", color: Color.cavnarInk)
                 } else {
                     Text("Hold for 3 seconds to submit")
                 }

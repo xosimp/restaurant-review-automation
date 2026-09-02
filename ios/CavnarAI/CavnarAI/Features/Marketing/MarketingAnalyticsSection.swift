@@ -12,7 +12,7 @@ struct MarketingAnalyticsSection: View {
             )
 
             if viewModel.isLoading && viewModel.performance == nil {
-                ProgressView().frame(maxWidth: .infinity).padding(.vertical, 20)
+                CavnarWorkingLine().padding(.vertical, 20)
             } else {
                 if let perf = viewModel.performance, perf.hasData {
                     HStack(spacing: 0) {

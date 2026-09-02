@@ -53,9 +53,13 @@ struct HomeModuleGrid: View {
     var comingSoon: [ModuleSummary] = []
     var onSelect: (ModuleSummary) -> Void
 
+    // Tiles rise in one after another on first load (see
+    // CavnarEntranceClock) — one clock shared by every tile in this grid.
+    @State private var clock = CavnarEntranceClock()
+
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
-            ForEach(modules) { module in
+            ForEach(Array(modules.enumerated()), id: \.element.id) { index, module in
                 // A Button calling back into the parent's NavigationPath,
                 // not a NavigationLink — keeps the haptic on a deterministic
                 // action closure instead of a simultaneousGesture racing
@@ -65,10 +69,14 @@ struct HomeModuleGrid: View {
                 } label: {
                     KPITile(module: module)
                 }
-                .buttonStyle(.plain)
+                // Settles under the finger with its ember edge lit — .plain
+                // gave a tap no visible response at all.
+                .buttonStyle(CavnarTilePressStyle())
+                .cavnarRowEntrance(index: index, clock: clock)
             }
-            ForEach(comingSoon) { module in
+            ForEach(Array(comingSoon.enumerated()), id: \.element.id) { index, module in
                 ComingSoonModuleTile(module: module)
+                    .cavnarRowEntrance(index: modules.count + index, clock: clock)
             }
         }
     }

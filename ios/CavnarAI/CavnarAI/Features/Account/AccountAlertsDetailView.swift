@@ -11,6 +11,7 @@ import SwiftUI
 struct AccountAlertsDetailView: View {
     let viewModel: AccountViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var postedLabel: String?
 
     @State private var draft: AlertSettings
     @State private var contacts: [AlertContact]
@@ -180,11 +181,14 @@ struct AccountAlertsDetailView: View {
                     toSave.alertQuietEnd = quietHoursEnabled ? Self.timeFormatter.string(from: quietEnd) : nil
                     Task {
                         await viewModel.saveAlertSettings(toSave, contacts: contacts)
-                        if viewModel.saveAlertsError == nil { dismiss() }
+                        if viewModel.saveAlertsError == nil {
+                            Haptic.success()
+                            postedLabel = "Alert settings saved"
+                        }
                     }
                 } label: {
                     if viewModel.isSavingAlerts {
-                        ProgressView().tint(.white)
+                        CavnarShimmerText(text: "Saving…")
                     } else {
                         Text("Save alert settings")
                     }
@@ -200,6 +204,7 @@ struct AccountAlertsDetailView: View {
         .navigationTitle("Alerts")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { cavnarTitleToolbar("Alerts") }
+        .cavnarPostedOverlay(postedLabel) { dismiss() }
         }
     }
 

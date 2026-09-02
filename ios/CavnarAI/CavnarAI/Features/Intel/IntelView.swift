@@ -573,9 +573,8 @@ struct IntelView: View {
                             }
                         } label: {
                             if removingPlaceId == c.placeId {
-                                ProgressView()
-                                    .scaleEffect(0.6)
-                                    .frame(width: 12, height: 12)
+                                CavnarShimmerLine(color: .cavnarEmber2)
+                                    .frame(width: 14)
                             } else {
                                 Image(systemName: "xmark.circle.fill")
                                     .font(.system(size: 12))
@@ -693,10 +692,7 @@ struct IntelView: View {
             Task { await viewModel.refreshCompetitors() }
         } label: {
             if viewModel.isRefreshing {
-                HStack(spacing: 6) {
-                    ProgressView().tint(.white)
-                    Text("Refreshing…")
-                }
+                CavnarShimmerText(text: "Refreshing…")
             } else {
                 Text(label)
             }

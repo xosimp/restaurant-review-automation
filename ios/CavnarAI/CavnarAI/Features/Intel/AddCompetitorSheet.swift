@@ -19,6 +19,7 @@ struct AddCompetitorSheet: View {
     @State private var hasSearchedOnce = false
     @State private var searchTask: Task<Void, Never>?
     @State private var addingPlaceId: String?
+    @State private var postedLabel: String?
     @FocusState private var focusedField: AddCompetitorField?
 
     var body: some View {
@@ -94,6 +95,7 @@ struct AddCompetitorSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar("Add a Competitor") }
             .keyboardDoneToolbar { focusedField = nil }
+            .cavnarPostedOverlay(postedLabel) { dismiss() }
             .toolbar {
                 cavnarToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -109,7 +111,10 @@ struct AddCompetitorSheet: View {
                 addingPlaceId = result.placeId
                 let success = await viewModel.addCompetitor(placeId: result.placeId)
                 addingPlaceId = nil
-                if success { dismiss() }
+                if success {
+                    Haptic.success()
+                    postedLabel = "\(result.name) added"
+                }
             }
         } label: {
             HStack(spacing: 12) {

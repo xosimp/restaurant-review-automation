@@ -113,7 +113,7 @@ struct ReviewDetailView: View {
                     .font(.cavnarBody(17.5, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                 HStack(spacing: 6) {
-                    StarRatingView(rating: viewModel.review.rating ?? 0)
+                    StarRatingView(rating: viewModel.review.rating ?? 0, size: 13, animated: true)
                     Text(viewModel.review.platformDisplayName)
                         .font(.cavnarBody(14.5, weight: 700))
                         .tracking(0.4)
@@ -258,7 +258,7 @@ struct ReviewDetailView: View {
             .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
 
             if viewModel.isSubmitting {
-                ProgressView()
+                CavnarWorkingLine(width: 80)
             } else {
                 Button(undoLabel, role: isDestructiveUndo ? .destructive : nil) {
                     undo()
@@ -283,7 +283,7 @@ struct ReviewDetailView: View {
                 Task { await viewModel.approve() }
             } label: {
                 if viewModel.isSubmitting {
-                    ProgressView().tint(Color.cavnarInk)
+                    CavnarShimmerText(text: "Posting…", color: Color.cavnarInk)
                 } else {
                     Text("Approve & Post")
                 }

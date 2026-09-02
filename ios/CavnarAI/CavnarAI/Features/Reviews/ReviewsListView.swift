@@ -12,6 +12,7 @@ struct ReviewsListView: View {
     @State private var deepLinkedReview: Review?
     @State private var subTab: ReviewsSubTab = .inbox
     @State private var showingSendRequest = false
+    @State private var clock = CavnarEntranceClock()
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
 
     var body: some View {
@@ -88,7 +89,7 @@ struct ReviewsListView: View {
                     message: "New reviews land here automatically once your platforms are connected."
                 )
             } else {
-                List(viewModel.reviews) { review in
+                List(Array(viewModel.reviews.enumerated()), id: \.element.id) { index, review in
                     NavigationLink {
                         ReviewDetailView(
                             viewModel: ReviewDetailViewModel(review: review),
@@ -105,6 +106,8 @@ struct ReviewsListView: View {
                     // gradient instead of blending into it.
                     .listRowBackground(Color.clear)
                     .listRowSeparatorTint(Color.cavnarPaper3)
+                    // Rows rise in one after another on first load.
+                    .cavnarRowEntrance(index: index, clock: clock)
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
@@ -165,14 +168,32 @@ struct ReviewRow: View {
 
 struct StarRatingView: View {
     let rating: Int
+    var size: CGFloat = 10
+    // Review Detail only: the filled stars light up left to right on
+    // first appearance, each with a brief amber glow. Off in list rows,
+    // where twenty of them animating at once would just be noise.
+    var animated: Bool = false
+
+    @State private var lit = false
 
     var body: some View {
-        HStack(spacing: 1) {
+        HStack(spacing: animated ? 2 : 1) {
             ForEach(0..<5, id: \.self) { index in
-                Image(systemName: index < rating ? "star.fill" : "star")
-                    .font(.system(size: 10))
-                    .foregroundStyle(index < rating ? Color.cavnarAmber : Color.cavnarPaper3)
+                let filled = index < rating
+                Image(systemName: filled ? "star.fill" : "star")
+                    .font(.system(size: size))
+                    .foregroundStyle(filled ? Color.cavnarAmber : Color.cavnarPaper3)
+                    .shadow(color: Color.cavnarAmber.opacity(animated && filled ? 0.55 : 0), radius: 4)
+                    .scaleEffect(animated && filled ? (lit ? 1 : 0.35) : 1)
+                    .opacity(animated ? (lit ? 1 : 0) : 1)
+                    .animation(
+                        animated ? .easeOut(duration: 0.34).delay(Double(index) * 0.08) : nil,
+                        value: lit
+                    )
             }
+        }
+        .onAppear {
+            if animated { lit = true }
         }
     }
 }

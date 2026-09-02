@@ -32,6 +32,8 @@ struct ScheduleHistoryView: View {
         return f
     }()
 
+    @State private var clock = CavnarEntranceClock()
+
     // Own NavigationStack, not pushed onto a parent's — presented as a
     // sheet from AccountView now (see its own comment), matching how
     // every other modal in this app opens, sliding up from the bottom.
@@ -69,7 +71,7 @@ struct ScheduleHistoryView: View {
                 // .scrollContentBackground(.hidden) since a List row keeps
                 // an opaque background of its own otherwise.
                 List {
-                    ForEach(viewModel.history) { entry in
+                    ForEach(Array(viewModel.history.enumerated()), id: \.element.id) { index, entry in
                         NavigationLink {
                             ScheduleHistoryDetailView(historyId: entry.id, weekLabel: weekLabel(entry))
                         } label: {
@@ -79,6 +81,7 @@ struct ScheduleHistoryView: View {
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 6, leading: 20, bottom: 6, trailing: 20))
+                        .cavnarRowEntrance(index: index, clock: clock)
                         // Schedules never disappear on their own — this is
                         // the only removal path, deliberately requiring an
                         // explicit swipe, not a tap.

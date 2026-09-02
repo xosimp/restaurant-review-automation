@@ -9,6 +9,7 @@ struct UpdateEmailSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var newEmail = ""
     @State private var currentPassword = ""
+    @State private var postedLabel: String?
     @FocusState private var focusedField: UpdateEmailField?
 
     private var canSubmit: Bool {
@@ -38,11 +39,14 @@ struct UpdateEmailSheet: View {
                         Button {
                             Task {
                                 await viewModel.updateEmail(newEmail: newEmail, currentPassword: currentPassword)
-                                if viewModel.updateEmailSucceeded { dismiss() }
+                                if viewModel.updateEmailSucceeded {
+                                    Haptic.success()
+                                    postedLabel = "Email updated"
+                                }
                             }
                         } label: {
                             if viewModel.isUpdatingEmail {
-                                ProgressView().tint(Color.cavnarInk)
+                                CavnarShimmerText(text: "Updating…", color: Color.cavnarInk)
                             } else {
                                 Text("Update email")
                             }
@@ -61,6 +65,7 @@ struct UpdateEmailSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar("Update Email") }
             .keyboardNavToolbar($focusedField)
+            .cavnarPostedOverlay(postedLabel) { dismiss() }
         }
     }
 }

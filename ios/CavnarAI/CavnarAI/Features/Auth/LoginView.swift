@@ -65,7 +65,7 @@ struct LoginView: View {
                         Task { await viewModel.submit() }
                     } label: {
                         if viewModel.isLoading {
-                            ProgressView().tint(.white)
+                            CavnarShimmerText(text: "Signing in…")
                         } else {
                             Text("Sign In")
                         }

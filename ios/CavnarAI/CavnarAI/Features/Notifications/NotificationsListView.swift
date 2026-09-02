@@ -98,6 +98,7 @@ struct NotificationsListView: View {
     let viewModel: NotificationsListViewModel
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
     @Environment(\.dismiss) private var dismiss
+    @State private var clock = CavnarEntranceClock()
 
     var body: some View {
         NavigationStack {
@@ -126,7 +127,7 @@ struct NotificationsListView: View {
                     )
                     .padding(.top, 40)
                 } else {
-                    List(viewModel.notifications) { item in
+                    List(Array(viewModel.notifications.enumerated()), id: \.element.id) { index, item in
                         Button {
                             Haptic.light()
                             deepLinkRouter.handleNotificationTap(alertType: item.type, reviewId: item.reviewId)
@@ -148,6 +149,7 @@ struct NotificationsListView: View {
                             }
                         }
                         .buttonStyle(.plain)
+                        .cavnarRowEntrance(index: index, clock: clock)
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)

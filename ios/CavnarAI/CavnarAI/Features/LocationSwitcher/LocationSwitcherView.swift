@@ -6,6 +6,9 @@ struct LocationSwitcherView: View {
     @State private var viewModel = LocationSwitcherViewModel()
     @Environment(\.dismiss) private var dismiss
     var onSwitched: () -> Void
+    // The row just tapped — its check pops in with one ember ripple while
+    // the switch is in flight, so the tap reads immediately.
+    @State private var tappedName: String?
 
     var body: some View {
         NavigationStack {
@@ -17,10 +20,14 @@ struct LocationSwitcherView: View {
                 }
                 ForEach(viewModel.locations) { location in
                     Button {
+                        Haptic.selection()
+                        tappedName = location.name
                         Task {
                             if await viewModel.switchTo(location) {
                                 onSwitched()
                                 dismiss()
+                            } else {
+                                tappedName = nil
                             }
                         }
                     } label: {
@@ -29,12 +36,24 @@ struct LocationSwitcherView: View {
                                 .font(.cavnarBody(15))
                                 .foregroundStyle(Color.cavnarInk)
                             Spacer()
-                            if location.active {
+                            if tappedName == location.name {
+                                ZStack {
+                                    CavnarRippleBurst(fromDiameter: 18, toDiameter: 48, rings: 1, duration: 0.7)
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundStyle(Color.cavnarEmber)
+                                        .transition(.scale(scale: 0.4).combined(with: .opacity))
+                                }
+                                .frame(width: 24, height: 24)
+                            } else if location.active {
                                 Image(systemName: "checkmark")
+                                    .font(.system(size: 15, weight: .semibold))
                                     .foregroundStyle(Color.cavnarEmber)
                             }
                         }
                     }
+                    .disabled(tappedName != nil)
+                    .animation(.easeOut(duration: 0.25), value: tappedName)
                 }
             }
             .scrollContentBackground(.hidden)

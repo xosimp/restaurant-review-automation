@@ -15,6 +15,9 @@ struct AvailabilityManagerSection: View {
     @State private var name = ""
     @State private var selectedDays: Set<String> = []
     @State private var notes = ""
+    // Flipped on a save that came back clean — the posted check plays
+    // under the button, then clears itself.
+    @State private var savedFlash = false
     @FocusState private var focusedField: Field?
 
     private enum Field: Hashable, CaseIterable {
@@ -36,7 +39,7 @@ struct AvailabilityManagerSection: View {
                 addForm
 
                 if viewModel.isLoadingAvailability && viewModel.availability.isEmpty {
-                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 12)
+                    CavnarWorkingLine().padding(.vertical, 12)
                 } else if viewModel.availability.isEmpty {
                     Text("No availability set yet — add someone above.")
                         .font(.cavnarBody(14))
@@ -154,6 +157,10 @@ struct AvailabilityManagerSection: View {
                         employeeName: name, availableDays: Array(selectedDays),
                         notes: notes.isEmpty ? nil : notes
                     )
+                    if viewModel.availabilityError == nil {
+                        Haptic.success()
+                        savedFlash = true
+                    }
                     name = ""
                     notes = ""
                     selectedDays = []
@@ -169,10 +176,16 @@ struct AvailabilityManagerSection: View {
             .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: name.trimmingCharacters(in: .whitespaces).isEmpty))
             .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || viewModel.isSavingAvailability)
 
+            if savedFlash {
+                CavnarInlinePosted(label: "Availability saved") { savedFlash = false }
+                    .transition(.opacity)
+            }
+
             if let error = viewModel.availabilityError {
                 Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
             }
         }
+        .animation(.easeOut(duration: 0.3), value: savedFlash)
         .padding(12)
         .background(Color.cavnarPaper2.opacity(0.4))
         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))

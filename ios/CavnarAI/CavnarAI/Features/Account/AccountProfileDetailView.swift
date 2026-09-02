@@ -25,6 +25,7 @@ struct AccountProfileDetailView: View {
 
     private enum Field: Hashable { case ownerName, ownerPhone, voiceNotes, neverSay, menuNotes }
     @FocusState private var focusedField: Field?
+    @State private var postedLabel: String?
 
     init(viewModel: AccountViewModel, profile: AccountProfile) {
         self.viewModel = viewModel
@@ -54,11 +55,14 @@ struct AccountProfileDetailView: View {
                                 ownerName: ownerName, ownerPhone: ownerPhone,
                                 voiceNotes: voiceNotes, neverSay: neverSay, menuNotes: menuNotes
                             )
-                            if viewModel.saveProfileSucceeded { dismiss() }
+                            if viewModel.saveProfileSucceeded {
+                                Haptic.success()
+                                postedLabel = "Profile saved"
+                            }
                         }
                     } label: {
                         if viewModel.isSavingProfile {
-                            ProgressView().tint(.white)
+                            CavnarShimmerText(text: "Saving…")
                         } else {
                             Text("Save changes")
                         }
@@ -75,6 +79,7 @@ struct AccountProfileDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar("Profile") }
             .keyboardDoneToolbar { focusedField = nil }
+            .cavnarPostedOverlay(postedLabel) { dismiss() }
             .sheet(isPresented: $showingUpdateEmail) {
                 UpdateEmailSheet(viewModel: viewModel)
             }

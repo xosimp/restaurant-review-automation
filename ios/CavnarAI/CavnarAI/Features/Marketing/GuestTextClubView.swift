@@ -67,7 +67,7 @@ struct GuestTextClubView: View {
                 Task { await viewModel.draftCampaign() }
             } label: {
                 if viewModel.isDrafting {
-                    ProgressView().tint(.white)
+                    CavnarShimmerText(text: "Drafting…")
                 } else {
                     Text("Draft message")
                 }
@@ -88,7 +88,7 @@ struct GuestTextClubView: View {
                     Task { await viewModel.sendCampaign() }
                 } label: {
                     if viewModel.isSending {
-                        ProgressView().tint(.white)
+                        CavnarShimmerText(text: "Sending…")
                     } else {
                         Text("Send to consented guests")
                     }
@@ -97,9 +97,12 @@ struct GuestTextClubView: View {
                 .disabled(viewModel.isSending)
 
                 if viewModel.didSend {
-                    Label("Campaign sent", systemImage: "checkmark.circle.fill")
-                        .font(.cavnarBody(14, weight: 600))
-                        .foregroundStyle(Color.cavnarGreen)
+                    // "Posted" — plays once on the real send, then clears
+                    // itself so the form is ready for the next campaign.
+                    CavnarInlinePosted(label: "Campaign sent") {
+                        viewModel.didSend = false
+                    }
+                    .padding(.top, 6)
                 }
             }
 
@@ -124,7 +127,7 @@ struct GuestTextClubView: View {
                 }
             }
             if viewModel.isLoading {
-                ProgressView()
+                CavnarWorkingLine().padding(.vertical, 8)
             } else if let error = viewModel.errorMessage {
                 Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
             } else {
@@ -165,6 +168,7 @@ private struct AddGuestContactSheet: View {
     @State private var name = ""
     @State private var phone = ""
     @State private var isAdding = false
+    @State private var postedLabel: String?
     @FocusState private var focusedField: AddGuestContactField?
 
     private var canAdd: Bool { !isAdding && !name.isEmpty && !phone.isEmpty }
@@ -188,11 +192,14 @@ private struct AddGuestContactSheet: View {
                                 isAdding = true
                                 let added = await viewModel.addContact(name: name, phone: phone)
                                 isAdding = false
-                                if added { dismiss() }
+                                if added {
+                                    Haptic.success()
+                                    postedLabel = "Guest added"
+                                }
                             }
                         } label: {
                             if isAdding {
-                                ProgressView().tint(Color.cavnarInk)
+                                CavnarShimmerText(text: "Adding…", color: Color.cavnarInk)
                             } else {
                                 Text("Add guest")
                             }
@@ -211,6 +218,7 @@ private struct AddGuestContactSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar("Add Guest") }
             .keyboardNavToolbar($focusedField)
+            .cavnarPostedOverlay(postedLabel) { dismiss() }
         }
     }
 }
