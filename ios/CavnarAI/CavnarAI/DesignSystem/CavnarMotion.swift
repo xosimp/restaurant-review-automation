@@ -104,7 +104,7 @@ struct CavnarSealDrawIn: View {
     }
 }
 
-// MARK: - 03 · Wordmark Stamp-in
+// MARK: - 03 · Wordmark entrances (stamp-in, trace-in) and finish
 
 /// One letter of the CAVNAR wordmark as a Shape. The wordmark is now the
 /// app's own headline face — Clash Display Semibold — set in caps and
@@ -124,8 +124,8 @@ struct CavnarWordmarkLetterShape: Shape {
     /// stamp-in scales around, so a letter settles in place instead of
     /// sliding sideways toward the box's own center.
     static let centers: [CGFloat] = [52.24, 162.65, 250.12, 367.29, 486.70, 606.13]
-    /// Each letter's horizontal extent — the typewriter cursor parks just
-    /// past the trailing edge of whatever's been typed so far.
+    /// Each letter's horizontal extent, for anything that needs to key off
+    /// a letter's edges rather than its center.
     static let bounds: [(leading: CGFloat, trailing: CGFloat)] = [
         (0, 104.48), (102.79, 222.5), (192.65, 307.58), (319.08, 415.5), (426.85, 546.55), (558, 654.27),
     ]
@@ -259,40 +259,238 @@ struct CavnarWordmarkLetterShape: Shape {
     }
 }
 
-/// The ember that the V cradles — the one point of color inside the
-/// wordmark itself, shared by the stamp-in and typewriter entrances.
-struct CavnarWordmarkEmber: View {
+/// The small "AI" tag — Space Grotesk Bold, outlined — as a Shape in the
+/// same 100-unit box as the letters: it starts `gap` units past the R and
+/// its cap line IS the wordmark's cap line (y = 0), so the tops of both
+/// words sit on one straight rule. Same geometry as wordmark.json "ai_tag"
+/// — regenerate with brand/assets/build_lockups.py, don't hand-edit.
+struct CavnarWordmarkAITagShape: Shape {
+    static let gap: CGFloat = 30
+    static let leading: CGFloat = 684.27
+    static let trailing: CGFloat = 714.69
+    static let height: CGFloat = 21
+    static var width: CGFloat { trailing - leading }
+
+    /// Drawn into a rect that spans the tag alone (width = 30.42 units at
+    /// 100 units of wordmark cap height), so it lays out as its own view.
+    func path(in rect: CGRect) -> Path {
+        let s = rect.width / Self.width
+        func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + (x - Self.leading) * s, y: rect.minY + y * s)
+        }
+        var p = Path()
+        p.move(to: pt(684.27, 21.00))
+        p.addLine(to: pt(689.79, 0.00))
+        p.addLine(to: pt(696.69, 0.00))
+        p.addLine(to: pt(702.21, 21.00))
+        p.addLine(to: pt(698.13, 21.00))
+        p.addLine(to: pt(696.99, 16.38))
+        p.addLine(to: pt(689.49, 16.38))
+        p.addLine(to: pt(688.35, 21.00))
+        p.closeSubpath()
+        p.move(to: pt(690.42, 12.72))
+        p.addLine(to: pt(696.06, 12.72))
+        p.addLine(to: pt(693.51, 2.49))
+        p.addLine(to: pt(692.97, 2.49))
+        p.closeSubpath()
+        p.move(to: pt(710.73, 21.00))
+        p.addLine(to: pt(710.73, 0.00))
+        p.addLine(to: pt(714.69, 0.00))
+        p.addLine(to: pt(714.69, 21.00))
+        p.closeSubpath()
+        return p
+    }
+}
+
+/// The surface finish for a raised glyph — see CavnarRaisedShape.
+struct CavnarRaisedFinish {
+    var faceTop: Color
+    var faceBottom: Color
+    var rim: Color
+    var lip: Color
+
+    /// Cream (Ink) letters lit from above — the wordmark on any dark ground.
+    static let ink = CavnarRaisedFinish(
+        faceTop: Color(red: 0.99, green: 0.975, blue: 0.945),
+        faceBottom: Color(red: 0.84, green: 0.81, blue: 0.75),
+        rim: Color.white.opacity(0.95),
+        lip: Color(red: 0.52, green: 0.49, blue: 0.44)
+    )
+    /// The ember AI tag, same light.
+    static let ember = CavnarRaisedFinish(
+        faceTop: Color(red: 0.95, green: 0.64, blue: 0.45),
+        faceBottom: Color(red: 0.76, green: 0.29, blue: 0.18),
+        rim: Color(red: 1.0, green: 0.80, blue: 0.64).opacity(0.9),
+        lip: Color(red: 0.45, green: 0.16, blue: 0.10)
+    )
+}
+
+/// A filled shape given physical depth — what every rest-state wordmark
+/// uses so it reads as a raised, top-lit surface instead of a flat cutout:
+/// a gradient face that catches the light along its top, a hairline of
+/// lighter rim peeking over the top edges, and a darker lip showing under
+/// the bottom edges. The drop shadow and warm bloom that lift the whole
+/// word off the page are applied once by the parent (cavnarWordmarkLift),
+/// not per glyph.
+struct CavnarRaisedShape<S: Shape>: View {
+    var shape: S
     var scale: CGFloat
+    var finish: CavnarRaisedFinish
 
     var body: some View {
         ZStack {
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [Color.cavnarEmber.opacity(0.28), Color.cavnarEmber.opacity(0)],
-                        center: .center, startRadius: 0, endRadius: CavnarWordmarkLetterShape.emberRadius * 2.2 * scale
-                    )
-                )
-                .frame(width: CavnarWordmarkLetterShape.emberRadius * 4.4 * scale, height: CavnarWordmarkLetterShape.emberRadius * 4.4 * scale)
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [Color.cavnarEmber2, Color.cavnarEmber],
-                        center: UnitPoint(x: 0.42, y: 0.38), startRadius: 0, endRadius: CavnarWordmarkLetterShape.emberRadius * 1.2 * scale
-                    )
-                )
-                .frame(width: CavnarWordmarkLetterShape.emberRadius * 2 * scale, height: CavnarWordmarkLetterShape.emberRadius * 2 * scale)
+            shape.fill(finish.lip).offset(y: 2.6 * scale)
+            shape.fill(finish.rim).offset(y: -1.5 * scale)
+            shape.fill(LinearGradient(colors: [finish.faceTop, finish.faceBottom], startPoint: .top, endPoint: .bottom))
         }
     }
 }
 
+extension View {
+    /// The wordmark's lift off the surface: a black drop shadow beneath and
+    /// a faint warm bloom around, applied to the word as one layer.
+    func cavnarWordmarkLift(scale: CGFloat) -> some View {
+        compositingGroup()
+            .shadow(color: .black.opacity(0.55), radius: 14 * scale, y: 8 * scale)
+            .shadow(color: Color.cavnarEmber.opacity(0.18), radius: 30 * scale)
+    }
+}
+
+/// The AI tag with the raised finish, fading and settling up into place.
+private struct CavnarWordmarkAITag: View {
+    var scale: CGFloat
+    var shown: Bool
+
+    var body: some View {
+        CavnarRaisedShape(shape: CavnarWordmarkAITagShape(), scale: scale, finish: .ember)
+            .frame(width: CavnarWordmarkAITagShape.width * scale, height: CavnarWordmarkAITagShape.height * scale)
+            .cavnarWordmarkLift(scale: scale)
+            .opacity(shown ? 1 : 0)
+            .offset(y: shown ? 0 : 6 * scale)
+    }
+}
+
+/// The ember the V cradles — the one point of color inside the wordmark.
+/// When `dropped` flips true it plops in: falls from above the cap line,
+/// squashes against the V on impact, throws a single ripple and a brief
+/// flare of heat, then settles into its resting glow. Mounted with
+/// `dropped` already true it just plays the plop on appear.
+struct CavnarWordmarkEmber: View {
+    var scale: CGFloat
+    var dropped: Bool
+
+    @State private var shown = false
+    // 1 = held above the word, 0 = seated in the V.
+    @State private var fall: CGFloat = 1
+    @State private var squashed = false
+    @State private var flare: CGFloat = 0
+    @State private var rippled = false
+
+    private var r: CGFloat { CavnarWordmarkLetterShape.emberRadius * scale }
+
+    var body: some View {
+        ZStack {
+            // Resting glow.
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Color.cavnarEmber.opacity(0.28), Color.cavnarEmber.opacity(0)],
+                        center: .center, startRadius: 0, endRadius: r * 2.2
+                    )
+                )
+                .frame(width: r * 4.4, height: r * 4.4)
+            // Impact flare — a hotter, wider halo that blooms and fades.
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [cavnarEmberHot.opacity(0.75), Color.cavnarEmber.opacity(0)],
+                        center: .center, startRadius: 0, endRadius: r * 3
+                    )
+                )
+                .frame(width: r * 6, height: r * 6)
+                .scaleEffect(0.5 + 0.7 * flare)
+                .opacity(flare)
+            // Impact ripple.
+            Circle()
+                .stroke(Color.cavnarEmber, lineWidth: 1.4)
+                .frame(width: r * 2, height: r * 2)
+                .scaleEffect(rippled ? 3.6 : 1)
+                .opacity(rippled ? 0 : 0.8)
+                .animation(.easeOut(duration: 0.6), value: rippled)
+            // The ember itself.
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Color.cavnarEmber2, Color.cavnarEmber],
+                        center: UnitPoint(x: 0.42, y: 0.38), startRadius: 0, endRadius: r * 1.2
+                    )
+                )
+                .frame(width: r * 2, height: r * 2)
+                .scaleEffect(x: squashed ? 1.24 : 1, y: squashed ? 0.76 : 1, anchor: .bottom)
+        }
+        .offset(y: -fall * 58 * scale)
+        .opacity(shown ? 1 : 0)
+        .allowsHitTesting(false)
+        .task(id: dropped) {
+            guard dropped else { return }
+            withAnimation(.easeOut(duration: 0.12)) { shown = true }
+            withAnimation(.easeIn(duration: 0.38)) { fall = 0 }
+            try? await Task.sleep(for: .seconds(0.38))
+            withAnimation(.easeOut(duration: 0.07)) {
+                squashed = true
+                flare = 1
+            }
+            rippled = true
+            try? await Task.sleep(for: .seconds(0.08))
+            withAnimation(.easeInOut(duration: 0.24)) { squashed = false }
+            withAnimation(.easeOut(duration: 0.6)) { flare = 0 }
+        }
+    }
+}
+
+/// One specular pass over the settled word — a narrow band of light swept
+/// diagonally through the letters, once, the way a polished surface
+/// catches a moving light. Masked to the glyphs so it never spills.
+struct CavnarWordmarkSheen: View {
+    var width: CGFloat
+    var height: CGFloat
+    var fired: Bool
+
+    var body: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .white.opacity(0), location: 0),
+                .init(color: .white.opacity(0.55), location: 0.5),
+                .init(color: .white.opacity(0), location: 1),
+            ],
+            startPoint: .leading, endPoint: .trailing
+        )
+        .frame(width: width * 0.28, height: height * 2.6)
+        .rotationEffect(.degrees(-22))
+        .offset(x: fired ? width * 0.8 : -width * 0.8)
+        .animation(.easeInOut(duration: 1.0), value: fired)
+        .frame(width: width, height: height)
+        .mask(
+            ZStack {
+                ForEach(0..<6, id: \.self) { i in
+                    CavnarWordmarkLetterShape(index: i).fill(.black)
+                }
+            }
+            .frame(width: width, height: height)
+        )
+        .blendMode(.plusLighter)
+        .allowsHitTesting(false)
+    }
+}
+
 /// Six letters stamp in like a branding iron, one after another, the
-/// ember drops into the V, then the AI tag fades up beside them. Plays
-/// once on appear. `width` is the wordmark's own width (the AI tag sits
-/// outside it, to the right).
+/// ember plops into the V while the last of them land, then the AI tag
+/// settles in and one pass of light sweeps the finished word. The warm
+/// entrance — a re-lock in the same session, a sign-out. `width` is the
+/// wordmark's own width (the AI tag sits outside it, to the right).
 struct CavnarWordmarkStampIn: View {
     var width: CGFloat
-    var color: Color = .cavnarInk
+    var finish: CavnarRaisedFinish = .ink
     var delay: Double = 0
     var showsAITag: Bool = true
     // When true the AI tag hangs off the wordmark's trailing edge as an
@@ -302,199 +500,218 @@ struct CavnarWordmarkStampIn: View {
     // is part of the composed lockup's width, matching the BrandLockup asset.
     var aiTagOverhangs: Bool = false
 
+    /// From the first stamp to the tag landing — what a parent waits for
+    /// before bringing up whatever sits beneath the word.
+    static let duration: Double = 1.0
+
     @State private var shown: [Bool] = Array(repeating: false, count: 6)
     @State private var emberDropped = false
     @State private var tagShown = false
+    @State private var sheenFired = false
 
     private var scale: CGFloat { width / CavnarWordmarkLetterShape.boxWidth }
     private var height: CGFloat { CavnarWordmarkLetterShape.boxHeight * scale }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 54 * scale) {
+        HStack(alignment: .top, spacing: CavnarWordmarkAITagShape.gap * scale) {
             ZStack(alignment: .topLeading) {
-                ForEach(0..<6, id: \.self) { i in
-                    CavnarWordmarkLetterShape(index: i)
-                        .fill(color)
-                        .frame(width: width, height: height)
-                        .opacity(shown[i] ? 1 : 0)
-                        .scaleEffect(
-                            shown[i] ? 1 : 1.06,
-                            anchor: UnitPoint(x: CavnarWordmarkLetterShape.centers[i] / CavnarWordmarkLetterShape.boxWidth, y: 0.5)
-                        )
-                        .offset(y: shown[i] ? 0 : 8 * scale)
+                ZStack {
+                    ForEach(0..<6, id: \.self) { i in
+                        CavnarRaisedShape(shape: CavnarWordmarkLetterShape(index: i), scale: scale, finish: finish)
+                            .opacity(shown[i] ? 1 : 0)
+                            .scaleEffect(
+                                shown[i] ? 1 : 1.06,
+                                anchor: UnitPoint(x: CavnarWordmarkLetterShape.centers[i] / CavnarWordmarkLetterShape.boxWidth, y: 0.5)
+                            )
+                            .offset(y: shown[i] ? 0 : 8 * scale)
+                    }
+                    CavnarWordmarkSheen(width: width, height: height, fired: sheenFired)
                 }
-                CavnarWordmarkEmber(scale: scale)
-                    .opacity(emberDropped ? 1 : 0)
-                    .offset(y: emberDropped ? 0 : -22 * scale)
+                .frame(width: width, height: height)
+                .cavnarWordmarkLift(scale: scale)
+                CavnarWordmarkEmber(scale: scale, dropped: emberDropped)
                     .position(x: CavnarWordmarkLetterShape.emberCenter.x * scale, y: CavnarWordmarkLetterShape.emberCenter.y * scale)
             }
             .frame(width: width, height: height)
             .overlay(alignment: .topLeading) {
                 if showsAITag && aiTagOverhangs {
-                    // Pinned at the frame's leading edge, then pushed past
-                    // the whole wordmark plus one gap — outside the frame,
-                    // taking no layout width. (An alignmentGuide on the
-                    // trailing edge was tried first and landed on the R.)
-                    aiTag.offset(x: width + 54 * scale)
+                    // Pinned at the frame's leading edge, then pushed out to
+                    // its own spot past the R — outside the frame, taking no
+                    // layout width. Top-aligned, so its cap line is the
+                    // letters' cap line.
+                    CavnarWordmarkAITag(scale: scale, shown: tagShown)
+                        .offset(x: CavnarWordmarkAITagShape.leading * scale)
                 }
             }
 
             if showsAITag && !aiTagOverhangs {
-                aiTag
+                CavnarWordmarkAITag(scale: scale, shown: tagShown)
             }
         }
         .task {
             if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
             for i in 0..<6 {
                 withAnimation(.easeOut(duration: 0.32)) { shown[i] = true }
+                // The V is down by now — the ember falls while the last
+                // two letters are still landing.
+                if i == 4 { emberDropped = true }
                 try? await Task.sleep(for: .seconds(0.09))
             }
-            try? await Task.sleep(for: .seconds(0.25))
-            withAnimation(.easeOut(duration: 0.35)) { emberDropped = true }
-            try? await Task.sleep(for: .seconds(0.2))
+            try? await Task.sleep(for: .seconds(0.4))
             withAnimation(.easeOut(duration: 0.4)) { tagShown = true }
+            try? await Task.sleep(for: .seconds(0.45))
+            sheenFired = true
         }
-    }
-
-    // Same size/tracking ratio as the BrandLockup asset's own tag
-    // (font-size 30, letter-spacing 6, in the same 100-unit box).
-    private var aiTag: some View {
-        Text("AI")
-            .font(.cavnarNumber(30 * scale, weight: 700))
-            .tracking(6 * scale)
-            .foregroundStyle(Color.cavnarEmber)
-            .padding(.top, 6 * scale)
-            .opacity(tagShown ? 1 : 0)
     }
 }
 
-/// The wordmark typed out by an ember cursor — the cold-launch entrance
-/// (a fresh process, not a return from the background). The cursor
-/// appears where the C will land, blinks once, types the six letters at
-/// a quick clip (each letter snaps in whole — no fade — the way a caret
-/// commits a character), the ember drops into the V, the cursor blinks
-/// twice at the end of the word and fades away, then the AI tag fades up.
-struct CavnarWordmarkTypewriter: View {
+/// The cold-launch entrance — a fresh process, not a return from the
+/// background. Each letter is drawn: a hot ember tip traces its outline,
+/// leaving a cream hairline behind, and as the trace closes the face
+/// floods in and the stroke burns off. The ember plops into the V while
+/// the word is still being drawn, the AI tag lands after the R, and one
+/// pass of light sweeps the finished word. `width` is the wordmark's own
+/// width (the tag sits past it).
+struct CavnarWordmarkTraceIn: View {
     var width: CGFloat
-    var color: Color = .cavnarInk
+    var finish: CavnarRaisedFinish = .ink
     var delay: Double = 0
     var showsAITag: Bool = true
     var aiTagOverhangs: Bool = false
     var onFinished: (() -> Void)? = nil
 
-    @State private var typed = 0
-    @State private var cursorShown = false
-    @State private var cursorLit = true
+    /// From the first trace to the tag landing — what a parent waits for
+    /// before bringing up whatever sits beneath the word.
+    static let duration: Double = 2.0
+
+    @State private var traced: [CGFloat] = Array(repeating: 0, count: 6)
+    @State private var filled: [Bool] = Array(repeating: false, count: 6)
     @State private var emberDropped = false
     @State private var tagShown = false
+    @State private var sheenFired = false
 
     private var scale: CGFloat { width / CavnarWordmarkLetterShape.boxWidth }
     private var height: CGFloat { CavnarWordmarkLetterShape.boxHeight * scale }
-    private var cursorX: CGFloat {
-        typed == 0 ? 0 : (CavnarWordmarkLetterShape.bounds[typed - 1].trailing + 8) * scale
+
+    private enum Step {
+        case trace(Int), fill(Int), ember, tag, sheen
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 54 * scale) {
+        HStack(alignment: .top, spacing: CavnarWordmarkAITagShape.gap * scale) {
             ZStack(alignment: .topLeading) {
+                // Faces.
+                ZStack {
+                    ForEach(0..<6, id: \.self) { i in
+                        CavnarRaisedShape(shape: CavnarWordmarkLetterShape(index: i), scale: scale, finish: finish)
+                            .opacity(filled[i] ? 1 : 0)
+                    }
+                    CavnarWordmarkSheen(width: width, height: height, fired: sheenFired)
+                }
+                .frame(width: width, height: height)
+                .cavnarWordmarkLift(scale: scale)
+                // Traces — the cream hairline, and the hot tip drawing it.
                 ForEach(0..<6, id: \.self) { i in
                     CavnarWordmarkLetterShape(index: i)
-                        .fill(color)
+                        .trim(from: 0, to: traced[i])
+                        .stroke(finish.rim, style: StrokeStyle(lineWidth: 2.2 * scale, lineCap: .round, lineJoin: .round))
                         .frame(width: width, height: height)
-                        .opacity(i < typed ? 1 : 0)
+                        .opacity(filled[i] ? 0 : 0.9)
+                    CavnarWordmarkLetterShape(index: i)
+                        .trim(from: max(0, traced[i] - 0.045), to: traced[i])
+                        .stroke(Color.cavnarEmber, style: StrokeStyle(lineWidth: 5 * scale, lineCap: .round, lineJoin: .round))
+                        .shadow(color: cavnarEmberHot.opacity(0.9), radius: 5 * scale)
+                        .frame(width: width, height: height)
+                        .opacity(filled[i] || traced[i] == 0 ? 0 : 1)
                 }
-                CavnarWordmarkEmber(scale: scale)
-                    .opacity(emberDropped ? 1 : 0)
-                    .offset(y: emberDropped ? 0 : -22 * scale)
+                CavnarWordmarkEmber(scale: scale, dropped: emberDropped)
                     .position(x: CavnarWordmarkLetterShape.emberCenter.x * scale, y: CavnarWordmarkLetterShape.emberCenter.y * scale)
-                // The cursor: a cap-height ember bar, one letter-stroke wide.
-                RoundedRectangle(cornerRadius: 2 * scale)
-                    .fill(Color.cavnarEmber)
-                    .frame(width: 9 * scale, height: height)
-                    .shadow(color: Color.cavnarEmber.opacity(0.6), radius: 6 * scale)
-                    .offset(x: cursorX)
-                    .opacity(cursorShown && cursorLit ? 1 : 0)
             }
             .frame(width: width, height: height)
             .overlay(alignment: .topLeading) {
                 if showsAITag && aiTagOverhangs {
-                    aiTag.offset(x: width + 54 * scale)
+                    CavnarWordmarkAITag(scale: scale, shown: tagShown)
+                        .offset(x: CavnarWordmarkAITagShape.leading * scale)
                 }
             }
 
             if showsAITag && !aiTagOverhangs {
-                aiTag
+                CavnarWordmarkAITag(scale: scale, shown: tagShown)
             }
         }
         .task {
             if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
-            // Cursor arrives where the C will be, blinks once.
-            withAnimation(.easeOut(duration: 0.2)) { cursorShown = true }
-            try? await Task.sleep(for: .seconds(0.45))
-            cursorLit = false
-            try? await Task.sleep(for: .seconds(0.18))
-            cursorLit = true
-            try? await Task.sleep(for: .seconds(0.3))
-            // Type.
-            for i in 1...6 {
-                var t = Transaction(animation: nil)
-                t.disablesAnimations = true
-                withTransaction(t) { typed = i }
-                try? await Task.sleep(for: .seconds(0.1))
+            // One timeline, in seconds from the first trace: letters start
+            // 0.14s apart, each fills 0.52s after its trace begins, and the
+            // ember drops the moment the V has filled.
+            var script: [(at: Double, step: Step)] = []
+            for i in 0..<6 {
+                let start = Double(i) * 0.14
+                script.append((start, .trace(i)))
+                script.append((start + 0.52, .fill(i)))
             }
-            try? await Task.sleep(for: .seconds(0.15))
-            withAnimation(.easeOut(duration: 0.35)) { emberDropped = true }
-            // Two blinks at the end of the word, then gone.
-            for _ in 0..<2 {
-                try? await Task.sleep(for: .seconds(0.32))
-                cursorLit = false
-                try? await Task.sleep(for: .seconds(0.3))
-                cursorLit = true
+            script.append((0.86, .ember))
+            script.append((1.45, .tag))
+            script.append((1.75, .sheen))
+            script.sort { $0.at < $1.at }
+
+            var clock = 0.0
+            for (at, step) in script {
+                if at > clock {
+                    try? await Task.sleep(for: .seconds(at - clock))
+                    clock = at
+                }
+                switch step {
+                case .trace(let i):
+                    withAnimation(.easeInOut(duration: 0.62)) { traced[i] = 1 }
+                case .fill(let i):
+                    withAnimation(.easeOut(duration: 0.3)) { filled[i] = true }
+                case .ember:
+                    emberDropped = true
+                case .tag:
+                    withAnimation(.easeOut(duration: 0.4)) { tagShown = true }
+                case .sheen:
+                    sheenFired = true
+                }
             }
-            try? await Task.sleep(for: .seconds(0.35))
-            withAnimation(.easeOut(duration: 0.55)) { cursorShown = false }
-            try? await Task.sleep(for: .seconds(0.2))
-            withAnimation(.easeOut(duration: 0.4)) { tagShown = true }
-            try? await Task.sleep(for: .seconds(0.4))
+            if Self.duration > clock {
+                try? await Task.sleep(for: .seconds(Self.duration - clock))
+            }
             onFinished?()
         }
-    }
-
-    private var aiTag: some View {
-        Text("AI")
-            .font(.cavnarNumber(30 * scale, weight: 700))
-            .tracking(6 * scale)
-            .foregroundStyle(Color.cavnarEmber)
-            .padding(.top, 6 * scale)
-            .opacity(tagShown ? 1 : 0)
     }
 }
 
 /// The full lockup (seal + wordmark + AI tag) as one choreographed
-/// entrance — seal draws itself while the letters stamp in (or, on a cold
-/// launch, get typed out by the ember cursor) beside it. Same 920x148
+/// entrance — the seal draws itself while the letters stamp in (or, on a
+/// cold launch, get traced and filled) beside it. Same 865x148
 /// proportions as the BrandLockup asset so it drops in at the same `width`
 /// wherever that static image was used.
 struct CavnarLockupIntro: View {
     var width: CGFloat
-    var typewriter: Bool = false
+    var coldLaunch: Bool = false
 
-    private var s: CGFloat { width / 920 }
+    /// The lockup's proportions (brand/assets/lockup-light.svg): seal, gap,
+    /// wordmark, gap, AI tag.
+    static let aspectWidth: CGFloat = 865
+    static let aspectHeight: CGFloat = 148
+
+    private var s: CGFloat { width / Self.aspectWidth }
 
     var body: some View {
         HStack(alignment: .top, spacing: 30 * s) {
             CavnarSealDrawIn(size: 120 * s)
                 .padding(.top, 14 * s)
             Group {
-                if typewriter {
-                    CavnarWordmarkTypewriter(width: CavnarWordmarkLetterShape.boxWidth * s, delay: 0.45)
+                if coldLaunch {
+                    CavnarWordmarkTraceIn(width: CavnarWordmarkLetterShape.boxWidth * s, delay: 0.45)
                 } else {
                     CavnarWordmarkStampIn(width: CavnarWordmarkLetterShape.boxWidth * s, delay: 0.45)
                 }
             }
             .padding(.top, 4 * s)
         }
-        .frame(width: width, height: 148 * s, alignment: .topLeading)
+        .frame(width: width, height: Self.aspectHeight * s, alignment: .topLeading)
     }
 }
 

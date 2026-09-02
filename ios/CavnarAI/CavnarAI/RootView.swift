@@ -19,8 +19,8 @@ struct RootView: View {
     // wasted underneath it.
     @State private var introWaitingOnSplash = false
     // True from process start until the first unlock/sign-in — the one
-    // window where the wordmark gets typed out by the ember cursor
-    // (CavnarWordmarkTypewriter) instead of stamping in. A later re-lock
+    // window where the wordmark gets traced and filled in by the ember
+    // (CavnarWordmarkTraceIn) instead of stamping in. A later re-lock
     // from the background is the same session, and gets the stamp-in.
     @State private var coldLaunchIntroPending = true
     // Owned here rather than by HomeView/ModulesGridView themselves — see
@@ -49,12 +49,12 @@ struct RootView: View {
     var body: some View {
         Group {
             if !sessionStore.isAuthenticated {
-                LoginView(sessionStore: sessionStore, introReady: !showLaunchSplash, typewriter: coldLaunchIntroPending)
+                LoginView(sessionStore: sessionStore, introReady: !showLaunchSplash, coldLaunch: coldLaunchIntroPending)
             } else if sessionStore.isLocked {
                 // introReady: on a cold launch this mounts UNDER the splash;
                 // without the gate its draw-in played hidden and the user
                 // only ever saw the settled end state once the splash lifted.
-                LockedView(introReady: !showLaunchSplash, typewriter: coldLaunchIntroPending)
+                LockedView(introReady: !showLaunchSplash, coldLaunch: coldLaunchIntroPending)
             } else {
                 mainTabs
             }
@@ -94,7 +94,7 @@ struct RootView: View {
                 sessionStore.lockIfNeeded()
             }
         }
-        // The cold-launch typewriter is spent once the user is through the
+        // The cold-launch trace-in is spent once the user is through the
         // gate — by unlocking, or by signing in on a fresh install.
         .onChange(of: sessionStore.isLocked) { _, locked in
             if !locked { coldLaunchIntroPending = false }
@@ -395,9 +395,9 @@ struct LockedView: View {
     // launch — the wordmark isn't mounted (so its stamp-in doesn't start)
     // and the stagger below waits, so nothing plays hidden.
     var introReady: Bool = true
-    // Cold launch: the wordmark is typed out by the ember cursor. A warm
-    // re-lock (same session) gets the quicker stamp-in.
-    var typewriter: Bool = false
+    // Cold launch: the wordmark is traced and filled in by the ember. A
+    // warm re-lock (same session) gets the quicker stamp-in.
+    var coldLaunch: Bool = false
     @State private var isUnlocking = false
     @State private var unlockFailed = false
     // Staggered reveal after the lockup has drawn itself in: 1 headline,
@@ -434,8 +434,8 @@ struct LockedView: View {
                 // aiTagOverhangs: the six letters are what's centered above
                 // "Welcome back"; the small AI tag hangs off to the right.
                 Group {
-                    if introReady && typewriter {
-                        CavnarWordmarkTypewriter(width: 300, aiTagOverhangs: true)
+                    if introReady && coldLaunch {
+                        CavnarWordmarkTraceIn(width: 300, aiTagOverhangs: true)
                     } else if introReady {
                         CavnarWordmarkStampIn(width: 300, aiTagOverhangs: true)
                     } else {
@@ -503,10 +503,9 @@ struct LockedView: View {
         .animation(.easeOut(duration: 0.3), value: unlockFailed)
         .task(id: introReady) {
             guard introReady, stage == 0 else { return }
-            // Let the wordmark finish arriving first — typed out (~2.7s to
-            // the cursor's last blink) or stamped in (~1s) — then bring the
-            // rest up in order.
-            try? await Task.sleep(for: .seconds(typewriter ? 2.7 : 1.0))
+            // Let the wordmark finish arriving first — traced and filled
+            // (cold launch) or stamped in — then bring the rest up in order.
+            try? await Task.sleep(for: .seconds(coldLaunch ? CavnarWordmarkTraceIn.duration : CavnarWordmarkStampIn.duration))
             for step in 1...4 {
                 withAnimation(.easeOut(duration: 0.45)) { stage = step }
                 try? await Task.sleep(for: .seconds(0.14))
