@@ -1,9 +1,11 @@
 """
 emails.py — Cavnar AI email sending functions
 """
+import logging
 import os
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 FROM_EMAIL     = os.getenv("FROM_EMAIL", "will@cavnar.ai")
+log = logging.getLogger(__name__)
 
 
 def generate_email_personalization(context: str, fallback: str, restaurant_id: int = None) -> str:
@@ -43,6 +45,7 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
 def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: str = None):
     """Send 2FA verification code email."""
     if not RESEND_API_KEY:
+        log.warning("send_2fa_code: RESEND_API_KEY not set — nothing sent")
         return False
     import requests
     greeting = f"Hi {owner_name}," if owner_name else "Hi,"
@@ -69,8 +72,11 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
             json={"from": f"Cavnar AI <{FROM_EMAIL}>", "to": [to_email],
                   "subject": f"Your Cavnar AI verification code: {code}", "html": html},
             timeout=10)
+        if resp.status_code != 200:
+            log.warning("send_2fa_code: Resend returned %s: %s", resp.status_code, resp.text[:300])
         return resp.status_code == 200
-    except Exception:
+    except Exception as e:
+        log.warning("send_2fa_code: request to Resend failed: %s", e)
         return False
 
 def send_login_notification(to_email: str, restaurant_name: str,

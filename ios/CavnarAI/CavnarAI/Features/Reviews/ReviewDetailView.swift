@@ -165,9 +165,11 @@ struct ReviewDetailView: View {
                     .disabled(viewModel.isSubmitting)
                 }
             }
-            if viewModel.isLoadingInitialDraft {
+            if viewModel.isGeneratingDraft {
                 // "Composing" — an ember caret writing each line into place
-                // while Claude drafts the reply (see CavnarMotion).
+                // while Claude drafts the reply (see CavnarMotion). Covers
+                // the very first auto-draft AND a manual Regenerate tap —
+                // both route through regenerateDraft().
                 CavnarComposingLines(widths: [1.0, 0.95, 0.9, 0.97, 0.8, 0.88, 0.5], lineHeight: 12, spacing: 10)
                     .frame(minHeight: 130)
                     .padding(14)
@@ -282,7 +284,9 @@ struct ReviewDetailView: View {
             Button {
                 Task { await viewModel.approve() }
             } label: {
-                if viewModel.isSubmitting {
+                // isApproving, not isSubmitting — regenerate/skip/save also
+                // set isSubmitting, and none of those are "posting."
+                if viewModel.isApproving {
                     CavnarShimmerText(text: "Posting…", color: Color.cavnarInk)
                 } else {
                     Text("Approve & Post")

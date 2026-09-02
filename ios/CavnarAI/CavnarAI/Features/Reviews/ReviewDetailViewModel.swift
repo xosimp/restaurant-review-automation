@@ -13,11 +13,18 @@ final class ReviewDetailViewModel {
     var currentStatus: String
     var editedDraft: String
     var isSubmitting = false
-    /// True only while the very-first auto-draft (ensureDraftIfNeeded) is in
-    /// flight — distinct from isSubmitting, which also covers approve/skip/
-    /// manual-regenerate/save, none of which should show the initial-load
-    /// skeleton in the draft box.
-    var isLoadingInitialDraft = false
+    /// True only while approve() itself is running — narrower than
+    /// isSubmitting (which also covers skip/regenerate/save/undo/retract)
+    /// so the "Approve & Post" button's label only ever claims to be
+    /// posting when it genuinely is. It used to read isSubmitting directly
+    /// and said "Posting…" while a regenerate was running underneath it.
+    var isApproving = false
+    /// True while a draft is being written by Claude — the very first
+    /// auto-draft (ensureDraftIfNeeded) and every manual Regenerate both
+    /// route through regenerateDraft(), which sets this for the duration
+    /// of either. The draft box shows the composing-lines animation
+    /// instead of the (stale) old draft while this is true.
+    var isGeneratingDraft = false
     var errorMessage: String?
     /// Set to true once approve/skip succeeds — the detail view watches this
     /// to pop back to the list.
@@ -98,8 +105,12 @@ final class ReviewDetailViewModel {
             await saveDraft()
         }
         isSubmitting = true
+        isApproving = true
         errorMessage = nil
-        defer { isSubmitting = false }
+        defer {
+            isSubmitting = false
+            isApproving = false
+        }
         do {
             let response: ApproveResponse = try await client.send(
                 "/mobile/api/reviews/\(review.id)/approve", method: .post
@@ -153,9 +164,7 @@ final class ReviewDetailViewModel {
     /// using the same regenerate-draft endpoint the button already calls.
     func ensureDraftIfNeeded() async {
         guard editedDraft.isEmpty else { return }
-        isLoadingInitialDraft = true
         await regenerateDraft()
-        isLoadingInitialDraft = false
     }
 
     /// Note: this route (like save-draft below) always answers HTTP 200 and
@@ -163,8 +172,12 @@ final class ReviewDetailViewModel {
     /// client_api.py's regenerate_draft(), which never sets an error status.
     func regenerateDraft() async {
         isSubmitting = true
+        isGeneratingDraft = true
         errorMessage = nil
-        defer { isSubmitting = false }
+        defer {
+            isSubmitting = false
+            isGeneratingDraft = false
+        }
         do {
             let response: DraftResponse = try await client.send(
                 "/mobile/api/reviews/\(review.id)/regenerate-draft", method: .post

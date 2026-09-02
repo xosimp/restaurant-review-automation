@@ -134,6 +134,7 @@ private struct ChangePasswordSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var current = ""
     @State private var newPassword = ""
+    @State private var postedLabel: String?
     @FocusState private var focusedField: ChangePasswordField?
 
     private var canSubmit: Bool {
@@ -163,7 +164,10 @@ private struct ChangePasswordSheet: View {
                         Button {
                             Task {
                                 await viewModel.changePassword(current: current, newPassword: newPassword)
-                                if viewModel.changePasswordSucceeded { dismiss() }
+                                if viewModel.changePasswordSucceeded {
+                                    Haptic.success()
+                                    postedLabel = "Password changed"
+                                }
                             }
                         } label: {
                             if viewModel.isChangingPassword {
@@ -186,6 +190,7 @@ private struct ChangePasswordSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { cavnarTitleToolbar("Change Password") }
             .keyboardNavToolbar($focusedField)
+            .cavnarPostedOverlay(postedLabel) { dismiss() }
         }
     }
 }
@@ -198,6 +203,7 @@ private struct TwoFactorSetupSheet: View {
     let viewModel: AccountViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var code = ""
+    @State private var postedLabel: String?
     @FocusState private var focusedField: TwoFactorSetupField?
 
     var body: some View {
@@ -223,7 +229,10 @@ private struct TwoFactorSetupSheet: View {
                         CavnarFormButtonPair { matchedWidth in
                             Button {
                                 Task {
-                                    if await viewModel.verify2FA(code: code) { dismiss() }
+                                    if await viewModel.verify2FA(code: code) {
+                                        Haptic.success()
+                                        postedLabel = "Two-factor enabled"
+                                    }
                                 }
                             } label: {
                                 if viewModel.is2FABusy {
@@ -275,6 +284,10 @@ private struct TwoFactorSetupSheet: View {
             // matching Apple's own single-field bar rather than showing
             // two permanently-disabled chevrons for show.
             .keyboardDoneToolbar { focusedField = nil }
+            // Only the verify-and-enable success gets the posted moment —
+            // sending the test code is a step along the way, not the
+            // milestone itself.
+            .cavnarPostedOverlay(postedLabel) { dismiss() }
         }
     }
 }

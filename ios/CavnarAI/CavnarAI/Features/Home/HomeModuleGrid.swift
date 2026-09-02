@@ -82,17 +82,20 @@ struct HomeModuleGrid: View {
         }
     }
 
-    /// Lights the tile the instant it's tapped, holds it fully lit for one
-    /// guaranteed beat, then navigates — decoupled from the Button's own
-    /// `isPressed` (see CavnarTileFlash's doc comment for why that's
-    /// unreliable this deep inside a ScrollView). `onSelect` still carries
-    /// the actual haptic, via the parent's own debounced navigate(to:).
+    /// Lights the tile and navigates in the same instant — no gating delay
+    /// before `onSelect` fires (an earlier version waited ~130ms first "to
+    /// let the flash show," which was exactly the lag that made tapping
+    /// feel slow). The flash and the navigation push both start in this
+    /// same call; the tile is covered by the pushed screen well before its
+    /// own fade-out would finish, so nothing is lost by not waiting for
+    /// it. flashingKey is only cleared afterward, for cleanup — that
+    /// clearing is not on the critical path and never delays a tap.
     private func tap(_ module: ModuleSummary) {
         flashingKey = module.id
+        onSelect(module)
         Task {
-            try? await Task.sleep(for: .milliseconds(130))
-            onSelect(module)
-            flashingKey = nil
+            try? await Task.sleep(for: .milliseconds(400))
+            if flashingKey == module.id { flashingKey = nil }
         }
     }
 }
