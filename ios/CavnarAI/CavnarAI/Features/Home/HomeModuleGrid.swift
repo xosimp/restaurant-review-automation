@@ -82,19 +82,22 @@ struct HomeModuleGrid: View {
         }
     }
 
-    /// Lights the tile and navigates in the same instant — no gating delay
-    /// before `onSelect` fires (an earlier version waited ~130ms first "to
-    /// let the flash show," which was exactly the lag that made tapping
-    /// feel slow). The flash and the navigation push both start in this
-    /// same call; the tile is covered by the pushed screen well before its
-    /// own fade-out would finish, so nothing is lost by not waiting for
-    /// it. flashingKey is only cleared afterward, for cleanup — that
-    /// clearing is not on the critical path and never delays a tap.
+    /// Lights the tile, holds for one short beat, then navigates. Firing
+    /// both at once (no delay at all) made the flash imperceptible — the
+    /// NavigationStack push transition is a bigger, faster motion that
+    /// starts in the same instant and visually swallows a same-frame
+    /// flash before the eye can register it. 70ms is the shortest gap
+    /// that reliably reads as an intentional highlight rather than
+    /// nothing (roughly what UITableViewCell's own selection flash uses)
+    /// while staying well under the ~130ms a first attempt used, which
+    /// read as lag rather than feedback.
+    private static let flashHoldMs: UInt64 = 70
+
     private func tap(_ module: ModuleSummary) {
         flashingKey = module.id
-        onSelect(module)
         Task {
-            try? await Task.sleep(for: .milliseconds(400))
+            try? await Task.sleep(for: .milliseconds(Self.flashHoldMs))
+            onSelect(module)
             if flashingKey == module.id { flashingKey = nil }
         }
     }

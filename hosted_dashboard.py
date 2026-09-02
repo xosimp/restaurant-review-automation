@@ -6,8 +6,24 @@ Run locally:  python3 hosted_dashboard.py
 Deploy:       Railway (connect GitHub repo, set env vars)
 """
 import os, json
+import pathlib
 from datetime import datetime, timedelta
 from functools import wraps
+# Must run before any local module is imported below — emails.py (and
+# others) read RESEND_API_KEY/etc. as a MODULE-LEVEL constant via
+# os.getenv() at import time. Python only executes a module's top-level
+# code on its FIRST import; every later `from emails import ...` anywhere
+# in the app (admin_routes.py, webhook_routes.py) just reuses that same
+# cached module object. Locally, .env is the only source for these vars —
+# on Railway they're already in the real environment before Python even
+# starts, so this ordering bug never showed up there — but here, the old
+# order (load_dotenv() at the bottom of this import block, after `from
+# emails import ...` above it) meant RESEND_API_KEY froze as "" for the
+# life of every local run, and every emails.py function silently failed
+# with no indication why. Found via send_2fa_code's new logging: "RESEND_
+# API_KEY not set" even though .env plainly has a working key.
+from dotenv import load_dotenv
+load_dotenv(pathlib.Path(__file__).parent / ".env")
 PORT = int(os.getenv("PORT", 5000))
 from flask import (Flask, render_template, request,
                    jsonify, redirect, url_for, make_response, send_file, session)
@@ -22,9 +38,6 @@ from auth import (init_auth, verify_password, create_session,
                   list_users, update_password,
                   get_sessions_for_user, revoke_other_sessions,
                   get_user_by_restaurant_id)
-from dotenv import load_dotenv
-import pathlib
-load_dotenv(pathlib.Path(__file__).parent / ".env")
 
 # ── Sentry error monitoring ───────────────────────────────────────────────────
 import sentry_sdk
