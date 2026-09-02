@@ -38,6 +38,11 @@ final class SessionStore {
     // themselves so the flow resumes right where the user left off instead
     // of just vanishing.
     var pendingTwoFactorSetupEmail: String?
+    // Which channel that pending test code went out on ("email"/"sms") —
+    // survives the same relock as pendingTwoFactorSetupEmail above, so a
+    // resumed setup flow verifies against the channel that was actually
+    // used rather than silently defaulting back to email.
+    var pendingTwoFactorSetupMethod: String = "email"
 
     var isAuthenticated: Bool { token != nil }
 
@@ -209,6 +214,7 @@ final class SessionStore {
         isLocked = false
         hasShownHomeIntro = false
         pendingTwoFactorSetupEmail = nil
+        pendingTwoFactorSetupMethod = "email"
     }
 
     // MARK: - Face ID re-entry lock

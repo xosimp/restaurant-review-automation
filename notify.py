@@ -58,6 +58,15 @@ def send_sms(to_phone: str, message: str) -> bool:
         return False
 
 
+def send_2fa_sms(to_phone: str, restaurant_name: str, code: str) -> bool:
+    """The SMS side of 2FA delivery — a client can choose email or text
+    when they enable two-factor (see mobile_api.py's
+    account/2fa/send-test and .../verify). Plain send_sms under the hood;
+    exists mainly so the 6 call sites that send a 2FA code don't each
+    hand-roll their own message copy."""
+    return send_sms(to_phone, f"Cavnar AI verification code for {restaurant_name}: {code}. Expires in 10 minutes. If you didn't request this, someone may have your password — contact will@cavnar.ai.")
+
+
 def _send_alert_email(owner_email: str, subject: str, html: str) -> bool:
     """Send an alert email via Resend. Returns True on success."""
     if not RESEND_API_KEY or not owner_email:

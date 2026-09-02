@@ -90,29 +90,22 @@ struct ReviewsListView: View {
                 )
             } else {
                 List(Array(viewModel.reviews.enumerated()), id: \.element.id) { index, review in
-                    NavigationLink {
-                        ReviewDetailView(
-                            viewModel: ReviewDetailViewModel(review: review),
-                            onCompleted: { status in viewModel.markCompleted(reviewID: review.id, status: status) }
-                        )
+                    // A NavigationLink row plus a .simultaneousGesture tap
+                    // haptic was tried here and broke navigation outright —
+                    // the gesture ended up winning the hit-test in this List,
+                    // so taps fired the haptic but never pushed. A plain
+                    // Button driving the same .navigationDestination(item:)
+                    // used for deep links fires the haptic AND navigates
+                    // reliably, since there's only ever one gesture involved.
+                    Button {
+                        Haptic.light()
+                        deepLinkedReview = review
                     } label: {
-                        // The entrance fade/rise lives on the LABEL, not the
-                        // NavigationLink itself, so it can't interfere with
-                        // the link's own hit-testing.
                         ReviewRow(review: review)
                             .cavnarRowEntrance(index: index, clock: clock)
+                            .contentShape(Rectangle())
                     }
-                    // A plain List+NavigationLink row never actually fires a
-                    // system haptic on tap (verified — there's no built-in
-                    // one, unlike a Toggle/Picker; an earlier fix here
-                    // wrongly assumed one existed and had regressed). A
-                    // *simultaneous* TapGesture runs alongside the link's
-                    // own gesture rather than competing for it — unlike a
-                    // DragGesture (which this codebase already found could
-                    // swallow a Button's own tap, see HomeModuleGrid's
-                    // comment), a plain TapGesture's simultaneousGesture
-                    // never claims exclusivity, so navigation is untouched.
-                    .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
+                    .buttonStyle(.plain)
                     // List rows keep an opaque background of their own even
                     // with .scrollContentBackground(.hidden) below (that only
                     // clears the list's overall canvas) — every other module
@@ -150,30 +143,41 @@ struct ReviewRow: View {
     let review: Review
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            StarRatingView(rating: review.rating ?? 0)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(review.author ?? "Anonymous")
-                        .font(.cavnarBody(14.5, weight: 600))
-                        .foregroundStyle(Color.cavnarInk)
-                    StatusPill(status: review.responseStatus)
-                    if let date = review.formattedDate {
-                        Text(date)
-                            .font(.cavnarBody(14.5))
-                            .foregroundStyle(Color.cavnarInk3)
+        HStack(alignment: .center, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                StarRatingView(rating: review.rating ?? 0)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(review.author ?? "Anonymous")
+                            .font(.cavnarBody(14.5, weight: 600))
+                            .foregroundStyle(Color.cavnarInk)
+                        StatusPill(status: review.responseStatus)
+                        if let date = review.formattedDate {
+                            Text(date)
+                                .font(.cavnarBody(14.5))
+                                .foregroundStyle(Color.cavnarInk3)
+                        }
+                        if review.isUrgent {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .foregroundStyle(Color.cavnarRed)
+                                .font(.system(size: 12))
+                        }
                     }
-                    if review.isUrgent {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(Color.cavnarRed)
-                            .font(.system(size: 12))
-                    }
+                    Text(review.text ?? "")
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .lineLimit(2)
                 }
-                Text(review.text ?? "")
-                    .font(.cavnarBody(14))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .lineLimit(2)
             }
+            Spacer(minLength: 0)
+            // Manual chevron — the row is a Button now, not a NavigationLink,
+            // so there's no free system disclosure indicator anymore. It
+            // sits in its own outer HStack(alignment: .center) so it stays
+            // vertically centered regardless of how tall the top-aligned
+            // content beside it grows.
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.cavnarInk3)
         }
         .padding(.vertical, 4)
     }

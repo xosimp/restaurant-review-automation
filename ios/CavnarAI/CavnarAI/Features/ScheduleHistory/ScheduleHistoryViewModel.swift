@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-struct ScheduleHistoryEntry: Codable, Identifiable {
+struct ScheduleHistoryEntry: Codable, Identifiable, Hashable {
     let id: Int
     let generatedAt: String
     let weekStart: String?

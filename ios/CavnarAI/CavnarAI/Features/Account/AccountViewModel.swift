@@ -121,19 +121,29 @@ final class AccountViewModel {
         let ok: Bool
         let masked: String?
         let error: String?
+        let method: String?
     }
 
-    func send2FATest() async {
+    private struct Send2FATestBody: Encodable { let method: String }
+
+    // twoFATestMethod records which channel the code actually went out on
+    // (echoed back by the server), so the "enter code" screen can show the
+    // right copy even if send2FATest is called again later with a stale
+    // default.
+    var twoFATestMethod: String = "email"
+
+    func send2FATest(method: String) async {
         is2FABusy = true
         twoFAError = nil
         twoFATestMasked = nil
         defer { is2FABusy = false }
         do {
             let response: Send2FATestResponse = try await client.send(
-                "/mobile/api/account/2fa/send-test", method: .post
+                "/mobile/api/account/2fa/send-test", method: .post, body: Send2FATestBody(method: method)
             )
             if response.ok {
                 twoFATestMasked = response.masked
+                twoFATestMethod = response.method ?? method
             } else {
                 twoFAError = response.error ?? "Couldn't send a test code."
             }
@@ -144,7 +154,7 @@ final class AccountViewModel {
         }
     }
 
-    private struct VerifyBody: Encodable { let code: String }
+    private struct VerifyBody: Encodable { let code: String; let method: String }
 
     func verify2FA(code: String) async -> Bool {
         is2FABusy = true
@@ -152,7 +162,7 @@ final class AccountViewModel {
         defer { is2FABusy = false }
         do {
             let response: OKErrorResponse = try await client.send(
-                "/mobile/api/account/2fa/verify", method: .post, body: VerifyBody(code: code)
+                "/mobile/api/account/2fa/verify", method: .post, body: VerifyBody(code: code, method: twoFATestMethod)
             )
             if response.ok {
                 await load()

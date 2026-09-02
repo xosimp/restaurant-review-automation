@@ -313,6 +313,7 @@ class Restaurant:
     two_fa_expires: str             = None
     two_fa_device_token: str        = None
     two_fa_pending: str             = None
+    two_fa_method: str              = "email"  # "email" or "sms" — which channel a verification code goes to; set once setup verifies, not at send-test time
     timezone: str                   = "America/Chicago"  # IANA name; all per-restaurant "today"/trend math uses this
     onboarding_dismissed: int       = 0
     internal_notes: Optional[str]   = None
@@ -586,6 +587,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN two_fa_expires TEXT",
         "ALTER TABLE restaurants ADD COLUMN two_fa_device_token TEXT",
         "ALTER TABLE restaurants ADD COLUMN two_fa_pending TEXT",
+        "ALTER TABLE restaurants ADD COLUMN two_fa_method TEXT DEFAULT 'email'",
         "ALTER TABLE restaurants ADD COLUMN timezone TEXT DEFAULT 'America/Chicago'",
         "ALTER TABLE restaurants ADD COLUMN onboarding_dismissed INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN last_active_tab TEXT",
@@ -1518,7 +1520,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "hourly_rate","labor_target_pct","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
-        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","login_notify","timezone","onboarding_dismissed",
+        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","timezone","onboarding_dismissed",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
         "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error",
         "square_access_token","square_location_id","square_last_synced","square_sync_error",
@@ -1608,6 +1610,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         two_fa_expires=row["two_fa_expires"] if "two_fa_expires" in row.keys() else None,
         two_fa_device_token=row["two_fa_device_token"] if "two_fa_device_token" in row.keys() else None,
         two_fa_pending=row["two_fa_pending"] if "two_fa_pending" in row.keys() else None,
+        two_fa_method=(row["two_fa_method"] if "two_fa_method" in row.keys() and row["two_fa_method"] else "email"),
         timezone=(row["timezone"] if "timezone" in row.keys() and row["timezone"] else "America/Chicago"),
         onboarding_dismissed=(row["onboarding_dismissed"] if "onboarding_dismissed" in row.keys() else 0) or 0,
         last_active_tab=row["last_active_tab"] if "last_active_tab" in row.keys() else None,

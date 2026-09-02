@@ -193,17 +193,23 @@ def login():
             import secrets as _sec3
             pending = _sec3.token_hex(24)
             update_restaurant(_rid, {"two_fa_code": code, "two_fa_expires": expires, "two_fa_pending": pending})
-            # Send email
+            # Send code via the restaurant's chosen 2FA method
             try:
                 rest2 = get_restaurant(_rid)
-                email = rest2.owner_email or ""
-                if "@" in email:
-                    from emails import send_2fa_code
-                    owner = rest2.owner_name or None
-                    send_2fa_code(email, rest2.name or "your restaurant", code, owner)
-                    masked = email[:2] + "***@" + email.split("@")[-1] if "@" in email else email
+                if rest2.two_fa_method == "sms" and rest2.owner_phone:
+                    from notify import send_2fa_sms
+                    send_2fa_sms(rest2.owner_phone, rest2.name or "your restaurant", code)
+                    _digits = "".join(c for c in rest2.owner_phone if c.isdigit())
+                    masked = "(•••) •••-" + _digits[-4:] if len(_digits) >= 4 else "your phone"
                 else:
-                    masked = "your registered email"
+                    email = rest2.owner_email or ""
+                    if "@" in email:
+                        from emails import send_2fa_code
+                        owner = rest2.owner_name or None
+                        send_2fa_code(email, rest2.name or "your restaurant", code, owner)
+                        masked = email[:2] + "***@" + email.split("@")[-1] if "@" in email else email
+                    else:
+                        masked = "your registered email"
             except Exception:
                 masked = "your registered email"
             # Encode uid into pending token: "uid:token"
@@ -374,10 +380,14 @@ def resend_2fa():
     expires = (_dt4.datetime.now() + _dt4.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
     update_restaurant(uid, {"two_fa_code": code, "two_fa_expires": expires})
     try:
-        email = rest.owner_email or ""
-        if "@" in email:
-            from emails import send_2fa_code
-            send_2fa_code(email, rest.name or "your restaurant", code, rest.owner_name)
+        if rest.two_fa_method == "sms" and rest.owner_phone:
+            from notify import send_2fa_sms
+            send_2fa_sms(rest.owner_phone, rest.name or "your restaurant", code)
+        else:
+            email = rest.owner_email or ""
+            if "@" in email:
+                from emails import send_2fa_code
+                send_2fa_code(email, rest.name or "your restaurant", code, rest.owner_name)
     except Exception:
         pass
     return jsonify(ok=True)
@@ -395,25 +405,40 @@ def logout():
 @auth_bp.route("/api/send-2fa-test", methods=["POST"])
 @login_required
 def send_2fa_test(current_user):
-    """Send a test 2FA code to verify email before enabling."""
+    """Send a test 2FA code to verify email or phone before enabling."""
     import random, datetime as _dt5
     from models import get_restaurant, update_restaurant
     rest = get_restaurant(current_user["restaurant_id"])
     if not rest:
         return jsonify(ok=False, error="Restaurant not found")
-    email = rest.owner_email or ""
-    if not email or "@" not in email:
-        return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email.")
+    data = request.get_json(silent=True) or {}
+    method = data.get("method") or "email"
+    if method == "sms":
+        if not rest.owner_phone:
+            return jsonify(ok=False, error="No phone number found. Contact will@cavnar.ai to update your account phone.")
+    else:
+        email = rest.owner_email or ""
+        if not email or "@" not in email:
+            return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email.")
     code = str(random.randint(100000, 999999))
     expires = (_dt5.datetime.now() + _dt5.timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
     update_restaurant(current_user["restaurant_id"], {"two_fa_code": code, "two_fa_expires": expires})
-    try:
-        from emails import send_2fa_code
-        send_2fa_code(email, rest.name or "your restaurant", code, rest.owner_name)
-    except Exception as e:
-        return jsonify(ok=False, error=f"Failed to send email: {str(e)[:60]}")
-    masked = email[:2] + "***@" + email.split("@")[-1]
-    return jsonify(ok=True, masked=masked)
+    if method == "sms":
+        try:
+            from notify import send_2fa_sms
+            send_2fa_sms(rest.owner_phone, rest.name or "your restaurant", code)
+        except Exception as e:
+            return jsonify(ok=False, error=f"Failed to send text: {str(e)[:60]}")
+        digits = "".join(c for c in rest.owner_phone if c.isdigit())
+        masked = "(•••) •••-" + digits[-4:] if len(digits) >= 4 else "your phone"
+    else:
+        try:
+            from emails import send_2fa_code
+            send_2fa_code(email, rest.name or "your restaurant", code, rest.owner_name)
+        except Exception as e:
+            return jsonify(ok=False, error=f"Failed to send email: {str(e)[:60]}")
+        masked = email[:2] + "***@" + email.split("@")[-1]
+    return jsonify(ok=True, masked=masked, method=method)
 
 @auth_bp.route("/api/verify-2fa-setup", methods=["POST"])
 @login_required
@@ -442,8 +467,9 @@ def verify_2fa_setup(current_user):
             return jsonify(ok=False, error="Code expired. Click resend.")
     except Exception:
         return jsonify(ok=False, error="Code expired. Click resend.")
+    method = data.get("method") if data.get("method") in ("email", "sms") else "email"
     update_restaurant(current_user["restaurant_id"], {
-        "two_fa_enabled": 1, "two_fa_code": "", "two_fa_expires": ""
+        "two_fa_enabled": 1, "two_fa_code": "", "two_fa_expires": "", "two_fa_method": method
     })
     return jsonify(ok=True)
 

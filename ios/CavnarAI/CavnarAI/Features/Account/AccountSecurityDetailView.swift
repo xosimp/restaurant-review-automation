@@ -227,6 +227,14 @@ private struct TwoFactorSetupSheet: View {
     @State private var code = ""
     @State private var postedLabel: String?
     @FocusState private var isCodeFocused: Bool
+    // "email" or "sms" — which channel the test code goes out on. Text is
+    // only offered when a phone number is on file (see hasPhone below);
+    // otherwise this stays "email" and the picker never renders.
+    @State private var selectedMethod: String = "email"
+
+    private var hasPhone: Bool {
+        !(viewModel.summary?.profile.ownerPhone?.trimmingCharacters(in: .whitespaces).isEmpty ?? true)
+    }
 
     var body: some View {
         NavigationStack {
@@ -269,7 +277,16 @@ private struct TwoFactorSetupSheet: View {
                             Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                         }
 
-                        CavnarFormButtonPair { matchedWidth in
+                        // Plain full-width buttons, not CavnarFormButtonPair —
+                        // its PreferenceKey width-matching could get stuck at
+                        // a stale/tiny value under this screen's multi-stage
+                        // sheet-restoration timing (relock -> re-present),
+                        // which is what produced the "Verify and enable"
+                        // button rendering as a tall sliver with its text
+                        // wrapped one character per line. A fixed
+                        // .frame(maxWidth: .infinity) on each label can't get
+                        // stuck, since nothing is measured or fed back in.
+                        VStack(spacing: 10) {
                             Button {
                                 Task {
                                     if await viewModel.verify2FA(code: code) {
@@ -279,50 +296,86 @@ private struct TwoFactorSetupSheet: View {
                                     }
                                 }
                             } label: {
-                                if viewModel.is2FABusy {
-                                    CavnarShimmerText(text: "Verifying…", color: Color.cavnarInk)
-                                } else {
-                                    Text("Verify and enable")
+                                Group {
+                                    if viewModel.is2FABusy {
+                                        CavnarShimmerText(text: "Verifying…", color: Color.cavnarInk)
+                                    } else {
+                                        Text("Verify and enable")
+                                    }
                                 }
+                                .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy || code.count != 6, matchedWidth: matchedWidth))
+                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy || code.count != 6))
                             .disabled(viewModel.is2FABusy || code.count != 6)
-                        } cancelAction: {
-                            sessionStore.pendingTwoFactorSetupEmail = nil
-                            dismiss()
+
+                            Button {
+                                sessionStore.pendingTwoFactorSetupEmail = nil
+                                dismiss()
+                            } label: {
+                                Text("Cancel").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(CavnarSecondaryButtonStyle())
                         }
                         .padding(.top, 6)
                     } else {
-                        Text("We'll email a 6-digit code to the address on file to confirm two-factor sign-in works before turning it on.")
+                        Text(selectedMethod == "sms"
+                             ? "We'll text a 6-digit code to the phone number on file to confirm two-factor sign-in works before turning it on."
+                             : "We'll email a 6-digit code to the address on file to confirm two-factor sign-in works before turning it on.")
                             .font(.cavnarBody(16))
                             .foregroundStyle(Color.cavnarInk3)
+
+                        if hasPhone {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("SEND CODE BY")
+                                    .font(.cavnarBody(12, weight: 700))
+                                    .foregroundStyle(Color.cavnarInk3)
+                                    .tracking(0.6)
+                                CavnarSegmentedControl(selection: $selectedMethod, options: ["email", "sms"]) { option in
+                                    option == "sms" ? "Text" : "Email"
+                                }
+                            }
+                            .padding(.top, 4)
+                        }
 
                         if let error = viewModel.twoFAError {
                             Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                         }
 
-                        CavnarFormButtonPair { matchedWidth in
+                        // Plain full-width button — see the identical note
+                        // on the "Verify and enable" button above for why
+                        // CavnarFormButtonPair's width-matching was dropped
+                        // from this screen specifically.
+                        VStack(spacing: 10) {
                             Button {
                                 Task {
-                                    await viewModel.send2FATest()
+                                    await viewModel.send2FATest(method: selectedMethod)
                                     // Recorded on SessionStore (survives a
                                     // Face ID relock) the instant a real
                                     // code goes out — see its doc comment.
                                     if let masked = viewModel.twoFATestMasked {
                                         sessionStore.pendingTwoFactorSetupEmail = masked
+                                        sessionStore.pendingTwoFactorSetupMethod = viewModel.twoFATestMethod
                                     }
                                 }
                             } label: {
-                                if viewModel.is2FABusy {
-                                    CavnarShimmerText(text: "Sending…", color: Color.cavnarInk)
-                                } else {
-                                    Text("Send test code")
+                                Group {
+                                    if viewModel.is2FABusy {
+                                        CavnarShimmerText(text: "Sending…", color: Color.cavnarInk)
+                                    } else {
+                                        Text("Send test code")
+                                    }
                                 }
+                                .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy, matchedWidth: matchedWidth))
+                            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.is2FABusy))
                             .disabled(viewModel.is2FABusy)
-                        } cancelAction: {
-                            dismiss()
+
+                            Button {
+                                dismiss()
+                            } label: {
+                                Text("Cancel").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(CavnarSecondaryButtonStyle())
                         }
                         .padding(.top, 6)
                     }
@@ -348,6 +401,8 @@ private struct TwoFactorSetupSheet: View {
             .onAppear {
                 if viewModel.twoFATestMasked == nil, let pending = sessionStore.pendingTwoFactorSetupEmail {
                     viewModel.twoFATestMasked = pending
+                    viewModel.twoFATestMethod = sessionStore.pendingTwoFactorSetupMethod
+                    selectedMethod = sessionStore.pendingTwoFactorSetupMethod
                 }
             }
         }

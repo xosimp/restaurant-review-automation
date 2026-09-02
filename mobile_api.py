@@ -174,11 +174,16 @@ def mobile_login():
         update_restaurant(rid, {"two_fa_code": code, "two_fa_expires": expires, "two_fa_pending": pending})
         masked = "your registered email"
         try:
-            email = rest.owner_email or ""
-            if "@" in email:
-                from emails import send_2fa_code
-                send_2fa_code(email, rest.name or "your restaurant", code, rest.owner_name)
-                masked = email[:2] + "***@" + email.split("@")[-1]
+            if rest.two_fa_method == "sms" and rest.owner_phone:
+                from notify import send_2fa_sms
+                send_2fa_sms(rest.owner_phone, rest.name or "your restaurant", code)
+                masked = "(•••) •••-" + "".join(c for c in rest.owner_phone if c.isdigit())[-4:]
+            else:
+                email = rest.owner_email or ""
+                if "@" in email:
+                    from emails import send_2fa_code
+                    send_2fa_code(email, rest.name or "your restaurant", code, rest.owner_name)
+                    masked = email[:2] + "***@" + email.split("@")[-1]
         except Exception:
             pass
         pending_encoded = base64.urlsafe_b64encode(f"{rid}:{pending}".encode()).decode()
@@ -2083,11 +2088,25 @@ def mobile_send_2fa_test(current_user):
     if not restaurant:
         return jsonify(ok=False, error="Restaurant not found"), 404
     email = restaurant.owner_email or ""
-    if not email or "@" not in email:
+    method = (request.get_json(silent=True) or {}).get("method") or "email"
+    if method == "sms" and not restaurant.owner_phone:
+        return jsonify(ok=False, error="No phone number found. Add one in Profile & Details, or send by email instead."), 400
+    if method != "sms" and (not email or "@" not in email):
         return jsonify(ok=False, error="No email address found. Contact will@cavnar.ai to update your account email."), 400
     code = str(_random.randint(100000, 999999))
     expires = (datetime.now() + timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
     update_restaurant(rid, {"two_fa_code": code, "two_fa_expires": expires})
+    if method == "sms":
+        phone = restaurant.owner_phone
+        try:
+            from notify import send_2fa_sms
+            sent = send_2fa_sms(phone, restaurant.name or "your restaurant", code)
+        except Exception as e:
+            return jsonify(ok=False, error=f"Failed to send text: {str(e)[:60]}"), 500
+        if not sent:
+            return jsonify(ok=False, error="Couldn't send the code — text delivery failed. Try again in a moment."), 502
+        masked = "(•••) •••-" + "".join(c for c in phone if c.isdigit())[-4:]
+        return jsonify(ok=True, masked=masked, method="sms")
     try:
         from emails import send_2fa_code
         sent = send_2fa_code(email, restaurant.name or "your restaurant", code, restaurant.owner_name)
@@ -2100,7 +2119,7 @@ def mobile_send_2fa_test(current_user):
         # the app showed "Code sent" even when nothing went out.
         return jsonify(ok=False, error="Couldn't send the code — email delivery failed. Try again in a moment."), 502
     masked = email[:2] + "***@" + email.split("@")[-1]
-    return jsonify(ok=True, masked=masked)
+    return jsonify(ok=True, masked=masked, method="email")
 
 
 @mobile_bp.route("/account/2fa/verify", methods=["POST"])
@@ -2125,7 +2144,8 @@ def mobile_verify_2fa_setup(current_user):
             continue
     if expired:
         return jsonify(ok=False, error="Code expired. Try again."), 400
-    update_restaurant(rid, {"two_fa_enabled": 1, "two_fa_code": "", "two_fa_expires": ""})
+    method = data.get("method") if data.get("method") in ("email", "sms") else "email"
+    update_restaurant(rid, {"two_fa_enabled": 1, "two_fa_code": "", "two_fa_expires": "", "two_fa_method": method})
     return jsonify(ok=True)
 
 

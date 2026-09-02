@@ -33,6 +33,7 @@ struct ScheduleHistoryView: View {
     }()
 
     @State private var clock = CavnarEntranceClock()
+    @State private var selectedEntry: ScheduleHistoryEntry?
 
     // Own NavigationStack, not pushed onto a parent's — presented as a
     // sheet from AccountView now (see its own comment), matching how
@@ -72,19 +73,21 @@ struct ScheduleHistoryView: View {
                 // an opaque background of its own otherwise.
                 List {
                     ForEach(Array(viewModel.history.enumerated()), id: \.element.id) { index, entry in
-                        NavigationLink {
-                            ScheduleHistoryDetailView(historyId: entry.id, weekLabel: weekLabel(entry))
+                        // NavigationLink + .simultaneousGesture (the previous
+                        // fix here, mirroring ReviewsListView's old approach)
+                        // fired the haptic but broke the push entirely — see
+                        // ReviewsListView's identical correction. A plain
+                        // Button driving .navigationDestination(item:) below
+                        // does both reliably.
+                        Button {
+                            Haptic.light()
+                            selectedEntry = entry
                         } label: {
-                            // On the label, not the NavigationLink — see
-                            // ReviewsListView's identical structure.
                             row(entry)
                                 .cavnarRowEntrance(index: index, clock: clock)
+                                .contentShape(Rectangle())
                         }
-                        // See ReviewsListView's identical fix/comment — a
-                        // plain List+NavigationLink row was never actually
-                        // producing a tap haptic on its own; this fires one
-                        // explicitly without touching navigation.
-                        .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
+                        .buttonStyle(.plain)
                         .foregroundStyle(Color.cavnarInk)
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
@@ -110,6 +113,9 @@ struct ScheduleHistoryView: View {
         .navigationTitle("Schedule History")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { cavnarTitleToolbar("Schedule History") }
+        .navigationDestination(item: $selectedEntry) { entry in
+            ScheduleHistoryDetailView(historyId: entry.id, weekLabel: weekLabel(entry))
+        }
         .task { await viewModel.load() }
         .cavnarEmberRefreshable { await viewModel.load() }
         // A standard modal alert for a failed delete — surfaces the real
@@ -153,11 +159,12 @@ struct ScheduleHistoryView: View {
                     .font(.cavnarNumber(14, weight: 700))
                     .foregroundStyle(Color.cavnarInk2)
             }
-            // No manual chevron here — a NavigationLink inside a List
-            // (unlike one in a plain ScrollView/VStack) already adds its
-            // own system disclosure indicator for free, same as every
-            // other List-based screen in this app (e.g. ReviewsListView).
-            // This row used to add a second one on top of it.
+            // Manual chevron — now that the row is a Button rather than a
+            // NavigationLink, there's no free system disclosure indicator
+            // to lean on anymore.
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.cavnarInk3)
         }
         // Distinct from the standard .cavnarCard() used everywhere else —
         // primarily orange fading into black (leading to trailing, since
