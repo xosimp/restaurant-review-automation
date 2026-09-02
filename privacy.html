@@ -278,6 +278,7 @@
     <a href="#how-we-use">How We Use Information</a>
     <a href="#third-party-sharing">Third-Party Sharing</a>
     <a href="#meta-instagram">Meta & Instagram Data</a>
+    <a href="#google-business-profile">Google Business Profile Data</a>
     <a href="#data-retention">Data Retention</a>
     <a href="#data-security">Data Security</a>
     <a href="#your-rights">Your Rights</a>
@@ -485,8 +486,57 @@
       </ul>
     </div>
 
+    <div class="section" id="google-business-profile">
+      <div class="section-number">06 — Google Business Profile Data</div>
+      <h2>How we handle Google Business Profile data</h2>
+      <p>This section applies specifically to users who connect their Google Business Profile to Cavnar AI for the Reviews and Intel modules.</p>
+
+      <div class="callout">
+        <strong>Important:</strong> Cavnar AI only requests access to the Google Business Profile you explicitly connect and authorize through Google's own consent screen. We never access any other Google account data.
+      </div>
+
+      <h3>What Google data we access</h3>
+      <ul>
+        <li>Basic business profile information (name, address, category, hours)</li>
+        <li>Review content: text, star ratings, dates, and reviewer display names left on your Google Business Profile</li>
+        <li>The ability to publish review replies to your Google Business Profile on your behalf, only when you approve an AI-drafted response from your Cavnar AI dashboard</li>
+      </ul>
+
+      <h3>What Google permission we request</h3>
+      <ul>
+        <li><strong>https://www.googleapis.com/auth/business.manage</strong> — read your Business Profile's reviews and publish replies to them on your behalf</li>
+      </ul>
+
+      <h3>How we store Google credentials</h3>
+      <ul>
+        <li>OAuth access and refresh tokens are stored encrypted in our database</li>
+        <li>Tokens are never logged or transmitted to any third party except Google's servers during API calls</li>
+        <li>Tokens are refreshed automatically and securely</li>
+        <li>We do not store your Google account password at any point</li>
+      </ul>
+
+      <h3>How to revoke Google access</h3>
+      <p>You can revoke Cavnar AI's access to your Google Business Profile at any time by:</p>
+      <ul>
+        <li>Going to your <a href="https://myaccount.google.com/permissions">Google Account permissions</a> and removing Cavnar AI</li>
+        <li>Contacting us at <a href="mailto:will@cavnar.ai">will@cavnar.ai</a> and requesting disconnection</li>
+      </ul>
+      <p>Revoking access will immediately disable the ability to fetch new reviews or publish replies to your Google Business Profile. Previously published replies will not be affected.</p>
+
+      <h3>Google API Services User Data Policy</h3>
+      <p>Cavnar AI's use and transfer of information received from Google APIs to any other app will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements. Specifically:</p>
+      <ul>
+        <li>We do not use Google user data to build audience profiles or targeting data</li>
+        <li>We do not sell Google user data or share it with advertisers or data brokers</li>
+        <li>We do not use Google user data to train generalized AI/ML models — it is used only to draft and publish responses for the specific restaurant that authorized the connection</li>
+        <li>We do not transfer Google user data to any third party except Anthropic, solely as needed to generate an AI-drafted reply on your behalf (see Third-Party Sharing above)</li>
+        <li>Any human access to Google user data is limited to what is necessary for security, legal compliance, or with your consent to resolve a support request</li>
+        <li>We retain Google-sourced data only as long as your account is active (see Data Retention below)</li>
+      </ul>
+    </div>
+
     <div class="section" id="data-retention">
-      <div class="section-number">06 — Data Retention</div>
+      <div class="section-number">07 — Data Retention</div>
       <h2>How long we keep your data</h2>
       <p>We retain your data for as long as your Cavnar AI account is active or as needed to provide services. Specifically:</p>
 
@@ -499,6 +549,7 @@
           <tr><td>Restaurant operational data (labor, inventory)</td><td>Duration of active account + 30 days after cancellation</td></tr>
           <tr><td>Review data and AI-drafted responses</td><td>Duration of active account + 30 days after cancellation</td></tr>
           <tr><td>Meta OAuth tokens</td><td>Until revoked by you or account cancellation</td></tr>
+          <tr><td>Google OAuth tokens</td><td>Until revoked by you or account cancellation</td></tr>
           <tr><td>Marketing content generated</td><td>Duration of active account + 30 days after cancellation</td></tr>
           <tr><td>Payment records</td><td>7 years (required for tax and legal compliance)</td></tr>
           <tr><td>Service agreements / contracts</td><td>7 years (required for legal compliance)</td></tr>
@@ -510,7 +561,7 @@
     </div>
 
     <div class="section" id="data-security">
-      <div class="section-number">07 — Data Security</div>
+      <div class="section-number">08 — Data Security</div>
       <h2>How we protect your data</h2>
       <p>We implement industry-standard security measures to protect your information against unauthorized access, alteration, disclosure, or destruction:</p>
       <ul>
@@ -526,7 +577,7 @@
     </div>
 
     <div class="section" id="your-rights">
-      <div class="section-number">08 — Your Rights</div>
+      <div class="section-number">09 — Your Rights</div>
       <h2>Your rights and choices</h2>
       <p>You have the following rights with respect to your personal information:</p>
 
@@ -549,7 +600,7 @@
     </div>
 
     <div class="section" id="data-deletion">
-      <div class="section-number">09 — Data Deletion</div>
+      <div class="section-number">10 — Data Deletion</div>
       <h2>How to delete your data</h2>
       <p>You can request deletion of your Cavnar AI account and associated data at any time using any of the following methods:</p>
 

@@ -1263,7 +1263,7 @@ def security_txt():
     content = (
         "Contact: mailto:will@cavnar.ai\n"
         "Preferred-Languages: en\n"
-        "Policy: https://cavnar.ai/privacy\n"
+        "Policy: https://dashboard.cavnar.ai/privacy\n"
         "Expires: 2027-01-01T00:00:00.000Z\n"
     )
     return Response(content, mimetype="text/plain")
