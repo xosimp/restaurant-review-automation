@@ -8,8 +8,9 @@ Bold, outlined) sitting `ai_tag.gap` units past the R with its cap line on
 the wordmark's own cap line — so the tops of both words read as one
 straight rule. Run this after touching the JSON; never hand-edit the SVGs.
 
-Writes lockup-light.svg / lockup-dark.svg to every place they live, and
-prints the Swift `Path` commands for the AI tag (paste into
+Writes lockup-light.svg / lockup-dark.svg (seal + wordmark + tag) and
+wordmark-light.svg / wordmark-dark.svg (no seal) to every place they live,
+and prints the Swift `Path` commands for the AI tag (paste into
 CavnarWordmarkAITagShape in ios/.../DesignSystem/CavnarMotion.swift).
 """
 import json
@@ -80,6 +81,31 @@ def svg(data, ink):
 """
 
 
+def wordmark_svg(data, ink):
+    """The wordmark on its own — letters, ember, AI tag — for anywhere the
+    seal isn't wanted beside it (the social headers/covers, where the user
+    found it misaligned and out of place). Same box units; 6 of margin on
+    the left/right, 14 above the cap line for the ember glow, 14 below."""
+    letters = "".join(f'<path d="{l["d"]}"/>' for l in data["letters"])
+    e = data["ember"]
+    tag = data["ai_tag"]
+    tag_svg = "".join(f'<path d="{d}"/>' for d in tag_paths(tag))
+    width = tag["x1"] + 12
+    return f"""<svg viewBox="-6 -14 {width:.0f} 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="ember-dot" cx="42%" cy="38%" r="72%">
+      <stop offset="0%" stop-color="#F2B183"/><stop offset="45%" stop-color="#E8956A"/><stop offset="100%" stop-color="#C74E33"/>
+    </radialGradient>
+    <radialGradient id="ember-glow">
+      <stop offset="0%" stop-color="#D4583A" stop-opacity="0.28"/><stop offset="100%" stop-color="#D4583A" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <!-- CAVNAR in Clash Display Semibold, outlined, optically kerned, cap height 100; ember cradled in the V; AI tag on the same cap line -->
+  <g fill="{ink}">{letters}</g><circle cx="{e['cx']}" cy="{e['cy']}" r="{e['r'] * 2.2:.1f}" fill="url(#ember-glow)"/><circle cx="{e['cx']}" cy="{e['cy']}" r="{e['r']}" fill="url(#ember-dot)"/><g fill="#D4583A">{tag_svg}</g>
+</svg>
+"""
+
+
 def swift(tag):
     lines = []
     for contour_set in tag["glyphs"]:
@@ -103,6 +129,11 @@ def main():
             with open(path, "w") as f:
                 f.write(svg(data, ink))
             print("wrote", os.path.relpath(path, ROOT))
+            if target not in LIGHT_ONLY:
+                wpath = os.path.join(target, name.replace("lockup-", "wordmark-"))
+                with open(wpath, "w") as f:
+                    f.write(wordmark_svg(data, ink))
+                print("wrote", os.path.relpath(wpath, ROOT))
     print(f"\nlockup viewBox width: {WORD_X + tag['x1']:.2f}")
     print(f"AI tag: x {tag['x0']:.2f}–{tag['x1']:.2f}, height {tag['height']}, gap {tag['gap']}")
     print("\n// Swift — CavnarWordmarkAITagShape.path(in:)")
