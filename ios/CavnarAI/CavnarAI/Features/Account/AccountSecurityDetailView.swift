@@ -239,7 +239,7 @@ private struct TwoFactorSetupSheet: View {
                         }
                         .padding(.top, 6)
                     } else {
-                        Text("We'll text a 6-digit code to the phone number on file to confirm two-factor sign-in works before turning it on.")
+                        Text("We'll email a 6-digit code to the address on file to confirm two-factor sign-in works before turning it on.")
                             .font(.cavnarBody(14.5))
                             .foregroundStyle(Color.cavnarInk3)
 

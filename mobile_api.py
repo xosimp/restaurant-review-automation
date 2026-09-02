@@ -2074,9 +2074,15 @@ def mobile_send_2fa_test(current_user):
     update_restaurant(rid, {"two_fa_code": code, "two_fa_expires": expires})
     try:
         from emails import send_2fa_code
-        send_2fa_code(email, restaurant.name or "your restaurant", code, restaurant.owner_name)
+        sent = send_2fa_code(email, restaurant.name or "your restaurant", code, restaurant.owner_name)
     except Exception as e:
         return jsonify(ok=False, error=f"Failed to send email: {str(e)[:60]}"), 500
+    if not sent:
+        # send_2fa_code swallows its own failures (missing RESEND_API_KEY,
+        # a non-200 from Resend) and just returns False rather than raising
+        # — without this check the route reported ok=True regardless, so
+        # the app showed "Code sent" even when nothing went out.
+        return jsonify(ok=False, error="Couldn't send the code — email delivery failed. Try again in a moment."), 502
     masked = email[:2] + "***@" + email.split("@")[-1]
     return jsonify(ok=True, masked=masked)
 

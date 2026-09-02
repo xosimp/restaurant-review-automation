@@ -1655,11 +1655,26 @@ def test_2fa_send_test_requires_owner_email(client, db_path):
     assert resp.status_code == 400
 
 
+def test_2fa_send_test_surfaces_a_failed_email_send(client, db_path, monkeypatch):
+    # send_2fa_code swallows its own failures (missing RESEND_API_KEY, a
+    # non-200 from Resend) and just returns False rather than raising — the
+    # route must check that return value, not assume ok=True the moment
+    # send_2fa_code was merely CALLED without an exception.
+    rid = _restaurant(db_path)
+    update_restaurant(rid, {"owner_email": "owner@x.com"}, db_path=db_path)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("emails.send_2fa_code", lambda *a, **kw: False)
+
+    resp = client.post("/mobile/api/account/2fa/send-test", headers=_auth_headers(token))
+    assert resp.get_json()["ok"] is False
+    assert resp.status_code != 200
+
+
 def test_2fa_send_test_and_verify_enables_2fa(client, db_path, monkeypatch):
     rid = _restaurant(db_path)
     update_restaurant(rid, {"owner_email": "owner@x.com"}, db_path=db_path)
     token = _login(client, db_path, rid)
-    monkeypatch.setattr("emails.send_2fa_code", lambda *a, **kw: None)
+    monkeypatch.setattr("emails.send_2fa_code", lambda *a, **kw: True)
 
     resp = client.post("/mobile/api/account/2fa/send-test", headers=_auth_headers(token))
     assert resp.get_json()["ok"] is True

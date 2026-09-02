@@ -86,21 +86,37 @@ struct CavnarInlinePosted: View {
 
 // MARK: - Tile press
 
-/// Press feedback for the module tiles: the tile settles down under the
-/// finger and its ember edge lights, then springs nowhere — it just
-/// releases. Replaces .plain, which gave a tap no visible response at all.
-struct CavnarTilePressStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        let pressed = configuration.isPressed
-        return configuration.label
+/// Press feedback for the module tiles: the tile settles down and its
+/// ember edge lights, then eases back as navigation happens. Driven
+/// explicitly by the tap action (see HomeModuleGrid) rather than the
+/// system's `isPressed` — a Button this deep inside a ScrollView/
+/// LazyVGrid delays or drops `isPressed` on a fast tap (SwiftUI needs a
+/// beat to decide the touch isn't a scroll), so a quick tap showed
+/// nothing and only a deliberate hold ever rendered it. Setting `active`
+/// from the tap handler is reliable at any tap speed since it isn't
+/// gated on that same disambiguation. The on-transition is unanimated —
+/// snaps to fully lit in one frame — so it's never caught mid-fade by a
+/// tap that releases before an eased engage would have finished; only the
+/// release eases out.
+struct CavnarTileFlash: ViewModifier {
+    var active: Bool
+
+    func body(content: Content) -> some View {
+        content
             .overlay(
                 RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
-                    .strokeBorder(Color.cavnarEmber2.opacity(pressed ? 0.95 : 0), lineWidth: 1.5)
+                    .strokeBorder(Color.cavnarEmber2.opacity(active ? 0.95 : 0), lineWidth: 1.5)
             )
-            .brightness(pressed ? 0.05 : 0)
-            .shadow(color: Color.cavnarEmber.opacity(pressed ? 0.45 : 0), radius: 20, y: 4)
-            .scaleEffect(pressed ? 0.965 : 1)
-            .animation(.easeOut(duration: pressed ? 0.1 : 0.22), value: pressed)
+            .brightness(active ? 0.05 : 0)
+            .shadow(color: Color.cavnarEmber.opacity(active ? 0.45 : 0), radius: 20, y: 4)
+            .scaleEffect(active ? 0.965 : 1)
+            .animation(active ? nil : .easeOut(duration: 0.3), value: active)
+    }
+}
+
+extension View {
+    func cavnarTileFlash(_ active: Bool) -> some View {
+        modifier(CavnarTileFlash(active: active))
     }
 }
 

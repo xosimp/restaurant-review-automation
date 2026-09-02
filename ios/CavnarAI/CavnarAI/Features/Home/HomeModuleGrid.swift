@@ -56,6 +56,8 @@ struct HomeModuleGrid: View {
     // Tiles rise in one after another on first load (see
     // CavnarEntranceClock) — one clock shared by every tile in this grid.
     @State private var clock = CavnarEntranceClock()
+    // Which tile is showing its tap flash right now — see tap(_:) below.
+    @State private var flashingKey: String?
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
@@ -65,19 +67,32 @@ struct HomeModuleGrid: View {
                 // action closure instead of a simultaneousGesture racing
                 // NavigationLink's own tap handling.
                 Button {
-                    onSelect(module)
+                    tap(module)
                 } label: {
                     KPITile(module: module)
+                        .cavnarTileFlash(flashingKey == module.id)
                 }
-                // Settles under the finger with its ember edge lit — .plain
-                // gave a tap no visible response at all.
-                .buttonStyle(CavnarTilePressStyle())
+                .buttonStyle(.plain)
                 .cavnarRowEntrance(index: index, clock: clock)
             }
             ForEach(Array(comingSoon.enumerated()), id: \.element.id) { index, module in
                 ComingSoonModuleTile(module: module)
                     .cavnarRowEntrance(index: modules.count + index, clock: clock)
             }
+        }
+    }
+
+    /// Lights the tile the instant it's tapped, holds it fully lit for one
+    /// guaranteed beat, then navigates — decoupled from the Button's own
+    /// `isPressed` (see CavnarTileFlash's doc comment for why that's
+    /// unreliable this deep inside a ScrollView). `onSelect` still carries
+    /// the actual haptic, via the parent's own debounced navigate(to:).
+    private func tap(_ module: ModuleSummary) {
+        flashingKey = module.id
+        Task {
+            try? await Task.sleep(for: .milliseconds(130))
+            onSelect(module)
+            flashingKey = nil
         }
     }
 }
