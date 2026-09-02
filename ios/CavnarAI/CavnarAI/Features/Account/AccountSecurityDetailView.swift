@@ -1,12 +1,10 @@
 import SwiftUI
 
-/// Opened from Account's "Security & devices" row. Was four cards of
-/// unrelated heights (Sign-in, 2FA, a single-toggle Alerts card, Active
-/// Devices) with no visual relationship between them — collapsed to two:
-/// everything about how you authenticate in one "Sign-in & security" card
-/// (username, password, 2FA, sign-in notifications), device management
-/// in the other. A lone toggle in its own full-width card was most of
-/// the "zero flow" feeling on its own.
+/// Opened from Account's "Security & devices" row. Option A ("identity
+/// card") from the account-sheet design review: the sheet opens on the
+/// answer to "am I protected?" — a shield tile, a one-word verdict, and
+/// three status tiles (password, two-factor, sign-in alerts) — before any
+/// setting. Then one Sign-in card and one Devices card.
 struct AccountSecurityDetailView: View {
     let viewModel: AccountViewModel
     let account: AccountInfo
@@ -15,104 +13,24 @@ struct AccountSecurityDetailView: View {
     @State private var disabledLabel: String?
     @Environment(SessionStore.self) private var sessionStore
 
+    // Prefer the live summary (it refreshes after enable/disable 2FA and
+    // the notify toggle) over the snapshot the sheet was opened with.
+    private var live: AccountInfo { viewModel.summary?.account ?? account }
+    private var twoFAByText: Bool { live.twoFAMethod == "sms" }
+
     var body: some View {
         NavigationStack {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 4) {
-                    sectionHeader("Sign-in & security")
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack {
-                            Text("Username").font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
-                            Spacer()
-                            Text(account.username).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-                        }
-                        Button("Change password") { Haptic.light(); showingChangePassword = true }
-                            .font(.cavnarBody(14.5, weight: 600))
-                            .foregroundStyle(Color.cavnarEmber)
-
-                        divider()
-
-                        if account.twoFAEnabled {
-                            HStack {
-                                Text("Two-factor authentication").font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
-                                Spacer()
-                                Text("On").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarGreen)
-                            }
-                            Button("Disable two-factor authentication", role: .destructive) {
-                                Haptic.light()
-                                Task {
-                                    if await viewModel.disable2FA() {
-                                        Haptic.success()
-                                        disabledLabel = "Two-factor disabled"
-                                    }
-                                }
-                            }
-                            .font(.cavnarBody(14.5, weight: 600))
-                        } else {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Two-factor authentication").font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                Text("Adds an email code on new sign-ins.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                            }
-                            Button("Enable two-factor authentication") { Haptic.light(); showing2FASetup = true }
-                                .font(.cavnarBody(14.5, weight: 600))
-                                .foregroundStyle(Color.cavnarEmber)
-                        }
-
-                        divider()
-
-                        // No manual Haptic.selection() — Toggle/UISwitch
-                        // already fires its own automatic system haptic.
-                        Toggle(isOn: Binding(
-                            get: { account.loginNotify },
-                            set: { newValue in Task { await viewModel.toggleLoginNotify(newValue) } }
-                        )) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Sign-in notifications").font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                Text("Get notified of new sign-ins to your account").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                            }
-                        }
-                        .tint(Color.cavnarEmber)
-                    }
-                    .cavnarCard()
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    sectionHeader("Active devices")
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(viewModel.sessions) { session in
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    Text(session.label).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                    if session.isCurrent {
-                                        Text("This device")
-                                            .font(.cavnarBody(14, weight: 700))
-                                            .foregroundStyle(Color.cavnarEmber)
-                                    }
-                                }
-                                Text("Last active \(session.lastActive)")
-                                    .font(.cavnarBody(14))
-                                    .foregroundStyle(Color.cavnarInk3)
-                            }
-                            if session.id != viewModel.sessions.last?.id {
-                                divider()
-                            }
-                        }
-                        Button("Sign out all other devices", role: .destructive) {
-                            Task { await viewModel.revokeOtherSessions() }
-                        }
-                        .font(.cavnarBody(14.5, weight: 600))
-                    }
-                    .cavnarCard()
-                }
+            VStack(alignment: .leading, spacing: 22) {
+                hero
+                statusStrip
+                signInSection
+                devicesSection
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
         }
-        .cavnarModuleBackground()
-        .navigationTitle("Security")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { cavnarTitleToolbar("Security") }
+        .accountSheetChrome("Security")
         .sheet(isPresented: $showingChangePassword) {
             ChangePasswordSheet(viewModel: viewModel)
         }
@@ -139,14 +57,91 @@ struct AccountSecurityDetailView: View {
         }
     }
 
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.cavnarBody(14.5, weight: 700))
-            .foregroundStyle(Color.cavnarInk3)
+    // MARK: - Identity
+
+    private var hero: some View {
+        AccountHero(title: live.twoFAEnabled ? "Protected" : "Protect your account") {
+            GlowBadge(systemImage: "checkmark.shield", size: 64)
+        } subtitle: {
+            Text("Signed in as ") + Text(live.username).font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarInk2)
+        }
     }
 
-    private func divider() -> some View {
-        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+    private var statusStrip: some View {
+        HStack(spacing: 8) {
+            AccountStatTile(
+                label: "Password", value: "Set",
+                detail: live.lastLogin == nil ? "Change anytime" : "Signed in " + AccountRelativeTime.describe(live.lastLogin).lowercased(),
+                detailIsNumber: true
+            )
+            AccountStatTile(
+                label: "2FA", value: live.twoFAEnabled ? "On" : "Off",
+                tone: live.twoFAEnabled ? .cavnarGreen : .cavnarInk3,
+                detail: live.twoFAEnabled ? "\(twoFAByText ? "Text" : "Email") · \(live.twoFAContactMasked ?? "")" : "Not set up",
+                detailIsNumber: live.twoFAEnabled && twoFAByText
+            )
+            AccountStatTile(
+                label: "Alerts", value: live.loginNotify ? "On" : "Off",
+                tone: live.loginNotify ? .cavnarGreen : .cavnarInk3,
+                detail: "New sign-ins"
+            )
+        }
+    }
+
+    // MARK: - Sign-in
+
+    private var signInSection: some View {
+        AccountSection(kicker: "Sign-in") {
+            AccountKVRow(label: "Password") {
+                AccountLink(title: "Change") { showingChangePassword = true }
+            }
+            if live.twoFAEnabled {
+                AccountKVRow(label: "Two-factor code by") {
+                    AccountValue(text: twoFAByText ? "Text message" : "Email")
+                }
+                AccountKVRow(label: "Two-factor") {
+                    AccountLink(title: "Turn off", tone: .cavnarRed) {
+                        Task {
+                            if await viewModel.disable2FA() {
+                                Haptic.success()
+                                disabledLabel = "Two-factor disabled"
+                            }
+                        }
+                    }
+                }
+            } else {
+                AccountKVRow(label: "Two-factor") {
+                    AccountLink(title: "Turn on") { showing2FASetup = true }
+                }
+            }
+            AccountKVRow(label: "Sign-in notifications", showsDivider: false) {
+                // No manual Haptic.selection() — Toggle/UISwitch already
+                // fires its own automatic system haptic.
+                Toggle("", isOn: Binding(
+                    get: { live.loginNotify },
+                    set: { newValue in Task { await viewModel.toggleLoginNotify(newValue) } }
+                ))
+                .labelsHidden()
+                .tint(Color.cavnarEmber)
+            }
+        }
+    }
+
+    // MARK: - Devices
+
+    private var devicesSection: some View {
+        AccountSection(kicker: viewModel.sessions.isEmpty ? "Devices" : "Devices · \(viewModel.sessions.count)") {
+            ForEach(Array(viewModel.sessions.enumerated()), id: \.element.id) { index, session in
+                AccountDeviceRow(session: session, showsDivider: index < viewModel.sessions.count - 1)
+            }
+            Button {
+                Task { await viewModel.revokeOtherSessions() }
+            } label: {
+                Text("Sign out all other devices").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle())
+            .padding(.top, 12)
+        }
     }
 }
 

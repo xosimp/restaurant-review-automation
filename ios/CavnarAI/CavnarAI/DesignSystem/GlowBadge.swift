@@ -23,6 +23,9 @@ struct GlowBadge: View {
     // A thin conic ember halo just outside the tile, for the one badge that
     // should read as alive (the Ask Cavnar FAB). Off for module tiles.
     var halo: Bool = false
+    // When set, drawn in place of `systemImage` — Account's identity hero
+    // uses the restaurant's initials here.
+    var monogram: String? = nil
 
     private var radius: CGFloat { size * 0.3 }
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: radius, style: .continuous) }
@@ -86,10 +89,17 @@ struct GlowBadge: View {
                 )
                 .shadow(color: .black.opacity(0.55), radius: size * 0.1, x: 0, y: size * 0.06)
 
-            // The glyph — cream, flat.
-            Image(systemName: systemImage)
-                .font(.system(size: size * 0.4, weight: .semibold))
-                .foregroundStyle(Color.cavnarInk)
+            // The glyph — cream, flat. A monogram (Account's identity
+            // hero) takes the same seat in Clash Display.
+            if let monogram {
+                Text(monogram)
+                    .font(.cavnarHeadline(size * 0.375))
+                    .foregroundStyle(Color.cavnarInk)
+            } else {
+                Image(systemName: systemImage)
+                    .font(.system(size: size * 0.4, weight: .semibold))
+                    .foregroundStyle(Color.cavnarInk)
+            }
 
             // The ember, seated on the tile's right edge — the seal's coal.
             Circle()

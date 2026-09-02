@@ -31,12 +31,21 @@ struct AccountInfo: Decodable {
     let username: String
     let email: String
     let twoFAEnabled: Bool
+    // "email" or "sms", plus the masked destination ("•••-0142" /
+    // "ma***@giamia.com") — for the Security sheet's status tile.
+    let twoFAMethod: String?
+    let twoFAContactMasked: String?
     var loginNotify: Bool
+    // users.last_login, "YYYY-MM-DD HH:MM:SS" UTC or nil.
+    let lastLogin: String?
 
     enum CodingKeys: String, CodingKey {
         case username, email
         case twoFAEnabled = "two_fa_enabled"
+        case twoFAMethod = "two_fa_method"
+        case twoFAContactMasked = "two_fa_contact_masked"
         case loginNotify = "login_notify"
+        case lastLogin = "last_login"
     }
 }
 

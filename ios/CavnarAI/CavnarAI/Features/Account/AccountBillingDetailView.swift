@@ -19,10 +19,12 @@ struct AccountBillingDetailView: View {
     var body: some View {
         NavigationStack {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 22) {
+                hero
                 if let billing, billing.ok, billing.status != "inactive" {
+                    statusStrip(billing)
                     VStack(alignment: .leading, spacing: 10) {
-                        row("Next charge", billing.nextDate ?? "—")
+                        row("Next charge", billing.nextDate ?? "—", isNumber: true)
                         divider()
                         row("Amount", billing.amount ?? "—", isNumber: true)
                         divider()
@@ -42,10 +44,8 @@ struct AccountBillingDetailView: View {
                     .cavnarCard()
 
                     if let invoices = billing.invoices, !invoices.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("RECENT INVOICES")
-                                .font(.cavnarBody(14.5, weight: 700))
-                                .foregroundStyle(Color.cavnarInk3)
+                        VStack(alignment: .leading, spacing: 8) {
+                            AccountKicker(text: "Recent invoices")
                             VStack(alignment: .leading, spacing: 0) {
                                 ForEach(Array(invoices.enumerated()), id: \.element.id) { index, invoice in
                                     invoiceRow(invoice)
@@ -66,10 +66,44 @@ struct AccountBillingDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
         }
-        .cavnarModuleBackground()
-        .navigationTitle("Billing")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { cavnarTitleToolbar("Billing") }
+        .accountSheetChrome("Billing")
+        }
+    }
+
+    // MARK: - Identity (option A)
+
+    private var planTitle: String {
+        guard let billing, billing.ok, billing.status != "inactive", let status = billing.status else { return "No active plan" }
+        switch status {
+        case "active": return "Active plan"
+        case "trialing": return "Free trial"
+        case "past_due": return "Payment past due"
+        default: return status.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    private var hero: some View {
+        AccountHero(title: planTitle) {
+            GlowBadge(systemImage: "creditcard", size: 64)
+        } subtitle: {
+            if let billing, billing.ok, billing.status != "inactive" {
+                Text(billing.amount ?? "—").font(.cavnarNumber(14, weight: 600))
+                    + Text(" · next charge ")
+                    + Text(billing.nextDate ?? "—").font(.cavnarNumber(14, weight: 600))
+            } else {
+                Text(billing?.message ?? "Contact will@cavnar.ai to get set up")
+            }
+        }
+    }
+
+    private func statusStrip(_ billing: BillingSummary) -> some View {
+        let status = billing.status ?? ""
+        let good = status == "active" || status == "trialing"
+        return HStack(spacing: 8) {
+            AccountStatTile(label: "Status", value: status == "trialing" ? "Trial" : status.capitalized,
+                            tone: good ? .cavnarGreen : .cavnarAmber)
+            AccountStatTile(label: "Amount", value: billing.amount ?? "—", valueIsNumber: true)
+            AccountStatTile(label: "Next charge", value: billing.nextDate ?? "—", valueIsNumber: true)
         }
     }
 

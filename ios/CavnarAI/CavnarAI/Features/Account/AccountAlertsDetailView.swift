@@ -41,8 +41,11 @@ struct AccountAlertsDetailView: View {
     var body: some View {
         NavigationStack {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 22) {
+                hero
+                statusStrip
+
+                VStack(alignment: .leading, spacing: 8) {
                     sectionHeader("What triggers an alert")
                     VStack(alignment: .leading, spacing: 12) {
                         toggle("1-star reviews", $draft.alert1star)
@@ -57,7 +60,7 @@ struct AccountAlertsDetailView: View {
                     .cavnarCard()
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 8) {
                     sectionHeader("How urgent alerts reach you")
                     VStack(alignment: .leading, spacing: 12) {
                         toggle("Text alerts", $draft.urgentViaSms)
@@ -66,7 +69,7 @@ struct AccountAlertsDetailView: View {
                     .cavnarCard()
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 8) {
                     sectionHeader("Push notifications")
                     VStack(alignment: .leading, spacing: 12) {
                         pushToggle("1-star reviews", $draft.al1starPush, on: draft.alert1star)
@@ -83,7 +86,7 @@ struct AccountAlertsDetailView: View {
                     .cavnarCard()
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 8) {
                     sectionHeader("Quiet hours")
                     VStack(alignment: .leading, spacing: 12) {
                         Toggle(isOn: $quietHoursEnabled) {
@@ -105,7 +108,7 @@ struct AccountAlertsDetailView: View {
                     .cavnarCard()
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 8) {
                     sectionHeader("Weekly digest")
                     VStack(alignment: .leading, spacing: 12) {
                         toggle("Weekly digest", $draft.digestEnabled)
@@ -125,7 +128,7 @@ struct AccountAlertsDetailView: View {
                     .cavnarCard()
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         sectionHeader("Alert contacts")
                         Spacer()
@@ -187,31 +190,62 @@ struct AccountAlertsDetailView: View {
                         }
                     }
                 } label: {
-                    if viewModel.isSavingAlerts {
-                        CavnarShimmerText(text: "Saving…")
-                    } else {
-                        Text("Save alert settings")
+                    Group {
+                        if viewModel.isSavingAlerts {
+                            CavnarShimmerText(text: "Saving…")
+                        } else {
+                            Text("Save alert settings")
+                        }
                     }
+                    .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSavingAlerts))
                 .disabled(viewModel.isSavingAlerts)
-                .frame(maxWidth: .infinity)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
         }
-        .cavnarModuleBackground()
-        .navigationTitle("Alerts")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { cavnarTitleToolbar("Alerts") }
+        .accountSheetChrome("Alerts")
         .cavnarPostedOverlay(postedLabel) { dismiss() }
         }
     }
 
+    // MARK: - Identity (option A)
+
+    private var onCount: Int {
+        [draft.alert1star, draft.alert2star, draft.alert5star, draft.alertHealth,
+         draft.alertNegSpike, draft.alertNegativeTrend, draft.alertNoResponse, draft.alertLaborOver].filter { $0 }.count
+    }
+
+    private var pushCount: Int {
+        [draft.al1starPush && draft.alert1star, draft.al2starPush && draft.alert2star,
+         draft.al5starPush && draft.alert5star, draft.alHealthPush && draft.alertHealth,
+         draft.alSpikePush && draft.alertNegSpike, draft.alUnresPush && draft.alertNoResponse].filter { $0 }.count
+    }
+
+    private var hero: some View {
+        AccountHero(title: onCount == 0 ? "No alerts on" : "Alerts on") {
+            GlowBadge(systemImage: "bell.badge", size: 64)
+        } subtitle: {
+            Text("\(onCount)").font(.cavnarNumber(14, weight: 600))
+                + Text(" of ")
+                + Text("8").font(.cavnarNumber(14, weight: 600))
+                + Text(" triggers · Digest \(draft.digestEnabled ? draft.digestDay.capitalized : "off") · Quiet hours \(quietHoursEnabled ? "on" : "off")")
+        }
+    }
+
+    private var statusStrip: some View {
+        HStack(spacing: 8) {
+            AccountStatTile(label: "Text", value: draft.urgentViaSms ? "On" : "Off",
+                            tone: draft.urgentViaSms ? .cavnarGreen : .cavnarInk3, detail: "Urgent alerts")
+            AccountStatTile(label: "Email", value: draft.urgentViaEmail ? "On" : "Off",
+                            tone: draft.urgentViaEmail ? .cavnarGreen : .cavnarInk3, detail: "Urgent alerts")
+            AccountStatTile(label: "Push", value: "\(pushCount)", detail: "alert types", valueIsNumber: true)
+        }
+    }
+
     private func sectionHeader(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.cavnarBody(14.5, weight: 700))
-            .foregroundStyle(Color.cavnarInk3)
+        AccountKicker(text: title)
     }
 
     private func pushToggle(_ label: String, _ binding: Binding<Bool>, on: Bool) -> some View {

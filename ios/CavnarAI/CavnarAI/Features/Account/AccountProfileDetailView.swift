@@ -1,14 +1,13 @@
 import SwiftUI
 
-/// Opened from Account's "Profile & details" row. Split down the middle:
-/// restaurant identity fields (name/location/neighborhood/vibe/known-for)
-/// are set once by Will during onboarding and stay locked here, because
-/// client_api.py matches several of them by exact string elsewhere (AI
-/// query construction, competitor lookups) — a client edit could silently
-/// break that matching with no visible error. Everything else here has no
-/// such dependency (pure contact info, or freeform notes fed to the AI as
-/// context rather than parsed), so it's a real editable form now instead
-/// of "email will@cavnar.ai to change this."
+/// Opened from Account's "Profile & details" row. Option A ("identity
+/// card") from the account-sheet design review: the sheet opens on who
+/// this restaurant is — monogram tile, name, location — with the admin-set
+/// facts as chips, then the editable contact and AI-voice fields in warm
+/// cards. Restaurant identity fields (name/location/neighborhood/vibe/
+/// known-for) stay admin-managed because client_api.py matches several of
+/// them by exact string (AI query construction, competitor lookups); the
+/// "Set during onboarding" chip is the whole lock notice now.
 struct AccountProfileDetailView: View {
     let viewModel: AccountViewModel
     let profile: AccountProfile
@@ -16,6 +15,7 @@ struct AccountProfileDetailView: View {
     @Environment(SessionStore.self) private var sessionStore
     @State private var showingUpdateEmail = false
     @State private var showingLocationSwitcher = false
+    @State private var locations = LocationSwitcherViewModel()
 
     @State private var ownerName: String
     @State private var ownerPhone: String
@@ -37,11 +37,14 @@ struct AccountProfileDetailView: View {
         _menuNotes  = State(initialValue: profile.menuNotes ?? "")
     }
 
+    private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    lockedSection
+                VStack(alignment: .leading, spacing: 22) {
+                    hero
+                    chips
                     contactSection
                     voiceSection
 
@@ -61,23 +64,22 @@ struct AccountProfileDetailView: View {
                             }
                         }
                     } label: {
-                        if viewModel.isSavingProfile {
-                            CavnarShimmerText(text: "Saving…")
-                        } else {
-                            Text("Save changes")
+                        Group {
+                            if viewModel.isSavingProfile {
+                                CavnarShimmerText(text: "Saving…")
+                            } else {
+                                Text("Save changes")
+                            }
                         }
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isSavingProfile))
                     .disabled(viewModel.isSavingProfile)
-                    .frame(maxWidth: .infinity)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
             }
-            .cavnarModuleBackground()
-            .navigationTitle("Profile")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { cavnarTitleToolbar("Profile") }
+            .accountSheetChrome("Restaurant")
             .keyboardDoneToolbar { focusedField = nil }
             .cavnarPostedOverlay(postedLabel) { dismiss() }
             .sheet(isPresented: $showingUpdateEmail) {
@@ -86,157 +88,95 @@ struct AccountProfileDetailView: View {
             .sheet(isPresented: $showingLocationSwitcher) {
                 LocationSwitcherView { Task { await viewModel.load() } }
             }
-        }
-    }
-
-    // MARK: - Locked (admin-set) fields
-
-    private var lockedSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            sectionHeader("Restaurant")
-            VStack(alignment: .leading, spacing: 10) {
-                lockedRow("Restaurant", profile.restaurantName)
-                if let location = profile.locationName {
-                    divider()
-                    lockedRow("Location", location)
-                }
-                if let neighborhood = profile.neighborhood {
-                    divider()
-                    lockedRow("Neighborhood", neighborhood)
-                }
-                if let vibe = profile.vibe {
-                    divider()
-                    lockedRow("Atmosphere", vibe)
-                }
-                if let knownFor = profile.knownFor {
-                    divider()
-                    lockedRow("Known for", knownFor)
-                }
-                divider()
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .padding(.top, 1)
-                    Text("Set during setup — this is what the AI uses to describe your restaurant, so it stays admin-managed. Email will@cavnar.ai to change it.")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
-                }
-                .padding(.top, 2)
+            .task {
+                if isOwner { await locations.load() }
             }
-            .cavnarCard()
         }
     }
 
-    private func lockedRow(_ label: String, _ value: String) -> some View {
-        HStack {
-            Text(label).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
-            Spacer()
-            Text(value).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk2)
+    // MARK: - Identity
+
+    private var initials: String {
+        let words = profile.restaurantName.split(separator: " ")
+        return String(words.prefix(2).compactMap { $0.first }).uppercased()
+    }
+
+    private var hero: some View {
+        AccountHero(title: profile.restaurantName) {
+            GlowBadge(systemImage: "building.2", size: 64, monogram: initials)
+        } subtitle: {
+            Text([profile.locationName, profile.neighborhood].compactMap { $0 }.joined(separator: " · "))
         }
     }
 
-    // MARK: - Editable contact
+    /// Known-for reads as one chip per thing ("Wood-fired pizza & house
+    /// pasta" → two chips), not one long one.
+    private var factChips: [String] {
+        var out: [String] = []
+        if let vibe = profile.vibe, !vibe.isEmpty { out.append(vibe) }
+        if let knownFor = profile.knownFor {
+            let parts = knownFor
+                .replacingOccurrences(of: " and ", with: " & ")
+                .split(whereSeparator: { $0 == "&" || $0 == "," })
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            out.append(contentsOf: parts.map { $0.prefix(1).uppercased() + $0.dropFirst() })
+        }
+        return out
+    }
+
+    private var chips: some View {
+        AccountFlowLayout(spacing: 6) {
+            ForEach(factChips, id: \.self) { AccountChip(text: $0) }
+            AccountChip(text: "Set during onboarding", muted: true)
+        }
+    }
+
+    // MARK: - Contact
 
     private var contactSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            sectionHeader("Contact")
-            VStack(alignment: .leading, spacing: 16) {
-                profileField("Owner name", text: $ownerName, field: .ownerName)
-                profileField("Phone", text: $ownerPhone, field: .ownerPhone, keyboardType: .phonePad)
-
-                divider()
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Email").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                        Text(profile.ownerEmail ?? "—").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk)
+        AccountSection(kicker: "Contact") {
+            AccountField(label: "Owner", text: $ownerName, focus: $focusedField, field: .ownerName)
+            AccountField(label: "Phone", text: $ownerPhone, focus: $focusedField, field: .ownerPhone, keyboardType: .phonePad, isNumber: true)
+            AccountKVRow(label: "", showsDivider: isOwner) {
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("EMAIL").font(.cavnarBody(12.5, weight: 700)).tracking(0.8).foregroundStyle(Color.cavnarInk3)
+                        Text(profile.ownerEmail ?? "—").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk)
                     }
                     Spacer()
-                    Button {
-                        Haptic.light()
-                        showingUpdateEmail = true
-                    } label: {
-                        Text("Update")
-                            .font(.cavnarBody(14, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber)
-                    }
+                    AccountLink(title: "Update") { showingUpdateEmail = true }
                 }
-
-                if sessionStore.currentUser?.isOwner == true {
-                    divider()
-                    Button {
-                        Haptic.light()
-                        showingLocationSwitcher = true
-                    } label: {
-                        HStack {
-                            Text("Locations").font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(Color.cavnarInk3)
+            }
+            if isOwner {
+                Button {
+                    Haptic.light()
+                    showingLocationSwitcher = true
+                } label: {
+                    HStack {
+                        Text("Locations").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk)
+                        Spacer()
+                        if locations.locations.isEmpty {
+                            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Color.cavnarInk3)
+                        } else {
+                            AccountChip(text: "\(locations.locations.count)", muted: true)
                         }
                     }
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
-            .cavnarCard()
         }
     }
 
-    // MARK: - AI voice (editable, freeform)
+    // MARK: - AI voice
 
     private var voiceSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            sectionHeader("How the AI writes for you")
-            VStack(alignment: .leading, spacing: 16) {
-                profileEditor("Brand voice", placeholder: "e.g. warm, a little playful, never corporate", text: $voiceNotes, field: .voiceNotes)
-                divider()
-                profileEditor("Never says", placeholder: "Phrases or claims the AI should avoid", text: $neverSay, field: .neverSay)
-                divider()
-                profileEditor("Menu highlights", placeholder: "Dishes, specials, or ingredients worth mentioning", text: $menuNotes, field: .menuNotes)
-            }
-            .cavnarCard()
+        AccountSection(kicker: "How the AI writes for you") {
+            AccountEditor(label: "Brand voice", placeholder: "e.g. warm, a little playful, never corporate", text: $voiceNotes, focus: $focusedField, field: .voiceNotes)
+            AccountEditor(label: "Never says", placeholder: "Phrases or claims the AI should avoid", text: $neverSay, focus: $focusedField, field: .neverSay)
+            AccountEditor(label: "Menu highlights", placeholder: "Dishes, specials, or ingredients worth mentioning", text: $menuNotes, focus: $focusedField, field: .menuNotes, showsDivider: false)
         }
-    }
-
-    // MARK: - Shared field styles
-
-    private func profileField(_ label: String, text: Binding<String>, field: Field, keyboardType: UIKeyboardType = .default) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-            TextField(label, text: text)
-                .font(.cavnarBody(14, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
-                .keyboardType(keyboardType)
-                .focused($focusedField, equals: field)
-        }
-    }
-
-    private func profileEditor(_ label: String, placeholder: String, text: Binding<String>, field: Field) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-            ZStack(alignment: .topLeading) {
-                if text.wrappedValue.isEmpty {
-                    Text(placeholder)
-                        .font(.cavnarBody(14.5))
-                        .foregroundStyle(Color.cavnarInk3.opacity(0.6))
-                        .padding(.top, 8)
-                        .padding(.leading, 4)
-                }
-                TextEditor(text: text)
-                    .font(.cavnarBody(14.5, weight: 500))
-                    .foregroundStyle(Color.cavnarInk)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 64, maxHeight: 110)
-                    .focused($focusedField, equals: field)
-            }
-        }
-    }
-
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.cavnarBody(14.5, weight: 700))
-            .foregroundStyle(Color.cavnarInk3)
-    }
-
-    private func divider() -> some View {
-        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
     }
 }

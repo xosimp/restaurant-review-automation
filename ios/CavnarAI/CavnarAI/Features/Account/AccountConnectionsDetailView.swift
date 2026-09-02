@@ -19,6 +19,8 @@ struct AccountConnectionsDetailView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    hero
+                    marksRow
                     googleRow
                     toastRow
                     requestRow(
@@ -37,12 +39,58 @@ struct AccountConnectionsDetailView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
             }
-            .cavnarModuleBackground()
-            .navigationTitle("Connections")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { cavnarTitleToolbar("Connections") }
+            .accountSheetChrome("Connections")
             .sheet(isPresented: $showingToastConnect) {
                 ToastConnectSheet(viewModel: viewModel)
+            }
+        }
+    }
+
+    // MARK: - Identity (option A)
+
+    private var marks: [(name: String, symbol: String, tint: Color, status: ConnectionStatus)] {
+        [
+            ("Google", "building.2.fill", Color(red: 0.26, green: 0.52, blue: 0.96), connections.googleBusiness),
+            ("Toast", "fork.knife", Color(red: 0.98, green: 0.35, blue: 0.15), connections.toast),
+            ("Instagram", "camera.fill", Color(red: 0.82, green: 0.14, blue: 0.56), connections.instagram),
+            ("Square", "square.fill", .black, connections.square),
+            ("Clover", "leaf.fill", Color(red: 0.19, green: 0.6, blue: 0.35), connections.clover),
+        ]
+    }
+
+    private var connectedNames: [String] { marks.filter { $0.status.connected }.map(\.name) }
+
+    private var hero: some View {
+        AccountHero(title: connectedNames.isEmpty ? "Nothing connected yet" : connectedNames.joined(separator: " · ")) {
+            GlowBadge(systemImage: "link", size: 64)
+        } subtitle: {
+            Text("\(connectedNames.count)").font(.cavnarNumber(14, weight: 600))
+                + Text(" of ")
+                + Text("5").font(.cavnarNumber(14, weight: 600))
+                + Text(" apps connected")
+        }
+    }
+
+    /// The five app marks in a row — lit when connected, dimmed when not.
+    private var marksRow: some View {
+        HStack(spacing: 8) {
+            ForEach(marks, id: \.name) { mark in
+                Image(systemName: mark.symbol)
+                    .font(.system(size: 17))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(mark.tint)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .opacity(mark.status.connected ? 1 : 0.3)
+                    .overlay(alignment: .topTrailing) {
+                        if mark.status.connected {
+                            Circle().fill(Color.cavnarGreen)
+                                .frame(width: 8, height: 8)
+                                .overlay(Circle().strokeBorder(Color.cavnarPaper, lineWidth: 1.5))
+                                .offset(x: 2, y: -2)
+                        }
+                    }
             }
         }
     }

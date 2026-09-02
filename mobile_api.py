@@ -1835,11 +1835,24 @@ def _do_mobile_account(current_user):
         "never_say": restaurant.never_say or None,
         "menu_notes": restaurant.menu_notes or None,
     }
+    # Where a 2FA code actually goes, masked, for the Security sheet's
+    # status tile ("Text · •••-0142" / "Email · ma***@giamia.com").
+    _method = getattr(restaurant, "two_fa_method", "email") or "email"
+    if _method == "sms" and restaurant.owner_phone:
+        _digits = "".join(c for c in restaurant.owner_phone if c.isdigit())
+        _masked = "•••-" + _digits[-4:] if len(_digits) >= 4 else "your phone"
+    else:
+        _method = "email"
+        _em = restaurant.owner_email or current_user.get("email") or ""
+        _masked = (_em[:2] + "***@" + _em.split("@")[-1]) if "@" in _em else "your email"
     account = {
         "username": current_user["username"],
         "email": current_user["email"],
         "two_fa_enabled": bool(restaurant.two_fa_enabled),
+        "two_fa_method": _method,
+        "two_fa_contact_masked": _masked,
         "login_notify": bool(getattr(restaurant, "login_notify", 0)),
+        "last_login": current_user.get("last_login"),
     }
     connections = {
         "google_business": {
