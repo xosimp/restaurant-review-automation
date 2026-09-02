@@ -24,8 +24,13 @@ load_dotenv()
 
 app = Flask(__name__)
 
-RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-FROM_EMAIL       = os.getenv("FROM_EMAIL", "will@cavnar.ai")
+# Read fresh at call time — see scheduler.py's identical note (this
+# standalone app happens to import-order safely today since
+# load_dotenv() above runs first in THIS file, but the pattern is
+# fragile and easy to break by reordering, same as the bug already
+# hit once in hosted_dashboard.py/emails.py).
+def _resend_key(): return os.getenv("RESEND_API_KEY", "")
+def _from_email(): return os.getenv("FROM_EMAIL", "will@cavnar.ai")
 
 # ── PDF Colors ────────────────────────────────────────────────────────────────
 INK         = colors.HexColor("#0e0c0a")
@@ -364,17 +369,15 @@ def generate_pdf(data):
 def send_email(to_email, restaurant, pdf_buf):
     pdf_data = base64.b64encode(pdf_buf.read()).decode()
     date_str = datetime.now().strftime("%B %d, %Y")
-    resend.api_key = RESEND_API_KEY
+    resend.api_key = _resend_key()
     params = {
-        "from": f"Will Cavnar <{FROM_EMAIL}>",
+        "from": f"Will Cavnar <{_from_email()}>",
         "to": [to_email],
         "subject": f"Your AI Audit Report — {restaurant}",
         "html": f"""
 <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:Georgia,serif;font-size:22px;font-weight:400;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
-    </h2>
+    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
       Restaurant AI Consulting · Chicago, IL
     </p>
@@ -792,7 +795,7 @@ def send():
     data = request.get_json()
     if not data.get("owner_email"):
         return jsonify(ok=False, error="No owner email provided")
-    if not RESEND_API_KEY:
+    if not _resend_key():
         return jsonify(ok=False, error="RESEND_API_KEY not set in .env")
     try:
         pdf_buf = generate_pdf(data)

@@ -33,8 +33,11 @@ def sanitize(value, max_len=1000):
     return value[:max_len].strip() or None
 
 # Pull config from environment
-RESEND_API_KEY        = os.getenv("RESEND_API_KEY", "")
-FROM_EMAIL            = os.getenv("FROM_EMAIL", "will@cavnar.ai")
+# Read fresh at call time, not as a module-level constant — see
+# scheduler.py's identical note for why a module-level os.getenv() here
+# is the exact bug class that froze RESEND_API_KEY as "" in emails.py.
+def _resend_key(): return os.getenv("RESEND_API_KEY", "")
+def _from_email(): return os.getenv("FROM_EMAIL", "will@cavnar.ai")
 ADMIN_USERNAME        = os.getenv("ADMIN_USERNAME", "will")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_SECRET_KEY     = os.getenv("STRIPE_SECRET_KEY", "")
@@ -755,12 +758,13 @@ def reset_password(user_id, current_user):
             conn.close()
             if row:
                 import resend as _resend
-                _resend.api_key = RESEND_API_KEY
+                _resend.api_key = _resend_key()
                 _resend.Emails.send({
-                    "from": f"Will Cavnar <{FROM_EMAIL}>",
+                    "from": f"Will Cavnar <{_from_email()}>",
                     "to": [row["email"]],
                     "subject": "Your Cavnar AI password has been reset",
-                    "html": f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+                    "html": f"""<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:500px;margin:0 auto">
+                        <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin:0 0 20px">
                         <h3 style="color:#0e0c0a">Password reset</h3>
                         <p>Hi — your Cavnar AI dashboard password has been reset.</p>
                         <div style="background:#f7f4ef;padding:14px;border-radius:8px;margin:16px 0">
@@ -1578,9 +1582,9 @@ def test_digest(restaurant_id, current_user):
         owner_email = restaurant.owner_email
         report = build_report_from_db(restaurant_id, restaurant.name, days=7)
         html = render_html(report, restaurant.name, owner_name=restaurant.owner_name, restaurant_id=restaurant_id)
-        _resend.api_key = RESEND_API_KEY
+        _resend.api_key = _resend_key()
         _resend.Emails.send({
-            "from": f"Cavnar AI <{FROM_EMAIL}>",
+            "from": f"Cavnar AI <{_from_email()}>",
             "to": [owner_email],
             "subject": f"[TEST] Your weekly review digest — {restaurant.name}",
             "html": html,
@@ -1739,7 +1743,7 @@ def send_referral(current_user):
         note_block = f"<p style=\"margin:0 0 16px 0;font-style:italic;color:#4a4540\">\"{note}\"</p>" if note else ""
         html = f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:540px;margin:0 auto;padding:32px 24px;background:#fdf8f4">
-  <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;color:#0e0c0a;margin-bottom:4px">Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span></div>
+  <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin-bottom:6px">
   <div style="font-size:10px;color:#7a736a;letter-spacing:.1em;text-transform:uppercase;margin-bottom:24px">Restaurant Intelligence</div>
   <p style="margin:0 0 16px 0;font-size:15px;color:#0e0c0a;line-height:1.7">Hi — {owner_name} from {referrer} thought you might find this useful.</p>
   {note_block}
@@ -1748,17 +1752,17 @@ def send_referral(current_user):
   <a href="https://calendly.com/will-cavnar/30min" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:4px;text-decoration:none;font-size:13px;font-weight:600">Book a free call</a>
   <p style="margin:24px 0 0 0;font-size:12px;color:#7a736a">Will Cavnar · Cavnar AI · <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a></p>
 </div>"""
-        _resend.api_key = RESEND_API_KEY
+        _resend.api_key = _resend_key()
         _resend.Emails.send({
-            "from": f"Will Cavnar <{FROM_EMAIL}>",
+            "from": f"Will Cavnar <{_from_email()}>",
             "to": [ref_email],
             "subject": f"{owner_name} thinks you should check out Cavnar AI",
             "html": html,
         })
         # Notify Will
         _resend.Emails.send({
-            "from": f"Cavnar AI <{FROM_EMAIL}>",
-            "to": [FROM_EMAIL],
+            "from": f"Cavnar AI <{_from_email()}>",
+            "to": [_from_email()],
             "subject": f"New referral from {referrer} — {ref_name}",
             "html": f"<p>{referrer} referred {ref_name} ({ref_email}).</p><p>Note: {note or 'none'}</p>",
         })

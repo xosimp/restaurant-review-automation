@@ -84,7 +84,7 @@ def forgot_password():
                     "subject": "Reset your Cavnar AI password",
                     "html": f"""
                     <div style="font-family:'DM Sans',sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
-                      <div style="font-size:20px;font-weight:600;margin-bottom:24px">Cavnar <em style="color:#c84b2f;font-style:italic">AI</em></div>
+                      <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin-bottom:24px">
                       <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:#0e0c0a">Reset your password</h2>
                       <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:24px">
                         Click the button below to reset your password. This link expires in 1 hour.

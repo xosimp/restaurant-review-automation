@@ -2656,8 +2656,9 @@ def client_upload_data(current_user):
                     "to": [_r_ot.owner_email],
                     "subject": "⚠ Overtime detected — " + _r_ot.name,
                     "html": (
-                        "<div style='font-family:sans-serif;max-width:520px;margin:0 auto'>"
-                        "<div style='border-top:3px solid #e07040;padding-top:20px;margin-bottom:16px'>"
+                        "<div style='font-family:-apple-system,BlinkMacSystemFont,\"Helvetica Neue\",Arial,sans-serif;max-width:520px;margin:0 auto'>"
+                        "<img src='https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png' width='150' height='28' alt='Cavnar AI' style='display:block;width:150px;height:28px;border:0;outline:none;margin-bottom:16px'>"
+                        "<div style='border-top:3px solid #e07040;padding-top:16px;margin-bottom:16px'>"
                         "<h3 style='color:#0e0c0a;margin:0'>Overtime Alert</h3>"
                         "<p style='font-size:13px;color:#7a736a;margin:4px 0 0'>Cavnar AI Labor Monitor</p>"
                         "</div>"
@@ -2683,23 +2684,36 @@ def client_upload_data(current_user):
         from models import get_restaurant, get_client_data
         r = get_restaurant(restaurant_id)
         label = "Labor CSV upload" if data_type == "shifts" else "Inventory CSV upload"
+
+        # Genuinely check first-upload-of-this-type — the comment always
+        # claimed this but nothing enforced it, so Will was emailed on
+        # every single CSV upload, not just the first. Checked BEFORE
+        # log_email() below inserts this upload's own row, using the
+        # existing email_log table as the record of every prior upload.
+        _conn_fu = get_conn()
+        _is_first_upload = _conn_fu.execute(
+            "SELECT 1 FROM email_log WHERE restaurant_id=? AND email_type=? LIMIT 1",
+            (restaurant_id, label)
+        ).fetchone() is None
+        _conn_fu.close()
+
         log_email(restaurant_id, label, current_user.get("email",""), f"{label} — {r.name if r else ''}")
 
-        # Check if this is the client's first upload of this type
         import os as _os, resend as _resend
         _resend_key = _os.getenv("RESEND_API_KEY", "")
         _will_email = _os.getenv("WILL_EMAIL", "will@cavnar.ai")
         _from_email = _os.getenv("FROM_EMAIL", "will@cavnar.ai")
-        if _resend_key and r:
+        if _is_first_upload and _resend_key and r:
             _resend.api_key = _resend_key
             _module = "shift schedule" if data_type == "shifts" else "inventory"
             _resend.Emails.send({
                 "from": f"Cavnar AI Alerts <{_from_email}>",
                 "to": [_will_email],
-                "subject": f"📂 {r.name} just uploaded their {_module} data",
-                "html": f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
-                    <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:16px">
-                        <h3 style="color:#0e0c0a;margin:0">Client data uploaded</h3>
+                "subject": f"📂 {r.name} uploaded their first {_module} data",
+                "html": f"""<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:500px;margin:0 auto">
+                    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin-bottom:16px">
+                    <div style="border-top:3px solid #c84b2f;padding-top:16px;margin-bottom:16px">
+                        <h3 style="color:#0e0c0a;margin:0">First data upload</h3>
                     </div>
                     <p style="font-size:15px;line-height:1.6">
                         <strong>{r.name}</strong> just uploaded their {_module} CSV ({len(rows)} rows).<br><br>
@@ -2955,9 +2969,7 @@ def _do_send_review_request(rid, data):
         html_body = f"""
         <div style="font-family:'DM Sans',Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f7f4ef">
           <div style="background:white;border-radius:12px;padding:32px;border:1px solid #e0dbd0">
-            <div style="font-family:Georgia,serif;font-size:22px;color:#0e0c0a;margin-bottom:4px">
-              Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
-            </div>
+            <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin-bottom:4px">
             <div style="font-size:11px;color:#7a736a;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid #e0dbd0">
               On behalf of {rest_name}
             </div>
@@ -2982,7 +2994,7 @@ def _do_send_review_request(rid, data):
 
         _resend.Emails.send({
             "from":    "reviews@cavnar.ai",
-            "to":      customer_email,
+            "to":      [customer_email],
             "subject": f"How was your visit to {rest_name}?",
             "html":    html_body,
         })

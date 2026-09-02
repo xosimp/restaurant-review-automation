@@ -574,7 +574,7 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 <!-- HEADER -->
 <tr><td style="background:{T['outer_bg']};border-bottom:1px solid {T['outer_border']};padding:24px 32px">
   <table width="100%" cellpadding="0" cellspacing="0"><tr>
-    <td><span style="font-family:Georgia,serif;font-size:22px;font-weight:400;color:{T['text_primary']}">Cavnar <em style="color:#c84b2f">AI</em></span></td>
+    <td><img src="{'https://dashboard.cavnar.ai/static/brand/lockup-light-email.png' if is_dark else 'https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png'}" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none"></td>
     <td align="right"><span style="font-size:11px;color:{T['header_sub']};letter-spacing:.1em;text-transform:uppercase">Weekly Digest</span></td>
   </tr></table>
   <div style="margin-top:6px;font-size:13px;color:{T['header_sub']}">{_html.escape(restaurant_name)}{location_label} &nbsp;·&nbsp; {week_label}</div>
@@ -625,7 +625,7 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 
 <!-- FOOTER -->
 <tr><td style="background:{T['footer_bg']};padding:16px 32px;border-top:1px solid {T['footer_border']}">
-  <p style="font-size:11px;color:{T['footer_text']};margin:0;text-align:center">Cavnar AI &nbsp;·&nbsp; will@cavnar.ai &nbsp;·&nbsp; <a href="https://cavnar.ai" style="color:{T['footer_text']}">cavnar.ai</a></p>
+  <p style="font-size:11px;color:{T['footer_text']};margin:0;text-align:center"><img src="{'https://dashboard.cavnar.ai/static/brand/seal-light-email.png' if is_dark else 'https://dashboard.cavnar.ai/static/brand/seal-dark-email.png'}" width="13" height="13" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &nbsp;·&nbsp; will@cavnar.ai &nbsp;·&nbsp; <a href="https://cavnar.ai" style="color:{T['footer_text']}">cavnar.ai</a></p>
 </td></tr>
 
 </table>

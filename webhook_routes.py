@@ -12,7 +12,8 @@ from emails import send_payment_email, send_welcome_email
 
 webhook_bp = Blueprint('webhook', __name__)
 
-RESEND_API_KEY        = os.getenv("RESEND_API_KEY", "")
+# Read fresh at call time — see scheduler.py's identical note.
+def _resend_key(): return os.getenv("RESEND_API_KEY", "")
 FROM_EMAIL            = os.getenv("FROM_EMAIL", "will@cavnar.ai")
 WILL_EMAIL            = os.getenv("WILL_EMAIL", "will@cavnar.ai")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
@@ -33,12 +34,12 @@ def stripe_webhook():
 
     def send_alert(subject, body):
         """Send alert email to Will."""
-        if not RESEND_API_KEY:
+        if not _resend_key():
             print(f"ALERT: {subject}\n{body}")
             return
         try:
             import resend as _resend
-            _resend.api_key = RESEND_API_KEY
+            _resend.api_key = _resend_key()
             _resend.Emails.send({
                 "from": f"Cavnar AI Alerts <{FROM_EMAIL}>",
                 "to": [WILL_EMAIL],
@@ -129,10 +130,10 @@ def stripe_webhook():
                     print(f"Saved Stripe customer {customer_id} for {email}")
 
                     # Notify Will when a client converts from trial to paid
-                    if first_payment and RESEND_API_KEY:
+                    if first_payment and _resend_key():
                         try:
                             import resend as _resend
-                            _resend.api_key = RESEND_API_KEY
+                            _resend.api_key = _resend_key()
                             # Get restaurant name
                             conn2 = get_conn()
                             rname_row = conn2.execute(
@@ -171,7 +172,7 @@ def stripe_webhook():
                                     "to": [email],
                                     "subject": f"Payment confirmed — Cavnar AI",
                                     "html": f"""<div style="font-family:'DM Sans',sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
-                                      <div style="font-size:20px;font-weight:600;margin-bottom:24px">Cavnar <em style="color:#c84b2f;font-style:italic">AI</em></div>
+                                      <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin-bottom:24px">
                                       <h2 style="font-size:18px;font-weight:600;margin-bottom:8px;color:#0e0c0a">Payment confirmed ✓</h2>
                                       <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:20px">
                                         Thank you — your payment of <strong>${amount:.2f}</strong> has been received for <strong>{rname}</strong>.
@@ -283,10 +284,10 @@ def docusign_webhook():
 
             if not row:
                 print(f"WARNING: No restaurant found for envelope {envelope_id} - emails not sent")
-            elif not RESEND_API_KEY:
+            elif not _resend_key():
                 print(f"WARNING: No RESEND_API_KEY - emails not sent")
 
-            if row and RESEND_API_KEY:
+            if row and _resend_key():
                 r = dict(row)
                 mods = sum([
                     1 if r.get("module_reviews") else 0,

@@ -110,7 +110,8 @@ def send_failure_digest():
             "html": f"""
 <div style="font-family:-apple-system,sans-serif;max-width:640px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:16px">
-    <h2 style="font-family:Georgia,serif;font-size:20px;font-weight:400;margin:0">Cavnar <span style="color:#c84b2f;font-style:italic">AI</span> — job failures</h2>
+    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin-bottom:4px">
+    <p style="font-size:13px;font-weight:600;color:#0e0c0a;margin:0">Job failures</p>
   </div>
   <table style="width:100%;border-collapse:collapse;font-size:13px">
     <tr>

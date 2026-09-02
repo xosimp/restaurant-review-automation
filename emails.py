@@ -52,8 +52,7 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
     html = f"""
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
       <div style="text-align:center;margin-bottom:24px">
-        <span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;color:#0e0c0a">Cavnar</span>
-        <span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:14px;font-weight:800;letter-spacing:0.14em;color:#c84b2f;vertical-align:3px">AI</span>
+        <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="180" height="34" alt="Cavnar AI" style="display:inline-block;width:180px;height:34px;border:0;outline:none">
       </div>
       <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
         <p style="color:#3a3530;font-size:15px;margin:0 0 16px">{greeting}</p>
@@ -63,7 +62,7 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
         </div>
         <p style="color:#7a736a;font-size:13px;text-align:center;margin:16px 0 0">This code expires in <strong>10 minutes</strong>. If you didn't request this, someone may have your password — change it immediately and contact <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a>.</p>
       </div>
-      <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
+      <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
     </div>
     """
     try:
@@ -107,8 +106,7 @@ def send_login_notification(to_email: str, restaurant_name: str,
     html = f"""
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
       <div style="text-align:center;margin-bottom:24px">
-        <span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;color:#0e0c0a">Cavnar</span>
-        <span style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:14px;font-weight:800;letter-spacing:0.14em;color:#c84b2f;vertical-align:3px">AI</span>
+        <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="180" height="34" alt="Cavnar AI" style="display:inline-block;width:180px;height:34px;border:0;outline:none">
       </div>
       <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
         <p style="color:#3a3530;font-size:15px;margin:0 0 16px">New sign-in to <strong>{restaurant_name}</strong></p>
@@ -119,7 +117,7 @@ def send_login_notification(to_email: str, restaurant_name: str,
         </table>
         <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed. If you don&rsquo;t recognize this sign-in, <a href="mailto:will@cavnar.ai" style="color:#c84b2f">contact Will immediately</a> and change your password.</p>
       </div>
-      <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
+      <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
     </div>
     """
     try:
@@ -197,9 +195,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
             "html": f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
-    </h2>
+    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
       Restaurant Intelligence Dashboard
     </p>
@@ -234,7 +230,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
   </p>
   <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
   <p style="font-size:12px;color:#7a736a;margin:0">
-    Will Cavnar &nbsp;·&nbsp; Cavnar AI<br/>
+    <img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:6px;border:0"><span style="vertical-align:middle">Will Cavnar &nbsp;·&nbsp; Cavnar AI</span><br/>
     <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
     &nbsp;·&nbsp;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
@@ -277,9 +273,7 @@ def send_welcome_email(to_email, restaurant_name, username, password,
     html = f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
-    </h2>
+    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
       Restaurant Intelligence Dashboard
     </p>
@@ -305,7 +299,7 @@ def send_welcome_email(to_email, restaurant_name, username, password,
   </p>
   <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
   <p style="font-size:12px;color:#7a736a;margin:0">
-    Will Cavnar &nbsp;·&nbsp; Cavnar AI<br/>
+    <img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:6px;border:0"><span style="vertical-align:middle">Will Cavnar &nbsp;·&nbsp; Cavnar AI</span><br/>
     <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
     &nbsp;·&nbsp;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
@@ -488,9 +482,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
             "html": f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
-    </h2>
+    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
@@ -505,7 +497,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
   </p>
   <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
   <p style="font-size:12px;color:#7a736a;margin:0">
-    Will Cavnar &nbsp;·&nbsp; Cavnar AI<br/>
+    <img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:6px;border:0"><span style="vertical-align:middle">Will Cavnar &nbsp;·&nbsp; Cavnar AI</span><br/>
     <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
     &nbsp;·&nbsp;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
@@ -584,9 +576,7 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
             "html": f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
-    </h2>
+    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
@@ -599,7 +589,7 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
   </p>
   <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
   <p style="font-size:12px;color:#7a736a;margin:0">
-    Will Cavnar &nbsp;·&nbsp; Cavnar AI<br/>
+    <img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:6px;border:0"><span style="vertical-align:middle">Will Cavnar &nbsp;·&nbsp; Cavnar AI</span><br/>
     <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
     &nbsp;·&nbsp;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
@@ -629,9 +619,7 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
             "html": f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
-    </h2>
+    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
@@ -740,9 +728,7 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
             "html": f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
-    </h2>
+    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">{month_name} {year} Monthly Summary</p>
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
@@ -821,9 +807,7 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
             "html": f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <h2 style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;font-size:22px;font-weight:700;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-weight:800;letter-spacing:0.08em;font-size:0.68em;vertical-align:2px">AI</span>
-    </h2>
+    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
@@ -840,7 +824,7 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
   </p>
   <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
   <p style="font-size:12px;color:#7a736a;margin:0">
-    Will Cavnar &nbsp;·&nbsp; Cavnar AI<br/>
+    <img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:6px;border:0"><span style="vertical-align:middle">Will Cavnar &nbsp;·&nbsp; Cavnar AI</span><br/>
     <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
     &nbsp;·&nbsp;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>

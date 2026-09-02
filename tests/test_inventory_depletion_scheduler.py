@@ -115,7 +115,7 @@ def test_stale_check_uses_ledger_freshness_for_migrated_restaurants(db_path, mon
     import inventory_ledger
     from datetime import datetime, timedelta
 
-    monkeypatch.setattr(scheduler, "RESEND_API_KEY", "fake-key")
+    monkeypatch.setenv("RESEND_API_KEY", "fake-key")
     sent = {}
     monkeypatch.setattr("resend.Emails.send", lambda payload: sent.update(payload))
 
@@ -141,7 +141,7 @@ def test_stale_check_uses_ledger_freshness_for_migrated_restaurants(db_path, mon
 def test_stale_check_flags_disconnected_toast_restaurant_explicitly(db_path, monkeypatch):
     from datetime import datetime, timedelta
 
-    monkeypatch.setattr(scheduler, "RESEND_API_KEY", "fake-key")
+    monkeypatch.setenv("RESEND_API_KEY", "fake-key")
     sent = {}
     monkeypatch.setattr("resend.Emails.send", lambda payload: sent.update(payload))
 

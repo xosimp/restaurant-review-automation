@@ -25,18 +25,23 @@ load_dotenv(pathlib.Path(__file__).parent / ".env")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [scheduler] %(message)s")
 log = logging.getLogger("scheduler")
 
-RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-FROM_EMAIL     = os.getenv("FROM_EMAIL", "will@cavnar.ai")
+# NOTE: intentionally NOT read as module-level constants — a module-level
+# os.getenv() call here froze RESEND_API_KEY as "" if this file was ever
+# imported before hosted_dashboard.py's load_dotenv() ran (the exact bug
+# fixed in emails.py/hosted_dashboard.py). Every sender below reads these
+# fresh via _resend_key()/_from_email() at call time instead.
+def _resend_key(): return os.getenv("RESEND_API_KEY", "")
+def _from_email(): return os.getenv("FROM_EMAIL", "will@cavnar.ai")
 
 
 def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
     """Email the owner immediately when a high-urgency review comes in."""
-    if not RESEND_API_KEY or not owner_email:
+    if not _resend_key() or not owner_email:
         log.warning(f"Cannot send urgent alert for {restaurant_name} — no key/email")
         return
     try:
         import resend as _resend
-        _resend.api_key = RESEND_API_KEY
+        _resend.api_key = _resend_key()
 
         # Look up draft responses for these reviews
         try:
@@ -81,15 +86,13 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
 </div>"""
 
         _resend.Emails.send({
-            "from": f"Cavnar AI Alerts <{FROM_EMAIL}>",
+            "from": f"Cavnar AI Alerts <{_from_email()}>",
             "to": [owner_email],
             "subject": f"\u26a0 Urgent review alert \u2014 {restaurant_name}",
             "html": f"""
 <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
-    <h2 style="font-family:Georgia,serif;font-size:20px;font-weight:400;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
-    </h2>
+    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
       Urgent Review Alert
     </p>
@@ -115,7 +118,7 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
     Cavnar AI &#183;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
     &#183;
-    <a href="mailto:{FROM_EMAIL}" style="color:#c84b2f;text-decoration:none">{FROM_EMAIL}</a>
+    <a href="mailto:{_from_email()}" style="color:#c84b2f;text-decoration:none">{_from_email()}</a>
   </p>
 </div>"""
         })
@@ -318,9 +321,9 @@ def run_weekly_digests():
 
                 owner_name = restaurant.sign_off_name or restaurant.owner_email.split("@")[0].title()
                 html = render_html(report, restaurant.name, owner_name=owner_name, restaurant_id=restaurant.id)
-                _resend.api_key = RESEND_API_KEY
+                _resend.api_key = _resend_key()
                 _resend.Emails.send({
-                    "from": f"Cavnar AI <{FROM_EMAIL}>",
+                    "from": f"Cavnar AI <{_from_email()}>",
                     "to": [owner_email],
                     "subject": f"Your weekly review digest \u2014 {restaurant.name}",
                     "html": html,
@@ -343,7 +346,7 @@ def run_weekly_digests():
 
 def check_stale_inventory():
     """Alert Will when a client's inventory data is more than 7 days old."""
-    if not RESEND_API_KEY:
+    if not _resend_key():
         return
     try:
         from models import get_all_restaurants
@@ -406,17 +409,15 @@ def check_stale_inventory():
             for name, status in stale
         ])
 
-        _resend.api_key = RESEND_API_KEY
+        _resend.api_key = _resend_key()
         _resend.Emails.send({
-            "from": f"Cavnar AI <{FROM_EMAIL}>",
-            "to": ["will@cavnar.ai"],
+            "from": f"Cavnar AI <{_from_email()}>",
+            "to": [os.getenv("WILL_EMAIL", "will@cavnar.ai")],
             "subject": f"⚠ Stale inventory data — {len(stale)} client(s) need updating",
             "html": f"""
 <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
   <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
-    <h2 style="font-family:Georgia,serif;font-size:20px;font-weight:400;margin:0 0 4px">
-      Cavnar <span style="color:#c84b2f;font-style:italic">AI</span>
-    </h2>
+    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
       Weekly Inventory Check
     </p>
@@ -632,12 +633,12 @@ def backup_db():
     WILL_EMAIL = os.getenv("WILL_EMAIL", "will@cavnar.ai")
 
     try:
-        if not RESEND_API_KEY:
+        if not _resend_key():
             log.warning("backup_db: RESEND_API_KEY not set — skipping backup")
             return
 
         import resend as _resend
-        _resend.api_key = RESEND_API_KEY
+        _resend.api_key = _resend_key()
 
         # Copy DB to a temp file so we don't lock the live DB during read
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
@@ -655,7 +656,7 @@ def backup_db():
         filename  = f"cavnar_ai_backup_{timestamp}.db"
 
         _resend.Emails.send({
-            "from": f"Cavnar AI Backups <{FROM_EMAIL}>",
+            "from": f"Cavnar AI Backups <{_from_email()}>",
             "to":   [WILL_EMAIL],
             "subject": f"Daily DB backup — {timestamp} ({size_kb} KB)",
             "html": f"""
