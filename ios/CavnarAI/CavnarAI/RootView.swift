@@ -254,7 +254,10 @@ private struct AskCavnarFAB: View {
                         // Intro's one-time spin, then the ambient loop keeps
                         // turning from wherever that left off — both are
                         // full 360s so the handoff between them never jumps.
-                        rotation: .degrees((iconSpun ? 360 : 0) + (ambientRotation ? 360 : 0))
+                        // Only the thin ember halo turns (see GlowBadge);
+                        // the tile and its sparkle stay still.
+                        rotation: .degrees((iconSpun ? 360 : 0) + (ambientRotation ? 360 : 0)),
+                        halo: true
                     )
                 }
                 if !collapsed {
@@ -412,12 +415,13 @@ struct LockedView: View {
                 // Wordmark only — no seal beside it here (it read as a
                 // stray "C" off to the side of the word). Placeholder keeps
                 // the layout stable until the splash lifts and it mounts.
+                // aiTagOverhangs: the six letters are what's centered above
+                // "Welcome back"; the small AI tag hangs off to the right.
                 Group {
                     if introReady {
-                        CavnarWordmarkStampIn(width: 280)
+                        CavnarWordmarkStampIn(width: 280, aiTagOverhangs: true)
                     } else {
-                        Color.clear
-                            .frame(width: 280 + 54 * (280 / 461) + 40, height: 280 * (100 / 461))
+                        Color.clear.frame(width: 280, height: 280 * (100 / 461))
                     }
                 }
                 .padding(.bottom, 48)

@@ -1,8 +1,13 @@
 <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
   <defs>
+    <!-- Obsidian, not jet black: Apple's own dark surface family (systemGray5
+         #2C2C2E at the lit corner falling to systemGray6 #1C1C1E and just
+         under it) — the same dark most iOS app icons sit on, so this one
+         reads as part of the set instead of a black hole next to them. -->
     <linearGradient id="bg" x1="0%" y1="0%" x2="70%" y2="100%">
-      <stop offset="0%" stop-color="#171310"/>
-      <stop offset="100%" stop-color="#0a0807"/>
+      <stop offset="0%" stop-color="#2C2C2E"/>
+      <stop offset="55%" stop-color="#1F1F22"/>
+      <stop offset="100%" stop-color="#161618"/>
     </linearGradient>
     <radialGradient id="ember-dot" cx="42%" cy="38%" r="72%">
       <stop offset="0%" stop-color="#F2B183"/><stop offset="45%" stop-color="#E8956A"/><stop offset="100%" stop-color="#C74E33"/>

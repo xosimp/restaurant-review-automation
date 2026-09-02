@@ -184,6 +184,12 @@ struct CavnarWordmarkStampIn: View {
     var color: Color = .cavnarInk
     var delay: Double = 0
     var showsAITag: Bool = true
+    // When true the AI tag hangs off the wordmark's trailing edge as an
+    // overlay that takes no layout width — so centering this view centers
+    // the six letters themselves, with the tag sitting off to the right
+    // (the lock screen). Off by default: inside CavnarLockupIntro the tag
+    // is part of the composed lockup's width, matching the BrandLockup asset.
+    var aiTagOverhangs: Bool = false
 
     @State private var shown: [Bool] = Array(repeating: false, count: 6)
     @State private var emberDropped = false
@@ -219,16 +225,17 @@ struct CavnarWordmarkStampIn: View {
                     .position(x: 177 * scale, y: 13 * scale)
             }
             .frame(width: width, height: height)
+            .overlay(alignment: .topTrailing) {
+                if showsAITag && aiTagOverhangs {
+                    aiTag
+                        // Its leading edge lands one gap past the letters'
+                        // trailing edge — outside the frame, no layout width.
+                        .alignmentGuide(.trailing) { d in d[.leading] - 54 * scale }
+                }
+            }
 
-            if showsAITag {
-                // Same size/tracking ratio as the BrandLockup asset's own tag
-                // (font-size 30, letter-spacing 6, in the same 100-unit box).
-                Text("AI")
-                    .font(.cavnarNumber(30 * scale, weight: 700))
-                    .tracking(6 * scale)
-                    .foregroundStyle(Color.cavnarEmber)
-                    .padding(.top, 6 * scale)
-                    .opacity(tagShown ? 1 : 0)
+            if showsAITag && !aiTagOverhangs {
+                aiTag
             }
         }
         .task {
@@ -242,6 +249,17 @@ struct CavnarWordmarkStampIn: View {
             try? await Task.sleep(for: .seconds(0.2))
             withAnimation(.easeOut(duration: 0.4)) { tagShown = true }
         }
+    }
+
+    // Same size/tracking ratio as the BrandLockup asset's own tag
+    // (font-size 30, letter-spacing 6, in the same 100-unit box).
+    private var aiTag: some View {
+        Text("AI")
+            .font(.cavnarNumber(30 * scale, weight: 700))
+            .tracking(6 * scale)
+            .foregroundStyle(Color.cavnarEmber)
+            .padding(.top, 6 * scale)
+            .opacity(tagShown ? 1 : 0)
     }
 }
 
