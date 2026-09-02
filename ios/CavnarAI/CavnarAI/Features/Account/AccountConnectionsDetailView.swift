@@ -74,8 +74,9 @@ struct AccountConnectionsDetailView: View {
                 }
                 .font(.cavnarBody(14, weight: 600))
             } else {
+                // No manual Haptic.light() — CavnarPrimaryButtonStyle fires
+                // its own press haptic, so this was doubling up.
                 Button {
-                    Haptic.light()
                     Task { await viewModel.connectGoogleBusiness() }
                 } label: {
                     if viewModel.isConnectingGoogle {
@@ -104,8 +105,8 @@ struct AccountConnectionsDetailView: View {
                 }
                 .font(.cavnarBody(14, weight: 600))
             } else {
+                // Same — the style's own press haptic covers this.
                 Button {
-                    Haptic.light()
                     showingToastConnect = true
                 } label: {
                     Text("Connect")

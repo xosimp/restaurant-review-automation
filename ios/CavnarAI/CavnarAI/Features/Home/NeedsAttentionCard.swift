@@ -112,15 +112,13 @@ struct NeedsAttentionFloatCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             ZStack {
-                // "Alert Fired" — one ember ripple out from the icon as the
+                // "Alert Fired" — one ember ripple out from the badge as the
                 // card lands, once (see CavnarMotion).
                 CavnarRippleBurst(color: .cavnarEmber2, fromDiameter: 34, toDiameter: 72, rings: 1, duration: 1.0, delay: 0.6)
-                Circle()
-                    .fill(Color.cavnarEmber.opacity(0.18))
-                    .frame(width: 34, height: 34)
-                Image(systemName: iconName)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.cavnarEmber2)
+                // The same ember tile the module grid uses (GlowBadge), not
+                // the old tinted circle — so an alert card's icon reads as
+                // part of the same family as the tile it links to.
+                GlowBadge(systemImage: iconName, size: 36)
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)

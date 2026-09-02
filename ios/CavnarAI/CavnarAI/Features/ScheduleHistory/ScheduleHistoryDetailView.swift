@@ -111,6 +111,11 @@ struct ScheduleHistoryDetailView: View {
         .navigationTitle(weekLabel)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { cavnarTitleToolbar(weekLabel) }
+        // This screen never adopted the app-wide ember back chevron — it
+        // was still showing the system's default back button, the one
+        // pushed screen in the app that did (device feedback: "does not
+        // match our other back buttons app wide").
+        .cavnarEmberBackButton()
         .toolbar {
             // Same ShareLink(item:preview:) pattern as the Labor tab's own
             // schedule export (LaborView.fullScheduleTable) — plain-text
@@ -129,10 +134,7 @@ struct ScheduleHistoryDetailView: View {
             cavnarToolbarItem(placement: .topBarTrailing) {
                 if let csv = viewModel.detail?.scheduleCsv {
                     ShareLink(item: csv, preview: SharePreview("Schedule — \(weekLabel).csv", image: Image("LaunchSeal"))) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(Color.cavnarEmber)
-                            .cavnarToolbarIconGlass()
+                        shareGlyph(opacity: 1)
                     }
                     .tint(nil)
                 } else {
@@ -140,14 +142,25 @@ struct ScheduleHistoryDetailView: View {
                     // ShareLink above so the toolbar slot doesn't visibly
                     // resize once loading finishes — only the icon's
                     // opacity and function change.
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(Color.cavnarEmber.opacity(0.3))
-                        .cavnarToolbarIconGlass()
+                    shareGlyph(opacity: 0.3)
                 }
             }
         }
         .task { await viewModel.load(id: historyId) }
+    }
+
+    /// The share glyph's box is taller than the other toolbar symbols
+    /// (the arrow rises well above the tray), so at the 17pt the bell/
+    /// chevron use it nearly clipped the 34pt circle's bottom and its
+    /// visual center sat low. 15pt fits with breathing room, and the
+    /// glyph's optical center is nudged up — the tray's baseline makes the
+    /// mathematically-centered version read bottom-heavy.
+    private func shareGlyph(opacity: Double) -> some View {
+        Image(systemName: "square.and.arrow.up")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(Color.cavnarEmber.opacity(opacity))
+            .offset(y: -1.5)
+            .cavnarToolbarIconGlass()
         // Belt-and-suspenders alongside .task — the same fix LaborView
         // needed for its own scheduleResult restore, tied to a signal
         // that isn't dependent on SwiftUI reliably re-running .task for

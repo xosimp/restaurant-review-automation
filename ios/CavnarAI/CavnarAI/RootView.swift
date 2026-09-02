@@ -487,8 +487,10 @@ struct LockedView: View {
                             .foregroundStyle(Color.cavnarRed)
                             .transition(.opacity)
                     }
+                    // No manual Haptic.light() here — CavnarPrimaryButtonStyle
+                    // already fires its own press haptic via .sensoryFeedback,
+                    // so this was buzzing twice per tap.
                     Button {
-                        Haptic.light()
                         Task { await unlock() }
                     } label: {
                         HStack(spacing: 10) {

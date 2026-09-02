@@ -87,6 +87,19 @@ actor APIClient {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            // A request cancelled because its view went away (a `.task`
+            // torn down by tapping Back, or by leaving a module screen
+            // before its loads finished) is NOT a failure — URLSession
+            // surfaces it as URLError.cancelled, and this path used to
+            // buzz the error pattern for every one of them. That was the
+            // stray "error" haptic after backing out of a detail screen,
+            // and the burst of doubled/tripled buzzes from tapping a tile,
+            // leaving fast, and tapping another: each abandoned screen's
+            // in-flight fetches all cancelled at once, each firing its own
+            // error haptic. Rethrow as a plain cancellation, silently.
+            if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
+                throw CancellationError()
+            }
             if hapticOnError { await Haptic.error() }
             throw APIError(message: "Couldn't reach the server — check your connection and try again.")
         }

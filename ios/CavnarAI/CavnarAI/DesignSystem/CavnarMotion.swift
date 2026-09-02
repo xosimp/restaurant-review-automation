@@ -1053,7 +1053,10 @@ struct CavnarPostedCheck: View {
     var onFinished: (() -> Void)? = nil
 
     @State private var travel: CGFloat = 0
+    // `landed` flips unanimated on the frame of contact (dot cuts, ring
+    // goes ember); `landedPop` is the same moment eased, for the scale.
     @State private var landed = false
+    @State private var landedPop = false
     @State private var checkTrim: CGFloat = 0
     @State private var labelShown = false
 
@@ -1095,7 +1098,11 @@ struct CavnarPostedCheck: View {
                         .stroke(Color.cavnarInk, style: StrokeStyle(lineWidth: 2.4, lineCap: .round, lineJoin: .round))
                 }
                 .frame(width: 40, height: 40)
-                .scaleEffect(landed ? 1 : 0.96)
+                // A small pop on impact — the ember arriving is what
+                // pushes the circle up to size, so landing reads as one
+                // continuous motion rather than a fade then a separate
+                // draw.
+                .scaleEffect(landedPop ? 1 : 0.94)
             }
 
             Text(label.uppercased())
@@ -1105,14 +1112,30 @@ struct CavnarPostedCheck: View {
                 .opacity(labelShown ? 1 : 0)
         }
         .task {
-            // Deliberately unhurried — the ember crossing the wire is the
-            // whole point of the moment, so it gets a real beat.
-            withAnimation(.easeInOut(duration: 1.15)) { travel = 1 }
-            try? await Task.sleep(for: .seconds(1.1))
-            withAnimation(.easeOut(duration: 0.3)) { landed = true }
-            withAnimation(.easeInOut(duration: 0.6).delay(0.08)) { checkTrim = 1 }
-            withAnimation(.easeOut(duration: 0.4).delay(0.3)) { labelShown = true }
-            try? await Task.sleep(for: .seconds(1.3))
+            // Reported on device as a "freeze right before the circle":
+            // the old .easeInOut(1.15) travel decelerated so hard that the
+            // dot covered the last 3% of the wire over its final ~230ms —
+            // visually stationary — and only THEN faded out over 0.3s
+            // while the check waited a further 80ms to start. No main-
+            // thread stall was involved (nothing else runs in that window;
+            // verified against every timer/sleep in the Account flow), it
+            // was purely the curve plus two sequential delays.
+            //
+            // Now: the ember accelerates INTO the circle on an ease-in
+            // curve that's still moving at arrival, the landing is driven
+            // by the travel animation's own completion (not a parallel
+            // sleep that could drift), the dot cuts instantly at the
+            // moment of contact instead of cross-fading, and the check
+            // starts drawing on that same frame.
+            withAnimation(.timingCurve(0.5, 0, 0.75, 0.6, duration: 0.95), completionCriteria: .logicallyComplete) {
+                travel = 1
+            } completion: {
+                landed = true
+                withAnimation(.easeOut(duration: 0.22)) { landedPop = true }
+                withAnimation(.easeOut(duration: 0.5)) { checkTrim = 1 }
+                withAnimation(.easeOut(duration: 0.35).delay(0.18)) { labelShown = true }
+            }
+            try? await Task.sleep(for: .seconds(0.95 + 1.35))
             onFinished?()
         }
     }
