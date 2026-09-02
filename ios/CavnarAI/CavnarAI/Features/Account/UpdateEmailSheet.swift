@@ -32,10 +32,16 @@ struct UpdateEmailSheet: View {
                     )
 
                     if let error = viewModel.updateEmailError {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                     }
 
-                    CavnarFormButtonPair { matchedWidth in
+                    // Plain full-width buttons, not CavnarFormButtonPair —
+                    // this sheet is reached through the same two-level
+                    // sheet chain (AccountView -> AccountProfileDetailView
+                    // -> here) that first exposed the PreferenceKey width-
+                    // matching bug on TwoFactorSetupSheet; device feedback
+                    // confirmed the identical narrow-button symptom here.
+                    VStack(spacing: 10) {
                         Button {
                             Task {
                                 await viewModel.updateEmail(newEmail: newEmail, currentPassword: currentPassword)
@@ -45,16 +51,24 @@ struct UpdateEmailSheet: View {
                                 }
                             }
                         } label: {
-                            if viewModel.isUpdatingEmail {
-                                CavnarShimmerText(text: "Updating…", color: Color.cavnarInk)
-                            } else {
-                                Text("Update email")
+                            Group {
+                                if viewModel.isUpdatingEmail {
+                                    CavnarShimmerText(text: "Updating…", color: Color.cavnarInk)
+                                } else {
+                                    Text("Update email")
+                                }
                             }
+                            .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSubmit, matchedWidth: matchedWidth))
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSubmit))
                         .disabled(!canSubmit)
-                    } cancelAction: {
-                        dismiss()
+
+                        Button {
+                            dismiss()
+                        } label: {
+                            Text("Cancel").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
                     }
                     .padding(.top, 6)
                 }

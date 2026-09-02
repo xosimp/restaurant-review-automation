@@ -30,7 +30,7 @@ struct ToastConnectSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     Text("Find these in Toast's admin under Toast Web → API Access. Ask your Toast rep if you don't see that option.")
-                        .font(.cavnarBody(14))
+                        .font(.cavnarBody(15))
                         .foregroundStyle(Color.cavnarInk3)
 
                     CavnarFloatingField(
@@ -55,7 +55,7 @@ struct ToastConnectSheet: View {
                     }
 
                     if let error = viewModel.connectToastError {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                     }
 
                     CavnarFormButtonPair { matchedWidth in

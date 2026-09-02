@@ -21,7 +21,7 @@ struct AccountView: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if let error = viewModel.errorMessage {
                         VStack(spacing: 8) {
-                            Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                            Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
                             Button("Retry") { Task { await viewModel.load() } }
                         }
                         .padding(.top, 60)
@@ -82,7 +82,7 @@ struct AccountView: View {
                     .font(.cavnarBody(17, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Text("\(summary.account.email) · \(sessionStore.currentUser?.isOwner == true ? "Owner" : "Manager")")
-                    .font(.cavnarBody(14))
+                    .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarInk3)
                     .lineLimit(1)
             }
@@ -94,7 +94,7 @@ struct AccountView: View {
                 HStack(spacing: 5) {
                     Circle().fill(isActive ? Color.cavnarGreen : Color.cavnarAmber).frame(width: 6, height: 6)
                     Text(status.uppercased())
-                        .font(.cavnarBody(14, weight: 700))
+                        .font(.cavnarBody(15, weight: 700))
                         .foregroundStyle(isActive ? Color.cavnarGreen : Color.cavnarAmber)
                 }
                 .padding(.horizontal, 10)
@@ -260,7 +260,7 @@ struct AccountView: View {
             .frame(height: 54)
             if let appIconError {
                 Text(appIconError)
-                    .font(.cavnarBody(14))
+                    .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarRed)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
@@ -294,7 +294,7 @@ struct AccountView: View {
     private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title.uppercased())
-                .font(.cavnarBody(14.5, weight: 700))
+                .font(.cavnarBody(15.5, weight: 700))
                 .tracking(1.2)
                 .foregroundStyle(Color.cavnarEmber2)
             VStack(spacing: 0) { content() }
@@ -322,7 +322,7 @@ struct AccountView: View {
                 HStack(spacing: 4) {
                     Circle().fill(Color.cavnarGreen).frame(width: 6, height: 6)
                     Text(badge)
-                        .font(.cavnarBody(12.5, weight: 700))
+                        .font(.cavnarBody(13.5, weight: 700))
                         .foregroundStyle(Color.cavnarGreen)
                 }
                 .padding(.horizontal, 8)
@@ -352,7 +352,7 @@ struct AccountView: View {
             Haptic.light()
             Task { await sessionStore.logout() }
         }
-        .font(.cavnarBody(14, weight: 700))
+        .font(.cavnarBody(15, weight: 700))
         .foregroundStyle(Color.cavnarRed)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 13)

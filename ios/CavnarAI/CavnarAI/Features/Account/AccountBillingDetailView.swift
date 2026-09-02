@@ -33,7 +33,7 @@ struct AccountBillingDetailView: View {
                             divider()
                             Link(destination: url) {
                                 HStack {
-                                    Text("Manage payment method").font(.cavnarBody(14.5, weight: 600))
+                                    Text("Manage payment method").font(.cavnarBody(15.5, weight: 600))
                                     Spacer()
                                     Image(systemName: "arrow.up.right").font(.system(size: 11))
                                 }
@@ -59,7 +59,7 @@ struct AccountBillingDetailView: View {
                     }
                 } else {
                     Text(billing?.message ?? "No active subscription. Contact will@cavnar.ai")
-                        .font(.cavnarBody(14.5))
+                        .font(.cavnarBody(15.5))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
@@ -87,9 +87,9 @@ struct AccountBillingDetailView: View {
             GlowBadge(systemImage: "creditcard", size: 64)
         } subtitle: {
             if let billing, billing.ok, billing.status != "inactive" {
-                Text(billing.amount ?? "—").font(.cavnarNumber(14, weight: 600))
+                Text(billing.amount ?? "—").font(.cavnarNumber(15.5, weight: 600))
                     + Text(" · next charge ")
-                    + Text(billing.nextDate ?? "—").font(.cavnarNumber(14, weight: 600))
+                    + Text(billing.nextDate ?? "—").font(.cavnarNumber(15.5, weight: 600))
             } else {
                 Text(billing?.message ?? "Contact will@cavnar.ai to get set up")
             }
@@ -109,10 +109,10 @@ struct AccountBillingDetailView: View {
 
     private func row(_ label: String, _ value: String, isNumber: Bool = false) -> some View {
         HStack {
-            Text(label).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
+            Text(label).font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk3)
             Spacer()
             Text(value)
-                .font(isNumber ? .cavnarNumber(14.5, weight: 600) : .cavnarBody(14.5, weight: 600))
+                .font(isNumber ? .cavnarNumber(15.5, weight: 600) : .cavnarBody(15.5, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
         }
     }
@@ -131,11 +131,11 @@ struct AccountBillingDetailView: View {
     private func invoiceRowContent(_ invoice: BillingInvoice) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(invoice.date).font(.cavnarBody(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-                Text(invoice.status.capitalized).font(.cavnarBody(14.5)).foregroundStyle(Color.cavnarInk3)
+                Text(invoice.date).font(.cavnarBody(15.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                Text(invoice.status.capitalized).font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk3)
             }
             Spacer()
-            Text(invoice.amount).font(.cavnarNumber(14.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+            Text(invoice.amount).font(.cavnarNumber(15.5, weight: 600)).foregroundStyle(Color.cavnarInk)
             if invoice.pdfURL != nil {
                 Image(systemName: "arrow.down.circle")
                     .font(.system(size: 13))

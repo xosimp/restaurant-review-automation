@@ -18,19 +18,27 @@ struct AccountSecurityDetailView: View {
     private var live: AccountInfo { viewModel.summary?.account ?? account }
     private var twoFAByText: Bool { live.twoFAMethod == "sms" }
 
+    // "Set" read as filler ("of course it's set, you have an account") once
+    // device feedback pointed it out — an account created before strength
+    // tracking existed, and never changed since, has neither value at all.
+    // "Unrated" says that honestly instead of a placeholder pretending to
+    // be information. auth.py now scores strength at account CREATION too
+    // (not just on a later change), so this only shows up for accounts
+    // older than that.
     private var passwordStrengthLabel: String {
         switch live.passwordStrength {
         case "strong": return "Strong"
         case "good": return "Good"
         case "weak": return "Weak"
-        default: return "Set"
+        default: return "Unrated"
         }
     }
     private var passwordStrengthTone: Color {
         switch live.passwordStrength {
         case "strong": return .cavnarGreen
+        case "good": return .cavnarInk
         case "weak": return .cavnarAmber
-        default: return .cavnarInk
+        default: return .cavnarInk3
         }
     }
 
@@ -79,7 +87,7 @@ struct AccountSecurityDetailView: View {
         AccountHero(title: live.twoFAEnabled ? "Protected" : "Protect your account") {
             GlowBadge(systemImage: "checkmark.shield", size: 64)
         } subtitle: {
-            Text("Signed in as ") + Text(live.username).font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarInk2)
+            Text("Signed in as ") + Text(live.username).font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk2)
         }
     }
 
@@ -112,10 +120,10 @@ struct AccountSecurityDetailView: View {
                 AccountLink(title: "Change") { showingChangePassword = true }
             }
             if live.twoFAEnabled {
-                AccountKVRow(label: "Two-factor code by") {
+                AccountKVRow(label: "2FA code by") {
                     AccountValue(text: twoFAByText ? "Text message" : "Email")
                 }
-                AccountKVRow(label: "Two-factor") {
+                AccountKVRow(label: "2FA") {
                     AccountLink(title: "Turn off", tone: .cavnarRed) {
                         Task {
                             if await viewModel.disable2FA() {
@@ -126,19 +134,26 @@ struct AccountSecurityDetailView: View {
                     }
                 }
             } else {
-                AccountKVRow(label: "Two-factor") {
+                AccountKVRow(label: "2FA") {
                     AccountLink(title: "Turn on") { showing2FASetup = true }
                 }
             }
+            // A "Turn on"/"Turn off" link, not a Toggle — matches 2FA's
+            // own trailing control right above it (a Toggle's native
+            // ~31pt height sat taller than every Link row around it,
+            // which is what made this row read as misaligned against its
+            // siblings; every row in this card is now the exact same
+            // AccountLink shape, so they can't drift apart again).
             AccountKVRow(label: "Sign-in notifications", showsDivider: false) {
-                // No manual Haptic.selection() — Toggle/UISwitch already
-                // fires its own automatic system haptic.
-                Toggle("", isOn: Binding(
-                    get: { live.loginNotify },
-                    set: { newValue in Task { await viewModel.toggleLoginNotify(newValue) } }
-                ))
-                .labelsHidden()
-                .tint(Color.cavnarEmber)
+                if live.loginNotify {
+                    AccountLink(title: "Turn off", tone: .cavnarRed) {
+                        Task { await viewModel.toggleLoginNotify(false) }
+                    }
+                } else {
+                    AccountLink(title: "Turn on") {
+                        Task { await viewModel.toggleLoginNotify(true) }
+                    }
+                }
             }
         }
     }
@@ -151,12 +166,16 @@ struct AccountSecurityDetailView: View {
                 AccountDeviceRow(session: session, showsDivider: index < viewModel.sessions.count - 1)
             }
             Button {
+                Haptic.light()
                 Task { await viewModel.revokeOtherSessions() }
             } label: {
                 Text("Sign out all other devices").frame(maxWidth: .infinity)
             }
             .buttonStyle(CavnarSecondaryButtonStyle())
-            .padding(.top, 12)
+            // Matches every other button group's top gap in this sheet
+            // (Change/Cancel, Turn on/Cancel) — was 12pt, the one button
+            // in Account that didn't match the shared 6pt rhythm.
+            .padding(.top, 6)
         }
     }
 }
@@ -193,10 +212,18 @@ private struct ChangePasswordSheet: View {
                     )
 
                     if let error = viewModel.changePasswordError {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                     }
 
-                    CavnarFormButtonPair { matchedWidth in
+                    // Plain full-width buttons, not CavnarFormButtonPair —
+                    // this sheet is reached through the same two-level
+                    // sheet chain (AccountView -> AccountSecurityDetailView
+                    // -> here) that first exposed the PreferenceKey width-
+                    // matching bug on TwoFactorSetupSheet (see its own
+                    // comment). Device feedback confirmed the identical
+                    // narrow-button symptom here too, so this gets the
+                    // same fix rather than waiting for a third report.
+                    VStack(spacing: 10) {
                         Button {
                             Task {
                                 await viewModel.changePassword(current: current, newPassword: newPassword)
@@ -206,16 +233,24 @@ private struct ChangePasswordSheet: View {
                                 }
                             }
                         } label: {
-                            if viewModel.isChangingPassword {
-                                CavnarShimmerText(text: "Changing…", color: Color.cavnarInk)
-                            } else {
-                                Text("Change password")
+                            Group {
+                                if viewModel.isChangingPassword {
+                                    CavnarShimmerText(text: "Changing…", color: Color.cavnarInk)
+                                } else {
+                                    Text("Change password")
+                                }
                             }
+                            .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSubmit, matchedWidth: matchedWidth))
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSubmit))
                         .disabled(!canSubmit)
-                    } cancelAction: {
-                        dismiss()
+
+                        Button {
+                            dismiss()
+                        } label: {
+                            Text("Cancel").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
                     }
                     .padding(.top, 6)
                 }
@@ -338,7 +373,7 @@ private struct TwoFactorSetupSheet: View {
                         if hasPhone {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("SEND CODE BY")
-                                    .font(.cavnarBody(12, weight: 700))
+                                    .font(.cavnarBody(13, weight: 700))
                                     .foregroundStyle(Color.cavnarInk3)
                                     .tracking(0.6)
                                 CavnarSegmentedControl(selection: $selectedMethod, options: ["email", "sms"]) { option in

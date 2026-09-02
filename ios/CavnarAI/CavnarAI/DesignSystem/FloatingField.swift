@@ -38,7 +38,7 @@ struct CavnarFloatingField<Field: Hashable>: View {
                         TextField(placeholder, text: $text)
                     }
                 }
-                .font(.cavnarBody(15))
+                .font(.cavnarBody(17))
                 .foregroundStyle(Color.cavnarInk)
                 .keyboardType(keyboardType)
                 .textContentType(textContentType)
@@ -78,7 +78,7 @@ struct CavnarFloatingTextArea<Field: Hashable>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(caption)
-                .font(.cavnarBody(14, weight: 700))
+                .font(.cavnarBody(15, weight: 700))
                 .tracking(0.9)
                 .textCase(.uppercase)
                 .foregroundStyle(Color.cavnarEmber2)
@@ -86,14 +86,14 @@ struct CavnarFloatingTextArea<Field: Hashable>: View {
                 ZStack(alignment: .topLeading) {
                     if text.isEmpty {
                         Text(placeholder)
-                            .font(.cavnarBody(15))
+                            .font(.cavnarBody(17))
                             .foregroundStyle(Color.cavnarInk3)
                             .padding(.top, 8)
                             .padding(.leading, 5)
                             .allowsHitTesting(false)
                     }
                     TextEditor(text: $text)
-                        .font(.cavnarBody(15))
+                        .font(.cavnarBody(17))
                         .foregroundStyle(Color.cavnarInk)
                         .scrollContentBackground(.hidden)
                         // Sizes to its content (one line minimum) and hands

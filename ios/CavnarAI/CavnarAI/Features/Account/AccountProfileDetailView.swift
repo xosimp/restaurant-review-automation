@@ -49,7 +49,7 @@ struct AccountProfileDetailView: View {
                     voiceSection
 
                     if let error = viewModel.saveProfileError {
-                        Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                        Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                     }
 
                     Button {
@@ -193,10 +193,10 @@ struct AccountProfileDetailView: View {
                 Text(label)
                 Image(systemName: systemImage).font(.system(size: 9, weight: .bold))
             }
-            .font(.cavnarBody(12.5, weight: 700))
+            .font(.cavnarBody(13.5, weight: 700))
             .foregroundStyle(Color.cavnarInk2)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
             .background(Color.white.opacity(0.05))
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
             .clipShape(Capsule())
@@ -220,14 +220,14 @@ struct AccountProfileDetailView: View {
             // exactly, just without the redundant wrapper.
             VStack(spacing: 0) {
                 HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("EMAIL").font(.cavnarBody(12.5, weight: 700)).tracking(0.8).foregroundStyle(Color.cavnarInk3)
-                        Text(profile.ownerEmail ?? "—").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("EMAIL").font(.cavnarBody(13, weight: 700)).tracking(0.8).foregroundStyle(Color.cavnarInk3)
+                        Text(profile.ownerEmail ?? "—").font(.cavnarBody(17, weight: 700)).foregroundStyle(Color.cavnarInk)
                     }
                     Spacer(minLength: 8)
                     AccountLink(title: "Update") { showingUpdateEmail = true }
                 }
-                .padding(.vertical, 10)
+                .padding(.vertical, 13)
                 if isOwner { AccountRowDivider() }
             }
             if isOwner {
@@ -236,15 +236,15 @@ struct AccountProfileDetailView: View {
                     showingLocationSwitcher = true
                 } label: {
                     HStack {
-                        Text("Locations").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk)
+                        Text("Locations").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
                         Spacer()
                         if locations.locations.isEmpty {
-                            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Color.cavnarInk3)
+                            Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.cavnarInk3)
                         } else {
                             AccountChip(text: "\(locations.locations.count)", muted: true)
                         }
                     }
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 13)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

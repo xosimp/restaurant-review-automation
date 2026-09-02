@@ -92,11 +92,17 @@ def create_user(restaurant_id: int, username: str, email: str,
                 password: str, is_admin: bool = False,
                 db_path: str = DB_PATH) -> int:
     conn = get_conn(db_path)
+    # Scored/stamped at creation too, not just on a later change — an
+    # account whose password was never touched since Will set it up used
+    # to have neither value, showing the Security sheet's tile a placeholder
+    # "Set" with no real information behind it.
+    from zoneinfo import ZoneInfo as _ZI_cu
+    now = datetime.now(_ZI_cu('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S')
     cur = conn.execute("""
-        INSERT INTO users (restaurant_id, username, email, password_hash, is_admin)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO users (restaurant_id, username, email, password_hash, is_admin, password_changed_at, password_strength)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (restaurant_id, username.lower().strip(), email.lower().strip(),
-          generate_password_hash(password), int(is_admin)))
+          generate_password_hash(password), int(is_admin), now, password_strength(password)))
     conn.commit()
     uid = cur.lastrowid
     conn.close()

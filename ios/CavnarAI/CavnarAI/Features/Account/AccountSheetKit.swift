@@ -25,7 +25,7 @@ struct AccountHero<Badge: View, Subtitle: View>: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 subtitle()
-                    .font(.cavnarBody(14))
+                    .font(.cavnarBody(15.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .lineLimit(1)
             }
@@ -42,10 +42,10 @@ struct AccountChip: View {
 
     var body: some View {
         Text(text)
-            .font(.cavnarBody(12.5, weight: 700))
+            .font(.cavnarBody(13.5, weight: 700))
             .foregroundStyle(muted ? Color.cavnarInk2 : Color.cavnarEmber2)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
             .background(muted ? Color.white.opacity(0.04) : Color.cavnarEmber.opacity(0.12))
             .overlay(
                 Capsule().strokeBorder(muted ? Color.white.opacity(0.08) : Color.cavnarEmber.opacity(0.3), lineWidth: 1)
@@ -98,7 +98,7 @@ struct AccountKicker: View {
     let text: String
     var body: some View {
         Text(text.uppercased())
-            .font(.cavnarBody(12, weight: 700))
+            .font(.cavnarBody(13, weight: 700))
             .tracking(1.4)
             .foregroundStyle(Color.cavnarInk3)
     }
@@ -139,26 +139,26 @@ struct AccountStatTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label.uppercased())
-                .font(.cavnarBody(11, weight: 700))
+                .font(.cavnarBody(12, weight: 700))
                 .tracking(1.1)
                 .foregroundStyle(Color.cavnarInk3)
             Text(value)
-                .font(valueIsNumber ? .cavnarNumber(17, weight: 600) : .cavnarHeadline(17))
+                .font(valueIsNumber ? .cavnarNumber(18, weight: 600) : .cavnarHeadline(18))
                 .foregroundStyle(tone)
                 .lineLimit(1)
-                .minimumScaleFactor(0.85)
+                .minimumScaleFactor(0.8)
             if let detail {
                 Text(detail)
-                    .font(detailIsNumber ? .cavnarNumber(12.5) : .cavnarBody(12.5))
+                    .font(detailIsNumber ? .cavnarNumber(13.5) : .cavnarBody(13.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+                    .minimumScaleFactor(0.8)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
+        .padding(.top, 13)
+        .padding(.bottom, 11)
         .background(
             LinearGradient(
                 colors: [Color.cavnarEmber.opacity(0.2), Color.cavnarEmber.opacity(0.05)],
@@ -172,9 +172,18 @@ struct AccountStatTile: View {
 
 // MARK: - Rows
 
-/// Label on the left, whatever you like on the right — a value, a link,
-/// a toggle.
+/// Label on the left, whatever you like on the right — a value or a
+/// link. Every row in a card built from these shares one fixed content
+/// height (`Self.rowHeight`, sized to a single line of the bumped 16pt
+/// row font) regardless of what sits in the trailing slot — device
+/// feedback caught a Toggle-vs-Text-link row visibly taller than its
+/// siblings in the same card, which is what made Sign-in's three rows
+/// read as inconsistently positioned even though each one was
+/// individually centered. A fixed height removes the possibility of that
+/// drift instead of tuning it away per call site.
 struct AccountKVRow<Trailing: View>: View {
+    static var rowHeight: CGFloat { 24 }
+
     let label: String
     var showsDivider: Bool = true
     @ViewBuilder var trailing: () -> Trailing
@@ -182,11 +191,12 @@ struct AccountKVRow<Trailing: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
-                Text(label).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                Text(label).font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
                 Spacer(minLength: 8)
                 trailing()
             }
-            .padding(.vertical, 10)
+            .frame(minHeight: Self.rowHeight)
+            .padding(.vertical, 13)
             if showsDivider { AccountRowDivider() }
         }
     }
@@ -199,7 +209,7 @@ struct AccountValue: View {
 
     var body: some View {
         Text(text)
-            .font(isNumber ? .cavnarNumber(14.5, weight: 600) : .cavnarBody(14.5, weight: 700))
+            .font(isNumber ? .cavnarNumber(16, weight: 600) : .cavnarBody(16, weight: 700))
             .foregroundStyle(tone)
             .multilineTextAlignment(.trailing)
     }
@@ -215,7 +225,7 @@ struct AccountLink: View {
             Haptic.light()
             action()
         } label: {
-            Text(title).font(.cavnarBody(14.5, weight: 700)).foregroundStyle(tone)
+            Text(title).font(.cavnarBody(16, weight: 700)).foregroundStyle(tone)
         }
         .buttonStyle(.plain)
     }
@@ -228,7 +238,7 @@ struct AccountPill: View {
     var body: some View {
         HStack(spacing: 6) {
             Circle().fill(on ? Color.cavnarGreen : Color.cavnarInk3).frame(width: 6, height: 6)
-            Text(text).font(.cavnarBody(12, weight: 700)).foregroundStyle(on ? Color.cavnarGreen : Color.cavnarInk3)
+            Text(text).font(.cavnarBody(13, weight: 700)).foregroundStyle(on ? Color.cavnarGreen : Color.cavnarInk3)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
@@ -250,11 +260,11 @@ private struct AccountFieldLabel: View {
     var body: some View {
         HStack(spacing: 4) {
             Text(text.uppercased())
-                .font(.cavnarBody(12.5, weight: 700))
+                .font(.cavnarBody(13, weight: 700))
                 .tracking(0.8)
                 .foregroundStyle(Color.cavnarInk3)
             Image(systemName: "pencil")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Color.cavnarEmber.opacity(0.7))
         }
     }
@@ -292,17 +302,17 @@ struct AccountField<Field: Hashable>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 5) {
                 AccountFieldLabel(text: label)
                 TextField("", text: $text)
-                    .font(isNumber ? .cavnarNumber(15, weight: 600) : .cavnarBody(15, weight: 700))
+                    .font(isNumber ? .cavnarNumber(17, weight: 600) : .cavnarBody(17, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                     .keyboardType(keyboardType)
                     .focused(focus, equals: field)
                 AccountFocusUnderline(lit: isFocused)
                     .padding(.top, 2)
             }
-            .padding(.vertical, 10)
+            .padding(.vertical, 13)
             .contentShape(Rectangle())
             .onTapGesture { focus.wrappedValue = field }
             if showsDivider { AccountRowDivider() }
@@ -322,29 +332,29 @@ struct AccountEditor<Field: Hashable>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 5) {
                 AccountFieldLabel(text: label)
                 ZStack(alignment: .topLeading) {
                     if text.isEmpty {
                         Text(placeholder)
-                            .font(.cavnarBody(15))
+                            .font(.cavnarBody(17))
                             .foregroundStyle(Color.cavnarInk3)
                             .padding(.top, 8)
                             .padding(.leading, 5)
                     }
                     TextEditor(text: $text)
-                        .font(.cavnarBody(15))
+                        .font(.cavnarBody(17))
                         .foregroundStyle(Color.cavnarInk2)
                         .scrollContentBackground(.hidden)
                         .scrollDisabled(true)
                         .fixedSize(horizontal: false, vertical: true)
-                        .frame(minHeight: 34)
+                        .frame(minHeight: 36)
                         .focused(focus, equals: field)
                 }
                 AccountFocusUnderline(lit: isFocused)
                     .padding(.top, 2)
             }
-            .padding(.vertical, 10)
+            .padding(.vertical, 13)
             .contentShape(Rectangle())
             .onTapGesture { focus.wrappedValue = field }
             if showsDivider { AccountRowDivider() }
@@ -381,16 +391,16 @@ struct AccountDeviceRow: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
-                        Text(session.label).font(.cavnarBody(14.5, weight: 700)).foregroundStyle(Color.cavnarInk)
+                        Text(session.label).font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
                         if session.isCurrent { AccountPill(text: "This device") }
                     }
                     Text(AccountRelativeTime.describe(session.lastActive, activePrefix: true))
-                        .font(.cavnarNumber(13))
+                        .font(.cavnarNumber(14))
                         .foregroundStyle(Color.cavnarInk3)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.vertical, 10)
+            .padding(.vertical, 13)
             if showsDivider { AccountRowDivider() }
         }
     }
