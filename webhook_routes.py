@@ -83,6 +83,24 @@ def stripe_webhook():
             If payment doesn't resolve within 3 days, consider pausing their dashboard access."""
         )
 
+        # The client themselves previously never found out their card was
+        # declined except by Will personally reaching out — only on the
+        # FIRST attempt, so Stripe's own retry schedule doesn't turn into a
+        # repeated-email spam for the same underlying decline.
+        if attempt == 1 and email and email != "unknown" and _resend_key():
+            try:
+                conn = get_conn()
+                row = conn.execute(
+                    "SELECT r.name, r.owner_name FROM restaurants r JOIN users u ON u.restaurant_id=r.id WHERE u.email=? LIMIT 1",
+                    (email,)
+                ).fetchone()
+                conn.close()
+                if row:
+                    from emails import send_payment_failed_client_email
+                    send_payment_failed_client_email(email, row["name"] or "your restaurant", amount, row["owner_name"])
+            except Exception as ce:
+                print(f"Client payment-failed email failed: {ce}")
+
     elif event["type"] == "customer.subscription.deleted":
         sub   = event["data"]["object"]
         email = sub.get("customer_email","unknown") if "customer_email" in sub else "unknown"

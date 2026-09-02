@@ -1925,6 +1925,13 @@ def mobile_change_password(current_user):
     if len(new_pw) < 8:
         return jsonify(ok=False, error="Password must be at least 8 characters"), 400
     update_password(current_user["id"], new_pw)
+    try:
+        restaurant = get_restaurant(current_user["restaurant_id"])
+        if restaurant and restaurant.owner_email:
+            from emails import send_password_changed_email
+            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name)
+    except Exception:
+        pass  # the password change itself already succeeded — a failed confirmation email isn't worth failing the request over
     return jsonify(ok=True)
 
 
@@ -1953,10 +1960,19 @@ def mobile_update_email(current_user):
     if existing:
         conn.close()
         return jsonify(ok=False, error="That email is already in use"), 400
+    old_email_row = conn.execute("SELECT email FROM users WHERE id=?", (current_user["id"],)).fetchone()
+    old_email = old_email_row["email"] if old_email_row else None
     conn.execute("UPDATE users SET email=? WHERE id=?", (new_email, current_user["id"]))
     conn.execute("UPDATE restaurants SET owner_email=? WHERE id=?", (new_email, current_user["restaurant_id"]))
     conn.commit()
     conn.close()
+    if old_email and old_email != new_email:
+        try:
+            restaurant = get_restaurant(current_user["restaurant_id"])
+            from emails import send_email_changed_email
+            send_email_changed_email(old_email, restaurant.name if restaurant else "your restaurant", new_email, restaurant.owner_name if restaurant else None)
+        except Exception:
+            pass  # the email change itself already succeeded
     return jsonify(ok=True)
 
 

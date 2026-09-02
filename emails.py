@@ -854,3 +854,136 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
         print(f"Onboarding day 30 sent to {to_email}")
     except Exception as e:
         print(f"send_onboarding_day30 failed: {e}")
+
+
+# ── Account-security confirmations ─────────────────────────────────────────
+# Three real gaps found in a full email-system audit: a card decline only
+# ever reached Will (the client had no idea their own card failed), and
+# neither a self-service password change nor an email change sent any
+# confirmation at all — a genuine security gap, since someone changing
+# either from inside an already-compromised account would do so silently.
+
+def send_password_changed_email(to_email: str, restaurant_name: str, owner_name: str = None):
+    """Confirms a password change back to the account — same security-
+    notification family as send_login_notification, deliberately (this is
+    exactly as sensitive an event)."""
+    if not RESEND_API_KEY:
+        log.warning("send_password_changed_email: RESEND_API_KEY not set — nothing sent")
+        return False
+    import requests
+    from datetime import datetime
+    try:
+        from zoneinfo import ZoneInfo
+        now_str = datetime.now(ZoneInfo("America/Chicago")).strftime("%b %d, %Y at %I:%M %p CT")
+    except Exception:
+        now_str = datetime.utcnow().strftime("%b %d, %Y at %H:%M UTC")
+    html = f"""
+    <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
+      <div style="text-align:center;margin-bottom:24px">
+        <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="180" height="32" alt="Cavnar AI" style="display:inline-block;width:180px;height:32px;border:0;outline:none">
+      </div>
+      <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
+        <p style="color:#3a3530;font-size:15px;margin:0 0 16px">Your password for <strong>{restaurant_name}</strong> was changed on {now_str}.</p>
+        <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed. If you didn't make this change, someone else may have access to your account — <a href="mailto:will@cavnar.ai" style="color:#c84b2f">contact Will immediately</a>.</p>
+      </div>
+      <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
+    </div>
+    </div>
+    """
+    try:
+        resp = requests.post("https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json={"from": f"Cavnar AI <{FROM_EMAIL}>", "to": [to_email],
+                  "subject": "Your Cavnar AI password was changed", "html": html},
+            timeout=10)
+        if resp.status_code != 200:
+            log.warning("send_password_changed_email: Resend returned %s: %s", resp.status_code, resp.text[:300])
+        return resp.status_code == 200
+    except Exception as e:
+        log.warning("send_password_changed_email: request to Resend failed: %s", e)
+        return False
+
+
+def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str, owner_name: str = None):
+    """Sent to the OLD address when the account email changes — the
+    security-critical direction (the new address already knows, since they
+    just typed it in; the old address is where an actual account takeover
+    would otherwise go unnoticed)."""
+    if not RESEND_API_KEY:
+        log.warning("send_email_changed_email: RESEND_API_KEY not set — nothing sent")
+        return False
+    import requests
+    from datetime import datetime
+    try:
+        from zoneinfo import ZoneInfo
+        now_str = datetime.now(ZoneInfo("America/Chicago")).strftime("%b %d, %Y at %I:%M %p CT")
+    except Exception:
+        now_str = datetime.utcnow().strftime("%b %d, %Y at %H:%M UTC")
+    masked_new = new_email[:2] + "***@" + new_email.split("@")[-1]
+    html = f"""
+    <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
+      <div style="text-align:center;margin-bottom:24px">
+        <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="180" height="32" alt="Cavnar AI" style="display:inline-block;width:180px;height:32px;border:0;outline:none">
+      </div>
+      <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
+        <p style="color:#3a3530;font-size:15px;margin:0 0 16px">The sign-in email for <strong>{restaurant_name}</strong> was changed on {now_str}, from this address to <strong>{masked_new}</strong>.</p>
+        <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed — this is the last email you'll receive at this address. If you didn't make this change, <a href="mailto:will@cavnar.ai" style="color:#c84b2f">contact Will immediately</a>, since someone else may now control sign-in to this account.</p>
+      </div>
+      <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
+    </div>
+    </div>
+    """
+    try:
+        resp = requests.post("https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json={"from": f"Cavnar AI <{FROM_EMAIL}>", "to": [to_email],
+                  "subject": "Your Cavnar AI sign-in email was changed", "html": html},
+            timeout=10)
+        if resp.status_code != 200:
+            log.warning("send_email_changed_email: Resend returned %s: %s", resp.status_code, resp.text[:300])
+        return resp.status_code == 200
+    except Exception as e:
+        log.warning("send_email_changed_email: request to Resend failed: %s", e)
+        return False
+
+
+def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount: float, owner_name: str = None):
+    """The client-facing half of a failed card charge — webhook_routes.py's
+    stripe_webhook() already alerts Will on invoice.payment_failed, but the
+    client themselves never found out except by Will personally reaching
+    out. This is what actually gets a card fixed quickly."""
+    if not RESEND_API_KEY:
+        log.warning("send_payment_failed_client_email: RESEND_API_KEY not set — nothing sent")
+        return False
+    import requests
+    greeting = f"Hi {owner_name}," if owner_name else "Hi,"
+    html = f"""
+    <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
+      <div style="text-align:center;margin-bottom:24px">
+        <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="180" height="32" alt="Cavnar AI" style="display:inline-block;width:180px;height:32px;border:0;outline:none">
+      </div>
+      <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
+        <p style="color:#3a3530;font-size:15px;margin:0 0 16px">{greeting}</p>
+        <p style="color:#3a3530;font-size:15px;margin:0 0 20px">Your payment of <strong>${amount:.2f}</strong> for <strong>{restaurant_name}</strong> didn't go through — your card was declined.</p>
+        <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Update payment method &#8594;</a>
+        <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">Log in and open Account &rarr; Plan &amp; Payment to update your card. If it isn't resolved in a few days, reach out and I'll help sort it out — <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a>.</p>
+      </div>
+      <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
+    </div>
+    </div>
+    """
+    try:
+        resp = requests.post("https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json={"from": f"Will Cavnar <{FROM_EMAIL}>", "to": [to_email],
+                  "subject": f"Payment issue — {restaurant_name}", "html": html},
+            timeout=10)
+        if resp.status_code != 200:
+            log.warning("send_payment_failed_client_email: Resend returned %s: %s", resp.status_code, resp.text[:300])
+        return resp.status_code == 200
+    except Exception as e:
+        log.warning("send_payment_failed_client_email: request to Resend failed: %s", e)
+        return False
