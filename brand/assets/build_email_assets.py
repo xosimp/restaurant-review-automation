@@ -49,6 +49,17 @@ def main():
     # 3x-retina for a ~150-220px email display width.
     render(os.path.join(assets, "lockup-dark.svg"), "lockup-dark-email", 672, 128, pad=6)
     render(os.path.join(assets, "lockup-light.svg"), "lockup-light-email", 672, 128, pad=6)
+    # Wordmark WITHOUT the seal — the header mark every email actually uses.
+    # Putting the seal beside the wordmark in the header (the lockup) reads
+    # as the same brand mark shown twice, side by side, redundantly — the
+    # user's own words: "it should be wordmark OR logo, not both." The seal
+    # stays for the small standalone footer mark below, which sits next to
+    # plain text, not another rendering of the wordmark. wordmark-*.svg's
+    # viewBox (-6 -14 727 128) is a different aspect ratio than the
+    # lockup's, so this uses its own canvas sized to match it, not the
+    # lockup's 672x128.
+    render(os.path.join(assets, "wordmark-dark.svg"), "wordmark-dark-email", 728, 128, pad=6)
+    render(os.path.join(assets, "wordmark-light.svg"), "wordmark-light-email", 728, 128, pad=6)
     # seal-color.svg's ring is cream (for dark cards); seal-mono-dark.svg's
     # ring is dark (for light cards) — NOT interchangeable with "dark"/
     # "light" meaning what you'd guess from the lockup naming.

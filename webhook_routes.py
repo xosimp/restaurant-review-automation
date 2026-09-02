@@ -171,8 +171,9 @@ def stripe_webhook():
                                     "from": f"Will Cavnar <{FROM_EMAIL}>",
                                     "to": [email],
                                     "subject": f"Payment confirmed — Cavnar AI",
-                                    "html": f"""<div style="font-family:'DM Sans',sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
-                                      <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin-bottom:24px">
+                                    "html": f"""<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+                                    <div style="font-family:'DM Sans',sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:white;border-radius:12px;box-sizing:border-box">
+                                      <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin-bottom:24px">
                                       <h2 style="font-size:18px;font-weight:600;margin-bottom:8px;color:#0e0c0a">Payment confirmed ✓</h2>
                                       <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:20px">
                                         Thank you — your payment of <strong>${amount:.2f}</strong> has been received for <strong>{rname}</strong>.
@@ -191,6 +192,7 @@ def stripe_webhook():
                                       <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">Go to dashboard →</a>
                                       <hr style="border:none;border-top:1px solid #e5e0db;margin:24px 0">
                                       <p style="font-size:11px;color:#9ca3af">Cavnar AI · will@cavnar.ai · cavnar.ai</p>
+                                    </div>
                                     </div>"""
                                 })
                                 log_email(dict(row)["id"], "Payment Receipt", email, f"Payment confirmed — ${amount:.2f}")

@@ -375,9 +375,10 @@ def send_email(to_email, restaurant, pdf_buf):
         "to": [to_email],
         "subject": f"Your AI Audit Report — {restaurant}",
         "html": f"""
-<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
+    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
       Restaurant AI Consulting · Chicago, IL
     </p>
@@ -402,6 +403,7 @@ def send_email(to_email, restaurant, pdf_buf):
     &nbsp;·&nbsp;
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
   </p>
+</div>
 </div>""",
         "attachments": [{
             "filename": f"Cavnar_AI_Audit_{restaurant.replace(chr(32), chr(95))}.pdf",

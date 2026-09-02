@@ -574,7 +574,7 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
 <!-- HEADER -->
 <tr><td style="background:{T['outer_bg']};border-bottom:1px solid {T['outer_border']};padding:24px 32px">
   <table width="100%" cellpadding="0" cellspacing="0"><tr>
-    <td><img src="{'https://dashboard.cavnar.ai/static/brand/lockup-light-email.png' if is_dark else 'https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png'}" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none"></td>
+    <td><img src="{'https://dashboard.cavnar.ai/static/brand/wordmark-light-email.png' if is_dark else 'https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png'}" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none"></td>
     <td align="right"><span style="font-size:11px;color:{T['header_sub']};letter-spacing:.1em;text-transform:uppercase">Weekly Digest</span></td>
   </tr></table>
   <div style="margin-top:6px;font-size:13px;color:{T['header_sub']}">{_html.escape(restaurant_name)}{location_label} &nbsp;·&nbsp; {week_label}</div>

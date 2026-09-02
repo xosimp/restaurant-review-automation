@@ -763,8 +763,9 @@ def reset_password(user_id, current_user):
                     "from": f"Will Cavnar <{_from_email()}>",
                     "to": [row["email"]],
                     "subject": "Your Cavnar AI password has been reset",
-                    "html": f"""<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:500px;margin:0 auto">
-                        <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin:0 0 20px">
+                    "html": f"""<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+                    <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:500px;margin:0 auto;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
+                        <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin:0 0 20px">
                         <h3 style="color:#0e0c0a">Password reset</h3>
                         <p>Hi — your Cavnar AI dashboard password has been reset.</p>
                         <div style="background:#f7f4ef;padding:14px;border-radius:8px;margin:16px 0">
@@ -773,6 +774,7 @@ def reset_password(user_id, current_user):
                         </div>
                         <p>Log in and update your password in the Account tab.</p>
                         <p style="color:#7a736a;font-size:12px">— Will Cavnar · will@cavnar.ai</p>
+                    </div>
                     </div>"""
                 })
         except Exception as e:
@@ -1743,7 +1745,7 @@ def send_referral(current_user):
         note_block = f"<p style=\"margin:0 0 16px 0;font-style:italic;color:#4a4540\">\"{note}\"</p>" if note else ""
         html = f"""
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:540px;margin:0 auto;padding:32px 24px;background:#fdf8f4">
-  <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin-bottom:6px">
+  <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin-bottom:6px">
   <div style="font-size:10px;color:#7a736a;letter-spacing:.1em;text-transform:uppercase;margin-bottom:24px">Restaurant Intelligence</div>
   <p style="margin:0 0 16px 0;font-size:15px;color:#0e0c0a;line-height:1.7">Hi — {owner_name} from {referrer} thought you might find this useful.</p>
   {note_block}

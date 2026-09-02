@@ -50,9 +50,10 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
     import requests
     greeting = f"Hi {owner_name}," if owner_name else "Hi,"
     html = f"""
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
       <div style="text-align:center;margin-bottom:24px">
-        <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="180" height="34" alt="Cavnar AI" style="display:inline-block;width:180px;height:34px;border:0;outline:none">
+        <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="180" height="32" alt="Cavnar AI" style="display:inline-block;width:180px;height:32px;border:0;outline:none">
       </div>
       <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
         <p style="color:#3a3530;font-size:15px;margin:0 0 16px">{greeting}</p>
@@ -64,6 +65,7 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
       </div>
       <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
     </div>
+</div>
     """
     try:
         resp = requests.post("https://api.resend.com/emails",
@@ -104,9 +106,10 @@ def send_login_notification(to_email: str, restaurant_name: str,
     elif "Safari/" in ua: browser = "Safari"
     else: browser = "Browser"
     html = f"""
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
       <div style="text-align:center;margin-bottom:24px">
-        <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="180" height="34" alt="Cavnar AI" style="display:inline-block;width:180px;height:34px;border:0;outline:none">
+        <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="180" height="32" alt="Cavnar AI" style="display:inline-block;width:180px;height:32px;border:0;outline:none">
       </div>
       <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
         <p style="color:#3a3530;font-size:15px;margin:0 0 16px">New sign-in to <strong>{restaurant_name}</strong></p>
@@ -119,6 +122,7 @@ def send_login_notification(to_email: str, restaurant_name: str,
       </div>
       <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
     </div>
+</div>
     """
     try:
         resp = requests.post("https://api.resend.com/emails",
@@ -193,9 +197,10 @@ def send_payment_email(to_email, restaurant_name, tier=None,
             "to": [to_email],
             "subject": f"Your Cavnar AI payment link — {restaurant_name}",
             "html": f"""
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
+    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
       Restaurant Intelligence Dashboard
     </p>
@@ -237,6 +242,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
     &nbsp;·&nbsp;
     <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
+</div>
 </div>"""
         })
     except Exception as e:
@@ -271,9 +277,10 @@ def send_welcome_email(to_email, restaurant_name, username, password,
     else:
         modules_text = f"{modules_count} modules — " + ", ".join(active_modules[:-1]) + f", and {active_modules[-1]}"
     html = f"""
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
+    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
       Restaurant Intelligence Dashboard
     </p>
@@ -306,6 +313,7 @@ def send_welcome_email(to_email, restaurant_name, username, password,
     &nbsp;·&nbsp;
     <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
+</div>
 </div>"""
     _resend.Emails.send({
         "from": f"Will Cavnar <{FROM_EMAIL}>",
@@ -480,9 +488,10 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
             "to": [to_email],
             "subject": f"Getting started with your Cavnar AI dashboard",
             "html": f"""
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
+    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
@@ -504,6 +513,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
     &nbsp;·&nbsp;
     <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
+</div>
 </div>"""
         })
         print(f"Onboarding day 2 sent to {to_email}")
@@ -574,9 +584,10 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
             "to": [to_email],
             "subject": f"One week in — how's the dashboard feeling?",
             "html": f"""
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
+    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
@@ -596,6 +607,7 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
     &nbsp;·&nbsp;
     <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
+</div>
 </div>"""
         })
         print(f"Onboarding day 7 sent to {to_email}")
@@ -617,9 +629,10 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
             "to": [to_email],
             "subject": f"Welcome back to Cavnar AI — {restaurant_name}",
             "html": f"""
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
+    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
@@ -637,6 +650,7 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
     <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
     · <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
+</div>
 </div>"""
         })
     except Exception as e:
@@ -726,9 +740,10 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
             "to": [to_email],
             "subject": f"{month_name} {year} — your monthly Cavnar AI summary",
             "html": f"""
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
+    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">{month_name} {year} Monthly Summary</p>
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
@@ -747,6 +762,7 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
     <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
     · <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
+</div>
 </div>"""
         })
     except Exception as e:
@@ -805,9 +821,10 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
             "to": [to_email],
             "subject": f"30 days of Cavnar AI — a quick check-in",
             "html": f"""
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="170" height="32" alt="Cavnar AI" style="display:block;width:170px;height:32px;border:0;outline:none;margin:0 0 6px">
+    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">Restaurant Intelligence Dashboard</p>
   </div>
   <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
@@ -831,6 +848,7 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
     &nbsp;·&nbsp;
     <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
+</div>
 </div>"""
         })
         print(f"Onboarding day 30 sent to {to_email}")

@@ -2656,8 +2656,9 @@ def client_upload_data(current_user):
                     "to": [_r_ot.owner_email],
                     "subject": "⚠ Overtime detected — " + _r_ot.name,
                     "html": (
-                        "<div style='font-family:-apple-system,BlinkMacSystemFont,\"Helvetica Neue\",Arial,sans-serif;max-width:520px;margin:0 auto'>"
-                        "<img src='https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png' width='150' height='28' alt='Cavnar AI' style='display:block;width:150px;height:28px;border:0;outline:none;margin-bottom:16px'>"
+                        "<div style='background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box'>"
+                        "<div style='font-family:-apple-system,BlinkMacSystemFont,\"Helvetica Neue\",Arial,sans-serif;max-width:520px;margin:0 auto;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box'>"
+                        "<img src='https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png' width='150' height='26' alt='Cavnar AI' style='display:block;width:150px;height:26px;border:0;outline:none;margin-bottom:16px'>"
                         "<div style='border-top:3px solid #e07040;padding-top:16px;margin-bottom:16px'>"
                         "<h3 style='color:#0e0c0a;margin:0'>Overtime Alert</h3>"
                         "<p style='font-size:13px;color:#7a736a;margin:4px 0 0'>Cavnar AI Labor Monitor</p>"
@@ -2673,6 +2674,7 @@ def client_upload_data(current_user):
                         "consider adjusting next week's schedule to avoid repeat overtime.</p>"
                         "<hr style='border:none;border-top:1px solid #e0dbd0;margin:16px 0'/>"
                         "<p style='font-size:11px;color:#7a736a'>Cavnar AI — dashboard.cavnar.ai</p>"
+                        "</div>"
                         "</div>"
                     )
                 })
@@ -2710,8 +2712,9 @@ def client_upload_data(current_user):
                 "from": f"Cavnar AI Alerts <{_from_email}>",
                 "to": [_will_email],
                 "subject": f"📂 {r.name} uploaded their first {_module} data",
-                "html": f"""<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:500px;margin:0 auto">
-                    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin-bottom:16px">
+                "html": f"""<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+                    <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:500px;margin:0 auto;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
+                    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin-bottom:16px">
                     <div style="border-top:3px solid #c84b2f;padding-top:16px;margin-bottom:16px">
                         <h3 style="color:#0e0c0a;margin:0">First data upload</h3>
                     </div>
@@ -2723,7 +2726,8 @@ def client_upload_data(current_user):
                     <p style="font-size:11px;color:#7a736a">
                         <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">View in admin →</a>
                     </p>
-                </div>"""
+                </div>
+                    </div>"""
             })
     except Exception:
         pass
@@ -2967,9 +2971,10 @@ def _do_send_review_request(rid, data):
             if guest_note else ""
         )
         html_body = f"""
+        <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
         <div style="font-family:'DM Sans',Arial,sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;background:#f7f4ef">
           <div style="background:white;border-radius:12px;padding:32px;border:1px solid #e0dbd0">
-            <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin-bottom:4px">
+            <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin-bottom:4px">
             <div style="font-size:11px;color:#7a736a;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid #e0dbd0">
               On behalf of {rest_name}
             </div>
@@ -2990,6 +2995,7 @@ def _do_send_review_request(rid, data):
           <p style="font-size:10px;color:#a09080;text-align:center;margin-top:16px">
             Sent via Cavnar AI · <a href="https://dashboard.cavnar.ai" style="color:#a09080">cavnar.ai</a>
           </p>
+        </div>
         </div>"""
 
         _resend.Emails.send({

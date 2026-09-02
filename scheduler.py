@@ -90,9 +90,10 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
             "to": [owner_email],
             "subject": f"\u26a0 Urgent review alert \u2014 {restaurant_name}",
             "html": f"""
-<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
-    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin:0 0 6px">
+    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
       Urgent Review Alert
     </p>
@@ -120,6 +121,7 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
     &#183;
     <a href="mailto:{_from_email()}" style="color:#c84b2f;text-decoration:none">{_from_email()}</a>
   </p>
+</div>
 </div>"""
         })
         log.info(f"Urgent alert sent to {owner_email} for {restaurant_name}")
@@ -415,9 +417,10 @@ def check_stale_inventory():
             "to": [os.getenv("WILL_EMAIL", "will@cavnar.ai")],
             "subject": f"⚠ Stale inventory data — {len(stale)} client(s) need updating",
             "html": f"""
-<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
-    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin:0 0 6px">
+    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
       Weekly Inventory Check
     </p>
@@ -439,6 +442,7 @@ def check_stale_inventory():
     Update inventory data at <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">dashboard.cavnar.ai/admin</a>
     → client → Manage Data.
   </p>
+</div>
 </div>"""
         })
         log.info(f"Stale inventory alert sent for {len(stale)} client(s)")

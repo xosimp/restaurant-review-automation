@@ -101,7 +101,7 @@ def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta
 <div style="background:{page_bg};padding:24px 0">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;background:{card_bg};border:1px solid {card_border};border-radius:12px;padding:28px;color:{text_primary}">
   <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
-    <img src="{'https://dashboard.cavnar.ai/static/brand/lockup-light-email.png' if is_dark else 'https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png'}" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin:0 0 6px">
+    <img src="{'https://dashboard.cavnar.ai/static/brand/wordmark-light-email.png' if is_dark else 'https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png'}" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:{header_sub};margin:0;letter-spacing:1px;text-transform:uppercase">Alert &mdash; {_safe(restaurant_name)}</p>
   </div>
   <h3 style="font-size:16px;font-weight:600;margin:0 0 12px;color:{text_primary}">{_safe(headline)}</h3>

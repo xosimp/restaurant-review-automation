@@ -108,9 +108,10 @@ def send_failure_digest():
             "to": [will],
             "subject": f"⚠ {total} background job failure{'s' if total != 1 else ''} in the last 24h",
             "html": f"""
-<div style="font-family:-apple-system,sans-serif;max-width:640px;margin:0 auto;color:#1a1714">
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+<div style="font-family:-apple-system,sans-serif;max-width:640px;margin:0 auto;color:#1a1714;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:16px">
-    <img src="https://dashboard.cavnar.ai/static/brand/lockup-dark-email.png" width="150" height="28" alt="Cavnar AI" style="display:block;width:150px;height:28px;border:0;outline:none;margin-bottom:4px">
+    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin-bottom:4px">
     <p style="font-size:13px;font-weight:600;color:#0e0c0a;margin:0">Job failures</p>
   </div>
   <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -122,6 +123,7 @@ def send_failure_digest():
     {rows_html}
   </table>
   <p style="font-size:12px;color:#7a736a;margin-top:16px">Full stack traces are in Sentry (if configured) and Railway logs.</p>
+</div>
 </div>""",
         })
         log.info(f"Failure digest sent to {will} ({total} failures)")
