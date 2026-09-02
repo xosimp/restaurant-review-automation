@@ -210,42 +210,30 @@ struct AccountProfileDetailView: View {
         AccountSection(kicker: "Contact") {
             AccountField(label: "Owner", text: $ownerName, focus: $focusedField, field: .ownerName)
             AccountField(label: "Phone", text: $ownerPhone, focus: $focusedField, field: .ownerPhone, keyboardType: .phonePad, isNumber: true)
-            // A raw row, not AccountKVRow — that component already wraps
-            // its own content in a "label · Spacer · trailing" HStack, and
-            // nesting a second label/Spacer/value/Spacer/link cluster
-            // inside its `trailing` slot fought that outer Spacer for
-            // space, which is what pushed the email block off-left and
-            // squeezed "Update" toward the middle instead of the trailing
-            // edge. This mirrors AccountKVRow's own padding/divider
-            // exactly, just without the redundant wrapper.
-            VStack(spacing: 0) {
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("EMAIL").font(.cavnarBody(13, weight: 700)).tracking(0.8).foregroundStyle(Color.cavnarInk3)
-                        Text(profile.ownerEmail ?? "—").font(.cavnarBody(17, weight: 700)).foregroundStyle(Color.cavnarInk)
-                    }
-                    Spacer(minLength: 8)
-                    AccountLink(title: "Update") { showingUpdateEmail = true }
-                }
-                .padding(.vertical, 13)
-                if isOwner { AccountRowDivider() }
+            // Shares AccountFieldRow's exact label/value/reserved-underline
+            // footprint (see AccountDisplayRow's own doc comment) — Email
+            // isn't edited inline (it opens its own sheet), but it sits in
+            // this same card next to Owner/Phone and needs to measure the
+            // same height as they do.
+            AccountDisplayRow(label: "Email", value: profile.ownerEmail ?? "—", showsDivider: isOwner) {
+                AccountLink(title: "Update") { showingUpdateEmail = true }
             }
             if isOwner {
+                // AccountKVRow, not a hand-rolled HStack — Locations is a
+                // single-line "tap to go elsewhere" row, the same family
+                // as Sign-in's Password/2FA rows, so it gets their exact
+                // shared row height instead of improvising its own.
                 Button {
                     Haptic.light()
                     showingLocationSwitcher = true
                 } label: {
-                    HStack {
-                        Text("Locations").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
-                        Spacer()
+                    AccountKVRow(label: "Locations", showsDivider: false) {
                         if locations.locations.isEmpty {
                             Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.cavnarInk3)
                         } else {
                             AccountChip(text: "\(locations.locations.count)", muted: true)
                         }
                     }
-                    .padding(.vertical, 13)
-                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }

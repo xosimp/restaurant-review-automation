@@ -44,6 +44,7 @@ struct AccountChip: View {
         Text(text)
             .font(.cavnarBody(13.5, weight: 700))
             .foregroundStyle(muted ? Color.cavnarInk2 : Color.cavnarEmber2)
+            .multilineTextAlignment(.leading)
             .padding(.horizontal, 11)
             .padding(.vertical, 6)
             .background(muted ? Color.white.opacity(0.04) : Color.cavnarEmber.opacity(0.12))
@@ -51,7 +52,11 @@ struct AccountChip: View {
                 Capsule().strokeBorder(muted ? Color.white.opacity(0.08) : Color.cavnarEmber.opacity(0.3), lineWidth: 1)
             )
             .clipShape(Capsule())
-            .lineLimit(1)
+        // Deliberately no .lineLimit(1) — a chip built from a full
+        // sentence (the "vibe" fact) needs to wrap within
+        // AccountFlowLayout's per-item measurement below, not truncate
+        // or run off the row. Every other chip here is short enough it
+        // never wraps in practice.
     }
 }
 
@@ -59,15 +64,31 @@ struct AccountChip: View {
 /// stack does this.
 struct AccountFlowLayout: Layout {
     var spacing: CGFloat = 6
+    var lineSpacing: CGFloat = 6
+
+    // A chip's IDEAL (unwrapped) width can exceed the whole row's
+    // available width — a full-sentence "vibe" chip did exactly that.
+    // The old version measured every item with .unspecified (no width
+    // constraint) and placed it at that full width regardless of fit;
+    // the FIRST item on a row skipped the wrap check entirely (nothing
+    // to wrap around yet), so it just rendered past the screen edge
+    // instead of wrapping or shrinking. Re-measuring an oversized item
+    // AT the row's own width lets Text's own multi-line layout wrap it
+    // within the pill instead.
+    private func measure(_ view: LayoutSubview, maxWidth: CGFloat) -> CGSize {
+        let ideal = view.sizeThatFits(.unspecified)
+        guard maxWidth.isFinite, ideal.width > maxWidth else { return ideal }
+        return view.sizeThatFits(ProposedViewSize(width: maxWidth, height: nil))
+    }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? .infinity
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
         for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
+            let size = measure(view, maxWidth: width)
             if x > 0, x + size.width > width {
                 x = 0
-                y += rowHeight + spacing
+                y += rowHeight + lineSpacing
                 rowHeight = 0
             }
             x += size.width + spacing
@@ -79,13 +100,13 @@ struct AccountFlowLayout: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
         for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
-            if x > bounds.minX, x + size.width > bounds.maxX {
+            let size = measure(view, maxWidth: bounds.width)
+            if x > bounds.minX, x - bounds.minX + size.width > bounds.width {
                 x = bounds.minX
-                y += rowHeight + spacing
+                y += rowHeight + lineSpacing
                 rowHeight = 0
             }
-            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: size.width, height: size.height))
             x += size.width + spacing
             rowHeight = max(rowHeight, size.height)
         }
@@ -258,7 +279,13 @@ struct AccountPill: View {
 private struct AccountFieldLabel: View {
     let text: String
     var body: some View {
-        HStack(spacing: 4) {
+        // .firstTextBaseline, not the HStack default .center — a custom
+        // Apfel Grotezk caption and an SF Symbol at a different point
+        // size don't share the same visual center, so a center-aligned
+        // pairing can read subtly misaligned; baseline alignment is the
+        // correct pairing for text next to a glyph regardless of either
+        // font's own metrics.
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text(text.uppercased())
                 .font(.cavnarBody(13, weight: 700))
                 .tracking(0.8)
@@ -267,6 +294,21 @@ private struct AccountFieldLabel: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Color.cavnarEmber.opacity(0.7))
         }
+    }
+}
+
+/// A plain caption, no pencil — for AccountDisplayRow's label, where the
+/// value isn't edited inline (Email opens its own sheet; Locations opens
+/// its own list). Sharing AccountFieldLabel's exact type/tracking keeps
+/// every row in a card visually paired, without implying a pencil-tap
+/// edits it directly.
+private struct AccountCaptionLabel: View {
+    let text: String
+    var body: some View {
+        Text(text.uppercased())
+            .font(.cavnarBody(13, weight: 700))
+            .tracking(0.8)
+            .foregroundStyle(Color.cavnarInk3)
     }
 }
 
@@ -289,13 +331,25 @@ private struct AccountFocusUnderline: View {
     }
 }
 
-struct AccountField<Field: Hashable>: View {
+/// The one editable-field row both AccountField and AccountEditor build
+/// on. Both used to be separate implementations — a single-line
+/// TextField for one, a TextEditor for the other — and the TextEditor
+/// side is a known SwiftUI trouble spot: `.fixedSize(vertical: true)`
+/// inside a ScrollView sizes it unreliably (confirmed here — "Menu
+/// highlights" rendered dramatically taller than "Brand voice" and
+/// "Never says" despite all three being built identically empty
+/// placeholders). `TextField(_:text:axis:)` sizes deterministically for
+/// both the single-line and growing cases, so there's now exactly one
+/// code path and Contact/"How the AI writes for you" can't drift apart.
+private struct AccountFieldRow<Field: Hashable>: View {
     let label: String
+    var placeholder: String = ""
     @Binding var text: String
     var focus: FocusState<Field?>.Binding
     let field: Field
     var keyboardType: UIKeyboardType = .default
     var isNumber: Bool = false
+    var multiline: Bool = false
     var showsDivider: Bool = true
 
     private var isFocused: Bool { focus.wrappedValue == field }
@@ -304,11 +358,18 @@ struct AccountField<Field: Hashable>: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 5) {
                 AccountFieldLabel(text: label)
-                TextField("", text: $text)
-                    .font(isNumber ? .cavnarNumber(17, weight: 600) : .cavnarBody(17, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
-                    .keyboardType(keyboardType)
-                    .focused(focus, equals: field)
+                Group {
+                    if multiline {
+                        TextField(placeholder, text: $text, axis: .vertical)
+                            .lineLimit(1...6)
+                    } else {
+                        TextField(placeholder, text: $text)
+                    }
+                }
+                .font(isNumber ? .cavnarNumber(17, weight: 600) : .cavnarBody(17, weight: multiline ? 400 : 700))
+                .foregroundStyle(multiline ? Color.cavnarInk2 : Color.cavnarInk)
+                .keyboardType(keyboardType)
+                .focused(focus, equals: field)
                 AccountFocusUnderline(lit: isFocused)
                     .padding(.top, 2)
             }
@@ -320,6 +381,21 @@ struct AccountField<Field: Hashable>: View {
     }
 }
 
+struct AccountField<Field: Hashable>: View {
+    let label: String
+    @Binding var text: String
+    var focus: FocusState<Field?>.Binding
+    let field: Field
+    var keyboardType: UIKeyboardType = .default
+    var isNumber: Bool = false
+    var showsDivider: Bool = true
+
+    var body: some View {
+        AccountFieldRow(label: label, text: $text, focus: focus, field: field,
+                        keyboardType: keyboardType, isNumber: isNumber, multiline: false, showsDivider: showsDivider)
+    }
+}
+
 struct AccountEditor<Field: Hashable>: View {
     let label: String
     let placeholder: String
@@ -328,35 +404,42 @@ struct AccountEditor<Field: Hashable>: View {
     let field: Field
     var showsDivider: Bool = true
 
-    private var isFocused: Bool { focus.wrappedValue == field }
+    var body: some View {
+        AccountFieldRow(label: label, placeholder: placeholder, text: $text, focus: focus, field: field,
+                        multiline: true, showsDivider: showsDivider)
+    }
+}
+
+/// A read-only counterpart with the identical label/value/reserved-
+/// underline footprint as AccountFieldRow — for a fact that opens its
+/// own flow to change (Email's "Update", Locations' own list) rather
+/// than editing inline. Sharing the exact same vertical rhythm is what
+/// makes every row in Contact measure the same height regardless of
+/// which kind it is.
+struct AccountDisplayRow<Trailing: View>: View {
+    let label: String
+    let value: String
+    var showsDivider: Bool = true
+    @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 5) {
-                AccountFieldLabel(text: label)
-                ZStack(alignment: .topLeading) {
-                    if text.isEmpty {
-                        Text(placeholder)
-                            .font(.cavnarBody(17))
-                            .foregroundStyle(Color.cavnarInk3)
-                            .padding(.top, 8)
-                            .padding(.leading, 5)
-                    }
-                    TextEditor(text: $text)
-                        .font(.cavnarBody(17))
-                        .foregroundStyle(Color.cavnarInk2)
-                        .scrollContentBackground(.hidden)
-                        .scrollDisabled(true)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(minHeight: 36)
-                        .focused(focus, equals: field)
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    AccountCaptionLabel(text: label)
+                    Text(value)
+                        .font(.cavnarBody(17, weight: 700))
+                        .foregroundStyle(Color.cavnarInk)
+                        .lineLimit(1)
+                    // Reserves the exact same height AccountFieldRow's
+                    // (invisible-when-unfocused) underline does, so a
+                    // display row sits exactly as tall as an editable one.
+                    Color.clear.frame(height: 1.5).padding(.top, 2)
                 }
-                AccountFocusUnderline(lit: isFocused)
-                    .padding(.top, 2)
+                Spacer(minLength: 8)
+                trailing()
             }
             .padding(.vertical, 13)
-            .contentShape(Rectangle())
-            .onTapGesture { focus.wrappedValue = field }
             if showsDivider { AccountRowDivider() }
         }
     }

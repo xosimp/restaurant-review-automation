@@ -169,7 +169,16 @@ struct AccountSecurityDetailView: View {
                 Haptic.light()
                 Task { await viewModel.revokeOtherSessions() }
             } label: {
-                Text("Sign out all other devices").frame(maxWidth: .infinity)
+                // CavnarSecondaryButtonStyle's own padding/shape is
+                // symmetric on every axis (verified against its source —
+                // no asymmetric shadow or offset like the primary style
+                // carries), so this stays defensively explicit rather
+                // than relying on defaults: centered alignment named
+                // outright, and multilineTextAlignment set in case this
+                // label ever wraps on a narrower device.
+                Text("Sign out all other devices")
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
             .buttonStyle(CavnarSecondaryButtonStyle())
             // Matches every other button group's top gap in this sheet
