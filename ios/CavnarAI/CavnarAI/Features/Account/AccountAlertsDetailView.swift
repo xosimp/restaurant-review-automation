@@ -56,6 +56,8 @@ struct AccountAlertsDetailView: View {
                         toggle("Rating declining trend", $draft.alertNegativeTrend)
                         toggle("Unresponded review (48h)", $draft.alertNoResponse)
                         toggle("Labor over target", $draft.alertLaborOver)
+                        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1).padding(.top, 2)
+                        masterAlertPill
                     }
                     .cavnarCard()
                 }
@@ -129,8 +131,8 @@ struct AccountAlertsDetailView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        sectionHeader("Alert contacts")
+                    HStack(alignment: .firstTextBaseline) {
+                        sectionHeader("Alert contacts · up to 2")
                         Spacer()
                         if contacts.count < 2 {
                             Button {
@@ -139,6 +141,11 @@ struct AccountAlertsDetailView: View {
                             } label: {
                                 Text("+ Add").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarEmber)
                             }
+                        } else {
+                            // Replaces the button once at the cap, rather
+                            // than just letting it vanish with no
+                            // explanation of why.
+                            Text("2 of 2 added").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarInk3)
                         }
                     }
                     VStack(alignment: .leading, spacing: 16) {
@@ -262,5 +269,41 @@ struct AccountAlertsDetailView: View {
             Text(label).font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk)
         }
         .tint(Color.cavnarEmber)
+    }
+
+    // One pill that reads the aggregate state of all 8 triggers above it —
+    // "Turn on all alerts" while any are off, "Turn off all alerts" once
+    // every one already is — rather than two separate buttons.
+    private var allAlertsOn: Bool {
+        draft.alert1star && draft.alert2star && draft.alert5star && draft.alertHealth
+            && draft.alertNegSpike && draft.alertNegativeTrend && draft.alertNoResponse && draft.alertLaborOver
+    }
+
+    private func setAllAlerts(_ on: Bool) {
+        draft.alert1star = on
+        draft.alert2star = on
+        draft.alert5star = on
+        draft.alertHealth = on
+        draft.alertNegSpike = on
+        draft.alertNegativeTrend = on
+        draft.alertNoResponse = on
+        draft.alertLaborOver = on
+    }
+
+    private var masterAlertPill: some View {
+        Button {
+            Haptic.light()
+            withAnimation(.easeOut(duration: 0.2)) { setAllAlerts(!allAlertsOn) }
+        } label: {
+            Text(allAlertsOn ? "Turn off all alerts" : "Turn on all alerts")
+                .font(.cavnarBody(15, weight: 700))
+                .foregroundStyle(allAlertsOn ? Color.cavnarInk2 : .white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(allAlertsOn ? Color.white.opacity(0.05) : Color.cavnarEmber)
+                .overlay(Capsule().strokeBorder(allAlertsOn ? Color.white.opacity(0.1) : Color.clear, lineWidth: 1))
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }

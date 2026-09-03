@@ -57,11 +57,12 @@ struct AccountBillingDetailView: View {
                             .cavnarCard()
                         }
                     }
-                } else {
-                    Text(billing?.message ?? "No active subscription. Contact will@cavnar.ai")
-                        .font(.cavnarBody(15.5))
-                        .foregroundStyle(Color.cavnarInk3)
                 }
+                // No body text in the empty state — the hero already
+                // shows "No active plan" + billing?.message (or the same
+                // "Contact will@cavnar.ai to get set up" fallback) right
+                // above; this used to repeat that exact string a second
+                // time.
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)

@@ -2398,8 +2398,13 @@ def save_alert_settings(current_user):
     sms_consented = bool(data.get("sms_consent"))
     sms_on = sms_requested and sms_consented
 
-    # Sync contacts — max 2
-    new_contacts = (data.get("contacts") or [])[:2]
+    # Sync contacts — max 2. A real error instead of silently dropping the
+    # extras — the client already hides its own "+ Add" past 2, but a
+    # direct API call or a stale build should hear why it failed.
+    raw_contacts = data.get("contacts") or []
+    if len(raw_contacts) > 2:
+        return jsonify(ok=False, error="Alert contacts are limited to 2."), 400
+    new_contacts = raw_contacts[:2]
     existing = get_alert_contacts(rid)
     for ec in existing:
         delete_alert_contact(ec["id"])

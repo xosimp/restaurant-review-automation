@@ -15,6 +15,7 @@ struct AccountSecurityDetailView: View {
     // with Sign-in notifications — .removed (red, a drawn bar) for turning
     // something off, .success (ember, the checkmark) for everything else.
     @State private var disabledTone: CavnarPostedTone = .success
+    @State private var isRevoking = false
     @Environment(SessionStore.self) private var sessionStore
 
     // Prefer the live summary (it refreshes after enable/disable 2FA and
@@ -59,6 +60,15 @@ struct AccountSecurityDetailView: View {
             .padding(20)
         }
         .accountSheetChrome("Security")
+        // Own load, not just a read of whatever AccountView's own .task
+        // happened to populate — this sheet can open before that initial
+        // fetch resolves (tap Account, tap Security & devices, fast),
+        // which is exactly what made the current device "only show up
+        // after clicking Sign out all other devices" — that button's own
+        // success path happens to call loadSessions() again as a side
+        // effect, so it looked like the click was what populated the
+        // list, when really it was just the first fetch to actually land.
+        .task { await viewModel.loadSessions() }
         .sheet(isPresented: $showingChangePassword) {
             ChangePasswordSheet(viewModel: viewModel)
         }
@@ -183,7 +193,23 @@ struct AccountSecurityDetailView: View {
             }
             Button {
                 Haptic.light()
-                Task { await viewModel.revokeOtherSessions() }
+                guard !isRevoking else { return }
+                isRevoking = true
+                Task {
+                    let ok = await viewModel.revokeOtherSessions()
+                    isRevoking = false
+                    // Verified end-to-end (revoke_other_sessions deletes
+                    // every session row for this user EXCEPT the current
+                    // token — a live test against the real DB confirmed
+                    // the current device survives and only the others go)
+                    // — this was only ever missing its own confirmation,
+                    // not actually broken. Only ever fires on the real
+                    // success response.
+                    if ok {
+                        disabledTone = .success
+                        disabledLabel = "Signed out of other devices"
+                    }
+                }
             } label: {
                 // CavnarSecondaryButtonStyle's own padding/shape is
                 // symmetric on every axis (verified against its source —
@@ -192,11 +218,18 @@ struct AccountSecurityDetailView: View {
                 // than relying on defaults: centered alignment named
                 // outright, and multilineTextAlignment set in case this
                 // label ever wraps on a narrower device.
-                Text("Sign out all other devices")
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                Group {
+                    if isRevoking {
+                        CavnarShimmerText(text: "Signing out…", color: Color.cavnarEmber)
+                    } else {
+                        Text("Sign out all other devices")
+                    }
+                }
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
-            .buttonStyle(CavnarSecondaryButtonStyle())
+            .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: isRevoking))
+            .disabled(isRevoking)
             // Matches every other button group's top gap in this sheet
             // (Change/Cancel, Turn on/Cancel) — was 12pt, the one button
             // in Account that didn't match the shared 6pt rhythm.

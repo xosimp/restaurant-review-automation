@@ -130,8 +130,11 @@ def send_login_notification(to_email: str, restaurant_name: str,
             json={"from": f"Cavnar AI <{FROM_EMAIL}>", "to": [to_email],
                   "subject": f"New sign-in to your Cavnar AI dashboard", "html": html},
             timeout=10)
+        if resp.status_code != 200:
+            log.warning(f"send_login_notification failed ({resp.status_code}): {resp.text[:300]}")
         return resp.status_code == 200
-    except Exception:
+    except Exception as e:
+        log.warning(f"send_login_notification error: {e}")
         return False
 
 

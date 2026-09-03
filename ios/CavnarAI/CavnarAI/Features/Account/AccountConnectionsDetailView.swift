@@ -3,13 +3,13 @@ import SwiftUI
 /// Opened from Account's "Connected apps" row. Was a single card of 5
 /// read-only rows with no way to actually connect anything. Now each
 /// connection is its own standalone card with real space between them,
-/// a brand-colored icon tile (SF Symbols, not the companies' own
-/// trademarked marks), and a real action: Google Business runs a full
-/// mobile OAuth round trip (GMBConnectCoordinator), Toast takes a
-/// credential pair (ToastConnectSheet) — Toast has no OAuth of its own.
-/// Instagram/Facebook, Square, and Clover have no connect API wired up
-/// yet, so their action is an honest "ask Cavnar to connect it" email
-/// rather than a button that looks like it works and does nothing.
+/// the brand's own real mark (see ConnectionMark below — real SVGs/PNG
+/// sourced from each brand's own public assets, not SF Symbol
+/// approximations), and a real action where one exists: Google Business
+/// runs a full mobile OAuth round trip (GMBConnectCoordinator), Toast
+/// takes a credential pair (ToastConnectSheet) — Toast has no OAuth of
+/// its own. Instagram/Facebook, Square, and Clover have no connect API
+/// wired up yet, so they show status only, no dead-end CTA.
 struct AccountConnectionsDetailView: View {
     let viewModel: AccountViewModel
     let connections: AccountConnections
@@ -23,18 +23,9 @@ struct AccountConnectionsDetailView: View {
                     marksRow
                     googleRow
                     toastRow
-                    requestRow(
-                        "Instagram & Facebook", systemImage: "camera.fill", tint: Color(red: 0.82, green: 0.14, blue: 0.56),
-                        status: connections.instagram
-                    )
-                    requestRow(
-                        "Square POS", systemImage: "square.fill", tint: .black,
-                        status: connections.square
-                    )
-                    requestRow(
-                        "Clover POS", systemImage: "leaf.fill", tint: Color(red: 0.19, green: 0.6, blue: 0.35),
-                        status: connections.clover
-                    )
+                    requestRow("Instagram & Facebook", brand: .instagram, status: connections.instagram)
+                    requestRow("Square POS", brand: .square, status: connections.square)
+                    requestRow("Clover POS", brand: .clover, status: connections.clover)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
@@ -48,13 +39,13 @@ struct AccountConnectionsDetailView: View {
 
     // MARK: - Identity (option A)
 
-    private var marks: [(name: String, symbol: String, tint: Color, status: ConnectionStatus)] {
+    private var marks: [(name: String, brand: ConnectionBrand, status: ConnectionStatus)] {
         [
-            ("Google", "building.2.fill", Color(red: 0.26, green: 0.52, blue: 0.96), connections.googleBusiness),
-            ("Toast", "fork.knife", Color(red: 0.98, green: 0.35, blue: 0.15), connections.toast),
-            ("Instagram", "camera.fill", Color(red: 0.82, green: 0.14, blue: 0.56), connections.instagram),
-            ("Square", "square.fill", .black, connections.square),
-            ("Clover", "leaf.fill", Color(red: 0.19, green: 0.6, blue: 0.35), connections.clover),
+            ("Google", .google, connections.googleBusiness),
+            ("Toast", .toast, connections.toast),
+            ("Instagram", .instagram, connections.instagram),
+            ("Square", .square, connections.square),
+            ("Clover", .clover, connections.clover),
         ]
     }
 
@@ -71,18 +62,13 @@ struct AccountConnectionsDetailView: View {
         }
     }
 
-    /// The five app marks in a row — lit when connected, dimmed when not.
+    /// The five real brand marks in a row — lit when connected, dimmed
+    /// when not.
     private var marksRow: some View {
         HStack(spacing: 8) {
             ForEach(marks, id: \.name) { mark in
-                Image(systemName: mark.symbol)
-                    .font(.system(size: 17))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 44)
-                    .background(mark.tint)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .opacity(mark.status.connected ? 1 : 0.3)
+                ConnectionMarkTile(brand: mark.brand, size: 44)
+                    .opacity(mark.status.connected ? 1 : 0.35)
                     .overlay(alignment: .topTrailing) {
                         if mark.status.connected {
                             Circle().fill(Color.cavnarGreen)
@@ -99,7 +85,7 @@ struct AccountConnectionsDetailView: View {
 
     private var googleRow: some View {
         VStack(alignment: .leading, spacing: 14) {
-            header("Google Business", systemImage: "building.2.fill", tint: Color(red: 0.26, green: 0.52, blue: 0.96), status: connections.googleBusiness)
+            header("Google Business", brand: .google, status: connections.googleBusiness)
 
             // "Handshake" — dashes march between the seal and Google while
             // the OAuth round trip is in flight (see CavnarMotion).
@@ -144,7 +130,7 @@ struct AccountConnectionsDetailView: View {
 
     private var toastRow: some View {
         VStack(alignment: .leading, spacing: 14) {
-            header("Toast POS", systemImage: "fork.knife", tint: Color(red: 0.98, green: 0.35, blue: 0.15), status: connections.toast)
+            header("Toast POS", brand: .toast, status: connections.toast)
 
             if connections.toast.connected {
                 Button("Disconnect", role: .destructive) {
@@ -167,41 +153,16 @@ struct AccountConnectionsDetailView: View {
 
     // MARK: - Not yet self-serve (Instagram/Facebook, Square, Clover)
 
-    private func requestRow(_ label: String, systemImage: String, tint: Color, status: ConnectionStatus) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header(label, systemImage: systemImage, tint: tint, status: status)
-
-            if !status.connected {
-                Link(destination: contactURL(for: label)) {
-                    HStack(spacing: 5) {
-                        Text("Ask Cavnar to connect this")
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 10))
-                    }
-                    .font(.cavnarBody(15, weight: 600))
-                    .foregroundStyle(Color.cavnarEmber)
-                }
-            }
-        }
-        .cavnarCard()
-    }
-
-    private func contactURL(for label: String) -> URL {
-        let subject = "Connect \(label)"
-        let encoded = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? subject
-        return URL(string: "mailto:will@cavnar.ai?subject=\(encoded)")!
+    private func requestRow(_ label: String, brand: ConnectionBrand, status: ConnectionStatus) -> some View {
+        header(label, brand: brand, status: status)
+            .cavnarCard()
     }
 
     // MARK: - Shared header
 
-    private func header(_ label: String, systemImage: String, tint: Color, status: ConnectionStatus) -> some View {
+    private func header(_ label: String, brand: ConnectionBrand, status: ConnectionStatus) -> some View {
         HStack(spacing: 13) {
-            Image(systemName: systemImage)
-                .font(.system(size: 17))
-                .foregroundStyle(.white)
-                .frame(width: 40, height: 40)
-                .background(tint)
-                .clipShape(RoundedRectangle(cornerRadius: 11))
+            ConnectionMarkTile(brand: brand, size: 40)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(label).font(.cavnarBody(15.5, weight: 700)).foregroundStyle(Color.cavnarInk)
@@ -222,6 +183,111 @@ struct AccountConnectionsDetailView: View {
                     .font(.cavnarBody(15, weight: 600))
                     .foregroundStyle(status.connected ? Color.cavnarGreen : Color.cavnarInk3)
             }
+        }
+    }
+}
+
+// MARK: - Real brand marks
+
+enum ConnectionBrand {
+    case google, toast, instagram, square, clover
+}
+
+/// Each brand's own real mark on a light neutral tile — brand marks are
+/// designed against a light ground (that's how Google/Instagram/Square
+/// all publish their own guidelines), so this stays a fixed light tile
+/// regardless of the app's own dark theme, the same way a "Sign in with
+/// Google" button never goes dark either.
+struct ConnectionMarkTile: View {
+    let brand: ConnectionBrand
+    var size: CGFloat = 40
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
+            .fill(Color(red: 0.97, green: 0.965, blue: 0.955))
+            .overlay(
+                RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
+                    .strokeBorder(Color.black.opacity(0.06), lineWidth: 1)
+            )
+            .frame(width: size, height: size)
+            .overlay(mark.padding(size * 0.2))
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.27, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var mark: some View {
+        switch brand {
+        case .google:
+            // Real 4-color "G" — Wikimedia's copy of Google's own
+            // publicly-published brand mark (used in every "Sign in with
+            // Google" button), fetched and bundled as GoogleMark.
+            Image("GoogleMark").resizable().aspectRatio(contentMode: .fit)
+        case .instagram:
+            // Real Instagram glyph shape, masked with their actual
+            // signature gradient (purple -> pink -> orange) instead of
+            // Simple Icons' single flat brand pink — the gradient is what
+            // people actually recognize as "Instagram."
+            Image("InstagramMark")
+                .resizable()
+                .renderingMode(.template)
+                .aspectRatio(contentMode: .fit)
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.51, green: 0.22, blue: 0.93),
+                            Color(red: 0.89, green: 0.15, blue: 0.42),
+                            Color(red: 0.98, green: 0.53, blue: 0.13),
+                        ],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                )
+        case .square:
+            Image("SquareMark").resizable().aspectRatio(contentMode: .fit)
+        case .toast:
+            Image("ToastMark").resizable().aspectRatio(contentMode: .fit)
+        case .clover:
+            CloverMark()
+        }
+    }
+}
+
+/// Clover's real mark IS four overlapping circles (with a small light
+/// notch cut into the bottom-left leaf) — reconstructed as native vector
+/// geometry from their own app icon rather than an approximated raster,
+/// since no clean vector source was available. Color sampled directly
+/// from their published app icon.
+private struct CloverMark: View {
+    private static let cloverGreen = Color(red: 0.137, green: 0.471, blue: 0.004)
+
+    var body: some View {
+        GeometryReader { geo in
+            let s = min(geo.size.width, geo.size.height)
+            let r = s * 0.27
+            let offset = r * 0.92
+            ZStack {
+                leaf(r: r).offset(x: -offset, y: -offset)
+                leaf(r: r).offset(x: offset, y: -offset)
+                leaf(r: r).offset(x: -offset, y: offset)
+                leaf(r: r, notched: true).offset(x: offset, y: offset)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+    }
+
+    @ViewBuilder
+    private func leaf(r: CGFloat, notched: Bool = false) -> some View {
+        if notched {
+            Circle()
+                .fill(Self.cloverGreen)
+                .frame(width: r * 2, height: r * 2)
+                .overlay(
+                    Circle()
+                        .trim(from: 0.5, to: 0.75)
+                        .stroke(Color.white.opacity(0.55), lineWidth: r * 0.22)
+                        .frame(width: r * 1.15, height: r * 1.15)
+                )
+        } else {
+            Circle().fill(Self.cloverGreen).frame(width: r * 2, height: r * 2)
         }
     }
 }
