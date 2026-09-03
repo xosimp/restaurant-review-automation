@@ -193,21 +193,27 @@ enum ConnectionBrand {
     case google, toast, instagram, square, clover
 }
 
-/// Each brand's own real mark on a light neutral tile — brand marks are
-/// designed against a light ground (that's how Google/Instagram/Square
-/// all publish their own guidelines), so this stays a fixed light tile
-/// regardless of the app's own dark theme, the same way a "Sign in with
-/// Google" button never goes dark either.
+/// Each brand's own real mark on the app's own dark glass tile — the same
+/// translucent-white-on-dark treatment every other icon tile in Account
+/// uses (AccountDeviceRow's device glyph, etc.). Used to sit on a fixed
+/// near-white tile instead (brand marks are drawn for a light ground in
+/// most style guides), but that read as a jarring bright-white square
+/// against the rest of the app's dark chrome. Google/Toast/Instagram/
+/// Clover's marks are all transparent-background art that reads fine on
+/// dark; Square's is the one exception — Simple Icons' asset is a flat
+/// dark charcoal (#3E4348) shape meant for a light ground, which would
+/// all but disappear here, so it renders as a template and gets tinted
+/// light instead of using its own baked-in color.
 struct ConnectionMarkTile: View {
     let brand: ConnectionBrand
     var size: CGFloat = 40
 
     var body: some View {
         RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
-            .fill(Color(red: 0.97, green: 0.965, blue: 0.955))
+            .fill(Color.white.opacity(0.06))
             .overlay(
                 RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
-                    .strokeBorder(Color.black.opacity(0.06), lineWidth: 1)
+                    .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
             )
             .frame(width: size, height: size)
             .overlay(mark.padding(size * 0.2))
@@ -242,7 +248,11 @@ struct ConnectionMarkTile: View {
                     )
                 )
         case .square:
-            Image("SquareMark").resizable().aspectRatio(contentMode: .fit)
+            Image("SquareMark")
+                .resizable()
+                .renderingMode(.template)
+                .aspectRatio(contentMode: .fit)
+                .foregroundStyle(Color.white.opacity(0.92))
         case .toast:
             Image("ToastMark").resizable().aspectRatio(contentMode: .fit)
         case .clover:

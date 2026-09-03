@@ -290,20 +290,22 @@ struct AccountAlertsDetailView: View {
         draft.alertLaborOver = on
     }
 
+    @ViewBuilder
     private var masterAlertPill: some View {
-        Button {
-            Haptic.light()
-            withAnimation(.easeOut(duration: 0.2)) { setAllAlerts(!allAlertsOn) }
-        } label: {
-            Text(allAlertsOn ? "Turn off all alerts" : "Turn on all alerts")
-                .font(.cavnarBody(15, weight: 700))
-                .foregroundStyle(allAlertsOn ? Color.cavnarInk2 : .white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(allAlertsOn ? Color.white.opacity(0.05) : Color.cavnarEmber)
-                .overlay(Capsule().strokeBorder(allAlertsOn ? Color.white.opacity(0.1) : Color.clear, lineWidth: 1))
-                .clipShape(Capsule())
+        if allAlertsOn {
+            Button {
+                withAnimation(.easeOut(duration: 0.2)) { setAllAlerts(false) }
+            } label: {
+                Text("Turn off all alerts").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle())
+        } else {
+            Button {
+                withAnimation(.easeOut(duration: 0.2)) { setAllAlerts(true) }
+            } label: {
+                Text("Turn on all alerts").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarPrimaryButtonStyle())
         }
-        .buttonStyle(.plain)
     }
 }

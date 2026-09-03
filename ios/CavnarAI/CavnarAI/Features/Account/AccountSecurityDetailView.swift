@@ -41,8 +41,8 @@ struct AccountSecurityDetailView: View {
     private var passwordStrengthTone: Color {
         switch live.passwordStrength {
         case "strong": return .cavnarGreen
-        case "good": return .cavnarInk
-        case "weak": return .cavnarAmber
+        case "good": return .cavnarGreen
+        case "weak": return .cavnarRed
         default: return .cavnarInk3
         }
     }

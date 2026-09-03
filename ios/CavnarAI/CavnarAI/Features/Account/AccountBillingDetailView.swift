@@ -83,6 +83,16 @@ struct AccountBillingDetailView: View {
         }
     }
 
+    // "will@cavnar.ai" as a tappable ember link, subject prefilled — only
+    // for the static fallback copy (below); billing?.message is arbitrary
+    // server text and isn't assumed to contain the address at all, let
+    // alone in a linkable form.
+    private var billingMailtoLink: String {
+        let subject = "Cavnar AI billing question"
+        let encoded = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? subject
+        return "mailto:will@cavnar.ai?subject=\(encoded)"
+    }
+
     private var hero: some View {
         AccountHero(title: planTitle) {
             GlowBadge(systemImage: "creditcard", size: 64)
@@ -91,8 +101,11 @@ struct AccountBillingDetailView: View {
                 Text(billing.amount ?? "—").font(.cavnarNumber(15.5, weight: 600))
                     + Text(" · next charge ")
                     + Text(billing.nextDate ?? "—").font(.cavnarNumber(15.5, weight: 600))
+            } else if let message = billing?.message {
+                Text(message)
             } else {
-                Text(billing?.message ?? "Contact will@cavnar.ai to get set up")
+                (Text("Contact ") + Text("[will@cavnar.ai](\(billingMailtoLink))") + Text(" to get set up"))
+                    .tint(Color.cavnarEmber)
             }
         }
     }

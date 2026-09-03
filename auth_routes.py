@@ -765,7 +765,13 @@ def gmb_mobile_callback():
         query = {"status": status}
         if msg:
             query["msg"] = msg
-        return redirect("cavnarai://gmb-callback?" + urllib.parse.urlencode(query))
+        # quote_via=quote, not urlencode's default quote_plus — Swift's
+        # URLComponents.queryItems percent-decodes %XX back to real
+        # characters but never turns a literal "+" back into a space (that
+        # convention is HTML form-encoding, not URI encoding), so a
+        # quote_plus-encoded space survived the round trip as a literal
+        # "+" and showed up verbatim in the app's error text.
+        return redirect("cavnarai://gmb-callback?" + urllib.parse.urlencode(query, quote_via=urllib.parse.quote))
 
     code  = request.args.get("code")
     state = request.args.get("state", "")
@@ -847,7 +853,9 @@ def google_sso_callback():
                 query["token"] = token
             if error:
                 query["error"] = error
-            resp = make_response(redirect("cavnarai://auth-callback?" + urllib.parse.urlencode(query)))
+            # See gmb_mobile_callback's _finish for why quote_via=quote,
+            # not urlencode's default quote_plus, is required here too.
+            resp = make_response(redirect("cavnarai://auth-callback?" + urllib.parse.urlencode(query, quote_via=urllib.parse.quote)))
             resp.delete_cookie("g_sso_state")
             resp.delete_cookie("g_sso_mobile")
             return resp
