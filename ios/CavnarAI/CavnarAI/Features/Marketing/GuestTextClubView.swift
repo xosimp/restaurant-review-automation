@@ -186,7 +186,10 @@ private struct AddGuestContactSheet: View {
                         focus: $focusedField, field: .phone
                     )
 
-                    CavnarFormButtonPair { matchedWidth in
+                    // Plain full-width buttons, not CavnarFormButtonPair —
+                    // see SendReviewRequestSheet's identical comment; same
+                    // PreferenceKey width-matching bug, same fix.
+                    VStack(spacing: 10) {
                         Button {
                             Task {
                                 isAdding = true
@@ -198,16 +201,24 @@ private struct AddGuestContactSheet: View {
                                 }
                             }
                         } label: {
-                            if isAdding {
-                                CavnarShimmerText(text: "Adding…", color: Color.cavnarInk)
-                            } else {
-                                Text("Add guest")
+                            Group {
+                                if isAdding {
+                                    CavnarShimmerText(text: "Adding…", color: Color.cavnarInk)
+                                } else {
+                                    Text("Add guest")
+                                }
                             }
+                            .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canAdd, matchedWidth: matchedWidth))
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canAdd))
                         .disabled(!canAdd)
-                    } cancelAction: {
-                        dismiss()
+
+                        Button {
+                            dismiss()
+                        } label: {
+                            Text("Cancel").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
                     }
                     .padding(.top, 6)
                 }

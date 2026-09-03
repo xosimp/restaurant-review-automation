@@ -123,13 +123,7 @@ struct AccountView: View {
 
     private func heroIdentity(_ summary: AccountSummary) -> some View {
         HStack(spacing: 14) {
-            Text(initials(summary.profile.restaurantName))
-                .font(.cavnarHeadline(21))
-                .foregroundStyle(Color.cavnarEmber2)
-                .frame(width: 54, height: 54)
-                .background(Color.cavnarEmber.opacity(0.16))
-                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.cavnarEmber.opacity(0.45), lineWidth: 1))
-                .clipShape(RoundedRectangle(cornerRadius: 16))
+            GlowBadge(systemImage: "", size: 54, monogram: initials(summary.profile.restaurantName))
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(summary.profile.restaurantName)

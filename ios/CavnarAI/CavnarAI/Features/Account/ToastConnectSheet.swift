@@ -58,7 +58,10 @@ struct ToastConnectSheet: View {
                         Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                     }
 
-                    CavnarFormButtonPair { matchedWidth in
+                    // Plain full-width buttons, not CavnarFormButtonPair —
+                    // see SendReviewRequestSheet's identical comment; same
+                    // PreferenceKey width-matching bug, same fix.
+                    VStack(spacing: 10) {
                         Button {
                             Task {
                                 withAnimation(.easeOut(duration: 0.25)) { handshake = .connecting }
@@ -74,16 +77,24 @@ struct ToastConnectSheet: View {
                                 }
                             }
                         } label: {
-                            if viewModel.isConnectingToast {
-                                CavnarShimmerText(text: "Connecting…")
-                            } else {
-                                Text("Connect Toast")
+                            Group {
+                                if viewModel.isConnectingToast {
+                                    CavnarShimmerText(text: "Connecting…")
+                                } else {
+                                    Text("Connect Toast")
+                                }
                             }
+                            .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSubmit, matchedWidth: matchedWidth))
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSubmit))
                         .disabled(!canSubmit)
-                    } cancelAction: {
-                        dismiss()
+
+                        Button {
+                            dismiss()
+                        } label: {
+                            Text("Cancel").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
                     }
                     .padding(.top, 6)
                 }

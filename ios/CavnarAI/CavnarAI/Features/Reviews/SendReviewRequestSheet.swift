@@ -101,7 +101,14 @@ struct SendReviewRequestSheet: View {
                         Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                     }
 
-                    CavnarFormButtonPair { matchedWidth in
+                    // Plain full-width buttons, not CavnarFormButtonPair —
+                    // that PreferenceKey width-matching mechanism doesn't
+                    // reliably resolve when the sheet sits in this app's
+                    // deeper sheet-presentation chains (already root-caused
+                    // and fixed the same way in TwoFactorSetupSheet and
+                    // AccountSecurityDetailView's password form; this sheet
+                    // just hadn't been migrated yet).
+                    VStack(spacing: 10) {
                         Button {
                             Task {
                                 await viewModel.send(name: name, email: email, phone: phone, message: message)
@@ -111,16 +118,24 @@ struct SendReviewRequestSheet: View {
                                 }
                             }
                         } label: {
-                            if viewModel.isSending {
-                                CavnarShimmerText(text: "Sending…", color: Color.cavnarInk)
-                            } else {
-                                Text("Send review request")
+                            Group {
+                                if viewModel.isSending {
+                                    CavnarShimmerText(text: "Sending…", color: Color.cavnarInk)
+                                } else {
+                                    Text("Send review request")
+                                }
                             }
+                            .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSend, matchedWidth: matchedWidth))
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !canSend))
                         .disabled(!canSend)
-                    } cancelAction: {
-                        dismiss()
+
+                        Button {
+                            dismiss()
+                        } label: {
+                            Text("Cancel").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
                     }
                     .padding(.top, 6)
                 }

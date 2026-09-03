@@ -95,11 +95,20 @@ struct RootView: View {
         // switchable is the home-screen APP ICON (Account > More), not
         // this. See AppIconManager for that.
         .preferredColorScheme(.dark)
-        // Dynamic Type is honoured (see Font+Cavnar), but capped at
-        // accessibility2 — beyond that the dense KPI/chart screens stop being
-        // usable at all. A cap is the right trade; ignoring the setting
-        // entirely, which is what the app did before, is not (audit 7.1).
-        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+        // Dynamic Type is honoured (see Font+Cavnar), capped at xxxLarge —
+        // the top of the "standard" range, one notch short of the
+        // "accessibility" categories (accessibility1...5). Those use a much
+        // steeper multiplier specifically meant for low-vision users, and
+        // ~400 call sites across this app were never individually stress-
+        // tested against jumps that large: this session's first cap
+        // (accessibility2) let short, bold, uppercase-tracked labels like
+        // Account's section kickers balloon disproportionately (small text
+        // styles scale more steeply than large ones by Apple's own design)
+        // while dense KPI/chart screens broke outright. xxxLarge still gives
+        // real, meaningful growth over the old frozen-at-any-setting
+        // behavior (audit 7.1's actual defect) without reaching into the
+        // range this app hasn't been laid out for yet.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         // Single app-wide source for tint — covers button/control tint AND
         // text field cursor color (a TextField's blinking caret follows the
         // environment's tint, not a color you set on the field itself).
@@ -178,7 +187,24 @@ struct RootView: View {
                 // .inactive -> .background transition, so locking only on
                 // .background meant revenue figures and review content sat in
                 // the switcher card with no authentication (audit 1.6).
-                if sessionStore.isAuthenticated { privacyShieldUp = true }
+                //
+                // isAuthenticated alone was wrong: it's true for the entire
+                // time the user is sitting on LockedView too, not just once
+                // they're actually in the dashboard. Two routine things also
+                // flip scenePhase to .inactive and were incorrectly raising
+                // this shield as a result — a plain cold launch (iOS always
+                // routes app startup through a brief .inactive tick before
+                // .active) and presenting the SYSTEM Face ID sheet itself
+                // (any system UI on top of the app does this). Both left the
+                // user staring at this black seal screen until content
+                // finished loading, on every login and every unlock — a real
+                // regression this fix introduced. LockedView is already a
+                // safe, non-sensitive screen, so it needs no extra shield;
+                // only raise this while the actual dashboard is what would be
+                // captured.
+                if sessionStore.isAuthenticated && !sessionStore.isLocked {
+                    privacyShieldUp = true
+                }
             case .background:
                 sessionStore.lockIfNeeded()
             case .active:

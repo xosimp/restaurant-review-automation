@@ -55,11 +55,14 @@ struct TwoFactorView: View {
                 Button {
                     Task { await viewModel.submit() }
                 } label: {
-                    if viewModel.isLoading {
-                        CavnarShimmerText(text: "Verifying…")
-                    } else {
-                        Text("Verify")
+                    Group {
+                        if viewModel.isLoading {
+                            CavnarShimmerText(text: "Verifying…")
+                        } else {
+                            Text("Verify")
+                        }
                     }
+                    .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !viewModel.canSubmit))
                 .disabled(!viewModel.canSubmit)

@@ -16,18 +16,32 @@ struct CavnarSegmentedControl<T: Hashable>: View {
     let options: [T]
     let label: (T) -> String
 
+    @State private var rowWidth: CGFloat = 0
+
     var body: some View {
-        GeometryReader { geo in
-            let segmentWidth = geo.size.width / CGFloat(max(options.count, 1))
-            segments
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in select(at: value.location.x, segmentWidth: segmentWidth) }
-                        .onEnded { value in select(at: value.location.x, segmentWidth: segmentWidth) }
-                )
-        }
-        .frame(minHeight: 34)
+        // A bare GeometryReader has no intrinsic size, so wrapping `segments`
+        // as its child (the previous shape here) let it expand to fill all
+        // available height in the ScrollView/VStack every module screen
+        // hosts this in — .frame(minHeight: 34) is only a floor, and with
+        // nothing capping the other side it pushed everything below it down
+        // by whatever slack the screen had. Only the width is actually
+        // needed, so read it off a zero-height background instead of making
+        // segments a GeometryReader's child — segments then sizes itself
+        // from its own (Dynamic-Type-aware) content again, same as any
+        // normal view.
+        segments
+            .background(
+                GeometryReader { geo in
+                    Color.clear.onAppear { rowWidth = geo.size.width }
+                        .onChange(of: geo.size.width) { _, newWidth in rowWidth = newWidth }
+                }
+            )
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in select(at: value.location.x, segmentWidth: rowWidth / CGFloat(max(options.count, 1))) }
+                    .onEnded { value in select(at: value.location.x, segmentWidth: rowWidth / CGFloat(max(options.count, 1))) }
+            )
         // A custom control has no native automatic haptic to lean on (unlike
         // Toggle/UISwitch) — .sensoryFeedback is the one deliberate source
         // here, not stacked with anything else.

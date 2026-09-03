@@ -108,22 +108,24 @@ struct AccountHelpView: View {
 
     private func faqRow(_ item: FAQItem) -> some View {
         let isOpen = expanded.contains(item.id)
-        return VStack(alignment: .leading, spacing: isOpen ? 8 : 0) {
+        return VStack(alignment: .leading, spacing: isOpen ? 12 : 0) {
             Button {
                 Haptic.light()
                 withAnimation(.easeOut(duration: 0.2)) {
                     if isOpen { expanded.remove(item.id) } else { expanded.insert(item.id) }
                 }
             } label: {
-                HStack(alignment: .top) {
+                HStack(alignment: .top, spacing: 10) {
                     Text(item.question)
-                        .font(.cavnarBody(15.5, weight: 600))
-                        .foregroundStyle(Color.cavnarInk)
+                        .font(.cavnarBody(15.5, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
                         .multilineTextAlignment(.leading)
+                        .lineSpacing(2)
                     Spacer(minLength: 8)
                     Image(systemName: isOpen ? "chevron.up" : "chevron.down")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color.cavnarInk3)
+                        .padding(.top, 2)
                 }
             }
             .buttonStyle(.plain)
@@ -131,8 +133,10 @@ struct AccountHelpView: View {
                 Text(item.answer)
                     .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarInk3)
+                    .lineSpacing(4)
+                    .padding(.bottom, 2)
             }
         }
-        .padding(.vertical, 12)
+        .padding(.vertical, 16)
     }
 }
