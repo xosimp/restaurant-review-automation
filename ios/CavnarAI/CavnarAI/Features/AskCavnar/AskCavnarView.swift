@@ -6,8 +6,16 @@ import UIKit
 private let chatScrollBottomID = "chat-scroll-bottom"
 
 struct AskCavnarView: View {
-    @State private var viewModel = AskCavnarViewModel()
+    /// Owned by RootView, not @State here — a sheet-owned view model is
+    /// deallocated on every dismissal, so swiping down to check a figure wiped
+    /// the whole conversation (audit 5.6). Same rationale as RootView's
+    /// homeViewModel.
+    /// @Bindable, not plain `let` — the input field binds to
+    /// $viewModel.question, and the model is now owned by RootView.
+    @Bindable var viewModel: AskCavnarViewModel
     @FocusState private var inputFocused: Bool
+    /// Throttles the reveal-driven scroll — see its call site below.
+    @State private var lastScrollTick = Date.distantPast
 
     private let suggestedQuestions = [
         "How are my reviews doing?",
@@ -53,6 +61,15 @@ struct AskCavnarView: View {
                                     // spacer that follows it reserves a
                                     // consistent gap instead, for as long as
                                     // this stays the last thing in the list.
+                                    // Throttled to ~10/sec: a scroll
+                                    // adjustment on every revealed word forced
+                                    // a full scroll-view layout pass up to 60
+                                    // times a second, on top of the reveal's
+                                    // own work (audit 3.3). At this cadence it
+                                    // still reads as continuous tracking.
+                                    let now = Date()
+                                    guard now.timeIntervalSince(lastScrollTick) > 0.1 else { return }
+                                    lastScrollTick = now
                                     proxy.scrollTo(chatScrollBottomID, anchor: .bottom)
                                 }
                                 .id(message.id)
@@ -181,6 +198,33 @@ struct AskCavnarView: View {
     }
 
     private var inputBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let error = viewModel.errorBanner {
+                Text(error)
+                    .font(.cavnarBody(13.5, weight: 600))
+                    .foregroundStyle(Color.cavnarRed)
+                    .padding(.horizontal, 4)
+            }
+            // Only surfaced as the cap approaches — the server truncates at
+            // 500 characters silently, so the limit has to be visible before
+            // it bites (audit 5.2).
+            if viewModel.remainingCharacters < 80 {
+                Text("\(viewModel.remainingCharacters)")
+                    .font(.cavnarNumber(12, weight: 600))
+                    .foregroundStyle(viewModel.remainingCharacters <= 0 ? Color.cavnarRed : Color.cavnarInk3)
+                    .padding(.horizontal, 4)
+            }
+            inputRow
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
+        }
+    }
+
+    private var inputRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
             TextField("How can I help?", text: $viewModel.question, axis: .vertical)
                 .font(.cavnarBody(15.5))
@@ -209,15 +253,16 @@ struct AskCavnarView: View {
                 }
                 .frame(width: 38, height: 38)
                 .shadow(color: viewModel.canSubmit ? Color.cavnarEmber.opacity(0.4) : .clear, radius: 8, y: 3)
+                // Visual stays 38pt; the hit region meets the 44pt HIG
+                // minimum — this is the primary action of the AI screen
+                // (audit 7.3).
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
             }
             .disabled(!viewModel.canSubmit)
             .animation(.easeOut(duration: 0.15), value: viewModel.canSubmit)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .top) {
-            Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
+            .accessibilityLabel("Send question")
+            .accessibilityHint(viewModel.canSubmit ? "" : "Type a question first")
         }
     }
 
@@ -249,7 +294,14 @@ private struct ChatBubble: View {
     // side) — the width actually available to the text itself.
     private static let maxBubbleWidth: CGFloat = 280
     private static let maxTextWidth: CGFloat = maxBubbleWidth - 30
-    private static let textFont = UIFont(name: "ApfelGrotezk-Regular", size: 16)!
+    /// Measurement font for cavnarMeasuredTextWidth. Falls back to the system
+    /// font rather than force-unwrapping: UIFont(name:size:) returns nil if the
+    /// custom font fails to register (a renamed .ttf, a PostScript-name
+    /// mismatch, iOS failing to register under memory pressure), and this is a
+    /// static let on the app's main AI screen — the unwrap crashed the whole
+    /// surface (audit 2.1).
+    private static let textFont: UIFont =
+        UIFont(name: "ApfelGrotezk-Regular", size: 16) ?? .systemFont(ofSize: 16)
 
     // Fourth attempt at the bubble-hugging bug. The first three all relied
     // on SwiftUI's own implicit sizing (fixedSize, frame(maxWidth:)
@@ -300,6 +352,15 @@ private struct ChatBubble: View {
                         maxWidth: Self.maxTextWidth, measuringFont: Self.textFont,
                         onReveal: onReveal
                     )
+                    if message.wasTruncated {
+                        // The model hit max_tokens, so this answer stops
+                        // mid-thought. Saying so is the difference between
+                        // advice and half a sentence read as advice (audit 5.1).
+                        Label("Answer was cut short", systemImage: "text.append")
+                            .font(.cavnarBody(13, weight: 600))
+                            .foregroundStyle(Color.cavnarAmber)
+                            .padding(.top, 4)
+                    }
                 }
             }
             .padding(.horizontal, 15)

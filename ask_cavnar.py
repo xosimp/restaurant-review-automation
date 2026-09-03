@@ -412,7 +412,13 @@ def ask(restaurant, question, history=None):
     prior back-and-forth in THIS chat session as
     [{"role": "user"|"assistant", "content": str}, ...], oldest first, NOT
     including `question` itself — the caller's own message list up to (but
-    not including) the new question. Returns the plain-text answer.
+    not including) the new question.
+
+    Returns (answer_text, was_truncated). `was_truncated` is True when the
+    model hit max_tokens and the answer therefore stops mid-thought — the
+    client used to render that identically to a complete answer, so a
+    half-finished recommendation about labor or a supplier read as final
+    advice. labor.py already checks stop_reason for the same reason.
     Callers are responsible for rate-limiting (see ai_utils.ai_rate_limited)
     before calling this — it always makes a real Claude call."""
     context = build_context(restaurant)
@@ -436,4 +442,5 @@ def ask(restaurant, question, history=None):
         restaurant_id=restaurant.id,
         action="ask_cavnar",
     )
-    return extract_text(message).strip()
+    truncated = getattr(message, "stop_reason", None) == "max_tokens"
+    return extract_text(message).strip(), truncated

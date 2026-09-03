@@ -401,9 +401,12 @@ def test_ask_builds_prompt_with_context_and_question(db_path, monkeypatch):
         return types.SimpleNamespace(content=[types.SimpleNamespace(text="Your rating is looking great!")])
 
     monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create_with_retry)
-    answer = ask(r, "How are my reviews doing?")
+    answer, truncated = ask(r, "How are my reviews doing?")
 
     assert answer == "Your rating is looking great!"
+    # A response with no stop_reason attribute (the fake here) must read as
+    # "not truncated" rather than raising.
+    assert truncated is False
     # Persona/rules/data snapshot live in `system` now, sent once per call;
     # `messages` carries only the actual conversation turns.
     assert "Total reviews analyzed: 1" in captured["system"]
@@ -507,3 +510,71 @@ def test_ask_history_caps_to_recent_messages_only(db_path, monkeypatch):
     # indices 8-19, and index 8 is "question 4".
     assert messages[0]["content"] == "question 4"
     assert messages[-1] == {"role": "user", "content": "latest question"}
+
+
+# ── stop_reason / truncation surfacing ───────────────────────────────────────
+
+def test_ask_reports_truncation_when_max_tokens_hit(db_path, monkeypatch):
+    """max_tokens is a safety ceiling, but when it IS hit the answer stops
+    mid-sentence. The client renders a truncated answer identically to a
+    complete one unless this flag comes back, so half a recommendation about
+    labor or a supplier reads as finished advice."""
+    r = _restaurant(db_path)
+
+    def fake_create_with_retry(client, **kwargs):
+        return types.SimpleNamespace(
+            content=[types.SimpleNamespace(text="Cut Tuesday lunch by two hours and")],
+            stop_reason="max_tokens",
+        )
+
+    monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create_with_retry)
+    answer, truncated = ask(r, "How do I get labor down?")
+
+    assert answer == "Cut Tuesday lunch by two hours and"
+    assert truncated is True
+
+
+def test_ask_reports_not_truncated_on_natural_completion(db_path, monkeypatch):
+    r = _restaurant(db_path)
+
+    def fake_create_with_retry(client, **kwargs):
+        return types.SimpleNamespace(
+            content=[types.SimpleNamespace(text="You're averaging 4.6 stars this month.")],
+            stop_reason="end_turn",
+        )
+
+    monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create_with_retry)
+    answer, truncated = ask(r, "How are my reviews?")
+
+    assert answer == "You're averaging 4.6 stars this month."
+    assert truncated is False
+
+
+def test_do_ask_cavnar_route_forwards_truncated_flag(db_path, monkeypatch):
+    """The flag has to survive the client_api layer too — the iOS client reads
+    it off the JSON, not off ask() directly."""
+    import client_api
+    r = _restaurant(db_path)
+    monkeypatch.setattr(client_api, "get_restaurant", lambda rid: r)
+    monkeypatch.setattr(ask_cavnar, "ask", lambda restaurant, question, history=None: ("cut off mid-", True))
+
+    payload, status = client_api._do_ask_cavnar(r.id, "How do I get labor down?")
+
+    assert status == 200
+    assert payload["ok"] is True
+    assert payload["answer"] == "cut off mid-"
+    assert payload["truncated"] is True
+
+
+def test_do_ask_cavnar_route_rejects_overly_long_question(db_path):
+    """Guards the contract the iOS client's own 500-char cap now mirrors — a
+    question over the limit is rejected outright with a clear message, not
+    quietly shortened."""
+    import client_api
+    r = _restaurant(db_path)
+
+    payload, status = client_api._do_ask_cavnar(r.id, "a" * 501)
+
+    assert status == 400
+    assert payload["ok"] is False
+    assert "500 characters" in payload["error"]

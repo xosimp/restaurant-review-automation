@@ -31,20 +31,26 @@ struct TypewriterText: View {
     var onReveal: (() -> Void)? = nil
 
     @State private var visibleWordCount = 0
+    /// Precomputed cumulative prefixes: `prefixes[i]` is the first i words
+    /// already joined. Rendering frame i is then an O(1) array read.
+    ///
+    /// `words` used to be a computed property, so every one of n body
+    /// evaluations re-split the entire answer AND rebuilt a growing joined
+    /// string — O(n²) character work across a reveal, on the main actor,
+    /// between animation frames (audit 3.1).
+    @State private var prefixes: [String] = [""]
+    /// Measured once per message rather than per frame. As a computed
+    /// property this was a full TextKit layout pass (NSString.boundingRect
+    /// over the whole answer) on every body evaluation (audit 3.2).
+    @State private var measuredWidth: CGFloat?
 
-    private var words: [String] { fullText.split(separator: " ").map(String.init) }
-
-    // Measured once against the FULL final text (not the partially-revealed
-    // string), so the bubble's width is fixed for the whole reveal instead
-    // of jittering wider/narrower word by word — only height should
-    // visibly grow as it types.
-    private var resolvedWidth: CGFloat? {
-        guard let maxWidth, let measuringFont else { return nil }
-        return cavnarMeasuredTextWidth(fullText, font: measuringFont, maxWidth: maxWidth)
-    }
 
     var body: some View {
-        Text(words.prefix(visibleWordCount).joined(separator: " "))
+        // Measured against the FULL final text (not the partially-revealed
+        // string), so the bubble's width is fixed for the whole reveal
+        // instead of jittering wider/narrower word by word — only height
+        // grows as it types.
+        Text(prefixes.indices.contains(visibleWordCount) ? prefixes[visibleWordCount] : fullText)
             .font(font)
             .foregroundStyle(color)
             .lineSpacing(lineSpacing)
@@ -60,11 +66,31 @@ struct TypewriterText: View {
             // nil when maxWidth/measuringFont aren't both set — frame(width:
             // nil) is a no-op, so this only takes effect for callers that
             // opted in.
-            .frame(width: resolvedWidth, alignment: .leading)
+            .frame(width: measuredWidth, alignment: .leading)
             .task(id: fullText) {
+                let split = fullText.split(separator: " ").map(String.init)
+
+                // Build every prefix once, up front.
+                var running: [String] = [""]
+                running.reserveCapacity(split.count + 1)
+                var accumulated = ""
+                for word in split {
+                    accumulated += accumulated.isEmpty ? word : " " + word
+                    running.append(accumulated)
+                }
+                prefixes = running
+
+                if let maxWidth, let measuringFont {
+                    measuredWidth = cavnarMeasuredTextWidth(fullText, font: measuringFont, maxWidth: maxWidth)
+                }
+
                 visibleWordCount = 0
-                let total = words.count
+                let total = split.count
                 guard total > 0 else { return }
+                // Total reveal is capped rather than scaling with length: the
+                // text has already fully arrived, so a long answer was adding
+                // its whole reveal duration on top of generation latency
+                // (audit 5.3).
                 let delayNanos = UInt64(min(max(1400.0 / Double(total), 16), 55) * 1_000_000)
                 for i in 1...total {
                     try? await Task.sleep(nanoseconds: delayNanos)

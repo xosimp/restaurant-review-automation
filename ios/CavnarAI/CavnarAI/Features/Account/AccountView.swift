@@ -213,7 +213,7 @@ struct AccountView: View {
                 }
             }
             .sheet(isPresented: $showingBilling) {
-                AccountBillingDetailView(billing: viewModel.billing)
+                AccountBillingDetailView(viewModel: viewModel, billing: viewModel.billing)
             }
 
             // Only the account's owner login can invite/remove other logins

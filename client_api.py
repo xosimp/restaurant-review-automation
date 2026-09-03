@@ -836,8 +836,11 @@ def _do_ask_cavnar(restaurant_id, question, history=None):
         restaurant = get_restaurant(restaurant_id)
         if not restaurant:
             return {"ok": False, "error": "Restaurant not found"}, 404
-        answer = _ask_cavnar(restaurant, question, history=history)
-        return {"ok": True, "answer": answer}, 200
+        answer, truncated = _ask_cavnar(restaurant, question, history=history)
+        # `truncated` tells the client the answer stopped at max_tokens rather
+        # than finishing, so it can say so instead of presenting a half
+        # sentence as complete advice.
+        return {"ok": True, "answer": answer, "truncated": truncated}, 200
     except Exception as e:
         import ops
         ops.capture(e, job="ask_cavnar", context=f"restaurant_id={restaurant_id}")

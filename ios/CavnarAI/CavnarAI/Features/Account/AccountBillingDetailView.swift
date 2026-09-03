@@ -5,7 +5,29 @@ import SwiftUI
 /// method / manage link only) — mobile_api.py's billing route now
 /// includes a short invoice history from the same Stripe customer.
 struct AccountBillingDetailView: View {
+    let viewModel: AccountViewModel
     let billing: BillingSummary?
+    @Environment(\.scenePhase) private var scenePhase
+
+    /// Prefer live state over the snapshot the sheet was opened with — the
+    /// owner can change their plan in Stripe's portal while this sheet is
+    /// backgrounded, and the snapshot would keep showing the pre-handoff
+    /// state forever (audit 4.1).
+    private var live: BillingSummary? { viewModel.billing ?? billing }
+
+    /// Stripe's billing portal only ever lives on these hosts. `portalURL` is
+    /// whatever the backend put in the JSON, and URL(string:) accepts far more
+    /// than https — a tampered response (or a backend bug) could point this at
+    /// an arbitrary phishing page opened from inside the trusted app UI
+    /// (audit 1.4). Anything that isn't Stripe means no link is offered.
+    private func validatedPortalURL(_ raw: String?) -> URL? {
+        guard let raw, let url = URL(string: raw),
+              url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased(),
+              host == "stripe.com" || host.hasSuffix(".stripe.com")
+        else { return nil }
+        return url
+    }
 
     // Own NavigationStack — presented as a sheet from AccountView, matching
     // every other Account detail screen (see ScheduleHistoryView's comment
@@ -21,7 +43,7 @@ struct AccountBillingDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 hero
-                if let billing, billing.ok, billing.status != "inactive" {
+                if let billing = live, billing.ok, billing.status != "inactive" {
                     statusStrip(billing)
                     VStack(alignment: .leading, spacing: 10) {
                         row("Next charge", billing.nextDate ?? "—", isNumber: true)
@@ -29,7 +51,7 @@ struct AccountBillingDetailView: View {
                         row("Amount", billing.amount ?? "—", isNumber: true)
                         divider()
                         row("Payment method", billing.paymentMethod ?? "—")
-                        if let urlString = billing.portalURL, let url = URL(string: urlString) {
+                        if let url = validatedPortalURL(billing.portalURL) {
                             divider()
                             Link(destination: url) {
                                 HStack {
@@ -68,13 +90,22 @@ struct AccountBillingDetailView: View {
             .padding(20)
         }
         .accountSheetChrome("Billing")
+        // Billing is the one screen whose source of truth changes outside the
+        // app: the owner leaves for Stripe's portal, updates a card, and comes
+        // back. Without these it kept showing "Payment past due" indefinitely
+        // after they had already fixed it (audit 4.1).
+        .task { await viewModel.loadBilling() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await viewModel.loadBilling() } }
+        }
+        .refreshable { await viewModel.loadBilling() }
         }
     }
 
     // MARK: - Identity (option A)
 
     private var planTitle: String {
-        guard let billing, billing.ok, billing.status != "inactive", let status = billing.status else { return "No active plan" }
+        guard let billing = live, billing.ok, billing.status != "inactive", let status = billing.status else { return "No active plan" }
         switch status {
         case "active": return "Active plan"
         case "trialing": return "Free trial"
@@ -97,11 +128,11 @@ struct AccountBillingDetailView: View {
         AccountHero(title: planTitle) {
             GlowBadge(systemImage: "creditcard", size: 64)
         } subtitle: {
-            if let billing, billing.ok, billing.status != "inactive" {
+            if let billing = live, billing.ok, billing.status != "inactive" {
                 Text(billing.amount ?? "—").font(.cavnarNumber(15.5, weight: 600))
                     + Text(" · next charge ")
                     + Text(billing.nextDate ?? "—").font(.cavnarNumber(15.5, weight: 600))
-            } else if let message = billing?.message {
+            } else if let message = live?.message {
                 Text(message)
             } else {
                 // ONE markdown string, not Text + Text concatenation — the

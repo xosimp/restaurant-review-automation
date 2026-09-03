@@ -18,18 +18,27 @@ final class GoogleSignInCoordinator: NSObject, ASWebAuthenticationPresentationCo
     private var session: ASWebAuthenticationSession?
 
     func signIn(baseURL: URL) async throws -> String {
-        var components = URLComponents(
+        // baseURL comes from AppEnvironment, which reads an environment
+        // variable — the only non-literal input any URL construction in this
+        // app takes. Force-unwrapping it crashed sign-in on a malformed
+        // override instead of reporting it (audit 2.7).
+        guard var components = URLComponents(
             url: baseURL.appendingPathComponent("auth/google-sso"),
             resolvingAgainstBaseURL: false
-        )!
+        ) else {
+            throw GoogleSignInError.serverError("Sign-in isn't configured correctly on this build.")
+        }
         components.queryItems = [
             URLQueryItem(name: "mobile", value: "1"),
             URLQueryItem(name: "device_id", value: Keychain.deviceIdentity()),
         ]
+        guard let authorizeURL = components.url else {
+            throw GoogleSignInError.serverError("Sign-in isn't configured correctly on this build.")
+        }
 
         return try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(
-                url: components.url!,
+                url: authorizeURL,
                 callbackURLScheme: "cavnarai"
             ) { callbackURL, error in
                 if let error {

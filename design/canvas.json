@@ -1,0 +1,14 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "title": "A · Grouped", "x": 0, "y": 0, "w": 390, "h": 1200 },
+    { "file": "DirectionB.dc.html", "title": "B · Status-first", "x": 510, "y": 0, "w": 390, "h": 1200 },
+    { "file": "DirectionC.dc.html", "title": "C · Editorial", "x": 1020, "y": 0, "w": 390, "h": 1240 }
+  ],
+  "annotations": [
+    { "id": "note-a", "x": 0, "y": -150, "w": 390, "text": "A · GROUPED — iOS-native settings grammar, refined.\n\n9 flat cards collapse into 5 labelled groups; every row pushes to a detail screen. Status rides along as trailing values (3 of 5, 7 on, Sep 14) so the summary is free.\n\nTradeoff: most taps to reach any one setting. Safest, most familiar, least distinctive." },
+    { "id": "note-b", "x": 510, "y": -150, "w": 390, "text": "B · STATUS-FIRST — answers \"is anything wrong?\" before \"where is X?\"\n\nBilling merges into the identity hero. A 3-tile strip reads security / connections / alerts at a glance, and a real gap (Square + Clover unconnected) gets an amber callout.\n\nTradeoff: densest of the three, and the health framing can over-dramatize a settings screen on a day when nothing is wrong." },
+    { "id": "note-c", "x": 1020, "y": -150, "w": 390, "text": "C · EDITORIAL — no boxes at all.\n\nHairline rules and ember section labels instead of card borders; restaurant name set big in Fraunces. This is the direction Food Cost and Intel already moved to (\"whitespace and typography instead of stacking bordered card after bordered card\").\n\nTradeoff: least scannable status; leans hardest on typography discipline holding up as rows get added." },
+    { "id": "note-shared", "x": 0, "y": 1290, "w": 900, "text": "All three are full-scroll renders (not one phone screen) and use the real tokens: Paper #000000, Paper2 #121212, Paper3 #262626, Ink #F0EBE0 / #C4BDB4 / #9E9790, Ember #D4583A / #E8956A, 16px card radius, and the same top ember wash cavnarModuleBackground() paints. Fraunces headlines, Plus Jakarta Sans chrome, Space Grotesk on every number. No fake status bar — the real one renders on top. Rows are 52–54px, above the 44px minimum.\n\nAll three assume one change the current screen does not do: Alerts, Connections and Sessions stop being inline walls of toggles and become pushed detail screens." }
+  ],
+  "launch": { "view": "canvas" }
+}

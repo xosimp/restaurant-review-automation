@@ -6,6 +6,8 @@ struct RootView: View {
     @Environment(SessionStore.self) private var sessionStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var deepLinkRouter = DeepLinkRouter()
+    @State private var network = NetworkMonitor()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedTab: AppTab = .home
     // Cold-launch handoff. iOS draws the launch screen itself (UILaunchScreen
     // in project.yml: the 128pt LaunchSeal on Paper) and it can't animate —
@@ -36,6 +38,13 @@ struct RootView: View {
     // top-left") for the reload before the hero came back.
     @State private var homeViewModel = HomeViewModel()
     @State private var showingAskCavnar = false
+    // Owned here, not inside the sheet — a sheet-owned @State view model is
+    // destroyed on every dismissal, wiping the whole conversation (audit 5.6).
+    // Same rationale as homeViewModel/homePath above.
+    @State private var askCavnarViewModel = AskCavnarViewModel()
+    // Raised at .inactive, BEFORE iOS takes the app-switcher snapshot, so the
+    // thumbnail shows the seal instead of the live dashboard (audit 1.6).
+    @State private var privacyShieldUp = false
     // Single shared flip that drives BOTH Home's hero fade-in and the FAB's
     // — owned up here (not by HomeView, which lives in a separate subtree
     // from the FAB overlay) so one withAnimation call moves both at once
@@ -81,6 +90,7 @@ struct RootView: View {
         // reads as trustworthy and a fade would just feel like lag.
         .animation(.easeOut(duration: 0.35), value: sessionStore.isAuthenticated)
         .environment(deepLinkRouter)
+        .environment(network)
         // Mobile's in-app interface is dark-only by design — what's
         // switchable is the home-screen APP ICON (Account > More), not
         // this. See AppIconManager for that.
@@ -95,6 +105,28 @@ struct RootView: View {
         // elsewhere (like Ask Cavnar's compose field) still showed the
         // system's default blue.
         .tint(Color.cavnarEmber)
+        .overlay {
+            if privacyShieldUp {
+                ZStack {
+                    Color.cavnarPaper.ignoresSafeArea()
+                    CavnarSealMark(size: 64)
+                }
+                .transition(.opacity)
+            }
+        }
+        .overlay(alignment: .top) {
+            if !network.isOnline {
+                Text("Offline — showing your last update")
+                    .font(.cavnarBody(13.5, weight: 600))
+                    .foregroundStyle(Color.cavnarInk)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color.cavnarAmber.opacity(0.92), in: Capsule())
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: network.isOnline)
         .overlay {
             if showLaunchSplash {
                 LaunchSplashView {
@@ -128,8 +160,25 @@ struct RootView: View {
         }
         #endif
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .background {
+            switch newPhase {
+            case .inactive:
+                // iOS captures the app-switcher thumbnail during the
+                // .inactive -> .background transition, so locking only on
+                // .background meant revenue figures and review content sat in
+                // the switcher card with no authentication (audit 1.6).
+                if sessionStore.isAuthenticated { privacyShieldUp = true }
+            case .background:
                 sessionStore.lockIfNeeded()
+            case .active:
+                privacyShieldUp = false
+                // Foreground is a reconnect opportunity for anything queued
+                // while offline, and for a push token that failed to register.
+                Task {
+                    await PendingWriteQueue.shared.drain()
+                    await PushManager.shared.flushPendingToken()
+                }
+            @unknown default:
+                break
             }
         }
         // The cold-launch trace-in is spent once the user is through the
@@ -201,9 +250,11 @@ struct RootView: View {
             }
                 .padding(.trailing, 20)
                 .padding(.bottom, 70)  // clears the tab bar
+                .accessibilityLabel("Ask Cavnar AI")
+                .accessibilityHint("Opens a chat with your restaurant intelligence consultant")
         }
         .sheet(isPresented: $showingAskCavnar) {
-            AskCavnarView()
+            AskCavnarView(viewModel: askCavnarViewModel)
         }
     }
 
@@ -281,6 +332,7 @@ private struct AskCavnarFAB: View {
     // listening presence instead of a static leftover icon. Self-contained
     // here rather than driven from RootView since it's purely cosmetic and
     // has no one-time/session-scoped requirement the way the intro does.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var ambientRotation = false
     @State private var ambientGlow = false
 
@@ -360,6 +412,15 @@ private struct AskCavnarFAB: View {
         .scaleEffect(popped ? 1.15 : 1.0)
         .task(id: collapsed) {
             guard collapsed else { return }
+            // Reduce Motion settles this straight to its resting state rather
+            // than looping forever — required for accessibility, and it also
+            // stops a decorative loop keeping the GPU awake on a phone parked
+            // on a pass counter all service (audit 3.6 / 7.6).
+            guard !reduceMotion else {
+                ambientRotation = false
+                ambientGlow = false
+                return
+            }
             withAnimation(.linear(duration: 16).repeatForever(autoreverses: false)) {
                 ambientRotation = true
             }

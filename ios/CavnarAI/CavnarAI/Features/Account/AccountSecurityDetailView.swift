@@ -139,6 +139,15 @@ struct AccountSecurityDetailView: View {
 
     private var signInSection: some View {
         AccountSection(kicker: "Sign-in") {
+            // Failures on these controls used to be completely silent, so a
+            // failed "Turn off" left the user believing 2FA was off when it
+            // was still on (audit 2.4).
+            if let error = viewModel.securityActionError {
+                Text(error)
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarRed)
+                    .padding(.bottom, 4)
+            }
             AccountKVRow(label: "Password") {
                 AccountLink(title: "Change") { showingChangePassword = true }
             }
@@ -218,6 +227,12 @@ struct AccountSecurityDetailView: View {
     // Turn-on/Turn-off pattern the network-backed settings above use.
     private var deviceLockSection: some View {
         AccountSection(kicker: "This device") {
+            if sessionStore.biometricsUnavailable {
+                Text("This device has no passcode or Face ID set up, so the app can't lock itself. Set a device passcode in Settings to turn this on.")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarAmber)
+                    .padding(.bottom, 4)
+            }
             AccountKVRow(label: "Require Face ID to reopen", showsDivider: false) {
                 Toggle("", isOn: Binding(
                     get: { sessionStore.biometricLockEnabled },

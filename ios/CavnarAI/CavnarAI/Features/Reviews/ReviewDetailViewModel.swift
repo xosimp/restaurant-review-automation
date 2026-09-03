@@ -116,8 +116,9 @@ final class ReviewDetailViewModel {
                 "/mobile/api/reviews/\(review.id)/approve", method: .post
             )
             Haptic.success()
-            finalStatus = (response.autoPosted == true) ? "posted" : "approved"
-            currentStatus = finalStatus!
+            let status = (response.autoPosted == true) ? "posted" : "approved"
+            finalStatus = status
+            currentStatus = status
             didComplete = true
         } catch let error as APIClient.APIError {
             errorMessage = error.message

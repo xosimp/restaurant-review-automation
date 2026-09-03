@@ -104,11 +104,18 @@ final class AccountViewModel {
     }
 
     func revokeOtherSessions() async -> Bool {
+        securityActionError = nil
         do {
             _ = try await client.send("/mobile/api/sessions/revoke-others", method: .post) as APIClient.EmptyResponse
             await loadSessions()
             return true
+        } catch let error as APIClient.APIError {
+            // Same reasoning as disable2FA: "Sign out all other devices"
+            // quietly doing nothing is a security-relevant false belief.
+            securityActionError = error.message
+            return false
         } catch {
+            securityActionError = "Couldn't sign out your other devices — check your connection and try again."
             return false
         }
     }
@@ -221,14 +228,23 @@ final class AccountViewModel {
         }
     }
 
+    /// Surfaced next to the Sign-in rows. A security control that silently
+    /// no-ops leaves the user believing 2FA is off when it is still on —
+    /// strictly worse than a visible error (audit 2.4).
+    var securityActionError: String?
+
     @discardableResult
     func disable2FA() async -> Bool {
+        securityActionError = nil
         do {
             _ = try await client.send("/mobile/api/account/2fa/disable", method: .post) as APIClient.EmptyResponse
             await load()
             return true
+        } catch let error as APIClient.APIError {
+            securityActionError = error.message
+            return false
         } catch {
-            // Left as-is — user can retry from the toggle.
+            securityActionError = "Couldn't turn two-factor off — check your connection and try again."
             return false
         }
     }
