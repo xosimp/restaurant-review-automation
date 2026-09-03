@@ -16,22 +16,41 @@ import Foundation
 /// AppEnvironment.isProductionHost gates whether this delegate is installed
 /// at all.
 final class PinnedSessionDelegate: NSObject, URLSessionDelegate {
-    /// SHA-256 of the server's SubjectPublicKeyInfo, base64-encoded.
+    /// SHA-256 of a SubjectPublicKeyInfo in the server's chain, base64-encoded.
     ///
-    /// Regenerate with:
-    ///   openssl s_client -connect dashboard.cavnar.ai:443 </dev/null 2>/dev/null \
-    ///     | openssl x509 -pubkey -noout \
-    ///     | openssl pkey -pubin -outform der \
-    ///     | openssl dgst -sha256 -binary | base64
+    /// These pin the **intermediate and root**, deliberately NOT the leaf.
+    /// dashboard.cavnar.ai is fronted by Railway, whose leaf certificate is
+    /// issued by Google Trust Services and auto-renewed roughly every 90 days
+    /// with a brand-new key that nobody can know in advance. Pinning the leaf
+    /// would therefore hard-fail every request on every installed build at the
+    /// next renewal, recoverable only by an App Store update — the exact
+    /// failure mode pinning is supposed to prevent.
     ///
-    /// ALWAYS keep at least two: the key in use, plus the next rotation key.
-    /// A single pin turns a routine certificate renewal into every installed
-    /// build failing every request with no way to recover but an App Store
-    /// update. An empty set disables pinning (fail-open) for exactly that
-    /// reason — an unconfigured pin must not brick the app.
+    /// Pinning the issuing chain instead means an attacker needs a certificate
+    /// for cavnar.ai issued under Google Trust Services, rather than one from
+    /// any of the ~150 CAs iOS trusts by default. That is a large reduction in
+    /// attack surface, and it survives leaf rotation untouched.
+    ///
+    /// Regenerate (prints leaf, intermediate and root):
+    ///   openssl s_client -connect dashboard.cavnar.ai:443 \
+    ///       -servername dashboard.cavnar.ai -showcerts </dev/null 2>/dev/null \
+    ///     | awk '/BEGIN CERT/,/END CERT/' \
+    ///     | csplit -sz -f /tmp/cert- - '/BEGIN CERT/' '{*}' \
+    ///     && for f in /tmp/cert-*; do \
+    ///          openssl x509 -in "$f" -pubkey -noout \
+    ///            | openssl pkey -pubin -outform der \
+    ///            | openssl dgst -sha256 -binary | base64; \
+    ///        done
+    ///
+    /// Re-check before each release, and whenever Railway announces a CA
+    /// change. GTS WE1 expires 2029-02-20; GTS Root R4 expires 2028-01-28.
+    /// An empty set disables pinning (fail-open) so an unconfigured build
+    /// cannot brick itself.
     static let pinnedPublicKeys: Set<String> = [
-        // TODO: populate before the next release — see the command above.
-        // Left empty deliberately: see the fail-open note in shouldPin.
+        // Intermediate — C=US, O=Google Trust Services, CN=WE1 (exp 2029-02-20)
+        "kIdp6NNEd8wsugYyyIYFsi1ylMCED3hZbSR8ZFsa/A4=",
+        // Root — C=US, O=Google Trust Services LLC, CN=GTS Root R4 (exp 2028-01-28)
+        "mEflZT5enoR1FuXLgYYGqnVEoZvmf9c2bVBpiOjYQ0c=",
     ]
 
     /// False while no pins are configured, so shipping this file without
