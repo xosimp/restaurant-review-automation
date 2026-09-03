@@ -195,6 +195,100 @@ def mobile_login():
     return jsonify(ok=True, requires_2fa=False, token=token, user=_public_user(user))
 
 
+@mobile_bp.route("/forgot-password", methods=["POST"])
+def mobile_forgot_password():
+    """The app's Forgot Password sheet. Same reset-token + 1-hour emailed
+    link the web /forgot-password form sends (the link itself still opens
+    the web reset page — that's fine, it's a one-time flow). Always
+    answers ok=True whether or not the email exists, same as the web,
+    so this can't be used to enumerate accounts. Rate-limited on the
+    shared in-memory counter the login routes use."""
+    ip = _get_client_ip()
+    if _is_rate_limited(ip):
+        return jsonify(ok=False, error="Too many requests — please wait a few minutes and try again."), 429
+    _record_failed_attempt(ip)
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        return jsonify(ok=False, error="Enter the email address on your account."), 400
+    try:
+        from models import create_reset_token
+        from emails import send_password_reset_email
+        token = create_reset_token(email)
+        if token:
+            send_password_reset_email(email, f"https://dashboard.cavnar.ai/reset-password/{token}")
+    except Exception as e:
+        print(f"[forgot-password-mobile] {e}")
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/register", methods=["POST"])
+def mobile_register():
+    """Self-serve signup from the app's Sign Up screen — the first public
+    registration path; every account before this was created by hand in
+    the admin panel (admin_routes.create_client). Mirrors that route's
+    restaurant + user creation with the Restaurant dataclass's own
+    defaults (trial tier, all four modules on), then signs the new user
+    straight in — same {token, user} shape /login returns — so the app
+    lands on Home instead of bouncing back to the login form. Will gets a
+    heads-up email so a signup nobody set up isn't discovered later."""
+    ip = _get_client_ip()
+    if _is_rate_limited(ip):
+        return jsonify(ok=False, error="Too many attempts — please wait a few minutes and try again."), 429
+    data = request.get_json(silent=True) or {}
+
+    restaurant_name = (data.get("restaurant_name") or "").strip()
+    owner_name = (data.get("owner_name") or "").strip()
+    email = (data.get("email") or "").strip().lower()
+    username = (data.get("username") or "").strip().lower()
+    password = data.get("password") or ""
+    phone = (data.get("phone") or "").strip() or None
+
+    import re as _re
+    if len(restaurant_name) < 2:
+        return jsonify(ok=False, error="Enter your restaurant's name."), 400
+    if not _re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
+        return jsonify(ok=False, error="Enter a valid email address."), 400
+    if not _re.match(r"^[a-z0-9._-]{3,30}$", username):
+        return jsonify(ok=False, error="Username must be 3–30 characters — letters, numbers, dots, dashes, or underscores."), 400
+    if len(password) < 8:
+        return jsonify(ok=False, error="Password must be at least 8 characters."), 400
+
+    conn = get_conn()
+    existing = conn.execute(
+        "SELECT id FROM users WHERE LOWER(email)=? OR LOWER(username)=?", (email, username)
+    ).fetchone()
+    conn.close()
+    if existing:
+        _record_failed_attempt(ip)
+        return jsonify(ok=False, error="An account with that email or username already exists. Try signing in instead."), 409
+
+    from models import create_restaurant, Restaurant
+    from auth import create_user
+    rid = create_restaurant(Restaurant(
+        name=restaurant_name,
+        owner_email=email,
+        owner_name=owner_name or None,
+        owner_phone=phone,
+        sign_off_name=restaurant_name,
+    ))
+    uid = create_user(restaurant_id=rid, username=username, email=email, password=password)
+    _clear_attempts(ip)
+
+    try:
+        from emails import send_signup_welcome_email, send_signup_admin_alert
+        send_signup_welcome_email(email, restaurant_name, owner_name or None)
+        send_signup_admin_alert(restaurant_name, owner_name, email, phone)
+    except Exception as e:
+        print(f"[register] welcome/admin email error: {e}")
+
+    from auth import get_user_by_username
+    user = get_user_by_username(username)
+    ua = request.headers.get("User-Agent", "Cavnar-iOS")
+    token = create_session(uid, ip_address=ip, user_agent=ua, device_type="ios")
+    return jsonify(ok=True, token=token, user=_public_user(user)), 201
+
+
 @mobile_bp.route("/verify-2fa", methods=["POST"])
 def mobile_verify_2fa():
     """Mirrors auth_routes.verify_2fa()'s POST branch — same pending-token

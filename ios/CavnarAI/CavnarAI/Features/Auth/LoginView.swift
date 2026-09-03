@@ -1,15 +1,26 @@
 import SwiftUI
 
-private enum LoginField: Hashable, CaseIterable {
+private enum LoginField_: Hashable, CaseIterable {
     case username, password
 }
 
+/// The sign-in screen, rebuilt to the approved render: the wordmark
+/// (no seal) over a living ember aurora + constellation, a greeting, two
+/// glass fields with SF Symbols and a focus-lit underline, "Forgot
+/// password?" right-aligned at a full 44pt, a full-width ember Sign In
+/// with a slow sheen, "or continue with", Apple and Google as white pills,
+/// and "Don't have an account? Sign up" anchoring the bottom. Every
+/// element rises in on a stagger; every button fires a haptic; every
+/// failure shows the red bar, shakes the fields, and buzzes the error
+/// pattern. All sizes come from LoginMetrics, colors from the palette.
 struct LoginView: View {
     @Environment(SessionStore.self) private var sessionStore
     @State private var viewModel: LoginViewModel
-    @FocusState private var focusedField: LoginField?
+    @FocusState private var focusedField: LoginField_?
+    @State private var showingForgot = false
+    @State private var showingRegister = false
     // False while RootView's launch splash still covers this on a cold
-    // launch — the lockup isn't mounted until it lifts, so its draw-in
+    // launch — the wordmark isn't mounted until it lifts, so its draw-in
     // doesn't play hidden underneath.
     private let introReady: Bool
     // Cold launch (fresh install): the wordmark is traced and filled in by
@@ -22,94 +33,57 @@ struct LoginView: View {
         self.coldLaunch = coldLaunch
     }
 
+    // The entrance choreography, in seconds after the wordmark starts.
+    private enum Cue {
+        static let greeting = 0.12
+        static let subtitle = 0.18
+        static let field1 = 0.28
+        static let field2 = 0.36
+        static let primary = 0.44
+        static let divider = 0.52
+        static let apple = 0.60
+        static let google = 0.68
+        static let anchor = 0.80
+    }
+
+    private var wordmarkHeight: CGFloat {
+        LoginMetrics.wordmarkWidth * (CavnarWordmarkLetterShape.boxHeight / CavnarWordmarkLetterShape.boxWidth)
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
-                VStack(spacing: 28) {
-                    Spacer()
+                LoginBackground()
 
-                    VStack(spacing: 14) {
-                        // Wordmark only — no seal beside it. Same call
-                        // already made everywhere else a lockup showed
-                        // both together (social headers, email headers,
-                        // the Face ID lock screen): it reads as the same
-                        // mark shown twice, not two different things.
-                        // Mirrors LockedView's own wordmark-only entrance
-                        // exactly (RootView.swift) rather than
-                        // CavnarLockupIntro, which still draws the seal.
-                        if introReady {
-                            Group {
-                                if coldLaunch {
-                                    CavnarWordmarkTraceIn(width: 260, aiTagOverhangs: true)
-                                } else {
-                                    CavnarWordmarkStampIn(width: 260, aiTagOverhangs: true)
-                                }
-                            }
-                            .frame(height: 260 * (CavnarWordmarkLetterShape.boxHeight / CavnarWordmarkLetterShape.boxWidth))
-                        } else {
-                            Color.clear.frame(width: 260, height: 260 * (CavnarWordmarkLetterShape.boxHeight / CavnarWordmarkLetterShape.boxWidth))
-                        }
-                        Text("Sign in to your restaurant")
-                            .font(.cavnarBody(15))
-                            .foregroundStyle(Color.cavnarInk3)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        brand
+                            .padding(.top, LoginMetrics.spaceHero)
+                            .padding(.bottom, LoginMetrics.spaceXXL)
+
+                        form
+
+                        divider
+                            .padding(.top, LoginMetrics.spaceXL)
+                            .padding(.bottom, LoginMetrics.spaceL)
+
+                        social
+
+                        anchor
+                            .padding(.top, LoginMetrics.spaceXL)
                     }
-
-                    VStack(spacing: 12) {
-                        TextField("Username", text: $viewModel.username)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .cavnarTextFieldStyle()
-                            .focused($focusedField, equals: .username)
-                        SecureField("Password", text: $viewModel.password)
-                            .cavnarTextFieldStyle()
-                            .focused($focusedField, equals: .password)
-                    }
-
-                    if let error = viewModel.errorMessage {
-                        Text(error)
-                            .font(.cavnarBody(15))
-                            .foregroundStyle(Color.cavnarRed)
-                            .multilineTextAlignment(.center)
-                    }
-
-                    Button {
-                        Task { await viewModel.submit() }
-                    } label: {
-                        Group {
-                            if viewModel.isLoading {
-                                CavnarShimmerText(text: "Signing in…")
-                            } else {
-                                Text("Sign In")
-                            }
-                        }
-                        // Was hugging its own text width while Google/Apple
-                        // below it stretched full width — the one button
-                        // on this screen that didn't match its siblings.
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !viewModel.canSubmit))
-                    .disabled(!viewModel.canSubmit)
-
-                    orDivider
-
-                    VStack(spacing: 10) {
-                        GoogleSignInButton(isLoading: viewModel.isLoading) {
-                            Haptic.light()
-                            Task { await viewModel.signInWithGoogle() }
-                        }
-                        AppleSignInButton(isLoading: viewModel.isLoading) {
-                            Haptic.light()
-                            Task { await viewModel.signInWithApple() }
-                        }
-                    }
-
-                    Spacer()
-                    Spacer()
+                    .padding(.horizontal, LoginMetrics.pageInset)
+                    .padding(.bottom, LoginMetrics.spaceXL)
                 }
-                .padding(28)
+                .scrollDismissesKeyboard(.interactively)
             }
-            .cavnarModuleBackground()
             .keyboardNavToolbar($focusedField)
+            .sheet(isPresented: $showingForgot) {
+                ForgotPasswordSheet(sessionStore: sessionStore, prefill: viewModel.username)
+            }
+            .sheet(isPresented: $showingRegister) {
+                RegisterView(sessionStore: sessionStore)
+            }
             .navigationDestination(
                 isPresented: Binding(
                     get: { viewModel.twoFactorPendingToken != nil },
@@ -131,65 +105,165 @@ struct LoginView: View {
         }
     }
 
-    private var orDivider: some View {
-        HStack(spacing: 12) {
-            Rectangle().fill(Color.cavnarPaper3).frame(height: 1)
-            Text("or")
-                .font(.cavnarBody(14, weight: 600))
+    // MARK: - Brand
+
+    private var brand: some View {
+        VStack(spacing: LoginMetrics.spaceM) {
+            // Wordmark only — the seal beside it was the same "two marks
+            // side by side" call already made everywhere else a lockup
+            // showed both. Same entrance LockedView uses.
+            Group {
+                if introReady {
+                    if coldLaunch {
+                        CavnarWordmarkTraceIn(width: LoginMetrics.wordmarkWidth, aiTagOverhangs: true)
+                    } else {
+                        CavnarWordmarkStampIn(width: LoginMetrics.wordmarkWidth, aiTagOverhangs: true)
+                    }
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(width: LoginMetrics.wordmarkWidth, height: wordmarkHeight)
+            .shadow(color: Color.cavnarEmber.opacity(0.25), radius: 30)
+
+            Text("Welcome back")
+                .font(.cavnarHeadline(24))
+                .foregroundStyle(Color.cavnarInk)
+                .loginRise(Cue.greeting, enabled: introReady)
+
+            Text("Sign in to your restaurant")
+                .font(.cavnarBody(15))
                 .foregroundStyle(Color.cavnarInk3)
-            Rectangle().fill(Color.cavnarPaper3).frame(height: 1)
+                .padding(.top, -LoginMetrics.spaceXS)
+                .loginRise(Cue.subtitle, enabled: introReady)
         }
     }
-}
 
-/// Google's brand guidelines call for their own logo mark on a plain white
-/// pill regardless of the host app's theme — matches the treatment the web
-/// login page already uses for the same button.
-private struct GoogleSignInButton: View {
-    var isLoading: Bool
-    var action: () -> Void
+    // MARK: - Form
 
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Text("G")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(Color.cavnarEmber)
-                Text("Sign in with Google")
-                    .font(.cavnarBody(14, weight: 600))
-                    .foregroundStyle(.black)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(.white)
-            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-        }
-        .disabled(isLoading)
-        .opacity(isLoading ? 0.6 : 1)
-    }
-}
-
-private struct AppleSignInButton: View {
-    var isLoading: Bool
-    var action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: "apple.logo")
-                    .font(.system(size: 15, weight: .semibold))
-                Text("Sign in with Apple")
-                    .font(.cavnarBody(14, weight: 600))
-            }
-            .foregroundStyle(Color.cavnarInk)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .overlay(
-                RoundedRectangle(cornerRadius: CavnarRadius.control)
-                    .strokeBorder(Color.cavnarPaper3, lineWidth: 1)
+    private var form: some View {
+        VStack(spacing: LoginMetrics.spaceM) {
+            LoginField(
+                systemImage: "envelope.fill", placeholder: "Email or username",
+                text: $viewModel.username, keyboardType: .emailAddress, textContentType: .username,
+                submitLabel: .next, onSubmit: { focusedField = .password },
+                focus: $focusedField, field: .username,
+                isError: viewModel.errorMessage != nil, shakeTrigger: viewModel.errorShake
             )
+            .loginRise(Cue.field1, enabled: introReady)
+
+            LoginField(
+                systemImage: "lock.fill", placeholder: "Password",
+                text: $viewModel.password, isSecure: true, textContentType: .password,
+                submitLabel: .go, onSubmit: { Task { await viewModel.submit() } },
+                focus: $focusedField, field: .password,
+                isError: viewModel.errorMessage != nil, shakeTrigger: viewModel.errorShake
+            )
+            .loginRise(Cue.field2, enabled: introReady)
+
+            if let error = viewModel.errorMessage {
+                LoginErrorBar(message: error)
+            }
+
+            HStack {
+                Spacer()
+                Button {
+                    Haptic.light()
+                    showingForgot = true
+                } label: {
+                    Text("Forgot password?")
+                        .font(.cavnarBody(13.5, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .frame(minHeight: LoginMetrics.touch)
+                        .padding(.horizontal, LoginMetrics.spaceXS)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, -LoginMetrics.spaceS)
+            .loginRise(Cue.field2, enabled: introReady)
+
+            Button {
+                Task { await viewModel.submit() }
+            } label: {
+                Group {
+                    if viewModel.isLoading {
+                        CavnarShimmerText(text: "Signing in…")
+                    } else {
+                        Text("Sign In")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: LoginMetrics.buttonHeight - 28)   // the style adds 14pt top + bottom
+            }
+            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !viewModel.canSubmit))
+            .disabled(!viewModel.canSubmit)
+            .loginSheen()
+            .padding(.top, -LoginMetrics.spaceXS)
+            .loginRise(Cue.primary, enabled: introReady)
         }
-        .disabled(isLoading)
-        .opacity(isLoading ? 0.6 : 1)
+        .animation(.easeOut(duration: 0.25), value: viewModel.errorMessage != nil)
+    }
+
+    // MARK: - Divider + social
+
+    private var divider: some View {
+        HStack(spacing: LoginMetrics.spaceM) {
+            LinearGradient(colors: [.clear, Color.cavnarInk3.opacity(0.45), .clear], startPoint: .leading, endPoint: .trailing)
+                .frame(height: 1)
+            Text("or continue with")
+                .font(.cavnarBody(13, weight: 600))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize()
+            LinearGradient(colors: [.clear, Color.cavnarInk3.opacity(0.45), .clear], startPoint: .leading, endPoint: .trailing)
+                .frame(height: 1)
+        }
+        .loginRise(Cue.divider, enabled: introReady)
+    }
+
+    private var social: some View {
+        VStack(spacing: LoginMetrics.spaceM) {
+            LoginSocialButton(title: "Continue with Apple", isLoading: viewModel.isLoading) {
+                Image(systemName: "apple.logo")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.black)
+            } action: {
+                Task { await viewModel.signInWithApple() }
+            }
+            .loginRise(Cue.apple, enabled: introReady)
+
+            LoginSocialButton(title: "Continue with Google", isLoading: viewModel.isLoading) {
+                // Google's real 4-color G — the same bundled mark the
+                // Connections screen uses.
+                Image("GoogleMark").resizable().aspectRatio(contentMode: .fit)
+            } action: {
+                Task { await viewModel.signInWithGoogle() }
+            }
+            .loginRise(Cue.google, enabled: introReady)
+        }
+    }
+
+    // MARK: - Anchor
+
+    private var anchor: some View {
+        HStack(spacing: LoginMetrics.spaceXS) {
+            Text("Don't have an account?")
+                .font(.cavnarBody(14))
+                .foregroundStyle(Color.cavnarInk3)
+            Button {
+                Haptic.light()
+                showingRegister = true
+            } label: {
+                Text("Sign up")
+                    .font(.cavnarBody(14, weight: 700))
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .frame(minHeight: LoginMetrics.touch)
+                    .padding(.horizontal, LoginMetrics.spaceXS)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity)
+        .loginRise(Cue.anchor, enabled: introReady)
     }
 }

@@ -188,6 +188,42 @@ final class SessionStore {
         try await completeLogin(token: response.token, user: response.user)
     }
 
+    // MARK: - Self-serve signup + password reset
+
+    struct RegisterBody: Encodable {
+        let restaurantName: String
+        let ownerName: String
+        let email: String
+        let username: String
+        let password: String
+        let phone: String
+        enum CodingKeys: String, CodingKey {
+            case restaurantName = "restaurant_name"
+            case ownerName = "owner_name"
+            case email, username, password, phone
+        }
+    }
+
+    /// /mobile/api/register hands back the same {token, user} /login does,
+    /// so a new account lands on Home already signed in rather than
+    /// bouncing back to the login form to type it all again.
+    func register(_ body: RegisterBody) async throws {
+        let response: AppleSignInResponse = try await client.send(
+            "/mobile/api/register", method: .post, body: body
+        )
+        try await completeLogin(token: response.token, user: response.user)
+    }
+
+    private struct ForgotBody: Encodable { let email: String }
+
+    /// Always resolves ok whether or not the email exists — the server
+    /// deliberately doesn't say, so this can't enumerate accounts.
+    func requestPasswordReset(email: String) async throws {
+        _ = try await client.send(
+            "/mobile/api/forgot-password", method: .post, body: ForgotBody(email: email)
+        ) as APIClient.EmptyResponse
+    }
+
     private func completeLogin(token: String, user: User) async throws {
         Keychain.set(token, for: Keychain.Key.sessionToken)
         await client.setToken(token)

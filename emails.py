@@ -138,6 +138,89 @@ def send_login_notification(to_email: str, restaurant_name: str,
         return False
 
 
+def _branded_email(inner_html: str) -> str:
+    """The shared full-bleed wrapper + wordmark header + seal footer every
+    client-facing email here uses — for the two new self-serve emails below
+    so they match the rest without re-pasting the frame."""
+    return f"""
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
+      <div style="text-align:center;margin-bottom:24px">
+        <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="180" height="32" alt="Cavnar AI" style="display:inline-block;width:180px;height:32px;border:0;outline:none">
+      </div>
+      <div style="background:white;border-radius:10px;padding:28px 24px;border:1px solid #e0dbd0">
+        {inner_html}
+      </div>
+      <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
+    </div>
+</div>
+"""
+
+
+def _send_branded(to_email: str, subject: str, inner_html: str, from_label: str = "Cavnar AI") -> bool:
+    if not RESEND_API_KEY or not to_email:
+        log.warning(f"{subject!r} not sent — RESEND_API_KEY or recipient missing")
+        return False
+    import requests
+    try:
+        resp = requests.post("https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json={"from": f"{from_label} <{FROM_EMAIL}>", "to": [to_email],
+                  "subject": subject, "html": _branded_email(inner_html)},
+            timeout=10)
+        if resp.status_code != 200:
+            log.warning(f"{subject!r} failed ({resp.status_code}): {resp.text[:300]}")
+        return resp.status_code == 200
+    except Exception as e:
+        log.warning(f"{subject!r} error: {e}")
+        return False
+
+
+def send_password_reset_email(to_email: str, reset_url: str) -> bool:
+    """The app's Forgot Password flow. Same 1-hour link the web page's own
+    inline version sends — this is that email, factored out so the mobile
+    endpoint doesn't carry a second copy of the HTML."""
+    return _send_branded(to_email, "Reset your Cavnar AI password", f"""
+        <p style="color:#0e0c0a;font-size:18px;font-weight:700;margin:0 0 12px">Reset your password</p>
+        <p style="color:#3a3530;font-size:14px;line-height:1.6;margin:0 0 24px">Tap the button to choose a new password. This link expires in 1 hour.</p>
+        <a href="{reset_url}" style="display:inline-block;background:#c84b2f;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">Reset password &rarr;</a>
+        <p style="color:#7a736a;font-size:12px;margin:24px 0 0;line-height:1.6">If you didn't request this, ignore this email &mdash; your password won't change.</p>
+    """)
+
+
+def send_signup_welcome_email(to_email: str, restaurant_name: str, owner_name: str = None) -> bool:
+    """Self-serve signup from the app. Deliberately NOT send_welcome_email —
+    that one prints the temporary password Will assigns an onboarded client;
+    a person who just typed their own password never needs it emailed
+    back to them in plaintext."""
+    first = (owner_name or "").split()[0] if owner_name else ""
+    greet = f"Hi {first}," if first else "Hi,"
+    return _send_branded(to_email, f"Welcome to Cavnar AI — {restaurant_name}", f"""
+        <p style="color:#0e0c0a;font-size:18px;font-weight:700;margin:0 0 12px">{greet} your account is ready.</p>
+        <p style="color:#3a3530;font-size:14px;line-height:1.6;margin:0 0 16px"><strong>{restaurant_name}</strong> is set up on Cavnar AI with a free trial of every module — Reviews, Labor, Food Cost, and Marketing. You're already signed in on the app; the same login works on the web at <a href="https://dashboard.cavnar.ai" style="color:#c84b2f">dashboard.cavnar.ai</a>.</p>
+        <p style="color:#3a3530;font-size:14px;line-height:1.6;margin:0 0 24px">First thing worth doing: connect Google Business under Account &rarr; Connected apps, so reviews start flowing in.</p>
+        <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">Open your dashboard &rarr;</a>
+        <p style="color:#7a736a;font-size:12px;margin:24px 0 0;line-height:1.6">Questions? Reply to this email or reach Will at <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a>.</p>
+    """)
+
+
+def send_signup_admin_alert(restaurant_name: str, owner_name: str, email: str, phone: str = None) -> bool:
+    """Heads-up to Will the moment someone self-registers — every other new
+    client so far has been created by hand, so a signup nobody set up
+    shouldn't be discovered days later in the admin list."""
+    to = os.getenv("WILL_EMAIL", "will@cavnar.ai")
+    return _send_branded(to, f"New signup — {restaurant_name}", f"""
+        <p style="color:#0e0c0a;font-size:18px;font-weight:700;margin:0 0 12px">New self-serve signup</p>
+        <table style="width:100%;font-size:14px;color:#3a3530;border-collapse:collapse">
+          <tr><td style="padding:6px 0;color:#7a736a;width:110px">Restaurant</td><td style="padding:6px 0"><strong>{restaurant_name}</strong></td></tr>
+          <tr><td style="padding:6px 0;color:#7a736a">Owner</td><td style="padding:6px 0"><strong>{owner_name or '—'}</strong></td></tr>
+          <tr><td style="padding:6px 0;color:#7a736a">Email</td><td style="padding:6px 0"><strong>{email}</strong></td></tr>
+          <tr><td style="padding:6px 0;color:#7a736a">Phone</td><td style="padding:6px 0"><strong>{phone or '—'}</strong></td></tr>
+        </table>
+        <p style="color:#7a736a;font-size:12px;margin:20px 0 0;line-height:1.6">Created on the trial tier with all four modules on. Review it in the <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">admin panel</a>.</p>
+    """, from_label="Cavnar AI Alerts")
+
+
 def send_payment_email(to_email, restaurant_name, tier=None,
                        module_count: int = None):
     """Send payment email with a dynamically generated Stripe checkout link."""

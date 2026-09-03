@@ -7,7 +7,12 @@ final class LoginViewModel {
     var username = ""
     var password = ""
     var isLoading = false
-    var errorMessage: String?
+    var errorMessage: String? {
+        didSet { if errorMessage != nil { errorShake += 1 } }
+    }
+    // Bumped every time a real error lands — the fields key their shake
+    // off it so a second identical error still shakes.
+    var errorShake = 0
     var twoFactorPendingToken: String?
     var twoFactorMaskedEmail: String?
 
