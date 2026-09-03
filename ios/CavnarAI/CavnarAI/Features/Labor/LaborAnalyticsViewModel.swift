@@ -57,7 +57,7 @@ final class LaborAnalyticsViewModel {
         self.restaurantId = restaurantId
         hasPlayedBarIntro = UserDefaults.standard.bool(forKey: Self.barIntroPlayedKey(restaurantId))
         hasPlayedTilesIntro = UserDefaults.standard.bool(forKey: Self.tilesIntroPlayedKey(restaurantId))
-        guard let data = UserDefaults.standard.data(forKey: Self.insightCacheKey(restaurantId)),
+        guard let data = SecureCache.read(key: Self.insightCacheKey(restaurantId)),
               let cached = try? JSONDecoder.cavnar.decode(AIInsight.self, from: data) else { return }
         insight = cached
     }
@@ -68,7 +68,7 @@ final class LaborAnalyticsViewModel {
 
     private func cacheInsight(_ insight: AIInsight) {
         guard let restaurantId, let data = try? JSONEncoder.cavnar.encode(insight) else { return }
-        UserDefaults.standard.set(data, forKey: Self.insightCacheKey(restaurantId))
+        SecureCache.write(data, key: Self.insightCacheKey(restaurantId))
     }
 
     func markBarIntroPlayed() {

@@ -53,7 +53,12 @@ targets:
     entitlements:
       path: Generated/CavnarAI.entitlements
       properties:
-        aps-environment: development
+        # Tracks the build configuration. Hardcoding `development` meant a
+        # Release/TestFlight build registered tokens against the sandbox APNs
+        # namespace while PushManager reported "production" — the two
+        # namespaces are separate, so every production push silently failed
+        # with no error anywhere (audit 1.8).
+        aps-environment: $(APS_ENVIRONMENT)
         com.apple.developer.applesignin:
           - Default
     settings:
@@ -68,9 +73,13 @@ targets:
         CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]: NO
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
+        APS_ENVIRONMENT: development
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_STRICT_CONCURRENCY: complete
+      configs:
+        Release:
+          APS_ENVIRONMENT: production
 
   CavnarAITests:
     type: bundle.unit-test
@@ -92,26 +101,28 @@ schemes:
         CavnarAITests: [test]
     run:
       config: Debug
-      # Local-dev backend override — checked into project.yml (not set by
-      # hand in Xcode's scheme editor) specifically because `xcodegen
-      # generate` rebuilds the .xcscheme from this file on every run and
-      # silently drops anything not declared here. Update the IP if the
-      # Mac's LAN address changes; still overridable by hand in Xcode for a
-      # one-off run (that override just won't survive the next regenerate).
+      # Local-dev backend override. The VALUE is deliberately not committed:
+      # it is a public, unauthenticated ngrok tunnel to a Mac serving live
+      # client data, and an address like that in version control is an
+      # access path for anyone who reads the repo (audit 1.1).
+      #
+      # xcodegen substitutes ${CAVNAR_DEV_API_BASE_URL} from the shell at
+      # generate time, so export it once in ~/.zshrc and every regenerate
+      # picks it up — which is the problem the old committed value was
+      # solving (xcodegen rebuilds the .xcscheme on every run and drops
+      # anything set by hand in Xcode's scheme editor):
+      #
+      #   export CAVNAR_DEV_API_BASE_URL="https://<your-tunnel>.ngrok-free.app"
+      #
+      # Unset is safe: the placeholder passes through unsubstituted and
+      # AppEnvironment rejects it, falling back to the compiled default.
+      #
       # Port 5000, not 5050, is macOS's own AirPlay Receiver (ControlCenter
       # process) — it silently answers with a blank 403 Forbidden for any
       # non-AirPlay request instead of a "connection refused", which reads
       # exactly like a real API error. Keep the local dev server on 5050.
-      #
-      # Pointed at the ngrok tunnel, not the home LAN IP, while testing off
-      # the home network (e.g. Panera) — a LAN IP is only reachable from
-      # devices on that same physical network, so it's not a "wrong IP"
-      # problem away from home, it's a different-network problem. The
-      # tunnel is a real public HTTPS URL, reachable from anywhere. Swap
-      # back to the LAN IP for local-only testing once back on home wifi
-      # (ngrok's free-tier URL also isn't stable across restarts).
       environmentVariables:
-        CAVNAR_API_BASE_URL: "https://4f87-208-44-38-158.ngrok-free.app"
+        CAVNAR_API_BASE_URL: "${CAVNAR_DEV_API_BASE_URL}"
     test:
       config: Debug
       targets:

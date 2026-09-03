@@ -212,7 +212,12 @@ private struct AnimatableTileNumber: View, Animatable {
     var value: Double
     var format: (Double) -> String
 
-    var animatableData: Double {
+    // nonisolated: SwiftUI drives animatableData from its own animation
+    // machinery, which is not guaranteed to run on the main actor. The
+    // property only reads/writes stored value types, so leaving it unisolated
+    // is both correct and required for the conformance to be valid in the
+    // Swift 6 language mode (audit 2.3).
+    nonisolated var animatableData: Double {
         get { value }
         set { value = newValue }
     }

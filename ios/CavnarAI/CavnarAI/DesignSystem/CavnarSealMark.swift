@@ -23,7 +23,12 @@ struct CavnarSealMark: View, Animatable {
     /// frame instead of snapping between the two colors.
     var emberWarmth: CGFloat = 1
 
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+    // nonisolated: SwiftUI drives animatableData from its own animation
+    // machinery, which is not guaranteed to run on the main actor. The
+    // property only reads/writes stored value types, so leaving it unisolated
+    // is both correct and required for the conformance to be valid in the
+    // Swift 6 language mode (audit 2.3).
+    nonisolated var animatableData: AnimatablePair<CGFloat, CGFloat> {
         get { AnimatablePair(emberIntensity, emberWarmth) }
         set { emberIntensity = newValue.first; emberWarmth = newValue.second }
     }

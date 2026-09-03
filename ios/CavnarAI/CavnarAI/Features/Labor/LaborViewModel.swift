@@ -285,11 +285,11 @@ final class LaborViewModel {
     /// specific week" expiry, same as LaborAnalyticsViewModel's insight cache.
     func configureCaching(restaurantId: Int) {
         self.restaurantId = restaurantId
-        if let data = UserDefaults.standard.data(forKey: Self.statsCacheKey(restaurantId)),
+        if let data = SecureCache.read(key: Self.statsCacheKey(restaurantId)),
            let cached = try? Self.cacheDecoder.decode(LaborStats.self, from: data) {
             stats = cached
         }
-        guard let data = UserDefaults.standard.data(forKey: Self.scheduleCacheKey(restaurantId)),
+        guard let data = SecureCache.read(key: Self.scheduleCacheKey(restaurantId)),
               let cached = try? Self.cacheDecoder.decode(GeneratedSchedule.self, from: data),
               !Self.isStale(cached) else { return }
         scheduleResult = cached
@@ -349,14 +349,14 @@ final class LaborViewModel {
     // making the real generated schedule fail to survive a relaunch.
     func cacheSchedule(_ schedule: GeneratedSchedule) {
         guard let restaurantId, let data = try? Self.cacheEncoder.encode(schedule) else { return }
-        UserDefaults.standard.set(data, forKey: Self.scheduleCacheKey(restaurantId))
+        SecureCache.write(data, key: Self.scheduleCacheKey(restaurantId))
     }
 
     // Not private, same reason as cacheSchedule above — exercised directly
     // by the round-trip test.
     func cacheStats(_ stats: LaborStats) {
         guard let restaurantId, let data = try? Self.cacheEncoder.encode(stats) else { return }
-        UserDefaults.standard.set(data, forKey: Self.statsCacheKey(restaurantId))
+        SecureCache.write(data, key: Self.statsCacheKey(restaurantId))
     }
 
     func load() async {

@@ -41,36 +41,42 @@ struct Review: Codable, Identifiable, Hashable {
     /// A review with no date, or a date in a shape none of these match,
     /// simply has no formattedDate — that's the actual explanation for why
     /// some rows show a date and others don't, not a bug in any one of them.
-    private static let sourceDateFormatters: [DateFormatter] = {
-        ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd"].map { format in
+    /// All four formatters are thread-local rather than shared singletons:
+    /// formattedDate is reachable from both the APIClient actor's decode path
+    /// and @MainActor view bodies, and Foundation formatters are not Sendable
+    /// (audit 2.2). See ThreadLocalFormatter.
+    private static let sourceDateFormatters = ThreadLocalFormatter<NSArray> {
+        let formatters = ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd"].map { format -> DateFormatter in
             let formatter = DateFormatter()
             formatter.dateFormat = format
             formatter.locale = Locale(identifier: "en_US_POSIX")
             return formatter
         }
-    }()
+        return formatters as NSArray
+    }
 
-    private static let isoFormatterWithFractionalSeconds: ISO8601DateFormatter = {
+    private static let isoFormatterWithFractionalSeconds = ThreadLocalFormatter<ISO8601DateFormatter> {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
-    }()
+    }
 
-    private static let isoFormatter = ISO8601DateFormatter()
+    private static let isoFormatter = ThreadLocalFormatter<ISO8601DateFormatter> { ISO8601DateFormatter() }
 
-    private static let displayDateFormatter: DateFormatter = {
+    private static let displayDateFormatter = ThreadLocalFormatter<DateFormatter> {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d"
         return formatter
-    }()
+    }
 
     var formattedDate: String? {
         guard let reviewDate, !reviewDate.isEmpty else { return nil }
-        let date = Self.isoFormatterWithFractionalSeconds.date(from: reviewDate)
-            ?? Self.isoFormatter.date(from: reviewDate)
-            ?? Self.sourceDateFormatters.lazy.compactMap { $0.date(from: reviewDate) }.first
+        let fallbacks = (Self.sourceDateFormatters.value as? [DateFormatter]) ?? []
+        let date = Self.isoFormatterWithFractionalSeconds.value.date(from: reviewDate)
+            ?? Self.isoFormatter.value.date(from: reviewDate)
+            ?? fallbacks.lazy.compactMap { $0.date(from: reviewDate) }.first
         guard let date else { return nil }
-        return Self.displayDateFormatter.string(from: date)
+        return Self.displayDateFormatter.value.string(from: date)
     }
 
     var platformDisplayName: String {

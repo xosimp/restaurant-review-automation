@@ -395,7 +395,8 @@ struct IntelView: View {
         let numberSize: CGFloat
         let tone: Color
 
-        var animatableData: Double {
+        // nonisolated — see CavnarSealMark.animatableData (audit 2.3).
+        nonisolated var animatableData: Double {
             get { rating }
             set { rating = newValue }
         }

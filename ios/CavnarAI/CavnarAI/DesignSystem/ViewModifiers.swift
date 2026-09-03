@@ -540,7 +540,12 @@ struct CavnarAnimatableNumber: View, Animatable {
     var value: Double
     var format: (Double) -> String
 
-    var animatableData: Double {
+    // nonisolated: SwiftUI drives animatableData from its own animation
+    // machinery, which is not guaranteed to run on the main actor. The
+    // property only reads/writes stored value types, so leaving it unisolated
+    // is both correct and required for the conformance to be valid in the
+    // Swift 6 language mode (audit 2.3).
+    nonisolated var animatableData: Double {
         get { value }
         set { value = newValue }
     }
@@ -551,7 +556,9 @@ struct CavnarAnimatableNumber: View, Animatable {
 }
 
 private struct CavnarWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+    // `let`, not `var` — as a static var this was nonisolated mutable global
+    // state, an error in the Swift 6 language mode (audit 2.6).
+    static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
     }

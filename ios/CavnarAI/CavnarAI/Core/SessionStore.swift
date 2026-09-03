@@ -262,6 +262,13 @@ final class SessionStore {
         self.token = token
         self.currentUser = user
         self.isLocked = false
+        // The APNs token usually arrives at launch, before a session exists,
+        // so its registration 401s and used to be dropped forever (audit
+        // 4.3). Now there is a session, flush anything queued.
+        await PushManager.shared.flushPendingToken()
+        // Same for writes queued while offline — signing in is a reconnect
+        // signal in its own right.
+        await PendingWriteQueue.shared.drain()
     }
 
     func logout() async {
@@ -276,6 +283,13 @@ final class SessionStore {
 
     private func clearLocalSession() {
         Keychain.delete(Keychain.Key.sessionToken)
+        // Staff schedules, labor costs and AI insights are cached on disk and
+        // used to survive sign-out entirely — the next person to pick up a
+        // shared back-office device inherited the previous account's data,
+        // and configureCaching() would happily restore it (audit 1.2).
+        SecureCache.purgeAll()
+        // Anything queued offline belongs to the session that queued it.
+        Task { await PendingWriteQueue.shared.clear() }
         Task { await client.setToken(nil) }
         token = nil
         currentUser = nil
@@ -310,15 +324,23 @@ final class SessionStore {
         isLocked = true
     }
 
+    /// True when the lock is switched on but the device cannot actually
+    /// enforce it (no passcode or biometrics enrolled). The app still fails
+    /// open — locking an owner out of their own data over a device setting
+    /// would be worse — but it no longer does so silently: Security settings
+    /// surfaces this so they know the gate isn't protecting anything (audit
+    /// 1.7).
+    private(set) var biometricsUnavailable = false
+
     func unlockWithBiometrics() async -> Bool {
         let context = LAContext()
         var evaluationError: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &evaluationError) else {
-            // No biometrics/passcode configured on this device — don't lock
-            // the owner out of their own data over a device limitation.
+            biometricsUnavailable = true
             isLocked = false
             return true
         }
+        biometricsUnavailable = false
         do {
             let success = try await context.evaluatePolicy(
                 .deviceOwnerAuthentication,
