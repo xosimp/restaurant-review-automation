@@ -17,9 +17,13 @@ struct AccountView: View {
                     if let summary = viewModel.summary {
                         content(summary)
                     } else if viewModel.isLoading {
-                        CavnarLoadingSeal()
-                            .padding(.top, 60)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        // A centered seal has no relationship to the real
+                        // layout, so content landing shoved the whole page
+                        // around — on a slow connection that window is long
+                        // enough to cause genuine mis-taps (audit 7.8). This
+                        // reserves the hero + group geometry instead, matching
+                        // HomeView's own heroSkeleton approach.
+                        loadingSkeleton
                     } else if let error = viewModel.errorMessage {
                         VStack(spacing: 8) {
                             Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
@@ -30,6 +34,7 @@ struct AccountView: View {
                     }
                 }
                 .padding(20)
+                .animation(.easeOut(duration: 0.25), value: viewModel.summary == nil)
             }
             .cavnarModuleBackground()
             .cavnarEmberRefreshable { await viewModel.load() }
@@ -69,6 +74,36 @@ struct AccountView: View {
                 #endif
             }
         }
+    }
+
+    /// Mirrors the hero row and the first few setting groups so the real
+    /// content lands into space already reserved for it.
+    private var loadingSkeleton: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            HStack(spacing: 14) {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.cavnarInk.opacity(0.08))
+                    .frame(width: 54, height: 54)
+                VStack(alignment: .leading, spacing: 6) {
+                    Capsule().fill(Color.cavnarInk.opacity(0.08)).frame(width: 168, height: 16)
+                    Capsule().fill(Color.cavnarInk.opacity(0.06)).frame(width: 210, height: 13)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.bottom, 6)
+
+            ForEach(0..<3, id: \.self) { _ in
+                VStack(alignment: .leading, spacing: 10) {
+                    Capsule().fill(Color.cavnarInk.opacity(0.06)).frame(width: 86, height: 11)
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color.cavnarPaper2)
+                        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+                        .frame(height: 54)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .transition(.opacity)
     }
 
     @ViewBuilder
@@ -335,7 +370,7 @@ struct AccountView: View {
                 .tint(Color.cavnarEmber)
             }
             .padding(.horizontal, 16)
-            .frame(height: 54)
+            .frame(minHeight: 54)
             if let appIconError {
                 Text(appIconError)
                     .font(.cavnarBody(15))
@@ -418,7 +453,9 @@ struct AccountView: View {
                 .foregroundStyle(Color.cavnarInk3)
         }
         .padding(.horizontal, 16)
-        .frame(height: 54)
+        // minHeight, not height — see AccountKVRow (audit 7.2). Also keeps
+        // these rows comfortably above the 44pt HIG tap-target minimum.
+        .frame(minHeight: 54)
         .contentShape(Rectangle())
     }
 

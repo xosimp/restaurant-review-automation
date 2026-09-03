@@ -273,6 +273,9 @@ struct HomeView: View {
             }
             .task { await viewModel.load() }
             .task { await notificationsBadge.refresh() }
+            // Reopening the app after a shift should not show morning's
+            // numbers as if they were current (audit 4.2).
+            .refreshOnForeground(lastLoaded: viewModel.lastLoadedAt) { await viewModel.load() }
         }
     }
 

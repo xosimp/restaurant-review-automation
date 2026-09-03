@@ -96,5 +96,8 @@ struct CavnarSplitButton<MenuContent: View>: View {
                 .foregroundStyle(.white)
         }
         .frame(width: 27, height: 27)
+        // 27pt visual, 44pt hit region — HIG minimum (audit 7.3).
+        .frame(width: 44, height: 44)
+        .contentShape(Rectangle())
     }
 }

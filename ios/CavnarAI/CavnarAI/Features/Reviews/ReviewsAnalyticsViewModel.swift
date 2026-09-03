@@ -18,7 +18,12 @@ final class ReviewsAnalyticsViewModel {
         self.client = client
     }
 
-    private struct DataResponse<T: Decodable>: Decodable {
+    /// Sendable, because `load()` fetches three of these concurrently with
+    /// `async let` — the results cross out of the APIClient actor's isolation
+    /// domain, which is an error in the Swift 6 language mode unless the type
+    /// is Sendable. All stored properties are immutable value types, so the
+    /// conformance is real rather than an @unchecked escape hatch.
+    private struct DataResponse<T: Decodable & Sendable>: Decodable, Sendable {
         let ok: Bool
         let data: T?
         let error: String?

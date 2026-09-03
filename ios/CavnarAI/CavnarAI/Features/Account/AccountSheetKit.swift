@@ -252,7 +252,12 @@ struct AccountKVRow<Trailing: View>: View {
                 Spacer(minLength: 8)
                 trailing()
             }
-            .frame(height: Self.rowHeight)
+            // A floor, not a fixed height. The exact-height version kept rows
+            // aligned at the default text size, but `.frame(height:)` is a
+            // hard constraint — once Dynamic Type scaling landed (see
+            // Font+Cavnar's relativeTo:) it clipped labels outright instead of
+            // letting the row grow (audit 7.2).
+            .frame(minHeight: Self.rowHeight)
             .padding(.vertical, 13)
             if showsDivider { AccountRowDivider() }
         }
@@ -301,6 +306,11 @@ struct AccountPill: View {
         .padding(.vertical, 4)
         .background(on ? Color.cavnarGreen.opacity(0.14) : Color.white.opacity(0.05))
         .clipShape(Capsule())
+        // The dot carries the on/off state through colour alone, which fails
+        // both VoiceOver and colour-blind users (WCAG 1.4.1). Restate it in
+        // the label rather than adding a second visual (audit 7.5).
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(text), \(on ? "active" : "inactive")")
     }
 }
 
@@ -587,6 +597,9 @@ private struct AccountSheetChrome: ViewModifier {
                     }
                     .buttonStyle(.plain)
                     .tint(nil)
+                    // Without a label VoiceOver reads the SF Symbol name
+                    // ("chevron dot left") instead of the action (audit 7.5).
+                    .accessibilityLabel("Back")
                 }
             }
     }

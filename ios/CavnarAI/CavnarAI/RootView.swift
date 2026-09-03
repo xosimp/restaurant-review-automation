@@ -95,6 +95,11 @@ struct RootView: View {
         // switchable is the home-screen APP ICON (Account > More), not
         // this. See AppIconManager for that.
         .preferredColorScheme(.dark)
+        // Dynamic Type is honoured (see Font+Cavnar), but capped at
+        // accessibility2 — beyond that the dense KPI/chart screens stop being
+        // usable at all. A cap is the right trade; ignoring the setting
+        // entirely, which is what the app did before, is not (audit 7.1).
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         // Single app-wide source for tint — covers button/control tint AND
         // text field cursor color (a TextField's blinking caret follows the
         // environment's tint, not a color you set on the field itself).

@@ -300,8 +300,15 @@ private struct ChatBubble: View {
     /// mismatch, iOS failing to register under memory pressure), and this is a
     /// static let on the app's main AI screen — the unwrap crashed the whole
     /// surface (audit 2.1).
-    private static let textFont: UIFont =
+    private static let baseTextFont: UIFont =
         UIFont(name: "ApfelGrotezk-Regular", size: 16) ?? .systemFont(ofSize: 16)
+
+    /// Scaled to the user's current text size. Measuring with a frozen 16pt
+    /// font while the rendered Text scales with Dynamic Type would under-
+    /// measure and clip every bubble (audit 7.1/7.2).
+    private static var textFont: UIFont {
+        UIFontMetrics(forTextStyle: .body).scaledFont(for: baseTextFont)
+    }
 
     // Fourth attempt at the bubble-hugging bug. The first three all relied
     // on SwiftUI's own implicit sizing (fixedSize, frame(maxWidth:)

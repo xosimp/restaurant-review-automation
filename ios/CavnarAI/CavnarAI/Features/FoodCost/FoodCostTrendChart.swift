@@ -80,6 +80,15 @@ struct FoodCostTrendChart: View {
         )
     }
 
+    private var accessibilitySummary: String {
+        guard let latest = weeks.last else { return "No waste data yet" }
+        let current = "$" + String(format: "%.0f", latest.waste)
+        guard let first = weeks.first, weeks.count > 1 else { return "\(current) this week" }
+        let direction = latest.waste > first.waste ? "up" : (latest.waste < first.waste ? "down" : "flat")
+        return "\(current) this week, \(direction) from $\(String(format: "%.0f", first.waste)) "
+            + "across \(weeks.count) weeks"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
@@ -168,7 +177,9 @@ struct FoodCostTrendChart: View {
                     withAnimation(.easeOut(duration: 0.75)) { barsVisible = true }
                 }
 
-                if let benchmarkLabel, let wasteRatePct, benchmarkLabel != "—" {
+                // wasteRatePct is only a presence check here — the band label
+                // below doesn't interpolate it.
+                if let benchmarkLabel, wasteRatePct != nil, benchmarkLabel != "—" {
                     HStack(spacing: 5) {
                         Rectangle().fill(Self.industryBandColor).frame(width: 12, height: 2)
                         Text("Industry target: 4–5% of purchases")
@@ -185,6 +196,10 @@ struct FoodCostTrendChart: View {
         .opacity(barsVisible ? 1 : 0)
         .offset(y: barsVisible ? 0 : 24)
         .animation(.easeOut(duration: 0.5), value: barsVisible)
+        // audit 7.4
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Food waste trend")
+        .accessibilityValue(accessibilitySummary)
     }
 
     /// Press-and-hold-to-inspect, same pattern as LaborPerformanceChart's

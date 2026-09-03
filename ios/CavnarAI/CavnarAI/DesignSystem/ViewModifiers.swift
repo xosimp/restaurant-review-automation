@@ -332,7 +332,10 @@ struct CavnarGlassButtonStyle: ButtonStyle {
 /// using this should be Color.cavnarEmber themselves (not the previous
 /// neutral tint) for the tinted-bg + ember-icon pairing to read right.
 extension View {
-    func cavnarToolbarIconGlass(size: CGFloat = 34) -> some View {
+    /// nonisolated: this composes only unisolated SwiftUI modifiers, and
+    /// returning a non-Sendable `some View` from a main-actor-isolated method
+    /// into a nonisolated context is an error in the Swift 6 language mode.
+    nonisolated func cavnarToolbarIconGlass(size: CGFloat = 34) -> some View {
         self
             .frame(width: size, height: size)
             .background(Color.cavnarEmber.opacity(0.14), in: Circle())
@@ -463,6 +466,7 @@ extension View {
 /// parent (GeometryReader fills whatever width/height it's given), so drop
 /// it into any layout as a stand-in for the content that isn't back yet.
 struct CavnarSkeletonBar: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var height: CGFloat = 12
     var widthFraction: CGFloat = 1.0
 
@@ -484,6 +488,7 @@ struct CavnarSkeletonBar: View {
         }
         .frame(height: height)
         .onAppear {
+            guard !reduceMotion else { return }   // audit 7.6
             withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
                 slide = true
             }
@@ -638,6 +643,7 @@ struct CavnarFormButtonPair<Primary: View>: View {
 /// loading state (not just AI-insight text) can reuse it instead of a bare
 /// ProgressView().
 struct PulsingText: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let text: String
     @State private var pulse = false
 
@@ -647,6 +653,7 @@ struct PulsingText: View {
         Text(text)
             .opacity(pulse ? 1 : 0.45)
             .onAppear {
+                guard !reduceMotion else { return }   // audit 7.6
                 withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
                     pulse = true
                 }

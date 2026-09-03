@@ -9,6 +9,8 @@ import SwiftUI
 /// instead of per-segment Buttons — a plain tap is just a zero-distance
 /// drag, so both interactions share one code path, matching the drag-across
 /// feel of the home row's own tab bar.
+// Heights here are floors rather than fixed values so a scaled label grows
+// the control instead of being clipped inside it (audit 7.2).
 struct CavnarSegmentedControl<T: Hashable>: View {
     @Binding var selection: T
     let options: [T]
@@ -25,7 +27,7 @@ struct CavnarSegmentedControl<T: Hashable>: View {
                         .onEnded { value in select(at: value.location.x, segmentWidth: segmentWidth) }
                 )
         }
-        .frame(height: 34)
+        .frame(minHeight: 34)
         // A custom control has no native automatic haptic to lean on (unlike
         // Toggle/UISwitch) — .sensoryFeedback is the one deliberate source
         // here, not stacked with anything else.
@@ -68,7 +70,7 @@ struct CavnarSegmentedControl<T: Hashable>: View {
             .font(.cavnarBody(14.5, weight: 600))
             .foregroundStyle(isSelected ? Color.cavnarInk : Color.cavnarInk2)
             .frame(maxWidth: .infinity)
-            .frame(height: 34)
+            .frame(minHeight: 34)
 
         if isSelected {
             if #available(iOS 26.0, *) {

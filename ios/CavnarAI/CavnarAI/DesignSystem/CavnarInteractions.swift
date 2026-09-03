@@ -193,6 +193,10 @@ struct CavnarCodeEntry: View {
     @State private var shake: CGFloat = 0
 
     private var digits: [Character] { Array(code) }
+    /// Fixed height is genuinely required here (six cells across a fixed grid
+    /// — a floor would let them grow unevenly), so the constant scales with
+    /// Dynamic Type instead of being frozen (audit 7.2).
+    @ScaledMetric(relativeTo: .title3) private var cellHeight: CGFloat = 56
 
     var body: some View {
         ZStack {
@@ -211,7 +215,7 @@ struct CavnarCodeEntry: View {
                 .tint(.clear)
                 .opacity(0.02)
                 .frame(maxWidth: .infinity)
-                .frame(height: 56)
+                .frame(height: cellHeight)
                 .contentShape(Rectangle())
         }
         .onChange(of: code) { _, new in
@@ -247,7 +251,7 @@ struct CavnarCodeEntry: View {
                 CavnarCaret()
             }
         }
-        .frame(height: 56)
+        .frame(height: cellHeight)
         .shadow(color: Color.cavnarEmber.opacity(active || isVerifying ? 0.35 : 0), radius: 10)
         .animation(.easeOut(duration: 0.18), value: filled)
         .animation(.easeOut(duration: 0.2), value: active)

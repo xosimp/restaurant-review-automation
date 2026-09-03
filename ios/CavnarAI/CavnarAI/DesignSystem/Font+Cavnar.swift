@@ -12,8 +12,17 @@ import CoreText
 extension Font {
     /// Clash Display — headlines and standalone words (matches the
     /// dashboard's `--headline` usage).
+    ///
+    /// `relativeTo:` is what makes a custom font participate in Dynamic Type.
+    /// Without it, `.custom(_:size:)` is frozen at `size` no matter what the
+    /// user sets under Accessibility -> Larger Text — the app was literally
+    /// unreadable-by-design for anyone who needs bigger text, which for
+    /// restaurant owners reading small financial figures in dim light is the
+    /// single biggest accessibility defect there was (audit 7.1). Because all
+    /// typography routes through these three helpers, adding it here fixes
+    /// every one of the ~400 call sites at once.
     static func cavnarHeadline(_ size: CGFloat, weight: ClashWeight = .semibold) -> Font {
-        .custom(weight.postScriptName, size: size)
+        .custom(weight.postScriptName, size: size, relativeTo: headlineTextStyle(for: size))
     }
 
     enum ClashWeight {
@@ -35,12 +44,57 @@ extension Font {
     /// as before, so none of ~400 existing call sites needed to change),
     /// snapped to whichever of the two real weights it's closer to.
     static func cavnarBody(_ size: CGFloat, weight: CGFloat = 400) -> Font {
-        .custom(weight >= 550 ? "ApfelGrotezk-Fett" : "ApfelGrotezk-Regular", size: size)
+        .custom(
+            weight >= 550 ? "ApfelGrotezk-Fett" : "ApfelGrotezk-Regular",
+            size: size,
+            relativeTo: bodyTextStyle(for: size)
+        )
     }
 
     /// Space Grotesk — numbers and stats (KPI tiles, dollar figures).
+    ///
+    /// This path builds a raw UIFont to reach the variable-weight axis, which
+    /// bypasses SwiftUI's scaling entirely — UIFontMetrics is the UIKit-side
+    /// equivalent of `relativeTo:` and puts it back.
     static func cavnarNumber(_ size: CGFloat, weight: CGFloat = 500) -> Font {
-        Font(cavnarUIFont(family: "Space Grotesk", weight: weight, size: size))
+        let base = cavnarUIFont(family: "Space Grotesk", weight: weight, size: size)
+        let metrics = UIFontMetrics(forTextStyle: uiTextStyle(for: size))
+        return Font(metrics.scaledFont(for: base))
+    }
+
+    /// Maps a literal point size onto the nearest system text style so scaling
+    /// stays proportional to the role the size implies — iOS grows captions
+    /// faster than titles, and matching that keeps hierarchy intact at large
+    /// sizes instead of everything converging on one size.
+    private static func bodyTextStyle(for size: CGFloat) -> Font.TextStyle {
+        switch size {
+        case ..<13:  return .caption
+        case ..<15:  return .footnote
+        case ..<17:  return .subheadline
+        case ..<20:  return .body
+        case ..<24:  return .title3
+        default:     return .title2
+        }
+    }
+
+    private static func headlineTextStyle(for size: CGFloat) -> Font.TextStyle {
+        switch size {
+        case ..<20:  return .headline
+        case ..<24:  return .title3
+        case ..<30:  return .title2
+        default:     return .largeTitle
+        }
+    }
+
+    private static func uiTextStyle(for size: CGFloat) -> UIFont.TextStyle {
+        switch size {
+        case ..<13:  return .caption1
+        case ..<15:  return .footnote
+        case ..<17:  return .subheadline
+        case ..<20:  return .body
+        case ..<24:  return .title3
+        default:     return .title2
+        }
     }
 }
 

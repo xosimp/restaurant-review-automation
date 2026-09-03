@@ -45,12 +45,16 @@ private struct AIConsultantStripContent: View {
 /// (LaborView.swift) rather than a static "Analyzing…" label sitting
 /// still for however long the request takes.
 private struct PulsingAnalyzingText: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
 
     var body: some View {
         Text("Analyzing this week's numbers…")
             .opacity(pulse ? 1 : 0.45)
             .onAppear {
+                // Reduce Motion settles this rather than looping forever
+                // (audit 7.6).
+                guard !reduceMotion else { return }
                 withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
                     pulse = true
                 }
@@ -215,6 +219,8 @@ private struct AIConsultantSheet: View {
                         Circle()
                             .fill(Color.cavnarEmber)
                             .frame(width: 30, height: 30)
+                            .frame(width: 44, height: 44)   // HIG tap target (audit 7.3)
+                            .contentShape(Rectangle())
                             .shadow(color: Color.cavnarEmber.opacity(0.6), radius: 7, x: 0, y: 0)
                         Text("\(index + 1)")
                             .font(.cavnarNumber(14, weight: 700))

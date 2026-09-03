@@ -120,6 +120,18 @@ final class ReviewDetailViewModel {
             finalStatus = status
             currentStatus = status
             didComplete = true
+        } catch let error as APIClient.APIError where error.isRetryable {
+            await PendingWriteQueue.shared.enqueue(
+                path: "/mobile/api/reviews/\(review.id)/approve",
+                method: "POST",
+                bodyJSON: nil,
+                label: "Approve response for \(review.author ?? "review")"
+            )
+            hasQueuedWrite = true
+            // Locally optimistic but honestly labelled — the row shows a
+            // "waiting to sync" state, not a claim that it posted.
+            currentStatus = "pending-sync"
+            didComplete = true
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch {
@@ -211,12 +223,31 @@ final class ReviewDetailViewModel {
             if !response.ok {
                 errorMessage = response.error ?? "Couldn't save your edit."
             }
+        } catch let error as APIClient.APIError where error.isRetryable {
+            // Offline or a dropped connection: queue the edit instead of
+            // discarding it. This is the exact loss the audit found — a
+            // manager on one bar of signal edits a response, the debounced
+            // autosave fails silently, and the work is gone (audit 6.1).
+            let body = try? JSONEncoder().encode(SaveDraftBody(draft: editedDraft))
+            await PendingWriteQueue.shared.enqueue(
+                path: "/mobile/api/reviews/\(review.id)/save-draft",
+                method: "POST",
+                bodyJSON: body,
+                label: "Save draft response"
+            )
+            hasQueuedWrite = true
+            errorMessage = nil
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch {
             errorMessage = "Couldn't save — try again."
         }
     }
+
+    /// True once an edit has been parked in the offline queue, so the UI can
+    /// say "saved, will sync" rather than either lying about success or
+    /// showing a bare failure.
+    var hasQueuedWrite = false
 
     private struct OkResponse: Decodable {
         let ok: Bool

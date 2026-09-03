@@ -137,6 +137,20 @@ struct LaborPerformanceChart: View {
         }
     }
 
+    /// Current value, direction of travel, and how it sits against target —
+    /// the three things the chart communicates visually.
+    private var accessibilitySummary: String {
+        guard let latest = trend.last else { return "No labor trend data yet" }
+        let current = String(format: "%.1f", latest.pct)
+        let vsTarget = latest.pct > target ? "over" : "under"
+        guard let first = trend.first, trend.count > 1 else {
+            return "\(current) percent, \(vsTarget) the \(String(format: "%.1f", target)) percent target"
+        }
+        let direction = latest.pct > first.pct ? "up" : (latest.pct < first.pct ? "down" : "flat")
+        return "\(current) percent, \(vsTarget) the \(String(format: "%.1f", target)) percent target, "
+            + "\(direction) from \(String(format: "%.1f", first.pct)) percent across \(trend.count) weeks"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("LABOR % PERFORMANCE")
@@ -225,6 +239,11 @@ struct LaborPerformanceChart: View {
         .offset(y: barsVisible ? 0 : 24)
         .animation(.easeOut(duration: 0.5), value: barsVisible)
         .onChange(of: mode) { _, _ in selectedBar = nil }
+        // Trend lines are unreadable to VoiceOver without an explicit summary
+        // (audit 7.4).
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Labor percent performance")
+        .accessibilityValue(accessibilitySummary)
     }
 
     @ViewBuilder

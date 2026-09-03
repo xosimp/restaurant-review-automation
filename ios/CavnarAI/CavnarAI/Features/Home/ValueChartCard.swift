@@ -36,6 +36,13 @@ struct ValueChartCard: View {
         return (values.max() ?? 0) != (values.min() ?? 0)
     }
 
+    private var accessibilitySummary: String {
+        let current = Self.currencyText(totalValue)
+        guard let first = history.first, history.count > 1 else { return current }
+        return "\(current), up from \(Self.currencyText(first.value)) "
+            + "across \(history.count) snapshots"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("TOTAL VALUE DELIVERED")
@@ -99,6 +106,10 @@ struct ValueChartCard: View {
 
             rangePills
         }
+        // audit 7.4 — the headline number the whole Home screen is built around
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Total value delivered")
+        .accessibilityValue(accessibilitySummary)
     }
 
     private var rangePills: some View {

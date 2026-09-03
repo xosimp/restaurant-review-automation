@@ -244,14 +244,12 @@ private struct ErrorEnvelope: Decodable {
     }
 }
 
-// `nonisolated(unsafe)`: JSONDecoder/JSONEncoder are not Sendable, but these
-// two are configured once at init and never mutated afterwards, and every
-// use is inside this actor. The annotation records that this sharing was
-// examined rather than leaving a strict-concurrency warning standing.
+// JSONDecoder/JSONEncoder are Sendable in this SDK, and both are configured
+// once and never mutated, so plain `static let` is already concurrency-safe.
 extension JSONDecoder {
-    nonisolated(unsafe) static let cavnar: JSONDecoder = JSONDecoder()
+    static let cavnar: JSONDecoder = JSONDecoder()
 }
 
 extension JSONEncoder {
-    nonisolated(unsafe) static let cavnar: JSONEncoder = JSONEncoder()
+    static let cavnar: JSONEncoder = JSONEncoder()
 }

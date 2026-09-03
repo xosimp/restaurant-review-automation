@@ -103,6 +103,20 @@ struct RoleDonutChart: View {
         return rows * collapsedRowHeight + (rows - 1) * 12
     }
 
+    /// Read aloud in place of the ring. Ordered largest-share first, which is
+    /// the order a sighted user reads the arcs in.
+    private var accessibilitySummary: String {
+        let total = roles.reduce(0.0) { $0 + $1.laborCost }
+        guard total > 0 else { return "No labor data yet" }
+        return roles
+            .sorted { $0.laborCost > $1.laborCost }
+            .map { role in
+                let share = Int((role.laborCost / total * 100).rounded())
+                return "\(role.role), \(share) percent, \(Int(role.hours.rounded())) hours"
+            }
+            .joined(separator: ". ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 22) {
@@ -138,6 +152,12 @@ struct RoleDonutChart: View {
             guard !sweepIn else { return }
             withAnimation(.easeOut(duration: 0.15)) { sweepIn = true }
         }
+        // A donut chart is pure drawing to VoiceOver — silent, unlabelled
+        // geometry. This exposes the same information the arcs carry, as one
+        // readable summary (audit 7.4).
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Labor cost by role")
+        .accessibilityValue(accessibilitySummary)
     }
 
     private static let ringStrokeWidth: CGFloat = 16

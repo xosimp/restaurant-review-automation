@@ -608,7 +608,16 @@ private struct IngredientCard: View {
                         .foregroundStyle(Color.cavnarInk.opacity(0.6))
                         .frame(width: 22, height: 22)
                         .background(Color.black.opacity(0.3), in: Circle())
+                        // Visual stays 22pt (the carousel's density depends on
+                        // it) but the hit region meets the 44pt HIG minimum.
+                        // This is a DELETE with no undo, on the screen used
+                        // mid-service with wet or gloved hands — at 22pt a
+                        // miss either frustrates or destroys an entry
+                        // (audit 7.3).
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
+                .accessibilityLabel("Delete entry")
                 .padding(.bottom, 1)
             }
             HStack(spacing: 24) {

@@ -48,6 +48,14 @@ struct FoodCostDonutChart: View {
         isExpanded ? slices : Array(slices.prefix(Self.collapseThreshold))
     }
 
+    private var accessibilitySummary: String {
+        guard total > 0 else { return "No data yet" }
+        return slices
+            .sorted { $0.value > $1.value }
+            .map { "\($0.name), \(Int(($0.value / total * 100).rounded())) percent" }
+            .joined(separator: ". ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
@@ -86,6 +94,10 @@ struct FoodCostDonutChart: View {
             guard !sweepIn else { return }
             withAnimation(.easeOut(duration: 0.15)) { sweepIn = true }
         }
+        // audit 7.4
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(accessibilitySummary)
     }
 
     private static let ringStrokeWidth: CGFloat = 15

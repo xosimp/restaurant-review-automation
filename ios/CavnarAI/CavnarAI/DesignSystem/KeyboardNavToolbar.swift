@@ -78,8 +78,14 @@ private struct KeyboardDoneToolbarModifier: ViewModifier {
 /// CaseIterable-enum shape the two modifiers above need) reuses this
 /// directly for its own checkmark button, so that one dismiss glyph stays
 /// pixel-identical to every other keyboard toolbar in the app.
+/// @MainActor throughout: this is a SwiftUI view builder, so it is main-actor
+/// work by definition, and its action closure legitimately touches main-actor
+/// state (focus bindings). Annotating the closure @MainActor rather than
+/// @Sendable is what actually resolves the strict-concurrency complaint —
+/// @Sendable just moves it onto every caller.
+@MainActor
 @ViewBuilder
-func keyboardIconButton(systemName: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+func keyboardIconButton(systemName: String, enabled: Bool, action: @escaping @MainActor () -> Void) -> some View {
     Button {
         Haptic.light()
         action()

@@ -201,6 +201,8 @@ struct AvailabilityManagerSection: View {
                 .font(.cavnarBody(14, weight: 600))
                 .foregroundStyle(isOn ? Color.cavnarInk : Color.cavnarInk3)
                 .frame(width: 38, height: 30)
+                .frame(minWidth: 44, minHeight: 44)   // HIG tap target (audit 7.3)
+                .contentShape(Rectangle())
                 .background(isOn ? Color.cavnarEmber.opacity(0.55) : Color.cavnarPaper3.opacity(0.5))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
         }
