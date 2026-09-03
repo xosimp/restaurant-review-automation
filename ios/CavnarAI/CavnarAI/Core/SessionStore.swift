@@ -216,11 +216,29 @@ final class SessionStore {
 
     private struct ForgotBody: Encodable { let email: String }
 
-    /// Always resolves ok whether or not the email exists — the server
-    /// deliberately doesn't say, so this can't enumerate accounts.
+    /// Emails a 6-digit reset code. Always resolves ok whether or not the
+    /// email exists — the server deliberately doesn't say, so this can't
+    /// enumerate accounts.
     func requestPasswordReset(email: String) async throws {
         _ = try await client.send(
             "/mobile/api/forgot-password", method: .post, body: ForgotBody(email: email)
+        ) as APIClient.EmptyResponse
+    }
+
+    private struct ResetBody: Encodable {
+        let email: String
+        let code: String
+        let newPassword: String
+        enum CodingKeys: String, CodingKey { case email, code; case newPassword = "new_password" }
+    }
+
+    /// Second half of the in-app reset — the code from that email plus the
+    /// new password. Doesn't sign in on success (a reset must not skip a
+    /// 2FA-enabled account's own login); the sheet closes back to Sign In.
+    func resetPassword(email: String, code: String, newPassword: String) async throws {
+        _ = try await client.send(
+            "/mobile/api/reset-password", method: .post,
+            body: ResetBody(email: email, code: code, newPassword: newPassword)
         ) as APIClient.EmptyResponse
     }
 

@@ -5,11 +5,12 @@ private enum LoginField_: Hashable, CaseIterable {
 }
 
 /// The sign-in screen, rebuilt to the approved render: the wordmark
-/// (no seal) over a living ember aurora + constellation, a greeting, two
-/// glass fields with SF Symbols and a focus-lit underline, "Forgot
-/// password?" right-aligned at a full 44pt, a full-width ember Sign In
-/// with a slow sheen, "or continue with", Apple and Google as white pills,
-/// and "Don't have an account? Sign up" anchoring the bottom. Every
+/// (no seal) over a living ember aurora + constellation, two glass fields
+/// with SF Symbols and a focus-lit underline, "Forgot password?" right-
+/// aligned at a full 44pt, a full-width ember Sign In with a slow sheen,
+/// "or continue with", Apple and Google as white pills, and "Don't have an
+/// account? Sign up" anchoring the bottom. The whole block is centered in
+/// the screen (and still scrolls when the keyboard needs the room). Every
 /// element rises in on a stagger; every button fires a haptic; every
 /// failure shows the red bar, shakes the fields, and buzzes the error
 /// pattern. All sizes come from LoginMetrics, colors from the palette.
@@ -35,7 +36,6 @@ struct LoginView: View {
 
     // The entrance choreography, in seconds after the wordmark starts.
     private enum Cue {
-        static let greeting = 0.12
         static let subtitle = 0.18
         static let field1 = 0.28
         static let field2 = 0.36
@@ -55,27 +55,36 @@ struct LoginView: View {
             ZStack {
                 LoginBackground()
 
-                ScrollView {
-                    VStack(spacing: 0) {
-                        brand
-                            .padding(.top, LoginMetrics.spaceHero)
-                            .padding(.bottom, LoginMetrics.spaceXXL)
+                // GeometryReader + minHeight is what centers the block:
+                // shorter than the screen, it floats to the middle; taller
+                // (keyboard up), it scrolls normally.
+                GeometryReader { geo in
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            Spacer(minLength: 0)
 
-                        form
+                            brand
+                                .padding(.bottom, LoginMetrics.spaceXXL)
 
-                        divider
-                            .padding(.top, LoginMetrics.spaceXL)
-                            .padding(.bottom, LoginMetrics.spaceL)
+                            form
 
-                        social
+                            divider
+                                .padding(.top, LoginMetrics.spaceXL)
+                                .padding(.bottom, LoginMetrics.spaceL)
 
-                        anchor
-                            .padding(.top, LoginMetrics.spaceXL)
+                            social
+
+                            anchor
+                                .padding(.top, LoginMetrics.spaceXL)
+
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, LoginMetrics.pageInset)
+                        .padding(.vertical, LoginMetrics.spaceXL)
+                        .frame(minHeight: geo.size.height)
                     }
-                    .padding(.horizontal, LoginMetrics.pageInset)
-                    .padding(.bottom, LoginMetrics.spaceXL)
+                    .scrollDismissesKeyboard(.interactively)
                 }
-                .scrollDismissesKeyboard(.interactively)
             }
             .keyboardNavToolbar($focusedField)
             .sheet(isPresented: $showingForgot) {
@@ -111,7 +120,10 @@ struct LoginView: View {
         VStack(spacing: LoginMetrics.spaceM) {
             // Wordmark only — the seal beside it was the same "two marks
             // side by side" call already made everywhere else a lockup
-            // showed both. Same entrance LockedView uses.
+            // showed both. Same entrance LockedView uses. The glow is a
+            // compositingGroup'd shadow at a modest radius — the first
+            // pass shadowed the live vector wordmark at 30pt on every
+            // frame of its own draw-in, which was part of the scroll lag.
             Group {
                 if introReady {
                     if coldLaunch {
@@ -124,17 +136,12 @@ struct LoginView: View {
                 }
             }
             .frame(width: LoginMetrics.wordmarkWidth, height: wordmarkHeight)
-            .shadow(color: Color.cavnarEmber.opacity(0.25), radius: 30)
-
-            Text("Welcome back")
-                .font(.cavnarHeadline(24))
-                .foregroundStyle(Color.cavnarInk)
-                .loginRise(Cue.greeting, enabled: introReady)
+            .compositingGroup()
+            .shadow(color: Color.cavnarEmber.opacity(0.22), radius: 16)
 
             Text("Sign in to your restaurant")
                 .font(.cavnarBody(15))
                 .foregroundStyle(Color.cavnarInk3)
-                .padding(.top, -LoginMetrics.spaceXS)
                 .loginRise(Cue.subtitle, enabled: introReady)
         }
     }

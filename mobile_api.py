@@ -212,14 +212,92 @@ def mobile_forgot_password():
     if not email or "@" not in email:
         return jsonify(ok=False, error="Enter the email address on your account."), 400
     try:
-        from models import create_reset_token
-        from emails import send_password_reset_email
-        token = create_reset_token(email)
-        if token:
-            send_password_reset_email(email, f"https://dashboard.cavnar.ai/reset-password/{token}")
+        # In-app flow: a 6-digit code the sheet asks for, not the web's
+        # emailed link. Stored in the same reset_token/expires columns the
+        # web flow uses, so the two can't both be live for one user at once
+        # — whichever was requested last is the one that works.
+        import random as _rnd
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        code = f"{_rnd.randint(0, 999999):06d}"
+        conn = get_conn()
+        row = conn.execute("SELECT id FROM users WHERE LOWER(email)=? AND is_active=1", (email,)).fetchone()
+        if row:
+            expires = (_dt.now(_tz.utc) + _td(hours=1)).isoformat()
+            conn.execute("UPDATE users SET reset_token=?, reset_token_expires=? WHERE id=?", (code, expires, row["id"]))
+            conn.commit()
+        conn.close()
+        if row:
+            from emails import send_password_reset_code_email
+            send_password_reset_code_email(email, code)
     except Exception as e:
         print(f"[forgot-password-mobile] {e}")
     return jsonify(ok=True)
+
+
+@mobile_bp.route("/reset-password", methods=["POST"])
+def mobile_reset_password():
+    """Second half of the in-app reset: {email, code, new_password}. The
+    code is only ever checked against the row for THAT email (never looked
+    up on its own — a bare 6-digit lookup would let anyone reset any
+    account by guessing), compared constant-time, and rejected past its
+    1-hour expiry. Goes through auth.update_password so the change is
+    stamped like any other (password_changed_at/strength). Rate-limited on
+    the shared login counter so the code can't be brute-forced."""
+    ip = _get_client_ip()
+    if _is_rate_limited(ip):
+        return jsonify(ok=False, error="Too many attempts — please wait a few minutes and try again."), 429
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    code = (data.get("code") or "").strip()
+    new_password = data.get("new_password") or ""
+    if len(new_password) < 8:
+        return jsonify(ok=False, error="Password must be at least 8 characters."), 400
+    if len(code) != 6 or not code.isdigit():
+        _record_failed_attempt(ip)
+        return jsonify(ok=False, error="That code isn't right. Check the email and try again."), 400
+
+    import hmac as _hmac
+    from datetime import datetime as _dt, timezone as _tz
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT id, reset_token, reset_token_expires FROM users WHERE LOWER(email)=? AND is_active=1", (email,)
+    ).fetchone()
+    conn.close()
+    stored = (row["reset_token"] if row else "") or ""
+    if not row or not stored or not _hmac.compare_digest(stored, code):
+        _record_failed_attempt(ip)
+        return jsonify(ok=False, error="That code isn't right. Check the email and try again."), 400
+    try:
+        exp = _dt.fromisoformat((row["reset_token_expires"] or "").replace("Z", "+00:00"))
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=_tz.utc)
+        if _dt.now(_tz.utc) > exp:
+            return jsonify(ok=False, error="That code has expired — request a new one."), 400
+    except Exception:
+        return jsonify(ok=False, error="That code has expired — request a new one."), 400
+
+    from auth import update_password
+    update_password(row["id"], new_password)
+    conn = get_conn()
+    conn.execute("UPDATE users SET reset_token=NULL, reset_token_expires=NULL WHERE id=?", (row["id"],))
+    conn.commit()
+    conn.close()
+    _clear_attempts(ip)
+    try:
+        restaurant = get_restaurant(get_user_by_email_rid(email))
+        if restaurant and restaurant.owner_email:
+            from emails import send_password_changed_email
+            send_password_changed_email(restaurant.owner_email, restaurant.name or "your restaurant", restaurant.owner_name)
+    except Exception:
+        pass
+    return jsonify(ok=True)
+
+
+def get_user_by_email_rid(email):
+    conn = get_conn()
+    row = conn.execute("SELECT restaurant_id FROM users WHERE LOWER(email)=? AND is_active=1", (email,)).fetchone()
+    conn.close()
+    return row["restaurant_id"] if row else None
 
 
 @mobile_bp.route("/register", methods=["POST"])

@@ -188,6 +188,18 @@ def send_password_reset_email(to_email: str, reset_url: str) -> bool:
     """)
 
 
+def send_password_reset_code_email(to_email: str, code: str) -> bool:
+    """The app's in-app reset: a 6-digit code typed into the sheet, instead
+    of the web flow's emailed link. Expires with the same 1-hour window."""
+    spaced = " ".join(code)
+    return _send_branded(to_email, "Your Cavnar AI reset code", f"""
+        <p style="color:#0e0c0a;font-size:18px;font-weight:700;margin:0 0 12px">Reset your password</p>
+        <p style="color:#3a3530;font-size:14px;line-height:1.6;margin:0 0 20px">Enter this code in the app to choose a new password. It expires in 1 hour.</p>
+        <p style="font-family:'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;font-size:32px;font-weight:700;letter-spacing:6px;color:#0e0c0a;margin:0 0 20px;text-align:center">{spaced}</p>
+        <p style="color:#7a736a;font-size:12px;margin:0;line-height:1.6">If you didn't request this, someone may have your email address on file &mdash; your password won't change unless this code is used. Contact <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a> if you're concerned.</p>
+    """)
+
+
 def send_signup_welcome_email(to_email: str, restaurant_name: str, owner_name: str = None) -> bool:
     """Self-serve signup from the app. Deliberately NOT send_welcome_email —
     that one prints the temporary password Will assigns an onboarded client;
