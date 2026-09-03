@@ -71,7 +71,7 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
         resp = requests.post("https://api.resend.com/emails",
             headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
             json={"from": f"Cavnar AI <{FROM_EMAIL}>", "to": [to_email],
-                  "subject": f"Your Cavnar AI verification code: {code}", "html": html},
+                  "subject": f"Your Cavnar AI verification code: {code}", "html": _html_document(html)},
             timeout=10)
         if resp.status_code != 200:
             log.warning("send_2fa_code: Resend returned %s: %s", resp.status_code, resp.text[:300])
@@ -128,7 +128,7 @@ def send_login_notification(to_email: str, restaurant_name: str,
         resp = requests.post("https://api.resend.com/emails",
             headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
             json={"from": f"Cavnar AI <{FROM_EMAIL}>", "to": [to_email],
-                  "subject": f"New sign-in to your Cavnar AI dashboard", "html": html},
+                  "subject": f"New sign-in to your Cavnar AI dashboard", "html": _html_document(html)},
             timeout=10)
         if resp.status_code != 200:
             log.warning(f"send_login_notification failed ({resp.status_code}): {resp.text[:300]}")
@@ -138,11 +138,39 @@ def send_login_notification(to_email: str, restaurant_name: str,
         return False
 
 
+def _html_document(fragment: str, bg: str = "#f7f4ef") -> str:
+    """Wraps an email's inner markup in a real HTML document (doctype, head,
+    body). Every template in this file used to hand Resend a bare <div>
+    fragment with no <html>/<body> — the fragment's own background only
+    ever extended as tall as its own content, so any mail client whose
+    message viewport is taller than that (nearly all of them) showed its
+    own default body color in the leftover space: usually white, but black
+    in a client running in dark mode, exactly the cut-off-halfway look
+    these emails had. Setting the background on a real <body> tag makes it
+    fill the whole message viewport the way client-side page backgrounds
+    normally do. The color-scheme meta tags stop Gmail/Apple Mail's dark
+    mode from re-theming (or inverting) an email that was deliberately
+    designed as a light card, which is the same failure mode from a
+    different angle."""
+    return f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+</head>
+<body style="margin:0;padding:0;background:{bg};">
+{fragment}
+</body>
+</html>"""
+
+
 def _branded_email(inner_html: str) -> str:
     """The shared full-bleed wrapper + wordmark header + seal footer every
     client-facing email here uses — for the two new self-serve emails below
     so they match the rest without re-pasting the frame."""
-    return f"""
+    return _html_document(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:480px;margin:0 auto;background:#f7f4ef;padding:32px 24px;border-radius:12px">
       <div style="text-align:center;margin-bottom:24px">
@@ -154,7 +182,7 @@ def _branded_email(inner_html: str) -> str:
       <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
     </div>
 </div>
-"""
+""")
 
 
 def _send_branded(to_email: str, subject: str, inner_html: str, from_label: str = "Cavnar AI") -> bool:
@@ -191,11 +219,12 @@ def send_password_reset_email(to_email: str, reset_url: str) -> bool:
 def send_password_reset_code_email(to_email: str, code: str) -> bool:
     """The app's in-app reset: a 6-digit code typed into the sheet, instead
     of the web flow's emailed link. Expires with the same 1-hour window."""
-    spaced = " ".join(code)
     return _send_branded(to_email, "Your Cavnar AI reset code", f"""
         <p style="color:#0e0c0a;font-size:18px;font-weight:700;margin:0 0 12px">Reset your password</p>
         <p style="color:#3a3530;font-size:14px;line-height:1.6;margin:0 0 20px">Enter this code in the app to choose a new password. It expires in 1 hour.</p>
-        <p style="font-family:'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;font-size:32px;font-weight:700;letter-spacing:6px;color:#0e0c0a;margin:0 0 20px;text-align:center">{spaced}</p>
+        <div style="text-align:center;margin:0 0 20px">
+          <span style="font-family:ui-monospace,'SF Mono','Space Mono',Menlo,Consolas,monospace;font-size:32px;font-weight:700;letter-spacing:8px;white-space:nowrap;color:#c84b2f;background:#fdf0ef;padding:14px 20px;border-radius:8px;display:inline-block">{code}</span>
+        </div>
         <p style="color:#7a736a;font-size:12px;margin:0;line-height:1.6">If you didn't request this, someone may have your email address on file &mdash; your password won't change unless this code is used. Contact <a href="mailto:will@cavnar.ai" style="color:#c84b2f">will@cavnar.ai</a> if you're concerned.</p>
     """)
 
@@ -294,7 +323,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
             "from": f"Will Cavnar <{FROM_EMAIL}>",
             "to": [to_email],
             "subject": f"Your Cavnar AI payment link — {restaurant_name}",
-            "html": f"""
+            "html": _html_document(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
@@ -341,7 +370,7 @@ def send_payment_email(to_email, restaurant_name, tier=None,
     <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
 </div>
-</div>"""
+</div>""")
         })
     except Exception as e:
         print(f"Payment email failed: {e}")
@@ -417,7 +446,7 @@ def send_welcome_email(to_email, restaurant_name, username, password,
         "from": f"Will Cavnar <{FROM_EMAIL}>",
         "to": [to_email],
         "subject": f"Your Cavnar AI dashboard is live — {restaurant_name}",
-        "html": html,
+        "html": _html_document(html),
     })
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -585,7 +614,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
             "from": f"Will Cavnar <{FROM_EMAIL}>",
             "to": [to_email],
             "subject": f"Getting started with your Cavnar AI dashboard",
-            "html": f"""
+            "html": _html_document(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
@@ -612,7 +641,7 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
     <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
 </div>
-</div>"""
+</div>""")
         })
         print(f"Onboarding day 2 sent to {to_email}")
     except Exception as e:
@@ -681,7 +710,7 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
             "from": f"Will Cavnar <{FROM_EMAIL}>",
             "to": [to_email],
             "subject": f"One week in — how's the dashboard feeling?",
-            "html": f"""
+            "html": _html_document(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
@@ -706,7 +735,7 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
     <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
 </div>
-</div>"""
+</div>""")
         })
         print(f"Onboarding day 7 sent to {to_email}")
     except Exception as e:
@@ -726,7 +755,7 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
             "from": f"Will Cavnar <{FROM_EMAIL}>",
             "to": [to_email],
             "subject": f"Welcome back to Cavnar AI — {restaurant_name}",
-            "html": f"""
+            "html": _html_document(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
@@ -749,7 +778,7 @@ def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str
     · <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
 </div>
-</div>"""
+</div>""")
         })
     except Exception as e:
         print(f"send_reactivation_email failed: {e}")
@@ -837,7 +866,7 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
             "from": f"Will Cavnar <{FROM_EMAIL}>",
             "to": [to_email],
             "subject": f"{month_name} {year} — your monthly Cavnar AI summary",
-            "html": f"""
+            "html": _html_document(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
@@ -861,7 +890,7 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
     · <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
 </div>
-</div>"""
+</div>""")
         })
     except Exception as e:
         print(f"send_monthly_summary_email failed: {e}")
@@ -918,7 +947,7 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
             "from": f"Will Cavnar <{FROM_EMAIL}>",
             "to": [to_email],
             "subject": f"30 days of Cavnar AI — a quick check-in",
-            "html": f"""
+            "html": _html_document(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
@@ -947,7 +976,7 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
     <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
   </p>
 </div>
-</div>"""
+</div>""")
         })
         print(f"Onboarding day 30 sent to {to_email}")
     except Exception as e:
@@ -993,7 +1022,7 @@ def send_password_changed_email(to_email: str, restaurant_name: str, owner_name:
         resp = requests.post("https://api.resend.com/emails",
             headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
             json={"from": f"Cavnar AI <{FROM_EMAIL}>", "to": [to_email],
-                  "subject": "Your Cavnar AI password was changed", "html": html},
+                  "subject": "Your Cavnar AI password was changed", "html": _html_document(html)},
             timeout=10)
         if resp.status_code != 200:
             log.warning("send_password_changed_email: Resend returned %s: %s", resp.status_code, resp.text[:300])
@@ -1037,7 +1066,7 @@ def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str
         resp = requests.post("https://api.resend.com/emails",
             headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
             json={"from": f"Cavnar AI <{FROM_EMAIL}>", "to": [to_email],
-                  "subject": "Your Cavnar AI sign-in email was changed", "html": html},
+                  "subject": "Your Cavnar AI sign-in email was changed", "html": _html_document(html)},
             timeout=10)
         if resp.status_code != 200:
             log.warning("send_email_changed_email: Resend returned %s: %s", resp.status_code, resp.text[:300])
@@ -1077,7 +1106,7 @@ def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount
         resp = requests.post("https://api.resend.com/emails",
             headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
             json={"from": f"Will Cavnar <{FROM_EMAIL}>", "to": [to_email],
-                  "subject": f"Payment issue — {restaurant_name}", "html": html},
+                  "subject": f"Payment issue — {restaurant_name}", "html": _html_document(html)},
             timeout=10)
         if resp.status_code != 200:
             log.warning("send_payment_failed_client_email: Resend returned %s: %s", resp.status_code, resp.text[:300])
