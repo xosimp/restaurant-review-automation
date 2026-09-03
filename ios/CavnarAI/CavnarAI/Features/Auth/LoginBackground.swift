@@ -179,6 +179,19 @@ private struct LoginConstellation: View {
 /// One fade-and-rise per element, offset by `delay` — the login screen's
 /// choreography (wordmark first, then the fields, button, social row,
 /// anchor, each ~0.08s apart).
+///
+/// Built on .onAppear + withAnimation(...).delay(...), the same mechanism
+/// CavnarRowEntrance already uses for staggered list rows — not
+/// .task { try? await Task.sleep(...) }, which this started as: a `.task`
+/// is a cancellable async Task tied to the view's lifetime, and inside
+/// this screen's GeometryReader/ScrollView/NavigationStack nesting it was
+/// getting cancelled and restarted by re-layout before the sleep ever
+/// completed, so `appeared` never flipped and everything using it sat at
+/// permanent opacity 0 — the wordmark (which animates itself internally,
+/// untouched by this modifier) was the only thing that ever became
+/// visible. withAnimation's delay is scheduled on SwiftUI's own
+/// transaction system rather than suspended on a Task, so it can't be
+/// cancelled out from under a re-layout the same way.
 struct LoginRise: ViewModifier {
     var delay: Double
     var enabled: Bool = true
@@ -188,10 +201,11 @@ struct LoginRise: ViewModifier {
         content
             .opacity(appeared || !enabled ? 1 : 0)
             .offset(y: appeared || !enabled ? 0 : 14)
-            .task {
+            .onAppear {
                 guard enabled, !appeared else { return }
-                try? await Task.sleep(for: .seconds(delay))
-                withAnimation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.8)) { appeared = true }
+                withAnimation(.timingCurve(0.2, 0.7, 0.2, 1, duration: 0.8).delay(delay)) {
+                    appeared = true
+                }
             }
     }
 }
