@@ -92,6 +92,12 @@ struct AccountHelpView: View {
                         }
                         .foregroundStyle(Color.cavnarEmber)
                     }
+
+                    Text("Build \(BuildInfo.gitSHA) · \(BuildInfo.builtAt)")
+                        .font(.cavnarBody(12))
+                        .foregroundStyle(Color.cavnarInk3.opacity(0.6))
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 8)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
