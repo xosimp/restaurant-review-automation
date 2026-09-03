@@ -115,7 +115,16 @@ schemes:
       #   export CAVNAR_DEV_API_BASE_URL="https://<your-tunnel>.ngrok-free.app"
       #
       # Unset is safe: the placeholder passes through unsubstituted and
-      # AppEnvironment rejects it, falling back to the compiled default.
+      # AppEnvironment rejects it, falling back to the compiled default —
+      # but that fallback (localhost:5000) is silently unreachable from a
+      # physical device, and "safe" only means it doesn't crash, not that
+      # the failure is obvious (see AppEnvironment's NSLog + RootView's
+      # on-screen tripwire for when it does happen). This has already bitten
+      # a `xcodegen generate` run from a shell that doesn't source ~/.zshrc
+      # (an agent/tool's own shell, not just a plain interactive Terminal) —
+      # that silently overwrites a working scheme's real tunnel URL back to
+      # this literal placeholder. Run `source ~/.zshrc` first if generating
+      # from anywhere other than an ordinary interactive terminal window.
       #
       # Port 5000, not 5050, is macOS's own AirPlay Receiver (ControlCenter
       # process) — it silently answers with a blank 403 Forbidden for any

@@ -141,6 +141,28 @@ struct RootView: View {
             }
         }
         .animation(.easeOut(duration: 0.25), value: network.isOnline)
+        #if DEBUG
+        // Debug-only tripwire for the exact failure that once took a whole
+        // live-debugging session to trace: CAVNAR_API_BASE_URL falling back
+        // to the unsubstituted "${CAVNAR_DEV_API_BASE_URL}" placeholder
+        // (because `xcodegen generate` ran in a shell that hadn't sourced
+        // the export) silently drops every request to unreachable
+        // localhost, and every screen just shows a generic "connection
+        // dropped" error with nothing pointing at the real cause. This
+        // can't be missed on screen the way AppEnvironment's console NSLog
+        // can be.
+        .overlay(alignment: .top) {
+            if AppEnvironment.baseURLOverrideIsUnsubstitutedPlaceholder {
+                Text("DEV BUILD: API base URL not configured — see Xcode console")
+                    .font(.cavnarBody(12, weight: 700))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color.cavnarRed, in: Capsule())
+                    .padding(.top, 8)
+            }
+        }
+        #endif
         .overlay {
             if showLaunchSplash {
                 LaunchSplashView {
