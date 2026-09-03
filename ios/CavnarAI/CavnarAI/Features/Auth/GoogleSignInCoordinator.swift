@@ -22,7 +22,10 @@ final class GoogleSignInCoordinator: NSObject, ASWebAuthenticationPresentationCo
             url: baseURL.appendingPathComponent("auth/google-sso"),
             resolvingAgainstBaseURL: false
         )!
-        components.queryItems = [URLQueryItem(name: "mobile", value: "1")]
+        components.queryItems = [
+            URLQueryItem(name: "mobile", value: "1"),
+            URLQueryItem(name: "device_id", value: Keychain.deviceIdentity()),
+        ]
 
         return try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(

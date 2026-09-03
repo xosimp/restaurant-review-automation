@@ -104,7 +104,14 @@ struct AccountBillingDetailView: View {
             } else if let message = billing?.message {
                 Text(message)
             } else {
-                (Text("Contact ") + Text("[will@cavnar.ai](\(billingMailtoLink))") + Text(" to get set up"))
+                // ONE markdown string, not Text + Text concatenation — the
+                // link rendered in the right color either way (styling
+                // survives concatenation), but the tap region didn't:
+                // SwiftUI's interactive-link hit-testing for a markdown
+                // link inside Text doesn't survive being merged in via the
+                // + operator, so tapping did nothing even though it looked
+                // identical to a working link.
+                Text("Contact [will@cavnar.ai](\(billingMailtoLink)) to get set up")
                     .tint(Color.cavnarEmber)
             }
         }

@@ -48,6 +48,20 @@ struct AccountView: View {
                 if sessionStore.pendingTwoFactorSetupEmail != nil {
                     showingSecurity = true
                 }
+                #if DEBUG
+                // Same opt-in, env-var-gated debug hook as RootView's
+                // auto-login — lets a screenshot-verification pass jump
+                // straight to a specific sheet without needing a reliable
+                // tap on this row. No-op unless explicitly set.
+                switch ProcessInfo.processInfo.environment["CAVNAR_DEBUG_OPEN_SHEET"] {
+                case "profile": showingProfile = true
+                case "security": showingSecurity = true
+                case "alerts": showingAlerts = true
+                case "connections": showingConnections = true
+                case "billing": showingBilling = true
+                default: break
+                }
+                #endif
             }
         }
     }

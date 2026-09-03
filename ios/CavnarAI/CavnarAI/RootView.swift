@@ -110,6 +110,23 @@ struct RootView: View {
         .onAppear {
             PushManager.shared.router = deepLinkRouter
         }
+        #if DEBUG
+        // Debug-only, opt-in auto-login for UI-automation/screenshot
+        // verification — a no-op unless BOTH this is a Debug build AND the
+        // launching process explicitly set these two env vars, so it can
+        // never fire in a TestFlight/release build or an ordinary debug
+        // run. Reuses the real login() path (not a fabricated token), so
+        // it exercises the exact same code a real sign-in does.
+        .task {
+            guard !sessionStore.isAuthenticated,
+                  let user = ProcessInfo.processInfo.environment["CAVNAR_DEBUG_AUTOLOGIN_USER"],
+                  let pass = ProcessInfo.processInfo.environment["CAVNAR_DEBUG_AUTOLOGIN_PASS"] else { return }
+            _ = try? await sessionStore.login(username: user, password: pass)
+            if ProcessInfo.processInfo.environment["CAVNAR_DEBUG_OPEN_SHEET"] != nil {
+                selectedTab = .account
+            }
+        }
+        #endif
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
                 sessionStore.lockIfNeeded()

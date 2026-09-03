@@ -113,11 +113,14 @@ struct AccountConnectionsDetailView: View {
                 Button {
                     Task { await viewModel.connectGoogleBusiness() }
                 } label: {
-                    if viewModel.isConnectingGoogle {
-                        CavnarShimmerText(text: "Connecting…")
-                    } else {
-                        Text("Connect")
+                    Group {
+                        if viewModel.isConnectingGoogle {
+                            CavnarShimmerText(text: "Connecting…")
+                        } else {
+                            Text("Connect")
+                        }
                     }
+                    .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isConnectingGoogle))
                 .disabled(viewModel.isConnectingGoogle)
@@ -143,7 +146,7 @@ struct AccountConnectionsDetailView: View {
                 Button {
                     showingToastConnect = true
                 } label: {
-                    Text("Connect")
+                    Text("Connect").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
             }
@@ -193,31 +196,81 @@ enum ConnectionBrand {
     case google, toast, instagram, square, clover
 }
 
-/// Each brand's own real mark on the app's own dark glass tile — the same
-/// translucent-white-on-dark treatment every other icon tile in Account
-/// uses (AccountDeviceRow's device glyph, etc.). Used to sit on a fixed
-/// near-white tile instead (brand marks are drawn for a light ground in
-/// most style guides), but that read as a jarring bright-white square
-/// against the rest of the app's dark chrome. Google/Toast/Instagram/
-/// Clover's marks are all transparent-background art that reads fine on
-/// dark; Square's is the one exception — Simple Icons' asset is a flat
-/// dark charcoal (#3E4348) shape meant for a light ground, which would
-/// all but disappear here, so it renders as a template and gets tinted
-/// light instead of using its own baked-in color.
+/// Each brand's own real mark on the exact same "obsidian tile" every
+/// other badge in the app sits on (GlowBadge — Home's module tiles, every
+/// Account sheet's hero icon, the Ask Cavnar FAB): the dark gradient
+/// surface, ember-lit top-left edge, hairline top highlight, drop shadow,
+/// and the ember dot seated on the right edge. First pass here was a flat
+/// translucent-white tile, its own one-off treatment that matched nothing
+/// else in the app — device feedback asked for the real shared badge
+/// look. GlowBadge itself only ever draws an SF Symbol or a text
+/// monogram, not arbitrary art, so this duplicates its tile construction
+/// rather than modifying a component used this widely — touching
+/// GlowBadge itself would mean re-verifying every screen that already
+/// uses it (Home, every Account hero, the FAB) for a change scoped to
+/// Connections alone.
+///
+/// Google/Toast/Instagram/Clover's marks are all transparent-background
+/// art that reads fine on dark; Square's is the one exception — Simple
+/// Icons' asset is a flat dark charcoal (#3E4348) shape meant for a light
+/// ground, which would all but disappear here, so it renders as a
+/// template and gets tinted light instead of using its own baked-in color.
 struct ConnectionMarkTile: View {
     let brand: ConnectionBrand
     var size: CGFloat = 40
 
+    private var radius: CGFloat { size * 0.3 }
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: radius, style: .continuous) }
+
+    // Obsidian — same two stops as GlowBadge, matching the app icon's own
+    // dark surface family.
+    private static let tileTop = Color(red: 0.173, green: 0.173, blue: 0.180)
+    private static let tileBottom = Color(red: 0.086, green: 0.086, blue: 0.094)
+
     var body: some View {
-        RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
-            .fill(Color.white.opacity(0.06))
-            .overlay(
-                RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
-            )
-            .frame(width: size, height: size)
-            .overlay(mark.padding(size * 0.2))
-            .clipShape(RoundedRectangle(cornerRadius: size * 0.27, style: .continuous))
+        ZStack {
+            shape
+                .fill(LinearGradient(colors: [Self.tileTop, Self.tileBottom], startPoint: .top, endPoint: .bottom))
+                .frame(width: size, height: size)
+                .overlay(
+                    shape.strokeBorder(
+                        LinearGradient(
+                            stops: [
+                                .init(color: Color.cavnarEmber2.opacity(0.95), location: 0),
+                                .init(color: Color.cavnarEmber.opacity(0.4), location: 0.45),
+                                .init(color: Color.cavnarEmber.opacity(0.12), location: 1),
+                            ],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        ),
+                        lineWidth: max(1, size * 0.03)
+                    )
+                )
+                .overlay(
+                    shape
+                        .inset(by: max(1, size * 0.03) + 0.5)
+                        .strokeBorder(
+                            LinearGradient(colors: [Color.white.opacity(0.10), Color.white.opacity(0)], startPoint: .top, endPoint: .center),
+                            lineWidth: 1
+                        )
+                )
+                .shadow(color: .black.opacity(0.55), radius: size * 0.1, x: 0, y: size * 0.06)
+
+            mark
+                .padding(size * 0.22)
+                .frame(width: size, height: size)
+
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Color.cavnarEmber2, Color.cavnarEmber],
+                        center: UnitPoint(x: 0.42, y: 0.38), startRadius: 0, endRadius: size * 0.1
+                    )
+                )
+                .frame(width: size * 0.17, height: size * 0.17)
+                .offset(x: size * 0.5 - size * 0.055)
+        }
+        .frame(width: size, height: size)
+        .compositingGroup()
     }
 
     @ViewBuilder

@@ -832,6 +832,9 @@ def google_sso_start():
     resp.set_cookie("g_sso_state", state, httponly=True, samesite="Lax", max_age=300)
     if request.args.get("mobile") == "1":
         resp.set_cookie("g_sso_mobile", "1", httponly=True, samesite="Lax", max_age=300)
+        device_id = (request.args.get("device_id") or "").strip()
+        if device_id:
+            resp.set_cookie("g_sso_device_id", device_id, httponly=True, samesite="Lax", max_age=300)
     return resp
 
 
@@ -858,6 +861,7 @@ def google_sso_callback():
             resp = make_response(redirect("cavnarai://auth-callback?" + urllib.parse.urlencode(query, quote_via=urllib.parse.quote)))
             resp.delete_cookie("g_sso_state")
             resp.delete_cookie("g_sso_mobile")
+            resp.delete_cookie("g_sso_device_id")
             return resp
         if error:
             return redirect(f"/login?error={error}")
@@ -937,7 +941,8 @@ def google_sso_callback():
     from auth import create_session, update_last_login
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
     ua = request.headers.get("User-Agent", "")
-    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios" if is_mobile else "web")
+    device_id = request.cookies.get("g_sso_device_id") or None
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios" if is_mobile else "web", device_id=device_id)
     update_last_login(user["id"])
 
     return _finish(token=token)

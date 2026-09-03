@@ -137,7 +137,21 @@ struct AccountSecurityDetailView: View {
                 AccountKVRow(label: "2FA code by") {
                     AccountValue(text: twoFAByText ? "Text message" : "Email")
                 }
-                AccountKVRow(label: "2FA") {
+            }
+            // Always an unconditional sibling — only its trailing link
+            // branches. This row used to be the whole AccountKVRow wrapped
+            // in the if/else above, and that was enough to make it
+            // measurably shorter than Password/Sign-in notifications (both
+            // unconditional siblings) despite using the identical
+            // component: SwiftUI's _ConditionalContent wrapper around a
+            // top-level if/else branch doesn't propagate a child's own
+            // .frame(minHeight:) through to the parent VStack's layout
+            // negotiation as reliably as an unconditional sibling does.
+            // Confirmed by direct pixel measurement — this row rendered at
+            // 51pt against its siblings' 64pt each, a real, visible gap
+            // device feedback caught, not a padding value being wrong.
+            AccountKVRow(label: "2FA") {
+                if live.twoFAEnabled {
                     AccountLink(title: "Turn off", tone: .cavnarRed) {
                         Task {
                             if await viewModel.disable2FA() {
@@ -146,9 +160,7 @@ struct AccountSecurityDetailView: View {
                             }
                         }
                     }
-                }
-            } else {
-                AccountKVRow(label: "2FA") {
+                } else {
                     AccountLink(title: "Turn on") { showing2FASetup = true }
                 }
             }

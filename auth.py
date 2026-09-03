@@ -56,6 +56,7 @@ def init_auth(db_path: str = DB_PATH):
         "ALTER TABLE sessions ADD COLUMN user_agent TEXT",
         "ALTER TABLE sessions ADD COLUMN active_restaurant_id INTEGER",
         "ALTER TABLE sessions ADD COLUMN device_type TEXT NOT NULL DEFAULT 'web'",
+        "ALTER TABLE sessions ADD COLUMN device_id TEXT",
         "ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'client'",
         "ALTER TABLE users ADD COLUMN google_id TEXT",
         "ALTER TABLE users ADD COLUMN apple_user_id TEXT",
@@ -197,17 +198,30 @@ def list_users(db_path: str = DB_PATH) -> list[dict]:
 
 def create_session(user_id: int, days: int = 30,
                    ip_address: str = None, user_agent: str = None,
-                   device_type: str = "web",
+                   device_type: str = "web", device_id: str = None,
                    db_path: str = DB_PATH) -> str:
+    """Every call used to unconditionally INSERT a new row, so a device that
+    just re-logs in (session expired, signed out, reinstalled) piled up a
+    fresh row every time — the Devices list in Account then showed several
+    "different" devices that were really the same phone signing in
+    repeatedly, since nothing here ever expired for 30 days. `device_id` is
+    a UUID the client generates once and persists (Keychain on iOS — see
+    DeviceIdentity.swift), sent on every login-family request; when present,
+    any of THIS user's existing sessions for that same device are replaced
+    rather than added to. Web logins (and any client that doesn't send one)
+    keep the old accumulate-until-expiry behavior, since there's no stable
+    per-device identity to key off there."""
     token = secrets.token_urlsafe(32)
     from datetime import timedelta
     expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
     conn = get_conn(db_path)
     # Prune expired sessions for this user (keep active ones for multi-device support)
     conn.execute("DELETE FROM sessions WHERE user_id=? AND expires_at <= datetime('now')", (user_id,))
+    if device_id:
+        conn.execute("DELETE FROM sessions WHERE user_id=? AND device_id=?", (user_id, device_id))
     conn.execute(
-        "INSERT INTO sessions (token, user_id, expires_at, ip_address, user_agent, device_type) VALUES (?,?,?,?,?,?)",
-        (token, user_id, expires, ip_address or "", user_agent or "", device_type)
+        "INSERT INTO sessions (token, user_id, expires_at, ip_address, user_agent, device_type, device_id) VALUES (?,?,?,?,?,?,?)",
+        (token, user_id, expires, ip_address or "", user_agent or "", device_type, device_id or "")
     )
     conn.commit()
     conn.close()

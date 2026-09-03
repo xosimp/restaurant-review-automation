@@ -219,15 +219,27 @@ struct AccountStatTile: View {
 
 /// Label on the left, whatever you like on the right — a value or a
 /// link. Every row in a card built from these shares one fixed content
-/// height (`Self.rowHeight`, sized to a single line of the bumped 16pt
-/// row font) regardless of what sits in the trailing slot — device
-/// feedback caught a Toggle-vs-Text-link row visibly taller than its
-/// siblings in the same card, which is what made Sign-in's three rows
-/// read as inconsistently positioned even though each one was
-/// individually centered. A fixed height removes the possibility of that
-/// drift instead of tuning it away per call site.
+/// height (`Self.rowHeight`) regardless of what sits in the trailing slot
+/// or how this row is constructed at the call site.
+///
+/// This was a `.frame(minHeight:)` floor of 24 — a floor, not a fixed
+/// size, on the theory that every row's real content would naturally
+/// settle around the same height anyway. Direct pixel measurement proved
+/// that wrong: Security's three Sign-in rows (Password/2FA/Sign-in
+/// notifications) are built from the identical component with identical
+/// label/trailing font sizes, yet 2FA rendered at 51pt against its
+/// siblings' 64pt each — a real, visible 13pt gap, not a perception
+/// issue. Every content- or structure-based theory that could explain it
+/// (conditional vs. unconditional construction, divider placement, label
+/// length, trailing content) was tested against a counter-example in this
+/// same card and disproven — whatever SwiftUI is actually doing here
+/// wasn't fully traceable through the source alone. A `.frame(height:)`
+/// (not minHeight) sidesteps the question entirely: 38 is the content
+/// height the working rows already settle at (64pt total − 26pt padding),
+/// so this makes every row match that, by construction, regardless of
+/// whatever was suppressing it for specific rows.
 struct AccountKVRow<Trailing: View>: View {
-    static var rowHeight: CGFloat { 24 }
+    static var rowHeight: CGFloat { 38 }
 
     let label: String
     var showsDivider: Bool = true
@@ -240,7 +252,7 @@ struct AccountKVRow<Trailing: View>: View {
                 Spacer(minLength: 8)
                 trailing()
             }
-            .frame(minHeight: Self.rowHeight)
+            .frame(height: Self.rowHeight)
             .padding(.vertical, 13)
             if showsDivider { AccountRowDivider() }
         }

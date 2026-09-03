@@ -97,6 +97,7 @@ def mobile_apple_signin():
     user's email on their very first-ever Sign In with Apple for this app,
     so apple_user_id is the only reliable match on every login after that."""
     data = request.get_json() or {}
+    device_id = (data.get("device_id") or "").strip() or None
     identity_token = data.get("identity_token") or ""
     if not identity_token:
         return jsonify(ok=False, error="Missing Apple identity token"), 400
@@ -131,7 +132,7 @@ def mobile_apple_signin():
     user = dict(row)
     ip = _get_client_ip()
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
-    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios")
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id)
     update_last_login(user["id"])
     _send_login_notification(user, ip, ua)
     return jsonify(ok=True, token=token, user=_public_user(user))
@@ -150,6 +151,7 @@ def mobile_login():
     if _is_rate_limited(ip):
         return jsonify(ok=False, error="Too many failed attempts. Please wait 5 minutes and try again."), 429
     data = request.get_json() or {}
+    device_id = (data.get("device_id") or "").strip() or None
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
     user = verify_password(username, password)
@@ -190,7 +192,7 @@ def mobile_login():
         return jsonify(ok=True, requires_2fa=True, pending_token=pending_encoded, masked_email=masked)
 
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
-    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios")
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id)
     _send_login_notification(user, ip, ua)
     return jsonify(ok=True, requires_2fa=False, token=token, user=_public_user(user))
 
@@ -314,6 +316,7 @@ def mobile_register():
     if _is_rate_limited(ip):
         return jsonify(ok=False, error="Too many attempts — please wait a few minutes and try again."), 429
     data = request.get_json(silent=True) or {}
+    device_id = (data.get("device_id") or "").strip() or None
 
     restaurant_name = (data.get("restaurant_name") or "").strip()
     owner_name = (data.get("owner_name") or "").strip()
@@ -363,7 +366,7 @@ def mobile_register():
     from auth import get_user_by_username
     user = get_user_by_username(username)
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
-    token = create_session(uid, ip_address=ip, user_agent=ua, device_type="ios")
+    token = create_session(uid, ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id)
     return jsonify(ok=True, token=token, user=_public_user(user)), 201
 
 
@@ -379,6 +382,7 @@ def mobile_verify_2fa():
     if _is_rate_limited("2fa:" + ip):
         return jsonify(ok=False, error="Too many attempts. Please wait 5 minutes and try again."), 429
     data = request.get_json() or {}
+    device_id = (data.get("device_id") or "").strip() or None
     pending_token = data.get("pending_token", "")
     code_entered = (data.get("code") or "").strip()
     remember = bool(data.get("remember_device"))
@@ -416,7 +420,7 @@ def mobile_verify_2fa():
         return jsonify(ok=False, error="Session expired — please log in again."), 401
 
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
-    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios")
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id)
     _send_login_notification(user, ip, ua)
 
     device_token = None

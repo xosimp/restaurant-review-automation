@@ -67,10 +67,16 @@ final class SessionStore {
         let username: String
         let password: String
         let deviceToken: String?
+        // Excluded from the memberwise init on purpose (always this exact
+        // expression, never caller-supplied) — see Keychain.deviceIdentity()
+        // and auth.py's create_session() for why every login-family body
+        // in this file carries one.
+        let deviceId: String = Keychain.deviceIdentity()
 
         enum CodingKeys: String, CodingKey {
             case username, password
             case deviceToken = "device_token"
+            case deviceId = "device_id"
         }
     }
 
@@ -116,11 +122,13 @@ final class SessionStore {
         let pendingToken: String
         let code: String
         let rememberDevice: Bool
+        let deviceId: String = Keychain.deviceIdentity()
 
         enum CodingKeys: String, CodingKey {
             case code
             case pendingToken = "pending_token"
             case rememberDevice = "remember_device"
+            case deviceId = "device_id"
         }
     }
 
@@ -168,7 +176,11 @@ final class SessionStore {
 
     private struct AppleSignInBody: Encodable {
         let identityToken: String
-        enum CodingKeys: String, CodingKey { case identityToken = "identity_token" }
+        let deviceId: String = Keychain.deviceIdentity()
+        enum CodingKeys: String, CodingKey {
+            case identityToken = "identity_token"
+            case deviceId = "device_id"
+        }
     }
 
     private struct AppleSignInResponse: Decodable {
@@ -197,10 +209,12 @@ final class SessionStore {
         let username: String
         let password: String
         let phone: String
+        let deviceId: String = Keychain.deviceIdentity()
         enum CodingKeys: String, CodingKey {
             case restaurantName = "restaurant_name"
             case ownerName = "owner_name"
             case email, username, password, phone
+            case deviceId = "device_id"
         }
     }
 

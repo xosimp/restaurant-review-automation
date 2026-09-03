@@ -44,5 +44,19 @@ enum Keychain {
     enum Key {
         static let sessionToken = "cavnar.session_token"
         static let deviceRememberToken = "cavnar.2fa_device_token"
+        static let deviceIdentity = "cavnar.device_identity"
+    }
+
+    /// A stable identifier for this physical device/install, generated
+    /// once and persisted here — sent on every login-family request so
+    /// the backend can recognize "this exact device signing in again" and
+    /// replace its old session instead of piling up a new row in the
+    /// Devices list on every fresh login (expired session, sign-out/back-
+    /// in, reinstall). See auth.py's create_session() for the other half.
+    static func deviceIdentity() -> String {
+        if let existing = get(Key.deviceIdentity) { return existing }
+        let fresh = UUID().uuidString
+        set(fresh, for: Key.deviceIdentity)
+        return fresh
     }
 }
