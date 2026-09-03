@@ -73,6 +73,16 @@ struct HomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             ZStack(alignment: .top) {
+                // Full-page ambient aurora underneath everything — the
+                // radial-bloom drift Login uses, at a fraction of its
+                // opacity so it reads as warmth behind the chart/carousel/
+                // module grid rather than competing with them (see
+                // HomeAmbientAurora's own doc comment). HomeHeroBackground
+                // draws on top of this, right where the greeting sits, so
+                // that band stays as vivid as it already was.
+                HomeAmbientAurora()
+                    .ignoresSafeArea()
+
                 HomeHeroBackground()
                     .frame(height: Self.heroBackgroundHeight)
                     .ignoresSafeArea(edges: .top)

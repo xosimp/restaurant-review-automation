@@ -93,7 +93,7 @@ struct NeedsAttentionCarousel: View {
                     old != nil && new != nil && old != new
                 }
             }
-            .frame(height: 208)
+            .frame(height: 188)
 
             if items.count > 1 {
                 PulsingSwipeArrow()
@@ -133,15 +133,17 @@ struct NeedsAttentionFloatCard: View {
         .padding(.vertical, 16)
         .padding(.horizontal, 14)
         // The card was never given its own height — only its enclosing
-        // GeometryReader was (208pt, below), so the card itself just
-        // content-hugged to whatever its badge + two text blocks needed
-        // (measured on a real render: ~140pt) and sat centered in the
-        // leftover space, reading as short/wide instead of the taller,
-        // closer-to-square shape the 208pt outer allowance was clearly
-        // sized for. 180 = 208 minus the carousel's own 14pt top/bottom
-        // scroll padding, so this fills that allowance exactly with no
-        // clipping.
-        .frame(width: 184, height: 180, alignment: .leading)
+        // GeometryReader was, so the card itself just content-hugged to
+        // whatever its badge + two text blocks needed (measured on a real
+        // render: ~140pt) and sat centered in the leftover space, reading
+        // as short/wide. Giving it an explicit height fixed that, but the
+        // first value (180, matched exactly to the outer allowance) left
+        // a lot of empty room below the text for the common single-line
+        // case — this is trimmed down to the smallest height that still
+        // comfortably fits a 2-line title + 2-line detail without either
+        // one clipping against the card's own rounded-rect mask. 160 = 188
+        // minus the carousel's own 14pt top/bottom scroll padding.
+        .frame(width: 184, height: 160, alignment: .leading)
         .background(
             LinearGradient(
                 colors: [Color.cavnarEmber.opacity(0.16), Color.cavnarEmber.opacity(0.04)],
