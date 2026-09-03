@@ -3,6 +3,14 @@
 **Target:** `ios/CavnarAI/CavnarAI/`
 **Focus:** rendering efficiency, main-thread work, retain cycles, animation cost
 
+
+> **Remediation status (ff937cc): 6/6 findings fixed.** All fixed.
+> Verified by: clean `xcodebuild` (0 errors, 0 warnings), 646 backend tests passing,
+> `scripts/check_colors.py` clean, and a per-finding grep confirming each original
+> code signature is gone. Findings below are kept as written (plus explicit
+> **Correction** notes where the original analysis was wrong) so the reasoning
+> stays auditable rather than being rewritten after the fact.
+
 ---
 
 ## Executive summary

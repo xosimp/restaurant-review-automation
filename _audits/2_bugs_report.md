@@ -3,6 +3,14 @@
 **Target:** `ios/CavnarAI/CavnarAI/`
 **Method:** static analysis + a full `xcodebuild` compile with `SWIFT_STRICT_CONCURRENCY: complete`, using the compiler's own diagnostics as evidence rather than pattern-matching alone.
 
+
+> **Remediation status (ff937cc): 8/8 findings fixed.** All fixed. Clean build is now 0 errors / 0 warnings, Swift 6 language-mode clean.
+> Verified by: clean `xcodebuild` (0 errors, 0 warnings), 646 backend tests passing,
+> `scripts/check_colors.py` clean, and a per-finding grep confirming each original
+> code signature is gone. Findings below are kept as written (plus explicit
+> **Correction** notes where the original analysis was wrong) so the reasoning
+> stays auditable rather than being rewritten after the fact.
+
 ---
 
 ## Executive summary
@@ -140,9 +148,11 @@ Call sites change from `Self.isoFormatter.date(...)` to `Self.isoFormatter.value
 
 ---
 
-## 2.3 WARNING — 13 warnings block the Swift 6 language mode
+## 2.3 WARNING — Warnings block the Swift 6 language mode (13 found; 16 actual)
 
-A full compile emits 13 distinct warnings, every one of them tagged *"this is an error in the Swift 6 language mode."* The project is on `SWIFT_VERSION: 5.0` with `SWIFT_STRICT_CONCURRENCY: complete`, so these are visible today and will become build failures the moment the language mode moves.
+**Correction (found during remediation):** the audit build was incremental and therefore under-reported. A `clean build` surfaces **3 more** in files the incremental build never recompiled — `ReviewsAnalyticsViewModel.swift:42,45,48`, where the private generic `DataResponse<T>` crosses out of the `APIClient` actor via `async let` without being `Sendable`. The true count is 16, not 13. Always audit concurrency against a clean build.
+
+A compile emits 13 distinct warnings incrementally (16 clean), every one of them tagged *"this is an error in the Swift 6 language mode."* The project is on `SWIFT_VERSION: 5.0` with `SWIFT_STRICT_CONCURRENCY: complete`, so these are visible today and will become build failures the moment the language mode moves.
 
 Breakdown:
 

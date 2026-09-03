@@ -87,15 +87,28 @@ struct TypewriterText: View {
                 visibleWordCount = 0
                 let total = split.count
                 guard total > 0 else { return }
-                // Total reveal is capped rather than scaling with length: the
-                // text has already fully arrived, so a long answer was adding
-                // its whole reveal duration on top of generation latency
-                // (audit 5.3).
-                let delayNanos = UInt64(min(max(1400.0 / Double(total), 16), 55) * 1_000_000)
-                for i in 1...total {
+
+                // Total reveal duration is CAPPED, not per-word. The old
+                // formula clamped the per-word delay at a 16ms floor, so
+                // total time grew linearly past ~87 words: a typical 240-word
+                // answer spent 3.8s, and a long one 6.4s, typing out text the
+                // device had already received in full — pure added latency on
+                // top of generation (audit 5.3). Past the cap, whole words are
+                // revealed per tick instead of slowing the whole thing down.
+                let targetDuration = 1.4
+                let minStep = 0.016
+                let rawStep = targetDuration / Double(total)
+                let step = min(max(rawStep, minStep), 0.055)
+                // How many words to advance per tick to still finish on time.
+                let wordsPerTick = max(1, Int((minStep / rawStep).rounded(.up)))
+                let delayNanos = UInt64(step * 1_000_000_000)
+
+                var revealed = 0
+                while revealed < total {
                     try? await Task.sleep(nanoseconds: delayNanos)
                     if Task.isCancelled { return }
-                    visibleWordCount = i
+                    revealed = min(revealed + wordsPerTick, total)
+                    visibleWordCount = revealed
                     onReveal?()
                 }
             }

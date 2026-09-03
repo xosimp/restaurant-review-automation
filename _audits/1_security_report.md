@@ -4,6 +4,14 @@
 **Date:** 2026-09-03
 **Scope:** credential handling, data-at-rest, transport security, log leakage, URL/deep-link surface
 
+
+> **Remediation status (ff937cc): 9/9 findings fixed.** All fixed.
+> Verified by: clean `xcodebuild` (0 errors, 0 warnings), 646 backend tests passing,
+> `scripts/check_colors.py` clean, and a per-finding grep confirming each original
+> code signature is gone. Findings below are kept as written (plus explicit
+> **Correction** notes where the original analysis was wrong) so the reasoning
+> stays auditable rather than being rewritten after the fact.
+
 ---
 
 ## Executive summary

@@ -36,7 +36,23 @@ final class GoogleSignInCoordinator: NSObject, ASWebAuthenticationPresentationCo
             throw GoogleSignInError.serverError("Sign-in isn't configured correctly on this build.")
         }
 
-        return try await withCheckedThrowingContinuation { continuation in
+        return try await withThrowingTaskGroup(of: String.self) { group in
+            group.addTask { try await self.runSession(authorizeURL: authorizeURL) }
+            group.addTask {
+                // See GMBConnectCoordinator.connect for why (audit 4.4).
+                try await Task.sleep(for: .seconds(180))
+                throw GoogleSignInError.serverError("Sign-in timed out — try again.")
+            }
+            defer { group.cancelAll() }
+            guard let first = try await group.next() else {
+                throw GoogleSignInError.missingToken
+            }
+            return first
+        }
+    }
+
+    private func runSession(authorizeURL: URL) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(
                 url: authorizeURL,
                 callbackURLScheme: "cavnarai"

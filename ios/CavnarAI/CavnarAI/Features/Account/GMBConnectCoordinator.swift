@@ -18,7 +18,26 @@ enum GMBConnectError: Error {
 final class GMBConnectCoordinator: NSObject, ASWebAuthenticationPresentationContextProviding {
     private var session: ASWebAuthenticationSession?
 
+    /// Races the browser sheet against a wall-clock timeout. ASWebAuthenticationSession
+    /// reliably reports user cancellation, but if the sheet is torn down by an
+    /// OS-level interruption (a call, the auth service being killed under
+    /// memory pressure) the completion may never fire — leaving the
+    /// continuation suspended for the life of the process, with the caller's
+    /// spinner running forever and no way to retry short of force-quitting
+    /// (audit 4.4).
     func connect(authorizeURL: URL) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await self.runSession(authorizeURL: authorizeURL) }
+            group.addTask {
+                try await Task.sleep(for: .seconds(180))
+                throw GMBConnectError.server("Connection timed out — try again.")
+            }
+            defer { group.cancelAll() }
+            try await group.next()
+        }
+    }
+
+    private func runSession(authorizeURL: URL) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let session = ASWebAuthenticationSession(
                 url: authorizeURL,

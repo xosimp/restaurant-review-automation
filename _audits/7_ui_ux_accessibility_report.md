@@ -4,6 +4,14 @@
 **Standard:** Apple Human Interface Guidelines; WCAG 2.1 AA where applicable
 **Deployment context:** restaurant floor, kitchen pass, dim dining rooms, wet/greasy hands
 
+
+> **Remediation status (ff937cc): 8/8 findings fixed.** All fixed.
+> Verified by: clean `xcodebuild` (0 errors, 0 warnings), 646 backend tests passing,
+> `scripts/check_colors.py` clean, and a per-finding grep confirming each original
+> code signature is gone. Findings below are kept as written (plus explicit
+> **Correction** notes where the original analysis was wrong) so the reasoning
+> stays auditable rather than being rewritten after the fact.
+
 ---
 
 ## Executive summary

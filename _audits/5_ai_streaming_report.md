@@ -3,6 +3,14 @@
 **Surfaces audited:** `Features/AskCavnar/` (conversational), `DesignSystem/TypewriterText.swift` + `DesignSystem/AIConsultantView.swift` (inline insights), and the backend contract in `ask_cavnar.py`
 **Focus:** streaming UX, context/token management, memory growth, malformed-response robustness
 
+
+> **Remediation status (ff937cc): 5.5/6 findings fixed.** 5.1, 5.2, 5.4, 5.5, 5.6 fixed. 5.3 fixed on the client side only — the artificial reveal is now capped at ~1.3s regardless of answer length (was up to 6.4s). Server-side SSE streaming is deliberately NOT done: it would bypass create_with_retry's retry/rate-limit/ops wrapper and cannot be verified end to end without live Claude calls through the tunnel. Tracked as a separate piece of work.
+> Verified by: clean `xcodebuild` (0 errors, 0 warnings), 646 backend tests passing,
+> `scripts/check_colors.py` clean, and a per-finding grep confirming each original
+> code signature is gone. Findings below are kept as written (plus explicit
+> **Correction** notes where the original analysis was wrong) so the reasoning
+> stays auditable rather than being rewritten after the fact.
+
 ---
 
 ## Executive summary
@@ -14,7 +22,7 @@ The problems are all on the **client side of that contract**: the app is unaware
 | # | Severity | Finding |
 |---|---|---|
 | 5.1 | CRITICAL | Truncated answers (`max_tokens`) render as if complete — no `stop_reason` surfaced |
-| 5.2 | WARNING | Questions over 500 chars are silently cut server-side with no client warning |
+| 5.2 | WARNING | Questions over 500 chars are rejected only after a round trip, with no client-side limit |
 | 5.3 | WARNING | "Streaming" is simulated — full blocking generation, then a client-side typewriter |
 | 5.4 | WARNING | Client uploads unbounded history the server will discard |
 | 5.5 | WARNING | Markdown safety relies solely on prompt instruction, with no render fallback |
@@ -115,7 +123,7 @@ if message.wasTruncated {
 
 ---
 
-## 5.2 WARNING — Questions over 500 characters are silently truncated
+## 5.2 WARNING — The 500-character limit is only enforced after a round trip
 
 **Files:** `ask_cavnar.py` line 420 (`question.strip()[:500]`); `Features/AskCavnar/AskCavnarView.swift` lines 185–189
 
@@ -130,7 +138,9 @@ TextField("How can I help?", text: $viewModel.question, axis: .vertical)
     .lineLimit(1...5)
 ```
 
-An owner describing a nuanced situation — "we've got a 3-star trend on service since we changed the closing shift, and my Saturday bartender…" — easily passes 500 characters. The tail is discarded server-side without a word, and Claude answers a question the owner never finished asking. The owner has no way to know why the answer missed the point.
+**Correction (verified during remediation):** `client_api._do_ask_cavnar` (lines 828–829) rejects an over-length question with an explicit 400 and the message "That question is too long — try to keep it under 500 characters." It is *not* silently truncated, as this finding originally stated — `ask()`'s own `[:500]` slice is a second-layer defence that the route already prevents reaching.
+
+The real defect is narrower but still real: the limit is invisible until the user has typed a long question, tapped send, waited for a round trip, and had it bounced. An owner describing a nuanced situation — "we've got a 3-star trend on service since we changed the closing shift, and my Saturday bartender…" — passes 500 characters easily and only finds out afterwards.
 
 **After** — enforce the limit visibly at the point of entry:
 ```swift
@@ -170,7 +180,16 @@ The actual sequence today:
 1. User sends → `LoadingBubble` appears.
 2. The backend blocks for the **entire** generation (a 320-token Sonnet answer: typically 2–5s).
 3. The complete answer arrives at once.
-4. `TypewriterText` then spends **another ~1.4 seconds** revealing text the device already has (`delayNanos` is derived from `1400.0 / Double(total)`, clamped to 16–55 ms/word).
+4. `TypewriterText` then spends **another 1.4 to 6.4 seconds** revealing text the device already has.
+
+**Correction (measured during remediation):** this finding originally said "~1.4 seconds", which is only true up to ~87 words. The per-word delay is clamped at a **16 ms floor**, so past that point total reveal time grows linearly with length rather than staying capped:
+
+| Answer length | Reveal time |
+|---|---|
+| 25 words | 1.38 s |
+| 87 words | 1.40 s |
+| 240 words (typical at `max_tokens=320`) | **3.84 s** |
+| 400 words | **6.40 s** |
 
 So the app deliberately adds up to 1.4s of latency *after* the data is in hand. Real streaming inverts this: first token in ~300–600 ms, and the reveal cadence *is* the generation. The current design has the cost of a typewriter (jitter, layout thrash, delayed comprehension — see Pass 3) with none of its benefit (early first token).
 
