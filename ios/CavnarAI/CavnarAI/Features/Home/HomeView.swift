@@ -161,14 +161,20 @@ struct HomeView: View {
                 // here matches the everyday-logo-in-the-corner convention
                 // most apps use, on the one screen every session opens on.
                 cavnarToolbarItem(placement: .topBarLeading) {
-                    // 17pt, matching the bell/building icons' own
-                    // .font(.system(size: 17)) exactly — was 18, a mismatch
-                    // device feedback caught (the seal reading visibly
-                    // smaller than the bell despite the larger number,
-                    // since it's a thin open ring rather than a bold-weight
-                    // filled glyph — same background circle size either way
-                    // via cavnarToolbarIconGlass()'s shared default).
-                    CavnarSealMark(size: 17)
+                    // Matching the SAME NUMBER as the bell's font size
+                    // ("17pt each") turned out not to mean matching visual
+                    // size at all, and measuring the actual rendered pixels
+                    // proved it: the bell glyph (a bold SF Symbol) rendered
+                    // at ~22pt tall, the seal's ring (custom-drawn geometry
+                    // with built-in internal padding — see CavnarSealMark's
+                    // own doc comment on its proportional 120x120 source)
+                    // rendered at only ~13pt tall from the same declared
+                    // "17". 28 empirically measured to produce the same
+                    // ~22pt glyph height as the bell. The shared background
+                    // circle stays identical either way — both go through
+                    // cavnarToolbarIconGlass()'s own fixed 34pt default,
+                    // which doesn't depend on the icon's declared size.
+                    CavnarSealMark(size: 28)
                         .cavnarToolbarIconGlass()
                 }
                 // Only shown when quiet hours is both enabled and the
@@ -347,6 +353,14 @@ struct HomeView: View {
             }
             .opacity(heroAppeared ? 1 : 0)
             .offset(y: heroAppeared ? 0 : 26)
+            // Same duration/delay as valueChartSection and
+            // needsAttentionSection below — all three used to animate on
+            // different schedules (this one inherited RootView's ambient
+            // 0.7s/0.15s transaction, the other two overrode it with their
+            // own, different, timings), so the page read as pieces arriving
+            // independently rather than one coordinated reveal. Bottom
+            // content was finishing before the hero above it.
+            .animation(Self.introAnimation, value: heroAppeared)
             Spacer(minLength: 16)
         }
         // Deliberately shorter than the background behind it — this governs
@@ -438,7 +452,7 @@ struct HomeView: View {
         ValueChartCard(totalValue: summary.totalValueDelivered, history: summary.valueHistory)
             .opacity(heroAppeared ? 1 : 0)
             .offset(y: heroAppeared ? 0 : 20)
-            .animation(.easeOut(duration: 0.5).delay(0.3), value: heroAppeared)
+            .animation(Self.introAnimation, value: heroAppeared)
     }
 
     // No "Needs attention" header and no enclosing gray .cavnarCard() around
@@ -455,16 +469,23 @@ struct HomeView: View {
             AllClearRow()
                 .opacity(heroAppeared ? 1 : 0)
                 .offset(y: heroAppeared ? 0 : 20)
-                .animation(.easeOut(duration: 0.5).delay(0.1), value: heroAppeared)
+                .animation(Self.introAnimation, value: heroAppeared)
         } else {
             NeedsAttentionCarousel(items: summary.needsAttention) { item in
                 navigate(to: ModuleRoute(key: item.module, label: item.module.capitalized))
             }
             .opacity(heroAppeared ? 1 : 0)
             .offset(y: heroAppeared ? 0 : 20)
-            .animation(.easeOut(duration: 0.55).delay(0.1), value: heroAppeared)
+            .animation(Self.introAnimation, value: heroAppeared)
         }
     }
+
+    // Single shared timing for every heroAppeared-driven fade-in on this
+    // screen (hero, value chart, needs-attention) — previously each had its
+    // own duration/delay, so the sections landed at different moments and
+    // the page read as pieces arriving independently instead of one
+    // coordinated reveal.
+    private static let introAnimation: Animation = .easeOut(duration: 0.55).delay(0.15)
 
     // A Button inside a ScrollView/LazyVGrid has to let the ScrollView's own
     // pan gesture "race" its tap gesture to tell a scroll from a tap — under

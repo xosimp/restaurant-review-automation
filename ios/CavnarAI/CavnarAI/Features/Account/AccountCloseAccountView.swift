@@ -38,13 +38,21 @@ struct AccountCloseAccountView: View {
                         .font(.cavnarBody(16))
                         .foregroundStyle(Color.cavnarInk3)
 
-                    // ONE markdown string, not Text + Text concatenation —
-                    // the latter silently drops SwiftUI's interactive-link
-                    // hit-testing even though the styling still looks right
-                    // (root-caused this session in Billing's identical link).
-                    Text("Contact [will@cavnar.ai](\(mailtoLink)) to request cancellation.")
+                    // A real Link, matching Help & FAQ's proven-working
+                    // "Contact Will" and Billing's identical fix — markdown
+                    // links embedded in Text never actually became tappable
+                    // on a real device despite looking and coloring
+                    // correctly, across multiple attempts. Link owns the tap
+                    // gesture itself, so Text+Text concatenation for
+                    // per-segment color is safe here.
+                    if let url = URL(string: mailtoLink) {
+                        Link(destination: url) {
+                            Text("Contact ").foregroundStyle(Color.cavnarInk3)
+                                + Text("will@cavnar.ai").foregroundStyle(Color.cavnarEmber)
+                                + Text(" to request cancellation.").foregroundStyle(Color.cavnarInk3)
+                        }
                         .font(.cavnarBody(16))
-                        .tint(Color.cavnarEmber)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)

@@ -134,16 +134,23 @@ struct AccountBillingDetailView: View {
                     + Text(billing.nextDate ?? "—").font(.cavnarNumber(15.5, weight: 600))
             } else if let message = live?.message {
                 Text(message)
-            } else {
-                // ONE markdown string, not Text + Text concatenation — the
-                // link rendered in the right color either way (styling
-                // survives concatenation), but the tap region didn't:
-                // SwiftUI's interactive-link hit-testing for a markdown
-                // link inside Text doesn't survive being merged in via the
-                // + operator, so tapping did nothing even though it looked
-                // identical to a working link.
-                Text("Contact [will@cavnar.ai](\(billingMailtoLink)) to get set up")
-                    .tint(Color.cavnarEmber)
+            } else if let url = URL(string: billingMailtoLink) {
+                // A real Link, not a markdown link embedded in Text. The
+                // markdown-in-Text approach looked identical and even
+                // colored correctly, but never actually became tappable —
+                // confirmed on a real device, twice, after two different
+                // "should be correct" fixes. Link is the exact mechanism
+                // "Contact Will" in Help & FAQ already uses successfully, so
+                // this stops guessing and copies the thing that's proven to
+                // work: Link owns the tap gesture and calls openURL itself,
+                // it doesn't depend on Text's internal markdown-link
+                // hit-testing at all, so Text+Text concatenation for
+                // per-segment color is completely safe here.
+                Link(destination: url) {
+                    Text("Contact ").foregroundStyle(Color.cavnarInk3)
+                        + Text("will@cavnar.ai").foregroundStyle(Color.cavnarEmber)
+                        + Text(" to get set up").foregroundStyle(Color.cavnarInk3)
+                }
             }
         }
     }

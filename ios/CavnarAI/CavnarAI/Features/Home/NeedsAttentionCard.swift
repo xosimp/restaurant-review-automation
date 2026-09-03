@@ -132,7 +132,16 @@ struct NeedsAttentionFloatCard: View {
         }
         .padding(.vertical, 16)
         .padding(.horizontal, 14)
-        .frame(width: 184, alignment: .leading)
+        // The card was never given its own height — only its enclosing
+        // GeometryReader was (208pt, below), so the card itself just
+        // content-hugged to whatever its badge + two text blocks needed
+        // (measured on a real render: ~140pt) and sat centered in the
+        // leftover space, reading as short/wide instead of the taller,
+        // closer-to-square shape the 208pt outer allowance was clearly
+        // sized for. 180 = 208 minus the carousel's own 14pt top/bottom
+        // scroll padding, so this fills that allowance exactly with no
+        // clipping.
+        .frame(width: 184, height: 180, alignment: .leading)
         .background(
             LinearGradient(
                 colors: [Color.cavnarEmber.opacity(0.16), Color.cavnarEmber.opacity(0.04)],

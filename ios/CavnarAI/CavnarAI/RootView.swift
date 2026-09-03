@@ -160,6 +160,13 @@ struct RootView: View {
                   let pass = ProcessInfo.processInfo.environment["CAVNAR_DEBUG_AUTOLOGIN_PASS"] else { return }
             _ = try? await sessionStore.login(username: user, password: pass)
             if ProcessInfo.processInfo.environment["CAVNAR_DEBUG_OPEN_SHEET"] != nil {
+                // The onChange(of: sessionStore.isAuthenticated) reset to
+                // .home (added to fix the real sign-out/sign-in bug) fires
+                // asynchronously off the same login() call and can land
+                // after this line, clobbering it back to .home. A beat's
+                // delay lets that settle first so this debug override
+                // actually sticks.
+                try? await Task.sleep(for: .milliseconds(100))
                 selectedTab = .account
             }
         }
@@ -192,7 +199,16 @@ struct RootView: View {
             if !locked { coldLaunchIntroPending = false }
         }
         .onChange(of: sessionStore.isAuthenticated) { _, authenticated in
-            if authenticated { coldLaunchIntroPending = false }
+            if authenticated {
+                coldLaunchIntroPending = false
+                // selectedTab is @State on RootView, which is never recreated
+                // across sign-out/sign-in (only isAuthenticated flips) — so it
+                // was remembering whatever tab was active when the user
+                // signed out. Signing out from Account and back in landed
+                // straight back on Account instead of Home. A fresh sign-in
+                // should always start on Home.
+                selectedTab = .home
+            }
         }
         .onChange(of: deepLinkRouter.pendingTab) { _, tab in
             if let tab { selectedTab = tab }
