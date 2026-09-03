@@ -22,10 +22,23 @@ struct AccountProfileDetailView: View {
     @State private var voiceNotes: String
     @State private var neverSay: String
     @State private var menuNotes: String
+    @State private var timezone: String
 
     private enum Field: Hashable { case ownerName, ownerPhone, voiceNotes, neverSay, menuNotes }
     @FocusState private var focusedField: Field?
     @State private var postedLabel: String?
+
+    // Same 7-zone list as the admin Client Settings page and the backend's
+    // own accepted-values whitelist (mobile_api.py's mobile_update_profile).
+    static let timezoneOptions: [(value: String, label: String)] = [
+        ("America/New_York", "Eastern (New York)"),
+        ("America/Chicago", "Central (Chicago)"),
+        ("America/Denver", "Mountain (Denver)"),
+        ("America/Phoenix", "Arizona (Phoenix)"),
+        ("America/Los_Angeles", "Pacific (Los Angeles)"),
+        ("America/Anchorage", "Alaska (Anchorage)"),
+        ("Pacific/Honolulu", "Hawaii (Honolulu)"),
+    ]
 
     init(viewModel: AccountViewModel, profile: AccountProfile) {
         self.viewModel = viewModel
@@ -35,6 +48,7 @@ struct AccountProfileDetailView: View {
         _voiceNotes = State(initialValue: profile.voiceNotes ?? "")
         _neverSay   = State(initialValue: profile.neverSay ?? "")
         _menuNotes  = State(initialValue: profile.menuNotes ?? "")
+        _timezone   = State(initialValue: profile.timezone)
     }
 
     private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
@@ -46,6 +60,7 @@ struct AccountProfileDetailView: View {
                     hero
                     chips
                     contactSection
+                    timezoneSection
                     voiceSection
 
                     if let error = viewModel.saveProfileError {
@@ -56,7 +71,8 @@ struct AccountProfileDetailView: View {
                         Task {
                             await viewModel.updateProfile(
                                 ownerName: ownerName, ownerPhone: ownerPhone,
-                                voiceNotes: voiceNotes, neverSay: neverSay, menuNotes: menuNotes
+                                voiceNotes: voiceNotes, neverSay: neverSay, menuNotes: menuNotes,
+                                timezone: timezone
                             )
                             if viewModel.saveProfileSucceeded {
                                 Haptic.success()
@@ -236,6 +252,21 @@ struct AccountProfileDetailView: View {
                     }
                 }
                 .buttonStyle(.plain)
+            }
+        }
+    }
+
+    // MARK: - Timezone
+
+    private var timezoneSection: some View {
+        AccountSection(kicker: "Timezone") {
+            AccountKVRow(label: "Drives \"today\" & weekly trends", showsDivider: false) {
+                Picker("", selection: $timezone) {
+                    ForEach(Self.timezoneOptions, id: \.value) { option in
+                        Text(option.label).tag(option.value)
+                    }
+                }
+                .tint(Color.cavnarEmber)
             }
         }
     }

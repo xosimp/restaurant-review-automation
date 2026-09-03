@@ -34,6 +34,8 @@ def _redirect_db(monkeypatch, db_path):
 @pytest.fixture(autouse=True)
 def _init_auth_tables(db_path):
     init_auth(db_path=db_path)
+    from models import init_two_fa_backup_codes
+    init_two_fa_backup_codes(db_path=db_path)
 
 
 @pytest.fixture(autouse=True)

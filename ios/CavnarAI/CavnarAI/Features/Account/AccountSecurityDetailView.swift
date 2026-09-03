@@ -10,6 +10,8 @@ struct AccountSecurityDetailView: View {
     let account: AccountInfo
     @State private var showingChangePassword = false
     @State private var showing2FASetup = false
+    @State private var showingSignInHistory = false
+    @State private var showingBackupCodes = false
     @State private var disabledLabel: String?
     // The same posted-check overlay 2FA-disable already used, now shared
     // with Sign-in notifications — .removed (red, a drawn bar) for turning
@@ -54,6 +56,7 @@ struct AccountSecurityDetailView: View {
                 hero
                 statusStrip
                 signInSection
+                deviceLockSection
                 devicesSection
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -74,6 +77,12 @@ struct AccountSecurityDetailView: View {
         }
         .sheet(isPresented: $showing2FASetup) {
             TwoFactorSetupSheet(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showingSignInHistory) {
+            AccountSignInHistoryView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showingBackupCodes) {
+            AccountBackupCodesView(viewModel: viewModel)
         }
         // Same resume as AccountView's own — this sheet was itself torn
         // down by the relock, so it re-presents its own child sheet too.
@@ -137,6 +146,9 @@ struct AccountSecurityDetailView: View {
                 AccountKVRow(label: "2FA code by") {
                     AccountValue(text: twoFAByText ? "Text message" : "Email")
                 }
+                AccountKVRow(label: "Backup codes") {
+                    AccountLink(title: "View") { showingBackupCodes = true }
+                }
             }
             // Always an unconditional sibling — only its trailing link
             // branches. This row used to be the whole AccountKVRow wrapped
@@ -170,6 +182,9 @@ struct AccountSecurityDetailView: View {
             // which is what made this row read as misaligned against its
             // siblings; every row in this card is now the exact same
             // AccountLink shape, so they can't drift apart again).
+            AccountKVRow(label: "Sign-in activity") {
+                AccountLink(title: "View") { showingSignInHistory = true }
+            }
             AccountKVRow(label: "Sign-in notifications", showsDivider: false) {
                 if live.loginNotify {
                     AccountLink(title: "Turn off", tone: .cavnarRed) {
@@ -192,6 +207,27 @@ struct AccountSecurityDetailView: View {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: - This device
+
+    // Device-local, not a network round trip — a plain Toggle, matching
+    // AccountView's own appIconRow precedent, not the AccountLink
+    // Turn-on/Turn-off pattern the network-backed settings above use.
+    private var deviceLockSection: some View {
+        AccountSection(kicker: "This device") {
+            AccountKVRow(label: "Require Face ID to reopen", showsDivider: false) {
+                Toggle("", isOn: Binding(
+                    get: { sessionStore.biometricLockEnabled },
+                    set: { newValue in
+                        Haptic.light()
+                        sessionStore.biometricLockEnabled = newValue
+                    }
+                ))
+                .labelsHidden()
+                .tint(Color.cavnarEmber)
             }
         }
     }
@@ -343,6 +379,9 @@ private struct TwoFactorSetupSheet: View {
     @State private var code = ""
     @State private var postedLabel: String?
     @FocusState private var isCodeFocused: Bool
+    // Shown once, right after the first successful verify — see
+    // AccountViewModel.freshBackupCodes' doc comment.
+    @State private var showingCodesStep = false
     // "email" or "sms" — which channel the test code goes out on. Text is
     // only offered when a phone number is on file (see hasPhone below);
     // otherwise this stays "email" and the picker never renders.
@@ -356,7 +395,9 @@ private struct TwoFactorSetupSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
-                    if let masked = viewModel.twoFATestMasked {
+                    if showingCodesStep {
+                        backupCodesStep
+                    } else if let masked = viewModel.twoFATestMasked {
                         Text("Code sent to \(masked)")
                             .font(.cavnarBody(16))
                             .foregroundStyle(Color.cavnarInk3)
@@ -380,9 +421,7 @@ private struct TwoFactorSetupSheet: View {
                             if new.count == 6, !viewModel.is2FABusy {
                                 Task {
                                     if await viewModel.verify2FA(code: code) {
-                                        Haptic.success()
-                                        postedLabel = "Two-factor enabled"
-                                        sessionStore.pendingTwoFactorSetupEmail = nil
+                                        handleVerified()
                                     }
                                 }
                             }
@@ -406,9 +445,7 @@ private struct TwoFactorSetupSheet: View {
                             Button {
                                 Task {
                                     if await viewModel.verify2FA(code: code) {
-                                        Haptic.success()
-                                        postedLabel = "Two-factor enabled"
-                                        sessionStore.pendingTwoFactorSetupEmail = nil
+                                        handleVerified()
                                     }
                                 }
                             } label: {
@@ -521,6 +558,49 @@ private struct TwoFactorSetupSheet: View {
                     selectedMethod = sessionStore.pendingTwoFactorSetupMethod
                 }
             }
+        }
+    }
+
+    // Interposes a "save these codes" step between a successful verify and
+    // the final posted-checkmark dismiss — codes are shown exactly once,
+    // right here, since only their hash is ever persisted server-side.
+    private func handleVerified() {
+        Haptic.success()
+        sessionStore.pendingTwoFactorSetupEmail = nil
+        if viewModel.freshBackupCodes?.isEmpty == false {
+            showingCodesStep = true
+        } else {
+            postedLabel = "Two-factor enabled"
+        }
+    }
+
+    private var backupCodesStep: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("Two-factor is on. Save these backup codes somewhere safe — each works once to sign in if you lose access to email or text.")
+                .font(.cavnarBody(16))
+                .foregroundStyle(Color.cavnarInk3)
+
+            VStack(spacing: 0) {
+                ForEach(Array((viewModel.freshBackupCodes ?? []).enumerated()), id: \.offset) { index, code in
+                    HStack {
+                        Text(code).font(.cavnarNumber(16, weight: 600)).foregroundStyle(Color.cavnarInk)
+                        Spacer()
+                    }
+                    .padding(.vertical, 10)
+                    if index < (viewModel.freshBackupCodes?.count ?? 0) - 1 {
+                        AccountRowDivider()
+                    }
+                }
+            }
+            .cavnarCard()
+
+            Button {
+                Haptic.light()
+                postedLabel = "Two-factor enabled"
+            } label: {
+                Text("I've saved these codes").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarPrimaryButtonStyle())
         }
     }
 }

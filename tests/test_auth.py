@@ -14,9 +14,11 @@ from auth import (
     create_session, get_session_user, get_sessions_for_user,
     revoke_other_sessions, delete_session, switch_active_restaurant,
     set_user_role, login_required, admin_required, INACTIVITY_HOURS,
-    init_auth,
+    init_auth, get_login_history, invite_team_member, get_team_members,
+    revoke_team_member,
 )
-from models import create_restaurant, get_conn, Restaurant
+from models import create_restaurant, get_conn, Restaurant, init_two_fa_backup_codes, \
+    generate_backup_codes, verify_and_consume_backup_code, count_unused_backup_codes
 
 
 @pytest.fixture(autouse=True)
@@ -24,6 +26,7 @@ def _init_auth_tables(db_path):
     """conftest.py's db_path fixture only runs models.init_db()/ensure_columns() —
     users/sessions live in auth.py's own AUTH_SCHEMA, applied by init_auth()."""
     init_auth(db_path=db_path)
+    init_two_fa_backup_codes(db_path=db_path)
 
 
 def _restaurant(db_path, **kw):
@@ -335,3 +338,159 @@ def test_admin_required_passes_through_admin_user(monkeypatch):
     app = Flask(__name__)
     with app.test_request_context("/api/whatever", method="POST"):
         assert protected() is admin_user
+
+
+# ── login history ─────────────────────────────────────────────────────────────
+
+def test_create_session_writes_login_history_row(db_path):
+    rid = _restaurant(db_path)
+    uid = create_user(rid, "alice", "alice@x.com", "correct-horse", db_path=db_path)
+    create_session(uid, ip_address="1.2.3.4", user_agent="pytest", device_type="ios", restaurant_id=rid, db_path=db_path)
+    history = get_login_history(uid, db_path=db_path)
+    assert len(history) == 1
+    assert history[0]["ip_address"] == "1.2.3.4"
+    assert history[0]["device_type"] == "ios"
+    assert history[0]["event"] == "login"
+
+
+def test_login_history_survives_session_revocation(db_path):
+    """The whole point of this table — unlike get_sessions_for_user(),
+    a revoked/expired session's login still shows up here."""
+    rid = _restaurant(db_path)
+    uid = create_user(rid, "alice", "alice@x.com", "correct-horse", db_path=db_path)
+    token = create_session(uid, restaurant_id=rid, db_path=db_path)
+    delete_session(token, db_path=db_path)
+    assert get_sessions_for_user(uid, db_path=db_path) == []
+    assert len(get_login_history(uid, db_path=db_path)) == 1
+
+
+def test_get_login_history_ordered_desc(db_path):
+    rid = _restaurant(db_path)
+    uid = create_user(rid, "alice", "alice@x.com", "correct-horse", db_path=db_path)
+    conn = get_conn(db_path)
+    conn.execute(
+        "INSERT INTO login_history (user_id, restaurant_id, event, created_at) VALUES (?,?,?,datetime('now','-1 day'))",
+        (uid, rid, "login")
+    )
+    conn.commit(); conn.close()
+    create_session(uid, restaurant_id=rid, db_path=db_path)
+    history = get_login_history(uid, db_path=db_path)
+    assert len(history) == 2
+    # Most recent (the just-created session) first.
+    assert history[0]["created_at"] > history[1]["created_at"]
+
+
+# ── 2FA backup codes ─────────────────────────────────────────────────────────
+
+def test_generate_backup_codes_returns_plaintext_and_persists_hashes_only(db_path):
+    rid = _restaurant(db_path)
+    codes = generate_backup_codes(rid, count=5, db_path=db_path)
+    assert len(codes) == 5
+    assert len(set(codes)) == 5  # all unique
+    conn = get_conn(db_path)
+    rows = conn.execute("SELECT code_hash FROM two_fa_backup_codes WHERE restaurant_id=?", (rid,)).fetchall()
+    conn.close()
+    assert len(rows) == 5
+    assert all(row["code_hash"] not in codes for row in rows)
+
+
+def test_generate_backup_codes_invalidates_previous_set(db_path):
+    rid = _restaurant(db_path)
+    old_codes = generate_backup_codes(rid, count=5, db_path=db_path)
+    generate_backup_codes(rid, count=5, db_path=db_path)
+    assert count_unused_backup_codes(rid, db_path=db_path) == 5
+    assert verify_and_consume_backup_code(rid, old_codes[0], db_path=db_path) is False
+
+
+def test_verify_and_consume_backup_code_single_use(db_path):
+    rid = _restaurant(db_path)
+    codes = generate_backup_codes(rid, count=5, db_path=db_path)
+    assert verify_and_consume_backup_code(rid, codes[0], db_path=db_path) is True
+    assert count_unused_backup_codes(rid, db_path=db_path) == 4
+    # Reusing the same code fails.
+    assert verify_and_consume_backup_code(rid, codes[0], db_path=db_path) is False
+
+
+def test_verify_and_consume_backup_code_rejects_unknown_code(db_path):
+    rid = _restaurant(db_path)
+    generate_backup_codes(rid, count=5, db_path=db_path)
+    assert verify_and_consume_backup_code(rid, "0000-0000", db_path=db_path) is False
+
+
+def test_backup_codes_scoped_per_restaurant(db_path):
+    rid_a = _restaurant(db_path, name="A Co")
+    rid_b = create_restaurant(Restaurant(name="B Co", owner_email="b@x.com"), db_path=db_path)
+    codes_a = generate_backup_codes(rid_a, count=3, db_path=db_path)
+    # A restaurant B code never validates against restaurant A.
+    assert verify_and_consume_backup_code(rid_b, codes_a[0], db_path=db_path) is False
+
+
+# ── team invite / manage access ──────────────────────────────────────────────
+
+def test_invite_team_member_creates_user_scoped_to_existing_restaurant(db_path):
+    rid = _restaurant(db_path)
+    create_user(rid, "owner1", "owner@x.com", "correct-horse", db_path=db_path)
+    result = invite_team_member(rid, "New Teammate", "teammate@x.com", db_path=db_path)
+    assert result["ok"] is True
+    members = get_team_members(rid, db_path=db_path)
+    assert len(members) == 2
+    invited = next(m for m in members if m["email"] == "teammate@x.com")
+    assert invited["role"] == "client"
+
+
+def test_invite_team_member_rejects_duplicate_email(db_path):
+    rid = _restaurant(db_path)
+    create_user(rid, "owner1", "owner@x.com", "correct-horse", db_path=db_path)
+    invite_team_member(rid, "First", "dup@x.com", db_path=db_path)
+    result = invite_team_member(rid, "Second", "dup@x.com", db_path=db_path)
+    assert result["ok"] is False
+    assert len(get_team_members(rid, db_path=db_path)) == 2
+
+
+def test_invite_team_member_generates_working_temp_password(db_path):
+    rid = _restaurant(db_path)
+    result = invite_team_member(rid, "New Teammate", "teammate@x.com", db_path=db_path)
+    user = verify_password(result["username"], result["temp_password"], db_path=db_path)
+    assert user is not None
+    assert user["email"] == "teammate@x.com"
+
+
+def test_revoke_team_member_deletes_sessions(db_path):
+    rid = _restaurant(db_path)
+    owner_id = create_user(rid, "owner1", "owner@x.com", "correct-horse", db_path=db_path)
+    result = invite_team_member(rid, "Teammate", "teammate@x.com", db_path=db_path)
+    member_id = result["user_id"]
+    create_session(member_id, restaurant_id=rid, db_path=db_path)
+    assert len(get_sessions_for_user(member_id, db_path=db_path)) == 1
+    outcome = revoke_team_member(rid, member_id, owner_id, db_path=db_path)
+    assert outcome["ok"] is True
+    assert get_sessions_for_user(member_id, db_path=db_path) == []
+    assert len(get_team_members(rid, db_path=db_path)) == 1
+
+
+def test_revoke_team_member_blocks_self_revoke(db_path):
+    rid = _restaurant(db_path)
+    owner_id = create_user(rid, "owner1", "owner@x.com", "correct-horse", db_path=db_path)
+    invite_team_member(rid, "Teammate", "teammate@x.com", db_path=db_path)
+    outcome = revoke_team_member(rid, owner_id, owner_id, db_path=db_path)
+    assert outcome["ok"] is False
+    assert len(get_team_members(rid, db_path=db_path)) == 2
+
+
+def test_revoke_team_member_blocks_last_remaining_user(db_path):
+    rid = _restaurant(db_path)
+    owner_id = create_user(rid, "owner1", "owner@x.com", "correct-horse", db_path=db_path)
+    outcome = revoke_team_member(rid, owner_id, 999999, db_path=db_path)
+    assert outcome["ok"] is False
+    assert len(get_team_members(rid, db_path=db_path)) == 1
+
+
+def test_revoke_team_member_rejects_cross_tenant_user_id(db_path):
+    rid_a = _restaurant(db_path, name="A Co")
+    rid_b = create_restaurant(Restaurant(name="B Co", owner_email="b@x.com"), db_path=db_path)
+    owner_a = create_user(rid_a, "ownera", "ownera@x.com", "correct-horse", db_path=db_path)
+    owner_b = create_user(rid_b, "ownerb", "ownerb@x.com", "correct-horse", db_path=db_path)
+    # Restaurant A's owner can't revoke restaurant B's owner just by guessing their id.
+    outcome = revoke_team_member(rid_a, owner_b, owner_a, db_path=db_path)
+    assert outcome["ok"] is False
+    assert len(get_team_members(rid_b, db_path=db_path)) == 1

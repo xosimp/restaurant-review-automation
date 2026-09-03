@@ -225,7 +225,7 @@ def login():
             return resp3
 
         _ua = request.headers.get("User-Agent", "")
-        token = create_session(user["id"], ip_address=ip, user_agent=_ua)
+        token = create_session(user["id"], ip_address=ip, user_agent=_ua, restaurant_id=user["restaurant_id"])
         # Send login notification (email + push + bell) if enabled
         try:
             from models import get_restaurant as _gr_ln
@@ -303,14 +303,17 @@ def verify_2fa():
         except Exception as _e_v:
             print(f"[verify_2fa] error: {_e_v}")
             masked = "your registered email"
-        if not (rest.two_fa_code and _hmac_2fa.compare_digest(rest.two_fa_code, code_entered)):
-            _record_failed_attempt("2fa:" + ip)
-            resp_err = make_response(render_template('two_fa.html',
-                masked_email=masked, error="Incorrect code. Try again.",
-                pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
-            resp_err.set_cookie("csrf_token", csrf4, httponly=True, samesite="Lax")
-            return resp_err
-        if now > expires:
+        _otp_matches = rest.two_fa_code and _hmac_2fa.compare_digest(rest.two_fa_code, code_entered)
+        if not _otp_matches:
+            from models import verify_and_consume_backup_code as _vcbc
+            if not _vcbc(uid, code_entered):
+                _record_failed_attempt("2fa:" + ip)
+                resp_err = make_response(render_template('two_fa.html',
+                    masked_email=masked, error="Incorrect code. Try again.",
+                    pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
+                resp_err.set_cookie("csrf_token", csrf4, httponly=True, samesite="Lax")
+                return resp_err
+        elif now > expires:
             resp_exp = make_response(render_template('two_fa.html',
                 masked_email=masked, error="Code expired. Request a new one.",
                 pending_token=pending_token, next_url=next_url, csrf_token=csrf4))
@@ -327,7 +330,7 @@ def verify_2fa():
         _user_for_session = get_user_by_restaurant_id(uid)
         if not _user_for_session:
             return redirect("/login")
-        token = create_session(_user_for_session["id"], ip_address=_ip_2fa, user_agent=_ua_2fa)
+        token = create_session(_user_for_session["id"], ip_address=_ip_2fa, user_agent=_ua_2fa, restaurant_id=_user_for_session["restaurant_id"])
         # Login notification (email + push + bell)
         try:
             _rest_ln2 = get_restaurant(uid)
@@ -942,7 +945,7 @@ def google_sso_callback():
     ip = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
     ua = request.headers.get("User-Agent", "")
     device_id = request.cookies.get("g_sso_device_id") or None
-    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios" if is_mobile else "web", device_id=device_id)
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios" if is_mobile else "web", device_id=device_id, restaurant_id=user["restaurant_id"])
     update_last_login(user["id"])
 
     return _finish(token=token)

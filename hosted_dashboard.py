@@ -783,6 +783,7 @@ def server_error(e):
 try:
     from models import init_db as _init_db, ensure_columns as _ec, init_email_log as _iel, init_onboarding_emails as _ioe
     from models import init_staff_notes as _isn, init_staff_availability as _isa
+    from models import init_two_fa_backup_codes as _i2fabc
     from auth import init_auth as _init_auth
     from webhooks import init_webhooks as _iwh
     from guest_marketing import init_guest_marketing as _igm
@@ -797,6 +798,7 @@ try:
     _iwh()
     _igm()
     _ipush()
+    _i2fabc()
     print("DB init OK")
 except Exception as _e:
     print(f"DB init error: {_e}")

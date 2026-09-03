@@ -12,6 +12,7 @@ struct AccountProfile: Decodable {
     let voiceNotes: String?
     let neverSay: String?
     let menuNotes: String?
+    let timezone: String
 
     enum CodingKeys: String, CodingKey {
         case restaurantName = "restaurant_name"
@@ -24,6 +25,7 @@ struct AccountProfile: Decodable {
         case voiceNotes = "voice_notes"
         case neverSay = "never_say"
         case menuNotes = "menu_notes"
+        case timezone
     }
 }
 
@@ -36,6 +38,7 @@ struct AccountInfo: Decodable {
     let twoFAMethod: String?
     let twoFAContactMasked: String?
     var loginNotify: Bool
+    var marketingEmailsOptOut: Bool
     // users.last_login, "YYYY-MM-DD HH:MM:SS" UTC or nil.
     let lastLogin: String?
     // "weak"/"good"/"strong", scored once at set-time (auth.py can't score
@@ -50,6 +53,7 @@ struct AccountInfo: Decodable {
         case twoFAMethod = "two_fa_method"
         case twoFAContactMasked = "two_fa_contact_masked"
         case loginNotify = "login_notify"
+        case marketingEmailsOptOut = "marketing_emails_opt_out"
         case lastLogin = "last_login"
         case passwordStrength = "password_strength"
         case passwordChangedAt = "password_changed_at"
@@ -175,6 +179,45 @@ struct AccountSession: Decodable, Identifiable {
         case ipAddress = "ip_address"
         case deviceType = "device_type"
         case label
+    }
+}
+
+// Distinct from AccountSession above: that's only currently-live sessions,
+// this is every past login — see auth.get_login_history()'s doc comment.
+struct LoginHistoryEntry: Decodable, Identifiable {
+    let event: String
+    let ipAddress: String?
+    let userAgent: String?
+    let deviceType: String?
+    let createdAt: String
+    let label: String
+
+    var id: String { createdAt + (ipAddress ?? "") }
+
+    enum CodingKeys: String, CodingKey {
+        case event
+        case ipAddress = "ip_address"
+        case userAgent = "user_agent"
+        case deviceType = "device_type"
+        case createdAt = "created_at"
+        case label
+    }
+}
+
+struct TeamMember: Decodable, Identifiable {
+    let id: Int
+    let username: String
+    let email: String
+    let role: String
+    let createdAt: String
+    let lastLogin: String?
+    let isYou: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, username, email, role
+        case createdAt = "created_at"
+        case lastLogin = "last_login"
+        case isYou = "is_you"
     }
 }
 

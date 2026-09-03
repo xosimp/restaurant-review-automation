@@ -3732,6 +3732,49 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
+  <!-- Help & FAQ -->
+  <div class="acct-card" style="padding:18px 22px;margin-bottom:14px">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Help &amp; FAQ</div>
+    <div id="faq-list">
+      <div class="faq-group">
+        <div style="font-size:11px;font-weight:700;color:var(--ink3);margin:14px 0 6px" class="faq-group-title">Getting started</div>
+        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">How is Cavnar AI set up for my restaurant?<span class="faq-arrow">▾</span></button><div class="faq-a">Will personally sets up every restaurant &mdash; connecting your Google Business Profile, POS system, and configuring the modules you're paying for. You won't need to do any technical setup yourself; if something looks disconnected or missing, contact Will.</div></div>
+        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">What's the difference between the modules?<span class="faq-arrow">▾</span></button><div class="faq-a">Reviews drafts AI responses to your Google reviews and flags urgent ones. Intel tracks what's being said about you and nearby competitors. Marketing automates guest outreach. Labor pulls hours and schedules from your POS. Food Cost tracks ingredient spend and waste. Not every restaurant has every module &mdash; check Account for what's active on yours.</div></div>
+      </div>
+      <div class="faq-group">
+        <div style="font-size:11px;font-weight:700;color:var(--ink3);margin:14px 0 6px" class="faq-group-title">Reviews</div>
+        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">Does Cavnar AI post responses automatically?<span class="faq-arrow">▾</span></button><div class="faq-a">No &mdash; every AI-drafted response needs your approval before it goes out. You can edit the draft, approve it as-is, or regenerate it from the review's detail screen.</div></div>
+        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">Why does a review show as "urgent"?<span class="faq-arrow">▾</span></button><div class="faq-a">Reviews mentioning health, safety, or a sharp negative sentiment are flagged urgent so they surface above routine reviews and can trigger an alert, depending on your alert settings.</div></div>
+      </div>
+      <div class="faq-group">
+        <div style="font-size:11px;font-weight:700;color:var(--ink3);margin:14px 0 6px" class="faq-group-title">Security</div>
+        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">What does two-factor authentication protect?<span class="faq-arrow">▾</span></button><div class="faq-a">2FA adds a one-time code (by email or text) on top of your password at sign-in. Once it's on, you'll also get a set of one-time backup codes &mdash; save them somewhere safe in case you ever lose access to your email or phone.</div></div>
+        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">Can more than one person log in for my restaurant?<span class="faq-arrow">▾</span></button><div class="faq-a">Yes &mdash; the account owner can add teammates from the Cavnar AI iOS app's Account &rarr; Manage team. Each teammate gets their own real login, and the owner can remove access at any time.</div></div>
+      </div>
+      <div class="faq-group">
+        <div style="font-size:11px;font-weight:700;color:var(--ink3);margin:14px 0 6px" class="faq-group-title">Billing &amp; account</div>
+        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">How do I change my plan or payment method?<span class="faq-arrow">▾</span></button><div class="faq-a">Use the Billing card above. If you don't have an active plan yet, or need something changed on your contract, contact Will directly.</div></div>
+        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">Can I export my review data?<span class="faq-arrow">▾</span></button><div class="faq-a">Yes &mdash; from the Cavnar AI iOS app, Account &rarr; Export my data emails you a CSV of your reviews (date, rating, text, and response status).</div></div>
+        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">How do I cancel my account?<span class="faq-arrow">▾</span></button><div class="faq-a">Getting started with Cavnar AI includes signing a service agreement, so cancellation isn't self-serve &mdash; use the "Request cancellation" link below. 30 days' written notice is required; your account stays active through the end of your current billing period plus 30 days.</div></div>
+      </div>
+      <div class="faq-group">
+        <div style="font-size:11px;font-weight:700;color:var(--ink3);margin:14px 0 6px" class="faq-group-title">Notifications</div>
+        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">How do I control which alerts I get?<span class="faq-arrow">▾</span></button><div class="faq-a">Alert settings control what triggers an alert (1-star reviews, a rating spike, health mentions, etc.) and whether it reaches you by text, email, or push, plus optional quiet hours.</div></div>
+        <div class="faq-item"><button type="button" class="faq-q" onclick="toggleFaq(this)">What's the difference between alerts and the weekly digest?<span class="faq-arrow">▾</span></button><div class="faq-a">Alerts are near-real-time &mdash; something specific just happened. The weekly digest is a full summary sent on the day you choose.</div></div>
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--ink3);margin-top:16px">Can't find what you're looking for? <a href="mailto:will@cavnar.ai" style="color:var(--ember)">Contact Will</a></div>
+  </div>
+  <style>
+    .faq-item{border-top:1px solid var(--paper3)}
+    .faq-item:first-of-type{border-top:none}
+    .faq-q{display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;background:none;border:none;padding:10px 0;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;color:var(--ink);cursor:pointer}
+    .faq-arrow{font-size:10px;color:var(--ink3);margin-left:10px;flex-shrink:0}
+    .faq-a{display:none;padding:0 0 12px;font-size:12px;line-height:1.6;color:var(--ink3)}
+    .faq-item.open .faq-a{display:block}
+    .faq-item.open .faq-arrow{transform:rotate(180deg)}
+  </style>
+
   <!-- Webhooks -->
   <div class="acct-card" style="padding:18px 22px;margin-bottom:14px">
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Outbound webhook</div>
@@ -7700,6 +7743,11 @@ function revokeOtherSessions(btn){
       }
     }).catch(function(){});
   }
+
+  window.toggleFaq = function(btn) {
+    var item = btn.parentElement;
+    item.classList.toggle('open');
+  };
 
   window.toggleWhHistory = function() {
     var panel = document.getElementById('wh-history-panel');

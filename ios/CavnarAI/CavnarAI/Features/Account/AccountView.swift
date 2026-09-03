@@ -8,6 +8,7 @@ import UIKit
 struct AccountView: View {
     @State private var viewModel = AccountViewModel()
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         NavigationStack {
@@ -59,6 +60,10 @@ struct AccountView: View {
                 case "alerts": showingAlerts = true
                 case "connections": showingConnections = true
                 case "billing": showingBilling = true
+                case "team": showingTeam = true
+                case "export": showingExportData = true
+                case "close-account": showingCloseAccount = true
+                case "help": showingHelp = true
                 default: break
                 }
                 #endif
@@ -129,6 +134,10 @@ struct AccountView: View {
     @State private var showingBilling = false
     @State private var showingScheduleHistory = false
     @State private var showingChangelog = false
+    @State private var showingTeam = false
+    @State private var showingExportData = false
+    @State private var showingCloseAccount = false
+    @State private var showingHelp = false
     @State private var changelogBadge = ChangelogBadgeViewModel()
     // Reflects the actual system state (UIApplication.shared.alternateIconName),
     // not a preference of our own — this is the home-screen icon, which iOS
@@ -207,6 +216,24 @@ struct AccountView: View {
                 AccountBillingDetailView(billing: viewModel.billing)
             }
 
+            // Only the account's owner login can invite/remove other logins
+            // on this restaurant — matches mobile_api.py's server-side
+            // role=='owner' check on the invite/revoke routes, which is the
+            // actual enforcement; hiding the row for a teammate just avoids
+            // showing a control that would 403 anyway.
+            if sessionStore.currentUser?.isOwner == true {
+                group("Team") {
+                    settingsRow {
+                        row("Manage team", systemImage: "person.2")
+                    } action: {
+                        showingTeam = true
+                    }
+                }
+                .sheet(isPresented: $showingTeam) {
+                    AccountTeamDetailView(viewModel: viewModel)
+                }
+            }
+
             group("More") {
                 settingsRow {
                     row("Schedule History", systemImage: "clock.arrow.circlepath")
@@ -223,6 +250,18 @@ struct AccountView: View {
                     showingChangelog = true
                 }
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                settingsRow {
+                    row("Export my data", systemImage: "square.and.arrow.up")
+                } action: {
+                    showingExportData = true
+                }
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                settingsRow {
+                    row("Close my account", systemImage: "xmark.circle")
+                } action: {
+                    showingCloseAccount = true
+                }
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
                 appIconRow
             }
             .task { await changelogBadge.refresh() }
@@ -231,6 +270,31 @@ struct AccountView: View {
             }
             .sheet(isPresented: $showingChangelog) {
                 ChangelogView()
+            }
+            .sheet(isPresented: $showingExportData) {
+                AccountExportDataView(viewModel: viewModel)
+            }
+            .sheet(isPresented: $showingCloseAccount) {
+                AccountCloseAccountView(viewModel: viewModel)
+            }
+
+            group("Support") {
+                settingsRow {
+                    row("Contact Will", systemImage: "envelope")
+                } action: {
+                    if let url = URL(string: "mailto:will@cavnar.ai") {
+                        openURL(url)
+                    }
+                }
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                settingsRow {
+                    row("Help & FAQ", systemImage: "questionmark.circle")
+                } action: {
+                    showingHelp = true
+                }
+            }
+            .sheet(isPresented: $showingHelp) {
+                AccountHelpView()
             }
         }
     }

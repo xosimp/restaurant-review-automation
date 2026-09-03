@@ -716,6 +716,11 @@ def run_onboarding_sequence():
         # Need a signup date
         if not r.created_at:
             continue
+        # Onboarding day-2/7/30 are all product-tips/marketing content, not
+        # transactional — the one flag gates all three from this single
+        # early-continue, same as the owner_email/created_at guards above.
+        if getattr(r, "marketing_emails_opt_out", 0):
+            continue
 
         try:
             created = datetime.fromisoformat(r.created_at.replace("Z", ""))
@@ -1003,6 +1008,8 @@ def scheduler_loop():
                     from models import get_all_restaurants
                     for r in get_all_restaurants():
                         if not r.owner_email or r.billing_status in ('internal', 'churned'):
+                            continue
+                        if getattr(r, "marketing_emails_opt_out", 0):
                             continue
                         try:
                             send_monthly_summary_email(

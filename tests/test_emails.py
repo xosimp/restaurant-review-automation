@@ -64,3 +64,16 @@ def test_no_template_placeholder_leaks_in_any_onboarding_email(monkeypatch):
     for html in (day2, day30):
         leaks = re.findall(r"\{[a-z_]+\}", html)
         assert not leaks, f"unrendered placeholders leaked: {leaks}"
+
+
+def test_send_team_invite_email_contains_temp_password(monkeypatch):
+    _stub_resend(monkeypatch)
+    emails.send_team_invite_email("teammate@x.com", "Gia Mia", "gia_teammate", "S3cr3t-Temp-9",
+                                  inviter_name="Will")
+    payload = FakeEmails.last
+    assert payload["to"] == ["teammate@x.com"]
+    html = payload["html"]
+    assert "gia_teammate" in html
+    assert "S3cr3t-Temp-9" in html
+    assert "Gia Mia" in html
+    assert "Will" in html

@@ -328,6 +328,7 @@ class Restaurant:
     skip_holidays:    Optional[str]  = None
     custom_competitors: Optional[str] = None
     login_notify:     int            = 0
+    marketing_emails_opt_out: int    = 0
     alert_1star:          int       = 1
     alert_2star:          int       = 0
     alert_health:         int       = 1
@@ -616,6 +617,7 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN skip_holidays TEXT",
         "ALTER TABLE restaurants ADD COLUMN custom_competitors TEXT",
         "ALTER TABLE restaurants ADD COLUMN login_notify INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN marketing_emails_opt_out INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN gmb_refresh_token TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_account_id TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_location_id TEXT",
@@ -1520,7 +1522,7 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "hourly_rate","labor_target_pct","monthly_revenue_target","hours_notes","role_rates_json","close_times_json","role_close_buffer_json","stripe_customer_id","docusign_envelope_id","contract_status","location_group","location_name","pos_system","inventory_frequency","delivery_days","inventory_notes","food_cost_target","inventory_updated_at","temp_password","ig_token","ig_user_id","fb_page_token","fb_page_id","ig_token_expires","fb_token_expires","competitor_intel","competitor_updated_at","reviews_live","billing_status","is_demo","internal_notes","gmb_access_token","gmb_refresh_token","gmb_account_id","gmb_location_id","gmb_token_expires",
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
-        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","timezone","onboarding_dismissed",
+        "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","marketing_emails_opt_out","timezone","onboarding_dismissed",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
         "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error",
         "square_access_token","square_location_id","square_last_synced","square_sync_error",
@@ -1619,6 +1621,7 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         skip_holidays=row["skip_holidays"] if "skip_holidays" in row.keys() else None,
         custom_competitors=row["custom_competitors"] if "custom_competitors" in row.keys() else None,
         login_notify=row["login_notify"] if "login_notify" in row.keys() else 0,
+        marketing_emails_opt_out=row["marketing_emails_opt_out"] if "marketing_emails_opt_out" in row.keys() else 0,
         alert_1star=row["alert_1star"] if "alert_1star" in row.keys() else 1,
         alert_2star=row["alert_2star"] if "alert_2star" in row.keys() else 0,
         alert_health=row["alert_health"] if "alert_health" in row.keys() else 1,
@@ -1992,6 +1995,62 @@ CREATE TABLE IF NOT EXISTS staff_availability (
     UNIQUE(restaurant_id, employee_name)
 );
 """
+
+def init_two_fa_backup_codes(db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("""CREATE TABLE IF NOT EXISTS two_fa_backup_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id INTEGER NOT NULL,
+        code_hash TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )""")
+    conn.commit()
+    conn.close()
+
+def generate_backup_codes(restaurant_id: int, count: int = 10, db_path: str = DB_PATH) -> list:
+    """Invalidates any previously-issued codes and mints a fresh set —
+    shown to the user exactly once (here, at generation time) since only
+    the hash is ever persisted, matching how password_hash never stores
+    the plaintext either."""
+    from werkzeug.security import generate_password_hash as _gph
+    import secrets as _secrets
+    codes = [f"{_secrets.token_hex(4).upper()[:4]}-{_secrets.token_hex(4).upper()[4:]}" for _ in range(count)]
+    conn = get_conn(db_path)
+    conn.execute("DELETE FROM two_fa_backup_codes WHERE restaurant_id=?", (restaurant_id,))
+    for code in codes:
+        conn.execute(
+            "INSERT INTO two_fa_backup_codes (restaurant_id, code_hash) VALUES (?, ?)",
+            (restaurant_id, _gph(code))
+        )
+    conn.commit()
+    conn.close()
+    return codes
+
+def verify_and_consume_backup_code(restaurant_id: int, code: str, db_path: str = DB_PATH) -> bool:
+    from werkzeug.security import check_password_hash as _cph
+    conn = get_conn(db_path)
+    rows = conn.execute(
+        "SELECT id, code_hash FROM two_fa_backup_codes WHERE restaurant_id=? AND used_at IS NULL",
+        (restaurant_id,)
+    ).fetchall()
+    for row in rows:
+        if _cph(row["code_hash"], code.strip()):
+            conn.execute("UPDATE two_fa_backup_codes SET used_at=datetime('now') WHERE id=?", (row["id"],))
+            conn.commit()
+            conn.close()
+            return True
+    conn.close()
+    return False
+
+def count_unused_backup_codes(restaurant_id: int, db_path: str = DB_PATH) -> int:
+    conn = get_conn(db_path)
+    n = conn.execute(
+        "SELECT COUNT(*) AS n FROM two_fa_backup_codes WHERE restaurant_id=? AND used_at IS NULL",
+        (restaurant_id,)
+    ).fetchone()["n"]
+    conn.close()
+    return n
 
 def init_email_log(db_path: str = DB_PATH):
     conn = get_conn(db_path)
@@ -3017,6 +3076,22 @@ def get_reviews_data(restaurant_id, filter_by="all", search="", category=None, p
         d["categories"] = json.loads(d["categories"] or "[]")
         result.append(d)
     return result
+
+
+def build_reviews_export_csv(restaurant_id: int) -> str:
+    """The self-serve "export my data" setting's payload — deliberately
+    narrower than admin's export_reviews() (9 columns, browser download):
+    just the 4 fields a restaurant owner would actually recognize as "my
+    review data" (date, rating, review text, response status), sized for
+    an email attachment rather than a full admin audit export."""
+    import csv, io
+    rows = get_reviews_data(restaurant_id)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Date", "Rating", "Review", "Response Status"])
+    for r in rows:
+        writer.writerow([r.get("review_date") or "", r.get("rating"), r.get("text") or "", r.get("response_status") or ""])
+    return buf.getvalue()
 
 
 def get_response_performance(restaurant_id: int, days: int = 90, db_path: str = DB_PATH) -> dict:

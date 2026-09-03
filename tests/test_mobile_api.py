@@ -32,6 +32,8 @@ def _redirect_db(monkeypatch, db_path):
 @pytest.fixture(autouse=True)
 def _init_auth_tables(db_path):
     init_auth(db_path=db_path)
+    from models import init_two_fa_backup_codes
+    init_two_fa_backup_codes(db_path=db_path)
 
 
 @pytest.fixture(autouse=True)
@@ -2056,3 +2058,280 @@ def test_review_request_stats_returns_zero_for_fresh_restaurant(client, db_path)
     data = resp.get_json()
     assert data["ok"] is True
     assert data["total_sent"] == 0
+
+
+# ── /mobile/api/account timezone + marketing opt-out ───────────────────────
+
+def test_account_profile_includes_timezone(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/account", headers=_auth_headers(token))
+    assert resp.get_json()["profile"]["timezone"] == "America/Chicago"
+
+
+def test_update_profile_accepts_valid_timezone(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post(
+        "/mobile/api/account/update-profile", json={"timezone": "America/Los_Angeles"},
+        headers=_auth_headers(token),
+    )
+    assert resp.get_json()["ok"] is True
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT timezone FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert row["timezone"] == "America/Los_Angeles"
+
+
+def test_update_profile_rejects_unknown_timezone(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post(
+        "/mobile/api/account/update-profile", json={"timezone": "Mars/Colony1"},
+        headers=_auth_headers(token),
+    )
+    assert resp.get_json()["ok"] is True  # route never fails outright — just ignores the bad value
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT timezone FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert row["timezone"] == "America/Chicago"  # unchanged from the default
+
+
+def test_marketing_opt_out_toggle(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post(
+        "/mobile/api/account/marketing-opt-out", json={"opted_out": True}, headers=_auth_headers(token)
+    )
+    assert resp.get_json()["ok"] is True
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT marketing_emails_opt_out FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert row["marketing_emails_opt_out"] == 1
+
+
+# ── /mobile/api/account/login-history ───────────────────────────────────────
+
+def test_login_history_route_requires_auth(client):
+    resp = client.get("/mobile/api/account/login-history")
+    assert resp.status_code == 401
+
+
+def test_login_history_route_returns_history(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.get("/mobile/api/account/login-history", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert len(data["history"]) == 1
+    assert data["history"][0]["event"] == "login"
+    assert data["history"][0]["label"]
+
+
+# ── /mobile/api/account/export-data ─────────────────────────────────────────
+
+def test_export_data_route_emails_four_column_csv(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _add_review(db_path, rid)
+    sent = {}
+
+    class FakeEmails:
+        @staticmethod
+        def send(payload):
+            sent.update(payload)
+            return {"id": "fake"}
+
+    monkeypatch.setattr("resend.Emails", FakeEmails)
+    resp = client.post("/mobile/api/account/export-data", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["email"] == "alice@x.com"
+    assert sent["attachments"][0]["filename"].endswith("_reviews.csv")
+    import base64
+    csv_text = base64.b64decode(sent["attachments"][0]["content"]).decode("utf-8")
+    assert csv_text.splitlines()[0] == "Date,Rating,Review,Response Status"
+    assert "Slow service." in csv_text
+
+
+def test_export_data_route_requires_auth(client):
+    resp = client.post("/mobile/api/account/export-data")
+    assert resp.status_code == 401
+
+
+# ── /mobile/api/account/send-test-digest ────────────────────────────────────
+
+def test_send_test_digest_scoped_to_own_restaurant(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    sent = {}
+
+    class FakeEmails:
+        @staticmethod
+        def send(payload):
+            sent.update(payload)
+            return {"id": "fake"}
+
+    monkeypatch.setattr("resend.Emails", FakeEmails)
+    resp = client.post("/mobile/api/account/send-test-digest", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["email"] == "alice@x.com"
+    assert sent["to"] == ["alice@x.com"]
+
+
+# ── 2FA backup codes ─────────────────────────────────────────────────────────
+
+def test_2fa_setup_returns_backup_codes_once(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    update_restaurant(rid, {"owner_email": "owner@x.com"}, db_path=db_path)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("emails.send_2fa_code", lambda *a, **kw: True)
+
+    client.post("/mobile/api/account/2fa/send-test", headers=_auth_headers(token))
+    code = _stored_2fa_code(db_path, rid)
+    resp = client.post(
+        "/mobile/api/account/2fa/verify", json={"code": code}, headers=_auth_headers(token)
+    )
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert len(data["backup_codes"]) == 10
+
+
+def test_backup_codes_status_route(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    from models import generate_backup_codes
+    generate_backup_codes(rid, count=7, db_path=db_path)
+    resp = client.get("/mobile/api/account/2fa/backup-codes", headers=_auth_headers(token))
+    assert resp.get_json()["remaining"] == 7
+
+
+def test_regenerate_backup_codes_route_invalidates_old_ones(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    from models import generate_backup_codes
+    old_codes = generate_backup_codes(rid, count=5, db_path=db_path)
+    resp = client.post("/mobile/api/account/2fa/backup-codes", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert data["ok"] is True
+    new_codes = data["backup_codes"]
+    assert len(new_codes) == 10
+    assert set(new_codes).isdisjoint(old_codes)
+
+
+def test_2fa_login_falls_back_to_backup_code_when_otp_wrong(client, db_path):
+    rid = _restaurant(db_path)
+    update_restaurant(rid, {"two_fa_enabled": 1}, db_path=db_path)
+    create_user(rid, "alice", "alice@x.com", "correct-horse", db_path=db_path)
+    from models import generate_backup_codes
+    codes = generate_backup_codes(rid, count=5, db_path=db_path)
+
+    login_resp = client.post("/mobile/api/login", json={"username": "alice", "password": "correct-horse"})
+    pending_token = login_resp.get_json()["pending_token"]
+
+    resp = client.post("/mobile/api/verify-2fa", json={"pending_token": pending_token, "code": codes[0]})
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert data["ok"] is True
+    assert data["token"]
+
+
+def test_2fa_login_backup_code_is_single_use(client, db_path):
+    rid = _restaurant(db_path)
+    update_restaurant(rid, {"two_fa_enabled": 1}, db_path=db_path)
+    create_user(rid, "alice", "alice@x.com", "correct-horse", db_path=db_path)
+    from models import generate_backup_codes
+    codes = generate_backup_codes(rid, count=5, db_path=db_path)
+
+    login_resp = client.post("/mobile/api/login", json={"username": "alice", "password": "correct-horse"})
+    pending_token = login_resp.get_json()["pending_token"]
+    client.post("/mobile/api/verify-2fa", json={"pending_token": pending_token, "code": codes[0]})
+
+    login_resp2 = client.post("/mobile/api/login", json={"username": "alice", "password": "correct-horse"})
+    pending_token2 = login_resp2.get_json()["pending_token"]
+    resp2 = client.post("/mobile/api/verify-2fa", json={"pending_token": pending_token2, "code": codes[0]})
+    assert resp2.get_json()["ok"] is False
+
+
+# ── team invite / manage access routes ──────────────────────────────────────
+
+def test_team_invite_route_requires_owner_role(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid, role="client")
+    resp = client.post(
+        "/mobile/api/account/team/invite", json={"name": "New", "email": "new@x.com"},
+        headers=_auth_headers(token),
+    )
+    assert resp.status_code == 403
+    assert resp.get_json()["ok"] is False
+
+
+def test_team_invite_route_creates_user(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid, role="owner")
+    monkeypatch.setattr("emails.send_team_invite_email", lambda *a, **kw: None)
+
+    resp = client.post(
+        "/mobile/api/account/team/invite", json={"name": "New Teammate", "email": "teammate@x.com"},
+        headers=_auth_headers(token),
+    )
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["username"]
+
+    resp2 = client.get("/mobile/api/account/team", headers=_auth_headers(token))
+    members = resp2.get_json()["members"]
+    assert len(members) == 2
+    assert any(m["email"] == "teammate@x.com" for m in members)
+
+
+def test_team_invite_route_rejects_duplicate_email(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid, role="owner")
+    monkeypatch.setattr("emails.send_team_invite_email", lambda *a, **kw: None)
+    client.post(
+        "/mobile/api/account/team/invite", json={"name": "First", "email": "dup@x.com"},
+        headers=_auth_headers(token),
+    )
+    resp = client.post(
+        "/mobile/api/account/team/invite", json={"name": "Second", "email": "dup@x.com"},
+        headers=_auth_headers(token),
+    )
+    assert resp.get_json()["ok"] is False
+    assert resp.status_code == 400
+
+
+def test_team_revoke_route_requires_owner_role(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid, role="client")
+    resp = client.post("/mobile/api/account/team/999/revoke", headers=_auth_headers(token))
+    assert resp.status_code == 403
+
+
+def test_team_revoke_route_blocks_self_revoke(client, db_path):
+    rid = _restaurant(db_path)
+    uid = create_user(rid, "alice", "alice@x.com", "correct-horse", db_path=db_path)
+    set_user_role(uid, "owner", db_path=db_path)
+    resp = client.post("/mobile/api/login", json={"username": "alice", "password": "correct-horse"})
+    token = resp.get_json()["token"]
+
+    resp2 = client.post(f"/mobile/api/account/team/{uid}/revoke", headers=_auth_headers(token))
+    assert resp2.get_json()["ok"] is False
+
+
+def test_team_revoke_route_removes_teammate(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid, role="owner")
+    monkeypatch.setattr("emails.send_team_invite_email", lambda *a, **kw: None)
+    invite_resp = client.post(
+        "/mobile/api/account/team/invite", json={"name": "New", "email": "teammate@x.com"},
+        headers=_auth_headers(token),
+    )
+    member_id = invite_resp.get_json()["user_id"]
+
+    resp = client.post(f"/mobile/api/account/team/{member_id}/revoke", headers=_auth_headers(token))
+    assert resp.get_json()["ok"] is True
+
+    members = client.get("/mobile/api/account/team", headers=_auth_headers(token)).get_json()["members"]
+    assert len(members) == 1

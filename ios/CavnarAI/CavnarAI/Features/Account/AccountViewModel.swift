@@ -25,6 +25,35 @@ final class AccountViewModel {
     var isSavingAlerts = false
     var saveAlertsError: String?
 
+    // Sign-in activity log
+    var loginHistory: [LoginHistoryEntry] = []
+    var isLoadingLoginHistory = false
+
+    // Export my data
+    var isExportingData = false
+    var exportDataError: String?
+    var exportDataSucceeded = false
+
+    // Self-serve test digest
+    var isSendingTestDigest = false
+    var testDigestError: String?
+    var testDigestSucceeded = false
+
+    // Marketing opt-out
+    var isTogglingMarketingOptOut = false
+
+    // 2FA backup codes
+    var backupCodesRemaining: Int?
+    var isBackupCodesBusy = false
+    var backupCodesError: String?
+
+    // Team (invite / manage access)
+    var teamMembers: [TeamMember] = []
+    var isLoadingTeam = false
+    var isInvitingTeamMember = false
+    var inviteTeamError: String?
+    var revokeTeamError: String?
+
     private let client: APIClient
 
     init(client: APIClient = .shared) {
@@ -159,16 +188,25 @@ final class AccountViewModel {
     }
 
     private struct VerifyBody: Encodable { let code: String; let method: String }
+    private struct VerifyResponse: Decodable { let ok: Bool; let error: String?; let backupCodes: [String]?
+        enum CodingKeys: String, CodingKey { case ok, error; case backupCodes = "backup_codes" }
+    }
+
+    // Set the moment 2FA is first enabled — the codes are shown exactly
+    // once (only the hash is ever persisted server-side), so the setup
+    // sheet reads this right after a successful verify and never again.
+    var freshBackupCodes: [String]?
 
     func verify2FA(code: String) async -> Bool {
         is2FABusy = true
         twoFAError = nil
         defer { is2FABusy = false }
         do {
-            let response: OKErrorResponse = try await client.send(
+            let response: VerifyResponse = try await client.send(
                 "/mobile/api/account/2fa/verify", method: .post, body: VerifyBody(code: code, method: twoFATestMethod)
             )
             if response.ok {
+                freshBackupCodes = response.backupCodes
                 await load()
                 return true
             }
@@ -215,6 +253,176 @@ final class AccountViewModel {
             return true
         } catch {
             await load()  // resync UI state with server if the toggle silently failed
+            return false
+        }
+    }
+
+    private struct MarketingOptOutBody: Encodable { let optedOut: Bool
+        enum CodingKeys: String, CodingKey { case optedOut = "opted_out" }
+    }
+
+    @discardableResult
+    func toggleMarketingOptOut(_ optedOut: Bool) async -> Bool {
+        isTogglingMarketingOptOut = true
+        defer { isTogglingMarketingOptOut = false }
+        do {
+            _ = try await client.send(
+                "/mobile/api/account/marketing-opt-out", method: .post, body: MarketingOptOutBody(optedOut: optedOut)
+            ) as APIClient.EmptyResponse
+            summary?.account.marketingEmailsOptOut = optedOut
+            return true
+        } catch {
+            await load()
+            return false
+        }
+    }
+
+    private struct HistoryResponse: Decodable { let ok: Bool; let history: [LoginHistoryEntry] }
+
+    func loadLoginHistory() async {
+        isLoadingLoginHistory = true
+        defer { isLoadingLoginHistory = false }
+        do {
+            let response: HistoryResponse = try await client.send("/mobile/api/account/login-history", hapticOnError: false)
+            loginHistory = response.history
+        } catch {
+            // Non-fatal — sheet just shows an empty state.
+        }
+    }
+
+    private struct ExportEmailResponse: Decodable { let ok: Bool; let email: String?; let error: String? }
+
+    func exportData() async {
+        isExportingData = true
+        exportDataError = nil
+        exportDataSucceeded = false
+        defer { isExportingData = false }
+        do {
+            let response: ExportEmailResponse = try await client.send("/mobile/api/account/export-data", method: .post)
+            if response.ok {
+                exportDataSucceeded = true
+            } else {
+                exportDataError = response.error ?? "Couldn't export your data."
+            }
+        } catch let error as APIClient.APIError {
+            exportDataError = error.message
+        } catch {
+            exportDataError = "Couldn't export your data."
+        }
+    }
+
+    func sendTestDigest() async {
+        isSendingTestDigest = true
+        testDigestError = nil
+        testDigestSucceeded = false
+        defer { isSendingTestDigest = false }
+        do {
+            let response: ExportEmailResponse = try await client.send("/mobile/api/account/send-test-digest", method: .post)
+            if response.ok {
+                testDigestSucceeded = true
+            } else {
+                testDigestError = response.error ?? "Couldn't send a preview."
+            }
+        } catch let error as APIClient.APIError {
+            testDigestError = error.message
+        } catch {
+            testDigestError = "Couldn't send a preview."
+        }
+    }
+
+    private struct BackupCodesStatusResponse: Decodable { let ok: Bool; let remaining: Int? }
+    private struct BackupCodesResponse: Decodable { let ok: Bool; let backupCodes: [String]?
+        enum CodingKeys: String, CodingKey { case ok; case backupCodes = "backup_codes" }
+    }
+
+    func loadBackupCodesStatus() async {
+        do {
+            let response: BackupCodesStatusResponse = try await client.send("/mobile/api/account/2fa/backup-codes", hapticOnError: false)
+            backupCodesRemaining = response.remaining
+        } catch {
+            // Non-fatal.
+        }
+    }
+
+    func regenerateBackupCodes() async -> [String]? {
+        isBackupCodesBusy = true
+        backupCodesError = nil
+        defer { isBackupCodesBusy = false }
+        do {
+            let response: BackupCodesResponse = try await client.send("/mobile/api/account/2fa/backup-codes", method: .post)
+            if response.ok, let codes = response.backupCodes {
+                backupCodesRemaining = codes.count
+                return codes
+            }
+            backupCodesError = "Couldn't generate new codes."
+            return nil
+        } catch let error as APIClient.APIError {
+            backupCodesError = error.message
+            return nil
+        } catch {
+            backupCodesError = "Couldn't generate new codes."
+            return nil
+        }
+    }
+
+    private struct TeamResponse: Decodable { let ok: Bool; let members: [TeamMember] }
+
+    func loadTeam() async {
+        isLoadingTeam = true
+        defer { isLoadingTeam = false }
+        do {
+            let response: TeamResponse = try await client.send("/mobile/api/account/team", hapticOnError: false)
+            teamMembers = response.members
+        } catch {
+            // Non-fatal — sheet just shows an empty state.
+        }
+    }
+
+    private struct InviteBody: Encodable { let name: String; let email: String }
+    private struct InviteResponse: Decodable { let ok: Bool; let error: String? }
+
+    @discardableResult
+    func inviteTeamMember(name: String, email: String) async -> Bool {
+        isInvitingTeamMember = true
+        inviteTeamError = nil
+        defer { isInvitingTeamMember = false }
+        do {
+            let response: InviteResponse = try await client.send(
+                "/mobile/api/account/team/invite", method: .post, body: InviteBody(name: name, email: email)
+            )
+            if response.ok {
+                await loadTeam()
+                return true
+            }
+            inviteTeamError = response.error ?? "Couldn't add that teammate."
+            return false
+        } catch let error as APIClient.APIError {
+            inviteTeamError = error.message
+            return false
+        } catch {
+            inviteTeamError = "Couldn't add that teammate."
+            return false
+        }
+    }
+
+    @discardableResult
+    func revokeTeamMember(_ userID: Int) async -> Bool {
+        revokeTeamError = nil
+        do {
+            let response: InviteResponse = try await client.send(
+                "/mobile/api/account/team/\(userID)/revoke", method: .post
+            )
+            if response.ok {
+                await loadTeam()
+                return true
+            }
+            revokeTeamError = response.error ?? "Couldn't remove that teammate."
+            return false
+        } catch let error as APIClient.APIError {
+            revokeTeamError = error.message
+            return false
+        } catch {
+            revokeTeamError = "Couldn't remove that teammate."
             return false
         }
     }
@@ -371,16 +579,18 @@ final class AccountViewModel {
         let voiceNotes: String
         let neverSay: String
         let menuNotes: String
+        let timezone: String
         enum CodingKeys: String, CodingKey {
             case ownerName = "owner_name"
             case ownerPhone = "owner_phone"
             case voiceNotes = "voice_notes"
             case neverSay = "never_say"
             case menuNotes = "menu_notes"
+            case timezone
         }
     }
 
-    func updateProfile(ownerName: String, ownerPhone: String, voiceNotes: String, neverSay: String, menuNotes: String) async {
+    func updateProfile(ownerName: String, ownerPhone: String, voiceNotes: String, neverSay: String, menuNotes: String, timezone: String) async {
         isSavingProfile = true
         saveProfileError = nil
         saveProfileSucceeded = false
@@ -390,7 +600,7 @@ final class AccountViewModel {
                 "/mobile/api/account/update-profile", method: .post,
                 body: UpdateProfileBody(
                     ownerName: ownerName, ownerPhone: ownerPhone,
-                    voiceNotes: voiceNotes, neverSay: neverSay, menuNotes: menuNotes
+                    voiceNotes: voiceNotes, neverSay: neverSay, menuNotes: menuNotes, timezone: timezone
                 )
             )
             if response.ok {

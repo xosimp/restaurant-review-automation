@@ -18,6 +18,7 @@ struct AccountAlertsDetailView: View {
     @State private var quietHoursEnabled: Bool
     @State private var quietStart: Date
     @State private var quietEnd: Date
+    @State private var testDigestLabel: String?
 
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -125,7 +126,54 @@ struct AccountAlertsDetailView: View {
                                 }
                                 .tint(Color.cavnarEmber)
                             }
+                            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                            Button {
+                                Task {
+                                    await viewModel.sendTestDigest()
+                                    if viewModel.testDigestSucceeded {
+                                        Haptic.success()
+                                        testDigestLabel = "Preview sent"
+                                    }
+                                }
+                            } label: {
+                                Group {
+                                    if viewModel.isSendingTestDigest {
+                                        CavnarShimmerText(text: "Sending…", color: Color.cavnarEmber)
+                                    } else {
+                                        Text("Send me a preview")
+                                    }
+                                }
+                            }
+                            .font(.cavnarBody(15, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber)
+                            .disabled(viewModel.isSendingTestDigest)
+                            if let testDigestLabel {
+                                Text(testDigestLabel).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen)
+                            } else if let error = viewModel.testDigestError {
+                                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                            }
                         }
+                    }
+                    .cavnarCard()
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionHeader("Email preferences")
+                    VStack(alignment: .leading, spacing: 12) {
+                        AccountKVRow(label: "Product updates & tips", showsDivider: false) {
+                            if viewModel.summary?.account.marketingEmailsOptOut == false {
+                                AccountLink(title: "Turn off", tone: .cavnarRed) {
+                                    Task { await viewModel.toggleMarketingOptOut(true) }
+                                }
+                            } else {
+                                AccountLink(title: "Turn on") {
+                                    Task { await viewModel.toggleMarketingOptOut(false) }
+                                }
+                            }
+                        }
+                        Text("This never affects security emails — sign-in alerts, 2FA codes, and password changes always go out.")
+                            .font(.cavnarBody(14))
+                            .foregroundStyle(Color.cavnarInk3)
                     }
                     .cavnarCard()
                 }

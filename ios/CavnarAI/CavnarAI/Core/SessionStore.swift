@@ -287,12 +287,26 @@ final class SessionStore {
 
     // MARK: - Face ID re-entry lock
 
+    /// Device-local preference — not synced to the backend or across a
+    /// user's devices. Defaults to true (opt-out) so existing users keep
+    /// today's mandatory-lock behavior until they explicitly turn it off;
+    /// a new install also starts locked, matching every install to date.
+    private static let biometricLockDefaultsKey = "cavnar.biometric_lock_enabled"
+    var biometricLockEnabled: Bool {
+        get {
+            guard UserDefaults.standard.object(forKey: Self.biometricLockDefaultsKey) != nil else { return true }
+            return UserDefaults.standard.bool(forKey: Self.biometricLockDefaultsKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: Self.biometricLockDefaultsKey) }
+    }
+
     /// Called when the app returns to the foreground. A no-op if there's no
-    /// active session (nothing to protect) or the device has no biometrics
-    /// enrolled (falls back to leaving the app unlocked rather than stranding
-    /// the owner with no way in).
+    /// active session (nothing to protect), the user has turned the lock
+    /// off in Security settings, or the device has no biometrics enrolled
+    /// (falls back to leaving the app unlocked rather than stranding the
+    /// owner with no way in).
     func lockIfNeeded() {
-        guard isAuthenticated else { return }
+        guard isAuthenticated, biometricLockEnabled else { return }
         isLocked = true
     }
 

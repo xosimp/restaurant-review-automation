@@ -449,6 +449,52 @@ def send_welcome_email(to_email, restaurant_name, username, password,
         "html": _html_document(html),
     })
 
+
+def send_team_invite_email(to_email, restaurant_name, username, password, inviter_name=None):
+    """Self-serve team-invite counterpart to send_welcome_email() above —
+    same credentials-in-an-email shape (matches the risk profile already
+    accepted for every restaurant's primary login), reworded for "added
+    to an existing dashboard" instead of "your dashboard is live"."""
+    import resend as _resend
+    _resend.api_key = RESEND_API_KEY
+    added_by = f" by {inviter_name}" if inviter_name else ""
+    html = f"""
+<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
+  <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
+    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin:0 0 6px">
+    <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">
+      Restaurant Intelligence Dashboard
+    </p>
+  </div>
+  <p style="font-size:15px;line-height:1.6;margin-bottom:16px">
+    You've been added{added_by} to the Cavnar AI dashboard for <strong>{restaurant_name}</strong>.
+  </p>
+  <div style="background:#f7f4ef;border-radius:8px;padding:16px 20px;margin-bottom:20px">
+    <p style="font-size:13px;color:#7a736a;margin:0 0 10px;text-transform:uppercase;letter-spacing:1px;font-weight:600">Your login details</p>
+    <p style="font-size:14px;margin:0 0 6px"><strong>URL:</strong> <a href="https://dashboard.cavnar.ai" style="color:#c84b2f">dashboard.cavnar.ai</a></p>
+    <p style="font-size:14px;margin:0 0 6px"><strong>Username:</strong> {username}</p>
+    <p style="font-size:14px;margin:0"><strong>Temporary password:</strong> {password}</p>
+  </div>
+  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:24px">
+    Once you log in, go to the <strong>Account</strong> tab to set your own password.
+  </p>
+  <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
+  <p style="font-size:12px;color:#7a736a;margin:0">
+    <img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:6px;border:0"><span style="vertical-align:middle">Will Cavnar &nbsp;·&nbsp; Cavnar AI</span><br/>
+    <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
+    &nbsp;·&nbsp;
+    <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
+  </p>
+</div>
+</div>"""
+    _resend.Emails.send({
+        "from": f"Will Cavnar <{FROM_EMAIL}>",
+        "to": [to_email],
+        "subject": f"You've been added to {restaurant_name}'s Cavnar AI dashboard",
+        "html": _html_document(html),
+    })
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 def create_stripe_checkout(module_count: int, owner_email: str,

@@ -37,6 +37,21 @@ CREATE TABLE IF NOT EXISTS sessions (
     ip_address      TEXT,
     user_agent      TEXT
 );
+
+-- Append-only, never pruned/deleted — unlike `sessions` (hard-deleted on
+-- expiry/revoke/device-dedup), this is what powers the Account "sign-in
+-- activity" history, so a login has to stay visible here regardless of
+-- what later happens to the session row it produced.
+CREATE TABLE IF NOT EXISTS login_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL REFERENCES users(id),
+    restaurant_id   INTEGER,
+    event           TEXT    NOT NULL DEFAULT 'login',
+    ip_address      TEXT,
+    user_agent      TEXT,
+    device_type     TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 def init_auth(db_path: str = DB_PATH):
@@ -183,6 +198,80 @@ def update_password(user_id: int, new_password: str, db_path: str = DB_PATH):
     conn.commit()
     conn.close()
 
+def invite_team_member(restaurant_id: int, name: str, email: str,
+                       db_path: str = DB_PATH) -> dict:
+    """Self-serve version of what Will already does by hand for every
+    client's primary login: create_user() already accepts an existing
+    restaurant_id (its only two callers just always happen to pass a
+    freshly-created one), so a second user on the same restaurant needs no
+    new creation path — just a generated username/temp password and the
+    same create_user() call. Returns {"ok": True, "user_id", "username",
+    "temp_password"} on success, or {"ok": False, "error": "..."} on a
+    duplicate username/email — never raises."""
+    email = email.lower().strip()
+    base = (email.split("@")[0] or name.lower().replace(" ", "")).strip() or "member"
+    username = "".join(c for c in base if c.isalnum()) or "member"
+    temp_password = secrets.token_urlsafe(9)
+    conn = get_conn(db_path)
+    candidate = username
+    suffix = 1
+    while conn.execute("SELECT 1 FROM users WHERE username=?", (candidate,)).fetchone():
+        suffix += 1
+        candidate = f"{username}{suffix}"
+    conn.close()
+    try:
+        user_id = create_user(restaurant_id, candidate, email, temp_password,
+                              is_admin=False, db_path=db_path)
+    except sqlite3.IntegrityError:
+        return {"ok": False, "error": "That email is already in use."}
+    return {"ok": True, "user_id": user_id, "username": candidate, "temp_password": temp_password}
+
+
+def get_team_members(restaurant_id: int, db_path: str = DB_PATH) -> list[dict]:
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT id, username, email, role, created_at, last_login, is_active
+        FROM users WHERE restaurant_id=? AND is_active=1
+        ORDER BY created_at
+    """, (restaurant_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def revoke_team_member(restaurant_id: int, user_id: int, acting_user_id: int,
+                       db_path: str = DB_PATH) -> dict:
+    """Deactivates a teammate's login and kills their sessions immediately —
+    revocation shouldn't wait for a 30-day token to expire on its own.
+    Guards against the three ways this could go wrong: revoking someone
+    from a *different* restaurant entirely (cross-tenant safety — restaurant_id
+    is always the acting owner's own, never trusted from the request body),
+    revoking yourself, and revoking the last remaining active login for a
+    restaurant (which would lock everyone out, including the owner)."""
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT id FROM users WHERE id=? AND restaurant_id=? AND is_active=1",
+        (user_id, restaurant_id)
+    ).fetchone()
+    if not row:
+        conn.close()
+        return {"ok": False, "error": "That teammate wasn't found."}
+    if user_id == acting_user_id:
+        conn.close()
+        return {"ok": False, "error": "You can't revoke your own access."}
+    active_count = conn.execute(
+        "SELECT COUNT(*) AS n FROM users WHERE restaurant_id=? AND is_active=1",
+        (restaurant_id,)
+    ).fetchone()["n"]
+    if active_count <= 1:
+        conn.close()
+        return {"ok": False, "error": "Can't remove the only remaining login."}
+    conn.execute("UPDATE users SET is_active=0 WHERE id=?", (user_id,))
+    conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 def list_users(db_path: str = DB_PATH) -> list[dict]:
     conn = get_conn(db_path)
     rows = conn.execute("""
@@ -199,6 +288,7 @@ def list_users(db_path: str = DB_PATH) -> list[dict]:
 def create_session(user_id: int, days: int = 30,
                    ip_address: str = None, user_agent: str = None,
                    device_type: str = "web", device_id: str = None,
+                   restaurant_id: int = None,
                    db_path: str = DB_PATH) -> str:
     """Every call used to unconditionally INSERT a new row, so a device that
     just re-logs in (session expired, signed out, reinstalled) piled up a
@@ -223,9 +313,30 @@ def create_session(user_id: int, days: int = 30,
         "INSERT INTO sessions (token, user_id, expires_at, ip_address, user_agent, device_type, device_id) VALUES (?,?,?,?,?,?,?)",
         (token, user_id, expires, ip_address or "", user_agent or "", device_type, device_id or "")
     )
+    conn.execute(
+        "INSERT INTO login_history (user_id, restaurant_id, event, ip_address, user_agent, device_type) VALUES (?,?,?,?,?,?)",
+        (user_id, restaurant_id, "login", ip_address or "", user_agent or "", device_type)
+    )
     conn.commit()
     conn.close()
     return token
+
+
+def get_login_history(user_id: int, limit: int = 50, db_path: str = DB_PATH) -> list[dict]:
+    """Every past login for this user, most recent first — unlike
+    get_sessions_for_user() above, this never drops a row when its session
+    later expires, gets revoked, or gets deduped by device_id, since it's
+    written once at login time and never touched again."""
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT event, ip_address, user_agent, device_type, created_at
+        FROM login_history
+        WHERE user_id=?
+        ORDER BY created_at DESC
+        LIMIT ?
+    """, (user_id, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def get_sessions_for_user(user_id: int, current_token: str = None,

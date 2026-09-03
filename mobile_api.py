@@ -39,6 +39,15 @@ import client_api as _capi
 mobile_bp = Blueprint('mobile_api', __name__, url_prefix='/mobile/api')
 
 
+# Same one-liner duplication as admin_routes.py/scheduler.py/audit_app.py —
+# only needed here for the two routes (test-digest preview, data export)
+# that send a dynamically-built report/attachment rather than one of
+# emails.py's fixed templates, so they can't go through emails.py's own
+# senders like every other email in this file does.
+def _resend_key(): return os.getenv("RESEND_API_KEY", "")
+def _from_email(): return os.getenv("FROM_EMAIL", "will@cavnar.ai")
+
+
 def _public_user(user):
     """Fields safe to hand to the client — never the password hash."""
     return {
@@ -132,7 +141,7 @@ def mobile_apple_signin():
     user = dict(row)
     ip = _get_client_ip()
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
-    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id)
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id, restaurant_id=user["restaurant_id"])
     update_last_login(user["id"])
     _send_login_notification(user, ip, ua)
     return jsonify(ok=True, token=token, user=_public_user(user))
@@ -192,7 +201,7 @@ def mobile_login():
         return jsonify(ok=True, requires_2fa=True, pending_token=pending_encoded, masked_email=masked)
 
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
-    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id)
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id, restaurant_id=user["restaurant_id"])
     _send_login_notification(user, ip, ua)
     return jsonify(ok=True, requires_2fa=False, token=token, user=_public_user(user))
 
@@ -366,7 +375,7 @@ def mobile_register():
     from auth import get_user_by_username
     user = get_user_by_username(username)
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
-    token = create_session(uid, ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id)
+    token = create_session(uid, ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id, restaurant_id=rid)
     return jsonify(ok=True, token=token, user=_public_user(user)), 201
 
 
@@ -402,16 +411,23 @@ def mobile_verify_2fa():
         _record_failed_attempt("2fa:" + ip)
         return jsonify(ok=False, error="Session expired — please log in again."), 401
 
-    if not (rest.two_fa_code and hmac.compare_digest(rest.two_fa_code, code_entered)):
-        _record_failed_attempt("2fa:" + ip)
-        return jsonify(ok=False, error="Incorrect code. Try again."), 401
-
-    try:
-        expires = datetime.strptime(rest.two_fa_expires, "%Y-%m-%d %H:%M:%S")
-    except Exception:
-        expires = datetime.now()
-    if datetime.now() > expires:
-        return jsonify(ok=False, error="Code expired. Request a new one."), 401
+    otp_matches = rest.two_fa_code and hmac.compare_digest(rest.two_fa_code, code_entered)
+    if not otp_matches:
+        # Not the emailed/texted code — try a 2FA backup code before
+        # failing outright (unlike the OTP, backup codes have no expiry
+        # window; a stolen phone with no email/SMS access is exactly the
+        # scenario recovery codes exist for).
+        from models import verify_and_consume_backup_code
+        if not verify_and_consume_backup_code(rid, code_entered):
+            _record_failed_attempt("2fa:" + ip)
+            return jsonify(ok=False, error="Incorrect code. Try again."), 401
+    else:
+        try:
+            expires = datetime.strptime(rest.two_fa_expires, "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            expires = datetime.now()
+        if datetime.now() > expires:
+            return jsonify(ok=False, error="Code expired. Request a new one."), 401
 
     _clear_attempts("2fa:" + ip)
     update_restaurant(rid, {"two_fa_code": "", "two_fa_expires": "", "two_fa_pending": ""})
@@ -420,7 +436,7 @@ def mobile_verify_2fa():
         return jsonify(ok=False, error="Session expired — please log in again."), 401
 
     ua = request.headers.get("User-Agent", "Cavnar-iOS")
-    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id)
+    token = create_session(user["id"], ip_address=ip, user_agent=ua, device_type="ios", device_id=device_id, restaurant_id=user["restaurant_id"])
     _send_login_notification(user, ip, ua)
 
     device_token = None
@@ -2019,6 +2035,7 @@ def _do_mobile_account(current_user):
         "voice_notes": restaurant.voice_notes or None,
         "never_say": restaurant.never_say or None,
         "menu_notes": restaurant.menu_notes or None,
+        "timezone": restaurant.timezone or "America/Chicago",
     }
     # Where a 2FA code actually goes, masked, for the Security sheet's
     # status tile ("Text · •••-0142" / "Email · ma***@giamia.com").
@@ -2037,6 +2054,7 @@ def _do_mobile_account(current_user):
         "two_fa_method": _method,
         "two_fa_contact_masked": _masked,
         "login_notify": bool(getattr(restaurant, "login_notify", 0)),
+        "marketing_emails_opt_out": bool(getattr(restaurant, "marketing_emails_opt_out", 0)),
         "last_login": current_user.get("last_login"),
         "password_changed_at": current_user.get("password_changed_at"),
         "password_strength": current_user.get("password_strength"),
@@ -2116,6 +2134,20 @@ def mobile_account_sessions(current_user):
     for s in sessions:
         s["label"] = _session_label(s)
     return jsonify(ok=True, sessions=sessions)
+
+
+@mobile_bp.route("/account/login-history")
+@mobile_login_required
+def mobile_login_history(current_user):
+    """Distinct from /account/sessions above: that's only currently-live
+    sessions, this is every past login (including ones whose session has
+    since expired, been revoked, or been deduped by device_id) — see
+    auth.get_login_history()'s doc comment."""
+    from auth import get_login_history
+    history = get_login_history(current_user["id"])
+    for h in history:
+        h["label"] = _session_label(h)
+    return jsonify(ok=True, history=history)
 
 
 @mobile_bp.route("/account/change-password", methods=["POST"])
@@ -2208,6 +2240,16 @@ def mobile_update_profile(current_user):
         "never_say":   _clean(data.get("never_say"), 1000),
         "menu_notes":  _clean(data.get("menu_notes"), 2000),
     }
+    # Same 7-zone list as the admin Client Settings page (templates/
+    # client_settings.html) — only accept a value from that fixed set so a
+    # bad string can't silently break "today"/trend math elsewhere.
+    _valid_timezones = {
+        "America/New_York", "America/Chicago", "America/Denver", "America/Phoenix",
+        "America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu",
+    }
+    tz = (data.get("timezone") or "").strip()
+    if tz in _valid_timezones:
+        updates["timezone"] = tz
     update_restaurant(current_user["restaurant_id"], updates)
     return jsonify(ok=True)
 
@@ -2346,7 +2388,9 @@ def mobile_verify_2fa_setup(current_user):
         return jsonify(ok=False, error="Code expired. Try again."), 400
     method = data.get("method") if data.get("method") in ("email", "sms") else "email"
     update_restaurant(rid, {"two_fa_enabled": 1, "two_fa_code": "", "two_fa_expires": "", "two_fa_method": method})
-    return jsonify(ok=True)
+    from models import generate_backup_codes
+    codes = generate_backup_codes(rid)
+    return jsonify(ok=True, backup_codes=codes)
 
 
 @mobile_bp.route("/account/2fa/disable", methods=["POST"])
@@ -2356,12 +2400,165 @@ def mobile_disable_2fa(current_user):
     return jsonify(ok=True)
 
 
+@mobile_bp.route("/account/2fa/backup-codes")
+@mobile_login_required
+def mobile_backup_codes_status(current_user):
+    from models import count_unused_backup_codes
+    return jsonify(ok=True, remaining=count_unused_backup_codes(current_user["restaurant_id"]))
+
+
+@mobile_bp.route("/account/2fa/backup-codes", methods=["POST"])
+@mobile_login_required
+def mobile_regenerate_backup_codes(current_user):
+    """Invalidates every previously-issued code and mints a fresh set —
+    shown once here, same as at initial 2FA setup."""
+    from models import generate_backup_codes
+    codes = generate_backup_codes(current_user["restaurant_id"])
+    return jsonify(ok=True, backup_codes=codes)
+
+
 @mobile_bp.route("/account/login-notify", methods=["POST"])
 @mobile_login_required
 def mobile_toggle_login_notify(current_user):
     data = request.get_json() or {}
     update_restaurant(current_user["restaurant_id"], {"login_notify": int(bool(data.get("enabled")))})
     return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/marketing-opt-out", methods=["POST"])
+@mobile_login_required
+def mobile_toggle_marketing_opt_out(current_user):
+    """Gates only the non-critical automated sends (onboarding drip,
+    monthly summary) at their scheduler.py call sites — security/
+    transactional email (2FA, login notify, password/email-changed,
+    welcome) is never affected by this flag."""
+    data = request.get_json() or {}
+    update_restaurant(current_user["restaurant_id"], {"marketing_emails_opt_out": int(bool(data.get("opted_out")))})
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/team")
+@mobile_login_required
+def mobile_get_team(current_user):
+    from auth import get_team_members
+    members = get_team_members(current_user["restaurant_id"])
+    for m in members:
+        m["is_you"] = (m["id"] == current_user["id"])
+    return jsonify(ok=True, members=members)
+
+
+@mobile_bp.route("/account/team/invite", methods=["POST"])
+@mobile_login_required
+def mobile_invite_team_member(current_user):
+    """Owner-only — the restaurant's role='owner' login is the only one
+    that can add/remove other logins on the same restaurant. There's no
+    finer-grained permission tier today; a plain teammate just doesn't
+    get this row in the UI, and the route double-checks it server-side
+    regardless of what the client shows."""
+    if current_user.get("role") != "owner":
+        return jsonify(ok=False, error="Only the account owner can invite team members."), 403
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    email = (data.get("email") or "").strip()
+    if not name or "@" not in email:
+        return jsonify(ok=False, error="Enter a name and a valid email."), 400
+    from auth import invite_team_member
+    result = invite_team_member(current_user["restaurant_id"], name, email)
+    if not result.get("ok"):
+        return jsonify(ok=False, error=result.get("error", "Couldn't add that teammate.")), 400
+    try:
+        from emails import send_team_invite_email
+        from models import log_email, get_restaurant as _gr
+        restaurant = _gr(current_user["restaurant_id"])
+        send_team_invite_email(email, restaurant.name, result["username"], result["temp_password"],
+                               inviter_name=current_user.get("username"))
+        log_email(current_user["restaurant_id"], "team_invite", email, f"You've been added to {restaurant.name}")
+    except Exception:
+        pass
+    return jsonify(ok=True, user_id=result["user_id"], username=result["username"])
+
+
+@mobile_bp.route("/account/team/<int:user_id>/revoke", methods=["POST"])
+@mobile_login_required
+def mobile_revoke_team_member(current_user, user_id):
+    if current_user.get("role") != "owner":
+        return jsonify(ok=False, error="Only the account owner can remove team members."), 403
+    from auth import revoke_team_member
+    result = revoke_team_member(current_user["restaurant_id"], user_id, current_user["id"])
+    if not result.get("ok"):
+        return jsonify(ok=False, error=result.get("error", "Couldn't remove that teammate.")), 400
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/send-test-digest", methods=["POST"])
+@mobile_login_required
+def mobile_send_test_digest(current_user):
+    """Self-serve version of admin_routes.py's test_digest() — same
+    build/render, but scoped to the caller's own restaurant and sent to
+    whoever's actually logged in (so a team member previews it addressed
+    to themselves, not always the primary owner)."""
+    from models import log_email
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    to_email = current_user.get("email")
+    if not to_email:
+        return jsonify(ok=False, error="No email on file for your account."), 400
+    try:
+        from reporter import build_report_from_db, render_html
+        import resend as _resend
+        report = build_report_from_db(rid, restaurant.name, days=7)
+        html = render_html(report, restaurant.name, owner_name=restaurant.owner_name, restaurant_id=rid)
+        _resend.api_key = _resend_key()
+        _resend.Emails.send({
+            "from": f"Cavnar AI <{_from_email()}>",
+            "to": [to_email],
+            "subject": f"[Preview] Your weekly review digest — {restaurant.name}",
+            "html": html,
+        })
+        try:
+            log_email(rid, "digest", to_email, f"[Preview] Weekly digest — {restaurant.name}")
+        except Exception: pass
+        return jsonify(ok=True, email=to_email)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+
+@mobile_bp.route("/account/export-data", methods=["POST"])
+@mobile_login_required
+def mobile_export_data(current_user):
+    """Emails the caller a CSV of their own reviews (date/rating/text/
+    response status) — the narrower, self-serve counterpart to admin's
+    export_reviews() browser download."""
+    import base64 as _b64
+    from models import build_reviews_export_csv, log_email
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    to_email = current_user.get("email")
+    if not to_email:
+        return jsonify(ok=False, error="No email on file for your account."), 400
+    try:
+        import resend as _resend
+        csv_text = build_reviews_export_csv(rid)
+        b64 = _b64.b64encode(csv_text.encode("utf-8")).decode("ascii")
+        safe_name = "".join(c for c in (restaurant.name or "cavnar") if c.isalnum() or c in " -_").strip() or "cavnar"
+        _resend.api_key = _resend_key()
+        _resend.Emails.send({
+            "from": f"Cavnar AI <{_from_email()}>",
+            "to": [to_email],
+            "subject": f"Your Cavnar AI data export — {restaurant.name}",
+            "html": "<p>Attached is a CSV of your reviews — date, rating, review text, and response status.</p>",
+            "attachments": [{"filename": f"{safe_name}_reviews.csv", "content": b64}],
+        })
+        try:
+            log_email(rid, "data_export", to_email, f"Data export — {restaurant.name}")
+        except Exception: pass
+        return jsonify(ok=True, email=to_email)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
 
 
 @mobile_bp.route("/account/alert-settings", methods=["POST"])
