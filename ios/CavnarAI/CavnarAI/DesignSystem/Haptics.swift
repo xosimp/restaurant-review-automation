@@ -21,6 +21,15 @@ enum Haptic {
         generator.impactOccurred()
     }
 
+    /// The heaviest tap — a single deliberate thud for a big, physical
+    /// gesture completing (pull-to-refresh engaging). Deliberately not used
+    /// for anything smaller than that, or it stops reading as significant.
+    static func heavy() {
+        let generator = UIImpactFeedbackGenerator(style: .heavy)
+        generator.prepare()
+        generator.impactOccurred()
+    }
+
     /// A completed action landed successfully (review posted, schedule
     /// generated, campaign sent, Face ID unlocked).
     static func success() {

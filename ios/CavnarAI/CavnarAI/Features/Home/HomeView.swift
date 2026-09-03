@@ -161,7 +161,14 @@ struct HomeView: View {
                 // here matches the everyday-logo-in-the-corner convention
                 // most apps use, on the one screen every session opens on.
                 cavnarToolbarItem(placement: .topBarLeading) {
-                    CavnarSealMark(size: 18)
+                    // 17pt, matching the bell/building icons' own
+                    // .font(.system(size: 17)) exactly — was 18, a mismatch
+                    // device feedback caught (the seal reading visibly
+                    // smaller than the bell despite the larger number,
+                    // since it's a thin open ring rather than a bold-weight
+                    // filled glyph — same background circle size either way
+                    // via cavnarToolbarIconGlass()'s shared default).
+                    CavnarSealMark(size: 17)
                         .cavnarToolbarIconGlass()
                 }
                 // Only shown when quiet hours is both enabled and the

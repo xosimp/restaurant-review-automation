@@ -142,10 +142,19 @@ struct ReviewDetailView: View {
 
     private var draftEditor: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text("AI-drafted response")
                     .font(.cavnarBody(14.5, weight: 700))
                     .foregroundStyle(Color.cavnarInk3)
+                if !isFinal {
+                    // Same at-rest "this is yours to change" cue Account's
+                    // editable fields use (AccountFieldLabel) — nothing else
+                    // here told a first-time user the draft below is
+                    // actually editable text, not a locked preview.
+                    Image(systemName: "pencil")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.cavnarEmber.opacity(0.7))
+                }
                 Spacer()
                 if !isFinal {
                     if !viewModel.templates.isEmpty {
@@ -178,24 +187,23 @@ struct ReviewDetailView: View {
                     .background(Color.cavnarEmber.opacity(0.20))
                     .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
             } else {
-                TextEditor(text: $viewModel.editedDraft)
+                // TextEditor (was here originally) is backed by a full
+                // UITextView — with this app's custom Apfel Grotezk font,
+                // that first becomeFirstResponder/layout pass on tapping in
+                // has to build a glyph cache for a font UIKit hasn't
+                // measured before, which is a well-known TextEditor+custom-
+                // font stutter, and it recurs every time since this view
+                // (and its TextEditor) is recreated fresh per review. Same
+                // fix Account's editable fields already use for a related
+                // TextEditor sizing bug (see AccountFieldRow's doc comment):
+                // TextField(_:text:axis:) is a lighter-weight growing-field
+                // primitive, not TextEditor's full rich-text stack, and
+                // doesn't carry the same first-focus cost.
+                TextField("", text: $viewModel.editedDraft, axis: .vertical)
                     .font(.cavnarBody(17))
                     .lineSpacing(5)
+                    .lineLimit(6...20)
                     .focused($isDraftFocused)
-                    // TextEditor keeps its own opaque system background by
-                    // default, which was rendering as a second, darker box
-                    // nested inside this one — .scrollContentBackground
-                    // hides it so only our own fill shows.
-                    .scrollContentBackground(.hidden)
-                    // Also fixes an inconsistent-height bug: without this,
-                    // TextEditor sometimes sized itself to fit all the text
-                    // and sometimes clipped it to just past minHeight,
-                    // depending on whether the text arrived before or after
-                    // the first layout pass. Disabling its own internal
-                    // scrolling forces it to size to its content instead,
-                    // deferring scrolling to the outer ScrollView.
-                    .scrollDisabled(true)
-                    .frame(minHeight: 130)
                     .padding(14)
                     .background(Color.cavnarEmber.opacity(0.20))
                     .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))

@@ -233,7 +233,7 @@ struct LoginView: View {
             LoginSocialButton(title: "Continue with Apple", isLoading: viewModel.isLoading) {
                 Image(systemName: "apple.logo")
                     .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.black)
+                    .foregroundStyle(Color.cavnarInk)
             } action: {
                 Task { await viewModel.signInWithApple() }
             }

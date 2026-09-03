@@ -1442,6 +1442,13 @@ struct CavnarEmberRefreshable: ViewModifier {
             }
         }
         .refreshable {
+            // The system UIRefreshControl fires its own haptic when the
+            // gesture engages, but that's an ambient default this app
+            // doesn't control and it reads as noticeably weaker than every
+            // other deliberate haptic here — one explicit heavy() at the
+            // moment refresh actually triggers replaces it with the same
+            // "deep single thud" every other big gesture in the app has.
+            Haptic.heavy()
             flareID += 1
             isRefreshing = true
             await action()

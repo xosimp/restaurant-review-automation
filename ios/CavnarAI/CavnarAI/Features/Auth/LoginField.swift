@@ -152,11 +152,22 @@ struct LoginSocialButton<Icon: View>: View {
                 icon().frame(width: 18, height: 18)
                 Text(title)
                     .font(.cavnarBody(16, weight: 700))
-                    .foregroundStyle(.black)
+                    .foregroundStyle(Color.cavnarInk)
             }
             .frame(maxWidth: .infinity)
             .frame(height: LoginMetrics.buttonHeight)
-            .background(.white, in: RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous))
+            // Bright white pills read as jarring/off-brand against the
+            // rest of this screen's black-and-ember theme — swapped for
+            // Apple/Google's own officially-supported dark button variant
+            // (both publish a black-background style alongside the default
+            // white one) instead of inventing a non-standard treatment.
+            // A faint ember edge, not a neutral gray one, ties it to the
+            // app's one accent color rather than reading as generic dark UI.
+            .background(Color.cavnarPaper3, in: RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
+                    .strokeBorder(Color.cavnarEmber.opacity(0.18), lineWidth: 1)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(LoginPressStyle())

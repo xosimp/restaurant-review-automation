@@ -50,6 +50,7 @@ struct RootView: View {
         Group {
             if !sessionStore.isAuthenticated {
                 LoginView(sessionStore: sessionStore, introReady: !showLaunchSplash, coldLaunch: coldLaunchIntroPending)
+                    .transition(.opacity)
             } else if sessionStore.isLocked {
                 // introReady: on a cold launch this mounts UNDER the splash;
                 // without the gate its draw-in played hidden and the user
@@ -66,8 +67,19 @@ struct RootView: View {
                     }
             } else {
                 mainTabs
+                    .transition(.opacity)
             }
         }
+        // Home's own hero/FAB already fade their CONTENT in (see
+        // playIntroSequence below) — this covers the screen SWAP itself,
+        // which was a hard, unanimated cut straight from the login screen
+        // to the fully-built tab bar + nav chrome underneath that content,
+        // reading as "it just appears" a beat before the hero's own fade
+        // even started. Scoped to isAuthenticated only — the Face ID
+        // lock/unlock swap (isLocked) stays an instant cut deliberately,
+        // since that's a frequent, security-relevant action where snappy
+        // reads as trustworthy and a fade would just feel like lag.
+        .animation(.easeOut(duration: 0.35), value: sessionStore.isAuthenticated)
         .environment(deepLinkRouter)
         // Mobile's in-app interface is dark-only by design — what's
         // switchable is the home-screen APP ICON (Account > More), not
