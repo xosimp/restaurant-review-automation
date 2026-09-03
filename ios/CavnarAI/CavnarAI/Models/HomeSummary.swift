@@ -21,6 +21,11 @@ struct HomeSummary: Codable {
     let needsAttention: [NeedsAttentionItem]
     let totalValueDelivered: Int
     let valueHistory: [ValueSnapshot]
+    // Computed server-side by the exact same is_in_quiet_hours() check
+    // notify.py's own alert dispatch gates on, so the Home badge can never
+    // disagree with what's actually being held back right now.
+    let quietHoursActive: Bool
+    let alertQuietEnd: String?
 
     enum CodingKeys: String, CodingKey {
         case username
@@ -32,6 +37,8 @@ struct HomeSummary: Codable {
         case needsAttention = "needs_attention"
         case totalValueDelivered = "total_value_delivered"
         case valueHistory = "value_history"
+        case quietHoursActive = "quiet_hours_active"
+        case alertQuietEnd = "alert_quiet_end"
     }
 }
 

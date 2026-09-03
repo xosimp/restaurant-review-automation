@@ -25,21 +25,32 @@ struct LoginView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.cavnarPaper.ignoresSafeArea()
                 VStack(spacing: 28) {
                     Spacer()
 
                     VStack(spacing: 14) {
-                        // The seal draws itself while the letters stamp in
-                        // beside it — the one-time entrance for the first
-                        // screen a session ever sees (see CavnarMotion).
+                        // Wordmark only — no seal beside it. Same call
+                        // already made everywhere else a lockup showed
+                        // both together (social headers, email headers,
+                        // the Face ID lock screen): it reads as the same
+                        // mark shown twice, not two different things.
+                        // Mirrors LockedView's own wordmark-only entrance
+                        // exactly (RootView.swift) rather than
+                        // CavnarLockupIntro, which still draws the seal.
                         if introReady {
-                            CavnarLockupIntro(width: 270, coldLaunch: coldLaunch)
+                            Group {
+                                if coldLaunch {
+                                    CavnarWordmarkTraceIn(width: 260, aiTagOverhangs: true)
+                                } else {
+                                    CavnarWordmarkStampIn(width: 260, aiTagOverhangs: true)
+                                }
+                            }
+                            .frame(height: 260 * (CavnarWordmarkLetterShape.boxHeight / CavnarWordmarkLetterShape.boxWidth))
                         } else {
-                            Color.clear.frame(width: 270, height: 270 * (CavnarLockupIntro.aspectHeight / CavnarLockupIntro.aspectWidth))
+                            Color.clear.frame(width: 260, height: 260 * (CavnarWordmarkLetterShape.boxHeight / CavnarWordmarkLetterShape.boxWidth))
                         }
                         Text("Sign in to your restaurant")
-                            .font(.cavnarBody(14))
+                            .font(.cavnarBody(15))
                             .foregroundStyle(Color.cavnarInk3)
                     }
 
@@ -56,7 +67,7 @@ struct LoginView: View {
 
                     if let error = viewModel.errorMessage {
                         Text(error)
-                            .font(.cavnarBody(14.5))
+                            .font(.cavnarBody(15))
                             .foregroundStyle(Color.cavnarRed)
                             .multilineTextAlignment(.center)
                     }
@@ -64,11 +75,17 @@ struct LoginView: View {
                     Button {
                         Task { await viewModel.submit() }
                     } label: {
-                        if viewModel.isLoading {
-                            CavnarShimmerText(text: "Signing in…")
-                        } else {
-                            Text("Sign In")
+                        Group {
+                            if viewModel.isLoading {
+                                CavnarShimmerText(text: "Signing in…")
+                            } else {
+                                Text("Sign In")
+                            }
                         }
+                        // Was hugging its own text width while Google/Apple
+                        // below it stretched full width — the one button
+                        // on this screen that didn't match its siblings.
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: !viewModel.canSubmit))
                     .disabled(!viewModel.canSubmit)
@@ -77,9 +94,11 @@ struct LoginView: View {
 
                     VStack(spacing: 10) {
                         GoogleSignInButton(isLoading: viewModel.isLoading) {
+                            Haptic.light()
                             Task { await viewModel.signInWithGoogle() }
                         }
                         AppleSignInButton(isLoading: viewModel.isLoading) {
+                            Haptic.light()
                             Task { await viewModel.signInWithApple() }
                         }
                     }
@@ -89,6 +108,7 @@ struct LoginView: View {
                 }
                 .padding(28)
             }
+            .cavnarModuleBackground()
             .keyboardNavToolbar($focusedField)
             .navigationDestination(
                 isPresented: Binding(

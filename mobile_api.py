@@ -423,6 +423,13 @@ def _do_mobile_home(current_user):
         pass  # the chart just has one fewer data point — never worth failing Home over
     value_history = get_value_history(rid, days=365)
 
+    # For Home's quiet-hours badge — reuses the exact same check
+    # notify.py's own alert dispatch gates on, so "is it actually silenced
+    # right now" can never disagree between what fires an alert and what
+    # the badge claims.
+    from models import is_in_quiet_hours
+    quiet_hours_active = is_in_quiet_hours(rid)
+
     return {
         "ok": True,
         "username": current_user.get("username"),
@@ -434,6 +441,8 @@ def _do_mobile_home(current_user):
         "needs_attention": needs_attention,
         "total_value_delivered": total_value,
         "value_history": value_history,
+        "quiet_hours_active": quiet_hours_active,
+        "alert_quiet_end": restaurant.alert_quiet_end or None,
     }, 200
 
 

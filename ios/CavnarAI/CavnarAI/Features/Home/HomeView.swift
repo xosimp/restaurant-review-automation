@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(DeepLinkRouter.self) private var deepLinkRouter
     // Owned by RootView (see its homeViewModel) so the loaded summary
     // survives the Face ID lock/unlock swap instead of reloading from
     // scratch on every unlock — and RootView fetches it while the lock
@@ -84,6 +85,11 @@ struct HomeView: View {
                             // the 20pt content margin the rest of the page
                             // uses.
                             hero(summary)
+                            if summary.quietHoursActive {
+                                quietHoursBanner(summary)
+                                    .padding(.horizontal, 20)
+                                    .padding(.top, 14)
+                            }
                             // spacing: 0 with an explicit .padding(.bottom,
                             // 38) on just the carousel below (instead of a
                             // uniform VStack spacing) — this is what lets
@@ -157,6 +163,25 @@ struct HomeView: View {
                 cavnarToolbarItem(placement: .topBarLeading) {
                     CavnarSealMark(size: 18)
                         .cavnarToolbarIconGlass()
+                }
+                // Only shown when quiet hours is both enabled and the
+                // current time actually falls inside the window — computed
+                // server-side by the same check notify.py's own alert
+                // dispatch gates on (see HomeSummary.quietHoursActive), so
+                // this can never claim alerts are silenced when they
+                // aren't. Sits to the left of the bell, since the bell is
+                // exactly what it's telling you is muted right now.
+                if viewModel.summary?.quietHoursActive == true {
+                    cavnarToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            Haptic.light()
+                            deepLinkRouter.pendingTab = .account
+                        } label: {
+                            CavnarQuietMark(size: 34)
+                        }
+                        .buttonStyle(.plain)
+                        .tint(nil)
+                    }
                 }
                 cavnarToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -342,6 +367,40 @@ struct HomeView: View {
     private func greetingName(_ summary: HomeSummary) -> String {
         guard let username = summary.username, !username.isEmpty else { return "Welcome back" }
         return username.prefix(1).uppercased() + username.dropFirst()
+    }
+
+    // The second of the two quiet-hours surfaces (see CavnarQuietMark's own
+    // doc comment) — a plain-language line for the first time someone
+    // actually sees this, since a lone toolbar glyph doesn't explain
+    // itself. Same trigger condition as the toolbar badge.
+    private func quietHoursBanner(_ summary: HomeSummary) -> some View {
+        HStack(spacing: 9) {
+            CavnarQuietMark(size: 26)
+            (Text("Notifications quiet").font(.cavnarBody(13.5, weight: 700)).foregroundStyle(Color.cavnarInk)
+                + Text(quietHoursEndText(summary)).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk2))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .background(Color.white.opacity(0.06))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func quietHoursEndText(_ summary: HomeSummary) -> String {
+        guard let end = summary.alertQuietEnd else {
+            return " — text, email, and push are all holding for now."
+        }
+        let parser = DateFormatter()
+        parser.dateFormat = "HH:mm"
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        guard let date = parser.date(from: end) else {
+            return " — text, email, and push are all holding for now."
+        }
+        let display = DateFormatter()
+        display.dateFormat = "h:mm a"
+        display.locale = Locale(identifier: "en_US")
+        return " until \(display.string(from: date)) — text, email, and push are all holding until then."
     }
 
     private var todayDateString: String {
