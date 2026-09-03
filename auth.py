@@ -224,6 +224,15 @@ def invite_team_member(restaurant_id: int, name: str, email: str,
                               is_admin=False, db_path=db_path)
     except sqlite3.IntegrityError:
         return {"ok": False, "error": "That email is already in use."}
+    # 'member' marks an invited teammate. The role column's existing
+    # vocabulary is 'client' (every restaurant's primary login, the default)
+    # and 'owner' (Will's multi-restaurant login that can switch its active
+    # restaurant — see get_session_user). The first cut of this feature
+    # gated invite/revoke on role == 'owner', which no client login has, so
+    # the whole Team feature was invisible and 403'd for every real account.
+    # The distinction that actually matters is "primary login vs. someone
+    # that login invited", and that's what this value records.
+    set_user_role(user_id, "member", db_path=db_path)
     return {"ok": True, "user_id": user_id, "username": candidate, "temp_password": temp_password}
 
 

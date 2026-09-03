@@ -52,7 +52,11 @@ final class SessionStore {
         self.client = client
         let storedToken = Keychain.get(Keychain.Key.sessionToken)
         self.token = storedToken
-        self.isLocked = storedToken != nil
+        self.appPasscodeSet = AppPasscode.isSet
+        // Only gate a cold launch when something can actually enforce the
+        // gate — with Face ID off and no passcode set, LockedView would
+        // just be a screen with nothing behind its Unlock button.
+        self.isLocked = storedToken != nil && (Self.biometricLockPreference || AppPasscode.isSet)
         Task {
             await client.setToken(storedToken)
             await client.setSessionExpiredHandler { [weak self] in
@@ -283,6 +287,11 @@ final class SessionStore {
 
     private func clearLocalSession() {
         Keychain.delete(Keychain.Key.sessionToken)
+        // The app passcode belongs to the session that set it — the next
+        // person to sign in on this device starts without one (and a
+        // forgotten passcode is recovered by signing out and back in).
+        AppPasscode.clear()
+        appPasscodeSet = false
         // Staff schedules, labor costs and AI insights are cached on disk and
         // used to survive sign-out entirely — the next person to pick up a
         // shared back-office device inherited the previous account's data,
@@ -307,20 +316,71 @@ final class SessionStore {
     /// a new install also starts locked, matching every install to date.
     private static let biometricLockDefaultsKey = "cavnar.biometric_lock_enabled"
     var biometricLockEnabled: Bool {
-        get {
-            guard UserDefaults.standard.object(forKey: Self.biometricLockDefaultsKey) != nil else { return true }
-            return UserDefaults.standard.bool(forKey: Self.biometricLockDefaultsKey)
-        }
+        get { Self.biometricLockPreference }
         set { UserDefaults.standard.set(newValue, forKey: Self.biometricLockDefaultsKey) }
     }
 
+    private static var biometricLockPreference: Bool {
+        guard UserDefaults.standard.object(forKey: biometricLockDefaultsKey) != nil else { return true }
+        return UserDefaults.standard.bool(forKey: biometricLockDefaultsKey)
+    }
+
+    // MARK: - App passcode
+
+    /// Mirrors AppPasscode.isSet as observable state so Security settings
+    /// and LockedView re-render when it changes (a Keychain read can't
+    /// drive SwiftUI on its own).
+    private(set) var appPasscodeSet: Bool
+
+    /// True when reopening the app is actually gated by something — Face
+    /// ID or a passcode. False means "Require Face ID" is off with no
+    /// passcode set, which Security settings calls out in amber.
+    var reentryProtected: Bool { biometricLockEnabled || appPasscodeSet }
+
+    func setAppPasscode(_ code: String) {
+        AppPasscode.set(code)
+        appPasscodeSet = true
+    }
+
+    func removeAppPasscode() {
+        AppPasscode.clear()
+        appPasscodeSet = false
+    }
+
+    enum PasscodeAttempt {
+        case unlocked
+        case wrong(remaining: Int)
+        case lockedOut(seconds: Int)
+    }
+
+    /// Seconds left on an active passcode lockout, 0 when none.
+    var passcodeLockoutRemaining: Int { Int(AppPasscode.lockoutRemaining.rounded(.up)) }
+
+    /// `consumeUnlock: false` checks the code without unlocking the session
+    /// — AppPasscodeSheet uses that to confirm the current passcode before
+    /// changing or removing it. The attempt throttle applies either way.
+    func unlockWithPasscode(_ code: String, consumeUnlock: Bool = true) -> PasscodeAttempt {
+        let lockout = passcodeLockoutRemaining
+        if lockout > 0 { return .lockedOut(seconds: lockout) }
+        if AppPasscode.matches(code) {
+            AppPasscode.resetFailures()
+            if consumeUnlock {
+                isLocked = false
+                Haptic.success()
+            }
+            return .unlocked
+        }
+        AppPasscode.recordFailure()
+        let after = passcodeLockoutRemaining
+        if after > 0 { return .lockedOut(seconds: after) }
+        return .wrong(remaining: max(0, 5 - AppPasscode.failures))
+    }
+
     /// Called when the app returns to the foreground. A no-op if there's no
-    /// active session (nothing to protect), the user has turned the lock
-    /// off in Security settings, or the device has no biometrics enrolled
-    /// (falls back to leaving the app unlocked rather than stranding the
-    /// owner with no way in).
+    /// active session (nothing to protect) or nothing is set up to enforce
+    /// the gate — Face ID off AND no app passcode.
     func lockIfNeeded() {
-        guard isAuthenticated, biometricLockEnabled else { return }
+        guard isAuthenticated, reentryProtected else { return }
         isLocked = true
     }
 
@@ -337,6 +397,9 @@ final class SessionStore {
         var evaluationError: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &evaluationError) else {
             biometricsUnavailable = true
+            // With an app passcode set there's a real fallback, so don't
+            // fail open — LockedView switches to the passcode pad instead.
+            if appPasscodeSet { return false }
             isLocked = false
             return true
         }

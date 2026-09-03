@@ -9,10 +9,10 @@ import SwiftUI
 /// and carousel — an earlier pass tried leaving it vivid and un-faded that
 /// far down and it read badly behind real content (see
 /// HomeHeroBackground.heroBackgroundHeight's doc comment) — so this is a
-/// separate, much dimmer layer underneath everything, not a re-run of that:
-/// opacities here (0.05–0.10) are roughly a fifth of Login's own (0.34–
-/// 0.66), enough to read as ambient warmth behind the chart/carousel/module
-/// grid without ever competing with them.
+/// separate, dimmer layer that sits above the hero band and below the
+/// scroll content (see HomeView for why that order matters): opacities here
+/// are about half of Login's own, enough to be visibly alive behind the
+/// chart/carousel/module grid without competing with them.
 struct HomeAmbientAurora: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -23,9 +23,11 @@ struct HomeAmbientAurora: View {
     }
 
     private let blooms: [Bloom] = [
-        Bloom(relX: 0.15, relY: 0.30, relRadius: 0.55, color: .cavnarEmber,  opacity: 0.09, period: 16, phase: 0),
-        Bloom(relX: 0.88, relY: 0.55, relRadius: 0.50, color: .cavnarEmber2, opacity: 0.07, period: 21, phase: 2.4),
-        Bloom(relX: 0.40, relY: 0.85, relRadius: 0.60, color: .cavnarEmber,  opacity: 0.06, period: 12, phase: 4.6),
+        // Roughly half of Login's own 0.34-0.66: the first pass (0.06-0.09)
+        // was invisible on a real device once it sat under the hero band.
+        Bloom(relX: 0.15, relY: 0.30, relRadius: 0.55, color: .cavnarEmber,  opacity: 0.24, period: 16, phase: 0),
+        Bloom(relX: 0.88, relY: 0.55, relRadius: 0.50, color: .cavnarEmber2, opacity: 0.18, period: 21, phase: 2.4),
+        Bloom(relX: 0.40, relY: 0.85, relRadius: 0.60, color: .cavnarEmber,  opacity: 0.16, period: 12, phase: 4.6),
     ]
 
     var body: some View {

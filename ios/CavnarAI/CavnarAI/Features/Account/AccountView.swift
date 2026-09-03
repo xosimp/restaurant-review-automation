@@ -129,7 +129,7 @@ struct AccountView: View {
                 Text(summary.profile.restaurantName)
                     .font(.cavnarBody(17, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
-                Text("\(summary.account.email) · \(sessionStore.currentUser?.isOwner == true ? "Owner" : "Manager")")
+                Text("\(summary.account.email) · \(sessionStore.currentUser?.isOwner == true ? "Owner" : "Team member")")
                     .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarInk3)
                     .lineLimit(1)
@@ -400,9 +400,13 @@ struct AccountView: View {
 
     private func group<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            // 13.5, not the 15.5 a prior type-scale pass bumped this to —
+            // that read as oversized once Dynamic Type started scaling it
+            // (see RootView's cap). Matches the 13pt kickers inside the
+            // Account sheets, so the tab and its sheets share one scale.
             Text(title.uppercased())
-                .font(.cavnarBody(15.5, weight: 700))
-                .tracking(1.2)
+                .font(.cavnarBody(13.5, weight: 700))
+                .tracking(1.3)
                 .foregroundStyle(Color.cavnarEmber2)
             VStack(spacing: 0) { content() }
                 .background(Color.cavnarPaper2)

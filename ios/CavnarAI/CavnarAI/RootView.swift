@@ -582,6 +582,14 @@ struct LockedView: View {
     // Staggered reveal after the lockup has drawn itself in: 1 headline,
     // 2 subtitle, 3 button, 4 caption.
     @State private var stage = 0
+    // Passcode mode — the pad instead of the Unlock button. Starts here
+    // when Face ID is switched off (the passcode is then the only gate),
+    // and is one tap away whenever both are set up.
+    @State private var usingPasscode = false
+    @State private var passcode = ""
+    @State private var passcodeError = false
+    @State private var passcodeMessage: String?
+    @State private var lockoutRemaining = 0
 
     private var biometry: (name: String, symbol: String) {
         let context = LAContext()
@@ -591,6 +599,10 @@ struct LockedView: View {
         case .touchID: return ("Touch ID", "touchid")
         default: return ("your passcode", "lock.fill")
         }
+    }
+
+    private var biometricAvailable: Bool {
+        sessionStore.biometricLockEnabled && !sessionStore.biometricsUnavailable
     }
 
     var body: some View {
@@ -612,25 +624,28 @@ struct LockedView: View {
                 // the layout stable until the splash lifts and it mounts.
                 // aiTagOverhangs: the six letters are what's centered above
                 // "Welcome back"; the small AI tag hangs off to the right.
+                let wordmarkWidth: CGFloat = usingPasscode ? 210 : 300
                 Group {
                     if introReady && coldLaunch {
-                        CavnarWordmarkTraceIn(width: 300, aiTagOverhangs: true)
+                        CavnarWordmarkTraceIn(width: wordmarkWidth, aiTagOverhangs: true)
                     } else if introReady {
-                        CavnarWordmarkStampIn(width: 300, aiTagOverhangs: true)
+                        CavnarWordmarkStampIn(width: wordmarkWidth, aiTagOverhangs: true)
                     } else {
-                        Color.clear.frame(width: 300, height: 300 * (100 / CavnarWordmarkLetterShape.boxWidth))
+                        Color.clear.frame(width: wordmarkWidth, height: wordmarkWidth * (100 / CavnarWordmarkLetterShape.boxWidth))
                     }
                 }
-                .padding(.bottom, 48)
+                .padding(.bottom, usingPasscode ? 26 : 48)
 
                 VStack(spacing: 12) {
-                    Text("Welcome back")
+                    Text(usingPasscode ? "Enter your passcode" : "Welcome back")
                         .font(.cavnarHeadline(28))
                         .foregroundStyle(Color.cavnarInk)
                         .lockReveal(stage >= 1)
-                    Text("Unlock with \(biometry.name) to pick up right where you left off.")
-                        .font(.cavnarBody(16))
-                        .foregroundStyle(Color.cavnarInk3)
+                    Text(usingPasscode
+                         ? (passcodeMessage ?? "Your app passcode picks up right where you left off.")
+                         : "Unlock with \(biometry.name) to pick up right where you left off.")
+                        .font(.cavnarBody(16, weight: passcodeMessage == nil ? 400 : 600))
+                        .foregroundStyle(passcodeMessage == nil ? Color.cavnarInk3 : Color.cavnarRed)
                         .multilineTextAlignment(.center)
                         .lineSpacing(3)
                         .lockReveal(stage >= 2)
@@ -639,6 +654,37 @@ struct LockedView: View {
 
                 Spacer(minLength: 0)
 
+                if usingPasscode {
+                    VStack(spacing: 26) {
+                        CavnarPasscodePad(
+                            code: $passcode,
+                            isError: passcodeError,
+                            isVerifying: isUnlocking,
+                            disabled: lockoutRemaining > 0,
+                            biometrySymbol: biometricAvailable ? biometry.symbol : nil,
+                            onBiometry: biometricAvailable ? { Task { await unlock() } } : nil
+                        ) { entered in
+                            submitPasscode(entered)
+                        }
+                        .lockReveal(stage >= 3)
+
+                        // The escape hatch for a forgotten passcode: signing
+                        // out clears it (see SessionStore.clearLocalSession),
+                        // and the account password gets them back in.
+                        Button {
+                            Haptic.light()
+                            Task { await sessionStore.logout() }
+                        } label: {
+                            Text("Forgot your passcode? Sign out")
+                                .font(.cavnarBody(14, weight: 600))
+                                .foregroundStyle(Color.cavnarEmber2)
+                        }
+                        .buttonStyle(.plain)
+                        .lockReveal(stage >= 4)
+                    }
+                    .padding(.bottom, 36)
+                    .transition(.opacity)
+                } else {
                 VStack(spacing: 18) {
                     if unlockFailed {
                         Text("Couldn't verify you — try again.")
@@ -668,20 +714,56 @@ struct LockedView: View {
                     .padding(.horizontal, 44)
                     .lockReveal(stage >= 3)
 
-                    HStack(spacing: 7) {
-                        Image(systemName: "checkmark.shield.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("Unlock with biometrics · secured with \(biometry.name)")
+                    if sessionStore.appPasscodeSet {
+                        Button {
+                            Haptic.light()
+                            switchToPasscode()
+                        } label: {
+                            HStack(spacing: 7) {
+                                Image(systemName: "circle.grid.3x3.fill")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text("Use passcode instead")
+                            }
+                            .font(.cavnarBody(14, weight: 600))
+                            .foregroundStyle(Color.cavnarEmber2)
+                        }
+                        .buttonStyle(.plain)
+                        .lockReveal(stage >= 4)
+                    } else {
+                        HStack(spacing: 7) {
+                            Image(systemName: "checkmark.shield.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text("Unlock with biometrics · secured with \(biometry.name)")
+                        }
+                        .font(.cavnarBody(14, weight: 600))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .lockReveal(stage >= 4)
                     }
-                    .font(.cavnarBody(14, weight: 600))
-                    .foregroundStyle(Color.cavnarEmber2)
-                    .lockReveal(stage >= 4)
                 }
                 .padding(.bottom, 54)
+                .transition(.opacity)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .animation(.easeOut(duration: 0.3), value: unlockFailed)
+        .animation(.easeOut(duration: 0.3), value: usingPasscode)
+        .animation(.easeOut(duration: 0.2), value: passcodeMessage)
+        .onAppear {
+            // Face ID off (or unusable on this device) with a passcode set:
+            // the passcode is the only gate, so open straight onto it.
+            if sessionStore.appPasscodeSet && !biometricAvailable {
+                usingPasscode = true
+                refreshLockout()
+            }
+        }
+        .task(id: lockoutRemaining > 0) {
+            // Live countdown while a lockout is active.
+            while lockoutRemaining > 0, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                refreshLockout()
+            }
+        }
         .task(id: introReady) {
             guard introReady, stage == 0 else { return }
             // Let the wordmark finish arriving first — traced and filled
@@ -699,7 +781,65 @@ struct LockedView: View {
         unlockFailed = false
         let unlocked = await sessionStore.unlockWithBiometrics()
         isUnlocking = false
-        if !unlocked { unlockFailed = true }
+        if !unlocked {
+            // Biometrics failed or aren't usable — with a passcode on file,
+            // offer it rather than leaving a dead Unlock button.
+            if sessionStore.appPasscodeSet && !usingPasscode {
+                switchToPasscode()
+            } else {
+                unlockFailed = true
+            }
+        }
+    }
+
+    private func switchToPasscode() {
+        passcode = ""
+        passcodeMessage = nil
+        usingPasscode = true
+        refreshLockout()
+    }
+
+    private func submitPasscode(_ entered: String) {
+        isUnlocking = true
+        // A beat of "verifying" so the row's breathe is actually seen and
+        // the success lands as a moment, not a flicker.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.35))
+            let result = sessionStore.unlockWithPasscode(entered)
+            isUnlocking = false
+            switch result {
+            case .unlocked:
+                break   // RootView swaps to mainTabs on isLocked = false
+            case .wrong(let remaining):
+                Haptic.error()
+                passcodeMessage = remaining > 0 && remaining <= 3
+                    ? "Wrong passcode · \(remaining) attempt\(remaining == 1 ? "" : "s") left"
+                    : "Wrong passcode — try again"
+                passcodeError = true
+                try? await Task.sleep(for: .seconds(0.5))
+                passcode = ""
+                passcodeError = false
+            case .lockedOut:
+                Haptic.error()
+                passcodeError = true
+                try? await Task.sleep(for: .seconds(0.5))
+                passcode = ""
+                passcodeError = false
+                refreshLockout()
+            }
+        }
+    }
+
+    private func refreshLockout() {
+        lockoutRemaining = sessionStore.passcodeLockoutRemaining
+        if lockoutRemaining > 0 {
+            let text = lockoutRemaining >= 60
+                ? "\(Int((Double(lockoutRemaining) / 60).rounded(.up))) min"
+                : "\(lockoutRemaining)s"
+            passcodeMessage = "Too many attempts. Try again in \(text)."
+        } else if passcodeMessage?.hasPrefix("Too many") == true {
+            passcodeMessage = nil
+        }
     }
 }
 

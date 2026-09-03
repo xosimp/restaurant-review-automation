@@ -16,5 +16,10 @@ struct User: Codable, Equatable {
         case isAdmin = "is_admin"
     }
 
-    var isOwner: Bool { role == "owner" }
+    /// The restaurant's own login (role 'client', the backend default) or
+    /// Will's multi-restaurant login ('owner') — anyone who isn't an invited
+    /// teammate ('member'). The first cut checked == "owner", which no client
+    /// login has, so the Team row never appeared for anyone (and the server
+    /// 403'd them too). See auth.py's invite_team_member for the vocabulary.
+    var isOwner: Bool { role != "member" }
 }

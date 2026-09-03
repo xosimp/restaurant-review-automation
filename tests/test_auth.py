@@ -435,7 +435,9 @@ def test_invite_team_member_creates_user_scoped_to_existing_restaurant(db_path):
     members = get_team_members(rid, db_path=db_path)
     assert len(members) == 2
     invited = next(m for m in members if m["email"] == "teammate@x.com")
-    assert invited["role"] == "client"
+    # Invited logins are marked 'member' so the primary login ('client', the
+    # column default) can be told apart from the people it invited.
+    assert invited["role"] == "member"
 
 
 def test_invite_team_member_rejects_duplicate_email(db_path):

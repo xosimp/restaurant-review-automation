@@ -2256,15 +2256,54 @@ def test_2fa_login_backup_code_is_single_use(client, db_path):
 
 # ── team invite / manage access routes ──────────────────────────────────────
 
-def test_team_invite_route_requires_owner_role(client, db_path):
+def test_team_invite_route_rejects_invited_member(client, db_path):
     rid = _restaurant(db_path)
-    token = _login(client, db_path, rid, role="client")
+    token = _login(client, db_path, rid, role="member")
     resp = client.post(
         "/mobile/api/account/team/invite", json={"name": "New", "email": "new@x.com"},
         headers=_auth_headers(token),
     )
     assert resp.status_code == 403
     assert resp.get_json()["ok"] is False
+
+
+def test_team_invite_route_allows_default_client_login(client, db_path, monkeypatch):
+    # The real-world case: every restaurant's primary login has the default
+    # role 'client' (nobody is role='owner' — that's Will's multi-restaurant
+    # login). Gating on 'owner' hid the whole feature from every real account.
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)  # role left at the column default
+    monkeypatch.setattr("emails.send_team_invite_email", lambda *a, **kw: None)
+    resp = client.post(
+        "/mobile/api/account/team/invite", json={"name": "New", "email": "new@x.com"},
+        headers=_auth_headers(token),
+    )
+    assert resp.status_code == 200
+    assert resp.get_json()["ok"] is True
+    members = client.get("/mobile/api/account/team", headers=_auth_headers(token)).get_json()["members"]
+    invited = next(m for m in members if m["email"] == "new@x.com")
+    assert invited["role"] == "member"
+
+
+def test_invited_member_cannot_invite_others(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    owner_token = _login(client, db_path, rid)
+    monkeypatch.setattr("emails.send_team_invite_email", lambda *a, **kw: None)
+    from auth import invite_team_member
+    result = invite_team_member(rid, "Team Mate", "mate@x.com", db_path=db_path)
+    resp = client.post("/mobile/api/login", json={"username": result["username"], "password": result["temp_password"]})
+    member_token = resp.get_json()["token"]
+    resp = client.post(
+        "/mobile/api/account/team/invite", json={"name": "Another", "email": "another@x.com"},
+        headers=_auth_headers(member_token),
+    )
+    assert resp.status_code == 403
+    # ...while the login that invited them still can.
+    resp = client.post(
+        "/mobile/api/account/team/invite", json={"name": "Another", "email": "another@x.com"},
+        headers=_auth_headers(owner_token),
+    )
+    assert resp.status_code == 200
 
 
 def test_team_invite_route_creates_user(client, db_path, monkeypatch):
@@ -2302,9 +2341,9 @@ def test_team_invite_route_rejects_duplicate_email(client, db_path, monkeypatch)
     assert resp.status_code == 400
 
 
-def test_team_revoke_route_requires_owner_role(client, db_path):
+def test_team_revoke_route_rejects_invited_member(client, db_path):
     rid = _restaurant(db_path)
-    token = _login(client, db_path, rid, role="client")
+    token = _login(client, db_path, rid, role="member")
     resp = client.post("/mobile/api/account/team/999/revoke", headers=_auth_headers(token))
     assert resp.status_code == 403
 

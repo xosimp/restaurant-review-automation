@@ -30,8 +30,8 @@ struct AccountTeamDetailView: View {
                         ForEach(Array(viewModel.teamMembers.enumerated()), id: \.element.id) { index, member in
                             AccountKVRow(label: member.username, showsDivider: index < viewModel.teamMembers.count - 1) {
                                 HStack(spacing: 8) {
-                                    AccountPill(text: member.role == "owner" ? "Owner" : "Member", on: member.role == "owner")
-                                    if !member.isYou && member.role != "owner" {
+                                    AccountPill(text: member.role == "member" ? "Member" : "Owner", on: member.role != "member")
+                                    if !member.isYou && member.role == "member" {
                                         AccountLink(title: "Remove", tone: .cavnarRed) {
                                             pendingRevoke = member
                                         }

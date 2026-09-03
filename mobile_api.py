@@ -2450,12 +2450,14 @@ def mobile_get_team(current_user):
 @mobile_bp.route("/account/team/invite", methods=["POST"])
 @mobile_login_required
 def mobile_invite_team_member(current_user):
-    """Owner-only — the restaurant's role='owner' login is the only one
-    that can add/remove other logins on the same restaurant. There's no
-    finer-grained permission tier today; a plain teammate just doesn't
-    get this row in the UI, and the route double-checks it server-side
-    regardless of what the client shows."""
-    if current_user.get("role") != "owner":
+    """Primary-login only — an invited teammate (role='member', see
+    auth.invite_team_member) can't add/remove other logins on the same
+    restaurant. Every other role ('client', the default for a restaurant's
+    own login, and 'owner', Will's multi-restaurant login) counts as the
+    account owner here. There's no finer-grained permission tier today; a
+    teammate just doesn't get this row in the UI, and the route
+    double-checks it server-side regardless of what the client shows."""
+    if current_user.get("role") == "member":
         return jsonify(ok=False, error="Only the account owner can invite team members."), 403
     data = request.get_json() or {}
     name = (data.get("name") or "").strip()
@@ -2481,7 +2483,7 @@ def mobile_invite_team_member(current_user):
 @mobile_bp.route("/account/team/<int:user_id>/revoke", methods=["POST"])
 @mobile_login_required
 def mobile_revoke_team_member(current_user, user_id):
-    if current_user.get("role") != "owner":
+    if current_user.get("role") == "member":
         return jsonify(ok=False, error="Only the account owner can remove team members."), 403
     from auth import revoke_team_member
     result = revoke_team_member(current_user["restaurant_id"], user_id, current_user["id"])

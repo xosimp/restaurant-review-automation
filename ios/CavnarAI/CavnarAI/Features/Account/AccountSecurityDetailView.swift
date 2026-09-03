@@ -12,6 +12,7 @@ struct AccountSecurityDetailView: View {
     @State private var showing2FASetup = false
     @State private var showingSignInHistory = false
     @State private var showingBackupCodes = false
+    @State private var passcodeSheet: AppPasscodeSheet.Mode?
     @State private var disabledLabel: String?
     // The same posted-check overlay 2FA-disable already used, now shared
     // with Sign-in notifications — .removed (red, a drawn bar) for turning
@@ -80,6 +81,9 @@ struct AccountSecurityDetailView: View {
         }
         .sheet(isPresented: $showingSignInHistory) {
             AccountSignInHistoryView(viewModel: viewModel)
+        }
+        .sheet(item: $passcodeSheet) { mode in
+            AppPasscodeSheet(mode: mode)
         }
         .sheet(isPresented: $showingBackupCodes) {
             AccountBackupCodesView(viewModel: viewModel)
@@ -233,7 +237,13 @@ struct AccountSecurityDetailView: View {
                     .foregroundStyle(Color.cavnarAmber)
                     .padding(.bottom, 4)
             }
-            AccountKVRow(label: "Require Face ID to reopen", showsDivider: false) {
+            if !sessionStore.reentryProtected {
+                Text("Nothing is protecting the app when you reopen it — turn Face ID back on or set an app passcode.")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarAmber)
+                    .padding(.bottom, 4)
+            }
+            AccountKVRow(label: "Require Face ID to reopen") {
                 Toggle("", isOn: Binding(
                     get: { sessionStore.biometricLockEnabled },
                     set: { newValue in
@@ -243,6 +253,19 @@ struct AccountSecurityDetailView: View {
                 ))
                 .labelsHidden()
                 .tint(Color.cavnarEmber)
+            }
+            // The fallback gate for when Face ID is off — see AppPasscode.
+            // Set/Change/Remove all confirm through the same passcode pad
+            // the lock screen uses.
+            AccountKVRow(label: "App passcode", showsDivider: false) {
+                if sessionStore.appPasscodeSet {
+                    HStack(spacing: 14) {
+                        AccountLink(title: "Change") { passcodeSheet = .change }
+                        AccountLink(title: "Remove", tone: .cavnarRed) { passcodeSheet = .remove }
+                    }
+                } else {
+                    AccountLink(title: "Set") { passcodeSheet = .create }
+                }
             }
         }
     }

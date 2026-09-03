@@ -73,19 +73,20 @@ struct HomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             ZStack(alignment: .top) {
-                // Full-page ambient aurora underneath everything — the
-                // radial-bloom drift Login uses, at a fraction of its
-                // opacity so it reads as warmth behind the chart/carousel/
-                // module grid rather than competing with them (see
-                // HomeAmbientAurora's own doc comment). HomeHeroBackground
-                // draws on top of this, right where the greeting sits, so
-                // that band stays as vivid as it already was.
-                HomeAmbientAurora()
-                    .ignoresSafeArea()
-
                 HomeHeroBackground()
                     .frame(height: Self.heroBackgroundHeight)
                     .ignoresSafeArea(edges: .top)
+
+                // Full-page ambient aurora — the radial-bloom drift Login
+                // uses — layered ABOVE the hero band and below the scroll
+                // content. It was first placed underneath the band, which
+                // hid it entirely for the top 460pt (the band's canvas
+                // paints opaque Paper) and, worse, drew a visible seam
+                // exactly where the band ended: pure Paper above the line,
+                // Paper + ember tint below it. One continuous layer on top
+                // of both has no edge to show.
+                HomeAmbientAurora()
+                    .ignoresSafeArea()
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
