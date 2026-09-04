@@ -451,6 +451,60 @@ def send_welcome_email(to_email, restaurant_name, username, password,
     })
 
 
+def send_staff_schedule_email(to_email, employee_name, restaurant_name, week_label,
+                              link, shifts, reply_to=None):
+    """One employee's shifts plus their own link.
+
+    The shifts are in the email body on purpose — staff read this on a
+    phone between jobs, and making them tap through to find out whether
+    they work Tuesday defeats the point. The link is for the always-current
+    version, since a schedule can change after it's sent."""
+    import resend as _resend
+    _resend.api_key = RESEND_API_KEY
+    if shifts:
+        rows = "".join(
+            f'''<tr>
+      <td style="padding:9px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;white-space:nowrap"><strong>{s.get("day") or s.get("date","")}</strong></td>
+      <td style="padding:9px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;white-space:nowrap">{s.get("start","")} – {s.get("end","")}</td>
+      <td style="padding:9px 12px;border-bottom:1px solid #e0dbd0;font-size:13px;color:#7a736a">{s.get("role","")}</td>
+    </tr>'''
+            for s in shifts
+        )
+        body = f'''<table style="width:100%;border-collapse:collapse;margin:0 0 18px">{rows}</table>'''
+    else:
+        body = ('<p style="font-size:15px;line-height:1.6;margin:0 0 18px">'
+                "You're not scheduled for any shifts this week.</p>")
+
+    html = f"""
+<div style="background:#ffffff;width:100%;padding:32px 20px;box-sizing:border-box">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:520px;margin:0 auto;color:#1a1714">
+  <p style="font-size:15px;line-height:1.6;margin:0 0 4px">Hi {employee_name},</p>
+  <p style="font-size:15px;line-height:1.6;margin:0 0 18px">
+    Here's your schedule at <strong>{restaurant_name}</strong> for {week_label}.
+  </p>
+  {body}
+  <p style="margin:0 0 22px">
+    <a href="{link}" style="display:inline-block;background:#c84b2f;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:11px 18px;border-radius:8px">View my schedule</a>
+  </p>
+  <p style="font-size:13px;color:#7a736a;line-height:1.6;margin:0">
+    That link always shows your current shifts, so check it if anything changes.
+    Questions about a shift go to your manager.
+  </p>
+</div></div>
+"""
+    params = {
+        # The restaurant is the visible sender — staff know the restaurant,
+        # not Cavnar.
+        "from": f"{restaurant_name} <{FROM_EMAIL}>",
+        "to": [to_email],
+        "subject": f"Your schedule — {week_label}",
+        "html": html,
+    }
+    if reply_to:
+        params["reply_to"] = reply_to
+    return _resend.Emails.send(params)
+
+
 def send_supplier_order_email(to_email, supplier_name, restaurant_name, po_number,
                               items, total_cost, reply_to=None):
     """The suggested order, sent to the supplier who actually fills it.

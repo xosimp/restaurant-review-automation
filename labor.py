@@ -1198,3 +1198,64 @@ def format_demand_block(forecast: dict) -> str:
             "overrides the minimum staffing floors or a day's own coverage requirements. Median, "
             "not average, so a one-off private event or a storm-closed day hasn't skewed it.\n"
             + "\n".join(lines))
+
+
+# ── Publishing a schedule to staff ─────────────────────────────────────────────
+
+def employee_shifts_from_csv(schedule_csv: str, employee_name: str) -> list:
+    """One employee's own shifts, pulled out of the generated schedule CSV.
+
+    The CSV is the schedule's source of truth (see generate_optimized_schedule's
+    header: date,day,employee,role,shift_start,shift_end,scheduled_hours,notes),
+    so a staff-facing view reads from it rather than from a second copy that
+    could drift. Matching is case- and whitespace-insensitive because names
+    arrive from POS exports with inconsistent spacing.
+    """
+    import csv as _csv
+    import io as _io
+
+    target = (employee_name or "").strip().lower()
+    if not schedule_csv or not target:
+        return []
+    shifts = []
+    try:
+        reader = _csv.DictReader(_io.StringIO(schedule_csv))
+        for row in reader:
+            name = (row.get("employee") or "").strip()
+            if name.lower() != target:
+                continue
+            try:
+                hours = float(row.get("scheduled_hours") or 0)
+            except (TypeError, ValueError):
+                hours = 0.0
+            shifts.append({
+                "date": (row.get("date") or "").strip(),
+                "day": (row.get("day") or "").strip(),
+                "role": (row.get("role") or "").strip(),
+                "start": (row.get("shift_start") or "").strip(),
+                "end": (row.get("shift_end") or "").strip(),
+                "hours": round(hours, 2),
+                "notes": (row.get("notes") or "").strip(),
+            })
+    except Exception:
+        return []
+    shifts.sort(key=lambda s: (s["date"], s["start"]))
+    return shifts
+
+
+def employees_in_schedule(schedule_csv: str) -> list:
+    """Every distinct employee named in a generated schedule, in the order
+    a person would read them (alphabetical)."""
+    import csv as _csv
+    import io as _io
+    if not schedule_csv:
+        return []
+    seen = {}
+    try:
+        for row in _csv.DictReader(_io.StringIO(schedule_csv)):
+            name = (row.get("employee") or "").strip()
+            if name and name.lower() not in seen:
+                seen[name.lower()] = name
+    except Exception:
+        return []
+    return sorted(seen.values(), key=lambda n: n.lower())

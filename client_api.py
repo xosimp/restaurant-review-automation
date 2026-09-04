@@ -3932,6 +3932,39 @@ def get_notifications(current_user):
 
 
 
+# ── Staff-facing schedule page ─────────────────────────────────────────────────
+
+@client_bp.route("/s/<token>")
+def staff_schedule_page(token):
+    """One employee's own shifts, no login. Deliberately public: kitchen and
+    floor staff don't have dashboard accounts, and requiring one is exactly
+    why schedules end up as a photo of a printout in a group chat.
+
+    The token is the whole authorisation — long, random, per employee per
+    schedule (models.create_schedule_share) — and it only ever exposes that
+    one person's shifts, never the full roster, wages, or anything else.
+    An unknown token 404s rather than saying whether it ever existed.
+    """
+    from models import get_schedule_share, mark_schedule_share_viewed
+    from labor import employee_shifts_from_csv
+
+    share = get_schedule_share(token)
+    if not share:
+        return "This schedule link isn't valid. Ask your manager for a new one.", 404
+
+    shifts = employee_shifts_from_csv(share.get("schedule_csv") or "", share["employee_name"])
+    mark_schedule_share_viewed(token)
+    return render_template(
+        "staff_schedule.html",
+        restaurant_name=share.get("restaurant_name") or "",
+        employee_name=share["employee_name"],
+        week_start=share.get("week_start") or "",
+        week_end=share.get("week_end") or "",
+        shifts=shifts,
+        total_hours=round(sum(s["hours"] for s in shifts), 1),
+    )
+
+
 # ── Shared account settings (web + iOS) ────────────────────────────────────────
 #
 # These five settings were built iOS-first and had no web equivalent, which

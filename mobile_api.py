@@ -1267,6 +1267,165 @@ def mobile_set_ingredient_supplier(current_user):
     return jsonify(ok=True, name=name, supplier_name=supplier_name, supplier_email=supplier_email)
 
 
+@mobile_bp.route("/labor/staff-contacts")
+@mobile_login_required
+def mobile_get_staff_contacts(current_user):
+    """Everyone named in the latest generated schedule, paired with however
+    we can reach them. Names come from the schedule itself (which comes from
+    POS shift data), so the list is always the people actually being
+    scheduled rather than a roster that has to be kept in sync by hand."""
+    from models import get_staff_contacts, get_conn as _gc
+    from labor import employees_in_schedule
+    rid = current_user["restaurant_id"]
+
+    conn = _gc()
+    try:
+        row = conn.execute(
+            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history "
+            "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    names = employees_in_schedule(row["schedule_csv"]) if row else []
+    saved = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
+    contacts = [{
+        "employee_name": n,
+        "email": (saved.get(n.lower()) or {}).get("email", ""),
+        "phone": (saved.get(n.lower()) or {}).get("phone", ""),
+    } for n in names]
+    return jsonify(ok=True, contacts=contacts,
+                   schedule_id=(row["id"] if row else None),
+                   week_start=(row["week_start"] if row else None),
+                   week_end=(row["week_end"] if row else None),
+                   reachable=sum(1 for c in contacts if c["email"]))
+
+
+@mobile_bp.route("/labor/staff-contacts", methods=["POST"])
+@mobile_login_required
+def mobile_set_staff_contact(current_user):
+    from models import set_staff_contact
+    data = request.get_json(silent=True) or {}
+    name = (data.get("employee_name") or "").strip()
+    email = (data.get("email") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="Which member of staff?"), 400
+    if email and "@" not in email:
+        return jsonify(ok=False, error="That doesn't look like an email address"), 400
+    if not set_staff_contact(current_user["restaurant_id"], name, email, (data.get("phone") or "").strip()):
+        return jsonify(ok=False, error="Couldn't save that contact."), 400
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/labor/publish-schedule", methods=["POST"])
+@mobile_login_required
+def mobile_publish_schedule(current_user):
+    """Send each member of staff their own shifts.
+
+    Every employee gets a private tokenised link to their own schedule
+    only, and a copy of their shifts in the email body so it's readable
+    without tapping anything. Sends are per-employee, so one bad address
+    can't stop the rest.
+
+    Email only for now: SMS would be the better channel for floor staff,
+    but it needs Twilio credentials this deployment doesn't have — rather
+    than pretend, staff without an email address come back in `unreachable`
+    so the manager knows exactly who still needs telling.
+    """
+    from models import get_conn as _gc, get_staff_contacts, create_schedule_share, get_schedule_share_status
+    from labor import employees_in_schedule, employee_shifts_from_csv
+
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+
+    data = request.get_json(silent=True) or {}
+    conn = _gc()
+    try:
+        if data.get("schedule_id"):
+            row = conn.execute(
+                "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                (int(data["schedule_id"]), rid)).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id, week_start, week_end, schedule_csv FROM schedule_history "
+                "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Which schedule?"), 400
+    finally:
+        conn.close()
+
+    if not row or not (row["schedule_csv"] or "").strip():
+        return jsonify(ok=False, error="Generate a schedule first — there's nothing to send yet."), 400
+
+    schedule_id = row["id"]
+    week_label = row["week_start"] or ""
+    if row["week_end"]:
+        week_label = f"{row['week_start']} – {row['week_end']}"
+
+    contacts = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
+    base_url = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+
+    sent, unreachable, failed = [], [], []
+    for name in employees_in_schedule(row["schedule_csv"]):
+        contact = contacts.get(name.lower()) or {}
+        email = (contact.get("email") or "").strip()
+        if not email:
+            unreachable.append({"employee_name": name, "reason": "no email address on file"})
+            continue
+
+        token = create_schedule_share(rid, schedule_id, name, sent_to=email)
+        link = f"{base_url}/s/{token}"
+        shifts = employee_shifts_from_csv(row["schedule_csv"], name)
+        try:
+            from emails import send_staff_schedule_email
+            send_staff_schedule_email(
+                to_email=email, employee_name=name, restaurant_name=restaurant.name,
+                week_label=week_label, link=link, shifts=shifts,
+                reply_to=restaurant.owner_email or None)
+        except Exception as e:
+            failed.append({"employee_name": name, "error": str(e)})
+            continue
+
+        try:
+            from models import log_email as _log_email
+            _log_email(rid, "staff_schedule", email, f"Your schedule — {week_label}")
+        except Exception:
+            pass
+        sent.append({"employee_name": name, "sent_to": email, "shifts": len(shifts)})
+
+    if sent:
+        _log_account_event(rid, "schedule_published", current_user,
+                           detail=f"{len(sent)} to staff")
+    return jsonify(ok=bool(sent), schedule_id=schedule_id, week_label=week_label,
+                   sent=sent, unreachable=unreachable, failed=failed,
+                   status=get_schedule_share_status(rid, schedule_id),
+                   error=None if sent else "Nobody has an email address on file yet.")
+
+
+@mobile_bp.route("/labor/schedule-share-status")
+@mobile_login_required
+def mobile_schedule_share_status(current_user):
+    """Who has actually opened the schedule — the difference between "I sent
+    it" and "the closing server has seen it"."""
+    from models import get_schedule_share_status, get_conn as _gc
+    rid = current_user["restaurant_id"]
+    schedule_id = request.args.get("schedule_id", type=int)
+    if not schedule_id:
+        conn = _gc()
+        try:
+            row = conn.execute("SELECT id FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 1",
+                               (rid,)).fetchone()
+        finally:
+            conn.close()
+        schedule_id = row["id"] if row else None
+    if not schedule_id:
+        return jsonify(ok=True, status=[])
+    return jsonify(ok=True, schedule_id=schedule_id,
+                   status=get_schedule_share_status(rid, schedule_id))
+
+
 @mobile_bp.route("/food-cost/menu-profitability")
 @mobile_login_required
 def mobile_menu_profitability(current_user):

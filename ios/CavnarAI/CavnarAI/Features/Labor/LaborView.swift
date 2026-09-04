@@ -8,6 +8,7 @@ private enum LaborSubTab: String, CaseIterable, Identifiable {
 }
 
 struct LaborView: View {
+    @State private var showingPublishSchedule = false
     @Environment(SessionStore.self) private var sessionStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var viewModel = LaborViewModel()
@@ -156,6 +157,9 @@ struct LaborView: View {
         }
         .task { await analyticsViewModel.load() }
         .task { await viewModel.loadAvailability() }
+        .sheet(isPresented: $showingPublishSchedule) {
+            PublishScheduleSheet()
+        }
         // Belt-and-suspenders alongside the .task-time restore above: tied
         // directly to scenePhase (the same signal RootView's own Face ID
         // lock keys off — confirmed swiping away and immediately back
@@ -595,6 +599,20 @@ struct LaborView: View {
                 if let rows = result.previewRows, !rows.isEmpty {
                     fullScheduleTable(rows, csv: result.scheduleCsv)
                 }
+
+                // The schedule used to end at a CSV download — the people
+                // who actually work the shifts never saw it.
+                Button {
+                    Haptic.light()
+                    showingPublishSchedule = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "paperplane.fill").font(.system(size: 13, weight: .semibold))
+                        Text("Send to staff")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
             }
         }
     }

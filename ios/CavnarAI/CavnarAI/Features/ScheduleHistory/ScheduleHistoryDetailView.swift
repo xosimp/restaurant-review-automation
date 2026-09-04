@@ -14,6 +14,12 @@ struct ScheduleHistoryDetailView: View {
     // already known — see ScheduleHistoryDetailViewModel.init's own
     // comment: this kicks off the load the moment this view is created,
     // instead of depending on .task/.onAppear firing reliably first.
+    // A schedule is usually sent to staff some time AFTER it was generated
+    // — the Labor tab's own "Send to staff" button only exists while the
+    // just-generated result is still in session state, which would mean
+    // regenerating a perfectly good schedule just to send it.
+    @State private var showingPublish = false
+
     init(historyId: Int, weekLabel: String) {
         self.historyId = historyId
         self.weekLabel = weekLabel
@@ -25,6 +31,18 @@ struct ScheduleHistoryDetailView: View {
             if let detail = viewModel.detail {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
+                        Button {
+                            Haptic.light()
+                            showingPublish = true
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "paperplane.fill").font(.system(size: 13, weight: .semibold))
+                                Text("Send to staff")
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
+
                         if let summary = detail.summary, !summary.isEmpty {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("WHAT CHANGED & WHY")
@@ -111,6 +129,9 @@ struct ScheduleHistoryDetailView: View {
         .navigationTitle(weekLabel)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { cavnarTitleToolbar(weekLabel) }
+        .sheet(isPresented: $showingPublish) {
+            PublishScheduleSheet()
+        }
         // This screen never adopted the app-wide ember back chevron — it
         // was still showing the system's default back button, the one
         // pushed screen in the app that did (device feedback: "does not

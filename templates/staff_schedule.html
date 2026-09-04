@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>{{ employee_name }} — schedule</title>
+<style>
+  :root{
+    --paper:#0c0c0c; --card:#151515; --line:#262626;
+    --ink:#f0ebe0; --ink2:#cdbfa9; --ink3:#8f847b;
+    --ember:#d4583a; --ember2:#e8956a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
+       -webkit-font-smoothing:antialiased;padding:28px 18px 56px}
+  .wrap{max-width:520px;margin:0 auto}
+  .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ember2)}
+  h1{font-size:26px;line-height:1.15;margin:10px 0 4px;letter-spacing:-.01em}
+  .sub{color:var(--ink3);font-size:14px;margin:0 0 24px}
+  .shift{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--ember);
+         border-radius:12px;padding:14px 16px;margin-bottom:10px}
+  .shift .day{font-size:15px;font-weight:700}
+  .shift .date{font-size:12.5px;color:var(--ink3);margin-left:6px;font-weight:400}
+  .shift .time{font-size:17px;font-weight:700;margin-top:6px;letter-spacing:.01em}
+  .shift .meta{font-size:13px;color:var(--ink2);margin-top:4px}
+  .shift .note{font-size:13px;color:var(--ember2);margin-top:6px}
+  .total{border-top:1px solid var(--line);margin-top:18px;padding-top:14px;
+         display:flex;justify-content:space-between;align-items:baseline;font-size:14px;color:var(--ink2)}
+  .total b{font-size:20px;color:var(--ink)}
+  .empty{background:var(--card);border:1px solid var(--line);border-radius:12px;
+         padding:22px 18px;color:var(--ink2);font-size:15px;line-height:1.55}
+  footer{margin-top:32px;color:var(--ink3);font-size:12px;line-height:1.6;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">{{ restaurant_name }}</div>
+  <h1>{{ employee_name }}</h1>
+  <p class="sub">Week of {{ week_start }}{% if week_end %} – {{ week_end }}{% endif %}</p>
+
+  {% if shifts %}
+    {% for s in shifts %}
+      <div class="shift">
+        <div><span class="day">{{ s.day or s.date }}</span><span class="date">{{ s.date }}</span></div>
+        <div class="time">{{ s.start }} – {{ s.end }}</div>
+        <div class="meta">{{ s.role }}{% if s.hours %} · {{ s.hours }} hrs{% endif %}</div>
+        {% if s.notes %}<div class="note">{{ s.notes }}</div>{% endif %}
+      </div>
+    {% endfor %}
+    <div class="total"><span>Total this week</span><b>{{ total_hours }} hrs</b></div>
+  {% else %}
+    <div class="empty">You're not scheduled for any shifts this week.</div>
+  {% endif %}
+
+  <footer>
+    This is your own schedule link — it only shows your shifts.<br>
+    Questions about a shift go to your manager, not to this page.
+  </footer>
+</div>
+</body>
+</html>

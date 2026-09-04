@@ -836,6 +836,56 @@ def init_db(db_path: str = DB_PATH):
             UNIQUE(restaurant_id, po_number)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_purchase_orders_restaurant ON purchase_orders(restaurant_id, sent_at)",
+        # Was created lazily inside save_schedule_history, which meant a
+        # fresh database simply didn't have it until someone happened to
+        # generate a schedule — and schedule_shares below references it.
+        # The lazy CREATE stays there too; both are IF NOT EXISTS.
+        """CREATE TABLE IF NOT EXISTS schedule_history (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL,
+            generated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+            week_start      TEXT,
+            week_end        TEXT,
+            hours_scheduled REAL,
+            hours_budget    REAL,
+            labor_target    REAL,
+            schedule_csv    TEXT,
+            summary_json    TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_schedule_history_restaurant ON schedule_history(restaurant_id, id)",
+        # Where to reach each member of staff. Employees are identified by
+        # NAME throughout this app (they come from POS shift data, not a
+        # roster we own — see staff_availability/staff_notes, keyed the same
+        # way), so this follows that convention rather than inventing an
+        # employee id the POS wouldn't recognise.
+        """CREATE TABLE IF NOT EXISTS staff_contacts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            employee_name   TEXT NOT NULL,
+            email           TEXT,
+            phone           TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, employee_name)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_staff_contacts_restaurant ON staff_contacts(restaurant_id)",
+        # One row per employee per published schedule: the tokenised link
+        # they were sent, and whether they have actually opened it. That
+        # last part is the difference between "I sent the schedule" and "the
+        # closing server has seen the schedule".
+        """CREATE TABLE IF NOT EXISTS schedule_shares (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            schedule_id     INTEGER NOT NULL REFERENCES schedule_history(id),
+            employee_name   TEXT NOT NULL,
+            token           TEXT NOT NULL UNIQUE,
+            sent_to         TEXT,
+            sent_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            viewed_at       TEXT,
+            view_count      INTEGER NOT NULL DEFAULT 0
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_schedule_shares_schedule ON schedule_shares(schedule_id)",
+        "CREATE INDEX IF NOT EXISTS idx_schedule_shares_token ON schedule_shares(token)",
         # event_type: 'recount' (qty = absolute counted amount) |
         # 'receiving' | 'depletion' | 'waste' (qty = signed delta).
         # source: 'toast' | 'manual' | 'admin' | 'inferred' | 'migration'.
@@ -3365,7 +3415,7 @@ ACCOUNT_EVENT_TYPES = (
     "login_reported_not_me", "data_exported", "alert_settings_saved",
     "login_notify_changed", "marketing_emails_changed", "auto_approve_changed",
     "hours_changed", "data_retention_changed", "profile_updated",
-    "pos_connected", "pos_disconnected", "supplier_order_sent",
+    "pos_connected", "pos_disconnected", "supplier_order_sent", "schedule_published",
 )
 
 ACCOUNT_EVENT_LABELS = {
@@ -3395,6 +3445,7 @@ ACCOUNT_EVENT_LABELS = {
     "pos_connected": "POS connected",
     "pos_disconnected": "POS disconnected",
     "supplier_order_sent": "Supplier order sent",
+    "schedule_published": "Schedule sent to staff",
 }
 
 
@@ -3740,3 +3791,118 @@ def mark_purchase_order_received(restaurant_id: int, po_id: int, db_path: str = 
         return cur.rowcount > 0
     finally:
         conn.close()
+
+
+# ── Staff contacts & schedule sharing ──────────────────────────────────────────
+
+def get_staff_contacts(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT id, employee_name, email, phone FROM staff_contacts "
+            "WHERE restaurant_id=? ORDER BY employee_name", (restaurant_id,)
+        ).fetchall()
+    finally:
+        conn.close()
+    return [{"id": r["id"], "employee_name": r["employee_name"],
+             "email": r["email"] or "", "phone": r["phone"] or ""} for r in rows]
+
+
+def set_staff_contact(restaurant_id: int, employee_name: str, email: str = None,
+                      phone: str = None, db_path: str = DB_PATH) -> bool:
+    """Upsert by (restaurant, employee name) — the same key
+    staff_availability and staff_notes use."""
+    name = (employee_name or "").strip()
+    if not name:
+        return False
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""
+            INSERT INTO staff_contacts (restaurant_id, employee_name, email, phone)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(restaurant_id, employee_name)
+            DO UPDATE SET email=excluded.email, phone=excluded.phone, updated_at=datetime('now')
+        """, (restaurant_id, name, (email or "").strip() or None, (phone or "").strip() or None))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def create_schedule_share(restaurant_id: int, schedule_id: int, employee_name: str,
+                          sent_to: str = None, db_path: str = DB_PATH) -> str:
+    """One tokenised link for one employee's view of one schedule.
+
+    Re-publishing the same schedule to the same person reuses their existing
+    token rather than minting a second one, so a link already sitting in
+    someone's inbox never goes dead because the manager hit Publish twice.
+    """
+    import secrets as _secrets
+    conn = get_conn(db_path)
+    try:
+        existing = conn.execute(
+            "SELECT token FROM schedule_shares WHERE schedule_id=? AND employee_name=?",
+            (schedule_id, employee_name)
+        ).fetchone()
+        if existing:
+            conn.execute("UPDATE schedule_shares SET sent_at=datetime('now'), sent_to=? "
+                         "WHERE schedule_id=? AND employee_name=?",
+                         (sent_to, schedule_id, employee_name))
+            conn.commit()
+            return existing["token"]
+        token = _secrets.token_urlsafe(24)
+        conn.execute("""
+            INSERT INTO schedule_shares (restaurant_id, schedule_id, employee_name, token, sent_to)
+            VALUES (?, ?, ?, ?, ?)
+        """, (restaurant_id, schedule_id, employee_name, token, sent_to))
+        conn.commit()
+        return token
+    finally:
+        conn.close()
+
+
+def get_schedule_share(token: str, db_path: str = DB_PATH) -> dict:
+    """Resolve a public token to the schedule and employee it belongs to.
+    Returns None for an unknown token — the public page then 404s rather
+    than leaking whether a token ever existed."""
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("""
+            SELECT s.id, s.restaurant_id, s.schedule_id, s.employee_name, s.viewed_at, s.view_count,
+                   h.week_start, h.week_end, h.schedule_csv, r.name AS restaurant_name
+            FROM schedule_shares s
+            JOIN schedule_history h ON h.id = s.schedule_id
+            JOIN restaurants r ON r.id = s.restaurant_id
+            WHERE s.token = ?
+        """, (token,)).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
+def mark_schedule_share_viewed(token: str, db_path: str = DB_PATH):
+    """First open stamps viewed_at; every open increments the count."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("""
+            UPDATE schedule_shares
+            SET viewed_at = COALESCE(viewed_at, datetime('now')), view_count = view_count + 1
+            WHERE token = ?
+        """, (token,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_schedule_share_status(restaurant_id: int, schedule_id: int, db_path: str = DB_PATH) -> list:
+    """Who was sent this schedule and who has actually opened it."""
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute("""
+            SELECT employee_name, sent_to, sent_at, viewed_at, view_count
+            FROM schedule_shares WHERE restaurant_id=? AND schedule_id=?
+            ORDER BY employee_name
+        """, (restaurant_id, schedule_id)).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]

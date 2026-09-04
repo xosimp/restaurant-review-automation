@@ -3204,3 +3204,153 @@ def test_pricing_cannot_reach_another_restaurants_menu(client, db_path):
 def test_menu_profitability_routes_require_authentication(client, db_path):
     assert client.get("/mobile/api/food-cost/menu-profitability").status_code == 401
     assert client.post("/mobile/api/food-cost/menu-item-price", json={}).status_code == 401
+
+
+# ── Publishing a schedule to staff ─────────────────────────────────────────
+
+_SCHED_CSV = """date,day,employee,role,shift_start,shift_end,scheduled_hours,notes
+2026-09-07,Monday,Sofia R.,Server,16:00,22:00,6.0,
+2026-09-08,Tuesday,Sofia R.,Server,17:00,23:00,6.0,close
+2026-09-07,Monday,Marcus T.,Cook,08:00,16:00,8.0,
+"""
+
+
+def _stored_schedule(db_path, rid, csv_text=_SCHED_CSV):
+    conn = get_conn(db_path)
+    cur = conn.execute("""
+        INSERT INTO schedule_history (restaurant_id, week_start, week_end, hours_scheduled,
+                                      hours_budget, labor_target, schedule_csv, summary_json)
+        VALUES (?, '2026-09-07', '2026-09-13', 20, 24, 30, ?, '[]')
+    """, (rid, csv_text))
+    conn.commit()
+    sid = cur.lastrowid
+    conn.close()
+    return sid
+
+
+def test_staff_contacts_list_comes_from_the_schedule_itself(client, db_path):
+    rid = _restaurant(db_path)
+    _stored_schedule(db_path, rid)
+    token = _login(client, db_path, rid)
+    d = client.get("/mobile/api/labor/staff-contacts", headers=_auth_headers(token)).get_json()
+    assert [c["employee_name"] for c in d["contacts"]] == ["Marcus T.", "Sofia R."]
+    assert d["reachable"] == 0          # nobody has an address yet
+    assert d["week_start"] == "2026-09-07"
+
+
+def test_saving_a_contact_makes_that_person_reachable(client, db_path):
+    rid = _restaurant(db_path)
+    _stored_schedule(db_path, rid)
+    token = _login(client, db_path, rid)
+    assert client.post("/mobile/api/labor/staff-contacts",
+                       json={"employee_name": "Sofia R.", "email": "sofia@x.test"},
+                       headers=_auth_headers(token)).get_json()["ok"] is True
+    d = client.get("/mobile/api/labor/staff-contacts", headers=_auth_headers(token)).get_json()
+    assert d["reachable"] == 1
+    assert next(c for c in d["contacts"] if c["employee_name"] == "Sofia R.")["email"] == "sofia@x.test"
+
+
+def test_publish_sends_each_person_their_own_shifts_and_flags_who_is_unreachable(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    _stored_schedule(db_path, rid)
+    token = _login(client, db_path, rid)
+    client.post("/mobile/api/labor/staff-contacts",
+                json={"employee_name": "Sofia R.", "email": "sofia@x.test"},
+                headers=_auth_headers(token))
+
+    sends = []
+    import emails as _emails
+    monkeypatch.setattr(_emails, "send_staff_schedule_email",
+                        lambda **kw: sends.append(kw) or {"id": "e"})
+
+    d = client.post("/mobile/api/labor/publish-schedule", headers=_auth_headers(token)).get_json()
+    assert d["ok"] is True
+    assert [s["employee_name"] for s in d["sent"]] == ["Sofia R."]
+    assert d["sent"][0]["shifts"] == 2
+    # Marcus has no address — surfaced, not silently skipped.
+    assert [u["employee_name"] for u in d["unreachable"]] == ["Marcus T."]
+
+    # The email carries only her shifts, and a link to her own page.
+    assert len(sends) == 1
+    assert {s["start"] for s in sends[0]["shifts"]} == {"16:00", "17:00"}
+    assert "/s/" in sends[0]["link"]
+
+
+def test_publish_refuses_when_no_schedule_exists_yet(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/labor/publish-schedule", headers=_auth_headers(token))
+    assert resp.status_code == 400
+    assert "generate a schedule first" in resp.get_json()["error"].lower()
+
+
+def test_publish_refuses_when_nobody_is_reachable(client, db_path):
+    rid = _restaurant(db_path)
+    _stored_schedule(db_path, rid)
+    token = _login(client, db_path, rid)
+    d = client.post("/mobile/api/labor/publish-schedule", headers=_auth_headers(token)).get_json()
+    assert d["ok"] is False
+    assert len(d["unreachable"]) == 2
+    assert "email address on file" in d["error"].lower()
+
+
+def test_one_failed_send_does_not_stop_the_others(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    _stored_schedule(db_path, rid)
+    token = _login(client, db_path, rid)
+    for name, email in [("Sofia R.", "sofia@x.test"), ("Marcus T.", "marcus@x.test")]:
+        client.post("/mobile/api/labor/staff-contacts", json={"employee_name": name, "email": email},
+                    headers=_auth_headers(token))
+
+    import emails as _emails
+    def _send(**kw):
+        if kw["to_email"] == "marcus@x.test":
+            raise RuntimeError("550 rejected")
+        return {"id": "e"}
+    monkeypatch.setattr(_emails, "send_staff_schedule_email", _send)
+
+    d = client.post("/mobile/api/labor/publish-schedule", headers=_auth_headers(token)).get_json()
+    assert [s["employee_name"] for s in d["sent"]] == ["Sofia R."]
+    assert [f["employee_name"] for f in d["failed"]] == ["Marcus T."]
+
+
+def test_share_status_reports_who_has_opened_the_schedule(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    sid = _stored_schedule(db_path, rid)
+    token = _login(client, db_path, rid)
+    client.post("/mobile/api/labor/staff-contacts",
+                json={"employee_name": "Sofia R.", "email": "sofia@x.test"},
+                headers=_auth_headers(token))
+    import emails as _emails
+    monkeypatch.setattr(_emails, "send_staff_schedule_email", lambda **kw: {"id": "e"})
+    client.post("/mobile/api/labor/publish-schedule", headers=_auth_headers(token))
+
+    d = client.get("/mobile/api/labor/schedule-share-status", headers=_auth_headers(token)).get_json()
+    row = next(r for r in d["status"] if r["employee_name"] == "Sofia R.")
+    assert row["sent_to"] == "sofia@x.test"
+    assert row["viewed_at"] is None        # sent, not yet opened
+
+    from models import mark_schedule_share_viewed, get_schedule_share_status
+    conn = get_conn(db_path)
+    share_token = conn.execute("SELECT token FROM schedule_shares WHERE schedule_id=?", (sid,)).fetchone()["token"]
+    conn.close()
+    mark_schedule_share_viewed(share_token, db_path=db_path)
+    after = client.get("/mobile/api/labor/schedule-share-status", headers=_auth_headers(token)).get_json()
+    assert next(r for r in after["status"] if r["employee_name"] == "Sofia R.")["viewed_at"] is not None
+
+
+def test_publish_cannot_reach_another_restaurants_schedule(client, db_path):
+    mine = _restaurant(db_path)
+    theirs = _restaurant(db_path, name="Other Co")
+    their_sid = _stored_schedule(db_path, theirs)
+    token = _login(client, db_path, mine)
+    resp = client.post("/mobile/api/labor/publish-schedule",
+                       json={"schedule_id": their_sid}, headers=_auth_headers(token))
+    assert resp.status_code == 400
+
+
+def test_staff_schedule_routes_require_authentication(client, db_path):
+    assert client.get("/mobile/api/labor/staff-contacts").status_code == 401
+    assert client.post("/mobile/api/labor/staff-contacts", json={}).status_code == 401
+    assert client.post("/mobile/api/labor/publish-schedule").status_code == 401
+    assert client.get("/mobile/api/labor/schedule-share-status").status_code == 401
