@@ -2625,7 +2625,7 @@ def test_topic_weeks_buckets_by_week_and_category(client, db_path):
                      (sent, cats, f"-{age} days", rid, ext))
         conn.commit(); conn.close()
     data = client.get("/mobile/api/reviews/topic-weeks", headers=_auth_headers(token)).get_json()["data"]
-    assert data["week_labels"] == [f"W{i}" for i in range(1, 9)]
+    assert len(data["week_labels"]) == 8 and all("/" in l for l in data["week_labels"])   # "8/26"-style Monday dates
     by = {t["category"]: t for t in data["topics"]}
     assert set(by) == {"service", "food_quality"}          # ambience is out of window
     assert by["service"]["total"] == 2 and by["food_quality"]["total"] == 2

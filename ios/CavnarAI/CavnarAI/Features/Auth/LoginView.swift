@@ -162,7 +162,7 @@ struct LoginView: View {
             LoginField(
                 systemImage: "lock.fill", placeholder: "Password",
                 text: $viewModel.password, isSecure: true, textContentType: .password,
-                submitLabel: .go, onSubmit: { Task { await viewModel.submit() } },
+                submitLabel: .go, onSubmit: { focusedField = nil; Task { await viewModel.submit() } },
                 focus: $focusedField, field: .password,
                 isError: viewModel.errorMessage != nil, shakeTrigger: viewModel.errorShake
             )
@@ -191,6 +191,23 @@ struct LoginView: View {
             .loginRise(Cue.field2, enabled: introReady)
 
             Button {
+                // Explicit, in the action — not only the style's isPressed
+                // haptic. After Password AutoFill, the SecureField's binding
+                // catches up when the field resigns, which is the same tap
+                // that hits this button: at touch-down canSubmit is still
+                // false, so the style's `new && !isDisabled` gate skips the
+                // buzz, then the field commits, the button re-enables, and
+                // touch-up still fires the action. The action haptic covers
+                // that path; the style's covers every ordinary tap.
+                Haptic.medium()
+                // Drop the keyboard NOW. Left up, it stays through the swap
+                // to the dashboard, so Home mounts with a keyboard-sized
+                // bottom inset: the Ask Cavnar FAB (an overlay that honours
+                // the keyboard safe area) lands high, then falls into place
+                // as the keyboard animates away — the "positioned weird
+                // before settling" glitch, plus a layout pass fighting
+                // Home's own fade-in.
+                focusedField = nil
                 Task { await viewModel.submit() }
             } label: {
                 Group {

@@ -742,6 +742,10 @@ struct CavnarStatCellStyle: ViewModifier {
     var tint: Color = .cavnarEmber
 
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous) }
+    // The brighter "lit corner" tone. Ember tiles get Ember2; any other
+    // tint (the coming-soon tiles' slate) lights with itself — the
+    // hardcoded Ember2 here was what put an orange flare on gray tiles.
+    private var flare: Color { tint == .cavnarEmber ? .cavnarEmber2 : tint }
 
     func body(content: Content) -> some View {
         content
@@ -770,7 +774,7 @@ struct CavnarStatCellStyle: ViewModifier {
                     // a dark card with a faint tint. (The previous white
                     // sheen here did the opposite: it washed the corner out.)
                     RadialGradient(
-                        colors: [Color.cavnarEmber2.opacity(0.6), tint.opacity(0.25), tint.opacity(0)],
+                        colors: [flare.opacity(0.6), tint.opacity(0.25), tint.opacity(0)],
                         center: UnitPoint(x: 0.1, y: 0), startRadius: 0, endRadius: 190
                     )
                     // A faint glossy catch along the top edge only.
@@ -787,7 +791,7 @@ struct CavnarStatCellStyle: ViewModifier {
                 Rectangle()
                     .fill(
                         LinearGradient(
-                            colors: [Color.cavnarEmber2.opacity(0.95), tint.opacity(0.85), tint.opacity(0.6)],
+                            colors: [flare.opacity(0.95), tint.opacity(0.85), tint.opacity(0.6)],
                             startPoint: .leading, endPoint: .trailing
                         )
                     )
@@ -797,7 +801,7 @@ struct CavnarStatCellStyle: ViewModifier {
             .overlay(
                 shape.strokeBorder(
                     LinearGradient(
-                        colors: [Color.cavnarEmber2.opacity(0.95), tint.opacity(0.7), tint.opacity(0.4)],
+                        colors: [flare.opacity(0.95), tint.opacity(0.7), tint.opacity(0.4)],
                         startPoint: .topLeading, endPoint: .bottomTrailing
                     ),
                     lineWidth: 1

@@ -3588,7 +3588,13 @@ def get_topic_weeks(restaurant_id: int, weeks: int = 8, db_path: str = DB_PATH) 
         out.append({"category": cat, "label": TOPIC_LABELS.get(cat, cat.replace("_", " ").title()),
                     "total": total, "weeks": cells})
     out.sort(key=lambda x: -x["total"])
-    return {"week_labels": [f"W{i + 1}" for i in range(weeks)], "topics": out[:6]}
+    # Label each column by the Monday that starts its week ("8/26", "9/2").
+    labels = []
+    for i in range(weeks - 1, -1, -1):
+        d = today - timedelta(days=7 * i)
+        monday = d - timedelta(days=d.weekday())
+        labels.append(f"{monday.month}/{monday.day}")
+    return {"week_labels": labels, "topics": out[:6]}
 
 
 def get_labor_daily(restaurant_id: int, days: int = 14, db_path: str = DB_PATH) -> list:

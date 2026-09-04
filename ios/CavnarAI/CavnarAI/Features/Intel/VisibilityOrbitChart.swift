@@ -14,21 +14,21 @@ struct VisibilityOrbitChart: View {
     }
 
     var body: some View {
-        CavnarAnimatedCanvas(duration: 1.6, height: 230, replayKey: "\(score)-\(runs.count)") { ctx, size, t, clock in
+        CavnarAnimatedCanvas(duration: 1.6, height: 150, replayKey: "\(score)-\(runs.count)") { ctx, size, t, clock in
             draw(&ctx, size: size, t: t, clock: clock)
         }
     }
 
     private func draw(_ ctx: inout GraphicsContext, size: CGSize, t: Double, clock: Double) {
-        let center = CGPoint(x: size.width * 0.3, y: size.height * 0.46)
-        let R: CGFloat = 52
+        let center = CGPoint(x: size.width * 0.26, y: size.height / 2)
+        let R: CGFloat = 46
         let s = CavnarChart.easeInOut(min(1, t / 0.9))
-        ctx.stroke(Path(ellipseIn: CGRect(x: center.x - R, y: center.y - R, width: R * 2, height: R * 2)), with: .color(Color.white.opacity(0.06)), lineWidth: 12)
+        ctx.stroke(Path(ellipseIn: CGRect(x: center.x - R, y: center.y - R, width: R * 2, height: R * 2)), with: .color(Color.white.opacity(0.06)), lineWidth: 10)
         let sweep = 360 * Double(score) / 100 * s
         var arc = Path()
         arc.addArc(center: center, radius: R, startAngle: .degrees(-90), endAngle: .degrees(-90 + sweep), clockwise: false)
         if sweep > 0.5 {
-            CavnarChart.glowStroke(&ctx, arc, color: .cavnarEmber2, glow: .cavnarEmber, lineWidth: 12, blur: 8)
+            CavnarChart.glowStroke(&ctx, arc, color: .cavnarEmber2, glow: .cavnarEmber, lineWidth: 10, blur: 8)
         }
         let orbit = (-90 + sweep) * Double.pi / 180
         let dot = CGPoint(x: center.x + CGFloat(cos(orbit)) * R, y: center.y + CGFloat(sin(orbit)) * R)
@@ -37,16 +37,18 @@ struct VisibilityOrbitChart: View {
             layer.addFilter(.shadow(color: cavnarEmberHot.opacity(0.9), radius: 8))
             layer.fill(Path(ellipseIn: CGRect(x: dot.x - r, y: dot.y - r, width: r * 2, height: r * 2)), with: .color(cavnarEmberHot))
         }
-        CavnarChart.text(&ctx, CavnarChart.number("\(Int((Double(score) * s).rounded()))", size: 28, weight: 700), at: CGPoint(x: center.x, y: center.y - 4))
-        CavnarChart.text(&ctx, CavnarChart.kicker("AI visibility"), at: CGPoint(x: center.x, y: center.y + 16))
+        CavnarChart.text(&ctx, CavnarChart.number("\(Int((Double(score) * s).rounded()))", size: 26, weight: 700), at: CGPoint(x: center.x, y: center.y - 4))
+        CavnarChart.text(&ctx, CavnarChart.kicker("AI visibility"), at: CGPoint(x: center.x, y: center.y + 15))
 
-        // History
-        let L = size.width * 0.56, Rr = size.width - 18, T: CGFloat = 54, B = size.height - 46
-        CavnarChart.text(&ctx, CavnarChart.label("LAST \(runs.count) RUN\(runs.count == 1 ? "" : "S")", size: 10.5, weight: 700), at: CGPoint(x: L, y: T - 16), anchor: .leading)
+        // History — a trend needs two runs; until then the right half is
+        // a single line of copy, not an empty plot.
+        let L = size.width * 0.52, Rr = size.width - 18, T: CGFloat = 40, B = size.height - 40
         guard runs.count >= 2 else {
-            CavnarChart.text(&ctx, CavnarChart.label("Run another check to start the trend.", size: 11), at: CGPoint(x: L, y: (T + B) / 2), anchor: .leading)
+            CavnarChart.text(&ctx, CavnarChart.label("FIRST CHECK", size: 10.5, weight: 700), at: CGPoint(x: L, y: center.y - 12), anchor: .leading)
+            CavnarChart.text(&ctx, CavnarChart.label("Run another check to start the trend line.", size: 11.5, color: .cavnarInk2), at: CGPoint(x: L, y: center.y + 8), anchor: .leading)
             return
         }
+        CavnarChart.text(&ctx, CavnarChart.label("LAST \(runs.count) RUNS", size: 10.5, weight: 700), at: CGPoint(x: L, y: T - 14), anchor: .leading)
         let n = runs.count
         let vals = runs.map { Double($0.aiScore) }
         let lo = max(0, (vals.min() ?? 0) - 10), hi = min(100, (vals.max() ?? 100) + 10)
@@ -72,7 +74,7 @@ struct VisibilityOrbitChart: View {
             ctx.drawLayer { layer in
                 layer.opacity = ln
                 CavnarChart.text(&layer, CavnarChart.number(text, size: 12, weight: 700, color: delta >= 0 ? .cavnarGreen : .cavnarRed),
-                                 at: CGPoint(x: Rr, y: size.height - 16), anchor: .trailing)
+                                 at: CGPoint(x: Rr, y: size.height - 14), anchor: .trailing)
             }
         }
     }

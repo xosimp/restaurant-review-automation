@@ -149,7 +149,7 @@ struct HomeView: View {
             .navigationDestination(for: ModuleRoute.self) { route in
                 ModuleDestinationView(moduleKey: route.key, moduleLabel: route.label)
             }
-            .sensoryFeedback(.impact(weight: .light), trigger: navHapticTrigger)
+            .sensoryFeedback(.impact(weight: .medium), trigger: navHapticTrigger)
             // The base color behind everything — where the background
             // layer's own bottom fade ends, and for any content below it.
             .background(Color.cavnarPaper)

@@ -300,7 +300,7 @@ struct RootView: View {
                 .tabItem { Label(AppTab.account.title, systemImage: AppTab.account.systemImage) }
                 .tag(AppTab.account)
         }
-        .sensoryFeedback(.selection, trigger: selectedTab) { _, _ in AppPreferences.hapticsEnabledSnapshot }
+        .sensoryFeedback(.impact(weight: .medium), trigger: selectedTab) { _, _ in AppPreferences.hapticsEnabledSnapshot }
         // True-black tab bar chrome, distinct from the warm near-black
         // content background — mirrors the web dashboard's own two-tier
         // black system (pure #000 nav chrome vs #1a1714 content).
@@ -333,6 +333,9 @@ struct RootView: View {
             }
                 .padding(.trailing, 20)
                 .padding(.bottom, 70)  // clears the tab bar
+                // Never ride the keyboard inset — see LoginView's Sign In
+                // action for the launch-time glitch this caused.
+                .ignoresSafeArea(.keyboard)
                 .accessibilityLabel("Ask Cavnar AI")
                 .accessibilityHint("Opens a chat with your restaurant intelligence consultant")
         }

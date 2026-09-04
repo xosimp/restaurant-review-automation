@@ -19,7 +19,17 @@ struct CavnarAnimatedCanvas<Overlay: View>: View {
     @ViewBuilder var overlay: () -> Overlay
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var start: Date?
+    // Initialised at construction and reset on appear — never left nil.
+    // The first version kept this nil until .onAppear and read it from
+    // INSIDE the Canvas draw closure. Every chart on Labor, the Food Cost
+    // gauge, and the ledgers after a tab switch then sat frozen at their
+    // first frame (t = 0: no band, no bars, "$0"): the Canvas closure
+    // captures a copy of the view struct, and a @State read through that
+    // copy doesn't reliably see a value set after the first render. The
+    // app's own working TimelineView components (CavnarEmberPullIndicator,
+    // PulsingSwipeArrow, the Home aurora) all initialise `start` up front
+    // and read it in the TimelineView closure — this now does the same.
+    @State private var start = Date()
 
     init(duration: Double = 1.6, height: CGFloat = 250, replayKey: AnyHashable = 0,
          draw: @escaping (inout GraphicsContext, CGSize, Double, Double) -> Void,
@@ -33,17 +43,21 @@ struct CavnarAnimatedCanvas<Overlay: View>: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion)) { timeline in
+            // Progress is resolved HERE, in the TimelineView closure, and
+            // handed to the Canvas as plain values — see `start` above.
+            let elapsed = max(0, timeline.date.timeIntervalSince(start))
+            let t = reduceMotion ? 1.0 : min(1.0, elapsed / duration)
+            let clock = reduceMotion ? 0.0 : elapsed
             Canvas { context, size in
-                let origin = start ?? timeline.date
-                let elapsed = timeline.date.timeIntervalSince(origin)
-                let t = reduceMotion ? 1 : min(1, max(0, elapsed / duration))
-                draw(&context, size, t, reduceMotion ? 0 : elapsed)
+                draw(&context, size, t, clock)
             }
         }
         .frame(height: height)
         .overlay { overlay() }
         .background(CavnarChartStage())
-        .onAppear { if start == nil { start = Date() } }
+        // Replay whenever the chart actually comes on screen (a tab
+        // switch recreates it; a scroll back into view doesn't).
+        .onAppear { start = Date() }
         .onChange(of: replayKey) { _, _ in start = Date() }
     }
 }

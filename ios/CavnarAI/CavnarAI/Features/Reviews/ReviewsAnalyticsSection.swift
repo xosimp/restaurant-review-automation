@@ -16,22 +16,16 @@ struct ReviewsAnalyticsSection: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                if let performance = viewModel.performance {
-                    ResponseRingsChart(performance: performance)
-                } else if viewModel.isLoading {
-                    performanceSkeleton
-                }
-
-                if let insight = viewModel.insight {
-                    insightCard(insight)
-                } else if viewModel.isLoading {
-                    insightSkeleton
-                }
-
                 if !viewModel.platforms.isEmpty {
                     platformSection
                 } else if viewModel.isLoading {
                     platformSkeleton
+                }
+
+                if let performance = viewModel.performance {
+                    ResponseRingsChart(performance: performance)
+                } else if viewModel.isLoading {
+                    performanceSkeleton
                 }
 
                 // The weekly grid needs categorised reviews inside the last 8
@@ -77,22 +71,6 @@ struct ReviewsAnalyticsSection: View {
                         CavnarSkeletonBar(height: 10, widthFraction: 0.8)
                     }
                     .frame(maxWidth: .infinity)
-                }
-            }
-        }
-    }
-
-    private var insightSkeleton: some View {
-        let widths: [CGFloat] = [0.92, 0.78, 0.85, 0.62]
-        return VStack(alignment: .leading, spacing: 0) {
-            ForEach(widths.indices, id: \.self) { index in
-                HStack(alignment: .top, spacing: 12) {
-                    Circle().fill(Color.cavnarEmber.opacity(0.15)).frame(width: 20, height: 20)
-                    CavnarSkeletonBar(height: 12, widthFraction: widths[index])
-                }
-                .padding(.vertical, 12)
-                if index < widths.count - 1 {
-                    Rectangle().fill(Color.cavnarPaper3.opacity(0.25)).frame(height: 1)
                 }
             }
         }
@@ -151,66 +129,6 @@ struct ReviewsAnalyticsSection: View {
         // Unboxed, matching trendChartCard's own now-unboxed container —
         // otherwise the skeleton pops from boxed to unboxed the instant
         // real data arrives.
-    }
-
-    // MARK: - AI insight (emoji lines → branded icon rows)
-
-    // Reviews' AI insight is a distinct web convention from Labor/Food Cost/
-    // Marketing's structured AIInsight — a handful of emoji-prefixed lines
-    // (see client_api.py's review-insight prompt) rather than intro/
-    // recommendations/forecast fields. Parsed here into icon rows instead of
-    // rendering the raw emoji characters, matching the app's branded-icon
-    // convention everywhere else.
-    private static let insightIcons: [(prefix: String, systemImage: String)] = [
-        ("📊", "chart.bar.fill"),
-        ("⚠️", "exclamationmark.triangle.fill"),
-        ("✅", "checkmark.circle.fill"),
-        ("🔮", "sparkles"),
-    ]
-
-    // No card/gradient container here on purpose — the page already has
-    // plenty of boxed sections below. These four lines float directly on
-    // the module background; a dark lift-shadow plus a faint ember glow
-    // (the same two-shadow technique as .cavnarNumberGlow) keeps the icon
-    // and text reading as raised/lit rather than flat against the wash,
-    // with hairline dividers standing in for a container edge.
-    private func insightCard(_ insight: String) -> some View {
-        let lines = insightLines(insight)
-        return VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: line.icon)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.cavnarEmber)
-                        .frame(width: 20, alignment: .center)
-                        .shadow(color: .cavnarEmber.opacity(0.55), radius: 5, x: 0, y: 0)
-                    Text(line.text)
-                        .font(.cavnarBody(14, weight: 600))
-                        .foregroundStyle(Color.cavnarInk)
-                        .lineSpacing(4)
-                        .shadow(color: .black.opacity(0.45), radius: 3, x: 0, y: 1)
-                }
-                .padding(.vertical, 12)
-                if index < lines.count - 1 {
-                    Rectangle()
-                        .fill(Color.cavnarPaper3.opacity(0.25))
-                        .frame(height: 1)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func insightLines(_ raw: String) -> [(icon: String, text: String)] {
-        raw.split(separator: "\n").compactMap { rawLine in
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty else { return nil }
-            for entry in Self.insightIcons where line.hasPrefix(entry.prefix) {
-                let text = line.dropFirst(entry.prefix.count).trimmingCharacters(in: .whitespaces)
-                return (entry.systemImage, text)
-            }
-            return ("circle.fill", line)
-        }
     }
 
     // MARK: - Platform breakdown
@@ -277,14 +195,24 @@ struct ReviewsAnalyticsSection: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        // .cavnarGlassCard(), not .cavnarGlossyCard() — the latter is real
-        // interactive Liquid Glass on iOS 26 (.glassEffect(...interactive()))
-        // and, wrapped inside this card's NavigationLink, was swallowing the
-        // tap before it ever reached the link: tapping did nothing at all,
-        // not even after a second tap. .cavnarGlassCard() is the same
-        // ember-tinted-gradient family with no glass gesture recognizer of
-        // its own, so the NavigationLink's tap goes through normally.
-        .cavnarGlassCard()
+        // Obsidian, not the ember glass wash — two solid orange tiles at the
+        // top of a page whose charts all sit on the quiet stage panel read
+        // as belonging to a different screen. Same surface as the chart
+        // stages; the rating number and its star carry the colour.
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
+                .fill(LinearGradient(colors: [Color(red: 0.11, green: 0.11, blue: 0.115), Color(red: 0.07, green: 0.07, blue: 0.075)], startPoint: .top, endPoint: .bottom))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
+        )
+        .overlay(alignment: .top) {
+            Rectangle().fill(LinearGradient(colors: [Color.cavnarEmber2.opacity(0.7), Color.cavnarEmber.opacity(0.1)], startPoint: .leading, endPoint: .trailing)).frame(height: 1)
+                .padding(.horizontal, 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous))
     }
 
 

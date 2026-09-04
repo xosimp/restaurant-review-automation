@@ -122,22 +122,25 @@ struct ComingSoonModuleTile: View {
     var body: some View {
         VStack(spacing: 8) {
             GlowBadge(systemImage: ModuleIcon.symbolName(for: module.icon), size: 40)
-                .opacity(0.45)
-                .grayscale(0.7)
+                .grayscale(1)
+                .opacity(0.7)
             Text("—")
                 .font(.cavnarNumber(26, weight: 500))
-                .foregroundStyle(Color.cavnarInk3)
+                .foregroundStyle(Color.cavnarInk2)
             Text(module.label)
                 .font(.cavnarHeadline(14))
-                .foregroundStyle(Color.cavnarInk3)
+                .foregroundStyle(Color.cavnarInk)
                 .multilineTextAlignment(.center)
             Text("Coming Soon")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3.opacity(0.75))
+                .font(.cavnarBody(14, weight: 600))
+                .foregroundStyle(Color.cavnarInk3)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
-        .cavnarStatCell(tint: Color.cavnarInk3)
+        // Slate, with nothing ember on it at all — inactive tiles never
+        // share the live tiles' colour language. Text stays at full ink so
+        // the label reads as clearly as on a live tile.
+        .cavnarStatCell(tint: Color(red: 0.36, green: 0.39, blue: 0.45))
     }
 }

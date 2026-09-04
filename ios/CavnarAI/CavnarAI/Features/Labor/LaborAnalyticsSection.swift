@@ -18,11 +18,18 @@ struct LaborAnalyticsSection: View {
                 LaborRibbonChart(points: ribbonPoints, target: stats.target,
                                  subtitle: viewModel.daily.isEmpty ? "8-week trend" : "last \(viewModel.daily.count) days")
                 WeekRadarChart(dowSummary: stats.dowSummary, target: stats.target,
-                               subtitle: [stats.dateRange.start, stats.dateRange.end].compactMap { $0 }.joined(separator: " – "))
+                               subtitle: [stats.dateRange.start, stats.dateRange.end].compactMap { $0 }.map(Self.shortDate).joined(separator: " – "))
             } else if viewModel.isLoading {
                 CavnarWorkingLine().padding(.vertical, 20)
             }
         }
+    }
+
+    /// "2026-06-01" -> "6/1/26" — the app's date shorthand everywhere else.
+    private static func shortDate(_ iso: String) -> String {
+        let parts = iso.prefix(10).split(separator: "-")
+        guard parts.count == 3, let m = Int(parts[1]), let d = Int(parts[2]) else { return iso }
+        return "\(m)/\(d)/\(parts[0].suffix(2))"
     }
 
     /// Daily labor % when the daily history exists (the Ribbon's real
@@ -45,7 +52,11 @@ struct LaborAnalyticsSection: View {
         // four count up together on first load instead of racing each
         // other for which gets to be "first" and flip the shared flag.
         let startFromZero = !viewModel.hasPlayedTilesIntro
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 10)], spacing: 10) {
+        // LazyVGrid doesn't equalise heights across a row, so a tile whose
+        // label wraps sat taller than its neighbour. Each tile now fills
+        // its cell (see SavingsTile's maxHeight) inside a grid whose rows
+        // are sized by the taller tile.
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
             if b.laborMonthly > 0 {
                 SavingsTile(numericValue: b.laborMonthly, format: formattedDollarsK, label: "Monthly savings", sublabel: "if schedule optimized", startFromZero: startFromZero)
             } else {
@@ -106,7 +117,7 @@ struct LaborAnalyticsSection: View {
                     .font(.cavnarNumber(14.5, weight: 700))
                     .foregroundStyle(bucket.color)
                 Text(bucket.label)
-                    .font(.cavnarBody(13.5, weight: 700))
+                    .font(.cavnarBody(14.5, weight: 700))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
@@ -186,7 +197,7 @@ private struct SavingsTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             AnimatableTileNumber(value: animatedValue, format: format)
-                .font(.cavnarNumber(22, weight: 700))
+                .font(.cavnarNumber(26, weight: 700))
                 .foregroundStyle(tone)
                 .cavnarNumberGlow(tone)
                 .cavnarSensitive()
@@ -206,11 +217,11 @@ private struct SavingsTile: View {
                 .textCase(.uppercase)
                 .foregroundStyle(Color.cavnarInk3)
             Text(sublabel)
-                .font(.cavnarBody(13.5))
+                .font(.cavnarBody(14.5))
                 .foregroundStyle(Color.cavnarInk3)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(16)
         .cavnarCard()
     }
 }
