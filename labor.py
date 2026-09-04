@@ -708,6 +708,16 @@ def generate_optimized_schedule(analysis: dict, shifts: list[dict],
                           "minimum staffing floors below — those floors hold regardless of forecast.\n"
                           + "\n".join(_w_lines))
 
+    # Which days actually take the money — this restaurant's own median
+    # sales per weekday (see build_demand_forecast). Silently omitted when
+    # there isn't enough history to say anything honest.
+    _demand_block = ""
+    if restaurant_id:
+        try:
+            _demand_block = format_demand_block(build_demand_forecast(restaurant_id))
+        except Exception:
+            _demand_block = ""
+
     # The actual previous generation's per-day/per-role staffing (not just
     # historical shift patterns, which TYPICAL HEADCOUNT above already
     # covers) — gives the model something concrete to genuinely compare
@@ -908,7 +918,7 @@ CONTEXT:
 - Recent overstaffed days: {[d["day"] + " (" + str(d["labor_pct"]) + "%)" for d in overstaffed]}
 - Recent understaffed days: {[d["day"] for d in understaffed]}
 - Recent labor % by day of week: {dow}
-- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:100]]}{yoy_block}{events_block}{_weather_block}{_prior_schedule_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_avail_block}{_sched_notes_block}
+- Active staff: {[e[0] + " (" + e[1] + ")" for e in employees[:100]]}{yoy_block}{events_block}{_demand_block}{_weather_block}{_prior_schedule_block}{role_rates_block}{hours_block}{par_block}{_headcount_block}{_cross_block}{_section_block}{_daypart_block}{_delivery_block}{_noshows_block}{_avail_block}{_sched_notes_block}
 
 Next week dates:
 {chr(10).join(f"- {d}: {n}" for d, n in zip(week_dates, week_days))}
@@ -1075,3 +1085,116 @@ def calculate_monthly_gap(analysis: dict) -> dict:
         "monthly_gap":   round(gap, 0),
         "over_target":   current_pct > target_pct,
     }
+
+
+# ── Sales-based demand forecast ────────────────────────────────────────────────
+
+def build_demand_forecast(restaurant_id: int, weeks: int = 8, db_path: str = None) -> dict:
+    """Per-weekday sales expectation from this restaurant's own recent history.
+
+    The scheduler already knew what a typical WEEK looks like in headcount
+    terms (TYPICAL HEADCOUNT) and what the weather is doing, but nothing
+    told it which days actually take the money. labor_daily_history has had
+    per-day sales in it all along — from the Toast sync and from CSV
+    uploads — so this reads the trailing `weeks` weeks, groups by weekday,
+    and reports each weekday's median sales alongside how it compares to an
+    average day.
+
+    Median, not mean: one catered private event or one storm-closed
+    Saturday shouldn't redefine what a normal Saturday looks like.
+
+    Returns {"ok": False, ...} when there isn't enough history to say
+    anything honest — the caller then simply omits the block rather than
+    presenting a number built on two data points.
+    """
+    from models import get_conn as _gc
+    try:
+        conn = _gc(db_path) if db_path else _gc()
+    except Exception:
+        return {"ok": False, "reason": "no database"}
+
+    try:
+        rows = conn.execute("""
+            SELECT day_of_week, sales FROM labor_daily_history
+            WHERE restaurant_id=? AND sales IS NOT NULL AND sales > 0
+              AND date >= date('now', ?)
+            ORDER BY date DESC
+        """, (restaurant_id, f"-{int(weeks) * 7} days")).fetchall()
+    except Exception:
+        return {"ok": False, "reason": "no history table"}
+    finally:
+        conn.close()
+
+    by_day = {}
+    for r in rows:
+        day = (r["day_of_week"] or "").strip().capitalize()
+        if day:
+            by_day.setdefault(day, []).append(float(r["sales"] or 0))
+
+    # At least three weekdays with two readings each — below that the
+    # "typical" is really just "last week", which the model already sees.
+    usable = {d: v for d, v in by_day.items() if len(v) >= 2}
+    if len(usable) < 3:
+        return {"ok": False, "reason": "not enough sales history yet",
+                "days_with_data": len(usable)}
+
+    def _median(values):
+        s = sorted(values)
+        mid = len(s) // 2
+        return s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
+
+    medians = {d: round(_median(v), 2) for d, v in usable.items()}
+    overall = _median(list(medians.values()))
+    if overall <= 0:
+        return {"ok": False, "reason": "no usable sales figures"}
+
+    days = []
+    for day, med in medians.items():
+        pct = int(round((med / overall - 1) * 100))
+        days.append({
+            "day": day,
+            "median_sales": med,
+            "samples": len(usable[day]),
+            "vs_average_pct": pct,
+        })
+    order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    days.sort(key=lambda d: order.index(d["day"]) if d["day"] in order else 99)
+
+    ranked = sorted(days, key=lambda d: d["median_sales"], reverse=True)
+    return {
+        "ok": True,
+        "weeks": int(weeks),
+        "overall_median": round(overall, 2),
+        "days": days,
+        "busiest": ranked[0]["day"],
+        "quietest": ranked[-1]["day"],
+    }
+
+
+def format_demand_block(forecast: dict) -> str:
+    """The prompt block for build_demand_forecast's output. Framed the same
+    way the weather block is: a real signal, but one that adjusts staffing
+    around the historical headcount and the minimum floors rather than
+    replacing either."""
+    if not forecast or not forecast.get("ok"):
+        return ""
+    lines = []
+    for d in forecast["days"]:
+        pct = d["vs_average_pct"]
+        if pct > 4:
+            rel = f"{pct}% above an average day"
+        elif pct < -4:
+            rel = f"{abs(pct)}% below an average day"
+        else:
+            rel = "about an average day"
+        lines.append(f"  {d['day']}: ${int(d['median_sales']):,} typical sales — {rel} "
+                     f"({d['samples']} recent {'week' if d['samples'] == 1 else 'weeks'})")
+    return ("\n\nEXPECTED DEMAND BY DAY — this restaurant's own median sales per weekday over the "
+            f"last {forecast['weeks']} weeks, so the schedule can put people where the money "
+            f"actually is. {forecast['busiest']} is the busiest day and {forecast['quietest']} the "
+            "quietest. Weight staffing toward the higher-demand days and trim the quiet ones, but "
+            "treat this the same way as the weather block: it adjusts the TYPICAL HEADCOUNT "
+            "starting point by a person or two per day, it does not replace it, and it never "
+            "overrides the minimum staffing floors or a day's own coverage requirements. Median, "
+            "not average, so a one-off private event or a storm-closed day hasn't skewed it.\n"
+            + "\n".join(lines))
