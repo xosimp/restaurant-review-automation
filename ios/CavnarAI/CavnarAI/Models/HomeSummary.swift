@@ -26,6 +26,13 @@ struct HomeSummary: Codable {
     // disagree with what's actually being held back right now.
     let quietHoursActive: Bool
     let alertQuietEnd: String?
+    // Home's hero subline ("Overnight, Cavnar answered 3 reviews and
+    // flagged 2 things for you") and its closing "This week" receipt — see
+    // mobile_api.py's _home_overnight / _home_weekly_receipts. Both optional
+    // on purpose: a summary cached before these shipped still decodes, and
+    // the hero simply falls back to its quiet line.
+    let overnight: HomeOvernight?
+    let weeklyReceipts: [HomeWeeklyReceipt]?
 
     enum CodingKeys: String, CodingKey {
         case username
@@ -39,7 +46,34 @@ struct HomeSummary: Codable {
         case valueHistory = "value_history"
         case quietHoursActive = "quiet_hours_active"
         case alertQuietEnd = "alert_quiet_end"
+        case overnight
+        case weeklyReceipts = "weekly_receipts"
     }
+}
+
+/// Drafts written and alerts fired in the last `windowHours` — the numbers
+/// the hero subline is built from.
+struct HomeOvernight: Codable, Hashable {
+    let answered: Int
+    let flagged: Int
+    let windowHours: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case answered, flagged
+        case windowHours = "window_hours"
+    }
+}
+
+/// One line of the "This week — what Cavnar did for you" receipt: a bold
+/// `emphasis` ("9 replies") followed by the rest of the sentence. The
+/// backend only sends lines whose number is non-zero, so an empty list
+/// means the section is hidden, never padded.
+struct HomeWeeklyReceipt: Codable, Identifiable, Hashable {
+    let module: String
+    let emphasis: String
+    let text: String
+
+    var id: String { module + "|" + emphasis + "|" + text }
 }
 
 /// One day's "Total value delivered" figure — see value_delivered.py's
@@ -64,6 +98,11 @@ struct ModuleSummary: Codable, Identifiable, Hashable {
     /// ComingSoonView instead of a real screen.
     let status: String
     let kpi: ModuleKPI?
+    /// Home's pulse-strip chip for this module — the KPI value with a
+    /// short label and a semantic tone. Defaulted so the Modules tab's
+    /// static coming-soon entries (built with the memberwise init) keep
+    /// compiling untouched.
+    var pulse: ModulePulse? = nil
 
     var id: String { key }
     var isAvailable: Bool { status == "available" }
@@ -74,6 +113,15 @@ struct ModuleKPI: Codable, Hashable {
     let sublabel: String
 }
 
+/// "12/14 · replies · 86%" with a breathing dot — `tone` is "good", "warn"
+/// or nil (ember), decided server-side from the same thresholds the alerts
+/// use (mobile_api.py's _home_pulse).
+struct ModulePulse: Codable, Hashable {
+    let value: String
+    let label: String
+    let tone: String?
+}
+
 /// `module` names which module a tap should navigate into — a key into the
 /// Modules registry, not a literal tab name (the app has no per-module tabs
 /// anymore).
@@ -82,6 +130,14 @@ struct NeedsAttentionItem: Codable, Identifiable {
     let module: String
     let title: String
     let detail: String
+    /// The action deck's buttons — primary label, optional secondary link,
+    /// and what the primary does: "publish_replies" (one-tap bulk publish
+    /// via /mobile/api/reviews/approve-all) or "open_module" (navigate).
+    /// All optional so an older cached summary still decodes.
+    let cta: String?
+    let secondary: String?
+    let action: String?
 
     var id: String { type }
+    var isPublishAction: Bool { action == "publish_replies" }
 }

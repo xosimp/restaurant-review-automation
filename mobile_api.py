@@ -535,6 +535,157 @@ def _intel_home_kpi(restaurant):
         return {"value": "—", "sublabel": "no data yet"}
 
 
+def _home_tz(restaurant):
+    from zoneinfo import ZoneInfo
+    try:
+        return ZoneInfo(getattr(restaurant, "timezone", None) or "America/Chicago")
+    except Exception:
+        return ZoneInfo("America/Chicago")
+
+
+def _home_pulse(key, kpi, rstats, labor, restaurant, inv):
+    """One chip for Home's pulse strip per active module: the KPI value, a
+    short label, and a semantic tone ("good"/"warn"/None) that colours the
+    chip's breathing dot. Computed here, not on the phone, so the same
+    thresholds drive the chip, the Modules tile sublabel and the alerts."""
+    if not kpi:
+        return None
+    value = kpi.get("value", "—")
+    if key == "reviews":
+        rate = int(rstats.get("response_rate", 0) or 0)
+        tone = "good" if rate >= 80 else ("warn" if rstats.get("total", 0) and rate < 50 else None)
+        return {"value": value, "label": f"replies · {rate}%", "tone": tone}
+    if key == "labor":
+        target = float(restaurant.labor_target_pct or 30.0)
+        pct = (labor or {}).get("overall_labor_pct", 0) or 0
+        on_track = pct <= target
+        return {"value": value, "label": "labor · on target" if on_track else f"labor · over {int(target)}%",
+                "tone": "good" if on_track else "warn"}
+    if key == "inventory":
+        recoverable = int((inv or {}).get("recoverable_monthly", 0) or 0)
+        return {"value": value, "label": "recoverable", "tone": "warn" if recoverable > 0 else "good"}
+    if key == "marketing":
+        return {"value": value, "label": "pieces this month", "tone": None}
+    if key == "intel":
+        return {"value": value, "label": kpi.get("sublabel", "").replace("recommendations ready", "recommendations").replace("recommendation ready", "recommendation") or "intel", "tone": None}
+    return {"value": value, "label": kpi.get("sublabel", ""), "tone": None}
+
+
+def _home_query(sql, params):
+    """One row, or None on any error — every Home helper query is independent,
+    so a missing optional table (alert_log/marketing_content_log on a fresh
+    install) costs that one number, never the whole screen."""
+    try:
+        conn = get_conn()
+        try:
+            return conn.execute(sql, params).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
+def _home_overnight(rid):
+    """What Cavnar did while the owner wasn't looking — drafts written and
+    alerts fired in the last 24 hours. A rolling window rather than a literal
+    'since 6pm' so the line is true whenever the app is opened; the phone
+    picks 'Overnight' vs 'Since yesterday' from the clock."""
+    answered = _home_query("""
+        SELECT COUNT(*) AS n FROM reviews
+        WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
+          AND response_status IN ('drafted','approved','posted')
+          AND draft_response IS NOT NULL
+          AND julianday(fetched_at) >= julianday('now','-1 day')
+    """, (rid,))
+    flagged = _home_query("""
+        SELECT COUNT(*) AS n FROM alert_log
+        WHERE restaurant_id=? AND julianday(fired_at) >= julianday('now','-1 day')
+    """, (rid,))
+    return {
+        "answered": int((answered["n"] if answered else 0) or 0),
+        "flagged": int((flagged["n"] if flagged else 0) or 0),
+        "window_hours": 24,
+    }
+
+
+def _home_weekly_receipts(rid, active_keys, inv):
+    """The 'This week — what Cavnar did for you' receipt: up to three real,
+    dated things since Monday. Each is only included when its number is
+    non-zero — an empty list means the phone hides the section, never
+    pads it with placeholders."""
+    receipts = []
+    week_start = "date('now','-6 days','weekday 1')"
+    if "reviews" in active_keys:
+        row = _home_query(f"""
+            SELECT COUNT(*) AS posted,
+                   SUM(CASE WHEN review_date IS NOT NULL
+                             AND (julianday(posted_at) - julianday(review_date)) * 24 <= 24 THEN 1 ELSE 0 END) AS fast
+            FROM reviews
+            WHERE restaurant_id=? AND deleted_at IS NULL AND response_status='posted'
+              AND julianday(posted_at) >= julianday({week_start})
+        """, (rid,))
+        posted = int((row["posted"] if row else 0) or 0)
+        if posted:
+            pct = int(round(100 * ((row["fast"] or 0) / posted)))
+            receipts.append({"module": "reviews",
+                             "emphasis": f"{posted} {'reply' if posted == 1 else 'replies'}",
+                             "text": f"published to Google — {pct}% within 24h"})
+        else:
+            row = _home_query(f"""
+                SELECT COUNT(*) AS n FROM reviews
+                WHERE restaurant_id=? AND deleted_at IS NULL AND response_status='approved'
+                  AND julianday(approved_at) >= julianday({week_start})
+            """, (rid,))
+            approved = int((row["n"] if row else 0) or 0)
+            if approved:
+                receipts.append({"module": "reviews",
+                                 "emphasis": f"{approved} {'reply' if approved == 1 else 'replies'}",
+                                 "text": "approved in your voice"})
+    if "labor" in active_keys:
+        sched = _home_query(f"""
+            SELECT week_start, hours_scheduled, hours_budget FROM schedule_history
+            WHERE restaurant_id=? AND julianday(generated_at) >= julianday({week_start})
+            ORDER BY id DESC LIMIT 1
+        """, (rid,))
+        if sched:
+            hs = float(sched["hours_scheduled"] or 0)
+            hb = float(sched["hours_budget"] or 0)
+            if hb and hs and hs < hb:
+                receipts.append({"module": "labor", "emphasis": "Next week's schedule",
+                                 "text": f"built {int(round(hb - hs))} hrs under budget"})
+            elif hs:
+                receipts.append({"module": "labor", "emphasis": "Next week's schedule",
+                                 "text": f"built — {int(round(hs))} hrs scheduled"})
+    if "inventory" in active_keys:
+        top = ((inv or {}).get("waste_items") or [None])[0]
+        try:
+            waste_cost = float((top or {}).get("waste_cost", 0) or 0)
+        except (TypeError, ValueError):
+            waste_cost = 0
+        if top and waste_cost > 0:
+            receipts.append({"module": "inventory",
+                             "emphasis": f"${int(round(waste_cost))} of {top.get('item', 'waste')} waste",
+                             "text": "flagged before your next order"})
+    if "marketing" in active_keys:
+        row = _home_query(f"""
+            SELECT COUNT(*) AS n FROM marketing_content_log
+            WHERE restaurant_id=? AND julianday(created_at) >= julianday({week_start})
+        """, (rid,))
+        n = int((row["n"] if row else 0) or 0)
+        if n:
+            receipts.append({"module": "marketing", "emphasis": f"{n} marketing {'piece' if n == 1 else 'pieces'}",
+                             "text": "drafted and ready to post"})
+    row = _home_query(f"""
+        SELECT COUNT(*) AS n FROM alert_log
+        WHERE restaurant_id=? AND julianday(fired_at) >= julianday({week_start})
+    """, (rid,))
+    alerts = int((row["n"] if row else 0) or 0)
+    if alerts:
+        receipts.append({"module": "alerts", "emphasis": f"{alerts} {'alert' if alerts == 1 else 'alerts'}",
+                         "text": "sent to you before they became problems"})
+    return receipts[:3]
+
+
 def _do_mobile_home(current_user):
     from models import get_review_stats, get_active_modules
     rid = current_user["restaurant_id"]
@@ -554,6 +705,8 @@ def _do_mobile_home(current_user):
         except Exception:
             labor = None
 
+    inv = {}
+    inv_live = False
     modules_out = []
     for m in active_modules:
         key = m["key"]
@@ -576,6 +729,10 @@ def _do_mobile_home(current_user):
                 from inventory import load_inventory_for_restaurant, analyse_inventory
                 _items, _live = load_inventory_for_restaurant(rid)
                 inv = analyse_inventory(_items)
+                # Only a restaurant with its own live inventory gets a
+                # waste line on the weekly receipt — the sample items a
+                # fresh account is analysed against aren't its own waste.
+                inv_live = bool(_live)
             except Exception:
                 inv = {}
             kpi = {
@@ -600,7 +757,8 @@ def _do_mobile_home(current_user):
         elif key == "intel":
             kpi = _intel_home_kpi(restaurant)
 
-        modules_out.append({"key": key, "label": m["label"], "icon": key, "status": m["status"], "kpi": kpi})
+        modules_out.append({"key": key, "label": m["label"], "icon": key, "status": m["status"], "kpi": kpi,
+                            "pulse": _home_pulse(key, kpi, rstats, labor, restaurant, inv)})
 
     # "Needs attention" — same three checks and thresholds as the web Home
     # tab's card list (templates/dashboard.html, id="home-attention-list").
@@ -608,12 +766,25 @@ def _do_mobile_home(current_user):
     # app no longer has one tab per module, so this is a key into the
     # Modules grid/registry, not a literal tab name.
     needs_attention = []
+    urgent = int(rstats.get("urgent", 0) or 0) if "reviews" in active_keys else 0
+    if urgent > 0:
+        needs_attention.append({
+            "type": "urgent_reviews", "module": "reviews",
+            "title": f"{urgent} urgent review{'' if urgent == 1 else 's'} unanswered",
+            "detail": "Negative reviews are still waiting on a reply",
+            "cta": "Reply now", "secondary": None, "action": "open_module",
+        })
     if "reviews" in active_keys and rstats.get("awaiting_approval", 0) > 0:
         n = rstats["awaiting_approval"]
         needs_attention.append({
             "type": "reviews_awaiting_approval", "module": "reviews",
             "title": f"{n} review{'' if n == 1 else 's'} awaiting approval",
-            "detail": "AI responses drafted — publish in one click",
+            "detail": "AI responses drafted — publish in one tap",
+            # The deck's one-tap publish is capped per tap (see
+            # mobile_approve_all_reviews); the label promises only what
+            # one tap will actually do.
+            "cta": f"Publish {min(n, 25)} {'reply' if n == 1 else 'replies'}",
+            "secondary": "Read them first", "action": "publish_replies",
         })
     if "labor" in active_keys and labor and labor.get("overtime_risk"):
         ot_count = sum(1 for o in labor["overtime_risk"] if o.get("status") == "overtime")
@@ -622,12 +793,14 @@ def _do_mobile_home(current_user):
                 "type": "labor_overtime", "module": "labor",
                 "title": f"{ot_count} staff member{'' if ot_count == 1 else 's'} in overtime",
                 "detail": f"Est. ${ot_count * 38}+ extra in OT wages this week",
+                "cta": "Open schedule", "secondary": None, "action": "open_module",
             })
     if "reviews" in active_keys and rstats.get("total", 0) > 0 and rstats.get("response_rate", 0) < 50:
         needs_attention.append({
             "type": "low_response_rate", "module": "reviews",
             "title": f"Response rate at {rstats['response_rate']}%",
             "detail": "Restaurants at 80%+ get 2x more new guests",
+            "cta": "Answer reviews", "secondary": None, "action": "open_module",
         })
 
     # Total value delivered — the Home tab's chart card. Snapshot recorded
@@ -662,6 +835,9 @@ def _do_mobile_home(current_user):
         "value_history": value_history,
         "quiet_hours_active": quiet_hours_active,
         "alert_quiet_end": restaurant.alert_quiet_end or None,
+        # Home's hero subline and its closing receipt — see the helpers.
+        "overnight": _home_overnight(rid),
+        "weekly_receipts": _home_weekly_receipts(rid, active_keys, inv if inv_live else {}),
     }, 200
 
 
@@ -698,6 +874,62 @@ def mobile_reviews(current_user):
 def mobile_approve_review(review_id, current_user):
     payload, status = _capi._do_approve(review_id, current_user["restaurant_id"])
     return jsonify(**payload), status
+
+
+@mobile_bp.route("/reviews/approve-all", methods=["POST"])
+@mobile_login_required
+def mobile_approve_all_reviews(current_user):
+    """Home's action deck: publish every drafted reply in one tap. Each
+    review goes through the exact same _do_approve path a single approve
+    uses (response_action, activity log, webhook, background Google post),
+    so nothing about a bulk publish is a shortcut. Capped at 25 per call —
+    a restaurant with a bigger backlog taps again, and the deck's label
+    only ever promises what one tap will do."""
+    rid = current_user["restaurant_id"]
+    data = request.get_json(silent=True) or {}
+    try:
+        limit = max(1, min(int(data.get("limit", 25)), 25))
+    except (TypeError, ValueError):
+        limit = 25
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT id FROM reviews
+        WHERE restaurant_id=? AND response_status='drafted' AND deleted_at IS NULL
+          AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
+        ORDER BY (urgency='high') DESC, review_date DESC, id DESC
+        LIMIT ?
+    """, (rid, limit)).fetchall()
+    conn.close()
+    approved = posted = failed = 0
+    for row in rows:
+        try:
+            payload, status = _capi._do_approve(row["id"], rid)
+            if status == 200 and payload.get("ok"):
+                approved += 1
+                if payload.get("auto_posted"):
+                    posted += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+    remaining = 0
+    try:
+        conn = get_conn()
+        remaining = conn.execute("""
+            SELECT COUNT(*) FROM reviews
+            WHERE restaurant_id=? AND response_status='drafted' AND deleted_at IS NULL
+              AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
+        """, (rid,)).fetchone()[0] or 0
+        conn.close()
+    except Exception:
+        pass
+    if approved:
+        try:
+            from models import log_event
+            log_event(rid, "reviews_bulk_approved", {"count": approved, "posted": posted})
+        except Exception:
+            pass
+    return jsonify(ok=True, approved=approved, posted=posted, failed=failed, remaining=int(remaining)), 200
 
 
 @mobile_bp.route("/reviews/<int:review_id>/skip", methods=["POST"])

@@ -2648,3 +2648,89 @@ def test_labor_daily_and_visibility_history_feeds(client, db_path):
         record_ai_visibility_run(rid, sc, 60, db_path=db_path)
     runs = client.get("/mobile/api/intel/ai-visibility/history", headers=_auth_headers(token)).get_json()["runs"]
     assert [r["ai_score"] for r in runs] == [42, 51, 70]
+
+
+# ── Home rebuild: overnight line, pulse strip, action-deck CTAs, weekly receipts, one-tap publish ──
+
+def test_home_pulse_overnight_and_publish_cta(client, db_path):
+    rid = _restaurant(db_path)
+    _add_review(db_path, rid)
+    token = _login(client, db_path, rid)
+    data = client.get("/mobile/api/home", headers=_auth_headers(token)).get_json()
+    reviews_module = next(m for m in data["modules"] if m["key"] == "reviews")
+    assert reviews_module["pulse"] == {"value": "0/1", "label": "replies · 0%", "tone": "warn"}
+    # The draft was written just now, so it counts as "answered" in the 24h window.
+    assert data["overnight"] == {"answered": 1, "flagged": 0, "window_hours": 24}
+    item = next(i for i in data["needs_attention"] if i["type"] == "reviews_awaiting_approval")
+    assert item["cta"] == "Publish 1 reply"
+    assert item["secondary"] == "Read them first"
+    assert item["action"] == "publish_replies"
+
+
+def test_home_needs_attention_leads_with_urgent_unanswered_reviews(client, db_path):
+    rid = _restaurant(db_path)
+    review_id = _add_review(db_path, rid)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE reviews SET urgency='high' WHERE id=?", (review_id,))
+    conn.commit()
+    conn.close()
+    token = _login(client, db_path, rid)
+    data = client.get("/mobile/api/home", headers=_auth_headers(token)).get_json()
+    first = data["needs_attention"][0]
+    assert first["type"] == "urgent_reviews"
+    assert first["title"] == "1 urgent review unanswered"
+    assert first["cta"] == "Reply now" and first["action"] == "open_module"
+
+
+def test_home_weekly_receipts_count_replies_posted_this_week(client, db_path):
+    rid = _restaurant(db_path)
+    review_id = _add_review(db_path, rid)
+    conn = get_conn(db_path)
+    conn.execute(
+        "UPDATE reviews SET response_status='posted', approved_at=datetime('now'), posted_at=datetime('now'), "
+        "review_date=datetime('now','-3 hours') WHERE id=?", (review_id,)
+    )
+    conn.commit()
+    conn.close()
+    token = _login(client, db_path, rid)
+    data = client.get("/mobile/api/home", headers=_auth_headers(token)).get_json()
+    receipt = next(r for r in data["weekly_receipts"] if r["module"] == "reviews")
+    assert receipt["emphasis"] == "1 reply"
+    assert receipt["text"] == "published to Google — 100% within 24h"
+
+
+def test_home_weekly_receipts_empty_for_a_quiet_week(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    data = client.get("/mobile/api/home", headers=_auth_headers(token)).get_json()
+    assert data["weekly_receipts"] == []
+    assert data["overnight"] == {"answered": 0, "flagged": 0, "window_hours": 24}
+
+
+def test_bulk_approve_publishes_every_drafted_reply_for_this_restaurant_only(client, db_path):
+    rid = _restaurant(db_path)
+    other = _restaurant(db_path, name="Other Co")
+    _add_review(db_path, rid, external_id="r1")
+    _add_review(db_path, rid, external_id="r2")
+    _add_review(db_path, other, external_id="r3")
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/reviews/approve-all", headers=_auth_headers(token))
+    data = resp.get_json()
+    assert resp.status_code == 200 and data["ok"] is True
+    assert (data["approved"], data["failed"], data["remaining"]) == (2, 0, 0)
+    conn = get_conn(db_path)
+    mine = conn.execute("SELECT response_status FROM reviews WHERE restaurant_id=?", (rid,)).fetchall()
+    theirs = conn.execute("SELECT response_status FROM reviews WHERE restaurant_id=?", (other,)).fetchone()
+    conn.close()
+    assert {r["response_status"] for r in mine} == {"approved"}
+    assert theirs["response_status"] == "drafted"
+
+
+def test_bulk_approve_respects_limit_and_reports_remaining(client, db_path):
+    rid = _restaurant(db_path)
+    _add_review(db_path, rid, external_id="r1")
+    _add_review(db_path, rid, external_id="r2")
+    token = _login(client, db_path, rid)
+    data = client.post("/mobile/api/reviews/approve-all", json={"limit": 1},
+                       headers=_auth_headers(token)).get_json()
+    assert data["approved"] == 1 and data["remaining"] == 1

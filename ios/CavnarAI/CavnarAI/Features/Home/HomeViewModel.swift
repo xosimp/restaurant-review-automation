@@ -33,6 +33,26 @@ final class HomeViewModel {
         return "Showing data from \(minutes / 60)h ago"
     }
 
+    /// True while the action deck's one-tap publish is in flight.
+    var isPublishingReplies = false
+
+    /// Home's "Publish N replies" — approves every drafted reply server-side
+    /// in one call (capped at 25 per tap, see mobile_api.py's
+    /// mobile_approve_all_reviews), then reloads so the deck, the pulse
+    /// strip and the value figure all catch up together. Returns nil on
+    /// failure; APIClient has already played the error haptic by then.
+    func publishAllReplies() async -> BulkPublishResult? {
+        isPublishingReplies = true
+        defer { isPublishingReplies = false }
+        do {
+            let result: BulkPublishResult = try await client.send("/mobile/api/reviews/approve-all", method: .post)
+            await load()
+            return result
+        } catch {
+            return nil
+        }
+    }
+
     func load() async {
         // Warm start: paint cached numbers immediately rather than a loading
         // seal, and keep them on screen if the fetch fails.
@@ -58,4 +78,14 @@ final class HomeViewModel {
             if summary == nil { errorMessage = "Couldn't load your dashboard." }
         }
     }
+}
+
+/// POST /mobile/api/reviews/approve-all — how many drafted replies one tap
+/// approved, how many of those are posting to Google right now, how many
+/// failed, and how many drafts are still waiting (the call caps at 25).
+struct BulkPublishResult: Decodable {
+    let approved: Int
+    let posted: Int
+    let failed: Int
+    let remaining: Int?
 }
