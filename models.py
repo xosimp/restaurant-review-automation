@@ -329,6 +329,19 @@ class Restaurant:
     custom_competitors: Optional[str] = None
     login_notify:     int            = 0
     marketing_emails_opt_out: int    = 0
+    # Settings audit additions (Account tab, iOS + web)
+    alert_health_bypass_quiet: int   = 0     # health/safety alerts ignore quiet hours
+    alert_food_waste: int            = 0     # daily: waste flagged on several items / a real dollar amount
+    alert_ai_visibility_drop: int    = 0     # daily: AI visibility score fell vs. the previous run
+    alert_extra_emails: Optional[str] = None # comma list; alert + digest emails also go here
+    push_sound: int                  = 1     # 0 = silent pushes
+    auto_approve_5star: int          = 0     # auto-approve (and post) drafted 5-star responses
+    auto_approve_daily_cap: int      = 5
+    auto_approve_paused: int         = 0     # kill switch — keeps the rule configured but off
+    open_times_json: Optional[str]   = None  # {"Monday":"11:00am",...}; close_times_json already exists
+    response_language: Optional[str] = None  # None = match the review's language (drafter default)
+    tone_preset: Optional[str]       = None  # warm / professional / playful / concise
+    data_retention_months: int       = 0     # 0 = keep everything
     alert_1star:          int       = 1
     alert_2star:          int       = 0
     alert_health:         int       = 1
@@ -618,6 +631,25 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE restaurants ADD COLUMN custom_competitors TEXT",
         "ALTER TABLE restaurants ADD COLUMN login_notify INTEGER DEFAULT 0",
         "ALTER TABLE restaurants ADD COLUMN marketing_emails_opt_out INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN alert_health_bypass_quiet INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN alert_food_waste INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN alert_ai_visibility_drop INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN alert_extra_emails TEXT",
+        "ALTER TABLE restaurants ADD COLUMN push_sound INTEGER DEFAULT 1",
+        "ALTER TABLE restaurants ADD COLUMN auto_approve_5star INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN auto_approve_daily_cap INTEGER DEFAULT 5",
+        "ALTER TABLE restaurants ADD COLUMN auto_approve_paused INTEGER DEFAULT 0",
+        "ALTER TABLE restaurants ADD COLUMN open_times_json TEXT",
+        "ALTER TABLE restaurants ADD COLUMN response_language TEXT",
+        "ALTER TABLE restaurants ADD COLUMN tone_preset TEXT",
+        "ALTER TABLE restaurants ADD COLUMN data_retention_months INTEGER DEFAULT 0",
+        """CREATE TABLE IF NOT EXISTS ai_visibility_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL,
+            ai_score INTEGER,
+            gbp_score INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
         "ALTER TABLE restaurants ADD COLUMN gmb_refresh_token TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_account_id TEXT",
         "ALTER TABLE restaurants ADD COLUMN gmb_location_id TEXT",
@@ -1523,6 +1555,9 @@ def update_restaurant(restaurant_id: int, fields: dict, db_path: str = DB_PATH):
         "service_tier","module_reviews","module_labor","module_inventory","module_marketing",
         "last_active_tab","last_activity","owner_name","owner_phone","digest_day","digest_enabled","menu_notes","menu_url","skip_holidays","custom_competitors",
         "two_fa_enabled","two_fa_code","two_fa_expires","two_fa_device_token","two_fa_pending","two_fa_method","login_notify","marketing_emails_opt_out","timezone","onboarding_dismissed",
+        "alert_health_bypass_quiet","alert_food_waste","alert_ai_visibility_drop","alert_extra_emails","push_sound",
+        "auto_approve_5star","auto_approve_daily_cap","auto_approve_paused","open_times_json",
+        "response_language","tone_preset","data_retention_months",
         "toast_client_id","toast_client_secret","toast_restaurant_guid",
         "toast_access_token","toast_token_expires","toast_last_synced","toast_sync_error",
         "square_access_token","square_location_id","square_last_synced","square_sync_error",
@@ -1622,6 +1657,18 @@ def get_restaurant(restaurant_id: int, db_path: str = DB_PATH) -> Optional[Resta
         custom_competitors=row["custom_competitors"] if "custom_competitors" in row.keys() else None,
         login_notify=row["login_notify"] if "login_notify" in row.keys() else 0,
         marketing_emails_opt_out=row["marketing_emails_opt_out"] if "marketing_emails_opt_out" in row.keys() else 0,
+        alert_health_bypass_quiet=row["alert_health_bypass_quiet"] if "alert_health_bypass_quiet" in row.keys() else 0,
+        alert_food_waste=row["alert_food_waste"] if "alert_food_waste" in row.keys() else 0,
+        alert_ai_visibility_drop=row["alert_ai_visibility_drop"] if "alert_ai_visibility_drop" in row.keys() else 0,
+        alert_extra_emails=row["alert_extra_emails"] if "alert_extra_emails" in row.keys() else None,
+        push_sound=row["push_sound"] if "push_sound" in row.keys() and row["push_sound"] is not None else 1,
+        auto_approve_5star=row["auto_approve_5star"] if "auto_approve_5star" in row.keys() else 0,
+        auto_approve_daily_cap=row["auto_approve_daily_cap"] if "auto_approve_daily_cap" in row.keys() and row["auto_approve_daily_cap"] is not None else 5,
+        auto_approve_paused=row["auto_approve_paused"] if "auto_approve_paused" in row.keys() else 0,
+        open_times_json=row["open_times_json"] if "open_times_json" in row.keys() else None,
+        response_language=row["response_language"] if "response_language" in row.keys() else None,
+        tone_preset=row["tone_preset"] if "tone_preset" in row.keys() else None,
+        data_retention_months=row["data_retention_months"] if "data_retention_months" in row.keys() and row["data_retention_months"] is not None else 0,
         alert_1star=row["alert_1star"] if "alert_1star" in row.keys() else 1,
         alert_2star=row["alert_2star"] if "alert_2star" in row.keys() else 0,
         alert_health=row["alert_health"] if "alert_health" in row.keys() else 1,
@@ -3268,3 +3315,210 @@ def get_review_request_stats(restaurant_id: int, db_path: str = DB_PATH) -> dict
         "total_sent":      row["total_sent"]      or 0,
         "sent_this_month": row["sent_this_month"] or 0,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Settings audit additions — account activity, AI-visibility history,
+# data retention, auto-approve, wider exports
+# ═══════════════════════════════════════════════════════════════════════
+
+# The event types the user-facing Account activity log shows. activity_log
+# also records every tab view (log_activity) and analytics-style events;
+# those are admin telemetry, not "what changed on my account".
+ACCOUNT_EVENT_TYPES = (
+    "login", "password_changed", "email_changed", "recovery_email_set", "recovery_email_removed",
+    "two_fa_enabled", "two_fa_disabled", "backup_codes_regenerated",
+    "team_member_invited", "team_member_revoked",
+    "sessions_revoked_others", "trusted_device_revoked", "trusted_devices_cleared",
+    "login_reported_not_me", "data_exported", "alert_settings_saved",
+    "login_notify_changed", "marketing_emails_changed", "auto_approve_changed",
+    "hours_changed", "data_retention_changed", "profile_updated",
+)
+
+ACCOUNT_EVENT_LABELS = {
+    "login": "Signed in",
+    "password_changed": "Password changed",
+    "email_changed": "Email address changed",
+    "recovery_email_set": "Recovery email set",
+    "recovery_email_removed": "Recovery email removed",
+    "two_fa_enabled": "Two-factor turned on",
+    "two_fa_disabled": "Two-factor turned off",
+    "backup_codes_regenerated": "Backup codes regenerated",
+    "team_member_invited": "Team member invited",
+    "team_member_revoked": "Team member removed",
+    "sessions_revoked_others": "Signed out of other devices",
+    "trusted_device_revoked": "Trusted device removed",
+    "trusted_devices_cleared": "All trusted devices removed",
+    "login_reported_not_me": "Sign-in reported as not you",
+    "data_exported": "Data export emailed",
+    "alert_settings_saved": "Alert settings saved",
+    "login_notify_changed": "Sign-in notifications changed",
+    "marketing_emails_changed": "Product update emails changed",
+    "auto_approve_changed": "Auto-approve rule changed",
+    "hours_changed": "Hours updated",
+    "data_retention_changed": "Data retention changed",
+    "profile_updated": "Profile updated",
+}
+
+
+def get_account_activity(restaurant_id: int, limit: int = 100, db_path: str = DB_PATH) -> list:
+    """Account-level events only (see ACCOUNT_EVENT_TYPES), newest first."""
+    import json as _json
+    conn = get_conn(db_path)
+    marks = ",".join("?" for _ in ACCOUNT_EVENT_TYPES)
+    rows = conn.execute(f"""
+        SELECT event_type, event_data, created_at FROM activity_log
+        WHERE restaurant_id=? AND event_type IN ({marks})
+        ORDER BY created_at DESC, id DESC LIMIT ?
+    """, (restaurant_id, *ACCOUNT_EVENT_TYPES, limit)).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        try:
+            data = _json.loads(r["event_data"] or "{}")
+        except Exception:
+            data = {}
+        out.append({
+            "type": r["event_type"],
+            "label": ACCOUNT_EVENT_LABELS.get(r["event_type"], r["event_type"].replace("_", " ").capitalize()),
+            "detail": data.get("detail"),
+            "actor": data.get("actor"),
+            "created_at": r["created_at"],
+        })
+    return out
+
+
+def record_ai_visibility_run(restaurant_id: int, ai_score: int, gbp_score: int = None, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("INSERT INTO ai_visibility_runs (restaurant_id, ai_score, gbp_score) VALUES (?,?,?)",
+                     (restaurant_id, ai_score, gbp_score))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def last_two_ai_visibility_scores(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT ai_score FROM ai_visibility_runs WHERE restaurant_id=? AND ai_score IS NOT NULL
+        ORDER BY created_at DESC, id DESC LIMIT 2
+    """, (restaurant_id,)).fetchall()
+    conn.close()
+    return [r["ai_score"] for r in rows]
+
+
+def purge_expired_reviews(db_path: str = DB_PATH) -> int:
+    """Soft-deletes reviews older than each restaurant's data_retention_months
+    (0 = keep everything). Soft, not hard — every reviews query already
+    filters deleted_at IS NULL, and a mistaken retention setting shouldn't
+    be unrecoverable. Returns the number of rows touched."""
+    conn = get_conn(db_path)
+    total = 0
+    try:
+        rows = conn.execute(
+            "SELECT id, data_retention_months FROM restaurants WHERE COALESCE(data_retention_months, 0) > 0"
+        ).fetchall()
+        for r in rows:
+            months = int(r["data_retention_months"])
+            cur = conn.execute(f"""
+                UPDATE reviews SET deleted_at = datetime('now')
+                WHERE restaurant_id=? AND deleted_at IS NULL
+                  AND COALESCE(review_date, fetched_at) < datetime('now', '-{months * 30} days')
+            """, (r["id"],))
+            total += cur.rowcount or 0
+        conn.commit()
+    finally:
+        conn.close()
+    return total
+
+
+def count_auto_approved_today(restaurant_id: int, db_path: str = DB_PATH) -> int:
+    conn = get_conn(db_path)
+    row = conn.execute("""
+        SELECT COUNT(*) AS n FROM activity_log
+        WHERE restaurant_id=? AND event_type='review_auto_approved'
+          AND created_at >= date('now', 'localtime')
+    """, (restaurant_id,)).fetchone()
+    conn.close()
+    return int(row["n"]) if row else 0
+
+
+def auto_approve_candidates(restaurant_id: int, db_path: str = DB_PATH) -> list:
+    """Drafted, unapproved 5-star reviews — the only thing the auto-approve
+    rule is ever allowed to touch."""
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT id FROM reviews
+        WHERE restaurant_id=? AND rating=5 AND response_status='drafted'
+          AND draft_response IS NOT NULL AND deleted_at IS NULL
+        ORDER BY fetched_at ASC
+    """, (restaurant_id,)).fetchall()
+    conn.close()
+    return [r["id"] for r in rows]
+
+
+def build_labor_export_csv(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    import csv, io
+    conn = get_conn(db_path)
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["week_start", "hours_scheduled", "labor_cost", "labor_pct", "generated_at"])
+    try:
+        rows = conn.execute("""
+            SELECT * FROM labor_history WHERE restaurant_id=? ORDER BY created_at DESC LIMIT 520
+        """, (restaurant_id,)).fetchall()
+        for r in rows:
+            k = r.keys()
+            w.writerow([
+                r["week_start"] if "week_start" in k else "",
+                r["hours_scheduled"] if "hours_scheduled" in k else "",
+                r["labor_cost"] if "labor_cost" in k else "",
+                r["labor_pct"] if "labor_pct" in k else "",
+                r["created_at"] if "created_at" in k else "",
+            ])
+    except Exception as e:
+        w.writerow([f"labor history unavailable: {e}"])
+    finally:
+        conn.close()
+    return out.getvalue()
+
+
+def build_food_cost_export_csv(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    import csv, io
+    conn = get_conn(db_path)
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["ingredient", "unit", "on_hand", "par", "unit_cost", "last_order_qty", "waste_last_week", "updated_at"])
+    try:
+        rows = conn.execute("SELECT * FROM ingredients WHERE restaurant_id=? ORDER BY name", (restaurant_id,)).fetchall()
+        for r in rows:
+            k = r.keys()
+            def g(col): return r[col] if col in k else ""
+            w.writerow([g("name"), g("unit"), g("on_hand"), g("par"), g("unit_cost"),
+                        g("last_order_qty"), g("waste_last_week"), g("updated_at")])
+    except Exception as e:
+        w.writerow([f"food cost data unavailable: {e}"])
+    finally:
+        conn.close()
+    return out.getvalue()
+
+
+def build_settings_export_json(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """Every self-serve setting, minus anything secret (tokens, codes)."""
+    import json as _json
+    r = get_restaurant(restaurant_id, db_path)
+    if not r:
+        return "{}"
+    keep = [
+        "name", "location_name", "owner_name", "owner_email", "owner_phone", "timezone",
+        "neighborhood", "vibe", "known_for", "voice_notes", "never_say", "menu_notes", "sign_off_name",
+        "response_language", "tone_preset", "open_times_json", "close_times_json", "skip_holidays",
+        "digest_day", "digest_enabled", "login_notify", "marketing_emails_opt_out",
+        "alert_1star", "alert_2star", "alert_health", "alert_neg_spike", "alert_negative_trend",
+        "alert_no_response", "alert_5star", "alert_labor_over", "alert_food_waste", "alert_ai_visibility_drop",
+        "alert_health_bypass_quiet", "alert_extra_emails", "push_sound", "urgent_via_email", "urgent_via_sms",
+        "alert_quiet_start", "alert_quiet_end", "auto_approve_5star", "auto_approve_daily_cap",
+        "auto_approve_paused", "data_retention_months", "two_fa_enabled", "two_fa_method",
+    ]
+    return _json.dumps({k: getattr(r, k, None) for k in keep}, indent=2, default=str)

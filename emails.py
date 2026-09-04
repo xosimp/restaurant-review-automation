@@ -81,7 +81,7 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
         return False
 
 def send_login_notification(to_email: str, restaurant_name: str,
-                            ip: str = None, user_agent: str = None):
+                            ip: str = None, user_agent: str = None, report_url: str = None):
     """Send sign-in notification email."""
     if not RESEND_API_KEY:
         return False
@@ -118,7 +118,8 @@ def send_login_notification(to_email: str, restaurant_name: str,
           <tr><td style="padding:6px 0;color:#7a736a">Device</td><td style="padding:6px 0"><strong>{device} &mdash; {browser}</strong></td></tr>
           <tr><td style="padding:6px 0;color:#7a736a">IP address</td><td style="padding:6px 0"><strong>{ip or 'Unknown'}</strong></td></tr>
         </table>
-        <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed. If you don&rsquo;t recognize this sign-in, <a href="mailto:will@cavnar.ai" style="color:#c84b2f">contact Will immediately</a> and change your password.</p>
+        <p style="color:#7a736a;font-size:13px;margin:20px 0 0;line-height:1.6">If this was you, no action needed.</p>
+        {("<p style=\"margin:16px 0 0\"><a href=\"" + report_url + "\" style=\"display:inline-block;background:#c84b2f;color:#fff;text-decoration:none;font-weight:700;font-size:14px;padding:11px 18px;border-radius:8px\">This wasn&rsquo;t me</a></p><p style=\"color:#7a736a;font-size:12px;margin:10px 0 0;line-height:1.6\">That link signs out every device, forgets every remembered device, and requires a password reset before anyone can sign in again. It works once, for 7 days.</p>") if report_url else "<p style=\"color:#7a736a;font-size:13px;margin:8px 0 0;line-height:1.6\">If you don&rsquo;t recognize this sign-in, <a href=\"mailto:will@cavnar.ai\" style=\"color:#c84b2f\">contact Will immediately</a> and change your password.</p>"}
       </div>
       <p style="color:#7a736a;font-size:11px;text-align:center;margin-top:20px"><img src="https://dashboard.cavnar.ai/static/brand/seal-dark-email.png" width="14" height="14" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &mdash; Restaurant Intelligence Platform</p>
     </div>
@@ -1160,3 +1161,29 @@ def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount
     except Exception as e:
         log.warning("send_payment_failed_client_email: request to Resend failed: %s", e)
         return False
+
+
+def send_recovery_email_code(to_email: str, code: str) -> bool:
+    """Verifies a recovery address before it counts — a typo here would
+    otherwise be the address that can reset the password."""
+    return _send_branded(to_email, "Confirm your Cavnar AI recovery email", f"""
+      <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:#0e0c0a">Confirm this recovery email</h2>
+      <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:20px">Enter this code in the app to finish adding this address as your recovery email. It expires in 15 minutes.</p>
+      <p style="font-size:32px;font-weight:700;letter-spacing:6px;color:#c84b2f;margin:0 0 20px">{code}</p>
+      <p style="font-size:12px;color:#7a736a;line-height:1.6">If you didn't request this, you can ignore it.</p>
+    """)
+
+
+def send_bug_report_email(restaurant_name: str, from_email: str, message: str, meta: dict) -> bool:
+    """Account -> More -> Report a bug. Lands in Will's inbox with the build
+    stamp and device details attached, so 'which build is this' never has
+    to be asked."""
+    rows = "".join(f"<tr><td style='padding:4px 12px 4px 0;color:#7a736a'>{k}</td><td style='padding:4px 0'><strong>{v}</strong></td></tr>"
+                   for k, v in (meta or {}).items() if v)
+    safe = (message or "").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+    return _send_branded(os.getenv("BUG_REPORT_EMAIL", "will@cavnar.ai"), f"Bug report — {restaurant_name}", f"""
+      <h2 style="font-size:18px;font-weight:600;margin-bottom:12px;color:#0e0c0a">Bug report from {restaurant_name}</h2>
+      <p style="font-size:14px;color:#4a4540;line-height:1.6;margin-bottom:16px">From {from_email}</p>
+      <div style="font-size:14px;color:#0e0c0a;line-height:1.6;background:#f7f4ef;padding:14px;border-radius:8px;margin-bottom:16px">{safe}</div>
+      <table style="font-size:13px;border-collapse:collapse">{rows}</table>
+    """, from_label="Cavnar AI Bug Reports")

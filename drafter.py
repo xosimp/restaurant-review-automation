@@ -48,13 +48,26 @@ def get_recurring_themes(restaurant_id: int) -> str:
         return ""
 
 
+# Account -> Profile -> "How the AI writes for you". A preset is a short
+# steer layered onto the owner's own voice notes, not a replacement.
+TONE_PRESETS = {
+    "warm": " Tone: warm and personal, like the owner wrote it themselves.",
+    "professional": " Tone: polished and professional; courteous, no slang, no exclamation marks.",
+    "playful": " Tone: light and playful, with a little personality — never sarcastic.",
+    "concise": " Tone: brief and direct — two or three sentences at most.",
+}
+LANGUAGE_NAMES = {"en": "English", "es": "Spanish", "fr": "French", "it": "Italian", "pt": "Portuguese", "de": "German"}
+
+
 def draft_response(review_id: int, rating: int, text: str,
                    sentiment: str, restaurant_name: str,
                    voice_notes: str = "", restaurant_id: int = None,
                    approved_examples: list = None,
                    sign_off: str = None,
                    never_say: str = None,
-                   urgency: str = "normal") -> str:
+                   urgency: str = "normal",
+                   language: str = None,
+                   tone: str = None) -> str:
 
     # Extract reviewer first name if available
     reviewer_name = ""
@@ -127,11 +140,11 @@ def draft_response(review_id: int, rating: int, text: str,
     prompt = f"""Write a public {sentiment} review response for {restaurant_name}.
 
 Platform: {platform_note}
-Voice: {voice_notes or "Warm, genuine, never corporate. Always invite guests back."}
+Voice: {voice_notes or "Warm, genuine, never corporate. Always invite guests back."}{TONE_PRESETS.get(tone or "", "")}
 Sign off as: {sign_off_name}
 {reviewer_line}
 Length: {length_note}{never_note}{style_block}{theme_note}{health_note}
-LANGUAGE: Detect the language of the review. If the review is NOT in English, write your response in that same language. If it is in English, respond in English.
+LANGUAGE: {("Always write the response in " + LANGUAGE_NAMES.get(language, language) + ", regardless of the language of the review.") if language else "Detect the language of the review. If the review is NOT in English, write your response in that same language. If it is in English, respond in English."}
 CRITICAL: If the reviewer mentions specific issues (cold food, slow service, wrong order, noise, parking, staff) — address each one directly by name. Never give a generic apology for a specific complaint.
 
 Review ({rating}/5 stars, {sentiment}):

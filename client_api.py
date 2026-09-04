@@ -1102,6 +1102,8 @@ def _do_regenerate_draft(review_id, restaurant_id):
             approved_examples=examples,
             sign_off=restaurant.sign_off_name or restaurant.name,
             never_say=restaurant.never_say or "",
+            language=getattr(restaurant, "response_language", None) or None,
+            tone=getattr(restaurant, "tone_preset", None) or None,
             urgency=r.get("urgency", "normal"),
         )
         conn = get_conn()
@@ -3530,6 +3532,11 @@ def _do_ai_visibility_inner(rid):
     _conn.close()
 
     ai_score = round((appeared_count / len(queries)) * 100) if queries else 0
+    try:
+        from models import record_ai_visibility_run
+        record_ai_visibility_run(rid, ai_score, gbp_score)
+    except Exception:
+        pass
 
     return {
         "ok": True,

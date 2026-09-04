@@ -167,6 +167,9 @@ def login():
             _record_failed_attempt(ip)
             return render_template('login.html', error="Invalid username or password", google_sso_enabled=_google_sso_post, csrf_token=_csrf_cookie)
         _clear_attempts(ip)
+        if user.get("must_reset_password"):
+            return render_template('login.html', google_sso_enabled=_google_sso_post, csrf_token=_csrf_cookie,
+                error="This account needs a password reset before signing in — use Forgot password below.")
         next_url = request.args.get("next", "/admin" if user["is_admin"] else "/")
 
         # Check if 2FA is enabled and device not remembered
@@ -176,7 +179,8 @@ def login():
             rest = get_restaurant(_rid) if _rid and not user.get("is_admin") else None
             _device_cookie = request.cookies.get("device_token_" + str(_rid), "")
             _2fa_on = rest and rest.two_fa_enabled and not user.get("is_admin")
-            _device_ok = _device_cookie and _device_cookie == getattr(rest, "two_fa_device_token", "")
+            from auth import trusted_device_ok as _tdo
+            _device_ok = bool(_device_cookie) and _tdo(_rid, _device_cookie)
         except Exception as _e_2fa:
             _2fa_on = False
             _device_ok = False
@@ -233,7 +237,9 @@ def login():
             _rest_ln = _gr_ln(_rid_ln) if _rid_ln else None
             if _rest_ln and getattr(_rest_ln, "login_notify", 0) and _rest_ln.owner_email:
                 from notify import send_login_alert
-                send_login_alert(_rid_ln, _rest_ln.name or "", _rest_ln.owner_email, ip, _ua)
+                from auth import create_login_report as _clr
+                send_login_alert(_rid_ln, _rest_ln.name or "", _rest_ln.owner_email, ip, _ua,
+                                 report_url=f"https://dashboard.cavnar.ai/auth/not-me/{_clr(user['id'], token)}")
         except Exception as _ln_e:
             print(f"[LoginNotify] {_ln_e}")
         resp = make_response(redirect(next_url))
@@ -336,7 +342,9 @@ def verify_2fa():
             _rest_ln2 = get_restaurant(uid)
             if _rest_ln2 and getattr(_rest_ln2, "login_notify", 0) and _rest_ln2.owner_email:
                 from notify import send_login_alert
-                send_login_alert(uid, _rest_ln2.name or "", _rest_ln2.owner_email, _ip_2fa, _ua_2fa)
+                from auth import create_login_report as _clr2
+                send_login_alert(uid, _rest_ln2.name or "", _rest_ln2.owner_email, _ip_2fa, _ua_2fa,
+                                 report_url=f"https://dashboard.cavnar.ai/auth/not-me/{_clr2(_user_for_session['id'], token)}")
         except Exception as _ln2_e:
             print(f"[LoginNotify2FA] {_ln2_e}")
         _on_railway = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"))
@@ -345,8 +353,8 @@ def verify_2fa():
                            httponly=True, secure=_on_railway, samesite="Lax")
         if remember == "1":
             import secrets as _sec6
-            dev_tok = _sec6.token_hex(32)
-            update_restaurant(uid, {"two_fa_device_token": dev_tok})
+            from auth import create_trusted_device as _ctd, describe_user_agent as _dua
+            dev_tok = _ctd(uid, _user_for_session["id"], _dua(request.headers.get("User-Agent", "")) + " · web")
             resp_ok.set_cookie("device_token_"+str(uid), dev_tok,
                                max_age=30*24*3600, httponly=True,
                                secure=_on_railway, samesite="Lax")
@@ -965,3 +973,33 @@ def gmb_disconnect(current_user):
     })
     return jsonify(ok=True)
 
+
+
+
+@auth_bp.route("/auth/not-me/<token>")
+def login_not_me(token):
+    """The login email's 'This wasn't me' button. Signs the account out
+    everywhere, forgets every remembered 2FA device, blocks sign-in until
+    the password is reset, and emails a reset link. One use, 7 days."""
+    from auth import consume_login_report
+    user = consume_login_report(token)
+    page = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cavnar AI</title><style>body{margin:0;background:#0c0c0c;color:#f0ebe0;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif}
+.card{max-width:460px;margin:12vh auto;padding:32px 28px;background:#121212;border:1px solid #262626;border-radius:16px}
+h1{font-size:22px;margin:0 0 12px}p{font-size:15px;line-height:1.6;color:#cdbfa9;margin:0 0 12px}a{color:#e8956a}</style></head><body><div class="card">%s</div></body></html>"""
+    if not user:
+        return page % "<h1>That link has expired</h1><p>It was already used, or it's more than 7 days old. If you still don't recognize a sign-in, use <a href='/forgot-password'>Forgot password</a> to reset your password now.</p>", 410
+    email = user.get("email") or ""
+    try:
+        from models import create_reset_token, log_event
+        from emails import send_password_reset_email
+        rt = create_reset_token(email)
+        if rt:
+            send_password_reset_email(email, f"https://dashboard.cavnar.ai/reset-password/{rt}")
+        if user.get("restaurant_id"):
+            log_event(user["restaurant_id"], "login_reported_not_me", {"actor": user.get("username")})
+    except Exception as _e:
+        print(f"[NotMe] reset email error: {_e}")
+    return page % ("<h1>You're signed out everywhere</h1><p>Every device has been signed out and every remembered device forgotten. "
+                   "Nobody can sign in again until the password is reset — we've emailed a reset link to <strong>%s</strong>.</p>"
+                   "<p>If you don't get it in a couple of minutes, <a href='/forgot-password'>request a new one</a>.</p>" % (email,))

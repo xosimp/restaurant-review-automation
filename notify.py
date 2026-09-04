@@ -67,7 +67,29 @@ def send_2fa_sms(to_phone: str, restaurant_name: str, code: str) -> bool:
     return send_sms(to_phone, f"Cavnar AI verification code for {restaurant_name}: {code}. Expires in 10 minutes. If you didn't request this, someone may have your password — contact will@cavnar.ai.")
 
 
-def _send_alert_email(owner_email: str, subject: str, html: str) -> bool:
+def alert_recipients(owner_email: str, restaurant_id: int = None, db_path: str = DB_PATH) -> list:
+    """owner_email plus the restaurant's alert_extra_emails (Account ->
+    Alerts -> 'Also email'). Resolved by restaurant_id when the caller has
+    it, else by owner_email, so no existing call site had to change."""
+    out = [owner_email] if owner_email else []
+    try:
+        conn = get_conn(db_path)
+        if restaurant_id:
+            row = conn.execute("SELECT alert_extra_emails FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        else:
+            row = conn.execute("SELECT alert_extra_emails FROM restaurants WHERE owner_email=? LIMIT 1", (owner_email,)).fetchone()
+        conn.close()
+        if row and row["alert_extra_emails"]:
+            for e in row["alert_extra_emails"].split(","):
+                e = e.strip().lower()
+                if "@" in e and e not in out:
+                    out.append(e)
+    except Exception:
+        pass
+    return out
+
+
+def _send_alert_email(owner_email: str, subject: str, html: str, restaurant_id: int = None) -> bool:
     """Send an alert email via Resend. Returns True on success."""
     if not RESEND_API_KEY or not owner_email:
         print(f"[notify] Resend not configured — would email {owner_email}: {subject}")
@@ -77,7 +99,7 @@ def _send_alert_email(owner_email: str, subject: str, html: str) -> bool:
         _r.api_key = RESEND_API_KEY
         _r.Emails.send({
             "from": f"Cavnar AI Alerts <{FROM_EMAIL}>",
-            "to": [owner_email],
+            "to": alert_recipients(owner_email, restaurant_id),
             "subject": subject,
             "html": html,
         })
@@ -238,7 +260,7 @@ def _log_alert(restaurant_id: int, alert_type: str, review_id: int = None, db_pa
 
 
 def send_login_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
-                      ip: str, user_agent: str, db_path: str = DB_PATH):
+                      ip: str, user_agent: str, db_path: str = DB_PATH, report_url: str = None):
     """The one 'Sign-in notifications' toggle used to mean email-only —
     audited on device feedback ("does an alert pop up? is it sent to the
     bell? does it show on a locked phone?") and the honest answer for all
@@ -250,7 +272,7 @@ def send_login_alert(restaurant_id: int, restaurant_name: str, owner_email: str,
     controls — callers check that (and owner_email) before calling this,
     same as they always have for the email alone."""
     from emails import send_login_notification
-    send_login_notification(owner_email, restaurant_name, ip, user_agent)
+    send_login_notification(owner_email, restaurant_name, ip, user_agent, report_url=report_url)
     try:
         from push import fire_push
         fire_push(
@@ -330,12 +352,18 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
         (restaurant_id,)
     ).fetchone() if False else None  # loaded lazily below
 
-    def _check_dnd():
+    def _check_dnd(alert_type: str = None):
         try:
             from models import is_in_quiet_hours, count_alerts_today
             if is_in_quiet_hours(restaurant_id, db_path):
-                print(f"[notify] rid={restaurant_id} suppressed — quiet hours active")
-                return True
+                # Health/safety mentions can opt out of quiet hours (Account
+                # -> Alerts -> "Health alerts ignore quiet hours") — the one
+                # alert an owner would rather be woken for.
+                if alert_type == "health" and health_bypasses_quiet_hours(restaurant_id, db_path):
+                    print(f"[notify] rid={restaurant_id} quiet hours active — health alert allowed through")
+                else:
+                    print(f"[notify] rid={restaurant_id} suppressed — quiet hours active")
+                    return True
             cap = row["alert_max_per_day"] if "alert_max_per_day" in row.keys() else 0
             if cap and cap > 0 and count_alerts_today(restaurant_id, db_path) >= cap:
                 print(f"[notify] rid={restaurant_id} suppressed — daily cap {cap} reached")
@@ -345,7 +373,7 @@ def fire_review_alerts(restaurant_id: int, restaurant_name: str, new_reviews: li
         return False
 
     def blast(sms_text: str, subject: str, html: str, alert_type: str, review_id: int = None):
-        if _check_dnd():
+        if _check_dnd(alert_type):
             return
         # Per-type channel flags (fall back to 1 so old data keeps working)
         type_map = {
@@ -740,3 +768,88 @@ def check_daily_alerts(db_path: str = DB_PATH):
                         restaurant_id=rid,
                     )
                     _fire(sms, f"💸 Labor over target — {name}", html, "labor_over")
+
+
+def health_bypasses_quiet_hours(restaurant_id: int, db_path: str = DB_PATH) -> bool:
+    try:
+        conn = get_conn(db_path)
+        row = conn.execute("SELECT alert_health_bypass_quiet FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        conn.close()
+        return bool(row and row["alert_health_bypass_quiet"])
+    except Exception:
+        return False
+
+
+def check_extra_daily_alerts(db_path: str = DB_PATH):
+    """The two daily triggers added by the settings audit — food waste and
+    an AI-visibility drop — run right after check_daily_alerts(). Same
+    7-day repeat window, same three channels (email to owner + extra
+    recipients, SMS to consented contacts, push)."""
+    conn = get_conn(db_path)
+    restaurants = conn.execute("""
+        SELECT id, name, owner_email, urgent_via_sms, urgent_via_email,
+               alert_food_waste, alert_ai_visibility_drop
+        FROM restaurants
+        WHERE (COALESCE(alert_food_waste,0)=1 OR COALESCE(alert_ai_visibility_drop,0)=1)
+    """).fetchall()
+    conn.close()
+
+    for r in restaurants:
+        rid, name = r["id"], r["name"]
+        owner_email = r["owner_email"] or ""
+        via_sms, via_email = bool(r["urgent_via_sms"]), bool(r["urgent_via_email"])
+        contacts = get_alert_contacts(rid, sms_consent_only=True, db_path=db_path) if via_sms else []
+
+        def _recent(alert_type):
+            c2 = get_conn(db_path)
+            row = c2.execute("""SELECT id FROM alert_log WHERE restaurant_id=? AND alert_type=?
+                                AND fired_at >= datetime('now', '-7 days')""", (rid, alert_type)).fetchone()
+            c2.close()
+            return row is not None
+
+        def _fire(alert_type, sms_text, subject, lines):
+            html = _alert_email_html(name, subject, lines, restaurant_id=rid)
+            if via_sms:
+                for c in contacts:
+                    send_sms(c["phone"], sms_text)
+            if via_email and owner_email:
+                _send_alert_email(owner_email, subject, html, restaurant_id=rid)
+            try:
+                from push import fire_push
+                fire_push(rid, alert_type, subject, sms_text, data={"alert_type": alert_type}, db_path=db_path)
+            except Exception:
+                pass
+            _log_alert(rid, alert_type, db_path=db_path)
+
+        # ── Food waste ────────────────────────────────────────
+        if r["alert_food_waste"] and not _recent("food_waste"):
+            try:
+                from inventory import load_inventory_for_restaurant, analyse_inventory
+                items = load_inventory_for_restaurant(rid)
+                analysis = analyse_inventory(items) if items else None
+                waste_items = (analysis or {}).get("waste_items") or []
+                total = sum(float(x.get("waste_cost") or 0) for x in waste_items)
+                flagged = [x for x in waste_items if float(x.get("waste_cost") or 0) > 0]
+                if len(flagged) >= 3 or total >= 150:
+                    top = ", ".join(x.get("item", "?") for x in flagged[:3])
+                    _fire("food_waste",
+                          f"Cavnar AI: ${total:,.0f} of waste flagged this week at {name} ({top}).",
+                          f"Food waste flagged — {name}",
+                          [f"${total:,.0f} of waste across {len(flagged)} items this week.",
+                           f"Biggest: {top}.", "Open Food Cost to see the breakdown."])
+            except Exception as e:
+                print(f"[notify] food waste check error rid={rid}: {e}")
+
+        # ── AI visibility drop ───────────────────────────────
+        if r["alert_ai_visibility_drop"] and not _recent("ai_visibility_drop"):
+            try:
+                from models import last_two_ai_visibility_scores
+                scores = last_two_ai_visibility_scores(rid, db_path)
+                if len(scores) == 2 and scores[0] < scores[1] - 15:
+                    _fire("ai_visibility_drop",
+                          f"Cavnar AI: {name}'s AI visibility fell from {scores[1]} to {scores[0]}.",
+                          f"AI visibility dropped — {name}",
+                          [f"Your AI visibility score went from {scores[1]} to {scores[0]} since the last check.",
+                           "Open Intel → AI Visibility to see which queries stopped mentioning you."])
+            except Exception as e:
+                print(f"[notify] ai visibility check error rid={rid}: {e}")

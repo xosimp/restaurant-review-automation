@@ -131,8 +131,24 @@ def _apns_host(environment):
 def _deliver(device_token_row, alert_type, title, body, data, db_path=DB_PATH):
     import httpx
     bundle_id = __import__("os").getenv("APNS_BUNDLE_ID", "")
+    aps = {"alert": {"title": title, "body": body}, "sound": "default"}
+    try:
+        rid = device_token_row["restaurant_id"] if "restaurant_id" in device_token_row.keys() else None
+        if rid:
+            _c = get_conn(db_path)
+            _r = _c.execute("SELECT push_sound, alert_health_bypass_quiet FROM restaurants WHERE id=?", (rid,)).fetchone()
+            _c.close()
+            if _r and _r["push_sound"] == 0:
+                aps.pop("sound", None)
+            # Health/safety mentions that opt out of quiet hours also break
+            # through the phone's Focus modes (Time Sensitive — needs the
+            # matching entitlement on the app, see project.yml).
+            if alert_type == "health" and _r and _r["alert_health_bypass_quiet"]:
+                aps["interruption-level"] = "time-sensitive"
+    except Exception:
+        pass
     payload = {
-        "aps": {"alert": {"title": title, "body": body}, "sound": "default"},
+        "aps": aps,
         "cavnar": {"alert_type": alert_type, **(data or {})},
     }
     payload_bytes = json.dumps(payload, separators=(",", ":")).encode()

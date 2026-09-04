@@ -2374,3 +2374,232 @@ def test_team_revoke_route_removes_teammate(client, db_path, monkeypatch):
 
     members = client.get("/mobile/api/account/team", headers=_auth_headers(token)).get_json()["members"]
     assert len(members) == 1
+
+
+# ── settings audit additions ────────────────────────────────────────────────
+
+def _set_status(db_path, review_id, status):
+    conn = get_conn(db_path)
+    conn.execute("UPDATE reviews SET response_status=? WHERE id=?", (status, review_id))
+    conn.commit(); conn.close()
+
+
+def test_account_payload_includes_new_blocks(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    data = client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()
+    assert data["reviews"] == {"auto_approve_5star": False, "auto_approve_daily_cap": 5,
+                               "auto_approve_paused": False, "auto_approved_today": 0}
+    assert data["data"] == {"data_retention_months": 0}
+    s = data["alerts"]["settings"]
+    assert s["alert_health_bypass_quiet"] is False and s["alert_food_waste"] is False
+    assert s["alert_ai_visibility_drop"] is False and s["push_sound"] is True and s["alert_extra_emails"] == ""
+    assert data["profile"]["sign_off_name"] is None and data["account"]["recovery_email"] is None
+
+
+def test_alert_settings_persist_new_fields_and_clean_extra_emails(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/account/alert-settings", headers=_auth_headers(token), json={
+        "alert_health": True, "alert_health_bypass_quiet": True, "alert_food_waste": True,
+        "alert_ai_visibility_drop": True, "push_sound": False,
+        "alert_extra_emails": "Chef@x.com, chef@x.com not-an-email  gm@x.com\nextra@x.com fourth@x.com",
+        "digest_day": "friday",
+    })
+    assert resp.get_json()["ok"] is True
+    s = client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()["alerts"]["settings"]
+    assert s["alert_health_bypass_quiet"] is True and s["alert_food_waste"] is True
+    assert s["alert_ai_visibility_drop"] is True and s["push_sound"] is False
+    assert s["alert_extra_emails"] == "chef@x.com,gm@x.com,extra@x.com"   # de-duped, capped at 3
+    from notify import alert_recipients, health_bypasses_quiet_hours
+    assert alert_recipients("m@x.com", rid, db_path=db_path) == ["m@x.com", "chef@x.com", "gm@x.com", "extra@x.com"]
+    assert health_bypasses_quiet_hours(rid, db_path=db_path) is True
+
+
+def test_auto_approve_route_and_scheduler_rule(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/account/auto-approve", headers=_auth_headers(token),
+                       json={"enabled": True, "daily_cap": 1, "paused": False})
+    assert resp.get_json()["ok"] is True
+    # Two drafted 5-stars, one drafted 4-star, one pending 5-star.
+    r1 = _add_review(db_path, rid, external_id="a", draft_response="Thank you!")
+    r2 = _add_review(db_path, rid, external_id="b", draft_response="Thank you!")
+    for r in (r1, r2):
+        _set_status(db_path, r, "drafted")
+    conn = get_conn(db_path)
+    conn.execute("UPDATE reviews SET rating=5 WHERE id IN (?,?)", (r1, r2))
+    conn.commit(); conn.close()
+    import scheduler
+    from models import get_restaurant
+    approved = scheduler.auto_approve_five_stars(rid, get_restaurant(rid, db_path))
+    assert approved == 1    # cap of 1
+    conn = get_conn(db_path)
+    statuses = {row["id"]: row["response_status"] for row in conn.execute("SELECT id, response_status FROM reviews WHERE restaurant_id=?", (rid,))}
+    conn.close()
+    assert sorted(statuses.values()) == ["approved", "drafted"]
+    data = client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()
+    assert data["reviews"]["auto_approved_today"] == 1
+    # Kill switch
+    client.post("/mobile/api/account/auto-approve", headers=_auth_headers(token),
+                json={"enabled": True, "daily_cap": 10, "paused": True})
+    assert scheduler.auto_approve_five_stars(rid, get_restaurant(rid, db_path)) == 0
+
+
+def test_hours_route_persists_and_ignores_junk(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/account/hours", headers=_auth_headers(token), json={
+        "open": {"Monday": "11:00am", "Funday": "9am", "Tuesday": ""},
+        "close": {"Monday": "10:00pm"},
+        "closures": ["2026-12-25", "2026-12-25", "  ", "2026-01-01"],
+    })
+    assert resp.get_json()["ok"] is True
+    p = client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()["profile"]
+    assert p["open_times_json"] == '{"Monday": "11:00am"}'
+    assert p["close_times_json"] == '{"Monday": "10:00pm"}'
+    assert p["skip_holidays"] == "2026-01-01,2026-12-25"
+
+
+def test_data_retention_route_and_purge(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    assert client.post("/mobile/api/account/data-retention", headers=_auth_headers(token), json={"months": 7}).status_code == 400
+    assert client.post("/mobile/api/account/data-retention", headers=_auth_headers(token), json={"months": 6}).get_json()["ok"] is True
+    old = _add_review(db_path, rid, external_id="old")
+    new = _add_review(db_path, rid, external_id="new")
+    conn = get_conn(db_path)
+    conn.execute("UPDATE reviews SET review_date='2020-01-01', fetched_at='2020-01-01' WHERE id=?", (old,))
+    conn.commit(); conn.close()
+    from models import purge_expired_reviews
+    assert purge_expired_reviews(db_path=db_path) == 1
+    conn = get_conn(db_path)
+    rows = {r["id"]: r["deleted_at"] for r in conn.execute("SELECT id, deleted_at FROM reviews WHERE restaurant_id=?", (rid,))}
+    conn.close()
+    assert rows[old] is not None and rows[new] is None
+    assert client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()["data"]["data_retention_months"] == 6
+
+
+def test_report_bug_route(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    sent = {}
+    monkeypatch.setattr("emails.send_bug_report_email", lambda name, frm, msg, meta: sent.update(name=name, msg=msg, meta=meta) or True)
+    assert client.post("/mobile/api/account/report-bug", headers=_auth_headers(token), json={"message": "hi"}).status_code == 400
+    resp = client.post("/mobile/api/account/report-bug", headers=_auth_headers(token),
+                       json={"message": "The chart is blank on Labor", "build": "abc123+", "device": "iPhone 15"})
+    assert resp.get_json()["ok"] is True
+    assert sent["msg"] == "The chart is blank on Labor" and sent["meta"]["build"] == "abc123+" and sent["meta"]["username"] == "alice"
+
+
+def test_recovery_email_flow(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    captured = {}
+    monkeypatch.setattr("emails.send_recovery_email_code", lambda email, code: captured.update(email=email, code=code) or True)
+    assert client.post("/mobile/api/account/recovery-email", headers=_auth_headers(token), json={"email": "alice@x.com"}).status_code == 400
+    resp = client.post("/mobile/api/account/recovery-email", headers=_auth_headers(token), json={"email": "Backup@X.com"})
+    assert resp.get_json()["pending"] == "backup@x.com" and captured["email"] == "backup@x.com"
+    acct = client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()["account"]
+    assert acct["recovery_email"] is None and acct["recovery_email_pending"] == "backup@x.com"
+    assert client.post("/mobile/api/account/recovery-email/verify", headers=_auth_headers(token), json={"code": "000000"}).status_code == 400
+    ok = client.post("/mobile/api/account/recovery-email/verify", headers=_auth_headers(token), json={"code": captured["code"]}).get_json()
+    assert ok["recovery_email"] == "backup@x.com"
+    acct = client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()["account"]
+    assert acct["recovery_email"] == "backup@x.com" and acct["recovery_email_pending"] is None
+    assert client.post("/mobile/api/account/recovery-email/remove", headers=_auth_headers(token)).get_json()["ok"] is True
+    assert client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()["account"]["recovery_email"] is None
+    events = client.get("/mobile/api/account/activity", headers=_auth_headers(token)).get_json()["events"]
+    assert [e["type"] for e in events][:2] == ["recovery_email_removed", "recovery_email_set"]
+
+
+def test_trusted_devices_list_revoke_and_login_honours_table(client, db_path):
+    from auth import create_trusted_device, trusted_device_ok, get_trusted_devices
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    tok_a = create_trusted_device(rid, None, "iPhone · app", db_path=db_path)
+    tok_b = create_trusted_device(rid, None, "Mac · web", db_path=db_path)
+    assert trusted_device_ok(rid, tok_a, db_path=db_path) and trusted_device_ok(rid, tok_b, db_path=db_path)
+    assert not trusted_device_ok(rid, "nope", db_path=db_path)
+    devices = client.get("/mobile/api/account/2fa/trusted-devices", headers=_auth_headers(token)).get_json()["devices"]
+    assert [d["label"] for d in devices] == ["Mac · web", "iPhone · app"]
+    assert client.post(f"/mobile/api/account/2fa/trusted-devices/{devices[1]['id']}/revoke", headers=_auth_headers(token)).get_json()["ok"] is True
+    assert not trusted_device_ok(rid, tok_a, db_path=db_path) and trusted_device_ok(rid, tok_b, db_path=db_path)
+    # Legacy single-slot token still honoured until revoke-all clears it.
+    update_restaurant(rid, {"two_fa_device_token": "legacy-token"}, db_path=db_path)
+    assert trusted_device_ok(rid, "legacy-token", db_path=db_path)
+    assert client.post("/mobile/api/account/2fa/trusted-devices/revoke-all", headers=_auth_headers(token)).get_json()["ok"] is True
+    assert get_trusted_devices(rid, db_path=db_path) == []
+    assert not trusted_device_ok(rid, tok_b, db_path=db_path) and not trusted_device_ok(rid, "legacy-token", db_path=db_path)
+
+
+def test_login_report_revokes_everything_and_blocks_login(client, db_path):
+    from auth import create_login_report, consume_login_report, create_trusted_device, get_trusted_devices, clear_must_reset_password
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    uid = client.get("/mobile/api/me", headers=_auth_headers(token)).get_json()["user"]["id"]
+    create_trusted_device(rid, uid, "iPhone · app", db_path=db_path)
+    report = create_login_report(uid, token, db_path=db_path)
+    user = consume_login_report(report, db_path=db_path)
+    assert user["id"] == uid
+    assert consume_login_report(report, db_path=db_path) is None          # one use
+    assert client.get("/mobile/api/account", headers=_auth_headers(token)).status_code == 401   # session gone
+    assert get_trusted_devices(rid, db_path=db_path) == []
+    resp = client.post("/mobile/api/login", json={"username": "alice", "password": "correct-horse"})
+    assert resp.status_code == 403 and resp.get_json()["password_reset_required"] is True
+    clear_must_reset_password(uid, db_path=db_path)
+    assert client.post("/mobile/api/login", json={"username": "alice", "password": "correct-horse"}).get_json()["ok"] is True
+
+
+def test_export_scopes(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    _add_review(db_path, rid)
+    sent = {}
+    class _Emails:
+        @staticmethod
+        def send(payload): sent.update(payload)
+    import resend
+    monkeypatch.setattr(resend, "Emails", _Emails)
+    monkeypatch.setattr(mobile_api, "_resend_key", lambda: "k")
+    assert client.post("/mobile/api/account/export-data", headers=_auth_headers(token), json={"scopes": ["bogus"]}).status_code == 400
+    resp = client.post("/mobile/api/account/export-data", headers=_auth_headers(token), json={"scopes": ["reviews", "settings", "labor", "food_cost"]})
+    assert resp.get_json()["scopes"] == ["reviews", "settings", "labor", "food_cost"]
+    names = [a["filename"] for a in sent["attachments"]]
+    assert names == ["Mobile Test Co_reviews.csv", "Mobile Test Co_settings.json", "Mobile Test Co_labor.csv", "Mobile Test Co_food_cost.csv"]
+    import base64, json as _json
+    settings = _json.loads(base64.b64decode(sent["attachments"][1]["content"]))
+    assert settings["name"] == "Mobile Test Co" and "two_fa_code" not in settings
+    events = client.get("/mobile/api/account/activity", headers=_auth_headers(token)).get_json()["events"]
+    assert events[0]["type"] == "data_exported" and events[0]["detail"] == "reviews, settings, labor, food_cost"
+
+
+def test_activity_log_records_account_events(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    client.post("/mobile/api/account/login-notify", headers=_auth_headers(token), json={"enabled": True})
+    client.post("/mobile/api/account/change-password", headers=_auth_headers(token), json={"current": "correct-horse", "new_password": "new-horse-99"})
+    client.post("/mobile/api/sessions/revoke-others", headers=_auth_headers(token))
+    events = client.get("/mobile/api/account/activity", headers=_auth_headers(token)).get_json()["events"]
+    assert [e["type"] for e in events][:3] == ["sessions_revoked_others", "password_changed", "login_notify_changed"]
+    assert events[2]["detail"] == "on" and events[0]["label"] == "Signed out of other devices" and events[0]["actor"] == "alice"
+
+
+def test_ai_visibility_drop_alert(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    client.post("/mobile/api/account/alert-settings", headers=_auth_headers(token),
+                json={"alert_ai_visibility_drop": True, "urgent_via_email": True, "digest_day": "monday"})
+    from models import record_ai_visibility_run
+    emails_sent = []
+    monkeypatch.setattr(notify, "_send_alert_email", lambda *a, **kw: emails_sent.append(a[1]) or True)
+    monkeypatch.setattr("push.fire_push", lambda *a, **kw: None)
+    record_ai_visibility_run(rid, 80, db_path=db_path)
+    record_ai_visibility_run(rid, 75, db_path=db_path)
+    notify.check_extra_daily_alerts(db_path=db_path)
+    assert emails_sent == []                       # a 5-point dip isn't a drop
+    record_ai_visibility_run(rid, 40, db_path=db_path)
+    notify.check_extra_daily_alerts(db_path=db_path)
+    assert emails_sent == ["AI visibility dropped — Mobile Test Co"]
+    notify.check_extra_daily_alerts(db_path=db_path)
+    assert len(emails_sent) == 1                   # 7-day repeat window

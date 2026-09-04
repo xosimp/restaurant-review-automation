@@ -262,10 +262,20 @@ def run_daily_fetch():
                                   restaurant_id=rid,
                                   approved_examples=approved_examples,
                                   sign_off=restaurant.sign_off_name or restaurant.name,
-                                  never_say=restaurant.never_say or "")
+                                  never_say=restaurant.never_say or "",
+                                  language=getattr(restaurant, "response_language", None) or None,
+                                  tone=getattr(restaurant, "tone_preset", None) or None,)
                 except Exception as e:
                     log.error(f"Draft error: {e}")
                     _ops.capture(e, job="review_draft", context=restaurant.name)
+
+            # Auto-approve rule (Account -> Profile -> Auto-approve): only
+            # ever drafted 5-star responses, only under the daily cap, and
+            # nothing at all while the kill switch is on.
+            try:
+                auto_approve_five_stars(rid, restaurant)
+            except Exception as e:
+                log.error(f"Auto-approve error: {e}")
 
             # Check for urgent reviews fetched in last hour
             conn = get_conn()
@@ -993,9 +1003,17 @@ def scheduler_loop():
             # 10am daily — no-response + trend/threshold/labor alerts
             if now.hour == 10 and _last_fetch_date != f"noresponse-{today}":
                 try:
-                    from notify import check_no_response_alerts, check_daily_alerts
+                    from notify import check_no_response_alerts, check_daily_alerts, check_extra_daily_alerts
                     check_no_response_alerts()
                     check_daily_alerts()
+                    check_extra_daily_alerts()
+                    try:
+                        from models import purge_expired_reviews
+                        purged = purge_expired_reviews()
+                        if purged:
+                            log.info(f"Data retention: soft-deleted {purged} expired reviews")
+                    except Exception as _pe:
+                        log.error(f"Retention purge failed: {_pe}")
                 except Exception as _nre:
                     log.error(f"Daily alert check failed: {_nre}")
 
@@ -1063,3 +1081,31 @@ def start_scheduler():
     t.start()
     log.info("Scheduler thread started")
     return t
+
+
+def auto_approve_five_stars(rid: int, restaurant) -> int:
+    """Approves (and, via _do_approve, posts to Google when connected) drafted
+    5-star responses for a restaurant with the rule on. Returns how many it
+    approved. Capped per day and logged per review so the Account tab can
+    show 'N auto-approved today'."""
+    if not getattr(restaurant, "auto_approve_5star", 0) or getattr(restaurant, "auto_approve_paused", 0):
+        return 0
+    from models import auto_approve_candidates, count_auto_approved_today, log_event
+    cap = int(getattr(restaurant, "auto_approve_daily_cap", 5) or 0)
+    done_today = count_auto_approved_today(rid)
+    if cap and done_today >= cap:
+        return 0
+    approved = 0
+    for review_id in auto_approve_candidates(rid):
+        if cap and done_today + approved >= cap:
+            break
+        try:
+            from client_api import _do_approve
+            _do_approve(review_id, rid)
+            log_event(rid, "review_auto_approved", {"review_id": review_id})
+            approved += 1
+        except Exception as e:
+            log.error(f"Auto-approve failed for review {review_id}: {e}")
+    if approved:
+        log.info(f"Auto-approved {approved} five-star responses for rid={rid}")
+    return approved

@@ -68,9 +68,30 @@ def _send_login_notification(user, ip, user_agent):
         rest = get_restaurant(rid) if rid else None
         if rest and getattr(rest, "login_notify", 0) and rest.owner_email:
             from notify import send_login_alert
-            send_login_alert(rid, rest.name or "", rest.owner_email, ip, user_agent)
+            send_login_alert(rid, rest.name or "", rest.owner_email, ip, user_agent,
+                             report_url=_login_report_url(user["id"]))
     except Exception as e:
         print(f"[LoginNotify-mobile] {e}")
+
+
+def _login_report_url(user_id: int) -> str:
+    """One-time link for the login email's 'This wasn't me' button — see
+    auth.consume_login_report for what it does."""
+    from auth import create_login_report
+    base = os.getenv("BASE_URL", "https://dashboard.cavnar.ai").rstrip("/")
+    return f"{base}/auth/not-me/{create_login_report(user_id, None)}"
+
+
+def _log_account_event(restaurant_id, event_type, current_user=None, detail=None):
+    """Account activity log (Account -> Security -> Account activity)."""
+    try:
+        from models import log_event
+        data = {"detail": detail}
+        if current_user:
+            data["actor"] = current_user.get("username")
+        log_event(restaurant_id, event_type, data)
+    except Exception:
+        pass
 
 
 _APPLE_JWKS_URL = "https://appleid.apple.com/auth/keys"
@@ -168,6 +189,11 @@ def mobile_login():
         _record_failed_attempt(ip)
         return jsonify(ok=False, error="Invalid username or password"), 401
     _clear_attempts(ip)
+    # A sign-in reported as "not me" burns the password until it's reset —
+    # see auth.consume_login_report.
+    if user.get("must_reset_password"):
+        return jsonify(ok=False, error="This account needs a password reset before signing in — use Forgot password.",
+                       password_reset_required=True), 403
 
     rid = user.get("restaurant_id")
     rest = get_restaurant(rid) if rid and not user.get("is_admin") else None
@@ -175,7 +201,8 @@ def mobile_login():
     # the web's device_token_<rid> cookie) and resends it here.
     device_token = (data.get("device_token") or "").strip()
     two_fa_on = bool(rest and rest.two_fa_enabled and not user.get("is_admin"))
-    device_ok = bool(device_token and device_token == (rest.two_fa_device_token or ""))
+    from auth import trusted_device_ok
+    device_ok = bool(device_token) and trusted_device_ok(rid, device_token)
 
     if two_fa_on and not device_ok:
         code = str(random.randint(100000, 999999))
@@ -441,9 +468,8 @@ def mobile_verify_2fa():
 
     device_token = None
     if remember:
-        import secrets as _secrets
-        device_token = _secrets.token_hex(32)
-        update_restaurant(rid, {"two_fa_device_token": device_token})
+        from auth import create_trusted_device, describe_user_agent
+        device_token = create_trusted_device(rid, user["id"], describe_user_agent(ua) + " · app")
 
     return jsonify(ok=True, token=token, device_token=device_token, user=_public_user(user))
 
@@ -471,6 +497,7 @@ def mobile_logout(current_user):
 @mobile_login_required
 def mobile_revoke_other_sessions(current_user):
     revoke_other_sessions(current_user["id"], _bearer_token())
+    _log_account_event(current_user["restaurant_id"], "sessions_revoked_others", current_user)
     return jsonify(ok=True)
 
 
@@ -2036,6 +2063,12 @@ def _do_mobile_account(current_user):
         "never_say": restaurant.never_say or None,
         "menu_notes": restaurant.menu_notes or None,
         "timezone": restaurant.timezone or "America/Chicago",
+        "sign_off_name": getattr(restaurant, "sign_off_name", None) or None,
+        "response_language": getattr(restaurant, "response_language", None) or None,
+        "tone_preset": getattr(restaurant, "tone_preset", None) or None,
+        "open_times_json": getattr(restaurant, "open_times_json", None) or None,
+        "close_times_json": getattr(restaurant, "close_times_json", None) or None,
+        "skip_holidays": getattr(restaurant, "skip_holidays", None) or None,
     }
     # Where a 2FA code actually goes, masked, for the Security sheet's
     # status tile ("Text · •••-0142" / "Email · ma***@giamia.com").
@@ -2055,6 +2088,8 @@ def _do_mobile_account(current_user):
         "two_fa_contact_masked": _masked,
         "login_notify": bool(getattr(restaurant, "login_notify", 0)),
         "marketing_emails_opt_out": bool(getattr(restaurant, "marketing_emails_opt_out", 0)),
+        "recovery_email": current_user.get("recovery_email"),
+        "recovery_email_pending": current_user.get("recovery_email_pending"),
         "last_login": current_user.get("last_login"),
         "password_changed_at": current_user.get("password_changed_at"),
         "password_strength": current_user.get("password_strength"),
@@ -2108,14 +2143,30 @@ def _do_mobile_account(current_user):
             "al_health_push": bool(getattr(restaurant, "al_health_push", 1)),
             "al_spike_push": bool(getattr(restaurant, "al_spike_push", 1)),
             "al_unres_push": bool(getattr(restaurant, "al_unres_push", 1)),
+            "alert_health_bypass_quiet": bool(getattr(restaurant, "alert_health_bypass_quiet", 0)),
+            "alert_food_waste": bool(getattr(restaurant, "alert_food_waste", 0)),
+            "alert_ai_visibility_drop": bool(getattr(restaurant, "alert_ai_visibility_drop", 0)),
+            "alert_extra_emails": getattr(restaurant, "alert_extra_emails", None) or "",
+            "push_sound": bool(getattr(restaurant, "push_sound", 1) if getattr(restaurant, "push_sound", 1) is not None else 1),
         },
     }
+    from models import count_auto_approved_today
+    reviews_block = {
+        "auto_approve_5star": bool(getattr(restaurant, "auto_approve_5star", 0)),
+        "auto_approve_daily_cap": int(getattr(restaurant, "auto_approve_daily_cap", 5) or 0),
+        "auto_approve_paused": bool(getattr(restaurant, "auto_approve_paused", 0)),
+        "auto_approved_today": count_auto_approved_today(rid),
+    }
+    data_block = {"data_retention_months": int(getattr(restaurant, "data_retention_months", 0) or 0)}
+
     return {
         "ok": True,
         "profile": profile,
         "account": account,
         "connections": connections,
         "alerts": alerts,
+        "reviews": reviews_block,
+        "data": data_block,
     }, 200
 
 
@@ -2162,6 +2213,7 @@ def mobile_change_password(current_user):
     if len(new_pw) < 8:
         return jsonify(ok=False, error="Password must be at least 8 characters"), 400
     update_password(current_user["id"], new_pw)
+    _log_account_event(current_user["restaurant_id"], "password_changed", current_user)
     try:
         restaurant = get_restaurant(current_user["restaurant_id"])
         if restaurant and restaurant.owner_email:
@@ -2203,6 +2255,7 @@ def mobile_update_email(current_user):
     conn.execute("UPDATE restaurants SET owner_email=? WHERE id=?", (new_email, current_user["restaurant_id"]))
     conn.commit()
     conn.close()
+    _log_account_event(current_user["restaurant_id"], "email_changed", current_user, detail=new_email)
     if old_email and old_email != new_email:
         try:
             restaurant = get_restaurant(current_user["restaurant_id"])
@@ -2239,7 +2292,13 @@ def mobile_update_profile(current_user):
         "voice_notes": _clean(data.get("voice_notes"), 1000),
         "never_say":   _clean(data.get("never_say"), 1000),
         "menu_notes":  _clean(data.get("menu_notes"), 2000),
+        "sign_off_name": _clean(data.get("sign_off_name"), 80),
     }
+    # Fixed sets — these are dropped straight into the drafting prompt.
+    lang = (data.get("response_language") or "").strip().lower()
+    updates["response_language"] = lang if lang in ("en", "es", "fr", "it", "pt", "de") else None
+    tone = (data.get("tone_preset") or "").strip().lower()
+    updates["tone_preset"] = tone if tone in ("warm", "professional", "playful", "concise") else None
     # Same 7-zone list as the admin Client Settings page (templates/
     # client_settings.html) — only accept a value from that fixed set so a
     # bad string can't silently break "today"/trend math elsewhere.
@@ -2251,6 +2310,7 @@ def mobile_update_profile(current_user):
     if tz in _valid_timezones:
         updates["timezone"] = tz
     update_restaurant(current_user["restaurant_id"], updates)
+    _log_account_event(current_user["restaurant_id"], "profile_updated", current_user)
     return jsonify(ok=True)
 
 
@@ -2390,6 +2450,7 @@ def mobile_verify_2fa_setup(current_user):
     update_restaurant(rid, {"two_fa_enabled": 1, "two_fa_code": "", "two_fa_expires": "", "two_fa_method": method})
     from models import generate_backup_codes
     codes = generate_backup_codes(rid)
+    _log_account_event(rid, "two_fa_enabled", current_user, detail=method)
     return jsonify(ok=True, backup_codes=codes)
 
 
@@ -2397,6 +2458,7 @@ def mobile_verify_2fa_setup(current_user):
 @mobile_login_required
 def mobile_disable_2fa(current_user):
     update_restaurant(current_user["restaurant_id"], {"two_fa_enabled": 0})
+    _log_account_event(current_user["restaurant_id"], "two_fa_disabled", current_user)
     return jsonify(ok=True)
 
 
@@ -2414,6 +2476,7 @@ def mobile_regenerate_backup_codes(current_user):
     shown once here, same as at initial 2FA setup."""
     from models import generate_backup_codes
     codes = generate_backup_codes(current_user["restaurant_id"])
+    _log_account_event(current_user["restaurant_id"], "backup_codes_regenerated", current_user)
     return jsonify(ok=True, backup_codes=codes)
 
 
@@ -2422,6 +2485,8 @@ def mobile_regenerate_backup_codes(current_user):
 def mobile_toggle_login_notify(current_user):
     data = request.get_json() or {}
     update_restaurant(current_user["restaurant_id"], {"login_notify": int(bool(data.get("enabled")))})
+    _log_account_event(current_user["restaurant_id"], "login_notify_changed", current_user,
+                       detail="on" if data.get("enabled") else "off")
     return jsonify(ok=True)
 
 
@@ -2434,6 +2499,8 @@ def mobile_toggle_marketing_opt_out(current_user):
     welcome) is never affected by this flag."""
     data = request.get_json() or {}
     update_restaurant(current_user["restaurant_id"], {"marketing_emails_opt_out": int(bool(data.get("opted_out")))})
+    _log_account_event(current_user["restaurant_id"], "marketing_emails_changed", current_user,
+                       detail="off" if data.get("opted_out") else "on")
     return jsonify(ok=True)
 
 
@@ -2477,6 +2544,7 @@ def mobile_invite_team_member(current_user):
         log_email(current_user["restaurant_id"], "team_invite", email, f"You've been added to {restaurant.name}")
     except Exception:
         pass
+    _log_account_event(current_user["restaurant_id"], "team_member_invited", current_user, detail=email)
     return jsonify(ok=True, user_id=result["user_id"], username=result["username"])
 
 
@@ -2489,6 +2557,7 @@ def mobile_revoke_team_member(current_user, user_id):
     result = revoke_team_member(current_user["restaurant_id"], user_id, current_user["id"])
     if not result.get("ok"):
         return jsonify(ok=False, error=result.get("error", "Couldn't remove that teammate.")), 400
+    _log_account_event(current_user["restaurant_id"], "team_member_revoked", current_user, detail=str(user_id))
     return jsonify(ok=True)
 
 
@@ -2530,11 +2599,12 @@ def mobile_send_test_digest(current_user):
 @mobile_bp.route("/account/export-data", methods=["POST"])
 @mobile_login_required
 def mobile_export_data(current_user):
-    """Emails the caller a CSV of their own reviews (date/rating/text/
-    response status) — the narrower, self-serve counterpart to admin's
-    export_reviews() browser download."""
+    """Emails the caller their own data. `scopes` picks what's attached —
+    any of reviews / labor / food_cost / settings (default: reviews, the
+    original behaviour). Each scope is its own attachment."""
     import base64 as _b64
-    from models import build_reviews_export_csv, log_email
+    from models import (build_reviews_export_csv, build_labor_export_csv,
+                        build_food_cost_export_csv, build_settings_export_json, log_email)
     rid = current_user["restaurant_id"]
     restaurant = get_restaurant(rid)
     if not restaurant:
@@ -2542,23 +2612,39 @@ def mobile_export_data(current_user):
     to_email = current_user.get("email")
     if not to_email:
         return jsonify(ok=False, error="No email on file for your account."), 400
+    data = request.get_json(silent=True) or {}
+    scopes = [s for s in (data.get("scopes") or ["reviews"]) if s in ("reviews", "labor", "food_cost", "settings")]
+    if not scopes:
+        return jsonify(ok=False, error="Pick at least one thing to export."), 400
+    safe_name = "".join(c for c in (restaurant.name or "cavnar") if c.isalnum() or c in " -_").strip() or "cavnar"
+    attachments, labels = [], []
+    builders = {
+        "reviews": ("reviews.csv", "reviews (date, rating, text, response status)", lambda: build_reviews_export_csv(rid)),
+        "labor": ("labor.csv", "labor history", lambda: build_labor_export_csv(rid)),
+        "food_cost": ("food_cost.csv", "food cost & inventory", lambda: build_food_cost_export_csv(rid)),
+        "settings": ("settings.json", "account settings", lambda: build_settings_export_json(rid)),
+    }
     try:
+        for scope in scopes:
+            fname, label, build = builders[scope]
+            body = build()
+            attachments.append({"filename": f"{safe_name}_{fname}",
+                                "content": _b64.b64encode(body.encode("utf-8")).decode("ascii")})
+            labels.append(label)
         import resend as _resend
-        csv_text = build_reviews_export_csv(rid)
-        b64 = _b64.b64encode(csv_text.encode("utf-8")).decode("ascii")
-        safe_name = "".join(c for c in (restaurant.name or "cavnar") if c.isalnum() or c in " -_").strip() or "cavnar"
         _resend.api_key = _resend_key()
         _resend.Emails.send({
             "from": f"Cavnar AI <{_from_email()}>",
             "to": [to_email],
             "subject": f"Your Cavnar AI data export — {restaurant.name}",
-            "html": "<p>Attached is a CSV of your reviews — date, rating, review text, and response status.</p>",
-            "attachments": [{"filename": f"{safe_name}_reviews.csv", "content": b64}],
+            "html": "<p>Attached: " + ", ".join(labels) + ".</p>",
+            "attachments": attachments,
         })
         try:
             log_email(rid, "data_export", to_email, f"Data export — {restaurant.name}")
         except Exception: pass
-        return jsonify(ok=True, email=to_email)
+        _log_account_event(rid, "data_exported", current_user, detail=", ".join(scopes))
+        return jsonify(ok=True, email=to_email, scopes=scopes)
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
 
@@ -2619,8 +2705,30 @@ def mobile_save_alert_settings(current_user):
         "al_health_push": int(bool(data.get("al_health_push"))),
         "al_spike_push": int(bool(data.get("al_spike_push"))),
         "al_unres_push": int(bool(data.get("al_unres_push"))),
+        "alert_health_bypass_quiet": int(bool(data.get("alert_health_bypass_quiet"))),
+        "alert_food_waste": int(bool(data.get("alert_food_waste"))),
+        "alert_ai_visibility_drop": int(bool(data.get("alert_ai_visibility_drop"))),
+        "alert_extra_emails": _clean_email_list(data.get("alert_extra_emails")),
+        "push_sound": 0 if data.get("push_sound") is False else 1,
     })
+    _log_account_event(rid, "alert_settings_saved", current_user)
     return jsonify(ok=True)
+
+
+def _clean_email_list(raw, cap: int = 3):
+    """Comma/space/newline-separated addresses -> a de-duplicated, lowercase
+    comma list of at most `cap`, or None."""
+    if not raw:
+        return None
+    import re as _re_el
+    seen, out = set(), []
+    for part in _re_el.split(r"[,\s]+", str(raw)):
+        e = part.strip().lower()
+        if e and "@" in e and "." in e.split("@")[-1] and e not in seen:
+            seen.add(e); out.append(e)
+        if len(out) >= cap:
+            break
+    return ",".join(out) or None
 
 
 @mobile_bp.route("/account/digest-day", methods=["POST"])
@@ -2718,3 +2826,172 @@ def _do_mobile_billing(restaurant_id):
 def mobile_billing(current_user):
     payload, status = _do_mobile_billing(current_user["restaurant_id"])
     return jsonify(**payload), status
+
+
+# ── Settings audit additions ──────────────────────────────────────────────
+
+@mobile_bp.route("/account/activity")
+@mobile_login_required
+def mobile_account_activity(current_user):
+    """Account-level events (password/email/2FA/team/export/etc.) — the
+    user-facing slice of activity_log. Sign-ins are in /account/login-history."""
+    from models import get_account_activity
+    return jsonify(ok=True, events=get_account_activity(current_user["restaurant_id"]))
+
+
+@mobile_bp.route("/account/2fa/trusted-devices")
+@mobile_login_required
+def mobile_trusted_devices(current_user):
+    from auth import get_trusted_devices
+    return jsonify(ok=True, devices=get_trusted_devices(current_user["restaurant_id"]))
+
+
+@mobile_bp.route("/account/2fa/trusted-devices/<int:device_id>/revoke", methods=["POST"])
+@mobile_login_required
+def mobile_revoke_trusted_device(current_user, device_id):
+    from auth import revoke_trusted_device
+    if not revoke_trusted_device(current_user["restaurant_id"], device_id):
+        return jsonify(ok=False, error="That device wasn't found."), 404
+    _log_account_event(current_user["restaurant_id"], "trusted_device_revoked", current_user)
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/2fa/trusted-devices/revoke-all", methods=["POST"])
+@mobile_login_required
+def mobile_revoke_all_trusted_devices(current_user):
+    from auth import revoke_all_trusted_devices
+    revoke_all_trusted_devices(current_user["restaurant_id"])
+    _log_account_event(current_user["restaurant_id"], "trusted_devices_cleared", current_user)
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/recovery-email", methods=["POST"])
+@mobile_login_required
+def mobile_set_recovery_email(current_user):
+    """Step 1: send a code to the new address. Nothing changes until
+    /account/recovery-email/verify confirms it."""
+    import re as _re_rec
+    data = request.get_json() or {}
+    email = (data.get("email") or "").strip().lower()
+    if not _re_rec.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
+        return jsonify(ok=False, error="Enter a valid email address"), 400
+    if email == (current_user.get("email") or "").lower():
+        return jsonify(ok=False, error="Use a different address than your sign-in email."), 400
+    from auth import start_recovery_email
+    code = start_recovery_email(current_user["id"], email)
+    try:
+        from emails import send_recovery_email_code
+        send_recovery_email_code(email, code)
+    except Exception:
+        pass
+    return jsonify(ok=True, pending=email)
+
+
+@mobile_bp.route("/account/recovery-email/verify", methods=["POST"])
+@mobile_login_required
+def mobile_verify_recovery_email(current_user):
+    data = request.get_json() or {}
+    from auth import verify_recovery_email
+    email = verify_recovery_email(current_user["id"], (data.get("code") or "").strip())
+    if not email:
+        return jsonify(ok=False, error="That code isn't right, or it expired. Send a new one."), 400
+    _log_account_event(current_user["restaurant_id"], "recovery_email_set", current_user, detail=email)
+    return jsonify(ok=True, recovery_email=email)
+
+
+@mobile_bp.route("/account/recovery-email/remove", methods=["POST"])
+@mobile_login_required
+def mobile_remove_recovery_email(current_user):
+    from auth import remove_recovery_email
+    remove_recovery_email(current_user["id"])
+    _log_account_event(current_user["restaurant_id"], "recovery_email_removed", current_user)
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/auto-approve", methods=["POST"])
+@mobile_login_required
+def mobile_auto_approve(current_user):
+    """The one rule: drafted 5-star responses get approved (and posted, when
+    Google is connected) without waiting — capped per day, with a kill
+    switch. Runs inside the daily fetch (scheduler.auto_approve_five_stars)."""
+    data = request.get_json() or {}
+    cap = data.get("daily_cap", 5)
+    try:
+        cap = max(1, min(50, int(cap)))
+    except Exception:
+        cap = 5
+    rid = current_user["restaurant_id"]
+    update_restaurant(rid, {
+        "auto_approve_5star": int(bool(data.get("enabled"))),
+        "auto_approve_daily_cap": cap,
+        "auto_approve_paused": int(bool(data.get("paused"))),
+    })
+    _log_account_event(rid, "auto_approve_changed", current_user,
+                       detail=("on" if data.get("enabled") else "off") + (", paused" if data.get("paused") else "") + f", cap {cap}/day")
+    return jsonify(ok=True)
+
+
+_DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+@mobile_bp.route("/account/hours", methods=["POST"])
+@mobile_login_required
+def mobile_hours(current_user):
+    """Open/close time per day plus closure dates. close_times_json already
+    drove schedule generation (shift_end hard cap); open_times_json is new."""
+    import json as _json_h
+    data = request.get_json() or {}
+    def _clean_times(raw):
+        out = {}
+        for day in _DAYS:
+            v = (raw or {}).get(day)
+            if isinstance(v, str) and v.strip():
+                out[day] = v.strip()[:12]
+        return _json_h.dumps(out) if out else None
+    closures = data.get("closures") or []
+    if not isinstance(closures, list):
+        closures = []
+    closures = sorted({str(c).strip()[:10] for c in closures if str(c).strip()})[:60]
+    rid = current_user["restaurant_id"]
+    update_restaurant(rid, {
+        "open_times_json": _clean_times(data.get("open")),
+        "close_times_json": _clean_times(data.get("close")),
+        "skip_holidays": ",".join(closures) or None,
+    })
+    _log_account_event(rid, "hours_changed", current_user)
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/data-retention", methods=["POST"])
+@mobile_login_required
+def mobile_data_retention(current_user):
+    """0 = keep everything; otherwise reviews older than N months are
+    soft-deleted by the nightly job (models.purge_expired_reviews)."""
+    data = request.get_json() or {}
+    try:
+        months = int(data.get("months", 0))
+    except Exception:
+        months = 0
+    if months not in (0, 6, 12, 24, 36):
+        return jsonify(ok=False, error="Choose keep everything, or 6, 12, 24 or 36 months."), 400
+    rid = current_user["restaurant_id"]
+    update_restaurant(rid, {"data_retention_months": months})
+    _log_account_event(rid, "data_retention_changed", current_user, detail=f"{months} months" if months else "keep everything")
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/account/report-bug", methods=["POST"])
+@mobile_login_required
+def mobile_report_bug(current_user):
+    data = request.get_json() or {}
+    message = (data.get("message") or "").strip()
+    if len(message) < 5:
+        return jsonify(ok=False, error="Tell us a little more about what happened."), 400
+    restaurant = get_restaurant(current_user["restaurant_id"])
+    meta = {k: str(data.get(k))[:80] for k in ("build", "app_version", "ios_version", "device", "screen") if data.get(k)}
+    meta["username"] = current_user.get("username")
+    try:
+        from emails import send_bug_report_email
+        send_bug_report_email(restaurant.name if restaurant else "Unknown", current_user.get("email") or "", message[:4000], meta)
+    except Exception as e:
+        return jsonify(ok=False, error=f"Couldn't send that right now ({e})."), 500
+    return jsonify(ok=True)

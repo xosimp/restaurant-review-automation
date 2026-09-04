@@ -52,6 +52,30 @@ CREATE TABLE IF NOT EXISTS login_history (
     device_type     TEXT,
     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+
+-- "Remember this device for 30 days" (2FA). One row per remembered device,
+-- so they can be listed and revoked individually — the older single
+-- restaurants.two_fa_device_token column only ever held the LAST device.
+CREATE TABLE IF NOT EXISTS trusted_devices (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id   INTEGER NOT NULL,
+    user_id         INTEGER,
+    token_hash      TEXT    NOT NULL UNIQUE,
+    label           TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    last_used_at    TEXT,
+    expires_at      TEXT    NOT NULL
+);
+
+-- One-time "This wasn't me" links minted per sign-in for the login-alert
+-- email. Consuming one revokes every session and forces a password reset.
+CREATE TABLE IF NOT EXISTS login_reports (
+    token           TEXT    PRIMARY KEY,
+    user_id         INTEGER NOT NULL,
+    session_token   TEXT,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    used_at         TEXT
+);
 """
 
 def init_auth(db_path: str = DB_PATH):
@@ -77,6 +101,11 @@ def init_auth(db_path: str = DB_PATH):
         "ALTER TABLE users ADD COLUMN apple_user_id TEXT",
         "ALTER TABLE users ADD COLUMN password_changed_at TEXT",
         "ALTER TABLE users ADD COLUMN password_strength TEXT",
+        "ALTER TABLE users ADD COLUMN recovery_email TEXT",
+        "ALTER TABLE users ADD COLUMN recovery_email_pending TEXT",
+        "ALTER TABLE users ADD COLUMN recovery_email_code TEXT",
+        "ALTER TABLE users ADD COLUMN recovery_email_expires TEXT",
+        "ALTER TABLE users ADD COLUMN must_reset_password INTEGER DEFAULT 0",
     ]:
         try:
             import sqlite3 as _sql
@@ -525,3 +554,181 @@ def mobile_login_required(f):
             return _jsonify_mlr(ok=False, error="Your session expired — please log in again.", session_expired=True), 401
         return f(*args, **kwargs, current_user=user)
     return decorated
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Trusted devices (2FA "remember this device"), login reports, recovery
+# email, forced password reset
+# ═══════════════════════════════════════════════════════════════════════
+
+def describe_user_agent(user_agent: str) -> str:
+    ua = user_agent or ""
+    if "Cavnar-iOS" in ua or "CavnarAI" in ua: return "iPhone app"
+    if "iPhone" in ua: return "iPhone"
+    if "iPad" in ua: return "iPad"
+    if "Android" in ua: return "Android"
+    if "Windows" in ua: return "Windows"
+    if "Macintosh" in ua or "Mac OS" in ua: return "Mac"
+    return "Device"
+
+
+def _hash_device_token(token: str) -> str:
+    import hashlib
+    return hashlib.sha256(("cavnar-trusted:" + token).encode()).hexdigest()
+
+
+def create_trusted_device(restaurant_id: int, user_id: int | None, label: str,
+                          days: int = 30, db_path: str = DB_PATH) -> str:
+    """Mints a new remember-token, stores only its hash, returns the token."""
+    import secrets
+    from datetime import datetime, timedelta
+    token = secrets.token_hex(32)
+    expires = (datetime.utcnow() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn(db_path)
+    conn.execute("""
+        INSERT INTO trusted_devices (restaurant_id, user_id, token_hash, label, expires_at)
+        VALUES (?,?,?,?,?)
+    """, (restaurant_id, user_id, _hash_device_token(token), label, expires))
+    conn.commit()
+    conn.close()
+    return token
+
+
+def trusted_device_ok(restaurant_id: int, token: str, db_path: str = DB_PATH) -> bool:
+    """True when `token` is a live remembered device for this restaurant.
+    Also honours the legacy single-slot restaurants.two_fa_device_token so
+    nobody gets re-prompted just because this table appeared."""
+    if not token:
+        return False
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("""
+            SELECT id FROM trusted_devices
+            WHERE restaurant_id=? AND token_hash=? AND expires_at > datetime('now')
+        """, (restaurant_id, _hash_device_token(token))).fetchone()
+        if row:
+            conn.execute("UPDATE trusted_devices SET last_used_at=datetime('now') WHERE id=?", (row["id"],))
+            conn.commit()
+            return True
+        legacy = conn.execute("SELECT two_fa_device_token FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        return bool(legacy and legacy["two_fa_device_token"] and legacy["two_fa_device_token"] == token)
+    finally:
+        conn.close()
+
+
+def get_trusted_devices(restaurant_id: int, db_path: str = DB_PATH) -> list[dict]:
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT id, label, created_at, last_used_at, expires_at FROM trusted_devices
+        WHERE restaurant_id=? AND expires_at > datetime('now') ORDER BY created_at DESC, id DESC
+    """, (restaurant_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def revoke_trusted_device(restaurant_id: int, device_id: int, db_path: str = DB_PATH) -> bool:
+    conn = get_conn(db_path)
+    cur = conn.execute("DELETE FROM trusted_devices WHERE id=? AND restaurant_id=?", (device_id, restaurant_id))
+    conn.commit()
+    conn.close()
+    return (cur.rowcount or 0) > 0
+
+
+def revoke_all_trusted_devices(restaurant_id: int, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("DELETE FROM trusted_devices WHERE restaurant_id=?", (restaurant_id,))
+    # The legacy single slot too, or the last-remembered device stays remembered.
+    conn.execute("UPDATE restaurants SET two_fa_device_token=NULL WHERE id=?", (restaurant_id,))
+    conn.commit()
+    conn.close()
+
+
+def create_login_report(user_id: int, session_token: str | None, db_path: str = DB_PATH) -> str:
+    import secrets
+    token = secrets.token_urlsafe(32)
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO login_reports (token, user_id, session_token) VALUES (?,?,?)",
+                 (token, user_id, session_token))
+    conn.commit()
+    conn.close()
+    return token
+
+
+def consume_login_report(token: str, db_path: str = DB_PATH) -> dict | None:
+    """'This wasn't me': revokes EVERY session for the user (not just the
+    reported one — if one sign-in was an attacker, assume the password is
+    burned), forgets every trusted device, and flags the account so the
+    next sign-in is refused until the password is reset. Returns the user
+    row, or None for an unknown / already-used / stale (>7 day) link."""
+    conn = get_conn(db_path)
+    row = conn.execute("""
+        SELECT user_id FROM login_reports
+        WHERE token=? AND used_at IS NULL AND created_at > datetime('now', '-7 days')
+    """, (token,)).fetchone()
+    if not row:
+        conn.close()
+        return None
+    user_id = row["user_id"]
+    conn.execute("UPDATE login_reports SET used_at=datetime('now') WHERE token=?", (token,))
+    conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+    conn.execute("UPDATE users SET must_reset_password=1 WHERE id=?", (user_id,))
+    user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    if user and user["restaurant_id"]:
+        conn.execute("DELETE FROM trusted_devices WHERE restaurant_id=?", (user["restaurant_id"],))
+        conn.execute("UPDATE restaurants SET two_fa_device_token=NULL WHERE id=?", (user["restaurant_id"],))
+    conn.commit()
+    conn.close()
+    return dict(user) if user else None
+
+
+def clear_must_reset_password(user_id: int, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("UPDATE users SET must_reset_password=0 WHERE id=?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def start_recovery_email(user_id: int, email: str, db_path: str = DB_PATH) -> str:
+    """Stores the address as pending and returns the 6-digit code that has
+    to come back through verify_recovery_email before it counts."""
+    import random
+    from datetime import datetime, timedelta
+    code = str(random.randint(100000, 999999))
+    expires = (datetime.utcnow() + timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn(db_path)
+    conn.execute("""
+        UPDATE users SET recovery_email_pending=?, recovery_email_code=?, recovery_email_expires=? WHERE id=?
+    """, (email.lower().strip(), code, expires, user_id))
+    conn.commit()
+    conn.close()
+    return code
+
+
+def verify_recovery_email(user_id: int, code: str, db_path: str = DB_PATH) -> str | None:
+    conn = get_conn(db_path)
+    row = conn.execute("""
+        SELECT recovery_email_pending, recovery_email_code, recovery_email_expires FROM users WHERE id=?
+    """, (user_id,)).fetchone()
+    if (not row or not row["recovery_email_pending"] or not row["recovery_email_code"]
+            or row["recovery_email_code"] != (code or "").strip()
+            or not row["recovery_email_expires"] or row["recovery_email_expires"] < __import__("datetime").datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")):
+        conn.close()
+        return None
+    email = row["recovery_email_pending"]
+    conn.execute("""
+        UPDATE users SET recovery_email=?, recovery_email_pending=NULL, recovery_email_code=NULL,
+                         recovery_email_expires=NULL WHERE id=?
+    """, (email, user_id))
+    conn.commit()
+    conn.close()
+    return email
+
+
+def remove_recovery_email(user_id: int, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute("""
+        UPDATE users SET recovery_email=NULL, recovery_email_pending=NULL, recovery_email_code=NULL,
+                         recovery_email_expires=NULL WHERE id=?
+    """, (user_id,))
+    conn.commit()
+    conn.close()
