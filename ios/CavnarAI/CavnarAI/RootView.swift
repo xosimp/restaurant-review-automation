@@ -634,13 +634,11 @@ struct LockedView: View {
     var body: some View {
         let biometry = biometry
         ZStack(alignment: .top) {
-            Color.cavnarPaper.ignoresSafeArea()
-            // The same moving ember aurora Home's hero sits on — ambient
-            // brand motion behind the lockup, fading to flat Paper below.
-            HomeHeroBackground()
-                .frame(height: 440)
-                .opacity(0.8)
-                .ignoresSafeArea(edges: .top)
+            // Exactly the sign-in screen's background — same aurora, same
+            // constellation, same vignette — so locking and signing in read
+            // as the same place. (Was Home's hero band at 0.8, which looked
+            // like a third variant of the brand backdrop.)
+            LoginBackground()
 
             VStack(spacing: 0) {
                 // Fixed, not a Spacer — the pad below is much taller than
@@ -662,7 +660,12 @@ struct LockedView: View {
                         Color.clear.frame(width: 300, height: 300 * (100 / CavnarWordmarkLetterShape.boxWidth))
                     }
                 }
-                .padding(.bottom, 52)
+
+                // The headline sits with the unlock surface, not with the
+                // wordmark — the slack goes here, above it, so "Welcome
+                // back" lands just over the pad/button instead of crowding
+                // the wordmark.
+                Spacer(minLength: 28)
 
                 VStack(spacing: 12) {
                     Text("Welcome back")
@@ -677,8 +680,7 @@ struct LockedView: View {
                         .lockReveal(stage >= 2)
                 }
                 .padding(.horizontal, 40)
-
-                Spacer(minLength: 24)
+                .padding(.bottom, 30)
 
                 if hasPasscode {
                     passcodeBlock(biometry)
