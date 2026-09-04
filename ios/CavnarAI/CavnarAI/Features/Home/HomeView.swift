@@ -276,6 +276,7 @@ struct HomeView: View {
                 .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 1)
 
             heroHeadline(summary)
+                .fixedSize(horizontal: false, vertical: true)
 
             overnightLine(summary)
                 .multilineTextAlignment(.center)

@@ -196,7 +196,10 @@ struct AllClearRow: View {
 /// eases back — one slow, symmetric breath, no spring/bounce/scale. The
 /// first attempt here (a capsule shaft popping up and extending) read as
 /// busy/gimmicky; this reads closer to a native iOS coach-mark nudge.
-private struct PulsingSwipeArrow: View {
+/// Not private — HomePulseStrip reuses this exact motion for its own
+/// horizontally-scrollable row rather than inventing a second nudge.
+struct PulsingSwipeArrow: View {
+    var size: CGFloat = 11
     @State private var start = Date()
 
     // Wall-clock driven (TimelineView), not a PhaseAnimator — the phase
@@ -211,9 +214,9 @@ private struct PulsingSwipeArrow: View {
             // 0 -> 1 -> 0 over one 2.3s breath, ease-in-out shaped.
             let phase = 0.5 - 0.5 * cos(t * 2 * .pi / 2.3)
             Image(systemName: "chevron.right")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: size, weight: .semibold))
                 .foregroundStyle(Color.cavnarEmber2.opacity(0.65 - 0.47 * phase))
-                .offset(x: 5 * phase)
+                .offset(x: (size * 0.45) * phase)
         }
     }
 }
