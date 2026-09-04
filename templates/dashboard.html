@@ -3733,6 +3733,68 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   </div>
 
   <!-- Help & FAQ -->
+  <!-- ACCOUNT SETTINGS PARITY: these five were app-only until now. The
+       auto-approve rule matters most — it publishes review replies from a
+       scheduled job, so a web-only client could not see or stop behaviour
+       that was running on their behalf. Same handlers as the app
+       (client_api._do_* ), so the two surfaces can't drift. -->
+  <div class="acct-card" style="padding:18px 22px;margin-bottom:14px" id="account-settings-card">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:10px">Automation &amp; data</div>
+
+    <div style="border-bottom:1px solid var(--paper3);padding-bottom:14px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:var(--ink);margin-bottom:4px">Auto-approve 5-star replies</div>
+      <p style="font-size:11.5px;color:var(--ink3);line-height:1.5;margin:0 0 12px">Drafted replies to 5-star reviews are approved automatically &mdash; and posted, when Google Business is connected. Capped per day, with a pause switch.</p>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0">
+        <label for="as-auto-enabled" style="font-size:12px;cursor:pointer">Turn on auto-approve</label>
+        <input type="checkbox" id="as-auto-enabled" style="accent-color:var(--ember)">
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0">
+        <label for="as-auto-cap" style="font-size:12px">Most replies per day</label>
+        <input type="number" id="as-auto-cap" min="1" max="50" value="5" style="font-family:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper1);color:var(--ink);width:70px">
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0">
+        <label for="as-auto-paused" style="font-size:12px;cursor:pointer">Pause it for now</label>
+        <input type="checkbox" id="as-auto-paused" style="accent-color:var(--ember)">
+      </div>
+      <button onclick="saveAutoApprove()" style="margin-top:8px;background:var(--ember);color:#fff;border:none;border-radius:6px;padding:7px 14px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer">Save rule</button>
+      <span id="as-auto-status" style="font-size:11.5px;color:var(--ink3);margin-left:10px"></span>
+    </div>
+
+    <div style="border-bottom:1px solid var(--paper3);padding-bottom:14px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:var(--ink);margin-bottom:4px">Hours &amp; closures</div>
+      <p style="font-size:11.5px;color:var(--ink3);line-height:1.5;margin:0 0 12px">Used when generating schedules and when drafting replies that mention your hours. Leave a day blank if it varies.</p>
+      <div id="as-hours-grid" style="display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 10px;align-items:center;margin-bottom:10px"></div>
+      <label for="as-closures" style="font-size:11.5px;color:var(--ink3);display:block;margin-bottom:4px">Closure dates (YYYY-MM-DD, comma separated)</label>
+      <input type="text" id="as-closures" placeholder="2026-12-25, 2027-01-01" style="font-family:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper1);color:var(--ink);width:100%;box-sizing:border-box">
+      <button onclick="saveAccountHours()" style="margin-top:10px;background:var(--ember);color:#fff;border:none;border-radius:6px;padding:7px 14px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer">Save hours</button>
+      <span id="as-hours-status" style="font-size:11.5px;color:var(--ink3);margin-left:10px"></span>
+    </div>
+
+    <div>
+      <div style="font-size:12px;font-weight:700;color:var(--ink);margin-bottom:4px">Data &amp; email</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0">
+        <label for="as-retention" style="font-size:12px">Keep review history for</label>
+        <select id="as-retention" onchange="saveDataRetention()" style="font-family:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper1);color:var(--ink)">
+          <option value="0">Keep everything</option>
+          <option value="6">6 months</option>
+          <option value="12">12 months</option>
+          <option value="24">24 months</option>
+          <option value="36">36 months</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0">
+        <label for="as-login-notify" style="font-size:12px;cursor:pointer">Email me about new sign-ins</label>
+        <input type="checkbox" id="as-login-notify" onchange="saveLoginNotify()" style="accent-color:var(--ember)">
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0">
+        <label for="as-marketing" style="font-size:12px;cursor:pointer">Product update emails</label>
+        <input type="checkbox" id="as-marketing" onchange="saveMarketingOptOut()" style="accent-color:var(--ember)">
+      </div>
+      <p style="font-size:11.5px;color:var(--ink3);line-height:1.5;margin:0 0 12px;margin:6px 0 0">Turning product updates off never affects security email &mdash; sign-in codes, password changes and alerts still send.</p>
+      <span id="as-data-status" style="font-size:11.5px;color:var(--ink3)"></span>
+    </div>
+  </div>
+
   <div class="acct-card" style="padding:18px 22px;margin-bottom:14px">
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Help &amp; FAQ</div>
     <div id="faq-list">
@@ -4821,7 +4883,7 @@ function switchTab(n,btn){
     // countUp animations and insight load triggered by switchFcTab when analytics tab is shown
   }
   if(n==='labor'){renderBars();loadLaborTrend(false);}
-  if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();}
+  if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();loadAccountSettings();}
   if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();startMetricsPoller();}else{stopMetricsPoller();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
@@ -6590,6 +6652,110 @@ function updateSmsConsentVisibility() {
   if (!smsOn) document.getElementById('al-sms-consent').checked = false;
 }
 
+
+// ── Account settings parity (auto-approve, hours, retention, email) ──────
+// ES5 only, same as the rest of this file. These call the shared handlers
+// in client_api.py that the iOS routes also use, so a rule set here means
+// exactly what it means in the app.
+var AS_DAYS = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+
+function asFlash(id, msg) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = msg;
+  setTimeout(function() { if (el.textContent === msg) el.textContent = ''; }, 2600);
+}
+
+function buildAccountHoursGrid(open, close) {
+  var grid = document.getElementById('as-hours-grid');
+  if (!grid) return;
+  var html = '<div></div><div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em">Open</div>'
+           + '<div style="font-size:10px;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em">Close</div>';
+  for (var i = 0; i < AS_DAYS.length; i++) {
+    var d = AS_DAYS[i];
+    html += '<label for="as-open-' + d + '" style="font-size:11.5px;color:var(--ink3)">' + d.slice(0, 3) + '</label>'
+         +  '<input type="time" id="as-open-' + d + '" value="' + ((open && open[d]) || '') + '" style="font-family:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper1);color:var(--ink)">'
+         +  '<input type="time" id="as-close-' + d + '" value="' + ((close && close[d]) || '') + '" style="font-family:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper1);color:var(--ink)">';
+  }
+  grid.innerHTML = html;
+}
+
+function loadAccountSettings() {
+  if (!document.getElementById('account-settings-card')) return;
+  fetch('/api/account-settings').then(function(r) { return r.json(); }).then(function(d) {
+    if (!d.ok) return;
+    var a = d.auto_approve || {};
+    document.getElementById('as-auto-enabled').checked = !!a.enabled;
+    document.getElementById('as-auto-cap').value = a.daily_cap || 5;
+    document.getElementById('as-auto-paused').checked = !!a.paused;
+
+    var h = d.hours || {};
+    buildAccountHoursGrid(h.open || {}, h.close || {});
+    document.getElementById('as-closures').value = (h.closures || []).join(', ');
+
+    document.getElementById('as-retention').value = String(d.data_retention_months || 0);
+    document.getElementById('as-login-notify').checked = !!d.login_notify;
+    // The stored flag is an opt-OUT; the switch reads as "send them", so
+    // it is deliberately the inverse.
+    document.getElementById('as-marketing').checked = !d.marketing_emails_opt_out;
+  }).catch(function() {});
+}
+
+function asPost(url, body, statusId, okMsg) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    asFlash(statusId, d.ok ? okMsg : (d.error || 'Could not save.'));
+    return d;
+  }).catch(function() { asFlash(statusId, 'Could not save.'); });
+}
+
+function saveAutoApprove() {
+  asPost('/api/account-settings/auto-approve', {
+    enabled: document.getElementById('as-auto-enabled').checked,
+    daily_cap: parseInt(document.getElementById('as-auto-cap').value, 10) || 5,
+    paused: document.getElementById('as-auto-paused').checked
+  }, 'as-auto-status', 'Saved').then(function() { loadAccountSettings(); });
+}
+
+function saveAccountHours() {
+  var open = {}, close = {};
+  for (var i = 0; i < AS_DAYS.length; i++) {
+    var d = AS_DAYS[i];
+    var o = document.getElementById('as-open-' + d);
+    var c = document.getElementById('as-close-' + d);
+    if (o && o.value) open[d] = o.value;
+    if (c && c.value) close[d] = c.value;
+  }
+  var raw = (document.getElementById('as-closures').value || '').split(',');
+  var closures = [];
+  for (var j = 0; j < raw.length; j++) {
+    var v = raw[j].replace(/^\s+|\s+$/g, '');
+    if (v) closures.push(v);
+  }
+  asPost('/api/account-settings/hours', { open: open, close: close, closures: closures },
+         'as-hours-status', 'Saved').then(function() { loadAccountSettings(); });
+}
+
+function saveDataRetention() {
+  asPost('/api/account-settings/data-retention',
+         { months: parseInt(document.getElementById('as-retention').value, 10) || 0 },
+         'as-data-status', 'Saved');
+}
+
+function saveLoginNotify() {
+  asPost('/api/account-settings/login-notify',
+         { enabled: document.getElementById('as-login-notify').checked },
+         'as-data-status', 'Saved');
+}
+
+function saveMarketingOptOut() {
+  asPost('/api/account-settings/marketing-opt-out',
+         { opted_out: !document.getElementById('as-marketing').checked },
+         'as-data-status', 'Saved');
+}
 
 function saveAlertSettings() {
   var smsOn = document.getElementById('al-via-sms').checked;

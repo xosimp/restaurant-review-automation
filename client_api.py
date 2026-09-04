@@ -3930,3 +3930,189 @@ def get_notifications(current_user):
 # ── Ryan seed (module-level — runs under Gunicorn AND direct python) ─────────
 
 
+
+
+# ── Shared account settings (web + iOS) ────────────────────────────────────────
+#
+# These five settings were built iOS-first and had no web equivalent, which
+# left web-only users unable to see or change behaviour that was running for
+# them regardless — the auto-approve rule in particular publishes review
+# replies on their behalf from a scheduled job. The handlers live here (the
+# import direction is mobile_api -> client_api) so both surfaces run the
+# same code and can't drift apart again.
+
+def log_account_event(restaurant_id, event_type, current_user=None, detail=None):
+    """Account activity log (Account -> Security -> Account activity).
+    Shared so a change made on the web is recorded identically to one made
+    in the app — mobile_api._log_account_event delegates here."""
+    try:
+        from models import log_event
+        data = {"detail": detail}
+        if current_user:
+            data["actor"] = current_user.get("username")
+        log_event(restaurant_id, event_type, data)
+    except Exception:
+        pass
+
+
+def _do_auto_approve(rid, data, current_user=None):
+    """The one rule: drafted 5-star responses get approved (and posted, when
+    Google is connected) without waiting — capped per day, with a kill
+    switch. Runs inside the daily fetch (scheduler.auto_approve_five_stars)."""
+    cap = (data or {}).get("daily_cap", 5)
+    try:
+        cap = max(1, min(50, int(cap)))
+    except Exception:
+        cap = 5
+    enabled = bool((data or {}).get("enabled"))
+    paused = bool((data or {}).get("paused"))
+    update_restaurant(rid, {
+        "auto_approve_5star": int(enabled),
+        "auto_approve_daily_cap": cap,
+        "auto_approve_paused": int(paused),
+    })
+    log_account_event(rid, "auto_approve_changed", current_user,
+                      detail=("on" if enabled else "off") + (", paused" if paused else "") + f", cap {cap}/day")
+    return {"ok": True}, 200
+
+
+_ACCOUNT_DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+def _do_account_hours(rid, data, current_user=None):
+    """Open/close time per day plus closure dates. close_times_json already
+    drove schedule generation (shift_end hard cap); open_times_json too."""
+    import json as _json_h
+
+    def _clean_times(raw):
+        out = {}
+        for day in _ACCOUNT_DAYS:
+            v = (raw or {}).get(day)
+            if isinstance(v, str) and v.strip():
+                out[day] = v.strip()[:12]
+        return _json_h.dumps(out) if out else None
+
+    closures = (data or {}).get("closures") or []
+    if not isinstance(closures, list):
+        closures = []
+    closures = sorted({str(c).strip()[:10] for c in closures if str(c).strip()})[:60]
+    update_restaurant(rid, {
+        "open_times_json": _clean_times((data or {}).get("open")),
+        "close_times_json": _clean_times((data or {}).get("close")),
+        "skip_holidays": ",".join(closures) or None,
+    })
+    log_account_event(rid, "hours_changed", current_user)
+    return {"ok": True}, 200
+
+
+def _do_data_retention(rid, data, current_user=None):
+    """0 = keep everything; otherwise reviews older than N months are
+    soft-deleted by the nightly job (models.purge_expired_reviews)."""
+    try:
+        months = int((data or {}).get("months", 0))
+    except Exception:
+        months = 0
+    if months not in (0, 6, 12, 24, 36):
+        return {"ok": False, "error": "Choose keep everything, or 6, 12, 24 or 36 months."}, 400
+    update_restaurant(rid, {"data_retention_months": months})
+    log_account_event(rid, "data_retention_changed", current_user,
+                      detail=f"{months} months" if months else "keep everything")
+    return {"ok": True}, 200
+
+
+def _do_marketing_opt_out(rid, data, current_user=None):
+    """Gates only the non-critical automated sends (onboarding drip, monthly
+    summary) at their scheduler.py call sites — security/transactional email
+    (2FA, login notify, password/email-changed, welcome) is never affected."""
+    opted_out = bool((data or {}).get("opted_out"))
+    update_restaurant(rid, {"marketing_emails_opt_out": int(opted_out)})
+    log_account_event(rid, "marketing_emails_changed", current_user,
+                      detail="off" if opted_out else "on")
+    return {"ok": True}, 200
+
+
+def _do_login_notify(rid, data, current_user=None):
+    enabled = bool((data or {}).get("enabled"))
+    update_restaurant(rid, {"login_notify": int(enabled)})
+    log_account_event(rid, "login_notify_changed", current_user,
+                      detail="on" if enabled else "off")
+    return {"ok": True}, 200
+
+
+def _account_settings_payload(rid):
+    """Everything the web Account panel needs to render these five settings."""
+    import json as _json_s
+    r = get_restaurant(rid)
+    if not r:
+        return {"ok": False, "error": "Restaurant not found"}, 404
+
+    def _times(raw):
+        try:
+            return _json_s.loads(raw) if raw else {}
+        except Exception:
+            return {}
+
+    closures = [c for c in (getattr(r, "skip_holidays", "") or "").split(",") if c.strip()]
+    return {
+        "ok": True,
+        "auto_approve": {
+            "enabled": bool(getattr(r, "auto_approve_5star", 0)),
+            "daily_cap": int(getattr(r, "auto_approve_daily_cap", 5) or 5),
+            "paused": bool(getattr(r, "auto_approve_paused", 0)),
+        },
+        "hours": {
+            "open": _times(getattr(r, "open_times_json", None)),
+            "close": _times(getattr(r, "close_times_json", None)),
+            "closures": closures,
+        },
+        "data_retention_months": int(getattr(r, "data_retention_months", 0) or 0),
+        "marketing_emails_opt_out": bool(getattr(r, "marketing_emails_opt_out", 0)),
+        "login_notify": bool(getattr(r, "login_notify", 0)),
+    }, 200
+
+
+@client_bp.route("/api/account-settings")
+@login_required
+def get_account_settings(current_user):
+    payload, status = _account_settings_payload(current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/account-settings/auto-approve", methods=["POST"])
+@login_required
+def save_auto_approve(current_user):
+    payload, status = _do_auto_approve(current_user["restaurant_id"],
+                                       request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/account-settings/hours", methods=["POST"])
+@login_required
+def save_account_hours(current_user):
+    payload, status = _do_account_hours(current_user["restaurant_id"],
+                                        request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/account-settings/data-retention", methods=["POST"])
+@login_required
+def save_data_retention(current_user):
+    payload, status = _do_data_retention(current_user["restaurant_id"],
+                                         request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/account-settings/marketing-opt-out", methods=["POST"])
+@login_required
+def save_marketing_opt_out(current_user):
+    payload, status = _do_marketing_opt_out(current_user["restaurant_id"],
+                                            request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/account-settings/login-notify", methods=["POST"])
+@login_required
+def save_login_notify(current_user):
+    payload, status = _do_login_notify(current_user["restaurant_id"],
+                                       request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status

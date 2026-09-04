@@ -83,15 +83,10 @@ def _login_report_url(user_id: int) -> str:
 
 
 def _log_account_event(restaurant_id, event_type, current_user=None, detail=None):
-    """Account activity log (Account -> Security -> Account activity)."""
-    try:
-        from models import log_event
-        data = {"detail": detail}
-        if current_user:
-            data["actor"] = current_user.get("username")
-        log_event(restaurant_id, event_type, data)
-    except Exception:
-        pass
+    """Account activity log (Account -> Security -> Account activity).
+    Thin delegate — the implementation is shared with the web routes so a
+    change made in either surface is recorded identically."""
+    _capi.log_account_event(restaurant_id, event_type, current_user, detail)
 
 
 _APPLE_JWKS_URL = "https://appleid.apple.com/auth/keys"
@@ -2970,25 +2965,19 @@ def mobile_regenerate_backup_codes(current_user):
 @mobile_bp.route("/account/login-notify", methods=["POST"])
 @mobile_login_required
 def mobile_toggle_login_notify(current_user):
-    data = request.get_json() or {}
-    update_restaurant(current_user["restaurant_id"], {"login_notify": int(bool(data.get("enabled")))})
-    _log_account_event(current_user["restaurant_id"], "login_notify_changed", current_user,
-                       detail="on" if data.get("enabled") else "off")
-    return jsonify(ok=True)
+    """See client_api._do_login_notify."""
+    payload, status = _capi._do_login_notify(current_user["restaurant_id"],
+                                             request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/account/marketing-opt-out", methods=["POST"])
 @mobile_login_required
 def mobile_toggle_marketing_opt_out(current_user):
-    """Gates only the non-critical automated sends (onboarding drip,
-    monthly summary) at their scheduler.py call sites — security/
-    transactional email (2FA, login notify, password/email-changed,
-    welcome) is never affected by this flag."""
-    data = request.get_json() or {}
-    update_restaurant(current_user["restaurant_id"], {"marketing_emails_opt_out": int(bool(data.get("opted_out")))})
-    _log_account_event(current_user["restaurant_id"], "marketing_emails_changed", current_user,
-                       detail="off" if data.get("opted_out") else "on")
-    return jsonify(ok=True)
+    """See client_api._do_marketing_opt_out."""
+    payload, status = _capi._do_marketing_opt_out(current_user["restaurant_id"],
+                                                  request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/account/team")
@@ -3398,72 +3387,29 @@ def mobile_remove_recovery_email(current_user):
 @mobile_bp.route("/account/auto-approve", methods=["POST"])
 @mobile_login_required
 def mobile_auto_approve(current_user):
-    """The one rule: drafted 5-star responses get approved (and posted, when
-    Google is connected) without waiting — capped per day, with a kill
-    switch. Runs inside the daily fetch (scheduler.auto_approve_five_stars)."""
-    data = request.get_json() or {}
-    cap = data.get("daily_cap", 5)
-    try:
-        cap = max(1, min(50, int(cap)))
-    except Exception:
-        cap = 5
-    rid = current_user["restaurant_id"]
-    update_restaurant(rid, {
-        "auto_approve_5star": int(bool(data.get("enabled"))),
-        "auto_approve_daily_cap": cap,
-        "auto_approve_paused": int(bool(data.get("paused"))),
-    })
-    _log_account_event(rid, "auto_approve_changed", current_user,
-                       detail=("on" if data.get("enabled") else "off") + (", paused" if data.get("paused") else "") + f", cap {cap}/day")
-    return jsonify(ok=True)
+    """See client_api._do_auto_approve — shared with the web route so the
+    rule can't mean two different things depending on where it was set."""
+    payload, status = _capi._do_auto_approve(current_user["restaurant_id"],
+                                             request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
 
-
-_DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 @mobile_bp.route("/account/hours", methods=["POST"])
 @mobile_login_required
 def mobile_hours(current_user):
-    """Open/close time per day plus closure dates. close_times_json already
-    drove schedule generation (shift_end hard cap); open_times_json is new."""
-    import json as _json_h
-    data = request.get_json() or {}
-    def _clean_times(raw):
-        out = {}
-        for day in _DAYS:
-            v = (raw or {}).get(day)
-            if isinstance(v, str) and v.strip():
-                out[day] = v.strip()[:12]
-        return _json_h.dumps(out) if out else None
-    closures = data.get("closures") or []
-    if not isinstance(closures, list):
-        closures = []
-    closures = sorted({str(c).strip()[:10] for c in closures if str(c).strip()})[:60]
-    rid = current_user["restaurant_id"]
-    update_restaurant(rid, {
-        "open_times_json": _clean_times(data.get("open")),
-        "close_times_json": _clean_times(data.get("close")),
-        "skip_holidays": ",".join(closures) or None,
-    })
-    _log_account_event(rid, "hours_changed", current_user)
-    return jsonify(ok=True)
+    """See client_api._do_account_hours."""
+    payload, status = _capi._do_account_hours(current_user["restaurant_id"],
+                                              request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/account/data-retention", methods=["POST"])
 @mobile_login_required
 def mobile_data_retention(current_user):
-    """0 = keep everything; otherwise reviews older than N months are
-    soft-deleted by the nightly job (models.purge_expired_reviews)."""
-    data = request.get_json() or {}
-    try:
-        months = int(data.get("months", 0))
-    except Exception:
-        months = 0
-    if months not in (0, 6, 12, 24, 36):
-        return jsonify(ok=False, error="Choose keep everything, or 6, 12, 24 or 36 months."), 400
-    rid = current_user["restaurant_id"]
-    update_restaurant(rid, {"data_retention_months": months})
-    _log_account_event(rid, "data_retention_changed", current_user, detail=f"{months} months" if months else "keep everything")
-    return jsonify(ok=True)
+    """See client_api._do_data_retention."""
+    payload, status = _capi._do_data_retention(current_user["restaurant_id"],
+                                               request.get_json(silent=True) or {}, current_user)
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/account/report-bug", methods=["POST"])
