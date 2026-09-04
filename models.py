@@ -853,6 +853,20 @@ def init_db(db_path: str = DB_PATH):
             summary_json    TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_schedule_history_restaurant ON schedule_history(restaurant_id, id)",
+        # Second table with the same lazy-init history as schedule_history
+        # above: it was only ever created by init_staff_availability(), so a
+        # fresh database didn't have it until something happened to call
+        # that. The staff-facing availability form depends on it existing.
+        """CREATE TABLE IF NOT EXISTS staff_availability (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id    INTEGER NOT NULL REFERENCES restaurants(id),
+            employee_name    TEXT    NOT NULL,
+            available_days   TEXT    NOT NULL DEFAULT '[]',
+            unavailable_days TEXT,
+            notes            TEXT,
+            updated_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(restaurant_id, employee_name)
+        )""",
         # Where to reach each member of staff. Employees are identified by
         # NAME throughout this app (they come from POS shift data, not a
         # roster we own — see staff_availability/staff_notes, keyed the same

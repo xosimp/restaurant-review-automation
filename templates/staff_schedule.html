@@ -31,6 +31,22 @@
   .total b{font-size:20px;color:var(--ink)}
   .empty{background:var(--card);border:1px solid var(--line);border-radius:12px;
          padding:22px 18px;color:var(--ink2);font-size:15px;line-height:1.55}
+  .avail{margin-top:30px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 16px}
+  .avail-title{font-size:15px;font-weight:700;margin-bottom:4px}
+  .avail-note{font-size:13px;color:var(--ink3);line-height:1.5;margin:0 0 14px}
+  .days{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+  .day{position:relative}
+  .day input{position:absolute;opacity:0;width:0;height:0}
+  .day span{display:block;min-width:46px;text-align:center;padding:9px 6px;border-radius:9px;
+            border:1px solid var(--line);background:#101010;color:var(--ink2);
+            font-size:13px;font-weight:600;cursor:pointer;user-select:none}
+  .day input:checked + span{background:var(--ember);border-color:var(--ember);color:#fff}
+  .day input:focus-visible + span{outline:2px solid var(--ember2);outline-offset:2px}
+  .avail-input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:9px;border:1px solid var(--line);
+        background:#101010;color:var(--ink);font-size:14px;font-family:inherit;margin-bottom:12px}
+  .avail button{width:100%;padding:12px;border:none;border-radius:9px;background:var(--ember);
+                color:#fff;font-size:15px;font-weight:700;font-family:inherit;cursor:pointer}
+  .saved{margin-top:10px;font-size:13.5px;color:#4ead7a;font-weight:600;text-align:center}
   footer{margin-top:32px;color:var(--ink3);font-size:12px;line-height:1.6;text-align:center}
 </style>
 </head>
@@ -53,6 +69,23 @@
   {% else %}
     <div class="empty">You're not scheduled for any shifts this week.</div>
   {% endif %}
+
+  <form class="avail" method="post" action="/s/{{ token }}/availability">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="avail-title">Days you can't work</div>
+    <p class="avail-note">Tick anything you're not available for. Your manager sees this straight away, and next week's schedule is built around it.</p>
+    <div class="days">
+      {% for d in days %}
+        <label class="day{% if d in unavailable_days %} on{% endif %}">
+          <input type="checkbox" name="unavailable" value="{{ d }}"{% if d in unavailable_days %} checked{% endif %}>
+          <span>{{ d[:3] }}</span>
+        </label>
+      {% endfor %}
+    </div>
+    <input class="avail-input" type="text" name="note" maxlength="300" placeholder="Anything else? (optional)">
+    <button type="submit">Save my availability</button>
+    {% if saved %}<div class="saved">Saved — thanks, your manager has it.</div>{% endif %}
+  </form>
 
   <footer>
     This is your own schedule link — it only shows your shifts.<br>

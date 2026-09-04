@@ -39,6 +39,20 @@ def app():
     return flask_app
 
 
+def _submit_availability(client, token, days, note="", extra=None):
+    """Mirrors what the page's own form sends, including the double-submit
+    CSRF pair (cookie + hidden field) — see staff_schedule_page's comment
+    on why the route isn't exempted from CSRF. A MultiDict, because
+    `unavailable` is a repeated field."""
+    from werkzeug.datastructures import MultiDict
+    client.set_cookie("csrf_js", "tok-for-test", domain="localhost")
+    items = [("unavailable", d) for d in days]
+    items.append(("note", note))
+    items.append(("csrf_token", "tok-for-test"))
+    items.extend(extra or [])
+    return client.post(f"/s/{token}/availability", data=MultiDict(items))
+
+
 @pytest.fixture
 def client(app):
     return app.test_client()
@@ -152,3 +166,72 @@ def test_employee_extraction_is_whitespace_and_case_insensitive():
     assert labor.employees_in_schedule(SCHEDULE_CSV) == ["Marcus T.", "Sofia R."]
     assert labor.employee_shifts_from_csv(SCHEDULE_CSV, "Nobody") == []
     assert labor.employee_shifts_from_csv("", "Sofia R.") == []
+
+
+
+# ── Staff availability self-service ────────────────────────────────────────
+
+def test_staff_can_submit_the_days_they_cannot_work(client, db_path):
+    rid = _restaurant(db_path)
+    sid = _schedule(db_path, rid)
+    token = models.create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
+
+    resp = _submit_availability(client, token, ["Tuesday", "Sunday"], "Class on Tuesdays")
+    assert resp.status_code in (302, 303)
+
+    rows = models.get_staff_availability(rid, db_path=db_path)
+    row = next(r for r in rows if r["employee_name"] == "Sofia R.")
+    import json
+    assert json.loads(row["unavailable_days"]) == ["Tuesday", "Sunday"]
+    assert row["notes"] == "Class on Tuesdays"
+
+
+def test_the_form_comes_back_pre_ticked(client, db_path):
+    rid = _restaurant(db_path)
+    sid = _schedule(db_path, rid)
+    token = models.create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
+    _submit_availability(client, token, ["Tuesday"])
+    body = client.get(f"/s/{token}").get_data(as_text=True)
+    assert 'value="Tuesday" checked' in body
+    assert 'value="Monday" checked' not in body
+
+
+def test_the_employee_name_comes_from_the_token_not_the_form(client, db_path):
+    """Otherwise anyone with one link could rewrite a colleague's
+    availability."""
+    rid = _restaurant(db_path)
+    sid = _schedule(db_path, rid)
+    token = models.create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
+
+    _submit_availability(client, token, ["Monday"],
+                         extra=[("employee_name", "Marcus T.")])   # forged — must be ignored
+    names = [r["employee_name"] for r in models.get_staff_availability(rid, db_path=db_path)]
+    assert names == ["Sofia R."]
+
+
+def test_only_real_day_names_are_accepted(client, db_path):
+    rid = _restaurant(db_path)
+    sid = _schedule(db_path, rid)
+    token = models.create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
+    _submit_availability(client, token, ["Tuesday", "Funday", "'; DROP TABLE staff_availability;--"])
+    import json
+    row = models.get_staff_availability(rid, db_path=db_path)[0]
+    assert json.loads(row["unavailable_days"]) == ["Tuesday"]
+
+
+def test_availability_submission_needs_a_valid_token(client, db_path):
+    resp = _submit_availability(client, "not-a-real-token", ["Monday"])
+    assert resp.status_code == 404
+
+
+def test_the_page_issues_a_csrf_token_on_the_very_first_visit(client, db_path):
+    """The form is a plain POST, so it can't use the dashboard's fetch
+    wrapper — without this the first submission a staff member ever makes
+    would be rejected."""
+    rid = _restaurant(db_path)
+    sid = _schedule(db_path, rid)
+    token = models.create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
+    resp = client.get(f"/s/{token}")
+    body = resp.get_data(as_text=True)
+    assert 'name="csrf_token"' in body
+    assert "csrf_js" in resp.headers.get("Set-Cookie", "")

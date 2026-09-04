@@ -2,7 +2,7 @@
 client_api.py — Client-facing API routes and data endpoints
 Registered as a Flask Blueprint in hosted_dashboard.py
 """
-from flask import Blueprint, request, jsonify, redirect, send_file, Response, render_template
+from flask import Blueprint, request, jsonify, redirect, send_file, Response, render_template, make_response
 import os, json, re
 from datetime import datetime
 
@@ -3952,9 +3952,38 @@ def staff_schedule_page(token):
     if not share:
         return "This schedule link isn't valid. Ask your manager for a new one.", 404
 
+    from models import get_staff_availability
+    import json as _json_av
+
     shifts = employee_shifts_from_csv(share.get("schedule_csv") or "", share["employee_name"])
     mark_schedule_share_viewed(token)
-    return render_template(
+
+    # Whatever they last told us, so the form comes back pre-ticked rather
+    # than making them re-enter it every week.
+    unavailable = []
+    for row in get_staff_availability(share["restaurant_id"]):
+        if (row.get("employee_name") or "").strip().lower() == share["employee_name"].strip().lower():
+            try:
+                unavailable = _json_av.loads(row.get("unavailable_days") or "[]")
+            except Exception:
+                unavailable = []
+            break
+
+    # The availability form below is a plain HTML POST, not a fetch, so it
+    # can't use the dashboard's fetch wrapper to supply the CSRF header —
+    # it echoes the same csrf_js cookie back as a hidden field instead
+    # (csrf.py's _token_from_request accepts that form fallback). On a
+    # first visit the cookie hasn't been issued yet (ensure_csrf_cookie
+    # runs after_request), so mint it here and set it on this response,
+    # otherwise the very first submission a staff member makes would be
+    # rejected. Exempting the route was the alternative and is strictly
+    # worse: the token is what stops a third-party page from posting
+    # availability on someone's behalf.
+    import secrets as _secrets_csrf
+    from csrf import CSRF_COOKIE as _CSRF_COOKIE
+
+    csrf_token = request.cookies.get(_CSRF_COOKIE) or _secrets_csrf.token_urlsafe(32)
+    response = make_response(render_template(
         "staff_schedule.html",
         restaurant_name=share.get("restaurant_name") or "",
         employee_name=share["employee_name"],
@@ -3962,7 +3991,64 @@ def staff_schedule_page(token):
         week_end=share.get("week_end") or "",
         shifts=shifts,
         total_hours=round(sum(s["hours"] for s in shifts), 1),
-    )
+        token=token,
+        days=DAY_NAMES,
+        unavailable_days=unavailable,
+        saved=request.args.get("saved") == "1",
+        csrf_token=csrf_token,
+    ))
+    if not request.cookies.get(_CSRF_COOKIE):
+        response.set_cookie(_CSRF_COOKIE, csrf_token, max_age=30 * 24 * 3600,
+                            httponly=False, secure=bool(os.getenv("RAILWAY_ENVIRONMENT")),
+                            samesite="Lax")
+    return response
+
+
+DAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+@client_bp.route("/s/<token>/availability", methods=["POST"])
+def staff_availability_submit(token):
+    """Staff tell the schedule when they can't work, from the same link.
+
+    This closes a real loop: staff_availability is already a HARD
+    constraint in schedule generation (see labor.py's EMPLOYEE AVAILABILITY
+    block), so what someone submits here genuinely shapes next week's
+    schedule instead of going to a manager to be re-typed.
+
+    Authorised by the same per-person token as the page itself, and it can
+    only ever write that one person's row — the employee name comes from
+    the token, never from the form, so a submitted name can't be forged.
+    """
+    from models import get_schedule_share, save_staff_availability, get_staff_availability
+    from ai_utils import ai_rate_limited
+    import json as _json_av
+
+    share = get_schedule_share(token)
+    if not share:
+        return "This link isn't valid. Ask your manager for a new one.", 404
+
+    ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr or "unknown"
+    if ai_rate_limited(f"staffavail:{ip}", max_calls=20, window_secs=300):
+        return "Too many updates just now — try again in a few minutes.", 429
+
+    submitted = [d for d in request.form.getlist("unavailable") if d in DAY_NAMES]
+    note = (request.form.get("note") or "").strip()[:300]
+
+    # Preserve whatever available_days the manager may have set; this form
+    # only speaks to the days someone CAN'T work.
+    existing_available = []
+    for row in get_staff_availability(share["restaurant_id"]):
+        if (row.get("employee_name") or "").strip().lower() == share["employee_name"].strip().lower():
+            try:
+                existing_available = _json_av.loads(row.get("available_days") or "[]")
+            except Exception:
+                existing_available = []
+            break
+
+    save_staff_availability(share["restaurant_id"], share["employee_name"],
+                            existing_available, submitted, note or None)
+    return redirect(f"/s/{token}?saved=1")
 
 
 # ── Shared account settings (web + iOS) ────────────────────────────────────────
