@@ -5,9 +5,10 @@ import SwiftUI
 /// Top to bottom: the hero line (the date, "{name} — your restaurant is
 /// running on AI.", and what Cavnar did overnight), the pulse strip of
 /// breathing module chips, the action deck led by the one thing to tap,
-/// the value-delivered band, the module tiles, and a "this week" receipt.
-/// Everything sits on HomeObsidianField — black stone with light moving
-/// across it — instead of the old ember aurora.
+/// the value-delivered band, and a "this week" receipt. No module tiles
+/// here — that's the Modules tab's job, not Home's. Everything sits on
+/// HomeObsidianField — black stone with light moving across it — instead
+/// of the old ember aurora.
 struct HomeView: View {
     @Environment(SessionStore.self) private var sessionStore
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
@@ -92,16 +93,11 @@ struct HomeView: View {
                             .padding(.top, 24)
                             .belowFold(heroAppeared, delay: 0.45)
 
-                            modulesSection(summary)
-                                .padding(.horizontal, 20)
-                                .padding(.top, 30)
-                                .belowFold(heroAppeared, delay: 0.5)
-
                             if let receipts = summary.weeklyReceipts, !receipts.isEmpty {
                                 HomeWeeklyReceipts(receipts: receipts)
                                     .padding(.horizontal, 20)
                                     .padding(.top, 30)
-                                    .belowFold(heroAppeared, delay: 0.55)
+                                    .belowFold(heroAppeared, delay: 0.5)
                             }
 
                             // Clears the FAB's reserved band above the tab
@@ -182,7 +178,12 @@ struct HomeView: View {
                     } label: {
                         Image(systemName: "bell")
                             .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(Color.cavnarEmber)
+                            // cavnarEmber2, not the deeper cavnarEmber — this
+                            // is Home's header, and the header's other orange
+                            // (the greeting name, the section kickers) is all
+                            // Ember2; a bell in the darker token read as an
+                            // off-brand mismatch next to them.
+                            .foregroundStyle(Color.cavnarEmber2)
                             .cavnarToolbarIconGlass()
                             .overlay(alignment: .topTrailing) {
                                 if notificationsBadge.unreadCount > 0 {
@@ -202,7 +203,10 @@ struct HomeView: View {
                         } label: {
                             Image(systemName: "building.2")
                                 .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(Color.cavnarEmber)
+                                // See the bell above — matches the header's
+                                // other orange (name, kickers), not the
+                                // darker cavnarEmber.
+                                .foregroundStyle(Color.cavnarEmber2)
                                 .cavnarToolbarIconGlass()
                         }
                         .buttonStyle(.plain)
@@ -359,23 +363,6 @@ struct HomeView: View {
             .cavnarPostedOverlay(postedLabel) { postedLabel = nil }
         }
     }
-
-    private func modulesSection(_ summary: HomeSummary) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HomeSectionHeader(kicker: "Your modules", title: "Everything Cavnar runs",
-                              trailing: "\(summary.modules.filter(\.isAvailable).count) active")
-            HomeModuleGrid(modules: summary.modules, comingSoon: Self.comingSoonModules) { module in
-                navigate(to: ModuleRoute(key: module.key, label: module.label))
-            }
-        }
-    }
-
-    // Always-shown placeholders for modules that aren't a real, backend-
-    // gated feature yet — the same two the Modules tab lists.
-    private static let comingSoonModules: [ModuleSummary] = [
-        ModuleSummary(key: "waitlist", label: "Waitlist & Reservations", icon: "waitlist", status: "coming_soon", kpi: nil),
-        ModuleSummary(key: "bar", label: "Bar & Alcohol", icon: "bar", status: "coming_soon", kpi: nil),
-    ]
 
     private var valueDetailSheet: some View {
         NavigationStack {
