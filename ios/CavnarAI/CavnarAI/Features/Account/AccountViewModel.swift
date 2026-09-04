@@ -255,9 +255,9 @@ final class AccountViewModel {
     // overlay only fires on a real success (see cavnarPostedOverlay's own
     // doc comment), never optimistically, so a caller needs this instead
     // of just firing-and-forgetting.
-    @discardableResult
     var isTogglingLoginNotify = false
 
+    @discardableResult
     func toggleLoginNotify(_ enabled: Bool) async -> Bool {
         isTogglingLoginNotify = true
         defer { isTogglingLoginNotify = false }
