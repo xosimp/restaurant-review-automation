@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from models import init_db, create_restaurant, get_restaurant, Restaurant
-from fetcher import fetch_google, fetch_yelp, ingest_csv, save_reviews
+from fetcher import fetch_google, ingest_csv, save_reviews
 from analyser import analyse_pending
 from drafter import draft_pending
 from reporter import build_report, send_digest, print_console_report
@@ -73,8 +73,6 @@ def run_daily(restaurant_id: int):
     reviews = []
     if GOOGLE_PLACE_ID:
         reviews += fetch_google(GOOGLE_PLACE_ID, restaurant_id)
-    if YELP_BUSINESS_ID:
-        reviews += fetch_yelp(YELP_BUSINESS_ID, restaurant_id)
     new, _ = save_reviews(reviews)
     print(f"  {new} new reviews saved")
     analyse_pending(restaurant_id)

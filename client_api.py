@@ -8,7 +8,7 @@ from datetime import datetime
 
 from models import (get_conn, get_restaurant, update_restaurant, approve_response,
                     get_review_stats, get_reviews_data, get_sentiment_trend,
-                    get_top_issues, get_platform_breakdown, get_topic_heatmap)
+                    get_top_issues, get_topic_heatmap)
 from auth import login_required
 
 client_bp = Blueprint('client', __name__)

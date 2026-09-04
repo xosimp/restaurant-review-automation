@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 from models import Review, save_reviews
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-YELP_API_KEY   = os.getenv("YELP_API_KEY")
 
 
 def fetch_google(place_id: str, restaurant_id: int) -> list[Review]:
@@ -20,20 +19,6 @@ def fetch_google(place_id: str, restaurant_id: int) -> list[Review]:
         rating=r.get("rating", 0), text=r.get("text", ""),
         review_date=datetime.fromtimestamp(r["time"]).astimezone(__import__('zoneinfo').ZoneInfo('America/Chicago')).strftime('%Y-%m-%dT%H:%M:%S'),
     ) for r in raw]
-
-
-def fetch_yelp(business_id: str, restaurant_id: int) -> list[Review]:
-    url = f"https://api.yelp.com/v3/businesses/{business_id}/reviews"
-    headers = {"Authorization": f"Bearer {YELP_API_KEY}"}
-    resp = requests.get(url, headers=headers,
-                        params={"limit": 50, "sort_by": "date_desc"}, timeout=10)
-    resp.raise_for_status()
-    return [Review(
-        restaurant_id=restaurant_id, platform="yelp",
-        external_id=r["id"], author=r["user"]["name"],
-        rating=r["rating"], text=r["text"],
-        review_date=r["time_created"],
-    ) for r in resp.json().get("reviews", [])]
 
 
 def ingest_csv(path: str, restaurant_id: int) -> list[Review]:

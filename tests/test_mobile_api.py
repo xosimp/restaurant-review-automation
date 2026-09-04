@@ -1867,20 +1867,6 @@ def test_delete_review_marks_deleted_at_and_scoped_to_own_restaurant(client, db_
 
 # ── /mobile/api/reviews/response-performance, topic-heatmap, sentiment-trend
 
-def test_platform_breakdown_requires_auth(client):
-    resp = client.get("/mobile/api/reviews/platform-breakdown")
-    assert resp.status_code == 401
-
-
-def test_platform_breakdown_returns_ok(client, db_path):
-    rid = _restaurant(db_path)
-    token = _login(client, db_path, rid)
-    resp = client.get("/mobile/api/reviews/platform-breakdown", headers=_auth_headers(token))
-    data = resp.get_json()
-    assert data["ok"] is True
-    assert data["data"] == []
-
-
 def test_response_performance_requires_auth(client):
     resp = client.get("/mobile/api/reviews/response-performance")
     assert resp.status_code == 401

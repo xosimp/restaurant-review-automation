@@ -31,7 +31,7 @@ from emails import send_payment_email, send_welcome_email
 from models import (init_db, get_conn, approve_response,
                     get_reviews_since, get_restaurant,
                     get_review_stats, get_reviews_data, get_top_issues,
-                    get_platform_breakdown, get_sentiment_trend, is_full_tier,
+                    get_sentiment_trend, is_full_tier,
                     get_active_modules, TIER_LABELS)
 from auth import (init_auth, verify_password, create_session,
                   get_session_user, delete_session, create_user,
@@ -369,7 +369,6 @@ def index(current_user):
     rstats     = get_review_stats(rid)
     reviews    = get_reviews_data(rid, rfilter, rsearch)
     top_issues        = get_top_issues(rid, days=90)
-    platform_breakdown = get_platform_breakdown(rid)
     sentiment_trend    = get_sentiment_trend(rid, weeks=8)
     try:
         labor = analyse_shifts_for_restaurant(rid)
@@ -650,7 +649,7 @@ def index(current_user):
         csrf_token=csrf_token,
         current_user=current_user, restaurant=restaurant,
         group_locations=_group_locations,
-        rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch, top_issues=top_issues, platform_breakdown=platform_breakdown, sentiment_trend=sentiment_trend,
+        rstats=rstats, reviews=reviews, rfilter=rfilter, rsearch=rsearch, top_issues=top_issues, sentiment_trend=sentiment_trend,
         labor=labor, inv=inv, ctypes=CONTENT_TYPES,
         mod_reviews=int(restaurant.module_reviews or 0),
         mod_labor=int(restaurant.module_labor or 0),

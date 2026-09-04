@@ -3,7 +3,6 @@ import SwiftUI
 struct ReviewsAnalyticsSection: View {
     let viewModel: ReviewsAnalyticsViewModel
 
-    @State private var selectedPlatform: PlatformBreakdown?
     @State private var selectedTopic: TopicWeekRow?
 
     // Each section shows its own skeleton while it's individually still in
@@ -16,12 +15,6 @@ struct ReviewsAnalyticsSection: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                if !viewModel.platforms.isEmpty {
-                    platformSection
-                } else if viewModel.isLoading {
-                    platformSkeleton
-                }
-
                 if let performance = viewModel.performance {
                     ResponseRingsChart(performance: performance)
                 } else if viewModel.isLoading {
@@ -51,9 +44,6 @@ struct ReviewsAnalyticsSection: View {
             }
             .padding(20)
         }
-        .navigationDestination(item: $selectedPlatform) { platform in
-            FilteredReviewsView(title: platform.platform.capitalized, platform: platform.platform)
-        }
         .navigationDestination(item: $selectedTopic) { topic in
             FilteredReviewsView(title: topic.label, category: topic.category)
         }
@@ -71,24 +61,6 @@ struct ReviewsAnalyticsSection: View {
                         CavnarSkeletonBar(height: 10, widthFraction: 0.8)
                     }
                     .frame(maxWidth: .infinity)
-                }
-            }
-        }
-    }
-
-    private var platformSkeleton: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            CavnarSkeletonBar(height: 11, widthFraction: 0.3)
-            HStack(spacing: 12) {
-                ForEach(0..<2, id: \.self) { _ in
-                    VStack(alignment: .leading, spacing: 10) {
-                        CavnarSkeletonBar(height: 11, widthFraction: 0.5)
-                        CavnarSkeletonBar(height: 10, widthFraction: 0.6)
-                        CavnarSkeletonBar(height: 26, widthFraction: 0.4)
-                        CavnarSkeletonBar(height: 11, widthFraction: 0.7)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .cavnarGlassCard()
                 }
             }
         }
@@ -130,91 +102,6 @@ struct ReviewsAnalyticsSection: View {
         // otherwise the skeleton pops from boxed to unboxed the instant
         // real data arrives.
     }
-
-    // MARK: - Platform breakdown
-
-    private var platformSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("By platform")
-                .font(.cavnarBody(14, weight: 700))
-                .foregroundStyle(Color.cavnarInk3)
-            HStack(spacing: 12) {
-                ForEach(viewModel.platforms) { platform in
-                    platformCard(platform)
-                        .contentShape(Rectangle())
-                        .onTapGesture { selectedPlatform = platform }
-                }
-            }
-        }
-    }
-
-    private func platformCard(_ platform: PlatformBreakdown) -> some View {
-        let ratings = viewModel.platforms.map(\.avgRating)
-        let isStrongest = viewModel.platforms.count > 1 && platform.avgRating == ratings.max()
-        let isWeakest = viewModel.platforms.count > 1 && platform.avgRating == ratings.min() && !isStrongest
-
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(platform.platform.uppercased())
-                    .font(.cavnarBody(14, weight: 700))
-                    .tracking(0.8)
-                    .foregroundStyle(Color.cavnarInk2)
-                Spacer()
-                if isStrongest {
-                    Text("Strongest")
-                        .font(.cavnarBody(13.5, weight: 700))
-                        .foregroundStyle(Color.cavnarGreen)
-                } else if isWeakest {
-                    Text("Needs attention")
-                        .font(.cavnarBody(13.5, weight: 700))
-                        .foregroundStyle(Color.cavnarRed)
-                }
-            }
-
-            Text("\(platform.total) reviews")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
-
-            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(String(format: "%.1f", platform.avgRating))
-                    .font(.cavnarNumber(26, weight: 600))
-                    .foregroundStyle(Color.cavnarInk)
-                    .cavnarNumberGlow()
-                Image(systemName: "star.fill")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Color.cavnarAmber)
-            }
-
-            HStack(spacing: 12) {
-                Label("\(platform.positive)", systemImage: "arrow.up")
-                    .font(.cavnarNumber(14, weight: 600))
-                    .foregroundStyle(Color.cavnarGreen)
-                Label("\(platform.negative)", systemImage: "arrow.down")
-                    .font(.cavnarNumber(14, weight: 600))
-                    .foregroundStyle(Color.cavnarRed)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // Obsidian, not the ember glass wash — two solid orange tiles at the
-        // top of a page whose charts all sit on the quiet stage panel read
-        // as belonging to a different screen. Same surface as the chart
-        // stages; the rating number and its star carry the colour.
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
-                .fill(LinearGradient(colors: [Color(red: 0.11, green: 0.11, blue: 0.115), Color(red: 0.07, green: 0.07, blue: 0.075)], startPoint: .top, endPoint: .bottom))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
-        )
-        .overlay(alignment: .top) {
-            Rectangle().fill(LinearGradient(colors: [Color.cavnarEmber2.opacity(0.7), Color.cavnarEmber.opacity(0.1)], startPoint: .leading, endPoint: .trailing)).frame(height: 1)
-                .padding(.horizontal, 1)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous))
-    }
-
 
     // MARK: - Topic sentiment grid
 

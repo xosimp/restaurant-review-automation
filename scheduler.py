@@ -156,7 +156,7 @@ def run_daily_fetch():
     try:
         from models import get_conn, get_restaurant, save_reviews
         from models import get_pending_analysis, get_pending_drafts, update_last_fetched
-        from fetcher import fetch_google, fetch_yelp
+        from fetcher import fetch_google
         from analyser import analyse_review
         from drafter import draft_response
 
@@ -200,13 +200,6 @@ def run_daily_fetch():
                 except Exception as e:
                     log.error(f"Google fetch [{restaurant.name}]: {e}")
                     _ops.capture(e, job="review_fetch", context=f"Google {restaurant.name}")
-            if restaurant.yelp_business_id:
-                try:
-                    reviews += fetch_yelp(restaurant.yelp_business_id, rid)
-                except Exception as e:
-                    log.error(f"Yelp fetch [{restaurant.name}]: {e}")
-                    _ops.capture(e, job="review_fetch", context=f"Yelp {restaurant.name}")
-
             update_last_fetched(rid)
 
             if not reviews:

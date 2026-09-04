@@ -1009,7 +1009,7 @@ def fetch_reviews_now(restaurant_id, current_user):
     if not restaurant:
         return jsonify(ok=False, error="Restaurant not found")
 
-    from fetcher import fetch_google, fetch_yelp, save_reviews
+    from fetcher import fetch_google, save_reviews
     reviews = []
     errors = []
 
@@ -1054,12 +1054,6 @@ def fetch_reviews_now(restaurant_id, current_user):
                 reviews += fetch_google(restaurant.google_place_id, restaurant_id)
             except Exception as e:
                 errors.append(f"Google: {e}")
-
-        if restaurant.yelp_business_id and restaurant.reviews_live:
-            try:
-                reviews += fetch_yelp(restaurant.yelp_business_id, restaurant_id)
-            except Exception as e:
-                errors.append(f"Yelp: {e}")
 
     if not reviews and not errors:
         return jsonify(ok=False, error="No platform IDs configured, reviews_live is off, and GMB not connected")

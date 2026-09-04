@@ -531,7 +531,7 @@ async function resendPayment(restaurantId, email, billing) {
 }
 
 async function fetchReviewsNow(rid){
-  if(!confirm('Fetch latest reviews from Google/Yelp for this restaurant?')) return;
+  if(!confirm('Fetch latest reviews from Google for this restaurant?')) return;
   const btn = event.target;
   btn.textContent = 'Fetching...'; btn.disabled = true;
   try {

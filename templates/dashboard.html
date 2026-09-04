@@ -265,16 +265,9 @@ html:not([data-theme="dark"]) :where(.dark-hero-card,.dark-hero-card *,.dark-ins
 /* Loading skeleton bars — semi-transparent white is invisible on light cards */
 html:not([data-theme="dark"]) .skeleton{background:rgba(20,15,10,.12)!important}
 
-/* Platform breakdown cards */
-.plat-card{background:var(--paper);border:1px solid var(--paper3);border-radius:8px;padding:12px 14px;cursor:pointer;transition:box-shadow .15s,border-color .15s}
 .hm-stat-tile{flex:1;text-align:center;padding:0 12px;cursor:pointer;transition:opacity 60ms}
 .hm-stat-tile:hover{opacity:.72}
 .labor-num{font-family:'Space Grotesk',sans-serif!important}
-.plat-worst{background:linear-gradient(to bottom,#f5d5d5,var(--paper));border-color:#f5c6c6}
-.plat-best{background:linear-gradient(to bottom,#d5ede0,var(--paper));border-color:#b7dfca}
-[data-theme="dark"] .plat-card{background:var(--surface)!important;border-color:var(--paper3)!important}
-[data-theme="dark"] .plat-worst{background:linear-gradient(to bottom,#2a1010,var(--surface))!important;border-color:#5a2828!important}
-[data-theme="dark"] .plat-best{background:linear-gradient(to bottom,#0c2318,var(--surface))!important;border-color:#1e4a30!important}
 /* Benchmark card gradients */
 [data-theme="dark"] [style*="background:linear-gradient(to right,#f5d5d5"]{background:linear-gradient(to right,#2a1010,var(--surface))!important}
 [data-theme="dark"] [style*="background:linear-gradient(to right,#d5ede0"]{background:linear-gradient(to right,#0c2318,var(--surface))!important}
@@ -282,11 +275,6 @@ html:not([data-theme="dark"]) .skeleton{background:rgba(20,15,10,.12)!important}
 [data-theme="dark"] [style*="background:rgba(255,255,255,.7)"]{background:rgba(255,255,255,.07)!important;color:var(--ink2)!important}
 /* Benchmark count box */
 [data-theme="dark"] [style*="background:rgba(255,255,255,.6)"]{background:rgba(255,255,255,.06)!important;color:var(--ink)!important}
-/* Platform breakdown card gradients */
-[data-theme="dark"] [style*="background:linear-gradient(to bottom,#f5d5d5"]{background:linear-gradient(to bottom,#2a1010,var(--surface))!important}
-[data-theme="dark"] [style*="background:linear-gradient(to bottom,#d5ede0"]{background:linear-gradient(to bottom,#0c2318,var(--surface))!important}
-/* Platform breakdown badges */
-[data-theme="dark"] [style*="background:#fde8e8"]{background:#2a1010!important;color:#e07055!important}
 [data-theme="dark"] [style*="background:#e8f5ee"]{background:#0c2318!important;color:#4ead7a!important}
 body{font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink);font-size:14px;line-height:1.6;min-height:100vh}
 html{background:linear-gradient(160deg,#edddd0 0%,#f2ece4 30%,#ede8df 65%,#e8e0d4 100%);background-attachment:fixed;min-height:100%}
@@ -1645,40 +1633,6 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
     <div class="review-rate-count" style="margin-top:6px;font-size:11px;color:var(--ink);background:rgba(255,255,255,.6);border-radius:4px;padding:3px 6px;display:inline-block">{{rstats.get("responded", rstats.posted)}} of {{rstats.total}} reviews responded to — restaurants that respond see <strong style="color:var(--ink)">35% higher return rates</strong> on average. This 3.1% sales lift can mean an additional <strong style="color:var(--ink)">{% if savings_breakdown and savings_breakdown.sales_lift_yr > 0 %}${{(savings_breakdown.sales_lift_yr // 1000)|int}}k/yr{% else %}$125k/yr{% endif %}</strong> for your restaurant. <span class="calc-tip calc-tip-light calc-tip-up" style="display:inline-flex;vertical-align:middle;margin-top:0"><svg class="tip-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="5.5" r="1" fill="currentColor"/><rect x="7.1" y="7.5" width="1.8" height="4.5" rx="0.9" fill="currentColor"/></svg><span class="tip-text">Sources: Harvard Business School study on restaurant review responses (35% return rate lift); Cornell Center for Hospitality Research — 3.1% revenue increase per unit response rate improvement at casual dining.</span></span></div>
   </div>
-  {% if platform_breakdown and platform_breakdown|length > 1 %}
-  {% set best_rating = platform_breakdown|map(attribute='avg_rating')|max %}
-  {% set worst_rating = platform_breakdown|map(attribute='avg_rating')|min %}
-  <div class="card" style="padding:14px 16px;margin-bottom:14px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink3)">Platform breakdown</div>
-      {% if best_rating != worst_rating %}<div style="font-size:11px;color:#c0392b;font-weight:600">⚠ {{(best_rating - worst_rating)|round(1)}} star gap between platforms</div>{% endif %}
-    </div>
-    <div style="display:grid;grid-template-columns:{% for p in platform_breakdown %}1fr{% if not loop.last %} {% endif %}{% endfor %};gap:12px">
-    {% for p in platform_breakdown %}
-      {% set plat_col = '#4285f4' if p.platform == 'google' else '#d32323' %}
-      {% set rating_col = '#2d6a4f' if p.avg_rating >= 4.5 else ('#ef9f27' if p.avg_rating >= 3.5 else '#c0392b') %}
-      {% set is_worst = p.avg_rating == worst_rating and best_rating != worst_rating %}
-      {% set is_best = p.avg_rating == best_rating and best_rating != worst_rating %}
-      <div onclick="filterByPlatform('{{p.platform}}')" class="plat-card {% if is_worst %}plat-worst{% elif is_best %}plat-best{% endif %}" onmouseover="var dk=document.documentElement.getAttribute('data-theme')==='dark';this.style.boxShadow=dk?'0 0 0 1px var(--paper3),0 8px 24px rgba(0,0,0,.6)':'0 6px 20px rgba(14,12,10,.18)';this.style.transform='translateY(-2px)'" onmouseout="this.style.boxShadow='';this.style.transform=''">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <div style="display:flex;align-items:center;gap:6px">
-            <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:{{plat_col}}">{{p.platform|title}}</span>
-            <span style="font-size:10px;color:var(--ink3)">{{p.total}} review{{'s' if p.total != 1}}</span>
-          </div>
-          {% if is_worst %}<span style="font-size:9px;font-weight:700;background:#fde8e8;color:#c0392b;padding:1px 6px;border-radius:10px">needs attention</span>
-          {% elif is_best %}<span style="font-size:9px;font-weight:700;background:#e8f5ee;color:#2d6a4f;padding:1px 6px;border-radius:10px">strongest</span>{% endif %}
-        </div>
-        <div style="font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:700;color:{{rating_col}};letter-spacing:-1px;line-height:1">{{p.avg_rating}} <span style="font-size:14px;color:var(--ink3)">★</span></div>
-        <div style="display:flex;gap:10px;margin-top:8px;font-size:11px">
-          <span style="color:#2d6a4f">▲ {{p.positive}} positive</span>
-          <span style="color:#c0392b">▼ {{p.negative}} negative</span>
-        </div>
-        <div style="margin-top:8px;font-size:10px;color:var(--ink3);letter-spacing:.3px">Click to view {{p.platform|title}} reviews<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M5.5 6.5l2.5 3 2.5-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-      </div>
-    {% endfor %}
-    </div>
-  </div>
-  {% endif %}
 
   <div class="card" style="padding:16px 18px;margin-bottom:14px" id="topic-heatmap-card">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
@@ -4800,43 +4754,6 @@ function clearTopicFilter(){
   var banner=document.getElementById('topic-filter-banner');
   if(banner) banner.remove();
   filterReviews();
-}
-function filterByPlatform(platform){
-  switchReviewsTab('inbox');
-  // Switch to reviews tab if not already there
-  var reviewsPanel = document.getElementById('panel-reviews');
-  var reviewsTab = document.getElementById('tab-reviews');
-  if(reviewsPanel && !reviewsPanel.classList.contains('active')){
-    document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active');});
-    document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');});
-    reviewsPanel.classList.add('active');
-    if(reviewsTab) reviewsTab.classList.add('active');
-    if(!reviewInsightLoaded){ loadReviewInsight(); loadSentimentTrend(); loadTopicHeatmap(); }
-  }
-  // Filter cards by platform
-  var cards = document.querySelectorAll('[id^="rc-"]');
-  var shown = 0;
-  cards.forEach(function(card){
-    var match = card.dataset.platform === platform;
-    card.style.display = match ? '' : 'none';
-    if(match) shown++;
-  });
-  var countEl = document.querySelector('.count-lbl');
-  if(countEl) countEl.textContent = shown + ' review' + (shown !== 1 ? 's' : '') + ' — ' + platform;
-  // Clear search + topic filter
-  window._topicFilter='';
-  var tb=document.getElementById('topic-filter-banner');
-  if(tb) tb.remove();
-  var searchEl = document.getElementById('rsearch');
-  if(searchEl) searchEl.value = '';
-  // Scroll to toolbar
-  var toolbar = document.querySelector('.toolbar');
-  if(toolbar) setTimeout(function(){ toolbar.scrollIntoView({behavior:'smooth', block:'start'}); }, 100);
-  // Update filter pill state — clear all, highlight search area
-  document.querySelectorAll('.fpill').forEach(function(p){ p.classList.remove('active','active-red'); });
-  rfilter = 'all';
-  var allPill = document.querySelector('.fpill');
-  if(allPill) allPill.classList.add('active');
 }
 function _moveTabIndicator(tabEl){
   var ind=document.getElementById('tab-indicator');

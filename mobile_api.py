@@ -997,17 +997,6 @@ def mobile_response_performance(current_user):
         return jsonify(ok=False, error=str(e)), 500
 
 
-@mobile_bp.route("/reviews/platform-breakdown")
-@mobile_login_required
-def mobile_platform_breakdown(current_user):
-    from models import get_platform_breakdown
-    try:
-        data = get_platform_breakdown(current_user["restaurant_id"])
-        return jsonify(ok=True, data=data)
-    except Exception as e:
-        return jsonify(ok=False, error=str(e)), 500
-
-
 @mobile_bp.route("/reviews/topic-heatmap")
 @mobile_login_required
 def mobile_topic_heatmap(current_user):
