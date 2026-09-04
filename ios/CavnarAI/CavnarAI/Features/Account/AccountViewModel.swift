@@ -756,6 +756,104 @@ final class AccountViewModel {
         }
     }
 
+    // Connections — Square / Clover
+    //
+    // Both mirror Toast exactly: a credential pair posted to a mobile route
+    // that verifies it against the POS before storing, so a typo fails in
+    // the sheet instead of silently at the next nightly sync. These rows
+    // used to be status-only because square_routes.py/clover_routes.py are
+    // session-auth (@login_required) and the app could never reach them.
+
+    var isConnectingSquare = false
+    var connectSquareError: String?
+    var connectSquareSucceeded = false
+
+    private struct ConnectSquareBody: Encodable {
+        let squareAccessToken: String
+        let squareLocationId: String
+        enum CodingKeys: String, CodingKey {
+            case squareAccessToken = "square_access_token"
+            case squareLocationId = "square_location_id"
+        }
+    }
+
+    func connectSquare(accessToken: String, locationId: String) async {
+        isConnectingSquare = true
+        connectSquareError = nil
+        connectSquareSucceeded = false
+        defer { isConnectingSquare = false }
+        do {
+            let response: OKErrorResponse = try await client.send(
+                "/mobile/api/connections/square", method: .post,
+                body: ConnectSquareBody(squareAccessToken: accessToken, squareLocationId: locationId)
+            )
+            if response.ok {
+                connectSquareSucceeded = true
+                await load()
+            } else {
+                connectSquareError = response.error ?? "Couldn't connect Square."
+            }
+        } catch let error as APIClient.APIError {
+            connectSquareError = error.message
+        } catch {
+            connectSquareError = "Couldn't connect Square."
+        }
+    }
+
+    func disconnectSquare() async {
+        do {
+            let _: APIClient.EmptyResponse = try await client.send("/mobile/api/connections/square", method: .delete)
+            await load()
+        } catch {
+            // Same low-stakes fallback as disconnectToast().
+        }
+    }
+
+    var isConnectingClover = false
+    var connectCloverError: String?
+    var connectCloverSucceeded = false
+
+    private struct ConnectCloverBody: Encodable {
+        let cloverMerchantId: String
+        let cloverApiToken: String
+        enum CodingKeys: String, CodingKey {
+            case cloverMerchantId = "clover_merchant_id"
+            case cloverApiToken = "clover_api_token"
+        }
+    }
+
+    func connectClover(merchantId: String, apiToken: String) async {
+        isConnectingClover = true
+        connectCloverError = nil
+        connectCloverSucceeded = false
+        defer { isConnectingClover = false }
+        do {
+            let response: OKErrorResponse = try await client.send(
+                "/mobile/api/connections/clover", method: .post,
+                body: ConnectCloverBody(cloverMerchantId: merchantId, cloverApiToken: apiToken)
+            )
+            if response.ok {
+                connectCloverSucceeded = true
+                await load()
+            } else {
+                connectCloverError = response.error ?? "Couldn't connect Clover."
+            }
+        } catch let error as APIClient.APIError {
+            connectCloverError = error.message
+        } catch {
+            connectCloverError = "Couldn't connect Clover."
+        }
+    }
+
+    func disconnectClover() async {
+        do {
+            let _: APIClient.EmptyResponse = try await client.send("/mobile/api/connections/clover", method: .delete)
+            await load()
+        } catch {
+            // Same low-stakes fallback as disconnectToast().
+        }
+    }
+
     // MARK: - Settings audit additions
 
     private struct ActivityResponse: Decodable { let ok: Bool; let events: [AccountActivityEvent] }

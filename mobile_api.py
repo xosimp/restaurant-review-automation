@@ -2588,6 +2588,88 @@ def mobile_disconnect_toast(current_user):
     return jsonify(ok=True)
 
 
+@mobile_bp.route("/connections/square", methods=["POST"])
+@mobile_login_required
+def mobile_connect_square(current_user):
+    """Self-service Square connect — the same two fields (access token +
+    location id) the admin panel and the web dashboard already set, now
+    reachable from the app. Credentials are verified against Square before
+    they're stored, so a typo fails here rather than silently at the next
+    nightly sync. The web routes in square_routes.py are session-auth only
+    (@login_required), which is why the app couldn't reach them and the
+    Connections row was a status-only stub."""
+    import square as _square
+    data = request.get_json() or {}
+    rid = current_user["restaurant_id"]
+    access_token = (data.get("square_access_token") or "").strip()
+    location_id  = (data.get("square_location_id") or "").strip()
+    if not access_token or not location_id:
+        return jsonify(ok=False, error="Access token and location ID are both required"), 400
+
+    result = _square.test_credentials(access_token, location_id)
+    if not result.get("ok"):
+        return jsonify(ok=False, error=result.get("error") or "Square rejected those credentials")
+
+    update_restaurant(rid, {
+        "square_access_token": access_token,
+        "square_location_id": location_id,
+        "square_sync_error": None,
+        "pos_system": "Square",
+    })
+    _log_account_event(rid, "pos_connected", current_user, detail="Square")
+    return jsonify(ok=True, location_name=result.get("location_name") or "")
+
+
+@mobile_bp.route("/connections/square", methods=["DELETE"])
+@mobile_login_required
+def mobile_disconnect_square(current_user):
+    update_restaurant(current_user["restaurant_id"], {
+        "square_access_token": None, "square_location_id": None,
+        "square_last_synced": None, "square_sync_error": None,
+    })
+    _log_account_event(current_user["restaurant_id"], "pos_disconnected", current_user, detail="Square")
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/connections/clover", methods=["POST"])
+@mobile_login_required
+def mobile_connect_clover(current_user):
+    """Self-service Clover connect — merchant ID + API token, verified
+    against Clover before storing. See mobile_connect_square for why these
+    mobile routes exist alongside clover_routes.py's session-auth ones."""
+    import clover as _clover
+    data = request.get_json() or {}
+    rid = current_user["restaurant_id"]
+    merchant_id = (data.get("clover_merchant_id") or "").strip()
+    api_token   = (data.get("clover_api_token") or "").strip()
+    if not merchant_id or not api_token:
+        return jsonify(ok=False, error="Merchant ID and API token are both required"), 400
+
+    result = _clover.test_credentials(merchant_id, api_token)
+    if not result.get("ok"):
+        return jsonify(ok=False, error=result.get("error") or "Clover rejected those credentials")
+
+    update_restaurant(rid, {
+        "clover_merchant_id": merchant_id,
+        "clover_api_token": api_token,
+        "clover_sync_error": None,
+        "pos_system": "Clover",
+    })
+    _log_account_event(rid, "pos_connected", current_user, detail="Clover")
+    return jsonify(ok=True, merchant_name=result.get("merchant_name") or "")
+
+
+@mobile_bp.route("/connections/clover", methods=["DELETE"])
+@mobile_login_required
+def mobile_disconnect_clover(current_user):
+    update_restaurant(current_user["restaurant_id"], {
+        "clover_merchant_id": None, "clover_api_token": None,
+        "clover_last_synced": None, "clover_sync_error": None,
+    })
+    _log_account_event(current_user["restaurant_id"], "pos_disconnected", current_user, detail="Clover")
+    return jsonify(ok=True)
+
+
 @mobile_bp.route("/connections/google/authorize", methods=["GET"])
 @mobile_login_required
 def mobile_google_authorize(current_user):

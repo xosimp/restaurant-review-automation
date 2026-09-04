@@ -2734,3 +2734,116 @@ def test_bulk_approve_respects_limit_and_reports_remaining(client, db_path):
     data = client.post("/mobile/api/reviews/approve-all", json={"limit": 1},
                        headers=_auth_headers(token)).get_json()
     assert data["approved"] == 1 and data["remaining"] == 1
+
+
+# ── Square / Clover self-serve connect (mobile) ────────────────────────────
+
+def test_connect_square_saves_credentials_after_verifying_them(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    import square as _square
+    monkeypatch.setattr(_square, "test_credentials",
+                        lambda t, l: {"ok": True, "location_name": "Gia Mia Downtown"})
+    resp = client.post("/mobile/api/connections/square",
+                       json={"square_access_token": "tok_abc", "square_location_id": "loc_1"},
+                       headers=_auth_headers(token))
+    data = resp.get_json()
+    assert resp.status_code == 200 and data["ok"] is True
+    assert data["location_name"] == "Gia Mia Downtown"
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT square_access_token, square_location_id, pos_system FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert (row["square_access_token"], row["square_location_id"], row["pos_system"]) == ("tok_abc", "loc_1", "Square")
+
+
+def test_connect_square_rejects_bad_credentials_without_storing_them(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    import square as _square
+    monkeypatch.setattr(_square, "test_credentials",
+                        lambda t, l: {"ok": False, "error": "Square returned 401"})
+    data = client.post("/mobile/api/connections/square",
+                       json={"square_access_token": "bad", "square_location_id": "loc_1"},
+                       headers=_auth_headers(token)).get_json()
+    assert data["ok"] is False and "401" in data["error"]
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT square_access_token FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert row["square_access_token"] is None
+
+
+def test_connect_square_requires_both_fields(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/connections/square",
+                       json={"square_access_token": "tok_abc"}, headers=_auth_headers(token))
+    assert resp.status_code == 400
+    assert resp.get_json()["ok"] is False
+
+
+def test_disconnect_square_clears_every_stored_field(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    import square as _square
+    monkeypatch.setattr(_square, "test_credentials", lambda t, l: {"ok": True, "location_name": "X"})
+    client.post("/mobile/api/connections/square",
+                json={"square_access_token": "tok_abc", "square_location_id": "loc_1"},
+                headers=_auth_headers(token))
+    assert client.delete("/mobile/api/connections/square", headers=_auth_headers(token)).get_json()["ok"] is True
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT square_access_token, square_location_id, square_last_synced, square_sync_error "
+        "FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert not any(row[k] for k in row.keys())
+
+
+def test_connect_clover_saves_credentials_after_verifying_them(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    import clover as _clover
+    monkeypatch.setattr(_clover, "test_credentials",
+                        lambda m, t: {"ok": True, "merchant_name": "Gia Mia"})
+    data = client.post("/mobile/api/connections/clover",
+                       json={"clover_merchant_id": "m_1", "clover_api_token": "tok_x"},
+                       headers=_auth_headers(token)).get_json()
+    assert data["ok"] is True and data["merchant_name"] == "Gia Mia"
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT clover_merchant_id, clover_api_token, pos_system FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert (row["clover_merchant_id"], row["clover_api_token"], row["pos_system"]) == ("m_1", "tok_x", "Clover")
+
+
+def test_connect_clover_rejects_bad_credentials(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    import clover as _clover
+    monkeypatch.setattr(_clover, "test_credentials", lambda m, t: {"ok": False, "error": "Clover returned 403"})
+    data = client.post("/mobile/api/connections/clover",
+                       json={"clover_merchant_id": "m_1", "clover_api_token": "bad"},
+                       headers=_auth_headers(token)).get_json()
+    assert data["ok"] is False
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT clover_merchant_id FROM restaurants WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert row["clover_merchant_id"] is None
+
+
+def test_pos_connect_is_recorded_in_the_account_activity_log(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    import square as _square
+    monkeypatch.setattr(_square, "test_credentials", lambda t, l: {"ok": True, "location_name": "X"})
+    client.post("/mobile/api/connections/square",
+                json={"square_access_token": "tok_abc", "square_location_id": "loc_1"},
+                headers=_auth_headers(token))
+    events = client.get("/mobile/api/account/activity", headers=_auth_headers(token)).get_json()["events"]
+    connected = [e for e in events if e["type"] == "pos_connected"]
+    assert connected and connected[0]["detail"] == "Square"
+    assert connected[0]["label"] == "POS connected"
+
+
+def test_pos_connect_routes_require_authentication(client, db_path):
+    for path in ("/mobile/api/connections/square", "/mobile/api/connections/clover"):
+        assert client.post(path, json={}).status_code == 401
+        assert client.delete(path).status_code == 401

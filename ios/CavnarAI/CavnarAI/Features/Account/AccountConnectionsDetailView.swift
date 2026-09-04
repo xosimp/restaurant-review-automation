@@ -6,14 +6,16 @@ import SwiftUI
 /// the brand's own real mark (see ConnectionMark below — real SVGs/PNG
 /// sourced from each brand's own public assets, not SF Symbol
 /// approximations), and a real action where one exists: Google Business
-/// runs a full mobile OAuth round trip (GMBConnectCoordinator), Toast
-/// takes a credential pair (ToastConnectSheet) — Toast has no OAuth of
-/// its own. Instagram/Facebook, Square, and Clover have no connect API
-/// wired up yet, so they show status only, no dead-end CTA.
+/// runs a full mobile OAuth round trip (GMBConnectCoordinator), Toast,
+/// Square and Clover each take a credential pair (their own *ConnectSheet)
+/// — none of the three has OAuth of its own. Instagram/Facebook has no
+/// connect API wired up yet, so it shows status only, no dead-end CTA.
 struct AccountConnectionsDetailView: View {
     let viewModel: AccountViewModel
     let connections: AccountConnections
     @State private var showingToastConnect = false
+    @State private var showingSquareConnect = false
+    @State private var showingCloverConnect = false
 
     var body: some View {
         NavigationStack {
@@ -24,8 +26,12 @@ struct AccountConnectionsDetailView: View {
                     googleRow
                     toastRow
                     requestRow("Instagram & Facebook", brand: .instagram, status: connections.instagram)
-                    requestRow("Square POS", brand: .square, status: connections.square)
-                    requestRow("Clover POS", brand: .clover, status: connections.clover)
+                    posRow("Square POS", brand: .square, status: connections.square,
+                           connect: { showingSquareConnect = true },
+                           disconnect: { await viewModel.disconnectSquare() })
+                    posRow("Clover POS", brand: .clover, status: connections.clover,
+                           connect: { showingCloverConnect = true },
+                           disconnect: { await viewModel.disconnectClover() })
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
@@ -33,6 +39,12 @@ struct AccountConnectionsDetailView: View {
             .accountSheetChrome("Connections")
             .sheet(isPresented: $showingToastConnect) {
                 ToastConnectSheet(viewModel: viewModel)
+            }
+            .sheet(isPresented: $showingSquareConnect) {
+                SquareConnectSheet(viewModel: viewModel)
+            }
+            .sheet(isPresented: $showingCloverConnect) {
+                CloverConnectSheet(viewModel: viewModel)
             }
         }
     }
@@ -150,7 +162,36 @@ struct AccountConnectionsDetailView: View {
         .cavnarCard()
     }
 
-    // MARK: - Not yet self-serve (Instagram/Facebook, Square, Clover)
+    // MARK: - Credential-pair POS connections (Square, Clover)
+
+    /// Identical shape to toastRow — the three credential-pair POS
+    /// integrations behave the same way, so they read the same way.
+    private func posRow(
+        _ label: String,
+        brand: ConnectionBrand,
+        status: ConnectionStatus,
+        connect: @escaping () -> Void,
+        disconnect: @escaping () async -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            header(label, brand: brand, status: status)
+
+            if status.connected {
+                AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
+                    Task { await disconnect() }
+                }
+            } else {
+                // The button style's own press haptic covers this.
+                Button(action: connect) {
+                    Text("Connect").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
+            }
+        }
+        .cavnarCard()
+    }
+
+    // MARK: - Not yet self-serve (Instagram/Facebook)
 
     private func requestRow(_ label: String, brand: ConnectionBrand, status: ConnectionStatus) -> some View {
         header(label, brand: brand, status: status)

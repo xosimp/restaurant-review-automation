@@ -3333,6 +3333,7 @@ ACCOUNT_EVENT_TYPES = (
     "login_reported_not_me", "data_exported", "alert_settings_saved",
     "login_notify_changed", "marketing_emails_changed", "auto_approve_changed",
     "hours_changed", "data_retention_changed", "profile_updated",
+    "pos_connected", "pos_disconnected",
 )
 
 ACCOUNT_EVENT_LABELS = {
@@ -3358,6 +3359,9 @@ ACCOUNT_EVENT_LABELS = {
     "hours_changed": "Hours updated",
     "data_retention_changed": "Data retention changed",
     "profile_updated": "Profile updated",
+    # `detail` carries which POS ("Square" / "Clover" / "Toast").
+    "pos_connected": "POS connected",
+    "pos_disconnected": "POS disconnected",
 }
 
 
