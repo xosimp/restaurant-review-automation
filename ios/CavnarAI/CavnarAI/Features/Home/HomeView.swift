@@ -54,17 +54,26 @@ struct HomeView: View {
     // that races the network call.
     var onHeroAppear: () -> Void = {}
 
+    // True while any sheet is up over Home — see HomeObsidianField's own
+    // doc comment on its `paused` parameter for why this exists: without
+    // it, the field's three Canvas layers and the pulse strip's marquee
+    // kept compositing every frame through a sheet's presentation and any
+    // interactive swipe-to-dismiss, which is what made both feel laggy.
+    private var backgroundMotionPaused: Bool {
+        showingValueDetail || showingNotifications || showingLocationSwitcher
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             ZStack(alignment: .top) {
-                HomeObsidianField()
+                HomeObsidianField(paused: backgroundMotionPaused)
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         if let summary = viewModel.summary {
                             hero(summary)
 
-                            HomePulseStrip(modules: summary.modules) { module in
+                            HomePulseStrip(modules: summary.modules, paused: backgroundMotionPaused) { module in
                                 navigate(to: ModuleRoute(key: module.key, label: module.label))
                             }
                             .padding(.top, 18)
@@ -312,7 +321,7 @@ struct HomeView: View {
                 .font(.cavnarBody(size, weight: 600)).foregroundStyle(quiet)
         }
         let when = Calendar.current.component(.hour, from: Date()) < 12 ? "Overnight" : "Since yesterday"
-        var line = lead + Text(verbatim: "\(when), Cavnar ").font(.cavnarBody(size, weight: 600)).foregroundStyle(quiet)
+        var line = lead + Text(verbatim: "\(when), Cavnar AI ").font(.cavnarBody(size, weight: 600)).foregroundStyle(quiet)
         var clauses: [Text] = []
         if overnight.answered > 0 {
             clauses.append(

@@ -7,6 +7,13 @@ import SwiftUI
 /// seamless loop, like a ticker — chips stay tappable while it moves.
 struct HomePulseStrip: View {
     let modules: [ModuleSummary]
+    // Set true while a sheet is presented over Home — see
+    // HomeObsidianField's own doc comment on `paused` for why: the marquee
+    // is another always-on TimelineView that kept compositing during a
+    // sheet's transition/interactive dismiss for no visible benefit (it's
+    // covered), adding to the same lag. Declared before `onSelect` so the
+    // trailing-closure call site can still name it directly.
+    var paused: Bool = false
     let onSelect: (ModuleSummary) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -34,7 +41,7 @@ struct HomePulseStrip: View {
                 // CavnarMotion's continuous loops already follow. A plain,
                 // manually-scrollable row keeps every chip reachable.
                 ScrollView(.horizontal, showsIndicators: false) {
-                    chipRow(chips)
+                    chipRow(chips, paused: false)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 6)
                 }
@@ -52,7 +59,7 @@ struct HomePulseStrip: View {
         // transaction can be interrupted by a tab switch and never resume,
         // leaving the strip frozen. A position computed from real elapsed
         // time can't get stuck on any frame it's asked to render.
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: paused)) { timeline in
             let period = Double(unitWidth + Self.gap)
             let elapsed = timeline.date.timeIntervalSince(start)
             let shift: CGFloat = period > 0
@@ -64,14 +71,14 @@ struct HomePulseStrip: View {
                 // its place, and the third covers a screen wide enough that
                 // even one or two chips never leave a visible gap. Only the
                 // first copy reports its width — all three are identical.
-                chipRow(chips)
+                chipRow(chips, paused: paused)
                     .background(
                         GeometryReader { geo in
                             Color.clear.preference(key: MarqueeWidthKey.self, value: geo.size.width)
                         }
                     )
-                chipRow(chips)
-                chipRow(chips)
+                chipRow(chips, paused: paused)
+                chipRow(chips, paused: paused)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 6)
@@ -82,14 +89,20 @@ struct HomePulseStrip: View {
         .onPreferenceChange(MarqueeWidthKey.self) { unitWidth = $0 }
     }
 
-    private func chipRow(_ items: [ModuleSummary]) -> some View {
+    // `paused` reaches every chip explicitly — pausing the marquee's own
+    // TimelineView freezes ITS layout, but each PulseChip underneath drives
+    // its breathing dot from a separate, independently-scheduled
+    // TimelineView that keeps ticking on its own unless told to stop. With
+    // three marquee copies that's up to fifteen live subscriptions; left
+    // unpaused they'd keep costing frames for a strip nobody can see.
+    private func chipRow(_ items: [ModuleSummary], paused: Bool) -> some View {
         HStack(spacing: Self.gap) {
             ForEach(items) { module in
                 if let pulse = module.pulse {
                     Button {
                         onSelect(module)
                     } label: {
-                        PulseChip(pulse: pulse)
+                        PulseChip(pulse: pulse, paused: paused)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("\(module.label): \(pulse.value) \(pulse.label)")
@@ -110,6 +123,7 @@ private struct MarqueeWidthKey: PreferenceKey {
 
 private struct PulseChip: View {
     let pulse: ModulePulse
+    var paused: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var start = Date()
@@ -126,9 +140,9 @@ private struct PulseChip: View {
         HStack(spacing: 8) {
             // One slow breath every 2.2s — wall-clock driven so it can't
             // stall the way a toggled repeatForever can after a tab swap.
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { timeline in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || paused)) { timeline in
                 let t = timeline.date.timeIntervalSince(start)
-                let phase = reduceMotion ? 0.5 : 0.5 - 0.5 * cos(t * 2 * .pi / 2.2)
+                let phase = (reduceMotion || paused) ? 0.5 : 0.5 - 0.5 * cos(t * 2 * .pi / 2.2)
                 Circle()
                     .fill(dotColor)
                     .frame(width: 6, height: 6)

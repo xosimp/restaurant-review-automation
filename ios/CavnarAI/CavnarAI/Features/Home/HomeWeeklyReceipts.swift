@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// "This week — what Cavnar did for you": a short receipt that closes the
+/// "This week — what Cavnar AI did for you": a short receipt that closes the
 /// page, so the last thing read is proof. Every line is a real number from
 /// this restaurant's own week (mobile_api.py's _home_weekly_receipts);
 /// when there's nothing to show yet the whole section stays hidden.
@@ -12,7 +12,7 @@ struct HomeWeeklyReceipts: View {
     var body: some View {
         if !receipts.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                HomeSectionHeader(kicker: "This week", title: "What Cavnar did for you")
+                HomeSectionHeader(kicker: "This week", title: "What Cavnar AI did for you")
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(receipts) { receipt in
                         HStack(alignment: .firstTextBaseline, spacing: 9) {

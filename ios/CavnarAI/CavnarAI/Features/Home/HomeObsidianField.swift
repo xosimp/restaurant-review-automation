@@ -22,16 +22,31 @@ import SwiftUI
 /// A fade to Paper toward the bottom keeps everything below the fold on
 /// solid ground.
 struct HomeObsidianField: View {
+    // Set true while a sheet is presented over Home. SwiftUI keeps a
+    // TimelineView ticking even when the view it drives is fully covered —
+    // the presenting view isn't torn down, just visually obscured — so
+    // three always-on Canvas layers were still repainting every frame the
+    // whole time a sheet was up, and iOS has to composite this field live
+    // during the sheet's open/close transition and any interactive
+    // swipe-to-dismiss (the presenting view is genuinely on screen,
+    // scaled and rounded, for every frame of that gesture). That's what
+    // made opening the value-delivered sheet and dragging it back down
+    // feel laggy — not the sheet's own chart. Freezing the field for the
+    // duration removes that compositing cost entirely.
+    var paused: Bool = false
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     static let frameInterval: Double = 1.0 / 30.0
 
+    private var frozen: Bool { reduceMotion || paused }
+
     var body: some View {
         ZStack {
             Color.cavnarPaper
-            ObsidianVeils(frozen: reduceMotion)
-            ObsidianConstellation(frozen: reduceMotion)
-            RisingEmbers(frozen: reduceMotion)
+            ObsidianVeils(frozen: frozen)
+            ObsidianConstellation(frozen: frozen)
+            RisingEmbers(frozen: frozen)
             LinearGradient(
                 stops: [
                     .init(color: Color.cavnarPaper.opacity(0), location: 0),

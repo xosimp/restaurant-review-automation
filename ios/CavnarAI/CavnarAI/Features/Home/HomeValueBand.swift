@@ -33,12 +33,10 @@ struct HomeValueBand: View {
 
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     Text("$")
-                        .font(.cavnarNumber(46, weight: 600))
-                        .foregroundStyle(Color.cavnarGreen)
                     CavnarAnimatableNumber(value: animatedTotal, format: { Self.digits(Int($0.rounded())) })
-                        .font(.cavnarNumber(46, weight: 600))
-                        .foregroundStyle(Color.cavnarInk)
                 }
+                .font(.cavnarNumber(46, weight: 600))
+                .foregroundStyle(Color.cavnarGreen)
                 .cavnarNumberGlow(.cavnarGreen)
                 .cavnarSensitive()
                 .onAppear {
@@ -98,7 +96,7 @@ struct HomeValueBand: View {
                 .font(.cavnarBody(13, weight: 700))
                 .foregroundStyle(Color.cavnarInk3)
         } else {
-            Text("Tracking starts today · grows as Cavnar answers, trims, and catches things")
+            Text("Tracking starts today · grows as Cavnar AI answers, trims, and catches things")
                 .font(.cavnarBody(13, weight: 600))
                 .foregroundStyle(Color.cavnarInk3)
         }
@@ -110,7 +108,7 @@ struct HomeValueBand: View {
         if activeModuleKeys.contains("labor") { parts.append("labor trimmed") }
         if activeModuleKeys.contains("inventory") { parts.append("waste caught") }
         if activeModuleKeys.contains("marketing") { parts.append("posts drafted") }
-        return parts.isEmpty ? "everything Cavnar runs" : parts.joined(separator: ", ")
+        return parts.isEmpty ? "everything Cavnar AI runs" : parts.joined(separator: ", ")
     }
 
     /// Gain since the first snapshot of this calendar month, or nil when

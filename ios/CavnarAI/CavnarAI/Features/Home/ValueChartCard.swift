@@ -269,7 +269,15 @@ private struct SparklineCanvas: View {
                     // owns the endpoint dot/glow once the reveal has settled.
                     Canvas { context, size in draw(context: context, size: size, progress: 1, drawEndpointMarker: false) }
                 } else {
-                    TimelineView(.animation) { timeline in
+                    // Capped at 60fps, not the display's uncapped native
+                    // rate (up to 120 on ProMotion) — this chart replays its
+                    // reveal fresh every time the value-delivered sheet
+                    // opens, right as the sheet's own presentation
+                    // transition is animating; an uncapped TimelineView here
+                    // was extra, invisible-at-60fps recompute competing with
+                    // that transition for the same frame budget, which is
+                    // part of what made opening the sheet feel laggy.
+                    TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
                         Canvas { context, size in
                             let progress = min(1, timeline.date.timeIntervalSince(startDate) / Self.revealDuration)
                             draw(context: context, size: size, progress: progress)
