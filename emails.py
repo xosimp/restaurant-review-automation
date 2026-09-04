@@ -451,6 +451,66 @@ def send_welcome_email(to_email, restaurant_name, username, password,
     })
 
 
+def send_supplier_order_email(to_email, supplier_name, restaurant_name, po_number,
+                              items, total_cost, reply_to=None):
+    """The suggested order, sent to the supplier who actually fills it.
+
+    Deliberately plain and scannable — a supplier reads this on a phone in
+    a warehouse, so it's a quantity table and a PO number, not a branded
+    marketing layout. `reply_to` is the restaurant's own address so the
+    supplier replies to the restaurant, not to Cavnar."""
+    import resend as _resend
+    _resend.api_key = RESEND_API_KEY
+    rows = "".join(
+        f'''<tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-size:14px">{i.get("item","")}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-size:14px;text-align:right;white-space:nowrap"><strong>{i.get("qty",0)}</strong> {i.get("unit","")}</td>
+    </tr>'''
+        for i in (items or [])
+    )
+    greeting = f"Hi {supplier_name}," if supplier_name else "Hi,"
+    html = f"""
+<div style="background:#ffffff;width:100%;padding:32px 20px;box-sizing:border-box">
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714">
+  <p style="font-size:15px;line-height:1.6;margin:0 0 4px">{greeting}</p>
+  <p style="font-size:15px;line-height:1.6;margin:0 0 20px">
+    Please supply the following for <strong>{restaurant_name}</strong>.
+  </p>
+  <p style="font-size:13px;color:#7a736a;margin:0 0 10px;letter-spacing:1px;text-transform:uppercase;font-weight:600">
+    Order {po_number}
+  </p>
+  <table style="width:100%;border-collapse:collapse;margin-bottom:18px">
+    <thead>
+      <tr>
+        <th align="left" style="padding:8px 12px;border-bottom:2px solid #1a1714;font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#7a736a">Item</th>
+        <th align="right" style="padding:8px 12px;border-bottom:2px solid #1a1714;font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#7a736a">Quantity</th>
+      </tr>
+    </thead>
+    <tbody>{rows}</tbody>
+  </table>
+  <p style="font-size:14px;color:#3a3530;margin:0 0 24px">
+    Please confirm availability and delivery date by replying to this email.
+  </p>
+  <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
+  <p style="font-size:12px;color:#7a736a;margin:0">
+    Sent by {restaurant_name} via Cavnar AI. Reference {po_number} on the invoice.
+  </p>
+</div></div>
+"""
+    params = {
+        # The supplier knows the restaurant, not Cavnar — so the restaurant
+        # is the visible sender, on the same verified FROM_EMAIL domain
+        # every other send in this file uses.
+        "from": f"{restaurant_name} <{FROM_EMAIL}>",
+        "to": [to_email],
+        "subject": f"Order {po_number} — {restaurant_name}",
+        "html": html,
+    }
+    if reply_to:
+        params["reply_to"] = reply_to
+    return _resend.Emails.send(params)
+
+
 def send_team_invite_email(to_email, restaurant_name, username, password, inviter_name=None):
     """Self-serve team-invite counterpart to send_welcome_email() above —
     same credentials-in-an-email shape (matches the risk profile already

@@ -527,6 +527,10 @@ def ensure_columns(db_path: str = DB_PATH):
         ("review_requests", "customer_phone", "TEXT"),
         # Soft-delete
         ("reviews", "deleted_at", "TEXT"),
+        # Who each ingredient is ordered from, so a suggested order can
+        # actually be sent somewhere (see build_purchase_orders below).
+        ("ingredients", "supplier_name", "TEXT"),
+        ("ingredients", "supplier_email", "TEXT"),
         # Changelog seen state
         ("restaurants", "changelog_seen_at", "TEXT"),
         # Notifications (alert_log) seen state — same stamp-on-read pattern
@@ -804,10 +808,33 @@ def init_db(db_path: str = DB_PATH):
             waste_last_week REAL DEFAULT 0,
             last_recount_at TEXT,
             is_active       INTEGER DEFAULT 1,
+            -- Also in the ALTER list below, for databases created before
+            -- suppliers existed. Both paths are needed: the ALTERs run
+            -- before these CREATE TABLEs, so a brand-new database only
+            -- gets these columns from here.
+            supplier_name   TEXT,
+            supplier_email  TEXT,
             created_at      TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_ingredients_restaurant ON ingredients(restaurant_id, is_active)",
+        # One row per supplier per "send order" — the record of what was
+        # actually ordered, which is also what lets receiving pre-fill
+        # quantities instead of re-typing them off the invoice.
+        """CREATE TABLE IF NOT EXISTS purchase_orders (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            po_number       TEXT NOT NULL,
+            supplier_name   TEXT,
+            supplier_email  TEXT,
+            items_json      TEXT NOT NULL,
+            total_cost      REAL DEFAULT 0,
+            status          TEXT NOT NULL DEFAULT 'sent',
+            sent_at         TEXT NOT NULL DEFAULT (datetime('now')),
+            received_at     TEXT,
+            UNIQUE(restaurant_id, po_number)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_purchase_orders_restaurant ON purchase_orders(restaurant_id, sent_at)",
         # event_type: 'recount' (qty = absolute counted amount) |
         # 'receiving' | 'depletion' | 'waste' (qty = signed delta).
         # source: 'toast' | 'manual' | 'admin' | 'inferred' | 'migration'.
@@ -3333,7 +3360,7 @@ ACCOUNT_EVENT_TYPES = (
     "login_reported_not_me", "data_exported", "alert_settings_saved",
     "login_notify_changed", "marketing_emails_changed", "auto_approve_changed",
     "hours_changed", "data_retention_changed", "profile_updated",
-    "pos_connected", "pos_disconnected",
+    "pos_connected", "pos_disconnected", "supplier_order_sent",
 )
 
 ACCOUNT_EVENT_LABELS = {
@@ -3362,6 +3389,7 @@ ACCOUNT_EVENT_LABELS = {
     # `detail` carries which POS ("Square" / "Clover" / "Toast").
     "pos_connected": "POS connected",
     "pos_disconnected": "POS disconnected",
+    "supplier_order_sent": "Supplier order sent",
 }
 
 
@@ -3624,3 +3652,86 @@ def get_ai_visibility_history(restaurant_id: int, limit: int = 10, db_path: str 
     """, (restaurant_id, limit)).fetchall()
     conn.close()
     return [dict(r) for r in rows][::-1]
+
+
+# ── Purchase orders ────────────────────────────────────────────────────────────
+
+def next_po_number(restaurant_id: int, db_path: str = DB_PATH) -> str:
+    """Sequential per restaurant — PO-0001, PO-0002... Derived from the
+    count of existing rows rather than a global autoincrement so two
+    restaurants never see each other's numbering, and so the number a
+    supplier sees is small and human-quotable."""
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM purchase_orders WHERE restaurant_id=?", (restaurant_id,)
+        ).fetchone()[0] or 0
+    finally:
+        conn.close()
+    return f"PO-{n + 1:04d}"
+
+
+def record_purchase_order(restaurant_id: int, po_number: str, supplier_name: str,
+                          supplier_email: str, items: list, total_cost: float,
+                          db_path: str = DB_PATH) -> int:
+    """Store what was actually sent, so receiving can pre-fill from it."""
+    import json as _json
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("""
+            INSERT INTO purchase_orders
+                (restaurant_id, po_number, supplier_name, supplier_email, items_json, total_cost)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (restaurant_id, po_number, supplier_name, supplier_email,
+              _json.dumps(items or []), round(float(total_cost or 0), 2)))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def get_purchase_orders(restaurant_id: int, limit: int = 25, status: str = None,
+                        db_path: str = DB_PATH) -> list:
+    """Newest first. `status` filters to 'sent' (still outstanding) or
+    'received'."""
+    import json as _json
+    conn = get_conn(db_path)
+    try:
+        sql = "SELECT * FROM purchase_orders WHERE restaurant_id=?"
+        params = [restaurant_id]
+        if status:
+            sql += " AND status=?"
+            params.append(status)
+        sql += " ORDER BY sent_at DESC, id DESC LIMIT ?"
+        params.append(limit)
+        rows = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        try:
+            items = _json.loads(r["items_json"] or "[]")
+        except Exception:
+            items = []
+        out.append({
+            "id": r["id"], "po_number": r["po_number"],
+            "supplier_name": r["supplier_name"] or "", "supplier_email": r["supplier_email"] or "",
+            "items": items, "total_cost": r["total_cost"] or 0,
+            "status": r["status"], "sent_at": r["sent_at"], "received_at": r["received_at"],
+        })
+    return out
+
+
+def mark_purchase_order_received(restaurant_id: int, po_id: int, db_path: str = DB_PATH) -> bool:
+    """Scoped by restaurant_id so one restaurant can never close another's
+    order. Returns False if the id doesn't belong to this restaurant."""
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute("""
+            UPDATE purchase_orders SET status='received', received_at=datetime('now')
+            WHERE id=? AND restaurant_id=? AND status='sent'
+        """, (po_id, restaurant_id))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()

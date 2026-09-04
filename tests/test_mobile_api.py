@@ -2847,3 +2847,179 @@ def test_pos_connect_routes_require_authentication(client, db_path):
     for path in ("/mobile/api/connections/square", "/mobile/api/connections/clover"):
         assert client.post(path, json={}).status_code == 401
         assert client.delete(path).status_code == 401
+
+
+# ── Supplier orders (food cost: order list → actually sent) ────────────────
+
+def _ingredient(db_path, rid, name, *, par=10, stock=0, usage=3, cost=4.0, case=1,
+                supplier_name=None, supplier_email=None):
+    """A live ingredients-table row — the path load_inventory_for_restaurant
+    prefers, so analyse_inventory sees real data rather than the sample set."""
+    conn = get_conn(db_path)
+    conn.execute("""
+        INSERT INTO ingredients (restaurant_id, name, category, unit, par_level, unit_cost,
+                                 case_size, current_stock, avg_daily_usage, last_order_qty,
+                                 waste_last_week, is_active, supplier_name, supplier_email)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?,?)
+    """, (rid, name, "Produce", "lb", par, cost, case, stock, usage, 0, 0,
+          supplier_name, supplier_email))
+    conn.commit()
+    conn.close()
+
+
+def test_order_draft_groups_items_by_supplier_and_flags_unassigned(client, db_path):
+    rid = _restaurant(db_path)
+    _ingredient(db_path, rid, "Romaine", supplier_name="Fresh Co", supplier_email="orders@fresh.test")
+    _ingredient(db_path, rid, "Tomatoes", supplier_name="Fresh Co", supplier_email="orders@fresh.test")
+    _ingredient(db_path, rid, "Salmon", supplier_name="Sea Co", supplier_email="orders@sea.test")
+    _ingredient(db_path, rid, "Napkins")  # no supplier assigned
+    token = _login(client, db_path, rid)
+    data = client.get("/mobile/api/food-cost/order-draft", headers=_auth_headers(token)).get_json()
+    assert data["ok"] is True
+    by_email = {g["supplier_email"]: g for g in data["groups"]}
+    assert set(by_email) == {"orders@fresh.test", "orders@sea.test"}
+    assert {i["item"] for i in by_email["orders@fresh.test"]["items"]} == {"Romaine", "Tomatoes"}
+    assert [i["item"] for i in data["unassigned"]] == ["Napkins"]
+    # Every line carries a real quantity, and the group total is their sum.
+    fresh = by_email["orders@fresh.test"]
+    assert all(i["qty"] > 0 for i in fresh["items"])
+    assert fresh["total_cost"] == round(sum(i["line_cost"] for i in fresh["items"]), 2)
+
+
+def test_send_order_emails_each_supplier_and_records_one_po_each(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    _ingredient(db_path, rid, "Romaine", supplier_name="Fresh Co", supplier_email="orders@fresh.test")
+    _ingredient(db_path, rid, "Salmon", supplier_name="Sea Co", supplier_email="orders@sea.test")
+    token = _login(client, db_path, rid)
+
+    sends = []
+    import emails as _emails
+    monkeypatch.setattr(_emails, "send_supplier_order_email",
+                        lambda **kw: sends.append(kw) or {"id": "email_1"})
+
+    data = client.post("/mobile/api/food-cost/send-order", headers=_auth_headers(token)).get_json()
+    assert data["ok"] is True and data["failed"] == []
+    assert len(data["sent"]) == 2
+    assert {s["po_number"] for s in data["sent"]} == {"PO-0001", "PO-0002"}
+    assert {kw["to_email"] for kw in sends} == {"orders@fresh.test", "orders@sea.test"}
+    # The supplier replies to the restaurant, not to Cavnar.
+    assert all(kw["reply_to"] == "m@x.com" for kw in sends)
+
+    orders = client.get("/mobile/api/food-cost/purchase-orders", headers=_auth_headers(token)).get_json()["orders"]
+    assert len(orders) == 2
+    assert all(o["status"] == "sent" and o["items"] for o in orders)
+
+
+def test_send_order_to_one_supplier_only(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    _ingredient(db_path, rid, "Romaine", supplier_name="Fresh Co", supplier_email="orders@fresh.test")
+    _ingredient(db_path, rid, "Salmon", supplier_name="Sea Co", supplier_email="orders@sea.test")
+    token = _login(client, db_path, rid)
+    import emails as _emails
+    monkeypatch.setattr(_emails, "send_supplier_order_email", lambda **kw: {"id": "e"})
+    data = client.post("/mobile/api/food-cost/send-order",
+                       json={"supplier_email": "orders@sea.test"},
+                       headers=_auth_headers(token)).get_json()
+    assert [s["supplier_email"] for s in data["sent"]] == ["orders@sea.test"]
+
+
+def test_a_failing_supplier_send_does_not_block_the_others_or_record_a_po(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    _ingredient(db_path, rid, "Romaine", supplier_name="Fresh Co", supplier_email="orders@fresh.test")
+    _ingredient(db_path, rid, "Salmon", supplier_name="Sea Co", supplier_email="bad@sea.test")
+    token = _login(client, db_path, rid)
+
+    import emails as _emails
+    def _send(**kw):
+        if kw["to_email"] == "bad@sea.test":
+            raise RuntimeError("550 rejected")
+        return {"id": "e"}
+    monkeypatch.setattr(_emails, "send_supplier_order_email", _send)
+
+    data = client.post("/mobile/api/food-cost/send-order", headers=_auth_headers(token)).get_json()
+    assert [s["supplier_email"] for s in data["sent"]] == ["orders@fresh.test"]
+    assert [f["supplier_email"] for f in data["failed"]] == ["bad@sea.test"]
+    orders = client.get("/mobile/api/food-cost/purchase-orders", headers=_auth_headers(token)).get_json()["orders"]
+    assert [o["supplier_email"] for o in orders] == ["orders@fresh.test"]
+
+
+def test_send_order_with_no_supplier_assigned_is_a_clear_refusal(client, db_path):
+    rid = _restaurant(db_path)
+    _ingredient(db_path, rid, "Napkins")
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/food-cost/send-order", headers=_auth_headers(token))
+    assert resp.status_code == 400
+    assert "no items with a supplier" in resp.get_json()["error"].lower()
+
+
+def test_setting_a_supplier_moves_an_item_out_of_unassigned(client, db_path):
+    rid = _restaurant(db_path)
+    _ingredient(db_path, rid, "Napkins")
+    token = _login(client, db_path, rid)
+    assert client.post("/mobile/api/food-cost/ingredient-supplier",
+                       json={"name": "Napkins", "supplier_name": "Dry Goods",
+                             "supplier_email": "orders@dry.test"},
+                       headers=_auth_headers(token)).get_json()["ok"] is True
+    data = client.get("/mobile/api/food-cost/order-draft", headers=_auth_headers(token)).get_json()
+    assert data["unassigned"] == []
+    assert data["groups"][0]["supplier_email"] == "orders@dry.test"
+
+
+def test_setting_a_supplier_validates_the_address_and_the_ingredient(client, db_path):
+    rid = _restaurant(db_path)
+    _ingredient(db_path, rid, "Napkins")
+    token = _login(client, db_path, rid)
+    bad = client.post("/mobile/api/food-cost/ingredient-supplier",
+                      json={"name": "Napkins", "supplier_email": "not-an-email"},
+                      headers=_auth_headers(token))
+    assert bad.status_code == 400
+    missing = client.post("/mobile/api/food-cost/ingredient-supplier",
+                          json={"name": "Nonexistent", "supplier_email": "a@b.test"},
+                          headers=_auth_headers(token))
+    assert missing.status_code == 404
+
+
+def test_supplier_assignment_cannot_reach_another_restaurants_ingredient(client, db_path):
+    mine = _restaurant(db_path)
+    theirs = _restaurant(db_path, name="Other Co")
+    _ingredient(db_path, theirs, "TheirItem")
+    token = _login(client, db_path, mine)
+    resp = client.post("/mobile/api/food-cost/ingredient-supplier",
+                       json={"name": "TheirItem", "supplier_email": "a@b.test"},
+                       headers=_auth_headers(token))
+    assert resp.status_code == 404
+    conn = get_conn(db_path)
+    row = conn.execute("SELECT supplier_email FROM ingredients WHERE restaurant_id=?", (theirs,)).fetchone()
+    conn.close()
+    assert row["supplier_email"] is None
+
+
+def test_receiving_a_po_closes_it_and_is_scoped_to_the_restaurant(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    other = _restaurant(db_path, name="Other Co")
+    _ingredient(db_path, rid, "Romaine", supplier_name="Fresh Co", supplier_email="orders@fresh.test")
+    token = _login(client, db_path, rid)
+    import emails as _emails
+    monkeypatch.setattr(_emails, "send_supplier_order_email", lambda **kw: {"id": "e"})
+    client.post("/mobile/api/food-cost/send-order", headers=_auth_headers(token))
+    po = client.get("/mobile/api/food-cost/purchase-orders", headers=_auth_headers(token)).get_json()["orders"][0]
+
+    other_token = _login(client, db_path, other, username="otheruser")
+    assert client.post(f"/mobile/api/food-cost/purchase-orders/{po['id']}/received",
+                       headers=_auth_headers(other_token)).status_code == 404
+
+    assert client.post(f"/mobile/api/food-cost/purchase-orders/{po['id']}/received",
+                       headers=_auth_headers(token)).get_json()["ok"] is True
+    received = client.get("/mobile/api/food-cost/purchase-orders?status=received",
+                          headers=_auth_headers(token)).get_json()["orders"]
+    assert [o["po_number"] for o in received] == [po["po_number"]]
+    # Closing twice is refused rather than silently re-closing.
+    assert client.post(f"/mobile/api/food-cost/purchase-orders/{po['id']}/received",
+                       headers=_auth_headers(token)).status_code == 404
+
+
+def test_supplier_order_routes_require_authentication(client, db_path):
+    assert client.get("/mobile/api/food-cost/order-draft").status_code == 401
+    assert client.post("/mobile/api/food-cost/send-order").status_code == 401
+    assert client.get("/mobile/api/food-cost/purchase-orders").status_code == 401
+    assert client.post("/mobile/api/food-cost/ingredient-supplier", json={}).status_code == 401

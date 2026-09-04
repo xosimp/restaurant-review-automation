@@ -1204,6 +1204,145 @@ def mobile_delete_food_cost_custom_item(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/food-cost/ingredient-supplier", methods=["POST"])
+@mobile_login_required
+def mobile_set_ingredient_supplier(current_user):
+    """Assign (or clear) the supplier an ingredient is ordered from.
+    Addressed by ingredient NAME to match how the rest of the food-cost
+    surface identifies items, and scoped to this restaurant so one
+    restaurant can never rewrite another's rows."""
+    # silent=True: a body-less POST should be a clean 400 about the
+    # missing field, not Flask's 415 about the missing content type.
+    data = request.get_json(silent=True) or {}
+    rid = current_user["restaurant_id"]
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="Ingredient name is required"), 400
+    supplier_name  = (data.get("supplier_name") or "").strip()
+    supplier_email = (data.get("supplier_email") or "").strip()
+    if supplier_email and "@" not in supplier_email:
+        return jsonify(ok=False, error="That doesn't look like an email address"), 400
+
+    conn = get_conn()
+    try:
+        cur = conn.execute("""
+            UPDATE ingredients SET supplier_name=?, supplier_email=?, updated_at=datetime('now')
+            WHERE restaurant_id=? AND name=? AND is_active=1
+        """, (supplier_name or None, supplier_email or None, rid, name))
+        conn.commit()
+        updated = cur.rowcount
+    finally:
+        conn.close()
+    if not updated:
+        return jsonify(ok=False, error=f"No active ingredient named \"{name}\""), 404
+    return jsonify(ok=True, name=name, supplier_name=supplier_name, supplier_email=supplier_email)
+
+
+@mobile_bp.route("/food-cost/order-draft")
+@mobile_login_required
+def mobile_food_cost_order_draft(current_user):
+    """What would be sent, grouped by supplier, without sending anything.
+    The order quantities are the same ones the Food Cost order list already
+    shows — see inventory.build_supplier_orders."""
+    from inventory import build_supplier_orders
+    try:
+        draft = build_supplier_orders(current_user["restaurant_id"])
+    except Exception as e:
+        return jsonify(ok=False, error=f"Couldn't build the order: {e}"), 500
+    return jsonify(ok=True, **draft)
+
+
+@mobile_bp.route("/food-cost/send-order", methods=["POST"])
+@mobile_login_required
+def mobile_send_supplier_order(current_user):
+    """Email the suggested order to each supplier and record a PO per
+    supplier. Optional `supplier_email` in the body sends to just that one
+    supplier; omitted, every group goes.
+
+    Each supplier is its own PO and its own send, so one bad address can't
+    stop the rest — failures come back per-supplier rather than as a single
+    all-or-nothing error."""
+    from inventory import build_supplier_orders
+    from models import next_po_number, record_purchase_order
+
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+
+    # The body is optional here — no body means "send every supplier".
+    data = request.get_json(silent=True) or {}
+    only = (data.get("supplier_email") or "").strip().lower()
+
+    try:
+        draft = build_supplier_orders(rid)
+    except Exception as e:
+        return jsonify(ok=False, error=f"Couldn't build the order: {e}"), 500
+
+    groups = draft.get("groups") or []
+    if only:
+        groups = [g for g in groups if (g.get("supplier_email") or "").lower() == only]
+    if not groups:
+        return jsonify(ok=False, error="Nothing to order — no items with a supplier assigned."), 400
+
+    sent, failed = [], []
+    for group in groups:
+        po_number = next_po_number(rid)
+        try:
+            from emails import send_supplier_order_email
+            send_supplier_order_email(
+                to_email=group["supplier_email"],
+                supplier_name=group.get("supplier_name") or "",
+                restaurant_name=restaurant.name,
+                po_number=po_number,
+                items=group["items"],
+                total_cost=group.get("total_cost") or 0,
+                reply_to=restaurant.owner_email or None,
+            )
+        except Exception as e:
+            failed.append({"supplier_email": group["supplier_email"], "error": str(e)})
+            continue
+
+        # Only recorded once the send actually succeeded — a PO in the
+        # ledger means a supplier really has it, so receiving can trust it.
+        record_purchase_order(rid, po_number, group.get("supplier_name") or "",
+                              group["supplier_email"], group["items"], group.get("total_cost") or 0)
+        try:
+            from models import log_email as _log_email
+            _log_email(rid, "supplier_order", group["supplier_email"],
+                       f"Order {po_number} — {restaurant.name}")
+        except Exception:
+            pass
+        sent.append({"po_number": po_number, "supplier_email": group["supplier_email"],
+                     "supplier_name": group.get("supplier_name") or "",
+                     "item_count": len(group["items"]), "total_cost": group.get("total_cost") or 0})
+
+    if sent:
+        _log_account_event(rid, "supplier_order_sent", current_user,
+                           detail=f"{len(sent)} order{'' if len(sent) == 1 else 's'}")
+    return jsonify(ok=bool(sent), sent=sent, failed=failed,
+                   error=None if sent else "Couldn't send the order — check the supplier addresses.")
+
+
+@mobile_bp.route("/food-cost/purchase-orders")
+@mobile_login_required
+def mobile_purchase_orders(current_user):
+    from models import get_purchase_orders
+    status = request.args.get("status") or None
+    return jsonify(ok=True, orders=get_purchase_orders(current_user["restaurant_id"], status=status))
+
+
+@mobile_bp.route("/food-cost/purchase-orders/<int:po_id>/received", methods=["POST"])
+@mobile_login_required
+def mobile_receive_purchase_order(current_user, po_id):
+    """Close a PO. The stored line items are what receiving pre-fills from,
+    so the count is confirmed against what was ordered rather than retyped."""
+    from models import mark_purchase_order_received
+    if not mark_purchase_order_received(current_user["restaurant_id"], po_id):
+        return jsonify(ok=False, error="That order is already received, or isn't yours."), 404
+    return jsonify(ok=True)
+
+
 @mobile_bp.route("/food-cost/analytics")
 @mobile_login_required
 def mobile_food_cost_analytics(current_user):
@@ -2599,7 +2738,7 @@ def mobile_connect_square(current_user):
     (@login_required), which is why the app couldn't reach them and the
     Connections row was a status-only stub."""
     import square as _square
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     rid = current_user["restaurant_id"]
     access_token = (data.get("square_access_token") or "").strip()
     location_id  = (data.get("square_location_id") or "").strip()
@@ -2638,7 +2777,7 @@ def mobile_connect_clover(current_user):
     against Clover before storing. See mobile_connect_square for why these
     mobile routes exist alongside clover_routes.py's session-auth ones."""
     import clover as _clover
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     rid = current_user["restaurant_id"]
     merchant_id = (data.get("clover_merchant_id") or "").strip()
     api_token   = (data.get("clover_api_token") or "").strip()

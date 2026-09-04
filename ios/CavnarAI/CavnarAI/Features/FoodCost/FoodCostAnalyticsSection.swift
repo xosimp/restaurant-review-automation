@@ -12,6 +12,7 @@ import SwiftUI
 /// same problem, just one step further along it (every section boxed, not
 /// just some).
 struct FoodCostAnalyticsSection: View {
+    @State private var showingSupplierOrder = false
     let viewModel: FoodCostAnalyticsViewModel
 
     var body: some View {
@@ -88,6 +89,9 @@ struct FoodCostAnalyticsSection: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 26)
+        }
+        .sheet(isPresented: $showingSupplierOrder) {
+            SupplierOrderSheet()
         }
     }
 
@@ -276,6 +280,23 @@ struct FoodCostAnalyticsSection: View {
                 }
                 if !a.orderReduction.isEmpty {
                     actionGroup(title: "REDUCE ORDER", color: Color.cavnarGreen, items: a.orderReduction, showDays: false)
+                }
+
+                // The order list used to end here — computed quantities and
+                // no way to act on them. This is the step that actually
+                // sends it to the supplier who fills it.
+                if !a.criticalLow.isEmpty || !a.reorderSoon.isEmpty {
+                    Button {
+                        Haptic.light()
+                        showingSupplierOrder = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "paperplane.fill").font(.system(size: 13, weight: .semibold))
+                            Text("Send order to suppliers")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
                 }
             }
         }

@@ -736,9 +736,79 @@ def load_inventory_for_restaurant(restaurant_id: int):
             "waste_last_week": r["waste_last_week"],
             "unit":            r["unit"] or "",
             "case_size":       r["case_size"] or 1.0,
+            # Carried through so build_supplier_orders can group an order
+            # by who it actually gets sent to. Only the ingredients-table
+            # path has these; CSV/sample items simply have none, and fall
+            # into the "unassigned" group.
+            "supplier_name":   (r["supplier_name"] if "supplier_name" in r.keys() else None) or "",
+            "supplier_email":  (r["supplier_email"] if "supplier_email" in r.keys() else None) or "",
         } for r in rows]
         return items, True
     data = get_client_data(restaurant_id)
     if data and data.get("inventory_csv"):
         return load_inventory(csv_string=data["inventory_csv"]), True
     return load_inventory(), False  # fallback to sample
+
+
+# ── Supplier orders ────────────────────────────────────────────────────────────
+
+def build_supplier_orders(restaurant_id: int, db_path: str = None) -> dict:
+    """Turn the computed order list into orders that can actually be sent.
+
+    The suggested-order maths already lives in analyse_inventory() — this
+    only takes what it flagged (critical_low first, then reorder_soon),
+    keeps anything with a real quantity, and groups it by the supplier
+    each ingredient is assigned to. Items with no supplier set come back
+    in their own "unassigned" group so the UI can prompt for one rather
+    than silently dropping them from the order.
+
+    Returns {"groups": [...], "unassigned": [...], "item_count": n,
+             "total_cost": float} where each group is
+    {"supplier_name", "supplier_email", "items": [...], "total_cost"}.
+    """
+    items, _is_live = load_inventory_for_restaurant(restaurant_id)
+    analysis = analyse_inventory(items)
+
+    # critical_low first — same order the UI shows them in — then
+    # reorder_soon, skipping anything already picked up.
+    seen, ordered = set(), []
+    for bucket in ("critical_low", "reorder_soon"):
+        for item in analysis.get(bucket, []):
+            name = item.get("item")
+            if not name or name in seen:
+                continue
+            if int(item.get("suggested_order_qty") or 0) <= 0:
+                continue
+            seen.add(name)
+            ordered.append({
+                "item": name,
+                "unit": item.get("unit") or "",
+                "qty": int(item["suggested_order_qty"]),
+                "unit_cost": round(float(item.get("unit_cost") or 0), 2),
+                "line_cost": round(int(item["suggested_order_qty"]) * float(item.get("unit_cost") or 0), 2),
+                "urgency": "critical" if bucket == "critical_low" else "soon",
+                "supplier_name": (item.get("supplier_name") or "").strip(),
+                "supplier_email": (item.get("supplier_email") or "").strip(),
+            })
+
+    groups, unassigned = {}, []
+    for row in ordered:
+        if not row["supplier_email"]:
+            unassigned.append(row)
+            continue
+        key = (row["supplier_name"], row["supplier_email"].lower())
+        groups.setdefault(key, []).append(row)
+
+    group_list = [{
+        "supplier_name": name or email,
+        "supplier_email": email,
+        "items": rows,
+        "total_cost": round(sum(r["line_cost"] for r in rows), 2),
+    } for (name, email), rows in sorted(groups.items())]
+
+    return {
+        "groups": group_list,
+        "unassigned": unassigned,
+        "item_count": len(ordered),
+        "total_cost": round(sum(r["line_cost"] for r in ordered), 2),
+    }
