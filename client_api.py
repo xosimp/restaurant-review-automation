@@ -4235,3 +4235,290 @@ def save_login_notify(current_user):
     payload, status = _do_login_notify(current_user["restaurant_id"],
                                        request.get_json(silent=True) or {}, current_user)
     return jsonify(**payload), status
+
+
+# ── Web parity: supplier orders, menu margins, schedule publishing ─────────────
+# Mobile-only until now (mobile_api.py) — same underlying models/inventory/
+# labor functions, just a session-authed route instead of a bearer-authed one.
+
+@client_bp.route("/api/food-cost/ingredient-supplier", methods=["POST"])
+@login_required
+def set_ingredient_supplier(current_user):
+    data = request.get_json(silent=True) or {}
+    rid = current_user["restaurant_id"]
+    name = (data.get("name") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="Ingredient name is required"), 400
+    supplier_name  = (data.get("supplier_name") or "").strip()
+    supplier_email = (data.get("supplier_email") or "").strip()
+    if supplier_email and "@" not in supplier_email:
+        return jsonify(ok=False, error="That doesn't look like an email address"), 400
+
+    conn = get_conn()
+    try:
+        cur = conn.execute("""
+            UPDATE ingredients SET supplier_name=?, supplier_email=?, updated_at=datetime('now')
+            WHERE restaurant_id=? AND name=? AND is_active=1
+        """, (supplier_name or None, supplier_email or None, rid, name))
+        conn.commit()
+        updated = cur.rowcount
+    finally:
+        conn.close()
+    if not updated:
+        return jsonify(ok=False, error=f"No active ingredient named \"{name}\""), 404
+    return jsonify(ok=True, name=name, supplier_name=supplier_name, supplier_email=supplier_email)
+
+
+@client_bp.route("/api/food-cost/order-draft")
+@login_required
+def food_cost_order_draft(current_user):
+    from inventory import build_supplier_orders
+    try:
+        draft = build_supplier_orders(current_user["restaurant_id"])
+    except Exception as e:
+        return jsonify(ok=False, error=f"Couldn't build the order: {e}"), 500
+    return jsonify(ok=True, **draft)
+
+
+@client_bp.route("/api/food-cost/send-order", methods=["POST"])
+@login_required
+def send_supplier_order(current_user):
+    from inventory import build_supplier_orders
+    from models import next_po_number, record_purchase_order
+
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+
+    data = request.get_json(silent=True) or {}
+    only = (data.get("supplier_email") or "").strip().lower()
+
+    try:
+        draft = build_supplier_orders(rid)
+    except Exception as e:
+        return jsonify(ok=False, error=f"Couldn't build the order: {e}"), 500
+
+    groups = draft.get("groups") or []
+    if only:
+        groups = [g for g in groups if (g.get("supplier_email") or "").lower() == only]
+    if not groups:
+        return jsonify(ok=False, error="Nothing to order — no items with a supplier assigned."), 400
+
+    sent, failed = [], []
+    for group in groups:
+        po_number = next_po_number(rid)
+        try:
+            from emails import send_supplier_order_email
+            send_supplier_order_email(
+                to_email=group["supplier_email"],
+                supplier_name=group.get("supplier_name") or "",
+                restaurant_name=restaurant.name,
+                po_number=po_number,
+                items=group["items"],
+                total_cost=group.get("total_cost") or 0,
+                reply_to=restaurant.owner_email or None,
+            )
+        except Exception as e:
+            failed.append({"supplier_email": group["supplier_email"], "error": str(e)})
+            continue
+
+        record_purchase_order(rid, po_number, group.get("supplier_name") or "",
+                              group["supplier_email"], group["items"], group.get("total_cost") or 0)
+        try:
+            from models import log_email as _log_email
+            _log_email(rid, "supplier_order", group["supplier_email"],
+                       f"Order {po_number} — {restaurant.name}")
+        except Exception:
+            pass
+        sent.append({"po_number": po_number, "supplier_email": group["supplier_email"],
+                     "supplier_name": group.get("supplier_name") or "",
+                     "item_count": len(group["items"]), "total_cost": group.get("total_cost") or 0})
+
+    if sent:
+        log_account_event(rid, "supplier_order_sent", current_user,
+                          detail=f"{len(sent)} order{'' if len(sent) == 1 else 's'}")
+    return jsonify(ok=bool(sent), sent=sent, failed=failed,
+                   error=None if sent else "Couldn't send the order — check the supplier addresses.")
+
+
+@client_bp.route("/api/food-cost/purchase-orders")
+@login_required
+def food_cost_purchase_orders(current_user):
+    from models import get_purchase_orders
+    status = request.args.get("status") or None
+    return jsonify(ok=True, orders=get_purchase_orders(current_user["restaurant_id"], status=status))
+
+
+@client_bp.route("/api/food-cost/purchase-orders/<int:po_id>/received", methods=["POST"])
+@login_required
+def receive_purchase_order(current_user, po_id):
+    from models import mark_purchase_order_received
+    if not mark_purchase_order_received(current_user["restaurant_id"], po_id):
+        return jsonify(ok=False, error="That order is already received, or isn't yours."), 404
+    return jsonify(ok=True)
+
+
+@client_bp.route("/api/food-cost/menu-profitability")
+@login_required
+def food_cost_menu_profitability(current_user):
+    import inventory_ledger as _il
+    try:
+        return jsonify(ok=True, **_il.menu_profitability(current_user["restaurant_id"]))
+    except Exception as e:
+        return jsonify(ok=False, error=f"Couldn't work out menu margins: {e}"), 500
+
+
+@client_bp.route("/api/food-cost/menu-item-price", methods=["POST"])
+@login_required
+def set_menu_item_price(current_user):
+    import inventory_ledger as _il
+    data = request.get_json(silent=True) or {}
+    try:
+        item_id = int(data.get("menu_item_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Which menu item?"), 400
+    if not _il.set_menu_item_price(current_user["restaurant_id"], item_id, data.get("sell_price")):
+        return jsonify(ok=False, error="Couldn't set that price — check the item and the amount."), 400
+    return jsonify(ok=True)
+
+
+@client_bp.route("/api/labor/staff-contacts")
+@login_required
+def get_staff_contacts_api(current_user):
+    from models import get_staff_contacts
+    from labor import employees_in_schedule
+    rid = current_user["restaurant_id"]
+
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, week_start, week_end, schedule_csv FROM schedule_history "
+            "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    names = employees_in_schedule(row["schedule_csv"]) if row else []
+    saved = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
+    contacts = [{
+        "employee_name": n,
+        "email": (saved.get(n.lower()) or {}).get("email", ""),
+        "phone": (saved.get(n.lower()) or {}).get("phone", ""),
+    } for n in names]
+    return jsonify(ok=True, contacts=contacts,
+                   schedule_id=(row["id"] if row else None),
+                   week_start=(row["week_start"] if row else None),
+                   week_end=(row["week_end"] if row else None),
+                   reachable=sum(1 for c in contacts if c["email"]))
+
+
+@client_bp.route("/api/labor/staff-contacts", methods=["POST"])
+@login_required
+def set_staff_contact_api(current_user):
+    from models import set_staff_contact
+    data = request.get_json(silent=True) or {}
+    name = (data.get("employee_name") or "").strip()
+    email = (data.get("email") or "").strip()
+    if not name:
+        return jsonify(ok=False, error="Which member of staff?"), 400
+    if email and "@" not in email:
+        return jsonify(ok=False, error="That doesn't look like an email address"), 400
+    if not set_staff_contact(current_user["restaurant_id"], name, email, (data.get("phone") or "").strip()):
+        return jsonify(ok=False, error="Couldn't save that contact."), 400
+    return jsonify(ok=True)
+
+
+@client_bp.route("/api/labor/publish-schedule", methods=["POST"])
+@login_required
+def publish_schedule_api(current_user):
+    from models import get_staff_contacts, create_schedule_share, get_schedule_share_status
+    from labor import employees_in_schedule, employee_shifts_from_csv
+
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+
+    data = request.get_json(silent=True) or {}
+    conn = get_conn()
+    try:
+        if data.get("schedule_id"):
+            row = conn.execute(
+                "SELECT id, week_start, week_end, schedule_csv FROM schedule_history WHERE id=? AND restaurant_id=?",
+                (int(data["schedule_id"]), rid)).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id, week_start, week_end, schedule_csv FROM schedule_history "
+                "WHERE restaurant_id=? ORDER BY id DESC LIMIT 1", (rid,)).fetchone()
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Which schedule?"), 400
+    finally:
+        conn.close()
+
+    if not row or not (row["schedule_csv"] or "").strip():
+        return jsonify(ok=False, error="Generate a schedule first — there's nothing to send yet."), 400
+
+    schedule_id = row["id"]
+    week_label = row["week_start"] or ""
+    if row["week_end"]:
+        week_label = f"{row['week_start']} – {row['week_end']}"
+
+    contacts = {c["employee_name"].lower(): c for c in get_staff_contacts(rid)}
+    base_url = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+
+    sent, unreachable, failed = [], [], []
+    for name in employees_in_schedule(row["schedule_csv"]):
+        contact = contacts.get(name.lower()) or {}
+        email = (contact.get("email") or "").strip()
+        if not email:
+            unreachable.append({"employee_name": name, "reason": "no email address on file"})
+            continue
+
+        token = create_schedule_share(rid, schedule_id, name, sent_to=email)
+        link = f"{base_url}/s/{token}"
+        shifts = employee_shifts_from_csv(row["schedule_csv"], name)
+        try:
+            from emails import send_staff_schedule_email
+            send_staff_schedule_email(
+                to_email=email, employee_name=name, restaurant_name=restaurant.name,
+                week_label=week_label, link=link, shifts=shifts,
+                reply_to=restaurant.owner_email or None)
+        except Exception as e:
+            failed.append({"employee_name": name, "error": str(e)})
+            continue
+
+        try:
+            from models import log_email as _log_email
+            _log_email(rid, "staff_schedule", email, f"Your schedule — {week_label}")
+        except Exception:
+            pass
+        sent.append({"employee_name": name, "sent_to": email, "shifts": len(shifts)})
+
+    if sent:
+        log_account_event(rid, "schedule_published", current_user,
+                          detail=f"{len(sent)} to staff")
+    return jsonify(ok=bool(sent), schedule_id=schedule_id, week_label=week_label,
+                   sent=sent, unreachable=unreachable, failed=failed,
+                   status=get_schedule_share_status(rid, schedule_id),
+                   error=None if sent else "Nobody has an email address on file yet.")
+
+
+@client_bp.route("/api/labor/schedule-share-status")
+@login_required
+def schedule_share_status_api(current_user):
+    from models import get_schedule_share_status
+    rid = current_user["restaurant_id"]
+    schedule_id = request.args.get("schedule_id", type=int)
+    if not schedule_id:
+        conn = get_conn()
+        try:
+            row = conn.execute("SELECT id FROM schedule_history WHERE restaurant_id=? ORDER BY id DESC LIMIT 1",
+                               (rid,)).fetchone()
+        finally:
+            conn.close()
+        schedule_id = row["id"] if row else None
+    if not schedule_id:
+        return jsonify(ok=True, status=[])
+    return jsonify(ok=True, schedule_id=schedule_id,
+                   status=get_schedule_share_status(rid, schedule_id))

@@ -1982,7 +1982,18 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button onclick="downloadScheduleFromPreview()" class="btn-primary" style="background:#2d6a4f;font-size:12px;padding:7px 16px" onmouseover="this.style.background='#235c42';this.style.boxShadow='0 4px 14px rgba(45,106,79,.38)';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='#2d6a4f';this.style.boxShadow='none';this.style.transform=''" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Download CSV</button>
+          <button onclick="openPublishSchedule()" class="btn-primary" style="background:rgba(200,75,47,.85);font-size:12px;padding:7px 16px">Send to staff</button>
           <button onclick="document.getElementById('schedule-preview-panel').style.display='none'" style="background:rgba(255,255,255,.08);color:rgba(255,255,255,.8);border:none;border-radius:var(--r);padding:7px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s,box-shadow .15s,transform .15s" onmouseover="this.style.background='rgba(255,255,255,.16)';this.style.transform='translateY(-1px)'" onmouseout="this.style.background='rgba(255,255,255,.08)';this.style.transform=''" onmousedown="this.style.transform='scale(.97)'" onmouseup="this.style.transform='translateY(-1px)'">Close</button>
+        </div>
+      </div>
+
+      <!-- Publish schedule to staff -->
+      <div id="publish-sched-panel" style="display:none;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(200,75,47,.05)">
+        <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--ember2);margin-bottom:8px">Send this schedule to your staff</div>
+        <div id="ps-contacts" style="font-size:12px;color:rgba(255,255,255,.4)">Loading staff…</div>
+        <div id="ps-actions" style="margin-top:10px;display:none">
+          <button onclick="publishScheduleNow()" id="ps-send-btn" class="btn-primary" style="background:#2d6a4f;font-size:12px;padding:7px 16px">Send now</button>
+          <span id="ps-result" style="font-size:12px;margin-left:10px"></span>
         </div>
       </div>
 
@@ -2799,6 +2810,130 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     {% endfor %}
   </div>
   {% endif %}
+
+  <!-- Menu margins + Send order to suppliers -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px">
+
+    <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.3);border-radius:12px;padding:16px 18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember)">Menu margins</div>
+        <button onclick="loadMenuMargins()" class="btn" style="background:rgba(200,75,47,.14);color:#e8956a;border:1px solid rgba(200,75,47,.32);font-size:11px;padding:5px 12px">Load</button>
+      </div>
+      <div id="mm-body" style="font-size:12px;color:rgba(255,255,255,.35)">See plate cost and margin for every priced dish.</div>
+    </div>
+
+    <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.3);border-radius:12px;padding:16px 18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember)">Send order to suppliers</div>
+        <button onclick="loadOrderDraft()" class="btn" style="background:rgba(200,75,47,.14);color:#e8956a;border:1px solid rgba(200,75,47,.32);font-size:11px;padding:5px 12px">Load</button>
+      </div>
+      <div id="so-body" style="font-size:12px;color:rgba(255,255,255,.35)">Email this week's suggested order to each supplier.</div>
+    </div>
+
+  </div>
+  <div id="po-history" style="margin-top:10px"></div>
+
+  <script>
+  function _mmEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+  function loadMenuMargins(){
+    var el = document.getElementById('mm-body');
+    el.innerHTML = '<span style="color:rgba(255,255,255,.3)">Loading…</span>';
+    fetch('/api/food-cost/menu-profitability').then(function(r){return r.json();}).then(function(d){
+      if(!d.ok){ el.innerHTML='<span style="color:#ef4444">'+_mmEsc(d.error||'Couldn\'t load menu margins')+'</span>'; return; }
+      if(!d.priced.length && !d.unpriced.length && !d.unmapped.length){
+        el.innerHTML='<span style="color:rgba(255,255,255,.3)">No menu items mapped to recipes yet.</span>';
+        return;
+      }
+      var html = '';
+      if(d.priced.length){
+        html += '<table style="width:100%;border-collapse:collapse;font-size:11.5px"><tbody>';
+        d.priced.forEach(function(item){
+          var band = item.food_cost_pct>=40 ? '#ef4444' : (item.food_cost_pct>=32 ? '#ef9f27' : '#6fcf97');
+          html += '<tr style="border-bottom:1px solid rgba(255,255,255,.06)">';
+          html += '<td style="padding:6px 4px;color:rgba(255,255,255,.85)">'+_mmEsc(item.name)+'</td>';
+          html += '<td style="padding:6px 4px;text-align:right;color:rgba(255,255,255,.4)">cost $'+item.plate_cost.toFixed(2)+'</td>';
+          html += '<td style="padding:6px 4px;text-align:right"><input type="number" step="0.01" value="'+item.sell_price.toFixed(2)+'" data-id="'+item.id+'" onchange="saveMenuPrice(this)" style="width:64px;background:#101010;border:1px solid var(--paper3);border-radius:4px;color:var(--ink);padding:3px 6px;font-size:11px;text-align:right"></td>';
+          html += '<td style="padding:6px 4px;text-align:right;color:'+band+';font-weight:700;white-space:nowrap">'+item.food_cost_pct.toFixed(0)+'% fc</td>';
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+      }
+      if(d.unpriced.length){
+        html += '<div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:10px">'+d.unpriced.length+' item'+(d.unpriced.length!==1?'s':'')+' with a recipe but no price set — add one above to see their margin.</div>';
+      }
+      el.innerHTML = html;
+    }).catch(function(){ el.innerHTML='<span style="color:#ef4444">Couldn\'t load menu margins</span>'; });
+  }
+
+  function saveMenuPrice(input){
+    var id = input.getAttribute('data-id');
+    var price = parseFloat(input.value);
+    fetch('/api/food-cost/menu-item-price', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({menu_item_id: id, sell_price: price})
+    }).then(function(r){return r.json();}).then(function(d){
+      if(d.ok){ toast('Price saved','success'); loadMenuMargins(); }
+      else { toast(d.error||'Couldn\'t save price','error'); }
+    });
+  }
+
+  function loadOrderDraft(){
+    var el = document.getElementById('so-body');
+    el.innerHTML = '<span style="color:rgba(255,255,255,.3)">Loading…</span>';
+    fetch('/api/food-cost/order-draft').then(function(r){return r.json();}).then(function(d){
+      if(!d.ok){ el.innerHTML='<span style="color:#ef4444">'+_mmEsc(d.error||'Couldn\'t build the order')+'</span>'; return; }
+      var groups = d.groups || [];
+      if(!groups.length){ el.innerHTML='<span style="color:rgba(255,255,255,.3)">Nothing to order — assign suppliers to ingredients first.</span>'; loadPurchaseOrders(); return; }
+      var html = '';
+      groups.forEach(function(g){
+        html += '<div style="border-bottom:1px solid rgba(255,255,255,.06);padding:8px 0">';
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
+        html += '<div style="font-size:12px;font-weight:600;color:rgba(255,255,255,.85)">'+_mmEsc(g.supplier_name||g.supplier_email)+'</div>';
+        html += '<button onclick="sendSupplierOrder(\''+_mmEsc(g.supplier_email)+'\',this)" class="btn" style="background:rgba(111,207,151,.12);color:#6fcf97;border:1px solid rgba(111,207,151,.3);font-size:10px;padding:4px 10px">Send ($'+(g.total_cost||0).toFixed(0)+')</button>';
+        html += '</div>';
+        html += '<div style="font-size:10px;color:rgba(255,255,255,.3);margin-top:2px">'+g.items.length+' item'+(g.items.length!==1?'s':'')+'</div>';
+        html += '</div>';
+      });
+      el.innerHTML = html;
+      loadPurchaseOrders();
+    }).catch(function(){ el.innerHTML='<span style="color:#ef4444">Couldn\'t build the order</span>'; });
+  }
+
+  function sendSupplierOrder(email, btn){
+    btn.disabled = true; btn.textContent = 'Sending…';
+    fetch('/api/food-cost/send-order', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({supplier_email: email})
+    }).then(function(r){return r.json();}).then(function(d){
+      if(d.ok){ toast('Order sent','success'); btn.textContent='Sent ✓'; loadPurchaseOrders(); }
+      else { toast(d.error||'Couldn\'t send order','error'); btn.disabled=false; btn.textContent='Send'; }
+    });
+  }
+
+  function loadPurchaseOrders(){
+    var el = document.getElementById('po-history');
+    fetch('/api/food-cost/purchase-orders?status=sent').then(function(r){return r.json();}).then(function(d){
+      if(!d.ok || !d.orders || !d.orders.length){ el.innerHTML=''; return; }
+      var html = '<div style="font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--ember);margin-bottom:8px">Recent purchase orders</div>';
+      html += '<div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.2);border-radius:12px;overflow:hidden">';
+      d.orders.slice(0,8).forEach(function(po,i){
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;'+(i>0?'border-top:1px solid rgba(255,255,255,.04);':'')+'gap:10px">';
+        html += '<div style="font-size:11.5px;color:rgba(255,255,255,.8)">'+_mmEsc(po.po_number)+' · '+_mmEsc(po.supplier_name||po.supplier_email)+'</div>';
+        html += '<button onclick="receivePO('+po.id+',this)" class="btn" style="background:rgba(255,255,255,.06);color:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.12);font-size:9.5px;padding:3px 8px">Mark received</button>';
+        html += '</div>';
+      });
+      html += '</div>';
+      el.innerHTML = html;
+    }).catch(function(){});
+  }
+
+  function receivePO(id, btn){
+    btn.disabled = true;
+    fetch('/api/food-cost/purchase-orders/'+id+'/received', {method:'POST'}).then(function(r){return r.json();}).then(function(d){
+      if(d.ok){ toast('Marked received','success'); loadPurchaseOrders(); }
+      else { toast(d.error||'Couldn\'t update','error'); btn.disabled=false; }
+    });
+  }
+  </script>
 
   <!-- 8-week waste cost trend — labor-style dark ember card, moved to bottom -->
   <div class="dark-hero-card" style="border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:20px 24px;margin-top:16px;position:relative;overflow:hidden;box-shadow:0 0 0 1px rgba(200,75,47,.1),0 8px 32px rgba(200,75,47,.18)">
@@ -6149,6 +6284,61 @@ function generateSchedule(btn) {
       _schedReset(btn);
       alert('Network error — try again');
     });
+}
+
+function _psEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function openPublishSchedule(){
+  var panel = document.getElementById('publish-sched-panel');
+  panel.style.display = 'block';
+  var body = document.getElementById('ps-contacts');
+  body.innerHTML = 'Loading staff…';
+  fetch('/api/labor/staff-contacts').then(function(r){return r.json();}).then(function(d){
+    if(!d.ok || !d.contacts || !d.contacts.length){
+      body.innerHTML = '<span style="color:rgba(255,255,255,.35)">No staff found in this schedule.</span>';
+      return;
+    }
+    var html = '';
+    d.contacts.forEach(function(c){
+      html += '<div style="display:flex;align-items:center;gap:8px;padding:5px 0">';
+      html += '<div style="width:110px;font-size:12px;color:rgba(255,255,255,.75);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+_psEsc(c.employee_name)+'</div>';
+      html += '<input type="email" placeholder="email address" value="'+_psEsc(c.email)+'" data-name="'+_psEsc(c.employee_name)+'" onchange="savePsContact(this)" style="flex:1;background:#101010;border:1px solid var(--paper3);border-radius:5px;color:var(--ink);padding:5px 8px;font-size:11.5px">';
+      html += '</div>';
+    });
+    body.innerHTML = html;
+    document.getElementById('ps-actions').style.display = 'block';
+    var reach = d.reachable + ' of ' + d.contacts.length + ' reachable by email';
+    document.getElementById('ps-result').textContent = reach;
+    document.getElementById('ps-result').style.color = 'rgba(255,255,255,.4)';
+  }).catch(function(){ body.innerHTML = '<span style="color:#ef4444">Couldn\'t load staff</span>'; });
+}
+
+function savePsContact(input){
+  var name = input.getAttribute('data-name');
+  var email = input.value.trim();
+  fetch('/api/labor/staff-contacts', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({employee_name: name, email: email})
+  }).then(function(r){return r.json();}).then(function(d){
+    if(!d.ok) toast(d.error||'Couldn\'t save that contact','error');
+  });
+}
+
+function publishScheduleNow(){
+  var btn = document.getElementById('ps-send-btn');
+  var result = document.getElementById('ps-result');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  fetch('/api/labor/publish-schedule', {method:'POST', headers:{'Content-Type':'application/json'}, body: '{}'})
+    .then(function(r){return r.json();}).then(function(d){
+      btn.disabled = false; btn.textContent = 'Send now';
+      if(d.ok){
+        result.style.color = '#6fcf97';
+        result.textContent = 'Sent to ' + d.sent.length + ' of ' + (d.sent.length + d.unreachable.length) + ' staff';
+        toast('Schedule sent','success');
+      } else {
+        result.style.color = '#ef4444';
+        result.textContent = d.error || 'Nothing sent';
+      }
+    }).catch(function(){ btn.disabled=false; btn.textContent='Send now'; result.style.color='#ef4444'; result.textContent='Network error'; });
 }
 
 var _schedTableOpen = false;
