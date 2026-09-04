@@ -3100,3 +3100,107 @@ def test_google_post_requires_text(client, db_path, monkeypatch):
 
 def test_google_post_route_requires_authentication(client, db_path):
     assert client.post("/mobile/api/marketing/google-post", json={}).status_code == 401
+
+
+# ── Menu profitability ─────────────────────────────────────────────────────
+
+def _menu_item(db_path, rid, name, price=None):
+    conn = get_conn(db_path)
+    cur = conn.execute("INSERT INTO menu_items (restaurant_id, name, sell_price, is_active) VALUES (?,?,?,1)",
+                       (rid, name, price))
+    conn.commit()
+    mid = cur.lastrowid
+    conn.close()
+    return mid
+
+
+def _recipe(db_path, rid, menu_item_id, pairs):
+    """pairs: [(ingredient_name, unit_cost, qty_per_unit)]"""
+    conn = get_conn(db_path)
+    for name, cost, qty in pairs:
+        cur = conn.execute("""INSERT INTO ingredients (restaurant_id, name, unit, unit_cost, is_active)
+                              VALUES (?,?,?,?,1)""", (rid, name, "lb", cost))
+        conn.execute("INSERT INTO recipe_ingredients (menu_item_id, ingredient_id, qty_per_unit) VALUES (?,?,?)",
+                     (menu_item_id, cur.lastrowid, qty))
+    conn.commit()
+    conn.close()
+
+
+def test_menu_profitability_costs_the_plate_and_computes_food_cost_pct(client, db_path):
+    rid = _restaurant(db_path)
+    burger = _menu_item(db_path, rid, "Burger", price=18.0)
+    _recipe(db_path, rid, burger, [("Beef", 6.0, 0.5), ("Bun", 1.0, 1.0)])  # 3.00 + 1.00 = 4.00
+    token = _login(client, db_path, rid)
+    data = client.get("/mobile/api/food-cost/menu-profitability", headers=_auth_headers(token)).get_json()
+    assert data["ok"] is True
+    item = data["priced"][0]
+    assert item["plate_cost"] == 4.0
+    assert item["margin"] == 14.0
+    assert item["food_cost_pct"] == round(4 / 18 * 100, 1)
+    assert data["average_food_cost_pct"] == item["food_cost_pct"]
+
+
+def test_items_are_grouped_by_what_can_honestly_be_said_about_them(client, db_path):
+    rid = _restaurant(db_path)
+    priced = _menu_item(db_path, rid, "Priced Dish", price=20.0)
+    _recipe(db_path, rid, priced, [("A", 2.0, 1.0)])
+    unpriced = _menu_item(db_path, rid, "No Price Yet")
+    _recipe(db_path, rid, unpriced, [("B", 3.0, 1.0)])
+    _menu_item(db_path, rid, "No Recipe", price=12.0)
+    token = _login(client, db_path, rid)
+    d = client.get("/mobile/api/food-cost/menu-profitability", headers=_auth_headers(token)).get_json()
+    assert [i["name"] for i in d["priced"]] == ["Priced Dish"]
+    assert [i["name"] for i in d["unpriced"]] == ["No Price Yet"]
+    assert d["unpriced"][0]["plate_cost"] == 3.0        # cost is known, margin isn't
+    assert "margin" not in d["unpriced"][0]
+    assert [i["name"] for i in d["unmapped"]] == ["No Recipe"]
+
+
+def test_worst_margin_is_listed_first(client, db_path):
+    rid = _restaurant(db_path)
+    good = _menu_item(db_path, rid, "Good Margin", price=20.0)
+    _recipe(db_path, rid, good, [("A", 2.0, 1.0)])       # 10%
+    bad = _menu_item(db_path, rid, "Bad Margin", price=10.0)
+    _recipe(db_path, rid, bad, [("B", 6.0, 1.0)])        # 60%
+    token = _login(client, db_path, rid)
+    d = client.get("/mobile/api/food-cost/menu-profitability", headers=_auth_headers(token)).get_json()
+    assert [i["name"] for i in d["priced"]] == ["Bad Margin", "Good Margin"]
+    assert d["worst"]["name"] == "Bad Margin"
+    assert d["best"]["name"] == "Good Margin"
+
+
+def test_setting_and_clearing_a_price(client, db_path):
+    rid = _restaurant(db_path)
+    mid = _menu_item(db_path, rid, "Dish")
+    _recipe(db_path, rid, mid, [("A", 5.0, 1.0)])
+    token = _login(client, db_path, rid)
+    assert client.post("/mobile/api/food-cost/menu-item-price",
+                       json={"menu_item_id": mid, "sell_price": 15.0},
+                       headers=_auth_headers(token)).get_json()["ok"] is True
+    d = client.get("/mobile/api/food-cost/menu-profitability", headers=_auth_headers(token)).get_json()
+    assert d["priced"][0]["food_cost_pct"] == round(5 / 15 * 100, 1)
+
+    client.post("/mobile/api/food-cost/menu-item-price",
+                json={"menu_item_id": mid, "sell_price": 0}, headers=_auth_headers(token))
+    d = client.get("/mobile/api/food-cost/menu-profitability", headers=_auth_headers(token)).get_json()
+    assert d["priced"] == [] and [i["name"] for i in d["unpriced"]] == ["Dish"]
+
+
+def test_pricing_cannot_reach_another_restaurants_menu(client, db_path):
+    mine = _restaurant(db_path)
+    theirs = _restaurant(db_path, name="Other Co")
+    their_item = _menu_item(db_path, theirs, "Their Dish", price=10.0)
+    token = _login(client, db_path, mine)
+    resp = client.post("/mobile/api/food-cost/menu-item-price",
+                       json={"menu_item_id": their_item, "sell_price": 99.0},
+                       headers=_auth_headers(token))
+    assert resp.status_code == 400
+    conn = get_conn(db_path)
+    price = conn.execute("SELECT sell_price FROM menu_items WHERE id=?", (their_item,)).fetchone()["sell_price"]
+    conn.close()
+    assert price == 10.0
+
+
+def test_menu_profitability_routes_require_authentication(client, db_path):
+    assert client.get("/mobile/api/food-cost/menu-profitability").status_code == 401
+    assert client.post("/mobile/api/food-cost/menu-item-price", json={}).status_code == 401

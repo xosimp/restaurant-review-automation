@@ -13,6 +13,7 @@ import SwiftUI
 /// just some).
 struct FoodCostAnalyticsSection: View {
     @State private var showingSupplierOrder = false
+    @State private var showingMenuMargins = false
     let viewModel: FoodCostAnalyticsViewModel
 
     var body: some View {
@@ -92,6 +93,9 @@ struct FoodCostAnalyticsSection: View {
         }
         .sheet(isPresented: $showingSupplierOrder) {
             SupplierOrderSheet()
+        }
+        .sheet(isPresented: $showingMenuMargins) {
+            MenuMarginsSheet()
         }
     }
 
@@ -298,6 +302,20 @@ struct FoodCostAnalyticsSection: View {
                     }
                     .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
                 }
+
+                // Recipes have costed the plate all along; this is where
+                // that cost meets the menu price and becomes a margin.
+                Button {
+                    Haptic.light()
+                    showingMenuMargins = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "chart.pie.fill").font(.system(size: 13, weight: .semibold))
+                        Text("Menu margins")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
             }
         }
     }

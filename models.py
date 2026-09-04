@@ -529,6 +529,7 @@ def ensure_columns(db_path: str = DB_PATH):
         ("reviews", "deleted_at", "TEXT"),
         # Who each ingredient is ordered from, so a suggested order can
         # actually be sent somewhere (see build_purchase_orders below).
+        ("menu_items", "sell_price", "REAL"),
         ("ingredients", "supplier_name", "TEXT"),
         ("ingredients", "supplier_email", "TEXT"),
         # Changelog seen state
@@ -856,6 +857,10 @@ def init_db(db_path: str = DB_PATH):
             toast_guid      TEXT,
             name            TEXT NOT NULL,
             is_active       INTEGER DEFAULT 1,
+            -- What the dish sells for. Recipes already cost the plate;
+            -- without a price there is no margin to show. Also in the ALTER
+            -- list below for databases created before this existed.
+            sell_price      REAL,
             UNIQUE(restaurant_id, toast_guid)
         )""",
         "CREATE INDEX IF NOT EXISTS idx_menu_items_restaurant ON menu_items(restaurant_id, toast_guid)",

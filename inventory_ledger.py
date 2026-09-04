@@ -535,3 +535,100 @@ def delete_recipe_ingredient(recipe_ingredient_id: int) -> None:
     with db_conn() as conn:
         conn.execute("DELETE FROM recipe_ingredients WHERE id=?", (recipe_ingredient_id,))
         conn.commit()
+
+
+# ── Menu profitability ─────────────────────────────────────────────────────────
+
+def menu_profitability(restaurant_id: int) -> dict:
+    """Plate cost and margin per menu item, from the recipes already mapped.
+
+    Recipes have costed ingredients all along (qty_per_unit x unit_cost);
+    what was missing was the other half of the equation — what the dish
+    sells for. With menu_items.sell_price set, each item gets a real food
+    cost percentage, which is the number that actually tells an owner which
+    dishes are worth pushing.
+
+    Items are returned in three groups so the UI never has to imply a
+    margin it can't compute:
+      priced   — has a recipe AND a price: real cost, margin, food cost %
+      unpriced — has a recipe but no price yet: cost only
+      unmapped — no recipe: nothing costable
+
+    `food_cost_pct` is cost/price. The industry rule of thumb is ~28-35%;
+    lower is a better margin.
+    """
+    from models import get_conn
+    conn = get_conn()
+    try:
+        items = conn.execute(
+            "SELECT id, name, sell_price FROM menu_items WHERE restaurant_id=? AND is_active=1 ORDER BY name",
+            (restaurant_id,)
+        ).fetchall()
+        costs = {}
+        for row in conn.execute("""
+            SELECT ri.menu_item_id AS mid,
+                   SUM(ri.qty_per_unit * COALESCE(i.unit_cost, 0)) AS plate_cost,
+                   COUNT(*) AS n
+            FROM recipe_ingredients ri
+            JOIN ingredients i ON i.id = ri.ingredient_id
+            JOIN menu_items m ON m.id = ri.menu_item_id
+            WHERE m.restaurant_id=?
+            GROUP BY ri.menu_item_id
+        """, (restaurant_id,)).fetchall():
+            costs[row["mid"]] = {"cost": float(row["plate_cost"] or 0), "ingredients": int(row["n"] or 0)}
+    finally:
+        conn.close()
+
+    priced, unpriced, unmapped = [], [], []
+    for it in items:
+        entry = {"id": it["id"], "name": it["name"],
+                 "sell_price": round(float(it["sell_price"]), 2) if it["sell_price"] else None}
+        costed = costs.get(it["id"])
+        if not costed or costed["ingredients"] == 0:
+            unmapped.append(entry)
+            continue
+        entry["plate_cost"] = round(costed["cost"], 2)
+        entry["ingredient_count"] = costed["ingredients"]
+        price = entry["sell_price"]
+        if not price or price <= 0:
+            unpriced.append(entry)
+            continue
+        entry["margin"] = round(price - entry["plate_cost"], 2)
+        entry["food_cost_pct"] = round(entry["plate_cost"] / price * 100, 1)
+        entry["margin_pct"] = round(entry["margin"] / price * 100, 1)
+        priced.append(entry)
+
+    # Worst food cost first — the dish quietly eating the margin is the
+    # one worth looking at, not the best performer.
+    priced.sort(key=lambda e: e["food_cost_pct"], reverse=True)
+    avg_fc = round(sum(e["food_cost_pct"] for e in priced) / len(priced), 1) if priced else None
+    return {
+        "priced": priced,
+        "unpriced": unpriced,
+        "unmapped": unmapped,
+        "average_food_cost_pct": avg_fc,
+        "best": priced[-1] if priced else None,
+        "worst": priced[0] if priced else None,
+    }
+
+
+def set_menu_item_price(restaurant_id: int, menu_item_id: int, sell_price) -> bool:
+    """Scoped by restaurant_id so one restaurant can never price another's
+    menu. `sell_price` of None or 0 clears the price. Returns False if the
+    item isn't theirs."""
+    from models import get_conn
+    try:
+        price = None if sell_price in (None, "", 0) else round(float(sell_price), 2)
+    except (TypeError, ValueError):
+        return False
+    if price is not None and price < 0:
+        return False
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE menu_items SET sell_price=? WHERE id=? AND restaurant_id=? AND is_active=1",
+            (price, menu_item_id, restaurant_id))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()

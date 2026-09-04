@@ -230,7 +230,15 @@ def test_verify_mobile_state_rejects_tampered_signature():
     from gmb import sign_mobile_state, verify_mobile_state
     state = sign_mobile_state(123)
     rid_part, expires_part, sig = state.split(":")
-    tampered = f"{rid_part}:{expires_part}:{'0' if sig[-1] != '0' else '1'}{sig[1:]}"
+    # The replacement character is chosen against sig[0] — the character
+    # actually being replaced. Choosing it against sig[-1] (as this did
+    # originally) left the "tampered" signature byte-identical to the real
+    # one whenever sig[0] already happened to be that character, which made
+    # this test hand a VALID signature to verify_mobile_state and assert it
+    # was rejected. That failed about 7% of runs.
+    tampered_sig = ("0" if sig[0] != "0" else "1") + sig[1:]
+    assert tampered_sig != sig
+    tampered = f"{rid_part}:{expires_part}:{tampered_sig}"
     assert verify_mobile_state(tampered) is None
 
 

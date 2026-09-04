@@ -1267,6 +1267,35 @@ def mobile_set_ingredient_supplier(current_user):
     return jsonify(ok=True, name=name, supplier_name=supplier_name, supplier_email=supplier_email)
 
 
+@mobile_bp.route("/food-cost/menu-profitability")
+@mobile_login_required
+def mobile_menu_profitability(current_user):
+    """Plate cost and margin per dish — see
+    inventory_ledger.menu_profitability. Items are grouped by what can
+    honestly be said about them, so the UI never implies a margin it
+    can't compute."""
+    import inventory_ledger as _il
+    try:
+        return jsonify(ok=True, **_il.menu_profitability(current_user["restaurant_id"]))
+    except Exception as e:
+        return jsonify(ok=False, error=f"Couldn't work out menu margins: {e}"), 500
+
+
+@mobile_bp.route("/food-cost/menu-item-price", methods=["POST"])
+@mobile_login_required
+def mobile_set_menu_item_price(current_user):
+    """Set (or clear, with 0/null) what a dish sells for."""
+    import inventory_ledger as _il
+    data = request.get_json(silent=True) or {}
+    try:
+        item_id = int(data.get("menu_item_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Which menu item?"), 400
+    if not _il.set_menu_item_price(current_user["restaurant_id"], item_id, data.get("sell_price")):
+        return jsonify(ok=False, error="Couldn't set that price — check the item and the amount."), 400
+    return jsonify(ok=True)
+
+
 @mobile_bp.route("/food-cost/order-draft")
 @mobile_login_required
 def mobile_food_cost_order_draft(current_user):
