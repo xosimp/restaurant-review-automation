@@ -3023,3 +3023,80 @@ def test_supplier_order_routes_require_authentication(client, db_path):
     assert client.post("/mobile/api/food-cost/send-order").status_code == 401
     assert client.get("/mobile/api/food-cost/purchase-orders").status_code == 401
     assert client.post("/mobile/api/food-cost/ingredient-supplier", json={}).status_code == 401
+
+
+# ── Google Business Profile posts ──────────────────────────────────────────
+
+def _connect_gmb(db_path, rid):
+    """The three fields gmb.is_connected / create_local_post require."""
+    from models import update_restaurant as _ur
+    _ur(rid, {"gmb_refresh_token": "refresh_x", "gmb_account_id": "accounts/123",
+              "gmb_location_id": "locations/456"}, db_path=db_path)
+
+
+def test_google_post_requires_a_connected_listing(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    resp = client.post("/mobile/api/marketing/google-post",
+                       json={"summary": "Fresh menu today"}, headers=_auth_headers(token))
+    assert resp.status_code == 400
+    assert "connect google business" in resp.get_json()["error"].lower()
+
+
+def test_google_post_publishes_and_logs_the_piece(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    _connect_gmb(db_path, rid)
+    token = _login(client, db_path, rid)
+    import gmb as _gmb
+    monkeypatch.setattr(_gmb, "is_connected", lambda r: True)
+    seen = {}
+    monkeypatch.setattr(_gmb, "create_local_post",
+                        lambda r, summary, cta_type=None, cta_url=None: seen.update(
+                            summary=summary, cta_type=cta_type, cta_url=cta_url)
+                        or {"ok": True, "name": "accounts/123/locations/456/localPosts/9"})
+    data = client.post("/mobile/api/marketing/google-post",
+                       json={"summary": "Half-price oysters all week",
+                             "cta_type": "LEARN_MORE", "cta_url": "https://gia.test"},
+                       headers=_auth_headers(token)).get_json()
+    assert data["ok"] is True
+    assert data["name"].endswith("/localPosts/9")
+    assert seen["summary"] == "Half-price oysters all week"
+    assert seen["cta_type"] == "LEARN_MORE"
+
+    conn = get_conn(db_path)
+    row = conn.execute(
+        "SELECT content_type, post_platform FROM marketing_content_log WHERE restaurant_id=?", (rid,)
+    ).fetchone()
+    conn.close()
+    assert (row["content_type"], row["post_platform"]) == ("google_promo", "google")
+
+
+def test_google_post_surfaces_the_api_error_and_logs_nothing(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    _connect_gmb(db_path, rid)
+    token = _login(client, db_path, rid)
+    import gmb as _gmb
+    monkeypatch.setattr(_gmb, "is_connected", lambda r: True)
+    monkeypatch.setattr(_gmb, "create_local_post",
+                        lambda *a, **k: {"ok": False, "error": "GBP API 403: not authorized"})
+    data = client.post("/mobile/api/marketing/google-post",
+                       json={"summary": "Anything"}, headers=_auth_headers(token)).get_json()
+    assert data["ok"] is False and "403" in data["error"]
+    conn = get_conn(db_path)
+    n = conn.execute("SELECT COUNT(*) FROM marketing_content_log WHERE restaurant_id=?", (rid,)).fetchone()[0]
+    conn.close()
+    assert n == 0
+
+
+def test_google_post_requires_text(client, db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    _connect_gmb(db_path, rid)
+    token = _login(client, db_path, rid)
+    import gmb as _gmb
+    monkeypatch.setattr(_gmb, "is_connected", lambda r: True)
+    assert client.post("/mobile/api/marketing/google-post", json={"summary": "  "},
+                       headers=_auth_headers(token)).status_code == 400
+
+
+def test_google_post_route_requires_authentication(client, db_path):
+    assert client.post("/mobile/api/marketing/google-post", json={}).status_code == 401

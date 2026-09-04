@@ -418,3 +418,82 @@ def update_gbp_listing(restaurant_id: int, fields: dict) -> dict:
         return {"ok": False, "error": f"GBP API {resp.status_code}: {resp.text[:300]}"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+# ── Local posts ────────────────────────────────────────────────────────────────
+
+# Valid callToAction actionType values, per Google's Local Posts reference.
+# BOOK/ORDER/SHOP/LEARN_MORE/SIGN_UP all require a url; CALL uses the
+# listing's own phone number and must NOT carry one.
+LOCAL_POST_ACTIONS = ("LEARN_MORE", "BOOK", "ORDER", "SHOP", "SIGN_UP", "CALL")
+
+
+def create_local_post(restaurant_id: int, summary: str, cta_type: str = None,
+                      cta_url: str = None, language_code: str = "en-US") -> dict:
+    """Publish a "What's new" post to the connected Google Business Profile.
+
+    Marketing already generates this copy (the `google_promo` content type)
+    — this is the step that actually puts it on the listing.
+
+    IMPORTANT, unverified: the endpoint below is Google's documented Local
+    Posts API (v4 `mybusiness.googleapis.com`, which Local Posts stayed on
+    after the rest of the surface moved to v1). It has NOT been exercised
+    against a live listing here, because no Google Business Profile can be
+    connected in this environment yet (the OAuth redirect URI and the
+    Cloudflare challenge are both still outstanding). The request shape
+    follows the published reference and the call construction is covered by
+    tests, but treat the first real post as the actual verification — same
+    caveat style as toast.fetch_order_selections' refundStatus note.
+
+    Returns {"ok": True, "name": "<post resource name>"} or
+    {"ok": False, "error": "..."}.
+    """
+    from models import get_restaurant
+
+    summary = (summary or "").strip()
+    if not summary:
+        return {"ok": False, "error": "Post text is required"}
+    # Google rejects anything over 1500 characters outright.
+    if len(summary) > 1500:
+        return {"ok": False, "error": "Post text is over Google's 1,500-character limit"}
+
+    r = get_restaurant(restaurant_id)
+    if not r or not r.gmb_refresh_token or not r.gmb_account_id or not r.gmb_location_id:
+        return {"ok": False, "error": "Google Business not connected"}
+
+    token = get_valid_token(restaurant_id)
+    if not token:
+        return {"ok": False, "error": "Could not refresh Google token"}
+
+    body = {"languageCode": language_code, "summary": summary, "topicType": "STANDARD"}
+    if cta_type:
+        cta_type = cta_type.upper()
+        if cta_type not in LOCAL_POST_ACTIONS:
+            return {"ok": False, "error": f"Unsupported call to action: {cta_type}"}
+        action = {"actionType": cta_type}
+        if cta_type == "CALL":
+            # CALL uses the listing's own number; sending a url is rejected.
+            if cta_url:
+                return {"ok": False, "error": "A Call button can't carry a link"}
+        else:
+            if not cta_url:
+                return {"ok": False, "error": f"{cta_type} needs a link"}
+            action["url"] = cta_url
+        body["callToAction"] = action
+
+    # gmb_account_id is "accounts/123", gmb_location_id is "locations/456"
+    # (see get_gmb_account_id / get_gmb_location_id) — localPosts hangs off
+    # the combined parent.
+    parent = f"{r.gmb_account_id}/{r.gmb_location_id}"
+    try:
+        resp = requests.post(
+            f"https://mybusiness.googleapis.com/v4/{parent}/localPosts",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=body,
+            timeout=15,
+        )
+        if resp.status_code in (200, 201):
+            return {"ok": True, "name": (resp.json() or {}).get("name", "")}
+        return {"ok": False, "error": f"GBP API {resp.status_code}: {resp.text[:300]}"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}

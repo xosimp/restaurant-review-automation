@@ -161,22 +161,36 @@ struct MarketingView: View {
                         .focused($focusedField, equals: .imageURL)
                 }
 
-                HStack(spacing: 10) {
+                // A Google Promo belongs on the Google listing, not on
+                // Instagram — so that one content type gets its own single
+                // destination rather than three buttons, two of which are a
+                // category error.
+                if viewModel.selectedType == "google_promo" {
                     Button {
-                        Task { await viewModel.postToInstagram() }
+                        Task { await viewModel.postToGoogle() }
                     } label: {
-                        Text("Post to Instagram")
+                        Text("Post to Google").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(CavnarPrimaryButtonStyle())
                     .disabled(viewModel.isPosting)
+                } else {
+                    HStack(spacing: 10) {
+                        Button {
+                            Task { await viewModel.postToInstagram() }
+                        } label: {
+                            Text("Post to Instagram")
+                        }
+                        .buttonStyle(CavnarPrimaryButtonStyle())
+                        .disabled(viewModel.isPosting)
 
-                    Button {
-                        Task { await viewModel.postToFacebook() }
-                    } label: {
-                        Text("Post to Facebook")
+                        Button {
+                            Task { await viewModel.postToFacebook() }
+                        } label: {
+                            Text("Post to Facebook")
+                        }
+                        .buttonStyle(CavnarPrimaryButtonStyle())
+                        .disabled(viewModel.isPosting)
                     }
-                    .buttonStyle(CavnarPrimaryButtonStyle())
-                    .disabled(viewModel.isPosting)
                 }
 
                 if let posted = viewModel.postedPlatform {

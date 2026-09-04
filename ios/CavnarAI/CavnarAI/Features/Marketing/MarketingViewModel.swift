@@ -160,6 +160,36 @@ final class MarketingViewModel {
         }
     }
 
+    private struct GooglePostBody: Encodable {
+        let summary: String
+        enum CodingKeys: String, CodingKey { case summary }
+    }
+
+    /// Publishes the generated Google Promo copy to the connected Google
+    /// Business Profile listing — the step this content type was always
+    /// written for but never had.
+    func postToGoogle() async {
+        guard let summary = generatedContent else { return }
+        isPosting = true
+        postError = nil
+        defer { isPosting = false }
+        do {
+            let response: PostResponse = try await client.send(
+                "/mobile/api/marketing/google-post", method: .post,
+                body: GooglePostBody(summary: summary)
+            )
+            if response.ok {
+                postedPlatform = "Google"
+            } else {
+                postError = response.error ?? "Couldn't post to Google."
+            }
+        } catch let error as APIClient.APIError {
+            postError = error.message
+        } catch {
+            postError = "Couldn't post to Google."
+        }
+    }
+
     func postToFacebook() async {
         guard let caption = generatedContent else { return }
         isPosting = true

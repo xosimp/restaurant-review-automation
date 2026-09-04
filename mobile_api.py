@@ -1204,6 +1204,40 @@ def mobile_delete_food_cost_custom_item(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/marketing/google-post", methods=["POST"])
+@mobile_login_required
+def mobile_create_google_post(current_user):
+    """Publish generated copy to the connected Google Business Profile.
+
+    Marketing already writes `google_promo` copy — this posts it. Logged to
+    marketing_content_log on success so it counts toward "pieces this
+    month" exactly like a published Instagram post does."""
+    import gmb as _gmb
+    data = request.get_json(silent=True) or {}
+    rid = current_user["restaurant_id"]
+
+    if not _gmb.is_connected(rid):
+        return jsonify(ok=False, error="Connect Google Business first — Account → Connections."), 400
+
+    summary  = (data.get("summary") or "").strip()
+    cta_type = (data.get("cta_type") or "").strip() or None
+    cta_url  = (data.get("cta_url") or "").strip() or None
+    if not summary:
+        return jsonify(ok=False, error="Post text is required"), 400
+
+    result = _gmb.create_local_post(rid, summary, cta_type=cta_type, cta_url=cta_url)
+    if not result.get("ok"):
+        return jsonify(ok=False, error=result.get("error") or "Google rejected the post")
+
+    try:
+        from marketing import log_content
+        log_content(rid, "google_promo", summary[:80], post_id=result.get("name") or None,
+                    post_platform="google")
+    except Exception:
+        pass
+    return jsonify(ok=True, name=result.get("name") or "")
+
+
 @mobile_bp.route("/food-cost/ingredient-supplier", methods=["POST"])
 @mobile_login_required
 def mobile_set_ingredient_supplier(current_user):
