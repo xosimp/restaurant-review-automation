@@ -85,6 +85,6 @@ struct AccountBackupCodesView: View {
                 if index < codes.count - 1 { AccountRowDivider() }
             }
         }
-        .cavnarCard()
+        .accountCard()
     }
 }

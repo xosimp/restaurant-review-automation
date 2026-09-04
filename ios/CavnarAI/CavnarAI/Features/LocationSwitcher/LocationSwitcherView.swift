@@ -57,24 +57,23 @@ struct LocationSwitcherView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .cavnarModuleBackground()
             .overlay {
                 if viewModel.isLoading { CavnarLoadingSeal() }
-                else if viewModel.locations.isEmpty && viewModel.errorMessage == nil {
+            }
+            // Top-aligned at the same offset as the Notifications sheet's
+            // empty state, not floated to the vertical center.
+            .overlay(alignment: .top) {
+                if !viewModel.isLoading && viewModel.locations.isEmpty && viewModel.errorMessage == nil {
                     CavnarEmptyHearth(
                         title: "No other locations",
                         message: "Additional restaurants in your group will appear here."
                     )
+                    .padding(.top, 40)
                 }
             }
-            .navigationTitle(viewModel.groupName ?? "Locations")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { cavnarTitleToolbar(viewModel.groupName ?? "Locations") }
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                }
-            }
+            // The same ember chevron every other sheet closes with — this
+            // was the last one still using a plain system "Close" button.
+            .accountSheetChrome(viewModel.groupName ?? "Locations")
             .task { await viewModel.load() }
         }
     }

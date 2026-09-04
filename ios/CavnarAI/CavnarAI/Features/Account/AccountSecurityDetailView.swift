@@ -630,7 +630,7 @@ private struct TwoFactorSetupSheet: View {
                     }
                 }
             }
-            .cavnarCard()
+            .accountCard()
 
             Button {
                 Haptic.light()

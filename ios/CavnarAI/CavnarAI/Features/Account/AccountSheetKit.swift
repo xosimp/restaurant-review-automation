@@ -152,6 +152,16 @@ private struct AccountCardStyle: ViewModifier {
     }
 }
 
+extension View {
+    /// The Account card inset for content whose rows carry their own
+    /// vertical padding (AccountKVRow, AccountDisplayRow, backup-code and
+    /// invoice rows). `.cavnarCard()`'s uniform 16pt stacked on top of a
+    /// row's own 9-10pt is what made "Product updates & tips" and the
+    /// backup-code list sit in a card that was mostly air above and below
+    /// the first/last row.
+    func accountCard() -> some View { modifier(AccountCardStyle()) }
+}
+
 struct AccountSection<Content: View>: View {
     let kicker: String
     @ViewBuilder var content: () -> Content

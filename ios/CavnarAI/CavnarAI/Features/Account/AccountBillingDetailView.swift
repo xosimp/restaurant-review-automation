@@ -76,7 +76,7 @@ struct AccountBillingDetailView: View {
                                     }
                                 }
                             }
-                            .cavnarCard()
+                            .accountCard()
                         }
                     }
                 }

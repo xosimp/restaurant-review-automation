@@ -128,6 +128,7 @@ struct AccountAlertsDetailView: View {
                             }
                             Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
                             Button {
+                                Haptic.light()
                                 Task {
                                     await viewModel.sendTestDigest()
                                     if viewModel.testDigestSucceeded {
@@ -157,25 +158,22 @@ struct AccountAlertsDetailView: View {
                     .cavnarCard()
                 }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader("Email preferences")
-                    VStack(alignment: .leading, spacing: 12) {
-                        AccountKVRow(label: "Product updates & tips", showsDivider: false) {
-                            if viewModel.summary?.account.marketingEmailsOptOut == false {
-                                AccountLink(title: "Turn off", tone: .cavnarRed) {
-                                    Task { await viewModel.toggleMarketingOptOut(true) }
-                                }
-                            } else {
-                                AccountLink(title: "Turn on") {
-                                    Task { await viewModel.toggleMarketingOptOut(false) }
-                                }
+                AccountSection(kicker: "Email preferences") {
+                    AccountKVRow(label: "Product updates & tips") {
+                        if viewModel.summary?.account.marketingEmailsOptOut == false {
+                            AccountLink(title: "Turn off", tone: .cavnarRed) {
+                                Task { await viewModel.toggleMarketingOptOut(true) }
+                            }
+                        } else {
+                            AccountLink(title: "Turn on") {
+                                Task { await viewModel.toggleMarketingOptOut(false) }
                             }
                         }
-                        Text("This never affects security emails — sign-in alerts, 2FA codes, and password changes always go out.")
-                            .font(.cavnarBody(14))
-                            .foregroundStyle(Color.cavnarInk3)
                     }
-                    .cavnarCard()
+                    Text("This never affects security emails — sign-in alerts, 2FA codes, and password changes always go out.")
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .padding(.vertical, 9)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {

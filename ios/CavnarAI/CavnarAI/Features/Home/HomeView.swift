@@ -264,8 +264,12 @@ struct HomeView: View {
                             Haptic.light()
                             showingLocationSwitcher = true
                         } label: {
+                            // 15, not the bell's 17 — building.2 is a much
+                            // wider glyph and at 17 it spilled past the 34pt
+                            // circle behind it. This renders the same
+                            // visual footprint as the bell.
                             Image(systemName: "building.2")
-                                .font(.system(size: 17, weight: .semibold))
+                                .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(Color.cavnarEmber)
                                 .cavnarToolbarIconGlass()
                         }

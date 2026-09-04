@@ -641,10 +641,16 @@ struct LockedView: View {
             LoginBackground()
 
             VStack(spacing: 0) {
-                // Fixed, not a Spacer — the pad below is much taller than
-                // the Face ID button, and a Spacer would float the wordmark
-                // to a different height in each mode.
-                Color.clear.frame(height: 96)
+                // Two equal Spacers — one above the wordmark, one between it
+                // and the headline — so the wordmark sits centered in
+                // whatever room is left above the unlock surface. With the
+                // pad up that lands it near the top; with just the Face ID
+                // button it settles around the upper third, which is where
+                // banking-app lock screens put their mark. The unlock
+                // controls stay anchored at the bottom either way: that's
+                // the thumb zone, and it's the convention (Apple's own lock
+                // screen, Chase, Revolut) — the gap above them is by design.
+                Spacer(minLength: 40)
 
                 // Wordmark only — no seal beside it here (it read as a
                 // stray "C" off to the side of the word). Placeholder keeps
@@ -662,9 +668,7 @@ struct LockedView: View {
                 }
 
                 // The headline sits with the unlock surface, not with the
-                // wordmark — the slack goes here, above it, so "Welcome
-                // back" lands just over the pad/button instead of crowding
-                // the wordmark.
+                // wordmark.
                 Spacer(minLength: 28)
 
                 VStack(spacing: 12) {
@@ -811,7 +815,7 @@ struct LockedView: View {
             .lockReveal(stage >= 4)
         }
         .padding(.horizontal, 44)
-        .padding(.bottom, 54)
+        .padding(.bottom, 44)
     }
 
     // MARK: - Actions

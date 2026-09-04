@@ -168,13 +168,10 @@ struct NotificationsListView: View {
             // gets the same full-bleed background regardless of how little
             // content it has.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .cavnarModuleBackground()
             .cavnarEmberRefreshable { await viewModel.load() }
-            .navigationTitle("Notifications")
-            // Inline, not the default large title — with the styled
-            // principal title below, the large one doubled it up top-left.
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { cavnarTitleToolbar("Notifications") }
+            // Module background, inline styled title, and the ember chevron
+            // — the same chrome every Account sheet uses.
+            .accountSheetChrome("Notifications")
         }
     }
 }
