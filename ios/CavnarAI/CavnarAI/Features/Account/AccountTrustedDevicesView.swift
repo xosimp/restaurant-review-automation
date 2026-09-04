@@ -65,7 +65,7 @@ struct AccountTrustedDevicesView: View {
                                             .foregroundStyle(Color.cavnarInk3)
                                     }
                                     Spacer(minLength: 8)
-                                    AccountLink(title: "Forget", tone: .cavnarRed) {
+                                    AccountActionChip(symbol: "xmark", tone: .cavnarRed, accessibilityLabel: "Forget \(device.label ?? "device")") {
                                         Task {
                                             if await viewModel.revokeTrustedDevice(device.id) { Haptic.success() }
                                         }

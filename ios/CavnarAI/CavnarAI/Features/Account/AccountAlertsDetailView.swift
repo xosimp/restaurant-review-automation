@@ -46,210 +46,155 @@ struct AccountAlertsDetailView: View {
                 hero
                 statusStrip
 
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader("What triggers an alert")
-                    VStack(alignment: .leading, spacing: 12) {
-                        toggle("1-star reviews", $draft.alert1star)
-                        toggle("2-star reviews", $draft.alert2star)
-                        toggle("5-star reviews", $draft.alert5star)
-                        toggle("Health or safety mention", $draft.alertHealth)
-                        toggle("Negative review spike", $draft.alertNegSpike)
-                        toggle("Rating declining trend", $draft.alertNegativeTrend)
-                        toggle("Unresponded review (48h)", $draft.alertNoResponse)
-                        toggle("Labor over target", $draft.alertLaborOver)
-                        toggle("Food waste flagged", $draft.alertFoodWaste)
-                        toggle("AI visibility drops", $draft.alertAiVisibilityDrop)
-                        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1).padding(.top, 2)
-                        masterAlertPill
-                    }
-                    .cavnarCard()
+                AccountSection(kicker: "What triggers an alert") {
+                    AccountSwitchRow(label: "1-star reviews", isOn: $draft.alert1star)
+                    AccountSwitchRow(label: "2-star reviews", isOn: $draft.alert2star)
+                    AccountSwitchRow(label: "5-star reviews", isOn: $draft.alert5star)
+                    AccountSwitchRow(label: "Health or safety mention", isOn: $draft.alertHealth)
+                    AccountSwitchRow(label: "Negative review spike", isOn: $draft.alertNegSpike)
+                    AccountSwitchRow(label: "Rating declining trend", isOn: $draft.alertNegativeTrend)
+                    AccountSwitchRow(label: "Unresponded review (48h)", isOn: $draft.alertNoResponse)
+                    AccountSwitchRow(label: "Labor over target", isOn: $draft.alertLaborOver)
+                    AccountSwitchRow(label: "Food waste flagged", isOn: $draft.alertFoodWaste)
+                    AccountSwitchRow(label: "AI visibility drops", isOn: $draft.alertAiVisibilityDrop)
+                    masterAlertPill.padding(.vertical, 9)
                 }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader("How urgent alerts reach you")
-                    VStack(alignment: .leading, spacing: 12) {
-                        toggle("Text alerts", $draft.urgentViaSms)
-                        toggle("Email alerts", $draft.urgentViaEmail)
-                        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Also email").font(.cavnarBody(15.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            TextField("chef@…, gm@… (up to 3)", text: $draft.alertExtraEmails)
-                                .font(.cavnarBody(15))
-                                .foregroundStyle(Color.cavnarInk)
-                                .keyboardType(.emailAddress)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                            Text("Alert and digest emails also go to these addresses.")
-                                .font(.cavnarBody(14))
-                                .foregroundStyle(Color.cavnarInk3)
+                AccountSection(kicker: "How urgent alerts reach you") {
+                    AccountSwitchRow(label: "Text alerts", isOn: $draft.urgentViaSms)
+                    AccountSwitchRow(label: "Email alerts", isOn: $draft.urgentViaEmail)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Also email").font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
+                        TextField("chef@…, gm@… (up to 3)", text: $draft.alertExtraEmails)
+                            .font(.cavnarBody(16, weight: 700))
+                            .foregroundStyle(Color.cavnarInk)
+                            .keyboardType(.emailAddress)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        Text("Alert and digest emails also go to these addresses.")
+                            .font(.cavnarBody(14))
+                            .foregroundStyle(Color.cavnarInk3.opacity(0.8))
+                    }
+                    .padding(.vertical, 9)
+                }
+
+                AccountSection(kicker: "Push notifications") {
+                    pushRow("1-star reviews", $draft.al1starPush, on: draft.alert1star)
+                    pushRow("2-star reviews", $draft.al2starPush, on: draft.alert2star)
+                    pushRow("5-star reviews", $draft.al5starPush, on: draft.alert5star)
+                    pushRow("Health or safety mention", $draft.alHealthPush, on: draft.alertHealth)
+                    pushRow("Negative review spike", $draft.alSpikePush, on: draft.alertNegSpike)
+                    pushRow("Unresponded review (48h)", $draft.alUnresPush, on: draft.alertNoResponse)
+                    AccountSwitchRow(label: "Play a sound", isOn: $draft.pushSound)
+                    Text("Push doesn't need text/email alerts turned on — it's free to send, so it's gated per-alert-type here instead. Trend, labor, waste and visibility alerts push automatically once enabled.")
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarInk3.opacity(0.8))
+                        .padding(.vertical, 9)
+                }
+
+                AccountSection(kicker: "Quiet hours") {
+                    AccountSwitchRow(
+                        label: "Pause overnight",
+                        detail: "Text, email, and push all wait until your quiet window ends",
+                        isOn: $quietHoursEnabled,
+                        showsDivider: quietHoursEnabled
+                    )
+                    if quietHoursEnabled {
+                        AccountKVRow(label: "From") {
+                            DatePicker("", selection: $quietStart, displayedComponents: .hourAndMinute).labelsHidden().tint(Color.cavnarEmber)
                         }
-                    }
-                    .cavnarCard()
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader("Push notifications")
-                    VStack(alignment: .leading, spacing: 12) {
-                        pushToggle("1-star reviews", $draft.al1starPush, on: draft.alert1star)
-                        pushToggle("2-star reviews", $draft.al2starPush, on: draft.alert2star)
-                        pushToggle("5-star reviews", $draft.al5starPush, on: draft.alert5star)
-                        pushToggle("Health or safety mention", $draft.alHealthPush, on: draft.alertHealth)
-                        pushToggle("Negative review spike", $draft.alSpikePush, on: draft.alertNegSpike)
-                        pushToggle("Unresponded review (48h)", $draft.alUnresPush, on: draft.alertNoResponse)
-                        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
-                        toggle("Play a sound", $draft.pushSound)
-                        Text("Push doesn't need text/email alerts turned on — it's free to send, so it's gated per-alert-type here instead. Trend and labor alerts above push automatically once enabled; there's no separate switch for those two yet.")
-                            .font(.cavnarBody(15))
-                            .foregroundStyle(Color.cavnarInk3)
-                            .padding(.top, 2)
-                    }
-                    .cavnarCard()
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader("Quiet hours")
-                    VStack(alignment: .leading, spacing: 12) {
-                        Toggle(isOn: $quietHoursEnabled) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Pause overnight").font(.cavnarBody(15.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                Text("Text, email, and push all wait until your quiet window ends").font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
-                            }
+                        AccountKVRow(label: "Until") {
+                            DatePicker("", selection: $quietEnd, displayedComponents: .hourAndMinute).labelsHidden().tint(Color.cavnarEmber)
                         }
-                        .tint(Color.cavnarEmber)
-                        if quietHoursEnabled {
-                            DatePicker("From", selection: $quietStart, displayedComponents: .hourAndMinute)
-                                .font(.cavnarBody(15.5))
-                                .tint(Color.cavnarEmber)
-                            DatePicker("Until", selection: $quietEnd, displayedComponents: .hourAndMinute)
-                                .font(.cavnarBody(15.5))
-                                .tint(Color.cavnarEmber)
-                            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
-                            Toggle(isOn: $draft.alertHealthBypassQuiet) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Health alerts break through").font(.cavnarBody(15.5, weight: 600)).foregroundStyle(Color.cavnarInk)
-                                    Text("A health or safety mention still reaches you during quiet hours, and pushes through Focus modes.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                        AccountSwitchRow(
+                            label: "Health alerts break through",
+                            detail: "A health or safety mention still reaches you during quiet hours, and pushes through Focus modes",
+                            isOn: $draft.alertHealthBypassQuiet,
+                            showsDivider: false
+                        )
+                    }
+                }
+
+                AccountSection(kicker: "Weekly digest") {
+                    AccountSwitchRow(label: "Weekly digest", isOn: $draft.digestEnabled, showsDivider: draft.digestEnabled)
+                    if draft.digestEnabled {
+                        AccountKVRow(label: "Delivered on") {
+                            Picker("", selection: $draft.digestDay) {
+                                ForEach(Self.days, id: \.self) { day in
+                                    Text(day.capitalized).tag(day)
                                 }
                             }
                             .tint(Color.cavnarEmber)
                         }
-                    }
-                    .cavnarCard()
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader("Weekly digest")
-                    VStack(alignment: .leading, spacing: 12) {
-                        toggle("Weekly digest", $draft.digestEnabled)
-                        if draft.digestEnabled {
-                            HStack {
-                                Text("Delivered on").font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk3)
-                                Spacer()
-                                Picker("", selection: $draft.digestDay) {
-                                    ForEach(Self.days, id: \.self) { day in
-                                        Text(day.capitalized).tag(day)
-                                    }
+                        AccountActionRow(
+                            label: "Send me a preview",
+                            detail: testDigestLabel ?? viewModel.testDigestError,
+                            symbol: "paperplane.fill",
+                            busy: viewModel.isSendingTestDigest,
+                            showsDivider: false
+                        ) {
+                            Task {
+                                await viewModel.sendTestDigest()
+                                if viewModel.testDigestSucceeded {
+                                    Haptic.success()
+                                    testDigestLabel = "Preview sent"
                                 }
-                                .tint(Color.cavnarEmber)
-                            }
-                            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
-                            Button {
-                                Haptic.light()
-                                Task {
-                                    await viewModel.sendTestDigest()
-                                    if viewModel.testDigestSucceeded {
-                                        Haptic.success()
-                                        testDigestLabel = "Preview sent"
-                                    }
-                                }
-                            } label: {
-                                Group {
-                                    if viewModel.isSendingTestDigest {
-                                        CavnarShimmerText(text: "Sending…", color: Color.cavnarEmber)
-                                    } else {
-                                        Text("Send me a preview")
-                                    }
-                                }
-                            }
-                            .font(.cavnarBody(15, weight: 700))
-                            .foregroundStyle(Color.cavnarEmber)
-                            .disabled(viewModel.isSendingTestDigest)
-                            if let testDigestLabel {
-                                Text(testDigestLabel).font(.cavnarBody(14)).foregroundStyle(Color.cavnarGreen)
-                            } else if let error = viewModel.testDigestError {
-                                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
                             }
                         }
                     }
-                    .cavnarCard()
                 }
 
                 AccountSection(kicker: "Email preferences") {
-                    AccountKVRow(label: "Product updates & tips") {
-                        if viewModel.summary?.account.marketingEmailsOptOut == false {
-                            AccountLink(title: "Turn off", tone: .cavnarRed) {
-                                Task { await viewModel.toggleMarketingOptOut(true) }
-                            }
-                        } else {
-                            AccountLink(title: "Turn on") {
-                                Task { await viewModel.toggleMarketingOptOut(false) }
-                            }
-                        }
-                    }
-                    Text("This never affects security emails — sign-in alerts, 2FA codes, and password changes always go out.")
-                        .font(.cavnarBody(14))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .padding(.vertical, 9)
+                    AccountSwitchRow(
+                        label: "Product updates & tips",
+                        detail: "Never affects security emails — sign-in alerts, 2FA codes, and password changes always go out",
+                        isOn: Binding(
+                            get: { viewModel.summary?.account.marketingEmailsOptOut == false },
+                            set: { on in Task { await viewModel.toggleMarketingOptOut(!on) } }
+                        ),
+                        busy: viewModel.isTogglingMarketingOptOut,
+                        showsDivider: false
+                    )
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline) {
-                        sectionHeader("Alert contacts · up to 2")
+                    HStack(alignment: .center) {
+                        sectionHeader(contacts.count == 2 ? "Alert contacts · 2 of 2" : "Alert contacts · up to 2")
                         Spacer()
                         if contacts.count < 2 {
-                            Button {
-                                Haptic.light()
+                            AccountActionChip(symbol: "plus", accessibilityLabel: "Add contact") {
                                 contacts.append(AlertContact(id: -contacts.count - 1, name: "", phone: "", smsConsent: false))
-                            } label: {
-                                Text("+ Add").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarEmber)
                             }
-                        } else {
-                            // Replaces the button once at the cap, rather
-                            // than just letting it vanish with no
-                            // explanation of why.
-                            Text("2 of 2 added").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarInk3)
                         }
                     }
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 0) {
                         if contacts.isEmpty {
                             Text("No contacts added — urgent alerts only go to the email/phone on your account.")
                                 .font(.cavnarBody(15))
                                 .foregroundStyle(Color.cavnarInk3)
+                                .padding(.vertical, 9)
                         }
-                        ForEach($contacts) { $contact in
-                            HStack(alignment: .top, spacing: 10) {
-                                VStack(spacing: 8) {
+                        ForEach(Array($contacts.enumerated()), id: \.element.id) { index, $contact in
+                            HStack(alignment: .center, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 6) {
                                     TextField("Name", text: $contact.name)
-                                        .font(.cavnarBody(15.5, weight: 600))
+                                        .font(.cavnarBody(16, weight: 700))
                                         .foregroundStyle(Color.cavnarInk)
-                                    Rectangle().fill(Color.cavnarPaper3).frame(height: 1)
                                     TextField("Phone", text: $contact.phone)
-                                        .font(.cavnarBody(15.5))
-                                        .foregroundStyle(Color.cavnarInk)
+                                        .font(.cavnarNumber(15))
+                                        .foregroundStyle(Color.cavnarInk2)
                                         .keyboardType(.phonePad)
                                 }
-                                Button {
-                                    Haptic.light()
+                                Spacer(minLength: 8)
+                                AccountActionChip(symbol: "xmark", tone: .cavnarRed, accessibilityLabel: "Remove contact") {
                                     contacts.removeAll { $0.id == contact.id }
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 15))
-                                        .foregroundStyle(Color.cavnarInk3)
                                 }
-                                .padding(.top, 4)
                             }
+                            .padding(.vertical, 9)
+                            if index < contacts.count - 1 { AccountRowDivider() }
                         }
                     }
-                    .cavnarCard()
+                    .accountCard()
                 }
 
                 if let error = viewModel.saveAlertsError {
@@ -327,20 +272,12 @@ struct AccountAlertsDetailView: View {
         AccountKicker(text: title)
     }
 
-    private func pushToggle(_ label: String, _ binding: Binding<Bool>, on: Bool) -> some View {
-        Toggle(isOn: binding) {
-            Text(label).font(.cavnarBody(15.5)).foregroundStyle(on ? Color.cavnarInk : Color.cavnarInk3)
-        }
-        .tint(Color.cavnarEmber)
-        .disabled(!on)
-        .opacity(on ? 1 : 0.5)
-    }
-
-    private func toggle(_ label: String, _ binding: Binding<Bool>) -> some View {
-        Toggle(isOn: binding) {
-            Text(label).font(.cavnarBody(15.5)).foregroundStyle(Color.cavnarInk)
-        }
-        .tint(Color.cavnarEmber)
+    /// A push switch is only meaningful once its alert type is on above —
+    /// otherwise it's shown dimmed and inert, not hidden (so the layout
+    /// doesn't jump as triggers are toggled).
+    private func pushRow(_ label: String, _ binding: Binding<Bool>, on: Bool) -> some View {
+        AccountSwitchRow(label: label, isOn: binding, disabled: !on)
+            .opacity(on ? 1 : 0.5)
     }
 
     // One pill that reads the aggregate state of all 8 triggers above it —

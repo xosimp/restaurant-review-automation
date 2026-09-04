@@ -256,7 +256,11 @@ final class AccountViewModel {
     // doc comment), never optimistically, so a caller needs this instead
     // of just firing-and-forgetting.
     @discardableResult
+    var isTogglingLoginNotify = false
+
     func toggleLoginNotify(_ enabled: Bool) async -> Bool {
+        isTogglingLoginNotify = true
+        defer { isTogglingLoginNotify = false }
         do {
             _ = try await client.send(
                 "/mobile/api/account/login-notify", method: .post, body: ToggleBody(enabled: enabled)

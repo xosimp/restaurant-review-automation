@@ -402,9 +402,7 @@ struct AccountView: View {
                 .font(.cavnarBody(15.5, weight: 600))
                 .foregroundStyle(Color.cavnarInk)
             Spacer()
-            Toggle("", isOn: isOn)
-                .labelsHidden()
-                .tint(Color.cavnarEmber)
+            AccountStateSwitch(isOn: isOn)
         }
         .padding(.horizontal, 16)
         .frame(minHeight: 54)
@@ -421,12 +419,10 @@ struct AccountView: View {
                     .font(.cavnarBody(15.5, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
                 Spacer()
-                Toggle("", isOn: Binding(
+                AccountStateSwitch(isOn: Binding(
                     get: { isLightAppIcon },
                     set: { newValue in setAppIcon(light: newValue) }
                 ))
-                .labelsHidden()
-                .tint(Color.cavnarEmber)
             }
             .padding(.horizontal, 16)
             .frame(minHeight: 54)
@@ -445,7 +441,6 @@ struct AccountView: View {
             appIconError = "This device doesn't support switching app icons."
             return
         }
-        Haptic.light()
         appIconError = nil
         let targetName = light ? "AppIconLight" : nil
         UIApplication.shared.setAlternateIconName(targetName) { error in
@@ -511,9 +506,7 @@ struct AccountView: View {
                     .font(.cavnarNumber(14, weight: 600))
                     .foregroundStyle(Color.cavnarInk3)
             }
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12))
-                .foregroundStyle(Color.cavnarInk3)
+            AccountDisclosureChip()
         }
         .padding(.horizontal, 16)
         // minHeight, not height — see AccountKVRow (audit 7.2). Also keeps

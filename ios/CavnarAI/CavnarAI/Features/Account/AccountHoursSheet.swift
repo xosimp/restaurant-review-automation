@@ -93,7 +93,7 @@ struct AccountHoursSheet: View {
                     AccountSection(kicker: closures.isEmpty ? "Closures" : "Closures · \(closures.count)") {
                         ForEach(Array(closures.enumerated()), id: \.element) { index, date in
                             AccountKVRow(label: Self.dayFormatter.date(from: date).map { Self.displayDayFormatter.string(from: $0) } ?? date) {
-                                AccountLink(title: "Remove", tone: .cavnarRed) {
+                                AccountActionChip(symbol: "xmark", tone: .cavnarRed, accessibilityLabel: "Remove closure") {
                                     closures.removeAll { $0 == date }
                                 }
                             }
@@ -103,7 +103,7 @@ struct AccountHoursSheet: View {
                                 .labelsHidden()
                                 .tint(Color.cavnarEmber)
                             Spacer(minLength: 0)
-                            AccountLink(title: "Add closure") {
+                            AccountActionChip(symbol: "plus", accessibilityLabel: "Add closure") {
                                 let s = Self.dayFormatter.string(from: newClosure)
                                 if !closures.contains(s) { closures.append(s); closures.sort() }
                             }
@@ -161,12 +161,9 @@ struct AccountHoursSheet: View {
                     Text("–").foregroundStyle(Color.cavnarInk3)
                     DatePicker("", selection: binding.close, displayedComponents: .hourAndMinute).labelsHidden().tint(Color.cavnarEmber)
                 }
-                Toggle("", isOn: Binding(get: { !binding.wrappedValue.closed }, set: { open in
-                    Haptic.selection()
+                AccountStateSwitch(isOn: Binding(get: { !binding.wrappedValue.closed }, set: { open in
                     binding.wrappedValue.closed = !open
                 }))
-                .labelsHidden()
-                .tint(Color.cavnarEmber)
             }
             .padding(.vertical, 9)
             if showsDivider { AccountRowDivider() }

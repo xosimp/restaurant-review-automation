@@ -261,9 +261,16 @@ struct AccountProfileDetailView: View {
             // isn't edited inline (it opens its own sheet), but it sits in
             // this same card next to Owner/Phone and needs to measure the
             // same height as they do.
-            AccountDisplayRow(label: "Email", value: profile.ownerEmail ?? "—", showsDivider: isOwner) {
-                AccountLink(title: "Update") { showingUpdateEmail = true }
+            Button {
+                Haptic.light()
+                showingUpdateEmail = true
+            } label: {
+                AccountDisplayRow(label: "Email", value: profile.ownerEmail ?? "—", showsDivider: isOwner) {
+                    AccountDisclosureChip()
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             if isOwner {
                 // AccountKVRow, not a hand-rolled HStack — Locations is a
                 // single-line "tap to go elsewhere" row, the same family
@@ -274,12 +281,14 @@ struct AccountProfileDetailView: View {
                     showingLocationSwitcher = true
                 } label: {
                     AccountKVRow(label: "Locations", showsDivider: false) {
-                        if locations.locations.isEmpty {
-                            Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.cavnarInk3)
-                        } else {
-                            AccountChip(text: "\(locations.locations.count)", muted: true)
+                        HStack(spacing: 10) {
+                            if !locations.locations.isEmpty {
+                                Text("\(locations.locations.count)").font(.cavnarNumber(15, weight: 600)).foregroundStyle(Color.cavnarInk2)
+                            }
+                            AccountDisclosureChip()
                         }
                     }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
@@ -311,9 +320,7 @@ struct AccountProfileDetailView: View {
 
     private var hoursSection: some View {
         AccountSection(kicker: "Hours") {
-            AccountKVRow(label: hoursSummary, showsDivider: false) {
-                AccountLink(title: "Edit hours & closures") { showingHours = true }
-            }
+            AccountNavRow(label: "Hours & closures", value: hoursSummary, showsDivider: false) { showingHours = true }
         }
     }
 
@@ -355,13 +362,12 @@ struct AccountProfileDetailView: View {
 
     private var autoApproveSection: some View {
         AccountSection(kicker: "Auto-approve") {
-            AccountKVRow(label: "Post 5-star replies automatically", showsDivider: autoApproveEnabled) {
-                Toggle("", isOn: Binding(get: { autoApproveEnabled }, set: { on in
-                    Haptic.light(); autoApproveEnabled = on; saveAutoApprove()
-                }))
-                .labelsHidden()
-                .tint(Color.cavnarEmber)
-            }
+            AccountSwitchRow(
+                label: "Post 5-star replies automatically",
+                isOn: Binding(get: { autoApproveEnabled }, set: { on in autoApproveEnabled = on; saveAutoApprove() }),
+                busy: viewModel.isSavingAutoApprove,
+                showsDivider: autoApproveEnabled
+            )
             if autoApproveEnabled {
                 AccountKVRow(label: "Daily cap") {
                     Picker("", selection: Binding(get: { autoApproveCap }, set: { cap in
@@ -371,13 +377,12 @@ struct AccountProfileDetailView: View {
                     }
                     .tint(Color.cavnarEmber)
                 }
-                AccountKVRow(label: "Paused", showsDivider: false) {
-                    Toggle("", isOn: Binding(get: { autoApprovePaused }, set: { paused in
-                        Haptic.light(); autoApprovePaused = paused; saveAutoApprove()
-                    }))
-                    .labelsHidden()
-                    .tint(Color.cavnarEmber)
-                }
+                AccountSwitchRow(
+                    label: "Paused",
+                    isOn: Binding(get: { autoApprovePaused }, set: { paused in autoApprovePaused = paused; saveAutoApprove() }),
+                    busy: viewModel.isSavingAutoApprove,
+                    showsDivider: false
+                )
                 Text(autoApprovePaused
                      ? "Paused — nothing posts on its own until you resume."
                      : "Only drafted 5-star replies, never anything lower. \(viewModel.summary?.reviews.approvedToday ?? 0) auto-approved today.")

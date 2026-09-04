@@ -32,7 +32,7 @@ struct AccountTeamDetailView: View {
                                 HStack(spacing: 8) {
                                     AccountPill(text: member.role == "member" ? "Member" : "Owner", on: member.role != "member")
                                     if !member.isYou && member.role == "member" {
-                                        AccountLink(title: "Remove", tone: .cavnarRed) {
+                                        AccountActionChip(symbol: "xmark", tone: .cavnarRed, accessibilityLabel: "Remove \(member.username)") {
                                             pendingRevoke = member
                                         }
                                     }

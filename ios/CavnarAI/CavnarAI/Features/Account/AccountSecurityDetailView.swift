@@ -178,22 +178,11 @@ struct AccountSecurityDetailView: View {
                     .foregroundStyle(Color.cavnarRed)
                     .padding(.bottom, 4)
             }
-            AccountKVRow(label: "Security checkup") {
-                AccountLink(title: "Run") { showingCheckup = true }
-            }
-            AccountKVRow(label: "Password") {
-                AccountLink(title: "Change") { showingChangePassword = true }
-            }
+            AccountNavRow(label: "Security checkup") { showingCheckup = true }
+            AccountNavRow(label: "Password", value: passwordStrengthLabel) { showingChangePassword = true }
             if live.twoFAEnabled {
-                AccountKVRow(label: "2FA code by") {
-                    AccountValue(text: twoFAByText ? "Text message" : "Email")
-                }
-                AccountKVRow(label: "Backup codes") {
-                    AccountLink(title: "View") { showingBackupCodes = true }
-                }
-                AccountKVRow(label: "Trusted devices") {
-                    AccountLink(title: "Manage") { showingTrustedDevices = true }
-                }
+                AccountNavRow(label: "Backup codes", value: viewModel.backupCodesRemaining.map { "\($0) left" }, valueIsNumber: true) { showingBackupCodes = true }
+                AccountNavRow(label: "Trusted devices") { showingTrustedDevices = true }
             }
             // Always an unconditional sibling — only its trailing link
             // branches. This row used to be the whole AccountKVRow wrapped
@@ -207,65 +196,52 @@ struct AccountSecurityDetailView: View {
             // Confirmed by direct pixel measurement — this row rendered at
             // 51pt against its siblings' 64pt each, a real, visible gap
             // device feedback caught, not a padding value being wrong.
-            AccountKVRow(label: "2FA") {
-                if live.twoFAEnabled {
-                    AccountLink(title: "Turn off", tone: .cavnarRed) {
-                        Task {
-                            if await viewModel.disable2FA() {
-                                Haptic.success()
-                                disabledLabel = "Two-factor disabled"
+            AccountSwitchRow(
+                label: "Two-factor authentication",
+                detail: live.twoFAEnabled ? "Code by \(twoFAByText ? "text message" : "email") on new devices" : nil,
+                isOn: Binding(
+                    get: { live.twoFAEnabled },
+                    set: { on in
+                        if on {
+                            showing2FASetup = true
+                        } else {
+                            Task {
+                                if await viewModel.disable2FA() {
+                                    Haptic.success()
+                                    disabledLabel = "Two-factor disabled"
+                                }
                             }
                         }
                     }
-                } else {
-                    AccountLink(title: "Turn on") { showing2FASetup = true }
-                }
-            }
+                ),
+                busy: viewModel.is2FABusy
+            )
             // A "Turn on"/"Turn off" link, not a Toggle — matches 2FA's
             // own trailing control right above it (a Toggle's native
             // ~31pt height sat taller than every Link row around it,
             // which is what made this row read as misaligned against its
             // siblings; every row in this card is now the exact same
             // AccountLink shape, so they can't drift apart again).
-            AccountKVRow(label: "Sign-in activity") {
-                AccountLink(title: "View") { showingSignInHistory = true }
-            }
-            AccountKVRow(label: "Account activity") {
-                AccountLink(title: "View") { showingActivity = true }
-            }
-            AccountKVRow(label: "Recovery email") {
-                if let recovery = live.recoveryEmail {
-                    HStack(spacing: 10) {
-                        Text(recovery).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk2).lineLimit(1)
-                        AccountLink(title: "Change") { showingRecoveryEmail = true }
-                    }
-                } else {
-                    AccountLink(title: "Add") { showingRecoveryEmail = true }
-                }
-            }
-            AccountKVRow(label: "Sign-in notifications", showsDivider: false) {
-                if live.loginNotify {
-                    AccountLink(title: "Turn off", tone: .cavnarRed) {
+            AccountNavRow(label: "Sign-in activity") { showingSignInHistory = true }
+            AccountNavRow(label: "Account activity") { showingActivity = true }
+            AccountNavRow(label: "Recovery email", value: live.recoveryEmail ?? "Not set") { showingRecoveryEmail = true }
+            AccountSwitchRow(
+                label: "Sign-in notifications",
+                isOn: Binding(
+                    get: { live.loginNotify },
+                    set: { on in
                         Task {
-                            if await viewModel.toggleLoginNotify(false) {
+                            if await viewModel.toggleLoginNotify(on) {
                                 Haptic.success()
-                                disabledTone = .removed
-                                disabledLabel = "Sign-in notifications off"
+                                disabledTone = on ? .success : .removed
+                                disabledLabel = on ? "Sign-in notifications on" : "Sign-in notifications off"
                             }
                         }
                     }
-                } else {
-                    AccountLink(title: "Turn on") {
-                        Task {
-                            if await viewModel.toggleLoginNotify(true) {
-                                Haptic.success()
-                                disabledTone = .success
-                                disabledLabel = "Sign-in notifications on"
-                            }
-                        }
-                    }
-                }
-            }
+                ),
+                busy: viewModel.isTogglingLoginNotify,
+                showsDivider: false
+            )
         }
     }
 
@@ -288,30 +264,37 @@ struct AccountSecurityDetailView: View {
                     .foregroundStyle(Color.cavnarAmber)
                     .padding(.bottom, 4)
             }
-            AccountKVRow(label: "Require Face ID to reopen") {
-                Toggle("", isOn: Binding(
+            AccountSwitchRow(
+                label: "Require Face ID to reopen",
+                isOn: Binding(
                     get: { sessionStore.biometricLockEnabled },
-                    set: { newValue in
-                        Haptic.light()
-                        sessionStore.biometricLockEnabled = newValue
-                    }
-                ))
-                .labelsHidden()
-                .tint(Color.cavnarEmber)
-            }
+                    set: { sessionStore.biometricLockEnabled = $0 }
+                )
+            )
             // The fallback gate for when Face ID is off — see AppPasscode.
             // Set/Change/Remove all confirm through the same passcode pad
-            // the lock screen uses.
-            AccountKVRow(label: "App passcode") {
-                if sessionStore.appPasscodeSet {
-                    HStack(spacing: 14) {
-                        AccountLink(title: "Change") { passcodeSheet = .change }
-                        AccountLink(title: "Remove", tone: .cavnarRed) { passcodeSheet = .remove }
+            // the lock screen uses. One row: tap to set or change, the red
+            // chip removes.
+            Button {
+                Haptic.light()
+                passcodeSheet = sessionStore.appPasscodeSet ? .change : .create
+            } label: {
+                AccountKVRow(label: "App passcode") {
+                    HStack(spacing: 10) {
+                        Text(sessionStore.appPasscodeSet ? "On" : "Not set")
+                            .font(.cavnarBody(15))
+                            .foregroundStyle(Color.cavnarInk2)
+                        if sessionStore.appPasscodeSet {
+                            AccountActionChip(symbol: "xmark", tone: .cavnarRed, accessibilityLabel: "Remove passcode") {
+                                passcodeSheet = .remove
+                            }
+                        }
+                        AccountDisclosureChip()
                     }
-                } else {
-                    AccountLink(title: "Set") { passcodeSheet = .create }
                 }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             // How long the app can sit in the background before the lock
             // engages. Immediately is the original behaviour; a short grace
             // means a manager checking the app between tables isn't asked
@@ -330,18 +313,12 @@ struct AccountSecurityDetailView: View {
             }
             // Blurs dollar figures and KPI numbers until tapped — for the
             // app open on the pass or handed to a server.
-            AccountKVRow(label: "Privacy mode", showsDivider: false) {
-                Toggle("", isOn: Binding(
-                    get: { prefs.privacyMode },
-                    set: { Haptic.light(); prefs.privacyMode = $0 }
-                ))
-                .labelsHidden()
-                .tint(Color.cavnarEmber)
-            }
-            Text("Privacy mode hides revenue, labor and food-cost figures behind a tap.")
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
-                .padding(.vertical, 9)
+            AccountSwitchRow(
+                label: "Privacy mode",
+                detail: "Hides revenue, labor and food-cost figures behind a tap",
+                isOn: Binding(get: { prefs.privacyMode }, set: { prefs.privacyMode = $0 }),
+                showsDivider: false
+            )
         }
     }
 

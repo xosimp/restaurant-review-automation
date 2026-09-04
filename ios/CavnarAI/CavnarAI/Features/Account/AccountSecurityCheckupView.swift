@@ -119,11 +119,18 @@ struct AccountSecurityCheckupView: View {
                                     }
                                     Text(item.detail).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
                                     if !item.earned, let fix = item.fix {
-                                        AccountLink(title: item.fixLabel) {
+                                        Button {
+                                            Haptic.light()
                                             dismiss()
                                             onFix(fix)
+                                        } label: {
+                                            HStack(spacing: 8) {
+                                                Text(item.fixLabel).font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarEmber)
+                                                AccountDisclosureChip()
+                                            }
                                         }
-                                        .padding(.top, 2)
+                                        .buttonStyle(.plain)
+                                        .padding(.top, 4)
                                     }
                                 }
                             }

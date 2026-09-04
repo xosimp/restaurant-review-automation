@@ -102,11 +102,9 @@ struct AccountConnectionsDetailView: View {
             }
 
             if connections.googleBusiness.connected {
-                Button("Disconnect", role: .destructive) {
-                    Haptic.light()
+                AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
                     Task { await viewModel.disconnectGoogleBusiness() }
                 }
-                .font(.cavnarBody(15, weight: 600))
             } else {
                 // No manual Haptic.light() — CavnarPrimaryButtonStyle fires
                 // its own press haptic, so this was doubling up.
@@ -136,11 +134,9 @@ struct AccountConnectionsDetailView: View {
             header("Toast POS", brand: .toast, status: connections.toast)
 
             if connections.toast.connected {
-                Button("Disconnect", role: .destructive) {
-                    Haptic.light()
+                AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
                     Task { await viewModel.disconnectToast() }
                 }
-                .font(.cavnarBody(15, weight: 600))
             } else {
                 // Same — the style's own press haptic covers this.
                 Button {

@@ -289,22 +289,6 @@ struct AccountValue: View {
     }
 }
 
-struct AccountLink: View {
-    let title: String
-    var tone: Color = .cavnarEmber
-    let action: () -> Void
-
-    var body: some View {
-        Button {
-            Haptic.light()
-            action()
-        } label: {
-            Text(title).font(.cavnarBody(16, weight: 700)).foregroundStyle(tone)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 struct AccountPill: View {
     let text: String
     var on: Bool = true
@@ -627,5 +611,220 @@ private struct AccountSheetChrome: ViewModifier {
 extension View {
     func accountSheetChrome(_ title: String) -> some View {
         modifier(AccountSheetChrome(title: title))
+    }
+}
+
+
+// MARK: - Actionable controls
+//
+// Every actionable thing in Account is one of three shapes, so a row reads
+// the same way on every sheet:
+//   AccountStateSwitch   on/off settings — red ✕ | ember ✓, the active side
+//                        filled. Replaces both the orange "Turn on/off"
+//                        links and the system Toggle.
+//   AccountDisclosureChip  "this row opens something" — a 28pt ember chip
+//                        with a chevron, the whole row tappable.
+//   AccountActionChip    a one-shot action on the row itself — the same
+//                        28pt chip with a glyph (red ✕ to remove/forget/
+//                        disconnect, ember + to add).
+// All three are ≤30pt tall, so they sit inside AccountKVRow's 48pt without
+// changing any row or card geometry.
+
+struct AccountStateSwitch: View {
+    @Binding var isOn: Bool
+    var busy: Bool = false
+    var disabled: Bool = false
+
+    private static let cell: CGFloat = 36
+    private static let height: CGFloat = 30
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack(alignment: isOn ? .trailing : .leading) {
+            // Track: hairline capsule with the thin divider between the two
+            // sides. The divider is drawn under the thumb so it only ever
+            // shows on the inactive side.
+            Capsule()
+                .fill(Color.white.opacity(0.05))
+                .overlay(Capsule().strokeBorder(Color.cavnarPaper3.opacity(0.9), lineWidth: 1))
+            Rectangle()
+                .fill(Color.cavnarPaper3.opacity(0.9))
+                .frame(width: 1, height: Self.height - 12)
+                .frame(maxWidth: .infinity)
+
+            // Thumb: fills the active side. Ember gradient for on, red for off.
+            Capsule()
+                .fill(
+                    isOn
+                        ? LinearGradient(colors: [Color.cavnarEmber2, Color.cavnarEmber], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        : LinearGradient(colors: [Color.cavnarRed.opacity(0.95), Color.cavnarRed.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                )
+                .frame(width: Self.cell, height: Self.height - 4)
+                .padding(2)
+                .shadow(color: (isOn ? Color.cavnarEmber : Color.cavnarRed).opacity(0.45), radius: 6, y: 1)
+
+            HStack(spacing: 0) {
+                glyph("xmark", active: !isOn)
+                glyph("checkmark", active: isOn)
+            }
+        }
+        .frame(width: Self.cell * 2 + 4, height: Self.height)
+        .opacity(disabled ? 0.45 : 1)
+        .overlay {
+            if busy {
+                Capsule().fill(Color.cavnarPaper.opacity(0.35))
+                CavnarShimmerLine(color: .cavnarEmber2).frame(width: 30)
+            }
+        }
+        .contentShape(Capsule())
+        .onTapGesture {
+            guard !disabled, !busy else { return }
+            Haptic.selection()
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { isOn.toggle() }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isOn ? "On" : "Off")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private func glyph(_ name: String, active: Bool) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(active ? Color.cavnarInk : Color.cavnarInk3.opacity(0.55))
+            .frame(width: Self.cell, height: Self.height)
+            .animation(.easeOut(duration: 0.2), value: active)
+    }
+}
+
+/// The 28pt ember chip that says "this row opens something".
+struct AccountDisclosureChip: View {
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(Color.cavnarEmber)
+            .frame(width: 28, height: 28)
+            .background(Color.cavnarEmber.opacity(0.14), in: Circle())
+    }
+}
+
+/// The same chip carrying a one-shot action — red ✕ to remove/forget/
+/// disconnect, ember + to add, and so on. The chip is the whole hit area.
+struct AccountActionChip: View {
+    let symbol: String
+    var tone: Color = .cavnarEmber
+    var accessibilityLabel: String
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            Haptic.light()
+            action()
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(tone)
+                .frame(width: 28, height: 28)
+                .background(tone.opacity(0.14), in: Circle())
+                .overlay(Circle().strokeBorder(tone.opacity(0.35), lineWidth: 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+/// A row that opens something: label, optional value on the right, chevron
+/// chip. The whole row is the button.
+struct AccountNavRow: View {
+    let label: String
+    var value: String? = nil
+    var valueIsNumber: Bool = false
+    var showsDivider: Bool = true
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            Haptic.light()
+            action()
+        } label: {
+            AccountKVRow(label: label, showsDivider: showsDivider) {
+                HStack(spacing: 10) {
+                    if let value {
+                        Text(value)
+                            .font(valueIsNumber ? .cavnarNumber(15, weight: 600) : .cavnarBody(15))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .lineLimit(1)
+                    }
+                    AccountDisclosureChip()
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// An on/off setting: label (optionally with a second line of detail) and
+/// the state switch. `onChange` fires after the flip so a network-backed
+/// setting can save; `busy` shows the switch mid-save.
+struct AccountSwitchRow: View {
+    let label: String
+    var detail: String? = nil
+    @Binding var isOn: Bool
+    var busy: Bool = false
+    var disabled: Bool = false
+    var showsDivider: Bool = true
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(label).font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
+                    if let detail {
+                        Text(detail).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3.opacity(0.8))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 8)
+                AccountStateSwitch(isOn: $isOn, busy: busy, disabled: disabled)
+            }
+            .frame(minHeight: AccountKVRow<EmptyView>.rowHeight)
+            .padding(.vertical, 9)
+            if showsDivider { AccountRowDivider() }
+        }
+    }
+}
+
+/// A one-shot action row: label and an action chip on the right.
+struct AccountActionRow: View {
+    let label: String
+    var detail: String? = nil
+    let symbol: String
+    var tone: Color = .cavnarEmber
+    var busy: Bool = false
+    var showsDivider: Bool = true
+    let action: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(label).font(.cavnarBody(16)).foregroundStyle(tone == .cavnarRed ? Color.cavnarRed : Color.cavnarInk3)
+                    if let detail {
+                        Text(detail).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3.opacity(0.8))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 8)
+                if busy {
+                    CavnarShimmerLine(color: tone).frame(width: 28)
+                } else {
+                    AccountActionChip(symbol: symbol, tone: tone, accessibilityLabel: label, action: action)
+                }
+            }
+            .frame(minHeight: AccountKVRow<EmptyView>.rowHeight)
+            .padding(.vertical, 9)
+            if showsDivider { AccountRowDivider() }
+        }
     }
 }
