@@ -9,6 +9,18 @@ struct AIVisibilityQuery: Decodable, Identifiable {
     var id: String { query }
 }
 
+struct AIVisibilityRun: Decodable, Identifiable {
+    let aiScore: Int
+    let gbpScore: Int?
+    let createdAt: String
+    var id: String { createdAt }
+    enum CodingKeys: String, CodingKey {
+        case aiScore = "ai_score"
+        case gbpScore = "gbp_score"
+        case createdAt = "created_at"
+    }
+}
+
 struct AIVisibilityChecklistItem: Decodable, Identifiable {
     let label: String
     let done: Bool
@@ -77,11 +89,22 @@ final class AIVisibilityViewModel {
     /// Deliberately NOT auto-loaded on screen appear — each check fires real,
     /// billable Perplexity queries (same 3-call/60s limit the web route
     /// shares), so this only runs when the owner explicitly asks for it.
+    var history: [AIVisibilityRun] = []
+    private struct HistoryResponse: Decodable { let ok: Bool; let runs: [AIVisibilityRun] }
+
+    /// Every past check (ai_visibility_runs) — the Orbit's trend line.
+    func loadHistory() async {
+        if let response: HistoryResponse = try? await client.send("/mobile/api/intel/ai-visibility/history", hapticOnError: false) {
+            history = response.runs
+        }
+    }
+
     func check() async {
         isChecking = true
         defer { isChecking = false }
         do {
             result = try await client.send("/mobile/api/intel/ai-visibility")
+            await loadHistory()
         } catch {
             result = nil
         }

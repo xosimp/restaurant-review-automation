@@ -1,6 +1,23 @@
 import Foundation
 import Observation
 
+struct LaborDay: Decodable, Identifiable {
+    let date: String
+    let dayOfWeek: String?
+    let laborPct: Double
+    let laborCost: Double?
+    let sales: Double?
+    let totalHours: Double?
+    var id: String { date }
+    enum CodingKeys: String, CodingKey {
+        case date, sales
+        case dayOfWeek = "day_of_week"
+        case laborPct = "labor_pct"
+        case laborCost = "labor_cost"
+        case totalHours = "total_hours"
+    }
+}
+
 struct LaborTrendWeek: Decodable, Identifiable {
     let label: String
     let pct: Double
@@ -16,6 +33,7 @@ struct LaborTrendWeek: Decodable, Identifiable {
 @MainActor
 final class LaborAnalyticsViewModel {
     var trend: [LaborTrendWeek] = []
+    var daily: [LaborDay] = []
     var insight: AIInsight?
     var isLoadingInsight = false
     var isLoading = false
@@ -41,6 +59,8 @@ final class LaborAnalyticsViewModel {
     init(client: APIClient = .shared) {
         self.client = client
     }
+
+    private struct DailyResponse: Decodable { let ok: Bool; let days: [LaborDay] }
 
     private struct TrendResponse: Decodable {
         let ok: Bool
@@ -96,8 +116,10 @@ final class LaborAnalyticsViewModel {
         // else currently depends on removing it too.
         async let trendResult: TrendResponse? = try? client.send("/mobile/api/labor/trend")
         async let insightResult: AIInsight? = try? client.send("/mobile/api/labor/insight")
+        async let dailyResult: DailyResponse? = try? client.send("/mobile/api/labor/daily")
 
         trend = await trendResult?.weeks ?? []
+        daily = await dailyResult?.days ?? []
         if let fresh = await insightResult {
             insight = fresh
             cacheInsight(fresh)

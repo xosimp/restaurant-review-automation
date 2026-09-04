@@ -2995,3 +2995,35 @@ def mobile_report_bug(current_user):
     except Exception as e:
         return jsonify(ok=False, error=f"Couldn't send that right now ({e})."), 500
     return jsonify(ok=True)
+
+
+# ── Analytics chart feeds ────────────────────────────────────────────────
+
+@mobile_bp.route("/reviews/topic-weeks")
+@mobile_login_required
+def mobile_topic_weeks(current_user):
+    from models import get_topic_weeks
+    try:
+        return jsonify(ok=True, data=get_topic_weeks(current_user["restaurant_id"], weeks=8))
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
+
+
+@mobile_bp.route("/labor/daily")
+@mobile_login_required
+def mobile_labor_daily(current_user):
+    from models import get_labor_daily
+    try:
+        return jsonify(ok=True, days=get_labor_daily(current_user["restaurant_id"], days=14))
+    except Exception as e:
+        return jsonify(ok=False, days=[], error=str(e)), 500
+
+
+@mobile_bp.route("/intel/ai-visibility/history")
+@mobile_login_required
+def mobile_ai_visibility_history(current_user):
+    from models import get_ai_visibility_history
+    try:
+        return jsonify(ok=True, runs=get_ai_visibility_history(current_user["restaurant_id"], limit=10))
+    except Exception as e:
+        return jsonify(ok=False, runs=[], error=str(e)), 500

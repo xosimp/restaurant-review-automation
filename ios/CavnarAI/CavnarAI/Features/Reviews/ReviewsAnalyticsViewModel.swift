@@ -8,6 +8,7 @@ final class ReviewsAnalyticsViewModel {
     var performance: ResponsePerformance?
     var heatmap: [TopicHeatmapEntry] = []
     var sentimentWeeks: [SentimentWeek] = []
+    var topicWeeks: TopicWeeks?
     var insight: String?
     var isLoading = false
     var errorMessage: String?
@@ -55,11 +56,13 @@ final class ReviewsAnalyticsViewModel {
         )
         async let weeksResult: WeeksResponse? = try? client.send("/mobile/api/reviews/sentiment-trend")
         async let insightResult: InsightResponse? = try? client.send("/mobile/api/reviews/insight")
+        async let topicWeeksResult: DataResponse<TopicWeeks>? = try? client.send("/mobile/api/reviews/topic-weeks")
 
         platforms = await platformsResult?.data ?? []
         performance = await performanceResult?.data
         heatmap = await heatmapResult?.data ?? []
         sentimentWeeks = await weeksResult?.weeks ?? []
         insight = await insightResult?.insight
+        topicWeeks = await topicWeeksResult?.data
     }
 }

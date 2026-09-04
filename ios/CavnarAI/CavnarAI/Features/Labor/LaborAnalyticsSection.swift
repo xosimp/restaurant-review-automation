@@ -15,16 +15,26 @@ struct LaborAnalyticsSection: View {
             if let stats = laborStats {
                 savingsTiles(stats)
                 benchmarkBar(stats)
-                LaborPerformanceChart(
-                    trend: viewModel.trend, dowSummary: stats.dowSummary, target: stats.target,
-                    dateRangeStart: stats.dateRange.start, dateRangeEnd: stats.dateRange.end,
-                    hasPlayedIntro: viewModel.hasPlayedBarIntro,
-                    onIntroPlayed: { viewModel.markBarIntroPlayed() }
-                )
+                LaborRibbonChart(points: ribbonPoints, target: stats.target,
+                                 subtitle: viewModel.daily.isEmpty ? "8-week trend" : "last \(viewModel.daily.count) days")
+                WeekRadarChart(dowSummary: stats.dowSummary, target: stats.target,
+                               subtitle: [stats.dateRange.start, stats.dateRange.end].compactMap { $0 }.joined(separator: " – "))
             } else if viewModel.isLoading {
                 CavnarWorkingLine().padding(.vertical, 20)
             }
         }
+    }
+
+    /// Daily labor % when the daily history exists (the Ribbon's real
+    /// feed); the 8-week trend otherwise, so the chart never sits empty.
+    private var ribbonPoints: [LaborRibbonChart.Point] {
+        if !viewModel.daily.isEmpty {
+            return viewModel.daily.map { day in
+                let label = day.dayOfWeek.map { String($0.prefix(3)) } ?? String(day.date.suffix(5))
+                return LaborRibbonChart.Point(id: day.date, label: label, pct: day.laborPct)
+            }
+        }
+        return viewModel.trend.map { LaborRibbonChart.Point(id: $0.label, label: $0.label, pct: $0.pct) }
     }
 
     @ViewBuilder

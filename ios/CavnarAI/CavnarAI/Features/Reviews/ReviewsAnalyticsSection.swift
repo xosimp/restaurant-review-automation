@@ -1,17 +1,10 @@
 import SwiftUI
-import Charts
 
 struct ReviewsAnalyticsSection: View {
     let viewModel: ReviewsAnalyticsViewModel
 
-    @State private var selectedWeek: SentimentWeek?
     @State private var selectedPlatform: PlatformBreakdown?
-    // Drives the sentiment chart's bars growing up from zero AND the whole
-    // card fading + rising into place — matching LaborPerformanceChart's/
-    // FoodCostTrendChart's own bar-grow-in, which this screen's chart never
-    // had (its stacked bars just rendered at final height with a flat,
-    // non-gradient fill from the very first frame).
-    @State private var trendAppeared = false
+    @State private var selectedTopic: TopicWeekRow?
 
     // Each section shows its own skeleton while it's individually still in
     // flight rather than gating the whole page behind one spinner — the 5
@@ -24,7 +17,7 @@ struct ReviewsAnalyticsSection: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 if let performance = viewModel.performance {
-                    performanceCard(performance)
+                    ResponseRingsChart(performance: performance)
                 } else if viewModel.isLoading {
                     performanceSkeleton
                 }
@@ -41,14 +34,23 @@ struct ReviewsAnalyticsSection: View {
                     platformSkeleton
                 }
 
-                if !viewModel.heatmap.isEmpty {
+                // The weekly grid needs categorised reviews inside the last 8
+                // weeks; the period-total cards stay as the fallback.
+                if let topicWeeks = viewModel.topicWeeks, !topicWeeks.topics.isEmpty {
+                    TopicHeatGridChart(
+                        data: topicWeeks,
+                        trends: Dictionary(uniqueKeysWithValues: viewModel.heatmap.map { ($0.category, $0.trend) })
+                    ) { row in
+                        selectedTopic = row
+                    }
+                } else if !viewModel.heatmap.isEmpty {
                     topicGrid
                 } else if viewModel.isLoading {
                     topicGridSkeleton
                 }
 
                 if !viewModel.sentimentWeeks.isEmpty {
-                    trendChartCard
+                    SentimentRiverChart(weeks: viewModel.sentimentWeeks)
                 } else if viewModel.isLoading {
                     trendChartSkeleton
                 }
@@ -57,6 +59,9 @@ struct ReviewsAnalyticsSection: View {
         }
         .navigationDestination(item: $selectedPlatform) { platform in
             FilteredReviewsView(title: platform.platform.capitalized, platform: platform.platform)
+        }
+        .navigationDestination(item: $selectedTopic) { topic in
+            FilteredReviewsView(title: topic.label, category: topic.category)
         }
     }
 
@@ -282,38 +287,6 @@ struct ReviewsAnalyticsSection: View {
         .cavnarGlassCard()
     }
 
-    // MARK: - Response performance
-
-    // Free-floating like the insight lines below it — no card background,
-    // it's the first thing on the page and doesn't need its own container
-    // to read as a distinct section.
-    private func performanceCard(_ performance: ResponsePerformance) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            (Text("Last ")
-                + Text("\(performance.days)").font(.cavnarNumber(14, weight: 700))
-                + Text("d"))
-                .font(.cavnarBody(14, weight: 700))
-                .foregroundStyle(Color.cavnarInk3)
-            HStack {
-                statTile("Approved as-is", performance.approvedAsIs)
-                statTile("Edited", performance.edited)
-                statTile("Regenerated", performance.regenerated)
-            }
-        }
-    }
-
-    private func statTile(_ label: String, _ value: Int) -> some View {
-        VStack(spacing: 2) {
-            Text("\(value)")
-                .font(.cavnarNumber(20, weight: 600))
-                .foregroundStyle(Color.cavnarInk)
-                .cavnarNumberGlow()
-            Text(label)
-                .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk3)
-        }
-        .frame(maxWidth: .infinity)
-    }
 
     // MARK: - Topic sentiment grid
 
@@ -384,278 +357,4 @@ struct ReviewsAnalyticsSection: View {
         }
     }
 
-    // MARK: - Sentiment trend chart
-
-    // Star rating (avgRating) deliberately isn't surfaced anywhere on this
-    // chart or this screen — it's a genuinely different metric (Intel's own
-    // "4.3★" is the live, all-time average across every processed review
-    // ever fetched, via get_review_stats' unfiltered AVG(rating)) from what
-    // this chart plots (review COUNTS, and only across an 8-week window at
-    // that). A weighted average of just the visible weeks' avgRating landed
-    // at a different number ("4.4") purely from that narrower window, which
-    // read as contradicting Intel's number rather than as a different,
-    // legitimate metric — removed rather than reconciled, since Intel
-    // already owns showing the restaurant's overall rating.
-    private var totalReviewsInWindow: Int {
-        viewModel.sentimentWeeks.reduce(0) { $0 + $1.total }
-    }
-
-    /// Average weekly review volume across the visible window — a neutral
-    /// reference line (no red/green implication the way Food Cost's waste
-    /// average or Labor's target line has): more reviews than average
-    /// isn't "bad" the way more waste or higher labor % is, so unlike
-    /// those two charts this line never recolors a bar, it's purely
-    /// there for the same "is this week typical" context at a glance.
-    private var averageWeeklyVolume: Double {
-        guard !viewModel.sentimentWeeks.isEmpty else { return 0 }
-        return Double(totalReviewsInWindow) / Double(viewModel.sentimentWeeks.count)
-    }
-
-    // Swift Charts auto-scales its Y-domain tight to the data's own max with
-    // no explicit floor here — fine for Food Cost/Labor's dollar-amount
-    // bars, where that auto max naturally lands well above the tallest bar,
-    // but review VOLUME is small integers (a typical week is single digits),
-    // so the auto domain sits right at the data ceiling and every bar reads
-    // as maxed-out with almost no headroom. An explicit domain with modest
-    // padding above the tallest week fixes that. This used to be
-    // maxTotal * 2 — literally double the tallest bar's own height, so even
-    // the busiest week in the window only ever reached the halfway mark of
-    // the chart with the entire top half sitting empty for every week.
-    // 25% headroom is enough to keep the axis label clear of the tallest
-    // bar's top edge without wasting most of the chart on nothing.
-    private var chartYMax: Double {
-        let maxTotal = viewModel.sentimentWeeks.map { Double($0.total) }.max() ?? 0
-        return max(maxTotal * 1.25, 4)
-    }
-
-    /// Three stacked segments per week — positive/neutral/negative counts,
-    /// the same fields weekTooltip below already breaks a week down by.
-    /// Used to be a single solid-color bar per week (week.total, colored
-    /// red or green by whether that week's avg rating dipped below the
-    /// window average) — which is why the "Positive/Neutral/Negative"
-    /// legend never actually matched what was on screen: amber never
-    /// appeared, and real weeks in this restaurant's own data mix all
-    /// three every week (checked against the live database directly — e.g.
-    /// one real week is 18 positive + 1 neutral + 1 negative), but the old
-    /// single-color bar only ever rendered solid green or solid red, so
-    /// the neutral/negative reviews sitting right there in the data were
-    /// simply invisible. Swift Charts stacks multiple BarMarks
-    /// automatically when they share an x value; positive is declared
-    /// first so it anchors the stack at the bottom (it's the largest
-    /// segment most weeks), with neutral/negative as thinner segments on
-    /// top — flat legend-matching colors rather than the old bright-to-
-    /// dark gradient, which was a magnitude cue that made sense for one
-    /// tall bar but reads as noise across several thin stacked slivers.
-    /// Same bright-base/dark-shadow-top fade LaborPerformanceChart's and
-    /// FoodCostTrendChart's own barGradient(_:) use — this chart's bars
-    /// were the one trend chart in the app still using a flat, single-
-    /// opacity fill instead of that gradient.
-    private func segmentGradient(_ tone: Color) -> LinearGradient {
-        LinearGradient(colors: [tone.opacity(0.9), tone.opacity(0.35)], startPoint: .bottom, endPoint: .top)
-    }
-
-    @ChartContentBuilder
-    private func trendBars() -> some ChartContent {
-        ForEach(viewModel.sentimentWeeks) { week in
-            BarMark(x: .value("Week", week.label), y: .value("Reviews", trendAppeared ? week.positive : 0))
-                .foregroundStyle(segmentGradient(.cavnarGreen))
-                .cornerRadius(2)
-            BarMark(x: .value("Week", week.label), y: .value("Reviews", trendAppeared ? week.neutral : 0))
-                .foregroundStyle(segmentGradient(.cavnarAmber))
-                .cornerRadius(2)
-            BarMark(x: .value("Week", week.label), y: .value("Reviews", trendAppeared ? week.negative : 0))
-                .foregroundStyle(segmentGradient(.cavnarRed))
-                .cornerRadius(2)
-        }
-    }
-
-    private var trendChartCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("SENTIMENT TREND — LAST 8 WEEKS")
-                .font(.cavnarBody(14, weight: 700))
-                .tracking(1.2)
-                .foregroundStyle(Color.cavnarEmber2)
-
-            // Chart marks aren't Views, so they can't take .shadow() — a
-            // blurred, non-interactive duplicate of the same bars sitting
-            // directly behind the crisp chart gives each bar its own soft
-            // border glow instead of one flat halo behind the whole plot
-            // rectangle. The glow copy mirrors the crisp chart's AXIS
-            // CONTENT exactly (same "60"/"40"/... value text, same font),
-            // just with a clear foreground, rather than a fixed placeholder
-            // — a leading-position y-axis reserves gutter width equal to
-            // its widest rendered label, so a differently-sized placeholder
-            // (or .hidden(), which reserves none) shifts that whole chart's
-            // plot area left/right relative to the crisp one, throwing the
-            // bars out of alignment. A small blur radius keeps the glow
-            // hugging the bar edges instead of spreading into a wide blob.
-            ZStack {
-                Chart { trendBars() }
-                    .chartLegend(.hidden)
-                    .chartYScale(domain: 0...chartYMax)
-                    .chartYAxis {
-                        AxisMarks(position: .leading) { value in
-                            AxisGridLine().foregroundStyle(.clear)
-                            AxisValueLabel {
-                                if let v = value.as(Int.self) {
-                                    Text("\(v)").font(.cavnarBody(13.5)).foregroundStyle(.clear)
-                                }
-                            }
-                        }
-                    }
-                    .chartXAxis {
-                        AxisMarks { _ in
-                            AxisValueLabel().font(.cavnarBody(13.5)).foregroundStyle(.clear)
-                        }
-                    }
-                    .opacity(0.6)
-                    .blur(radius: 1.6)
-                    .allowsHitTesting(false)
-
-                // The average RuleMark + its capsule annotation live only
-                // on this crisp chart, not the blurred glow copy above —
-                // duplicating it there would blur the label text itself,
-                // which reads as a mistake rather than a glow.
-                Chart {
-                    trendBars()
-                    RuleMark(y: .value("Average", averageWeeklyVolume))
-                        .foregroundStyle(Color.cavnarInk.opacity(0.8))
-                        .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-                        .annotation(position: .top, alignment: .trailing) {
-                            // Was bare "avg 11" — ambiguous whether that's
-                            // total reviews, just positive ones, or some
-                            // sentiment score, especially under a
-                            // "SENTIMENT TREND" heading. week.total (see
-                            // trendBars()) is every review regardless of
-                            // sentiment, so this is total volume, spelled
-                            // out explicitly now.
-                            Text("avg \(Int(averageWeeklyVolume)) reviews/wk")
-                                .font(.cavnarBody(13.5, weight: 700))
-                                .foregroundStyle(Color.black)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 3)
-                                .background(Color.cavnarInk)
-                                .clipShape(Capsule())
-                        }
-                }
-                    .chartLegend(.hidden)
-                    .chartYScale(domain: 0...chartYMax)
-                    .chartYAxis {
-                        AxisMarks(position: .leading) { value in
-                            AxisGridLine().foregroundStyle(Color.cavnarPaper3.opacity(0.4))
-                            AxisValueLabel {
-                                if let v = value.as(Int.self) {
-                                    Text("\(v)").font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
-                                }
-                            }
-                        }
-                    }
-                    .chartXAxis {
-                        AxisMarks { _ in
-                            AxisValueLabel()
-                                .font(.cavnarBody(13.5))
-                                .foregroundStyle(Color.cavnarInk3)
-                        }
-                    }
-                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-                    .chartOverlay { proxy in
-                        GeometryReader { geo in
-                            weekSelectionOverlay(proxy: proxy, geo: geo)
-                        }
-                    }
-                    .onAppear {
-                        withAnimation(.easeOut(duration: 0.75)) { trendAppeared = true }
-                    }
-            }
-            .frame(height: 190)
-
-            HStack(spacing: 16) {
-                legendItem(color: .cavnarGreen, label: "Positive")
-                legendItem(color: .cavnarAmber, label: "Neutral")
-                legendItem(color: .cavnarRed, label: "Negative")
-            }
-        }
-        // No .cavnarCard() — unboxed, matching Food Cost's own waste chart
-        // (FoodCostTrendChart), which floats directly on the module
-        // background with no bordered container either.
-        //
-        // Fades + rises on the same trendAppeared flip that grows the bars —
-        // one entrance instead of the bars growing inside an already-fully-
-        // visible, already-settled card.
-        .opacity(trendAppeared ? 1 : 0)
-        .offset(y: trendAppeared ? 0 : 24)
-        .animation(.easeOut(duration: 0.5), value: trendAppeared)
-    }
-
-    /// Press-and-hold-to-inspect, the touch equivalent of a desktop hover
-    /// tooltip: drag (with zero minimum distance, so a plain touch-down
-    /// already counts) picks the nearest week under the finger and shows
-    /// its exact pos/neutral/negative split; lifting the finger dismisses it.
-    @ViewBuilder
-    private func weekSelectionOverlay(proxy: ChartProxy, geo: GeometryProxy) -> some View {
-        if let selectedWeek, let plotFrame = proxy.plotFrame {
-            let frame = geo[plotFrame]
-            if let xPosition = proxy.position(forX: selectedWeek.label) {
-                let clampedX = min(max(xPosition + frame.origin.x, frame.minX + 60), frame.maxX - 60)
-                weekTooltip(selectedWeek)
-                    .position(x: clampedX, y: frame.minY + 30)
-            }
-        }
-        Rectangle()
-            .fill(Color.clear)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        guard let plotFrame = proxy.plotFrame else { return }
-                        let originX = geo[plotFrame].origin.x
-                        guard let label: String = proxy.value(atX: value.location.x - originX) else { return }
-                        // Same pattern as FoodCostTrendChart's own week-select
-                        // haptic — fire only when the finger actually lands on
-                        // a NEW week, not on every drag-move event within the
-                        // same bar's hit region.
-                        if let week = viewModel.sentimentWeeks.first(where: { $0.label == label }), week.id != selectedWeek?.id {
-                            Haptic.selection()
-                        }
-                        selectedWeek = viewModel.sentimentWeeks.first { $0.label == label }
-                    }
-                    .onEnded { _ in selectedWeek = nil }
-            )
-    }
-
-    private func weekTooltip(_ week: SentimentWeek) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(week.label)
-                .font(.cavnarBody(14, weight: 700))
-                .foregroundStyle(Color.cavnarInk3)
-            HStack(spacing: 10) {
-                tooltipStat(week.positive, color: .cavnarGreen)
-                tooltipStat(week.neutral, color: .cavnarAmber)
-                tooltipStat(week.negative, color: .cavnarRed)
-            }
-        }
-        .padding(10)
-        .background(Color.cavnarPaper2.opacity(0.95))
-        .overlay(
-            RoundedRectangle(cornerRadius: CavnarRadius.control)
-                .strokeBorder(Color.cavnarPaper3.opacity(0.6), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
-        .shadow(color: .black.opacity(0.4), radius: 8, x: 0, y: 4)
-        .fixedSize()
-    }
-
-    private func tooltipStat(_ value: Int, color: Color) -> some View {
-        HStack(spacing: 3) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            Text("\(value)").font(.cavnarNumber(14, weight: 700)).foregroundStyle(Color.cavnarInk)
-        }
-    }
-
-    private func legendItem(color: Color, label: String) -> some View {
-        HStack(spacing: 4) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            Text(label).font(.cavnarBody(13.5)).foregroundStyle(Color.cavnarInk3)
-        }
-    }
 }

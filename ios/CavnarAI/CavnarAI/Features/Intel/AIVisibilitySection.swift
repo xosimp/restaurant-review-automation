@@ -82,6 +82,7 @@ struct AIVisibilitySection: View {
                 }
             }
         }
+        .task { await viewModel.loadHistory() }
     }
 
     private var checkButton: some View {
@@ -181,6 +182,9 @@ struct AIVisibilitySection: View {
 
     private func heroPanel(_ result: AIVisibilityResult) -> some View {
         VStack(alignment: .leading, spacing: 0) {
+            // The Orbit: today's score as a ring, every past run as a line.
+            VisibilityOrbitChart(score: result.aiScore ?? 0, runs: viewModel.history)
+                .padding(.bottom, 14)
             HStack(spacing: 0) {
                 heroStat(
                     value: "\(result.aiScore ?? 0)%", tone: aiScoreTone(result.aiScore ?? 0),

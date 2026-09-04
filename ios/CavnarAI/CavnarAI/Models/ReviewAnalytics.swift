@@ -80,3 +80,29 @@ struct ResponseTemplate: Codable, Identifiable {
         case useCount = "use_count"
     }
 }
+
+
+// MARK: - Topic Heat Grid feed (/reviews/topic-weeks)
+
+struct TopicWeekCell: Decodable, Hashable {
+    let positive: Int
+    let negative: Int
+    let total: Int
+}
+
+struct TopicWeekRow: Decodable, Identifiable, Hashable {
+    let category: String
+    let label: String
+    let total: Int
+    let weeks: [TopicWeekCell]
+    var id: String { category }
+}
+
+struct TopicWeeks: Decodable, Hashable {
+    let weekLabels: [String]
+    let topics: [TopicWeekRow]
+    enum CodingKeys: String, CodingKey {
+        case weekLabels = "week_labels"
+        case topics
+    }
+}

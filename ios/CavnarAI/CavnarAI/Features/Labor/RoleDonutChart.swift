@@ -169,7 +169,7 @@ struct RoleDonutChart: View {
     /// flush against the same leading edge above it. Insetting by half the
     /// stroke width keeps the stroke's rendered bleed inside the ring's
     /// own frame. Mirrors the identical fix in Food Cost's own donut
-    /// (FoodCostDonutChart's `ring`), which shares this exact construction.
+    /// (the Food Cost donut, since replaced by WasteLedgerChart) shared this construction.
     private var ring: some View {
         ZStack {
             Circle()

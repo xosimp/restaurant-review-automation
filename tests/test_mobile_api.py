@@ -2603,3 +2603,48 @@ def test_ai_visibility_drop_alert(client, db_path, monkeypatch):
     assert emails_sent == ["AI visibility dropped — Mobile Test Co"]
     notify.check_extra_daily_alerts(db_path=db_path)
     assert len(emails_sent) == 1                   # 7-day repeat window
+
+
+
+# ── analytics chart feeds ───────────────────────────────────────────────────
+
+def test_topic_weeks_buckets_by_week_and_category(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    rows = [
+        ("a", "positive", '["service","food_quality"]', 0),
+        ("b", "negative", '["service"]', 0),
+        ("c", "positive", '["food_quality"]', 10),
+        ("d", "positive", '["ambience"]', 200),   # outside the 8-week window
+    ]
+    for ext, sent, cats, age in rows:
+        save_reviews([Review(restaurant_id=rid, platform="google", external_id=ext, author="A", rating=4, text="x")], db_path=db_path)
+        conn = get_conn(db_path)   # a fresh connection per write — holding one across save_reviews() locks the file
+        conn.execute("""UPDATE reviews SET processed=1, sentiment=?, categories=?,
+                        review_date=date('now', ?) WHERE restaurant_id=? AND external_id=?""",
+                     (sent, cats, f"-{age} days", rid, ext))
+        conn.commit(); conn.close()
+    data = client.get("/mobile/api/reviews/topic-weeks", headers=_auth_headers(token)).get_json()["data"]
+    assert data["week_labels"] == [f"W{i}" for i in range(1, 9)]
+    by = {t["category"]: t for t in data["topics"]}
+    assert set(by) == {"service", "food_quality"}          # ambience is out of window
+    assert by["service"]["total"] == 2 and by["food_quality"]["total"] == 2
+    assert by["service"]["weeks"][-1] == {"positive": 1, "negative": 1, "total": 2}
+    assert sum(w["total"] for w in by["food_quality"]["weeks"]) == 2
+
+
+def test_labor_daily_and_visibility_history_feeds(client, db_path):
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    from models import save_labor_daily_history, record_ai_visibility_run
+    save_labor_daily_history(rid, {
+        "2026-08-31": {"sales": 1000, "actual": 40, "labor_cost": 280, "labor_pct": 28.0},
+        "2026-09-01": {"sales": 1200, "actual": 44, "labor_cost": 396, "labor_pct": 33.0},
+    }, db_path=db_path)
+    days = client.get("/mobile/api/labor/daily", headers=_auth_headers(token)).get_json()["days"]
+    assert [d["date"] for d in days] == ["2026-08-31", "2026-09-01"]
+    assert days[1]["labor_pct"] == 33.0 and days[0]["day_of_week"] == "Monday"
+    for sc in (42, 51, 70):
+        record_ai_visibility_run(rid, sc, 60, db_path=db_path)
+    runs = client.get("/mobile/api/intel/ai-visibility/history", headers=_auth_headers(token)).get_json()["runs"]
+    assert [r["ai_score"] for r in runs] == [42, 51, 70]

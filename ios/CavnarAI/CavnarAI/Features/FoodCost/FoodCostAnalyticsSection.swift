@@ -42,34 +42,34 @@ struct FoodCostAnalyticsSection: View {
                         )
                     }
                     statStrip(analytics)
+                    if (analytics.recoverableMonthly ?? 0) > 0 {
+                        RecoverableGaugeChart(
+                            monthly: analytics.recoverableMonthly ?? 0,
+                            annual: analytics.annualRecoverable ?? (analytics.recoverableMonthly ?? 0) * 12,
+                            ceiling: max(analytics.recoverableMonthly ?? 0,
+                                         (analytics.monthlyWasteProjection ?? 0) + analytics.overstock.reduce(0) { $0 + $1.overstockCost })
+                        )
+                    }
                     if !analytics.wasteItems.isEmpty {
-                        FoodCostDonutChart(
-                            title: "TOP WASTE OFFENDERS",
-                            slices: analytics.wasteItems.map {
-                                FoodCostDonutSlice(
-                                    id: $0.id, name: $0.item, value: $0.wasteCost,
-                                    subtitle: Text(String(format: "%.0f", $0.wastePct)).font(.cavnarNumber(13.5))
-                                        + Text("% waste").font(.cavnarBody(13.5))
-                                )
-                            },
-                            centerLabel: "TOTAL"
+                        WasteLedgerChart(
+                            kicker: "Top waste offenders", title: "Waste Ledger",
+                            headline: "This week · $\(Int((analytics.totalWasteCostWeek ?? analytics.wasteItems.reduce(0) { $0 + $1.wasteCost }).rounded()).formatted()) flagged",
+                            rows: analytics.wasteItems.map {
+                                WasteLedgerChart.Row(id: $0.id, name: $0.item, value: $0.wasteCost, detail: String(format: "%.0f%% waste", $0.wastePct))
+                            }
                         )
                     }
                     if !analytics.overstock.isEmpty {
-                        FoodCostDonutChart(
-                            title: "OVERSTOCKED — TIED-UP CAPITAL",
-                            slices: analytics.overstock.map {
-                                FoodCostDonutSlice(
+                        WasteLedgerChart(
+                            kicker: "Overstocked", title: "Tied-Up Capital",
+                            headline: "$\(Int(analytics.overstock.reduce(0) { $0 + $1.overstockCost }.rounded()).formatted()) sitting on shelves",
+                            rows: analytics.overstock.map {
+                                WasteLedgerChart.Row(
                                     id: $0.id, name: $0.item, value: $0.overstockCost,
-                                    subtitle: [$0.currentStock, $0.parLevel].compactMap { $0 }.count == 2
-                                        ? Text("\(Int($0.currentStock ?? 0))").font(.cavnarNumber(13.5))
-                                            + Text(" / ").font(.cavnarBody(13.5))
-                                            + Text("\(Int($0.parLevel ?? 0))").font(.cavnarNumber(13.5))
-                                            + Text(" par").font(.cavnarBody(13.5))
-                                        : Text("")
+                                    detail: [$0.currentStock, $0.parLevel].compactMap { $0 }.count == 2 ? "\(Int($0.currentStock ?? 0)) / \(Int($0.parLevel ?? 0)) par" : nil
                                 )
                             },
-                            centerLabel: "TIED UP"
+                            tint: Color.cavnarAmber
                         )
                     }
                     actionSection(analytics)

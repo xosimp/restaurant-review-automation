@@ -3522,3 +3522,95 @@ def build_settings_export_json(restaurant_id: int, db_path: str = DB_PATH) -> st
         "auto_approve_paused", "data_retention_months", "two_fa_enabled", "two_fa_method",
     ]
     return _json.dumps({k: getattr(r, k, None) for k in keep}, indent=2, default=str)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Analytics chart feeds (Sentiment River / Topic Heat Grid / Labor Ribbon /
+# Visibility Orbit)
+# ═══════════════════════════════════════════════════════════════════════
+
+TOPIC_LABELS = {
+    "food_quality": "Food Quality", "service": "Service", "wait_time": "Wait Time", "value": "Value",
+    "ambience": "Ambience", "cleanliness": "Cleanliness", "portion": "Portions", "other": "Other",
+}
+
+
+def get_topic_weeks(restaurant_id: int, weeks: int = 8, db_path: str = DB_PATH) -> list:
+    """Per category, per ISO week: positive / negative / total mentions for
+    the last `weeks` weeks (oldest first). Feeds the Topic Heat Grid — the
+    existing get_topic_heatmap() only has period totals."""
+    import json as _json
+    from collections import defaultdict
+    from datetime import datetime, timedelta
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT categories, sentiment, COALESCE(review_date, fetched_at) AS d FROM reviews
+        WHERE restaurant_id=? AND processed=1 AND deleted_at IS NULL
+          AND categories IS NOT NULL AND categories != '[]'
+          AND COALESCE(review_date, fetched_at) >= datetime('now', ?)
+    """, (restaurant_id, f"-{weeks * 7} days")).fetchall()
+    conn.close()
+    # Week buckets, oldest first, keyed by ISO year-week.
+    today = datetime.utcnow().date()
+    keys = []
+    for i in range(weeks - 1, -1, -1):
+        d = today - timedelta(days=7 * i)
+        y, w, _ = d.isocalendar()
+        keys.append(f"{y}-W{w:02d}")
+    idx = {k: i for i, k in enumerate(keys)}
+    grid = defaultdict(lambda: [{"positive": 0, "negative": 0, "total": 0} for _ in keys])
+    for r in rows:
+        try:
+            d = datetime.strptime(str(r["d"])[:10], "%Y-%m-%d").date()
+        except Exception:
+            continue
+        y, w, _ = d.isocalendar()
+        k = f"{y}-W{w:02d}"
+        if k not in idx:
+            continue
+        s = r["sentiment"] or "neutral"
+        try:
+            cats = _json.loads(r["categories"] or "[]")
+        except Exception:
+            cats = []
+        for c in cats:
+            if not c:
+                continue
+            cell = grid[c][idx[k]]
+            cell["total"] += 1
+            if s == "positive": cell["positive"] += 1
+            elif s == "negative": cell["negative"] += 1
+    out = []
+    for cat, cells in grid.items():
+        total = sum(c["total"] for c in cells)
+        if total == 0:
+            continue
+        out.append({"category": cat, "label": TOPIC_LABELS.get(cat, cat.replace("_", " ").title()),
+                    "total": total, "weeks": cells})
+    out.sort(key=lambda x: -x["total"])
+    return {"week_labels": [f"W{i + 1}" for i in range(weeks)], "topics": out[:6]}
+
+
+def get_labor_daily(restaurant_id: int, days: int = 14, db_path: str = DB_PATH) -> list:
+    """Last `days` rows of labor_daily_history, oldest first — the Labor
+    Ribbon's daily labor-% spline."""
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT date, day_of_week, labor_pct, labor_cost, sales, total_hours
+        FROM labor_daily_history
+        WHERE restaurant_id=? AND labor_pct IS NOT NULL
+        ORDER BY date DESC LIMIT ?
+    """, (restaurant_id, days)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows][::-1]
+
+
+def get_ai_visibility_history(restaurant_id: int, limit: int = 10, db_path: str = DB_PATH) -> list:
+    conn = get_conn(db_path)
+    rows = conn.execute("""
+        SELECT ai_score, gbp_score, created_at FROM ai_visibility_runs
+        WHERE restaurant_id=? AND ai_score IS NOT NULL
+        ORDER BY created_at DESC, id DESC LIMIT ?
+    """, (restaurant_id, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows][::-1]
