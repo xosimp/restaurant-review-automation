@@ -364,3 +364,46 @@ def docusign_webhook():
         print(f"DocuSign webhook error: {e}")
         return jsonify(ok=True)  # Always return 200 to DocuSign
 
+
+
+# ── Inbound SMS (Twilio) ────────────────────────────────────────────────────
+# Public and unauthenticated by necessity — Twilio is the caller. The
+# signature check stands in for auth: without it anyone could forge a STOP
+# (silencing a guest) or a YES (granting marketing consent on someone's
+# behalf, the exact thing guest_marketing's consent model exists to prevent).
+
+@webhook_bp.route("/webhooks/twilio/sms", methods=["POST"])
+def twilio_inbound_sms():
+    from flask import Response
+    from notify import validate_twilio_signature
+    from guest_marketing import handle_inbound_sms
+
+    params = request.form.to_dict()
+    # Twilio signs the URL it was configured with. Behind Railway's proxy
+    # request.url arrives as http://, so rebuild it as https to match.
+    url = request.url
+    if request.headers.get("X-Forwarded-Proto") == "https" and url.startswith("http://"):
+        url = "https://" + url[len("http://"):]
+
+    if not validate_twilio_signature(url, params, request.headers.get("X-Twilio-Signature", "")):
+        return Response("", status=403, mimetype="text/xml")
+
+    from_phone = (params.get("From") or "").strip()
+    body = params.get("Body") or ""
+    if not from_phone:
+        return Response("<Response></Response>", mimetype="text/xml")
+
+    try:
+        reply = handle_inbound_sms(from_phone, body)
+    except Exception as e:
+        try:
+            import ops
+            ops.capture(e, job="twilio_inbound_sms", context=f"from={from_phone[-4:]}")
+        except Exception:
+            pass
+        reply = None
+
+    if reply:
+        safe = reply.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return Response(f"<Response><Message>{safe}</Message></Response>", mimetype="text/xml")
+    return Response("<Response></Response>", mimetype="text/xml")

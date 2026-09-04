@@ -623,6 +623,7 @@ _last_depletion_sync_date = None
 _last_onboard_date    = None
 _last_stale_inv_date  = None
 _last_inactive_date   = None
+_last_optin_invite_date = None
 _last_monthly_date    = None
 _last_opsdigest_date  = None
 _last_mktmetrics_date = None
@@ -922,6 +923,7 @@ def scheduler_loop():
     global _last_fetch_date, _last_digest_date, _last_backup_date
     global _last_toast_sync_date, _last_depletion_sync_date, _last_onboard_date, _last_stale_inv_date
     global _last_inactive_date, _last_monthly_date, _last_opsdigest_date, _last_mktmetrics_date
+    global _last_optin_invite_date
     log.info("Scheduler started — review fetch every 4hr (8am/12pm/4pm/8pm CT), digests 9am on client's chosen day")
 
 
@@ -1050,6 +1052,18 @@ def scheduler_loop():
                 # Monday 11am — inactive client check
                 log.info("Running inactive client check...")
                 _ops.run_job("inactive_clients", check_inactive_clients)
+
+            if now.hour == 11 and _last_optin_invite_date != today:
+                _last_optin_invite_date = today
+                # 11am daily — invite guests Toast identified yesterday to
+                # opt in for themselves. Yesterday, not today: Toast's
+                # business day doesn't end at midnight, so today's is still
+                # open and would be re-scanned tomorrow anyway.
+                log.info("Running Toast opt-in invites...")
+                from guest_marketing import run_toast_optin_invites
+                from datetime import date as _d, timedelta as _td
+                _ops.run_job("toast_optin_invites",
+                             lambda: run_toast_optin_invites(business_date=_d.today() - _td(days=1)))
 
             # Every tick (hourly) — automated post-visit review request texts.
             # Needs hourly granularity (not a once-daily gate) since eligibility

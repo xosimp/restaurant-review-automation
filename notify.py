@@ -36,6 +36,28 @@ def _normalize_phone(phone: str) -> str:
     return "+" + digits_only
 
 
+def validate_twilio_signature(url: str, post_params: dict, signature: str) -> bool:
+    """Verify an inbound webhook really came from Twilio.
+
+    The inbound SMS route is public and unauthenticated — without this,
+    anyone who knows the URL could forge a STOP (silencing a guest) or a
+    YES (granting marketing consent on a guest's behalf, which is exactly
+    what guest_marketing.py's consent model exists to prevent).
+
+    Twilio's scheme: HMAC-SHA1 over the full URL followed by each POST
+    field sorted by key and concatenated as key+value, keyed by the
+    account auth token, base64-encoded.
+    """
+    import hmac, hashlib, base64
+    if not TWILIO_TOKEN or not signature:
+        return False
+    payload = url + "".join(k + str(post_params[k]) for k in sorted(post_params))
+    digest = hmac.new(TWILIO_TOKEN.encode("utf-8"),
+                      payload.encode("utf-8"), hashlib.sha1).digest()
+    expected = base64.b64encode(digest).decode("utf-8")
+    return hmac.compare_digest(expected, signature)
+
+
 def send_sms(to_phone: str, message: str) -> bool:
     """Send a single SMS via Twilio. Returns True on success."""
     if not all([TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM]):

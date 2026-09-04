@@ -43,6 +43,18 @@ CREATE TABLE IF NOT EXISTS guest_campaigns (
     failed_count    INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS sms_optin_invites (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    restaurant_id  INTEGER NOT NULL REFERENCES restaurants(id),
+    phone          TEXT    NOT NULL,
+    source         TEXT    NOT NULL DEFAULT 'toast_order',
+    external_ref   TEXT,
+    sent_at        TEXT    NOT NULL DEFAULT (datetime('now')),
+    responded_at   TEXT,
+    response       TEXT,
+    UNIQUE(restaurant_id, external_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_optin_invites_phone ON sms_optin_invites(phone, sent_at);
 """
 
 
@@ -92,8 +104,19 @@ def add_guest_contact_manual(restaurant_id, phone, name=None, db_path=DB_PATH):
 
 
 def add_guest_contact_public_optin(restaurant_id, phone, name=None, db_path=DB_PATH):
-    """The one and only path that can ever set consent=True — the guest
-    submitting the public opt-in page themselves."""
+    """The guest submitting the public opt-in page themselves."""
+    return _upsert_contact(restaurant_id, phone, name=name, consent=True, db_path=db_path)
+
+
+def add_guest_contact_sms_optin(restaurant_id, phone, name=None, db_path=DB_PATH):
+    """The guest texting YES back to an opt-in invite.
+
+    Consent-equivalent to the public opt-in page: in both cases the guest
+    themselves takes an affirmative action. A number Toast happened to
+    capture at checkout is NOT this — that only ever reaches
+    add_guest_contact_manual (consent=False), because handing a phone
+    number to a POS for a receipt is not agreeing to marketing texts.
+    """
     return _upsert_contact(restaurant_id, phone, name=name, consent=True, db_path=db_path)
 
 
@@ -173,6 +196,127 @@ def unsubscribe_guest(restaurant_id, phone, db_path=DB_PATH):
     conn.close()
 
 
+# ── Inbound SMS ─────────────────────────────────────────────────────────────
+# Every outbound message this system sends promises "Reply STOP to
+# unsubscribe". Until these handlers existed that promise was not actually
+# kept by anything — a guest could text STOP and keep receiving messages.
+
+STOP_KEYWORDS  = {"stop", "stopall", "unsubscribe", "cancel", "end", "quit", "revoke"}
+START_KEYWORDS = {"start", "unstop", "yes", "y"}
+HELP_KEYWORDS  = {"help", "info"}
+
+
+def resubscribe_guest(restaurant_id, phone, db_path=DB_PATH):
+    conn = get_conn(db_path)
+    conn.execute(
+        "UPDATE guest_contacts SET unsubscribed=0 WHERE restaurant_id=? AND phone=?",
+        (restaurant_id, _normalize_phone(phone))
+    )
+    conn.commit()
+    conn.close()
+
+
+def record_optin_invite(restaurant_id, phone, source="toast_order", external_ref=None, db_path=DB_PATH):
+    """Log that an opt-in invite went out. external_ref (e.g. a Toast order
+    GUID) makes re-running the job idempotent — the UNIQUE constraint means
+    the same order can never invite the same guest twice."""
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "INSERT INTO sms_optin_invites (restaurant_id, phone, source, external_ref) VALUES (?,?,?,?)",
+            (restaurant_id, _normalize_phone(phone), source, external_ref)
+        )
+        conn.commit()
+        return cur.lastrowid
+    except Exception:
+        return None          # already invited for this external_ref
+    finally:
+        conn.close()
+
+
+def _restaurant_for_inbound(phone, db_path=DB_PATH):
+    """Which restaurant is this guest replying to?
+
+    Every restaurant shares one platform Twilio number, so the inbound
+    `To` can't identify the restaurant — the most recent thing we actually
+    sent this number can. Falls back to a guest_contacts match so a STOP
+    from someone who never got an invite still lands somewhere.
+    """
+    phone = _normalize_phone(phone)
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT restaurant_id FROM sms_optin_invites WHERE phone=? ORDER BY sent_at DESC, id DESC LIMIT 1",
+            (phone,)
+        ).fetchone()
+        if row:
+            return row["restaurant_id"]
+        row = conn.execute(
+            "SELECT restaurant_id FROM guest_contacts WHERE phone=? ORDER BY id DESC LIMIT 1",
+            (phone,)
+        ).fetchone()
+        return row["restaurant_id"] if row else None
+    finally:
+        conn.close()
+
+
+def _mark_invite_response(phone, response, db_path=DB_PATH):
+    from time_utils import restaurant_now_by_id
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute(
+            "SELECT id, restaurant_id FROM sms_optin_invites WHERE phone=? AND responded_at IS NULL "
+            "ORDER BY sent_at DESC, id DESC LIMIT 1", (_normalize_phone(phone),)
+        ).fetchone()
+        if not row:
+            return
+        now_iso = restaurant_now_by_id(row["restaurant_id"], naive=True).isoformat()
+        conn.execute("UPDATE sms_optin_invites SET responded_at=?, response=? WHERE id=?",
+                     (now_iso, response, row["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def handle_inbound_sms(from_phone, body, db_path=DB_PATH):
+    """Process one inbound guest text. Returns a reply string to send back
+    (or None to stay silent).
+
+    A STOP unsubscribes the guest from EVERY restaurant that has their
+    number, not just the one we think they were replying to — when someone
+    says stop, the safe reading is stop, not "stop from this one tenant".
+    """
+    phone = _normalize_phone(from_phone)
+    word = (body or "").strip().lower().split()[0] if (body or "").strip() else ""
+
+    if word in STOP_KEYWORDS:
+        conn = get_conn(db_path)
+        conn.execute("UPDATE guest_contacts SET unsubscribed=1 WHERE phone=?", (phone,))
+        conn.commit()
+        conn.close()
+        _mark_invite_response(phone, "stop", db_path=db_path)
+        return "You're unsubscribed and won't get any more texts from us. Reply START to opt back in."
+
+    restaurant_id = _restaurant_for_inbound(phone, db_path=db_path)
+    if restaurant_id is None:
+        return None          # nothing of ours — stay silent rather than guess
+
+    if word in HELP_KEYWORDS:
+        return "This is a guest text line for restaurant updates. Reply STOP to unsubscribe."
+
+    if word in START_KEYWORDS:
+        conn = get_conn(db_path)
+        row = conn.execute("SELECT name FROM restaurants WHERE id=?", (restaurant_id,)).fetchone()
+        conn.close()
+        add_guest_contact_sms_optin(restaurant_id, phone, db_path=db_path)
+        resubscribe_guest(restaurant_id, phone, db_path=db_path)
+        _mark_invite_response(phone, "yes", db_path=db_path)
+        name = row["name"] if row else "us"
+        return f"Thanks! You're in — we'll text you a review link after your next visit to {name}. Reply STOP anytime."
+
+    return None
+
+
 CAMPAIGN_PROMPTS = {
     "win_back": "a friendly win-back text to a guest who hasn't visited in a while, inviting them back",
     "event": "a text announcing an upcoming event, special, or promotion",
@@ -250,6 +394,86 @@ DEFAULT_REVIEW_REQUEST_DELAY_HOURS = 3
 def _google_review_link(place_id):
     return (f"https://search.google.com/local/writereview?placeid={place_id}"
             if place_id else "")
+
+
+def run_toast_optin_invites(business_date=None, db_path=DB_PATH):
+    """Daily job — invites guests Toast identified to opt in for themselves.
+
+    The invite is a single transactional message tied to a visit that
+    actually happened; it is deliberately NOT the review request and NOT a
+    campaign. The guest's number is stored unconsented (same footing as an
+    owner's manual add), and only a YES reply — handled in
+    handle_inbound_sms — ever sets consent. That keeps the one rule this
+    module is built around intact: consent comes from the guest.
+
+    A guest already consented, already unsubscribed, or already invited for
+    this order is skipped, so re-running is safe.
+    """
+    from datetime import date as _date
+    import toast as _toast
+
+    if business_date is None:
+        business_date = _date.today()
+
+    conn = get_conn(db_path)
+    restaurants = conn.execute(
+        "SELECT id, name FROM restaurants "
+        "WHERE module_marketing=1 AND toast_client_id IS NOT NULL AND toast_restaurant_guid IS NOT NULL"
+    ).fetchall()
+    conn.close()
+
+    invited, skipped, failed = 0, 0, 0
+    for r in restaurants:
+        rid = r["id"]
+        try:
+            customers = _toast.fetch_order_customers(rid, business_date)
+        except Exception:
+            failed += 1
+            continue
+
+        for cust in customers:
+            phone = _normalize_phone(cust["phone"])
+            conn = get_conn(db_path)
+            existing = conn.execute(
+                "SELECT consent, unsubscribed FROM guest_contacts WHERE restaurant_id=? AND phone=?",
+                (rid, phone)
+            ).fetchone()
+            already_invited = conn.execute(
+                "SELECT 1 FROM sms_optin_invites WHERE restaurant_id=? AND phone=?", (rid, phone)
+            ).fetchone()
+            conn.close()
+
+            if existing and (existing["consent"] or existing["unsubscribed"]):
+                skipped += 1
+                continue
+            if already_invited:
+                skipped += 1
+                continue
+
+            # Stored unconsented — visible to the owner, textable only if
+            # the guest replies YES.
+            add_guest_contact_manual(rid, phone, name=cust.get("name") or None, db_path=db_path)
+
+            if record_optin_invite(rid, phone, source="toast_order",
+                                   external_ref=cust.get("order_guid"), db_path=db_path) is None:
+                skipped += 1
+                continue
+
+            first = (cust.get("name") or "").split()[0] if cust.get("name") else "there"
+            message = (
+                f"Hi {first}, thanks for visiting {r['name']}! "
+                "Reply YES if we can text you a quick link to leave a review. "
+                "Reply STOP to opt out."
+            )
+            try:
+                if send_sms(phone, message):
+                    invited += 1
+                else:
+                    failed += 1
+            except Exception:
+                failed += 1
+
+    return {"invited": invited, "skipped": skipped, "failed": failed}
 
 
 def run_review_request_followups(delay_hours=None, db_path=DB_PATH):

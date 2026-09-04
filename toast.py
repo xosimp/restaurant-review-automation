@@ -362,6 +362,90 @@ def fetch_order_selections(restaurant_id: int, business_date: date) -> list:
     return all_selections
 
 
+def _demo_order_customers(business_date: date) -> list:
+    """Two identified guests per demo day — enough to exercise the opt-in
+    invite job end to end without a real Toast account."""
+    stamp = business_date.strftime("%Y%m%d")
+    return [
+        {"order_guid": f"demo-order-{stamp}-1", "name": "Demo Guest One",
+         "phone": "+15550000001", "email": "guest1@demo.test"},
+        {"order_guid": f"demo-order-{stamp}-2", "name": "Demo Guest Two",
+         "phone": "+15550000002", "email": "guest2@demo.test"},
+    ]
+
+
+def fetch_order_customers(restaurant_id: int, business_date: date) -> list:
+    """Guests Toast actually identified on one business date.
+
+    Same ordersBulk endpoint and pagination as fetch_order_selections, just
+    reading checks[].customer instead of checks[].selections. Returns
+    [{order_guid, name, phone, email}] for checks that carry a customer with
+    a phone number.
+
+    Most dine-in covers will NOT appear here: Toast only has a customer on
+    a check when one was actually captured (online ordering, loyalty, or a
+    server entering it). That is expected, not a bug — this is a partial
+    signal by nature, which is why the caller treats every number it
+    returns as unconsented until the guest opts in themselves.
+
+    The customer object's exact shape is documented by Toast but has not
+    been verified against a live response from this account, so every field
+    read here is defensive.
+    """
+    if _is_demo(restaurant_id):
+        return _demo_order_customers(business_date)
+
+    from models import get_restaurant
+
+    r     = get_restaurant(restaurant_id)
+    token = get_toast_token(restaurant_id)
+    base  = TOAST_SANDBOX if os.getenv("TOAST_SANDBOX", "").lower() in ("1", "true") else TOAST_BASE
+    business_date_str = business_date.strftime("%Y%m%d")
+
+    customers = []
+    seen = set()
+    page = 1
+    for _ in range(20):
+        resp = requests.get(
+            f"{base}/orders/v2/ordersBulk",
+            headers=_headers(token, r.toast_restaurant_guid),
+            params={"businessDate": business_date_str, "page": page, "pageSize": 100},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        orders = resp.json() or []
+        if not orders:
+            break
+
+        for order in orders:
+            if order.get("voided") or order.get("deleted"):
+                continue
+            order_guid = order.get("guid") or ""
+            for check in (order.get("checks") or []):
+                cust = check.get("customer") or {}
+                phone = (cust.get("phone") or "").strip()
+                if not phone:
+                    continue
+                name = " ".join(p for p in [(cust.get("firstName") or "").strip(),
+                                            (cust.get("lastName") or "").strip()] if p)
+                key = (order_guid, phone)
+                if key in seen:
+                    continue
+                seen.add(key)
+                customers.append({
+                    "order_guid": order_guid,
+                    "name": name,
+                    "phone": phone,
+                    "email": (cust.get("email") or "").strip(),
+                })
+
+        if len(orders) < 100:
+            break
+        page += 1
+
+    return customers
+
+
 # ── Data normalisation ─────────────────────────────────────────────────────────
 
 _DOW = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
