@@ -390,6 +390,34 @@ final class SessionStore {
         isLocked = true
     }
 
+    // MARK: - Lock delay (Security -> "Lock when reopening")
+
+    private var backgroundedAt: Date?
+
+    /// .background: lock now, or start the grace clock if a delay is set.
+    /// The app-switcher shield (RootView.privacyShieldUp) still covers the
+    /// snapshot either way — the delay only decides whether Face ID is
+    /// asked for on the way back in.
+    func noteBackgrounded() {
+        guard isAuthenticated, reentryProtected else { return }
+        let delay = AppPreferences.shared.lockDelaySeconds
+        if delay <= 0 {
+            isLocked = true
+        } else {
+            backgroundedAt = Date()
+        }
+    }
+
+    /// .active: engage the lock if the grace period ran out.
+    func lockIfGraceExpired() {
+        guard let at = backgroundedAt else { return }
+        backgroundedAt = nil
+        guard isAuthenticated, reentryProtected else { return }
+        if Date().timeIntervalSince(at) >= Double(AppPreferences.shared.lockDelaySeconds) {
+            isLocked = true
+        }
+    }
+
     /// True when the lock is switched on but the device cannot actually
     /// enforce it (no passcode or biometrics enrolled). The app still fails
     /// open — locking an owner out of their own data over a device setting

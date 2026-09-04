@@ -23,8 +23,25 @@ struct AccountProfileDetailView: View {
     @State private var neverSay: String
     @State private var menuNotes: String
     @State private var timezone: String
+    @State private var signOffName: String
+    @State private var responseLanguage: String
+    @State private var tonePreset: String
+    @State private var showingHours = false
+    @State private var autoApproveEnabled: Bool
+    @State private var autoApprovePaused: Bool
+    @State private var autoApproveCap: Int
 
-    private enum Field: Hashable { case ownerName, ownerPhone, voiceNotes, neverSay, menuNotes }
+    private enum Field: Hashable { case ownerName, ownerPhone, voiceNotes, neverSay, menuNotes, signOff }
+
+    static let languageOptions: [(value: String, label: String)] = [
+        ("", "Match the review"), ("en", "English"), ("es", "Spanish"), ("fr", "French"),
+        ("it", "Italian"), ("pt", "Portuguese"), ("de", "German"),
+    ]
+    static let toneOptions: [(value: String, label: String)] = [
+        ("", "Your brand voice only"), ("warm", "Warm"), ("professional", "Professional"),
+        ("playful", "Playful"), ("concise", "Concise"),
+    ]
+    static let capOptions = [1, 3, 5, 10, 20]
     @FocusState private var focusedField: Field?
     @State private var postedLabel: String?
 
@@ -49,6 +66,13 @@ struct AccountProfileDetailView: View {
         _neverSay   = State(initialValue: profile.neverSay ?? "")
         _menuNotes  = State(initialValue: profile.menuNotes ?? "")
         _timezone   = State(initialValue: profile.timezone)
+        _signOffName = State(initialValue: profile.signOffName ?? "")
+        _responseLanguage = State(initialValue: profile.responseLanguage ?? "")
+        _tonePreset = State(initialValue: profile.tonePreset ?? "")
+        let auto = viewModel.summary?.reviews
+        _autoApproveEnabled = State(initialValue: auto?.enabled ?? false)
+        _autoApprovePaused = State(initialValue: auto?.paused ?? false)
+        _autoApproveCap = State(initialValue: auto?.dailyCap ?? 5)
     }
 
     private var isOwner: Bool { sessionStore.currentUser?.isOwner == true }
@@ -61,7 +85,9 @@ struct AccountProfileDetailView: View {
                     chips
                     contactSection
                     timezoneSection
+                    hoursSection
                     voiceSection
+                    autoApproveSection
 
                     if let error = viewModel.saveProfileError {
                         Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
@@ -72,7 +98,8 @@ struct AccountProfileDetailView: View {
                             await viewModel.updateProfile(
                                 ownerName: ownerName, ownerPhone: ownerPhone,
                                 voiceNotes: voiceNotes, neverSay: neverSay, menuNotes: menuNotes,
-                                timezone: timezone
+                                timezone: timezone, signOffName: signOffName,
+                                responseLanguage: responseLanguage, tonePreset: tonePreset
                             )
                             if viewModel.saveProfileSucceeded {
                                 Haptic.success()
@@ -103,6 +130,9 @@ struct AccountProfileDetailView: View {
             }
             .sheet(isPresented: $showingLocationSwitcher) {
                 LocationSwitcherView { Task { await viewModel.load() } }
+            }
+            .sheet(isPresented: $showingHours) {
+                AccountHoursSheet(viewModel: viewModel, profile: viewModel.summary?.profile ?? profile)
             }
             .task {
                 if isOwner { await locations.load() }
@@ -271,13 +301,93 @@ struct AccountProfileDetailView: View {
         }
     }
 
+    // MARK: - Hours
+
+    private var hoursSummary: String {
+        guard let json = profile.closeTimesJson ?? profile.openTimesJson, let data = json.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String], !dict.isEmpty else { return "Not set" }
+        return "\(dict.count) day\(dict.count == 1 ? "" : "s") set"
+    }
+
+    private var hoursSection: some View {
+        AccountSection(kicker: "Hours") {
+            AccountKVRow(label: hoursSummary, showsDivider: false) {
+                AccountLink(title: "Edit hours & closures") { showingHours = true }
+            }
+        }
+    }
+
     // MARK: - AI voice
 
     private var voiceSection: some View {
         AccountSection(kicker: "How the AI writes for you") {
             AccountEditor(label: "Brand voice", placeholder: "e.g. warm, a little playful, never corporate", text: $voiceNotes, focus: $focusedField, field: .voiceNotes)
             AccountEditor(label: "Never says", placeholder: "Phrases or claims the AI should avoid", text: $neverSay, focus: $focusedField, field: .neverSay)
-            AccountEditor(label: "Menu highlights", placeholder: "Dishes, specials, or ingredients worth mentioning", text: $menuNotes, focus: $focusedField, field: .menuNotes, showsDivider: false)
+            AccountEditor(label: "Menu highlights", placeholder: "Dishes, specials, or ingredients worth mentioning", text: $menuNotes, focus: $focusedField, field: .menuNotes)
+            AccountField(label: "Signs off as", text: $signOffName, focus: $focusedField, field: .signOff)
+            AccountKVRow(label: "Reply language") {
+                Picker("", selection: $responseLanguage) {
+                    ForEach(Self.languageOptions, id: \.value) { Text($0.label).tag($0.value) }
+                }
+                .tint(Color.cavnarEmber)
+            }
+            AccountKVRow(label: "Tone", showsDivider: false) {
+                Picker("", selection: $tonePreset) {
+                    ForEach(Self.toneOptions, id: \.value) { Text($0.label).tag($0.value) }
+                }
+                .tint(Color.cavnarEmber)
+            }
+        }
+    }
+
+    // MARK: - Auto-approve
+
+    // Saves on change (not with the Save button below) — it's a rule with
+    // real consequences, so flipping it should land immediately and
+    // visibly, same as 2FA's own Turn on/off.
+    private func saveAutoApprove() {
+        Task {
+            if await viewModel.saveAutoApprove(enabled: autoApproveEnabled, paused: autoApprovePaused, dailyCap: autoApproveCap) {
+                Haptic.success()
+            }
+        }
+    }
+
+    private var autoApproveSection: some View {
+        AccountSection(kicker: "Auto-approve") {
+            AccountKVRow(label: "Post 5-star replies automatically", showsDivider: autoApproveEnabled) {
+                Toggle("", isOn: Binding(get: { autoApproveEnabled }, set: { on in
+                    Haptic.light(); autoApproveEnabled = on; saveAutoApprove()
+                }))
+                .labelsHidden()
+                .tint(Color.cavnarEmber)
+            }
+            if autoApproveEnabled {
+                AccountKVRow(label: "Daily cap") {
+                    Picker("", selection: Binding(get: { autoApproveCap }, set: { cap in
+                        Haptic.selection(); autoApproveCap = cap; saveAutoApprove()
+                    })) {
+                        ForEach(Self.capOptions, id: \.self) { Text("\($0) a day").tag($0) }
+                    }
+                    .tint(Color.cavnarEmber)
+                }
+                AccountKVRow(label: "Paused", showsDivider: false) {
+                    Toggle("", isOn: Binding(get: { autoApprovePaused }, set: { paused in
+                        Haptic.light(); autoApprovePaused = paused; saveAutoApprove()
+                    }))
+                    .labelsHidden()
+                    .tint(Color.cavnarEmber)
+                }
+                Text(autoApprovePaused
+                     ? "Paused — nothing posts on its own until you resume."
+                     : "Only drafted 5-star replies, never anything lower. \(viewModel.summary?.reviews.approvedToday ?? 0) auto-approved today.")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(autoApprovePaused ? Color.cavnarAmber : Color.cavnarInk3)
+                    .padding(.vertical, 9)
+            }
+            if let error = viewModel.autoApproveError {
+                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed).padding(.bottom, 6)
+            }
         }
     }
 }

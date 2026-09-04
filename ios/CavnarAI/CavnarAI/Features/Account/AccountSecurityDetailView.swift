@@ -13,6 +13,11 @@ struct AccountSecurityDetailView: View {
     @State private var showingSignInHistory = false
     @State private var showingBackupCodes = false
     @State private var passcodeSheet: AppPasscodeSheet.Mode?
+    @State private var showingActivity = false
+    @State private var showingTrustedDevices = false
+    @State private var showingRecoveryEmail = false
+    @State private var showingCheckup = false
+    @State private var prefs = AppPreferences.shared
     @State private var disabledLabel: String?
     // The same posted-check overlay 2FA-disable already used, now shared
     // with Sign-in notifications — .removed (red, a drawn bar) for turning
@@ -85,6 +90,27 @@ struct AccountSecurityDetailView: View {
         .sheet(item: $passcodeSheet) { mode in
             AppPasscodeSheet(mode: mode)
         }
+        .sheet(isPresented: $showingActivity) { AccountActivityLogView(viewModel: viewModel) }
+        .sheet(isPresented: $showingTrustedDevices) { AccountTrustedDevicesView(viewModel: viewModel) }
+        .sheet(isPresented: $showingRecoveryEmail) { AccountRecoveryEmailSheet(viewModel: viewModel) }
+        .sheet(isPresented: $showingCheckup) {
+            AccountSecurityCheckupView(viewModel: viewModel, account: live) { fix in
+                // The checkup dismisses itself first; give the sheet a beat
+                // to go before presenting the next one on top of this view.
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(0.45))
+                    switch fix {
+                    case .twoFA: showing2FASetup = true
+                    case .password: showingChangePassword = true
+                    case .deviceLock: if !sessionStore.appPasscodeSet { passcodeSheet = .create }
+                    case .backupCodes: showingBackupCodes = true
+                    case .loginNotify: _ = await viewModel.toggleLoginNotify(true)
+                    case .recoveryEmail: showingRecoveryEmail = true
+                    case .staleSessions: break   // the Devices list is right below on this sheet
+                    }
+                }
+            }
+        }
         .sheet(isPresented: $showingBackupCodes) {
             AccountBackupCodesView(viewModel: viewModel)
         }
@@ -152,6 +178,9 @@ struct AccountSecurityDetailView: View {
                     .foregroundStyle(Color.cavnarRed)
                     .padding(.bottom, 4)
             }
+            AccountKVRow(label: "Security checkup") {
+                AccountLink(title: "Run") { showingCheckup = true }
+            }
             AccountKVRow(label: "Password") {
                 AccountLink(title: "Change") { showingChangePassword = true }
             }
@@ -161,6 +190,9 @@ struct AccountSecurityDetailView: View {
                 }
                 AccountKVRow(label: "Backup codes") {
                     AccountLink(title: "View") { showingBackupCodes = true }
+                }
+                AccountKVRow(label: "Trusted devices") {
+                    AccountLink(title: "Manage") { showingTrustedDevices = true }
                 }
             }
             // Always an unconditional sibling — only its trailing link
@@ -197,6 +229,19 @@ struct AccountSecurityDetailView: View {
             // AccountLink shape, so they can't drift apart again).
             AccountKVRow(label: "Sign-in activity") {
                 AccountLink(title: "View") { showingSignInHistory = true }
+            }
+            AccountKVRow(label: "Account activity") {
+                AccountLink(title: "View") { showingActivity = true }
+            }
+            AccountKVRow(label: "Recovery email") {
+                if let recovery = live.recoveryEmail {
+                    HStack(spacing: 10) {
+                        Text(recovery).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk2).lineLimit(1)
+                        AccountLink(title: "Change") { showingRecoveryEmail = true }
+                    }
+                } else {
+                    AccountLink(title: "Add") { showingRecoveryEmail = true }
+                }
             }
             AccountKVRow(label: "Sign-in notifications", showsDivider: false) {
                 if live.loginNotify {
@@ -257,7 +302,7 @@ struct AccountSecurityDetailView: View {
             // The fallback gate for when Face ID is off — see AppPasscode.
             // Set/Change/Remove all confirm through the same passcode pad
             // the lock screen uses.
-            AccountKVRow(label: "App passcode", showsDivider: false) {
+            AccountKVRow(label: "App passcode") {
                 if sessionStore.appPasscodeSet {
                     HStack(spacing: 14) {
                         AccountLink(title: "Change") { passcodeSheet = .change }
@@ -267,6 +312,36 @@ struct AccountSecurityDetailView: View {
                     AccountLink(title: "Set") { passcodeSheet = .create }
                 }
             }
+            // How long the app can sit in the background before the lock
+            // engages. Immediately is the original behaviour; a short grace
+            // means a manager checking the app between tables isn't asked
+            // for Face ID every time.
+            AccountKVRow(label: "Lock when reopening") {
+                Picker("", selection: Binding(
+                    get: { prefs.lockDelaySeconds },
+                    set: { Haptic.selection(); prefs.lockDelaySeconds = $0 }
+                )) {
+                    ForEach(AppPreferences.lockDelayOptions, id: \.seconds) { option in
+                        Text(option.label).tag(option.seconds)
+                    }
+                }
+                .tint(Color.cavnarEmber)
+                .disabled(!sessionStore.reentryProtected)
+            }
+            // Blurs dollar figures and KPI numbers until tapped — for the
+            // app open on the pass or handed to a server.
+            AccountKVRow(label: "Privacy mode", showsDivider: false) {
+                Toggle("", isOn: Binding(
+                    get: { prefs.privacyMode },
+                    set: { Haptic.light(); prefs.privacyMode = $0 }
+                ))
+                .labelsHidden()
+                .tint(Color.cavnarEmber)
+            }
+            Text("Privacy mode hides revenue, labor and food-cost figures behind a tap.")
+                .font(.cavnarBody(14))
+                .foregroundStyle(Color.cavnarInk3)
+                .padding(.vertical, 9)
         }
     }
 

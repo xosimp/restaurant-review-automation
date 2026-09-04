@@ -57,6 +57,8 @@ struct AccountAlertsDetailView: View {
                         toggle("Rating declining trend", $draft.alertNegativeTrend)
                         toggle("Unresponded review (48h)", $draft.alertNoResponse)
                         toggle("Labor over target", $draft.alertLaborOver)
+                        toggle("Food waste flagged", $draft.alertFoodWaste)
+                        toggle("AI visibility drops", $draft.alertAiVisibilityDrop)
                         Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1).padding(.top, 2)
                         masterAlertPill
                     }
@@ -68,6 +70,19 @@ struct AccountAlertsDetailView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         toggle("Text alerts", $draft.urgentViaSms)
                         toggle("Email alerts", $draft.urgentViaEmail)
+                        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Also email").font(.cavnarBody(15.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                            TextField("chef@…, gm@… (up to 3)", text: $draft.alertExtraEmails)
+                                .font(.cavnarBody(15))
+                                .foregroundStyle(Color.cavnarInk)
+                                .keyboardType(.emailAddress)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                            Text("Alert and digest emails also go to these addresses.")
+                                .font(.cavnarBody(14))
+                                .foregroundStyle(Color.cavnarInk3)
+                        }
                     }
                     .cavnarCard()
                 }
@@ -81,6 +96,8 @@ struct AccountAlertsDetailView: View {
                         pushToggle("Health or safety mention", $draft.alHealthPush, on: draft.alertHealth)
                         pushToggle("Negative review spike", $draft.alSpikePush, on: draft.alertNegSpike)
                         pushToggle("Unresponded review (48h)", $draft.alUnresPush, on: draft.alertNoResponse)
+                        Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                        toggle("Play a sound", $draft.pushSound)
                         Text("Push doesn't need text/email alerts turned on — it's free to send, so it's gated per-alert-type here instead. Trend and labor alerts above push automatically once enabled; there's no separate switch for those two yet.")
                             .font(.cavnarBody(15))
                             .foregroundStyle(Color.cavnarInk3)
@@ -106,6 +123,14 @@ struct AccountAlertsDetailView: View {
                             DatePicker("Until", selection: $quietEnd, displayedComponents: .hourAndMinute)
                                 .font(.cavnarBody(15.5))
                                 .tint(Color.cavnarEmber)
+                            Rectangle().fill(Color.cavnarPaper3.opacity(0.5)).frame(height: 1)
+                            Toggle(isOn: $draft.alertHealthBypassQuiet) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Health alerts break through").font(.cavnarBody(15.5, weight: 600)).foregroundStyle(Color.cavnarInk)
+                                    Text("A health or safety mention still reaches you during quiet hours, and pushes through Focus modes.").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                                }
+                            }
+                            .tint(Color.cavnarEmber)
                         }
                     }
                     .cavnarCard()
@@ -267,7 +292,8 @@ struct AccountAlertsDetailView: View {
 
     private var onCount: Int {
         [draft.alert1star, draft.alert2star, draft.alert5star, draft.alertHealth,
-         draft.alertNegSpike, draft.alertNegativeTrend, draft.alertNoResponse, draft.alertLaborOver].filter { $0 }.count
+         draft.alertNegSpike, draft.alertNegativeTrend, draft.alertNoResponse, draft.alertLaborOver,
+         draft.alertFoodWaste, draft.alertAiVisibilityDrop].filter { $0 }.count
     }
 
     private var pushCount: Int {
@@ -282,7 +308,7 @@ struct AccountAlertsDetailView: View {
         } subtitle: {
             Text("\(onCount)").font(.cavnarNumber(15.5, weight: 600))
                 + Text(" of ")
-                + Text("8").font(.cavnarNumber(15.5, weight: 600))
+                + Text("10").font(.cavnarNumber(15.5, weight: 600))
                 + Text(" triggers · Digest \(draft.digestEnabled ? draft.digestDay.capitalized : "off") · Quiet hours \(quietHoursEnabled ? "on" : "off")")
         }
     }
@@ -323,6 +349,7 @@ struct AccountAlertsDetailView: View {
     private var allAlertsOn: Bool {
         draft.alert1star && draft.alert2star && draft.alert5star && draft.alertHealth
             && draft.alertNegSpike && draft.alertNegativeTrend && draft.alertNoResponse && draft.alertLaborOver
+            && draft.alertFoodWaste && draft.alertAiVisibilityDrop
     }
 
     private func setAllAlerts(_ on: Bool) {
@@ -334,6 +361,8 @@ struct AccountAlertsDetailView: View {
         draft.alertNegativeTrend = on
         draft.alertNoResponse = on
         draft.alertLaborOver = on
+        draft.alertFoodWaste = on
+        draft.alertAiVisibilityDrop = on
     }
 
     @ViewBuilder

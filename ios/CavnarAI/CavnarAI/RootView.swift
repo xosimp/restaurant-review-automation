@@ -8,7 +8,7 @@ struct RootView: View {
     @State private var deepLinkRouter = DeepLinkRouter()
     @State private var network = NetworkMonitor()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var selectedTab: AppTab = .home
+    @State private var selectedTab: AppTab = AppPreferences.shared.defaultTab
     // Cold-launch handoff. iOS draws the launch screen itself (UILaunchScreen
     // in project.yml: the 128pt LaunchSeal on Paper) and it can't animate —
     // so the app's own first frame redraws that exact seal in that exact
@@ -239,8 +239,11 @@ struct RootView: View {
                     privacyShieldUp = true
                 }
             case .background:
-                sessionStore.lockIfNeeded()
+                sessionStore.noteBackgrounded()
             case .active:
+                // Before the shield drops: if the grace period ran out the
+                // lock has to be up before any dashboard frame is drawn.
+                sessionStore.lockIfGraceExpired()
                 privacyShieldUp = false
                 // Foreground is a reconnect opportunity for anything queued
                 // while offline, and for a push token that failed to register.
@@ -266,7 +269,7 @@ struct RootView: View {
                 // signed out. Signing out from Account and back in landed
                 // straight back on Account instead of Home. A fresh sign-in
                 // should always start on Home.
-                selectedTab = .home
+                selectedTab = AppPreferences.shared.defaultTab
             }
         }
         .onChange(of: deepLinkRouter.pendingTab) { _, tab in
@@ -297,7 +300,7 @@ struct RootView: View {
                 .tabItem { Label(AppTab.account.title, systemImage: AppTab.account.systemImage) }
                 .tag(AppTab.account)
         }
-        .sensoryFeedback(.selection, trigger: selectedTab)
+        .sensoryFeedback(.selection, trigger: selectedTab) { _, _ in AppPreferences.hapticsEnabledSnapshot }
         // True-black tab bar chrome, distinct from the warm near-black
         // content background — mirrors the web dashboard's own two-tier
         // black system (pure #000 nav chrome vs #1a1714 content).

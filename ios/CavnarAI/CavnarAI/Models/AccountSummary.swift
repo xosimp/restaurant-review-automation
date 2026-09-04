@@ -13,9 +13,21 @@ struct AccountProfile: Decodable {
     let neverSay: String?
     let menuNotes: String?
     let timezone: String
+    let signOffName: String?
+    let responseLanguage: String?
+    let tonePreset: String?
+    let openTimesJson: String?
+    let closeTimesJson: String?
+    let skipHolidays: String?
 
     enum CodingKeys: String, CodingKey {
         case restaurantName = "restaurant_name"
+        case signOffName = "sign_off_name"
+        case responseLanguage = "response_language"
+        case tonePreset = "tone_preset"
+        case openTimesJson = "open_times_json"
+        case closeTimesJson = "close_times_json"
+        case skipHolidays = "skip_holidays"
         case locationName = "location_name"
         case ownerName = "owner_name"
         case ownerEmail = "owner_email"
@@ -46,9 +58,13 @@ struct AccountInfo: Decodable {
     // account whose password has never been changed since creation.
     let passwordStrength: String?
     let passwordChangedAt: String?
+    let recoveryEmail: String?
+    let recoveryEmailPending: String?
 
     enum CodingKeys: String, CodingKey {
         case username, email
+        case recoveryEmail = "recovery_email"
+        case recoveryEmailPending = "recovery_email_pending"
         case twoFAEnabled = "two_fa_enabled"
         case twoFAMethod = "two_fa_method"
         case twoFAContactMasked = "two_fa_contact_masked"
@@ -122,8 +138,19 @@ struct AlertSettings: Codable {
     var alHealthPush: Bool
     var alSpikePush: Bool
     var alUnresPush: Bool
+    // Settings audit additions
+    var alertHealthBypassQuiet: Bool
+    var alertFoodWaste: Bool
+    var alertAiVisibilityDrop: Bool
+    var alertExtraEmails: String
+    var pushSound: Bool
 
     enum CodingKeys: String, CodingKey {
+        case alertHealthBypassQuiet = "alert_health_bypass_quiet"
+        case alertFoodWaste = "alert_food_waste"
+        case alertAiVisibilityDrop = "alert_ai_visibility_drop"
+        case alertExtraEmails = "alert_extra_emails"
+        case pushSound = "push_sound"
         case alert1star = "alert_1star"
         case alert2star = "alert_2star"
         case alertHealth = "alert_health"
@@ -152,12 +179,59 @@ struct AccountAlerts: Decodable {
     let settings: AlertSettings
 }
 
+struct AutoApproveSettings: Decodable {
+    let enabled: Bool
+    let dailyCap: Int
+    let paused: Bool
+    let approvedToday: Int
+    enum CodingKeys: String, CodingKey {
+        case enabled = "auto_approve_5star"
+        case dailyCap = "auto_approve_daily_cap"
+        case paused = "auto_approve_paused"
+        case approvedToday = "auto_approved_today"
+    }
+}
+
+struct DataSettings: Decodable {
+    let retentionMonths: Int
+    enum CodingKeys: String, CodingKey { case retentionMonths = "data_retention_months" }
+}
+
 struct AccountSummary: Decodable {
     let ok: Bool
     let profile: AccountProfile
     var account: AccountInfo
     let connections: AccountConnections
     let alerts: AccountAlerts
+    let reviews: AutoApproveSettings
+    let data: DataSettings
+}
+
+struct TrustedDevice: Decodable, Identifiable {
+    let id: Int
+    let label: String?
+    let createdAt: String
+    let lastUsedAt: String?
+    let expiresAt: String
+    enum CodingKeys: String, CodingKey {
+        case id, label
+        case createdAt = "created_at"
+        case lastUsedAt = "last_used_at"
+        case expiresAt = "expires_at"
+    }
+}
+
+struct AccountActivityEvent: Decodable, Identifiable {
+    let type: String
+    let label: String
+    let detail: String?
+    let actor: String?
+    let createdAt: String
+    var id: String { createdAt + type + (detail ?? "") }
+    enum CodingKeys: String, CodingKey {
+        case type, label, detail, actor
+        case createdAt = "created_at"
+    }
 }
 
 struct AccountSession: Decodable, Identifiable {

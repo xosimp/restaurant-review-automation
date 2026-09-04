@@ -563,6 +563,13 @@ enum AccountRelativeTime {
         return f
     }()
 
+    /// Whole days since a backend stamp; a huge number when unparseable so
+    /// "stale" checks treat an unknown date as old rather than fresh.
+    static func daysSince(_ stamp: String?) -> Int {
+        guard let stamp, let date = parser.date(from: String(stamp.prefix(19)).replacingOccurrences(of: "T", with: " ")) else { return 10_000 }
+        return Int(Date().timeIntervalSince(date) / 86_400)
+    }
+
     static func describe(_ stamp: String?, activePrefix: Bool = false) -> String {
         guard let stamp, let date = parser.date(from: String(stamp.prefix(19)).replacingOccurrences(of: "T", with: " ")) else {
             return "—"

@@ -192,6 +192,7 @@ struct FoodCostAnalyticsSection: View {
                 .foregroundStyle(tone)
                 .shadow(color: .black.opacity(0.5), radius: 5, x: 0, y: 3)
                 .cavnarNumberGlow(tone)
+                .cavnarSensitive()
                 .onAppear {
                     if startFromZero {
                         withAnimation(.easeOut(duration: 1.2)) { animatedValue = numericValue }

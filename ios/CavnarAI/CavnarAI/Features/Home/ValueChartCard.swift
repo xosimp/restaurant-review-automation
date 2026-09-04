@@ -54,6 +54,7 @@ struct ValueChartCard: View {
                 .font(.cavnarNumber(38, weight: 600))
                 .foregroundStyle(Color.cavnarGreen)
                 .cavnarNumberGlow(.cavnarGreen)
+                .cavnarSensitive()
                 .onAppear {
                     guard !hasCountedUp else { return }
                     hasCountedUp = true

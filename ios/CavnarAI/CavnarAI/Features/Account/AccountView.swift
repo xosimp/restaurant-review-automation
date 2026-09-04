@@ -1,3 +1,4 @@
+import StoreKit
 import SwiftUI
 import UIKit
 
@@ -167,6 +168,8 @@ struct AccountView: View {
     @State private var showingExportData = false
     @State private var showingCloseAccount = false
     @State private var showingHelp = false
+    @State private var showingReportBug = false
+    @State private var prefs = AppPreferences.shared
     @State private var changelogBadge = ChangelogBadgeViewModel()
     // Reflects the actual system state (UIApplication.shared.alternateIconName),
     // not a preference of our own — this is the home-screen icon, which iOS
@@ -290,8 +293,6 @@ struct AccountView: View {
                 } action: {
                     showingCloseAccount = true
                 }
-                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
-                appIconRow
             }
             .task { await changelogBadge.refresh() }
             .sheet(isPresented: $showingScheduleHistory) {
@@ -307,6 +308,43 @@ struct AccountView: View {
                 AccountCloseAccountView(viewModel: viewModel)
             }
 
+            group("App") {
+                prefToggleRow("Haptic feedback", systemImage: "hand.tap", isOn: Binding(
+                    get: { prefs.hapticsEnabled },
+                    set: { on in prefs.hapticsEnabled = on; if on { Haptic.light() } }
+                ))
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                HStack(spacing: 13) {
+                    Image(systemName: "house")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .frame(width: 18)
+                    Text("Open on")
+                        .font(.cavnarBody(15.5, weight: 600))
+                        .foregroundStyle(Color.cavnarInk)
+                    Spacer()
+                    Picker("", selection: Binding(
+                        get: { prefs.defaultTab },
+                        set: { tab in Haptic.selection(); prefs.defaultTab = tab }
+                    )) {
+                        ForEach(AppTab.allCases) { Text($0.title).tag($0) }
+                    }
+                    .tint(Color.cavnarEmber)
+                }
+                .padding(.horizontal, 16)
+                .frame(minHeight: 54)
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                appIconRow
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                settingsRow {
+                    row("Rate Cavnar AI", systemImage: "star")
+                } action: {
+                    if let scene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene {
+                        AppStore.requestReview(in: scene)
+                    }
+                }
+            }
+
             group("Support") {
                 settingsRow {
                     row("Contact Will", systemImage: "envelope")
@@ -317,6 +355,12 @@ struct AccountView: View {
                 }
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
                 settingsRow {
+                    row("Report a bug", systemImage: "ladybug")
+                } action: {
+                    showingReportBug = true
+                }
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                settingsRow {
                     row("Help & FAQ", systemImage: "questionmark.circle")
                 } action: {
                     showingHelp = true
@@ -324,6 +368,9 @@ struct AccountView: View {
             }
             .sheet(isPresented: $showingHelp) {
                 AccountHelpView()
+            }
+            .sheet(isPresented: $showingReportBug) {
+                AccountReportBugSheet(viewModel: viewModel)
             }
         }
     }
@@ -345,6 +392,24 @@ struct AccountView: View {
     // alternate-icon mechanism, not our own preference storage, so the
     // toggle always reflects whatever's actually active rather than
     // trusting a stale local flag if the switch silently failed.
+    private func prefToggleRow(_ label: String, systemImage: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 13) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15))
+                .foregroundStyle(Color.cavnarInk3)
+                .frame(width: 18)
+            Text(label)
+                .font(.cavnarBody(15.5, weight: 600))
+                .foregroundStyle(Color.cavnarInk)
+            Spacer()
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .tint(Color.cavnarEmber)
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 54)
+    }
+
     private var appIconRow: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 13) {

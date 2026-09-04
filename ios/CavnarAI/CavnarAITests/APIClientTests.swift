@@ -106,7 +106,11 @@ final class APIClientTests: XCTestCase {
             let _: OKResponse = try await client.send("/mobile/api/home")
             XCTFail("expected an error to be thrown")
         } catch let error as APIClient.APIError {
-            XCTAssertTrue(error.message.lowercased().contains("connect"))
+            // APIClient classifies .notConnectedToInternet as .offline with
+            // its own copy ("You're offline — …"), distinct from the
+            // "connection dropped" wording a timeout gets.
+            XCTAssertEqual(error.kind, .offline)
+            XCTAssertTrue(error.message.lowercased().contains("offline"))
         } catch {
             XCTFail("expected APIError, got \(error)")
         }

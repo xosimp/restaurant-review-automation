@@ -90,7 +90,7 @@ struct NeedsAttentionCarousel: View {
                 // its id) so it doesn't buzz before the user has swiped or
                 // tapped anything.
                 .sensoryFeedback(.selection, trigger: centeredID) { old, new in
-                    old != nil && new != nil && old != new
+                    old != nil && new != nil && old != new && AppPreferences.hapticsEnabledSnapshot
                 }
             }
             .frame(height: 188)

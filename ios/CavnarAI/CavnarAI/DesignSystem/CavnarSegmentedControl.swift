@@ -45,7 +45,7 @@ struct CavnarSegmentedControl<T: Hashable>: View {
         // A custom control has no native automatic haptic to lean on (unlike
         // Toggle/UISwitch) — .sensoryFeedback is the one deliberate source
         // here, not stacked with anything else.
-        .sensoryFeedback(.selection, trigger: selection)
+        .sensoryFeedback(.selection, trigger: selection) { _, _ in AppPreferences.hapticsEnabledSnapshot }
     }
 
     @ViewBuilder

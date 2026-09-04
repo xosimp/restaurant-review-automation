@@ -88,6 +88,10 @@ targets:
         # namespaces are separate, so every production push silently failed
         # with no error anywhere (audit 1.8).
         aps-environment: $(APS_ENVIRONMENT)
+        # Health/safety alerts that opt out of quiet hours are sent with
+        # interruption-level time-sensitive (push.py) — this is what lets
+        # them break through Focus modes on the device.
+        com.apple.developer.usernotifications.time-sensitive: true
         com.apple.developer.applesignin:
           - Default
     settings:

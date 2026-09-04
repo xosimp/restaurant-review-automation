@@ -10,11 +10,14 @@ final class AccountSummaryTests: XCTestCase {
             "restaurant_name": "Gia Mia", "location_name": null,
             "owner_name": "Will", "owner_email": "will@x.com", "owner_phone": "312-555-0100",
             "neighborhood": "River North", "vibe": "Upscale casual", "known_for": "Pasta",
-            "voice_notes": "Warm and direct", "never_say": null, "menu_notes": null
+            "voice_notes": "Warm and direct", "never_say": null, "menu_notes": null,
+            "timezone": "America/Chicago", "sign_off_name": "Will", "response_language": null,
+            "tone_preset": "warm", "open_times_json": null, "close_times_json": null, "skip_holidays": null
           },
           "account": {
             "username": "will", "email": "will@x.com",
-            "two_fa_enabled": true, "login_notify": false
+            "two_fa_enabled": true, "login_notify": false, "marketing_emails_opt_out": false,
+            "recovery_email": "backup@x.com", "recovery_email_pending": null
           },
           "connections": {
             "google_business": {"connected": true, "last_synced": null},
@@ -29,9 +32,16 @@ final class AccountSummaryTests: XCTestCase {
               "alert_1star": true, "alert_2star": false, "alert_health": false,
               "alert_neg_spike": false, "alert_negative_trend": false, "alert_no_response": false,
               "alert_5star": false, "alert_labor_over": true, "urgent_via_sms": true,
-              "urgent_via_email": true, "digest_enabled": true, "digest_day": "monday"
+              "urgent_via_email": true, "digest_enabled": true, "digest_day": "monday",
+              "alert_quiet_start": null, "alert_quiet_end": null,
+              "al_1star_push": true, "al_2star_push": true, "al_5star_push": false,
+              "al_health_push": true, "al_spike_push": true, "al_unres_push": true,
+              "alert_health_bypass_quiet": true, "alert_food_waste": false,
+              "alert_ai_visibility_drop": true, "alert_extra_emails": "chef@x.com", "push_sound": true
             }
-          }
+          },
+          "reviews": {"auto_approve_5star": true, "auto_approve_daily_cap": 3, "auto_approve_paused": false, "auto_approved_today": 2},
+          "data": {"data_retention_months": 12}
         }
         """
         let summary = try JSONDecoder.cavnar.decode(AccountSummary.self, from: Data(json.utf8))
@@ -45,6 +55,28 @@ final class AccountSummaryTests: XCTestCase {
         XCTAssertEqual(summary.alerts.contacts[0].name, "Will")
         XCTAssertTrue(summary.alerts.settings.alert1star)
         XCTAssertEqual(summary.alerts.settings.digestDay, "monday")
+        XCTAssertEqual(summary.profile.signOffName, "Will")
+        XCTAssertEqual(summary.profile.tonePreset, "warm")
+        XCTAssertEqual(summary.account.recoveryEmail, "backup@x.com")
+        XCTAssertTrue(summary.alerts.settings.alertHealthBypassQuiet)
+        XCTAssertEqual(summary.alerts.settings.alertExtraEmails, "chef@x.com")
+        XCTAssertTrue(summary.reviews.enabled)
+        XCTAssertEqual(summary.reviews.dailyCap, 3)
+        XCTAssertEqual(summary.reviews.approvedToday, 2)
+        XCTAssertEqual(summary.data.retentionMonths, 12)
+    }
+
+    func testDecodesTrustedDeviceAndActivityEvent() throws {
+        let device = try JSONDecoder.cavnar.decode(TrustedDevice.self, from: Data("""
+        {"id": 4, "label": "iPhone · app", "created_at": "2026-09-01 10:00:00", "last_used_at": null, "expires_at": "2026-10-01 10:00:00"}
+        """.utf8))
+        XCTAssertEqual(device.label, "iPhone · app")
+        XCTAssertNil(device.lastUsedAt)
+        let event = try JSONDecoder.cavnar.decode(AccountActivityEvent.self, from: Data("""
+        {"type": "password_changed", "label": "Password changed", "detail": null, "actor": "will", "created_at": "2026-09-03T17:00:00"}
+        """.utf8))
+        XCTAssertEqual(event.label, "Password changed")
+        XCTAssertEqual(event.actor, "will")
     }
 
     func testDecodesAccountSessionWithDeviceType() throws {

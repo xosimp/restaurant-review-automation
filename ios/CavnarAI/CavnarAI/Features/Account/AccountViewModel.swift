@@ -308,13 +308,15 @@ final class AccountViewModel {
 
     private struct ExportEmailResponse: Decodable { let ok: Bool; let email: String?; let error: String? }
 
-    func exportData() async {
+    private struct ExportBody: Encodable { let scopes: [String] }
+
+    func exportData(scopes: [String] = ["reviews"]) async {
         isExportingData = true
         exportDataError = nil
         exportDataSucceeded = false
         defer { isExportingData = false }
         do {
-            let response: ExportEmailResponse = try await client.send("/mobile/api/account/export-data", method: .post)
+            let response: ExportEmailResponse = try await client.send("/mobile/api/account/export-data", method: .post, body: ExportBody(scopes: scopes))
             if response.ok {
                 exportDataSucceeded = true
             } else {
@@ -470,9 +472,19 @@ final class AccountViewModel {
         let alHealthPush: Bool
         let alSpikePush: Bool
         let alUnresPush: Bool
+        let alertHealthBypassQuiet: Bool
+        let alertFoodWaste: Bool
+        let alertAiVisibilityDrop: Bool
+        let alertExtraEmails: String
+        let pushSound: Bool
         let contacts: [AlertContactBody]
 
         enum CodingKeys: String, CodingKey {
+            case alertHealthBypassQuiet = "alert_health_bypass_quiet"
+            case alertFoodWaste = "alert_food_waste"
+            case alertAiVisibilityDrop = "alert_ai_visibility_drop"
+            case alertExtraEmails = "alert_extra_emails"
+            case pushSound = "push_sound"
             case alert1star = "alert_1star"
             case alert2star = "alert_2star"
             case alertHealth = "alert_health"
@@ -524,6 +536,11 @@ final class AccountViewModel {
             alHealthPush: settings.alHealthPush,
             alSpikePush: settings.alSpikePush,
             alUnresPush: settings.alUnresPush,
+            alertHealthBypassQuiet: settings.alertHealthBypassQuiet,
+            alertFoodWaste: settings.alertFoodWaste,
+            alertAiVisibilityDrop: settings.alertAiVisibilityDrop,
+            alertExtraEmails: settings.alertExtraEmails,
+            pushSound: settings.pushSound,
             contacts: contacts.map { AlertContactBody(name: $0.name, phone: $0.phone) }
         )
         do {
@@ -596,7 +613,13 @@ final class AccountViewModel {
         let neverSay: String
         let menuNotes: String
         let timezone: String
+        let signOffName: String
+        let responseLanguage: String
+        let tonePreset: String
         enum CodingKeys: String, CodingKey {
+            case signOffName = "sign_off_name"
+            case responseLanguage = "response_language"
+            case tonePreset = "tone_preset"
             case ownerName = "owner_name"
             case ownerPhone = "owner_phone"
             case voiceNotes = "voice_notes"
@@ -606,7 +629,8 @@ final class AccountViewModel {
         }
     }
 
-    func updateProfile(ownerName: String, ownerPhone: String, voiceNotes: String, neverSay: String, menuNotes: String, timezone: String) async {
+    func updateProfile(ownerName: String, ownerPhone: String, voiceNotes: String, neverSay: String, menuNotes: String, timezone: String,
+                       signOffName: String = "", responseLanguage: String = "", tonePreset: String = "") async {
         isSavingProfile = true
         saveProfileError = nil
         saveProfileSucceeded = false
@@ -616,7 +640,8 @@ final class AccountViewModel {
                 "/mobile/api/account/update-profile", method: .post,
                 body: UpdateProfileBody(
                     ownerName: ownerName, ownerPhone: ownerPhone,
-                    voiceNotes: voiceNotes, neverSay: neverSay, menuNotes: menuNotes, timezone: timezone
+                    voiceNotes: voiceNotes, neverSay: neverSay, menuNotes: menuNotes, timezone: timezone,
+                    signOffName: signOffName, responseLanguage: responseLanguage, tonePreset: tonePreset
                 )
             )
             if response.ok {
@@ -725,5 +750,203 @@ final class AccountViewModel {
             // disconnect just leaves the existing connected state showing,
             // which is a safe, obvious fallback with no separate UI for it.
         }
+    }
+
+    // MARK: - Settings audit additions
+
+    private struct ActivityResponse: Decodable { let ok: Bool; let events: [AccountActivityEvent] }
+    var activity: [AccountActivityEvent] = []
+    var isLoadingActivity = false
+
+    func loadActivity() async {
+        isLoadingActivity = true
+        defer { isLoadingActivity = false }
+        do {
+            let response: ActivityResponse = try await client.send("/mobile/api/account/activity", hapticOnError: false)
+            activity = response.events
+        } catch {}
+    }
+
+    private struct TrustedDevicesResponse: Decodable { let ok: Bool; let devices: [TrustedDevice] }
+    var trustedDevices: [TrustedDevice] = []
+    var isLoadingTrustedDevices = false
+    var trustedDevicesError: String?
+
+    func loadTrustedDevices() async {
+        isLoadingTrustedDevices = true
+        defer { isLoadingTrustedDevices = false }
+        do {
+            let response: TrustedDevicesResponse = try await client.send("/mobile/api/account/2fa/trusted-devices", hapticOnError: false)
+            trustedDevices = response.devices
+        } catch {}
+    }
+
+    func revokeTrustedDevice(_ id: Int) async -> Bool {
+        trustedDevicesError = nil
+        do {
+            let response: OKErrorResponse = try await client.send("/mobile/api/account/2fa/trusted-devices/\(id)/revoke", method: .post)
+            if response.ok { await loadTrustedDevices(); return true }
+            trustedDevicesError = response.error ?? "Couldn't forget that device."
+        } catch let error as APIClient.APIError {
+            trustedDevicesError = error.message
+        } catch {
+            trustedDevicesError = "Couldn't forget that device."
+        }
+        return false
+    }
+
+    func revokeAllTrustedDevices() async -> Bool {
+        trustedDevicesError = nil
+        do {
+            let response: OKErrorResponse = try await client.send("/mobile/api/account/2fa/trusted-devices/revoke-all", method: .post)
+            if response.ok { trustedDevices = []; return true }
+            trustedDevicesError = response.error ?? "Couldn't forget your devices."
+        } catch let error as APIClient.APIError {
+            trustedDevicesError = error.message
+        } catch {
+            trustedDevicesError = "Couldn't forget your devices."
+        }
+        return false
+    }
+
+    private struct RecoveryEmailBody: Encodable { let email: String }
+    private struct RecoveryCodeBody: Encodable { let code: String }
+    var isRecoveryEmailBusy = false
+    var recoveryEmailError: String?
+
+    func startRecoveryEmail(_ email: String) async -> Bool {
+        isRecoveryEmailBusy = true; recoveryEmailError = nil
+        defer { isRecoveryEmailBusy = false }
+        do {
+            let response: OKErrorResponse = try await client.send("/mobile/api/account/recovery-email", method: .post, body: RecoveryEmailBody(email: email))
+            if response.ok { await load(); return true }
+            recoveryEmailError = response.error ?? "Couldn't send the code."
+        } catch let error as APIClient.APIError {
+            recoveryEmailError = error.message
+        } catch {
+            recoveryEmailError = "Couldn't send the code."
+        }
+        return false
+    }
+
+    func verifyRecoveryEmail(code: String) async -> Bool {
+        isRecoveryEmailBusy = true; recoveryEmailError = nil
+        defer { isRecoveryEmailBusy = false }
+        do {
+            let response: OKErrorResponse = try await client.send("/mobile/api/account/recovery-email/verify", method: .post, body: RecoveryCodeBody(code: code))
+            if response.ok { await load(); return true }
+            recoveryEmailError = response.error ?? "That code didn't work."
+        } catch let error as APIClient.APIError {
+            recoveryEmailError = error.message
+        } catch {
+            recoveryEmailError = "That code didn't work."
+        }
+        return false
+    }
+
+    func removeRecoveryEmail() async -> Bool {
+        isRecoveryEmailBusy = true; recoveryEmailError = nil
+        defer { isRecoveryEmailBusy = false }
+        do {
+            let response: OKErrorResponse = try await client.send("/mobile/api/account/recovery-email/remove", method: .post)
+            if response.ok { await load(); return true }
+            recoveryEmailError = response.error ?? "Couldn't remove it."
+        } catch let error as APIClient.APIError {
+            recoveryEmailError = error.message
+        } catch {
+            recoveryEmailError = "Couldn't remove it."
+        }
+        return false
+    }
+
+    private struct AutoApproveBody: Encodable {
+        let enabled: Bool
+        let paused: Bool
+        let dailyCap: Int
+        enum CodingKeys: String, CodingKey { case enabled, paused; case dailyCap = "daily_cap" }
+    }
+    var isSavingAutoApprove = false
+    var autoApproveError: String?
+
+    func saveAutoApprove(enabled: Bool, paused: Bool, dailyCap: Int) async -> Bool {
+        isSavingAutoApprove = true; autoApproveError = nil
+        defer { isSavingAutoApprove = false }
+        do {
+            let response: OKErrorResponse = try await client.send("/mobile/api/account/auto-approve", method: .post,
+                                                                   body: AutoApproveBody(enabled: enabled, paused: paused, dailyCap: dailyCap))
+            if response.ok { await load(); return true }
+            autoApproveError = response.error ?? "Couldn't save that."
+        } catch let error as APIClient.APIError {
+            autoApproveError = error.message
+        } catch {
+            autoApproveError = "Couldn't save that."
+        }
+        return false
+    }
+
+    private struct HoursBody: Encodable { let open: [String: String]; let close: [String: String]; let closures: [String] }
+    var isSavingHours = false
+    var saveHoursError: String?
+
+    func saveHours(open: [String: String], close: [String: String], closures: [String]) async -> Bool {
+        isSavingHours = true; saveHoursError = nil
+        defer { isSavingHours = false }
+        do {
+            let response: OKErrorResponse = try await client.send("/mobile/api/account/hours", method: .post,
+                                                                   body: HoursBody(open: open, close: close, closures: closures))
+            if response.ok { await load(); return true }
+            saveHoursError = response.error ?? "Couldn't save your hours."
+        } catch let error as APIClient.APIError {
+            saveHoursError = error.message
+        } catch {
+            saveHoursError = "Couldn't save your hours."
+        }
+        return false
+    }
+
+    private struct RetentionBody: Encodable { let months: Int }
+    var isSavingRetention = false
+    var retentionError: String?
+
+    func setDataRetention(months: Int) async -> Bool {
+        isSavingRetention = true; retentionError = nil
+        defer { isSavingRetention = false }
+        do {
+            let response: OKErrorResponse = try await client.send("/mobile/api/account/data-retention", method: .post, body: RetentionBody(months: months))
+            if response.ok { await load(); return true }
+            retentionError = response.error ?? "Couldn't save that."
+        } catch let error as APIClient.APIError {
+            retentionError = error.message
+        } catch {
+            retentionError = "Couldn't save that."
+        }
+        return false
+    }
+
+    private struct BugReportBody: Encodable {
+        let message: String
+        let build: String
+        let device: String
+        let appVersion: String
+        enum CodingKeys: String, CodingKey { case message, build, device; case appVersion = "app_version" }
+    }
+    var isReportingBug = false
+    var reportBugError: String?
+
+    func reportBug(message: String, build: String, device: String) async -> Bool {
+        isReportingBug = true; reportBugError = nil
+        defer { isReportingBug = false }
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        do {
+            let response: OKErrorResponse = try await client.send("/mobile/api/account/report-bug", method: .post,
+                                                                   body: BugReportBody(message: message, build: build, device: device, appVersion: version))
+            if response.ok { return true }
+            reportBugError = response.error ?? "Couldn't send that."
+        } catch let error as APIClient.APIError {
+            reportBugError = error.message
+        } catch {
+            reportBugError = "Couldn't send that."
+        }
+        return false
     }
 }

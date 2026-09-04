@@ -93,6 +93,19 @@ struct AccountHelpView: View {
                         .foregroundStyle(Color.cavnarEmber)
                     }
 
+                    HStack(spacing: 18) {
+                        if let url = URL(string: "https://cavnar.ai/privacy") {
+                            Link("Privacy policy", destination: url)
+                        }
+                        if let url = URL(string: "https://cavnar.ai/terms") {
+                            Link("Terms of service", destination: url)
+                        }
+                    }
+                    .font(.cavnarBody(14, weight: 600))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 6)
+
                     Text("Build \(BuildInfo.gitSHA) · \(BuildInfo.builtAt)")
                         .font(.cavnarBody(12))
                         .foregroundStyle(Color.cavnarInk3.opacity(0.6))

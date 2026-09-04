@@ -14,6 +14,7 @@ struct KPITile: View {
                 .font(.cavnarNumber(26, weight: 500))
                 .foregroundStyle(Color.cavnarInk)
                 .cavnarNumberGlow()
+                .cavnarSensitive()
             // Clash Display, not Apfel — this names the module, the same
             // heading role a screen's own centered title plays once you
             // tap in (see cavnarTitleToolbar). Dropped the uppercase/

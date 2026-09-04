@@ -179,6 +179,7 @@ private struct SavingsTile: View {
                 .font(.cavnarNumber(22, weight: 700))
                 .foregroundStyle(tone)
                 .cavnarNumberGlow(tone)
+                .cavnarSensitive()
                 .onAppear {
                     if startFromZero {
                         withAnimation(.easeOut(duration: 1.2)) { animatedValue = numericValue }

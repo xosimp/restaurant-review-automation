@@ -898,6 +898,7 @@ private struct LaborHeroPercent: View {
                 )
                 .shadow(color: .black.opacity(0.55), radius: 4, x: 0, y: 3)
                 .shadow(color: tone.foreground.opacity(glow), radius: 16, x: 0, y: 0)
+                .cavnarSensitive()
         }
         .onAppear {
             withAnimation(.easeOut(duration: 1.1)) { animatedValue = value }
