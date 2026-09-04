@@ -332,6 +332,12 @@ final class SessionStore {
     /// drive SwiftUI on its own).
     private(set) var appPasscodeSet: Bool
 
+    /// Set by LockedView's "Set one" prompt: the user passed Face ID with
+    /// the intent to add a passcode, so RootView opens AppPasscodeSheet
+    /// the moment the lock drops. Setting a passcode is never allowed
+    /// from BEHIND the gate — only after it.
+    var pendingPasscodeSetup = false
+
     /// True when reopening the app is actually gated by something — Face
     /// ID or a passcode. False means "Require Face ID" is off with no
     /// passcode set, which Security settings calls out in amber.

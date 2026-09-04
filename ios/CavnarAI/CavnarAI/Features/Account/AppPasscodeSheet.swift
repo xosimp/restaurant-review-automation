@@ -38,20 +38,26 @@ struct AppPasscodeSheet: View {
         }
     }
 
+    private var heroSubtitle: String {
+        switch mode {
+        case .create: return "Reopen the app without Face ID"
+        case .change: return "Pick six new digits"
+        case .remove: return "The app will stop asking for it"
+        }
+    }
+
     private var headline: String {
         switch step {
-        case .current: return "Enter your current passcode"
-        case .new: return mode == .change ? "Enter a new passcode" : "Choose a passcode"
+        case .current: return "Enter your current one"
+        case .new: return "Choose six digits"
         case .confirm: return "Enter it once more"
         }
     }
 
     private var caption: String {
         switch step {
-        case .current: return mode == .remove
-            ? "Confirm it's you before the app stops asking for it."
-            : "Confirm it's you before choosing a new one."
-        case .new: return "Six digits. You'll use this to reopen the app whenever Face ID is off."
+        case .current: return "Confirm it's you first."
+        case .new: return "You'll use this whenever Face ID is off."
         case .confirm: return "Just so there are no typos."
         }
     }
@@ -59,11 +65,11 @@ struct AppPasscodeSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 30) {
+                VStack(spacing: 38) {
                     AccountHero(title: title) {
                         GlowBadge(systemImage: "lock.fill", size: 64)
                     } subtitle: {
-                        Text("App passcode")
+                        Text(heroSubtitle)
                     }
 
                     VStack(spacing: 8) {
@@ -78,6 +84,7 @@ struct AppPasscodeSheet: View {
                             .lineSpacing(3)
                     }
                     .padding(.horizontal, 12)
+                    .padding(.top, 22)
                     .id(stepIndex)
                     .transition(.asymmetric(
                         insertion: .move(edge: .trailing).combined(with: .opacity),
@@ -87,14 +94,14 @@ struct AppPasscodeSheet: View {
                     CavnarPasscodePad(code: $code, isError: isError) { entered in
                         handle(entered)
                     }
-                    .padding(.top, 6)
+                    .padding(.top, 10)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(20)
                 .animation(.easeOut(duration: 0.32), value: stepIndex)
                 .animation(.easeOut(duration: 0.2), value: errorText)
             }
-            .accountSheetChrome(title)
+            .accountSheetChrome("App passcode")
             .cavnarPostedOverlay(postedLabel, tone: postedTone) { dismiss() }
         }
     }

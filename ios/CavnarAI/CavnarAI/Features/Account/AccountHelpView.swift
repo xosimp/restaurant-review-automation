@@ -137,6 +137,6 @@ struct AccountHelpView: View {
                     .padding(.bottom, 2)
             }
         }
-        .padding(.vertical, 16)
+        .padding(.vertical, 11)
     }
 }

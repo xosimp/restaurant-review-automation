@@ -54,6 +54,8 @@ struct RootView: View {
     @State private var fabPopped = false
     @State private var fabIconSpun = false
     @State private var fabCollapsed = false
+    // See SessionStore.pendingPasscodeSetup.
+    @State private var showingPasscodeSetup = false
 
     var body: some View {
         Group {
@@ -177,6 +179,15 @@ struct RootView: View {
         }
         .onAppear {
             PushManager.shared.router = deepLinkRouter
+        }
+        .onChange(of: sessionStore.isLocked) { _, locked in
+            if !locked, sessionStore.pendingPasscodeSetup {
+                sessionStore.pendingPasscodeSetup = false
+                showingPasscodeSetup = true
+            }
+        }
+        .sheet(isPresented: $showingPasscodeSetup) {
+            AppPasscodeSheet(mode: .create)
         }
         #if DEBUG
         // Debug-only, opt-in auto-login for UI-automation/screenshot
@@ -580,12 +591,8 @@ struct LockedView: View {
     @State private var isUnlocking = false
     @State private var unlockFailed = false
     // Staggered reveal after the lockup has drawn itself in: 1 headline,
-    // 2 subtitle, 3 button, 4 caption.
+    // 2 caption, 3 the unlock surface, 4 the line beneath it.
     @State private var stage = 0
-    // Passcode mode — the pad instead of the Unlock button. Starts here
-    // when Face ID is switched off (the passcode is then the only gate),
-    // and is one tap away whenever both are set up.
-    @State private var usingPasscode = false
     @State private var passcode = ""
     @State private var passcodeError = false
     @State private var passcodeMessage: String?
@@ -604,6 +611,25 @@ struct LockedView: View {
     private var biometricAvailable: Bool {
         sessionStore.biometricLockEnabled && !sessionStore.biometricsUnavailable
     }
+    private var hasPasscode: Bool { sessionStore.appPasscodeSet }
+
+    // One screen, both ways in — like the phone's own lock screen. With a
+    // passcode on file the pad is always up and Face ID is the key in its
+    // bottom-left slot; without one, the Face ID button plus a prompt to
+    // add a passcode. The top half (wordmark, headline) never moves
+    // between the two, so the screen reads the same either way.
+    private var caption: String {
+        if let passcodeMessage { return passcodeMessage }
+        if unlockFailed {
+            return hasPasscode ? "Couldn't verify you — use your passcode instead." : "Couldn't verify you — try again."
+        }
+        switch (biometricAvailable, hasPasscode) {
+        case (true, true): return "Unlock with \(biometry.name) or your passcode."
+        case (false, true): return "Enter your app passcode to pick up where you left off."
+        default: return "Unlock with \(biometry.name) to pick up right where you left off."
+        }
+    }
+    private var captionIsError: Bool { passcodeMessage != nil || unlockFailed }
 
     var body: some View {
         let biometry = biometry
@@ -617,146 +643,54 @@ struct LockedView: View {
                 .ignoresSafeArea(edges: .top)
 
             VStack(spacing: 0) {
-                Spacer(minLength: 0)
+                // Fixed, not a Spacer — the pad below is much taller than
+                // the Face ID button, and a Spacer would float the wordmark
+                // to a different height in each mode.
+                Color.clear.frame(height: 96)
 
                 // Wordmark only — no seal beside it here (it read as a
                 // stray "C" off to the side of the word). Placeholder keeps
                 // the layout stable until the splash lifts and it mounts.
                 // aiTagOverhangs: the six letters are what's centered above
                 // "Welcome back"; the small AI tag hangs off to the right.
-                let wordmarkWidth: CGFloat = usingPasscode ? 210 : 300
                 Group {
                     if introReady && coldLaunch {
-                        CavnarWordmarkTraceIn(width: wordmarkWidth, aiTagOverhangs: true)
+                        CavnarWordmarkTraceIn(width: 300, aiTagOverhangs: true)
                     } else if introReady {
-                        CavnarWordmarkStampIn(width: wordmarkWidth, aiTagOverhangs: true)
+                        CavnarWordmarkStampIn(width: 300, aiTagOverhangs: true)
                     } else {
-                        Color.clear.frame(width: wordmarkWidth, height: wordmarkWidth * (100 / CavnarWordmarkLetterShape.boxWidth))
+                        Color.clear.frame(width: 300, height: 300 * (100 / CavnarWordmarkLetterShape.boxWidth))
                     }
                 }
-                .padding(.bottom, usingPasscode ? 26 : 48)
+                .padding(.bottom, 52)
 
                 VStack(spacing: 12) {
-                    Text(usingPasscode ? "Enter your passcode" : "Welcome back")
+                    Text("Welcome back")
                         .font(.cavnarHeadline(28))
                         .foregroundStyle(Color.cavnarInk)
                         .lockReveal(stage >= 1)
-                    Text(usingPasscode
-                         ? (passcodeMessage ?? "Your app passcode picks up right where you left off.")
-                         : "Unlock with \(biometry.name) to pick up right where you left off.")
-                        .font(.cavnarBody(16, weight: passcodeMessage == nil ? 400 : 600))
-                        .foregroundStyle(passcodeMessage == nil ? Color.cavnarInk3 : Color.cavnarRed)
+                    Text(caption)
+                        .font(.cavnarBody(16, weight: captionIsError ? 600 : 400))
+                        .foregroundStyle(captionIsError ? Color.cavnarRed : Color.cavnarInk3)
                         .multilineTextAlignment(.center)
                         .lineSpacing(3)
                         .lockReveal(stage >= 2)
                 }
                 .padding(.horizontal, 40)
 
-                Spacer(minLength: 0)
+                Spacer(minLength: 24)
 
-                if usingPasscode {
-                    VStack(spacing: 26) {
-                        CavnarPasscodePad(
-                            code: $passcode,
-                            isError: passcodeError,
-                            isVerifying: isUnlocking,
-                            disabled: lockoutRemaining > 0,
-                            biometrySymbol: biometricAvailable ? biometry.symbol : nil,
-                            onBiometry: biometricAvailable ? { Task { await unlock() } } : nil
-                        ) { entered in
-                            submitPasscode(entered)
-                        }
-                        .lockReveal(stage >= 3)
-
-                        // The escape hatch for a forgotten passcode: signing
-                        // out clears it (see SessionStore.clearLocalSession),
-                        // and the account password gets them back in.
-                        Button {
-                            Haptic.light()
-                            Task { await sessionStore.logout() }
-                        } label: {
-                            Text("Forgot your passcode? Sign out")
-                                .font(.cavnarBody(14, weight: 600))
-                                .foregroundStyle(Color.cavnarEmber2)
-                        }
-                        .buttonStyle(.plain)
-                        .lockReveal(stage >= 4)
-                    }
-                    .padding(.bottom, 36)
-                    .transition(.opacity)
+                if hasPasscode {
+                    passcodeBlock(biometry)
                 } else {
-                VStack(spacing: 18) {
-                    if unlockFailed {
-                        Text("Couldn't verify you — try again.")
-                            .font(.cavnarBody(14, weight: 600))
-                            .foregroundStyle(Color.cavnarRed)
-                            .transition(.opacity)
-                    }
-                    // No manual Haptic.light() here — CavnarPrimaryButtonStyle
-                    // already fires its own press haptic via .sensoryFeedback,
-                    // so this was buzzing twice per tap.
-                    Button {
-                        Task { await unlock() }
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: biometry.symbol)
-                                .font(.system(size: 21, weight: .semibold))
-                            if isUnlocking {
-                                CavnarShimmerText(text: "Verifying…")
-                            } else {
-                                Text("Unlock")
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: isUnlocking))
-                    .disabled(isUnlocking)
-                    .padding(.horizontal, 44)
-                    .lockReveal(stage >= 3)
-
-                    if sessionStore.appPasscodeSet {
-                        Button {
-                            Haptic.light()
-                            switchToPasscode()
-                        } label: {
-                            HStack(spacing: 7) {
-                                Image(systemName: "circle.grid.3x3.fill")
-                                    .font(.system(size: 13, weight: .semibold))
-                                Text("Use passcode instead")
-                            }
-                            .font(.cavnarBody(14, weight: 600))
-                            .foregroundStyle(Color.cavnarEmber2)
-                        }
-                        .buttonStyle(.plain)
-                        .lockReveal(stage >= 4)
-                    } else {
-                        HStack(spacing: 7) {
-                            Image(systemName: "checkmark.shield.fill")
-                                .font(.system(size: 13, weight: .semibold))
-                            Text("Unlock with biometrics · secured with \(biometry.name)")
-                        }
-                        .font(.cavnarBody(14, weight: 600))
-                        .foregroundStyle(Color.cavnarEmber2)
-                        .lockReveal(stage >= 4)
-                    }
-                }
-                .padding(.bottom, 54)
-                .transition(.opacity)
+                    biometricBlock(biometry)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .animation(.easeOut(duration: 0.3), value: unlockFailed)
-        .animation(.easeOut(duration: 0.3), value: usingPasscode)
         .animation(.easeOut(duration: 0.2), value: passcodeMessage)
-        .onAppear {
-            // Face ID off (or unusable on this device) with a passcode set:
-            // the passcode is the only gate, so open straight onto it.
-            if sessionStore.appPasscodeSet && !biometricAvailable {
-                usingPasscode = true
-                refreshLockout()
-            }
-        }
+        .onAppear { if hasPasscode { refreshLockout() } }
         .task(id: lockoutRemaining > 0) {
             // Live countdown while a lockout is active.
             while lockoutRemaining > 0, !Task.isCancelled {
@@ -776,31 +710,129 @@ struct LockedView: View {
         }
     }
 
+    // MARK: - Passcode on file: the pad (Face ID lives in its corner key)
+
+    private func passcodeBlock(_ biometry: (name: String, symbol: String)) -> some View {
+        VStack(spacing: 24) {
+            CavnarPasscodePad(
+                code: $passcode,
+                isError: passcodeError,
+                isVerifying: isUnlocking,
+                disabled: lockoutRemaining > 0,
+                biometrySymbol: biometricAvailable ? biometry.symbol : nil,
+                onBiometry: biometricAvailable ? { Task { await unlock() } } : nil
+            ) { entered in
+                submitPasscode(entered)
+            }
+            .lockReveal(stage >= 3)
+
+            // The escape hatch for a forgotten passcode: signing out clears
+            // it (see SessionStore.clearLocalSession), and the account
+            // password gets them back in.
+            Button {
+                Haptic.light()
+                Task { await sessionStore.logout() }
+            } label: {
+                Text("Forgot your passcode? Sign out")
+                    .font(.cavnarBody(14, weight: 600))
+                    .foregroundStyle(Color.cavnarEmber2)
+            }
+            .buttonStyle(.plain)
+            .lockReveal(stage >= 4)
+        }
+        .padding(.bottom, 34)
+    }
+
+    // MARK: - No passcode yet: Face ID, plus the prompt to add one
+
+    private func biometricBlock(_ biometry: (name: String, symbol: String)) -> some View {
+        VStack(spacing: 18) {
+            // No manual Haptic.light() here — CavnarPrimaryButtonStyle
+            // already fires its own press haptic via .sensoryFeedback,
+            // so this was buzzing twice per tap.
+            Button {
+                Task { await unlock() }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: biometry.symbol)
+                        .font(.system(size: 21, weight: .semibold))
+                    if isUnlocking {
+                        CavnarShimmerText(text: "Verifying…")
+                    } else {
+                        Text("Unlock")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: isUnlocking))
+            .disabled(isUnlocking)
+            .lockReveal(stage >= 3)
+
+            // Setting a passcode is never allowed from behind the gate —
+            // this passes Face ID first, then RootView opens the setup
+            // sheet the moment the lock drops (SessionStore.pendingPasscodeSetup).
+            Button {
+                Haptic.light()
+                Task { await unlockThenSetUpPasscode() }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "circle.grid.3x3.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.cavnarEmber2)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("No app passcode yet")
+                            .font(.cavnarBody(14.5, weight: 700))
+                            .foregroundStyle(Color.cavnarInk)
+                        Text("Add one to unlock without \(biometry.name)")
+                            .font(.cavnarBody(13.5))
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
+                    Spacer(minLength: 8)
+                    Text("Set one")
+                        .font(.cavnarBody(14.5, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber2)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 13)
+                .background(
+                    RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: CavnarRadius.card, style: .continuous)
+                        .strokeBorder(Color.cavnarEmber.opacity(0.32), lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isUnlocking)
+            .lockReveal(stage >= 4)
+        }
+        .padding(.horizontal, 44)
+        .padding(.bottom, 54)
+    }
+
+    // MARK: - Actions
+
     private func unlock() async {
         isUnlocking = true
         unlockFailed = false
         let unlocked = await sessionStore.unlockWithBiometrics()
         isUnlocking = false
-        if !unlocked {
-            // Biometrics failed or aren't usable — with a passcode on file,
-            // offer it rather than leaving a dead Unlock button.
-            if sessionStore.appPasscodeSet && !usingPasscode {
-                switchToPasscode()
-            } else {
-                unlockFailed = true
-            }
-        }
+        if !unlocked { unlockFailed = true }
     }
 
-    private func switchToPasscode() {
-        passcode = ""
-        passcodeMessage = nil
-        usingPasscode = true
-        refreshLockout()
+    private func unlockThenSetUpPasscode() async {
+        sessionStore.pendingPasscodeSetup = true
+        await unlock()
+        // Still locked (cancelled or failed) — don't leave the intent armed
+        // for some later, unrelated unlock.
+        if sessionStore.isLocked { sessionStore.pendingPasscodeSetup = false }
     }
 
     private func submitPasscode(_ entered: String) {
         isUnlocking = true
+        unlockFailed = false
         // A beat of "verifying" so the row's breathe is actually seen and
         // the success lands as a moment, not a flicker.
         Task { @MainActor in

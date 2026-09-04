@@ -130,19 +130,19 @@ struct AccountKicker: View {
 /// zero-spacing stack.
 ///
 /// Uses its own card padding instead of the shared `.cavnarCard()` — every
-/// row here reserves 13pt of its own top/bottom padding, so `.cavnarCard()`'s
-/// uniform 16pt inset stacked an extra 2pt onto the FIRST row's top gap and
-/// the LAST row's bottom gap versus the gap between two middle rows (16+13
-/// at the card edge vs. 13+1(divider)+13 between rows) — exactly the "top
-/// row's heading sits lower" device feedback. 14pt vertical (16pt stays on
-/// the horizontal, unchanged) makes edge and mid-row gaps equal: 14+13 ==
-/// 13+1+13. Scoped to Account only — the shared `.cavnarCard()` used
-/// elsewhere in the app isn't touched.
+/// row here reserves 9pt of its own top/bottom padding, so `.cavnarCard()`'s
+/// uniform 16pt inset would stack extra onto the FIRST row's top gap and
+/// the LAST row's bottom gap versus the gap between two middle rows —
+/// exactly the "top row's heading sits lower" device feedback. 10pt
+/// vertical (16pt stays on the horizontal) makes edge and mid-row gaps
+/// equal: 10+9 == 9+1+9. (Was 14/13 — every row measured ~64pt and the
+/// cards read as mostly empty space; see the row types below.) Scoped to
+/// Account only — the shared `.cavnarCard()` elsewhere isn't touched.
 private struct AccountCardStyle: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.vertical, 10)
             .background(Color.cavnarPaper2.opacity(0.6))
             .overlay(
                 RoundedRectangle(cornerRadius: CavnarRadius.card)
@@ -239,7 +239,9 @@ struct AccountStatTile: View {
 /// so this makes every row match that, by construction, regardless of
 /// whatever was suppressing it for specific rows.
 struct AccountKVRow<Trailing: View>: View {
-    static var rowHeight: CGFloat { 38 }
+    // 30 + 9pt top/bottom = 48pt rows, comfortably over the 44pt HIG tap
+    // minimum. Was 38 + 13 (64pt), which left every card mostly air.
+    static var rowHeight: CGFloat { 30 }
 
     let label: String
     var showsDivider: Bool = true
@@ -258,7 +260,7 @@ struct AccountKVRow<Trailing: View>: View {
             // Font+Cavnar's relativeTo:) it clipped labels outright instead of
             // letting the row grow (audit 7.2).
             .frame(minHeight: Self.rowHeight)
-            .padding(.vertical, 13)
+            .padding(.vertical, 9)
             if showsDivider { AccountRowDivider() }
         }
     }
@@ -402,7 +404,7 @@ private struct AccountFieldRow<Field: Hashable>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
                 AccountFieldLabel(text: label)
                 Group {
                     if multiline {
@@ -419,7 +421,7 @@ private struct AccountFieldRow<Field: Hashable>: View {
                 AccountFocusUnderline(lit: isFocused)
                     .padding(.top, 2)
             }
-            .padding(.vertical, 13)
+            .padding(.vertical, 9)
             .contentShape(Rectangle())
             .onTapGesture { focus.wrappedValue = field }
             if showsDivider { AccountRowDivider() }
@@ -471,7 +473,7 @@ struct AccountDisplayRow<Trailing: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 4) {
                     AccountCaptionLabel(text: label)
                     Text(value)
                         .font(.cavnarBody(17, weight: 700))
@@ -485,7 +487,7 @@ struct AccountDisplayRow<Trailing: View>: View {
                 Spacer(minLength: 8)
                 trailing()
             }
-            .padding(.vertical, 13)
+            .padding(.vertical, 9)
             if showsDivider { AccountRowDivider() }
         }
     }
@@ -529,7 +531,7 @@ struct AccountDeviceRow: View {
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.vertical, 13)
+            .padding(.vertical, 9)
             if showsDivider { AccountRowDivider() }
         }
     }

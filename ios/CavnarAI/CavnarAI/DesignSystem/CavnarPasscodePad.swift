@@ -164,39 +164,76 @@ struct CavnarPasscodePad: View {
         .animation(.easeOut(duration: 0.25), value: disabled)
     }
 
+    private static let letters: [String: String] = [
+        "2": "ABC", "3": "DEF", "4": "GHI", "5": "JKL", "6": "MNO", "7": "PQRS", "8": "TUV", "9": "WXYZ",
+    ]
+
     private func digitKey(_ digit: String) -> some View {
         key(accessibility: digit) {
             guard code.count < length else { return }
             Haptic.selection()
             code.append(digit)
         } label: {
-            Text(digit)
-                .font(.cavnarNumber(30, weight: 500))
-                .foregroundStyle(Color.cavnarInk)
+            VStack(spacing: 1) {
+                Text(digit)
+                    .font(.cavnarNumber(30, weight: 500))
+                    .foregroundStyle(Color.cavnarInk)
+                // The phone-dial letters — a familiar cue that also gives
+                // each key a second visual weight instead of one floating
+                // numeral. Reserved (invisible) on 0/1 so every digit sits
+                // at the same height.
+                Text(Self.letters[digit] ?? "ABC")
+                    .font(.cavnarBody(10, weight: 700))
+                    .tracking(1.6)
+                    .foregroundStyle(Color.cavnarInk3.opacity(0.85))
+                    .opacity(Self.letters[digit] == nil ? 0 : 1)
+            }
+            .padding(.top, 3)
         }
     }
 
     static let keySize: CGFloat = 74
+
+    // Obsidian — the same two surface tones GlowBadge's tile uses, so the
+    // keys and the app's badges read as one material.
+    private static let keyTop = Color(red: 0.173, green: 0.173, blue: 0.180)      // #2C2C2E
+    private static let keyBottom = Color(red: 0.094, green: 0.094, blue: 0.102)   // #18181A
 
     private func key<Label: View>(accessibility: String, action: @escaping () -> Void, @ViewBuilder label: () -> Label) -> some View {
         Button(action: action) {
             label()
                 .frame(width: Self.keySize, height: Self.keySize)
                 .background(
-                    Circle().fill(.ultraThinMaterial)
-                )
-                .overlay(
-                    // Hairline edge plus a lip of light along the top — the
-                    // same "solid object catching light" recipe GlowBadge
-                    // uses, so the keys read as part of the same family.
-                    Circle().strokeBorder(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.22), Color.cavnarPaper3.opacity(0.7)],
-                            startPoint: .top, endPoint: .bottom
-                        ),
-                        lineWidth: 1
+                    Circle().fill(
+                        LinearGradient(colors: [Self.keyTop, Self.keyBottom], startPoint: .top, endPoint: .bottom)
                     )
                 )
+                // Lit edge: ember at the top-left corner, falling to a plain
+                // hairline — GlowBadge's own recipe, so a key reads as a
+                // solid object catching the same light as every badge.
+                .overlay(
+                    Circle().strokeBorder(
+                        LinearGradient(
+                            stops: [
+                                .init(color: Color.cavnarEmber2.opacity(0.75), location: 0),
+                                .init(color: Color.cavnarEmber.opacity(0.28), location: 0.4),
+                                .init(color: Color.white.opacity(0.10), location: 1),
+                            ],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1.2
+                    )
+                )
+                // A lip of light along the top inside the edge.
+                .overlay(
+                    Circle()
+                        .inset(by: 2)
+                        .strokeBorder(
+                            LinearGradient(colors: [Color.white.opacity(0.12), Color.white.opacity(0)], startPoint: .top, endPoint: .center),
+                            lineWidth: 1
+                        )
+                )
+                .shadow(color: .black.opacity(0.55), radius: 8, x: 0, y: 5)
                 .contentShape(Circle())
         }
         .buttonStyle(PasscodeKeyStyle())
@@ -204,16 +241,22 @@ struct CavnarPasscodePad: View {
     }
 }
 
-/// Press feedback: the key settles down and an ember wash lights it for
-/// exactly as long as the finger is on it, then eases back out.
+/// Press feedback: the key settles down and an ember wash lights it from
+/// the inside for exactly as long as the finger is on it, then eases out.
 private struct PasscodeKeyStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .overlay(
                 Circle()
-                    .fill(Color.cavnarEmber.opacity(configuration.isPressed ? 0.42 : 0))
+                    .fill(
+                        RadialGradient(
+                            colors: [Color.cavnarEmber2.opacity(0.55), Color.cavnarEmber.opacity(0.25)],
+                            center: .center, startRadius: 0, endRadius: CavnarPasscodePad.keySize * 0.55
+                        )
+                    )
+                    .opacity(configuration.isPressed ? 1 : 0)
             )
-            .shadow(color: Color.cavnarEmber.opacity(configuration.isPressed ? 0.5 : 0), radius: 14)
+            .shadow(color: Color.cavnarEmber.opacity(configuration.isPressed ? 0.6 : 0), radius: 16)
             .scaleEffect(configuration.isPressed ? 0.92 : 1)
             .animation(configuration.isPressed ? nil : .easeOut(duration: 0.28), value: configuration.isPressed)
     }
