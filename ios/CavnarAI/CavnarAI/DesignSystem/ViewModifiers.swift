@@ -758,8 +758,11 @@ struct CavnarStatCellStyle: ViewModifier {
                         colors: [Color(red: 0.16, green: 0.16, blue: 0.17), Color(red: 0.08, green: 0.08, blue: 0.09)],
                         startPoint: .top, endPoint: .bottom
                     )
+                    // 0.6→0.2 still read as a black card with an orange corner
+                    // against the aurora on Home; the wash now stays ember all
+                    // the way across.
                     LinearGradient(
-                        colors: [tint.opacity(0.6), tint.opacity(0.2)],
+                        colors: [tint.opacity(0.88), tint.opacity(0.5)],
                         startPoint: .topLeading, endPoint: .bottomTrailing
                     )
                     // The ember's own light pooling in the lit corner — the
@@ -767,7 +770,7 @@ struct CavnarStatCellStyle: ViewModifier {
                     // a dark card with a faint tint. (The previous white
                     // sheen here did the opposite: it washed the corner out.)
                     RadialGradient(
-                        colors: [tint.opacity(0.55), tint.opacity(0.18), tint.opacity(0)],
+                        colors: [Color.cavnarEmber2.opacity(0.6), tint.opacity(0.25), tint.opacity(0)],
                         center: UnitPoint(x: 0.1, y: 0), startRadius: 0, endRadius: 190
                     )
                     // A faint glossy catch along the top edge only.

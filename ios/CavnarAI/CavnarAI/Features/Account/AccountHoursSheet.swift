@@ -150,22 +150,37 @@ struct AccountHoursSheet: View {
             get: { hours[day] ?? DayHours(closed: false, open: Date(), close: Date()) },
             set: { hours[day] = $0 }
         )
+        // Two lines: the day and its switch, then the open–close pickers.
+        // Two compact DatePickers plus the switch on ONE line left the day
+        // name ~60pt, so "Monday" wrapped to "Mon / day".
         return VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Text(day).font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
-                Spacer(minLength: 8)
-                if binding.wrappedValue.closed {
-                    Text("Closed").font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
-                } else {
-                    DatePicker("", selection: binding.open, displayedComponents: .hourAndMinute).labelsHidden().tint(Color.cavnarEmber)
-                    Text("–").foregroundStyle(Color.cavnarInk3)
-                    DatePicker("", selection: binding.close, displayedComponents: .hourAndMinute).labelsHidden().tint(Color.cavnarEmber)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    Text(day)
+                        .font(.cavnarBody(16, weight: 700))
+                        .foregroundStyle(Color.cavnarInk)
+                        .lineLimit(1)
+                        .fixedSize()
+                    Spacer(minLength: 8)
+                    if binding.wrappedValue.closed {
+                        Text("Closed").font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+                    }
+                    AccountStateSwitch(isOn: Binding(get: { !binding.wrappedValue.closed }, set: { open in
+                        binding.wrappedValue.closed = !open
+                    }))
                 }
-                AccountStateSwitch(isOn: Binding(get: { !binding.wrappedValue.closed }, set: { open in
-                    binding.wrappedValue.closed = !open
-                }))
+                if !binding.wrappedValue.closed {
+                    HStack(spacing: 10) {
+                        Text("Open").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                        DatePicker("", selection: binding.open, displayedComponents: .hourAndMinute).labelsHidden().tint(Color.cavnarEmber)
+                        Text("Close").font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3).padding(.leading, 6)
+                        DatePicker("", selection: binding.close, displayedComponents: .hourAndMinute).labelsHidden().tint(Color.cavnarEmber)
+                        Spacer(minLength: 0)
+                    }
+                }
             }
             .padding(.vertical, 9)
+            .animation(.easeOut(duration: 0.2), value: binding.wrappedValue.closed)
             if showsDivider { AccountRowDivider() }
         }
     }

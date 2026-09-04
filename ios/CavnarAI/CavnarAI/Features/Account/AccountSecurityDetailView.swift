@@ -179,7 +179,7 @@ struct AccountSecurityDetailView: View {
                     .padding(.bottom, 4)
             }
             AccountNavRow(label: "Security checkup") { showingCheckup = true }
-            AccountNavRow(label: "Password", value: passwordStrengthLabel) { showingChangePassword = true }
+            AccountNavRow(label: "Password") { showingChangePassword = true }
             if live.twoFAEnabled {
                 AccountNavRow(label: "Backup codes", value: viewModel.backupCodesRemaining.map { "\($0) left" }, valueIsNumber: true) { showingBackupCodes = true }
                 AccountNavRow(label: "Trusted devices") { showingTrustedDevices = true }
@@ -214,7 +214,8 @@ struct AccountSecurityDetailView: View {
                         }
                     }
                 ),
-                busy: viewModel.is2FABusy
+                busy: viewModel.is2FABusy,
+                optimistic: false
             )
             // A "Turn on"/"Turn off" link, not a Toggle — matches 2FA's
             // own trailing control right above it (a Toggle's native
@@ -315,7 +316,7 @@ struct AccountSecurityDetailView: View {
             // app open on the pass or handed to a server.
             AccountSwitchRow(
                 label: "Privacy mode",
-                detail: "Hides revenue, labor and food-cost figures behind a tap",
+                detail: "Keeps revenue, labor and food-cost figures blurred while it's on",
                 isOn: Binding(get: { prefs.privacyMode }, set: { prefs.privacyMode = $0 }),
                 showsDivider: false
             )

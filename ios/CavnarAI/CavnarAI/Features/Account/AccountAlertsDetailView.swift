@@ -19,6 +19,8 @@ struct AccountAlertsDetailView: View {
     @State private var quietStart: Date
     @State private var quietEnd: Date
     @State private var testDigestLabel: String?
+    private enum AlertsField: Hashable { case extraEmails, contactName(Int), contactPhone(Int) }
+    @FocusState private var focusedField: AlertsField?
 
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -41,6 +43,7 @@ struct AccountAlertsDetailView: View {
 
     var body: some View {
         NavigationStack {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 hero
@@ -71,6 +74,8 @@ struct AccountAlertsDetailView: View {
                             .keyboardType(.emailAddress)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
+                            .focused($focusedField, equals: .extraEmails)
+                            .id("alerts-extra-emails")
                         Text("Alert and digest emails also go to these addresses.")
                             .font(.cavnarBody(14))
                             .foregroundStyle(Color.cavnarInk3.opacity(0.8))
@@ -163,7 +168,13 @@ struct AccountAlertsDetailView: View {
                         Spacer()
                         if contacts.count < 2 {
                             AccountActionChip(symbol: "plus", accessibilityLabel: "Add contact") {
-                                contacts.append(AlertContact(id: -contacts.count - 1, name: "", phone: "", smsConsent: false))
+                                let id = -contacts.count - 1
+                                contacts.append(AlertContact(id: id, name: "", phone: "", smsConsent: false))
+                                // Straight into the new row's name field.
+                                Task { @MainActor in
+                                    try? await Task.sleep(for: .seconds(0.05))
+                                    focusedField = .contactName(id)
+                                }
                             }
                         }
                     }
@@ -180,11 +191,14 @@ struct AccountAlertsDetailView: View {
                                     TextField("Name", text: $contact.name)
                                         .font(.cavnarBody(16, weight: 700))
                                         .foregroundStyle(Color.cavnarInk)
+                                        .focused($focusedField, equals: .contactName(contact.id))
                                     TextField("Phone", text: $contact.phone)
                                         .font(.cavnarNumber(15))
                                         .foregroundStyle(Color.cavnarInk2)
                                         .keyboardType(.phonePad)
+                                        .focused($focusedField, equals: .contactPhone(contact.id))
                                 }
+                                .id("alerts-contact-\(contact.id)")
                                 Spacer(minLength: 8)
                                 AccountActionChip(symbol: "xmark", tone: .cavnarRed, accessibilityLabel: "Remove contact") {
                                     contacts.removeAll { $0.id == contact.id }
@@ -227,8 +241,29 @@ struct AccountAlertsDetailView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
+            // Room for the keyboard under the last contact row — without
+            // it the focused field's own scroll-into-view lands the field
+            // right at the keyboard's top edge, or under it.
+            .padding(.bottom, focusedField == nil ? 0 : 280)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .onChange(of: focusedField) { _, field in
+            guard let field else { return }
+            let target: String
+            switch field {
+            case .extraEmails: target = "alerts-extra-emails"
+            case .contactName(let id), .contactPhone(let id): target = "alerts-contact-\(id)"
+            }
+            // A beat for the keyboard to start rising so the scroll target
+            // is measured against the final safe area, not the pre-keyboard one.
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(0.12))
+                withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(target, anchor: .center) }
+            }
+        }
         }
         .accountSheetChrome("Alerts")
+        .keyboardDoneToolbar { focusedField = nil }
         .cavnarPostedOverlay(postedLabel) { dismiss() }
         }
     }

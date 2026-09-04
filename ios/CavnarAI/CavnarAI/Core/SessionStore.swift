@@ -315,9 +315,12 @@ final class SessionStore {
     /// today's mandatory-lock behavior until they explicitly turn it off;
     /// a new install also starts locked, matching every install to date.
     private static let biometricLockDefaultsKey = "cavnar.biometric_lock_enabled"
-    var biometricLockEnabled: Bool {
-        get { Self.biometricLockPreference }
-        set { UserDefaults.standard.set(newValue, forKey: Self.biometricLockDefaultsKey) }
+    // A stored property, not a computed get/set over UserDefaults: @Observable
+    // only tracks stored properties, so the computed version never told the
+    // Security sheet's switch to re-render after a tap — it wrote the new
+    // value and the control stayed exactly where it was.
+    var biometricLockEnabled: Bool = SessionStore.biometricLockPreference {
+        didSet { UserDefaults.standard.set(biometricLockEnabled, forKey: Self.biometricLockDefaultsKey) }
     }
 
     private static var biometricLockPreference: Bool {

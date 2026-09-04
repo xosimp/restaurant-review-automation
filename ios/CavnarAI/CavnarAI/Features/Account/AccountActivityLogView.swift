@@ -60,7 +60,8 @@ struct AccountActivityLogView: View {
                                             Text(AccountRelativeTime.describe(event.createdAt))
                                                 .font(.cavnarNumber(14))
                                             if let actor = event.actor, !actor.isEmpty {
-                                                Text("· by \(actor)").font(.cavnarBody(14))
+                                                (Text("· by ").font(.cavnarBody(14))
+                                                    + Text(actor).font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarEmber2))
                                             }
                                         }
                                         .foregroundStyle(Color.cavnarInk3)

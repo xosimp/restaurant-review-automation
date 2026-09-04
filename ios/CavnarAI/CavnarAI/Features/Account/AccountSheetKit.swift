@@ -354,25 +354,6 @@ private struct AccountCaptionLabel: View {
     }
 }
 
-/// An ember underline that lights only while its field has focus — the
-/// one cue that says "this is yours to change" without a lock-icon
-/// paragraph.
-private struct AccountFocusUnderline: View {
-    let lit: Bool
-    var body: some View {
-        Rectangle()
-            .fill(
-                LinearGradient(
-                    colors: [Color.cavnarEmber, Color.cavnarEmber.opacity(0)],
-                    startPoint: .leading, endPoint: .trailing
-                )
-            )
-            .frame(height: 1.5)
-            .opacity(lit ? 1 : 0)
-            .animation(.easeOut(duration: 0.2), value: lit)
-    }
-}
-
 /// The one editable-field row both AccountField and AccountEditor build
 /// on. Both used to be separate implementations — a single-line
 /// TextField for one, a TextEditor for the other — and the TextEditor
@@ -412,13 +393,24 @@ private struct AccountFieldRow<Field: Hashable>: View {
                 .foregroundStyle(multiline ? Color.cavnarInk2 : Color.cavnarInk)
                 .keyboardType(keyboardType)
                 .focused(focus, equals: field)
-                AccountFocusUnderline(lit: isFocused)
-                    .padding(.top, 2)
             }
             .padding(.vertical, 9)
             .contentShape(Rectangle())
             .onTapGesture { focus.wrappedValue = field }
-            if showsDivider { AccountRowDivider() }
+            // One line, not two: the row's divider IS the focus cue. It sits
+            // at Paper3 between rows, and lights ember (1.5pt) while this
+            // field is active. A separate underline above the divider read
+            // as a doubled line on the Invite Team Member sheet.
+            if showsDivider || isFocused {
+                Rectangle()
+                    .fill(
+                        isFocused
+                            ? LinearGradient(colors: [Color.cavnarEmber, Color.cavnarEmber.opacity(0.35)], startPoint: .leading, endPoint: .trailing)
+                            : LinearGradient(colors: [Color.cavnarPaper3.opacity(0.5), Color.cavnarPaper3.opacity(0.5)], startPoint: .leading, endPoint: .trailing)
+                    )
+                    .frame(height: isFocused ? 1.5 : 1)
+                    .animation(.easeOut(duration: 0.2), value: isFocused)
+            }
         }
     }
 }
@@ -473,10 +465,6 @@ struct AccountDisplayRow<Trailing: View>: View {
                         .font(.cavnarBody(17, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
                         .lineLimit(1)
-                    // Reserves the exact same height AccountFieldRow's
-                    // (invisible-when-unfocused) underline does, so a
-                    // display row sits exactly as tall as an editable one.
-                    Color.clear.frame(height: 1.5).padding(.top, 2)
                 }
                 Spacer(minLength: 8)
                 trailing()
@@ -634,13 +622,26 @@ struct AccountStateSwitch: View {
     @Binding var isOn: Bool
     var busy: Bool = false
     var disabled: Bool = false
+    /// Move the thumb the instant it's tapped and reconcile with `isOn`
+    /// afterwards. On by default. Off for a switch whose "on" opens a flow
+    /// that may be cancelled (2FA setup) — there the thumb only moves once
+    /// the source of truth actually changes.
+    var optimistic: Bool = true
 
     private static let cell: CGFloat = 36
     private static let height: CGFloat = 30
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    // The tapped-but-not-yet-confirmed position. Network-backed switches
+    // used to sit still until the round-trip finished and then snap — with
+    // a shimmer sweeping across in the meantime, which read as "an orange
+    // line dragging over to the other side". Now the thumb moves on tap,
+    // and if the save fails (`busy` ends with `isOn` unchanged) it eases back.
+    @State private var pending: Bool?
+
+    private var shown: Bool { pending ?? isOn }
 
     var body: some View {
-        ZStack(alignment: isOn ? .trailing : .leading) {
+        ZStack(alignment: shown ? .trailing : .leading) {
             // Track: hairline capsule with the thin divider between the two
             // sides. The divider is drawn under the thumb so it only ever
             // shows on the inactive side.
@@ -655,35 +656,42 @@ struct AccountStateSwitch: View {
             // Thumb: fills the active side. Ember gradient for on, red for off.
             Capsule()
                 .fill(
-                    isOn
+                    shown
                         ? LinearGradient(colors: [Color.cavnarEmber2, Color.cavnarEmber], startPoint: .topLeading, endPoint: .bottomTrailing)
                         : LinearGradient(colors: [Color.cavnarRed.opacity(0.95), Color.cavnarRed.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing)
                 )
                 .frame(width: Self.cell, height: Self.height - 4)
                 .padding(2)
-                .shadow(color: (isOn ? Color.cavnarEmber : Color.cavnarRed).opacity(0.45), radius: 6, y: 1)
+                .shadow(color: (shown ? Color.cavnarEmber : Color.cavnarRed).opacity(0.45), radius: 6, y: 1)
+                .opacity(busy ? 0.75 : 1)
 
             HStack(spacing: 0) {
-                glyph("xmark", active: !isOn)
-                glyph("checkmark", active: isOn)
+                glyph("xmark", active: !shown)
+                glyph("checkmark", active: shown)
             }
         }
         .frame(width: Self.cell * 2 + 4, height: Self.height)
         .opacity(disabled ? 0.45 : 1)
-        .overlay {
-            if busy {
-                Capsule().fill(Color.cavnarPaper.opacity(0.35))
-                CavnarShimmerLine(color: .cavnarEmber2).frame(width: 30)
-            }
-        }
         .contentShape(Capsule())
         .onTapGesture {
             guard !disabled, !busy else { return }
             Haptic.selection()
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { isOn.toggle() }
+            let target = !isOn
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
+                if optimistic { pending = target }
+                isOn = target
+            }
+        }
+        .onChange(of: isOn) { _, _ in
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { pending = nil }
+        }
+        .onChange(of: busy) { _, nowBusy in
+            // Save finished: the source of truth either changed (handled
+            // above) or didn't — either way the thumb follows it now.
+            if !nowBusy { withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { pending = nil } }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(isOn ? "On" : "Off")
+        .accessibilityLabel(shown ? "On" : "Off")
         .accessibilityAddTraits(.isButton)
     }
 
@@ -773,6 +781,7 @@ struct AccountSwitchRow: View {
     @Binding var isOn: Bool
     var busy: Bool = false
     var disabled: Bool = false
+    var optimistic: Bool = true
     var showsDivider: Bool = true
 
     var body: some View {
@@ -786,7 +795,7 @@ struct AccountSwitchRow: View {
                     }
                 }
                 Spacer(minLength: 8)
-                AccountStateSwitch(isOn: $isOn, busy: busy, disabled: disabled)
+                AccountStateSwitch(isOn: $isOn, busy: busy, disabled: disabled, optimistic: optimistic)
             }
             .frame(minHeight: AccountKVRow<EmptyView>.rowHeight)
             .padding(.vertical, 9)

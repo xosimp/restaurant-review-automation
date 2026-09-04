@@ -82,9 +82,9 @@ struct AccountView: View {
     private var loadingSkeleton: some View {
         VStack(alignment: .leading, spacing: 24) {
             HStack(spacing: 14) {
-                RoundedRectangle(cornerRadius: 16)
+                RoundedRectangle(cornerRadius: 20)
                     .fill(Color.cavnarInk.opacity(0.08))
-                    .frame(width: 54, height: 54)
+                    .frame(width: 66, height: 66)
                 VStack(alignment: .leading, spacing: 6) {
                     Capsule().fill(Color.cavnarInk.opacity(0.08)).frame(width: 168, height: 16)
                     Capsule().fill(Color.cavnarInk.opacity(0.06)).frame(width: 210, height: 13)
@@ -123,17 +123,20 @@ struct AccountView: View {
     }
 
     private func heroIdentity(_ summary: AccountSummary) -> some View {
-        HStack(spacing: 14) {
-            GlowBadge(systemImage: "", size: 54, monogram: initials(summary.profile.restaurantName))
+        HStack(spacing: 16) {
+            GlowBadge(systemImage: "", size: 66, monogram: initials(summary.profile.restaurantName))
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(summary.profile.restaurantName)
-                    .font(.cavnarBody(17, weight: 700))
+                    .font(.cavnarHeadline(22))
                     .foregroundStyle(Color.cavnarInk)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                 Text("\(summary.account.email) · \(sessionStore.currentUser?.isOwner == true ? "Owner" : "Team member")")
-                    .font(.cavnarBody(15))
+                    .font(.cavnarBody(16))
                     .foregroundStyle(Color.cavnarInk3)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
 
             Spacer(minLength: 8)
