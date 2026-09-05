@@ -31,13 +31,11 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "house.fill"
         case .modules: return "square.grid.2x2.fill"
-        // Not "sparkles" — every other tab icon here is a single solid
-        // shape; "sparkles" is a multi-layer symbol whose built-in
-        // selection bounce needs extra per-layer frames the system has to
-        // generate on the fly, which is what was landing exactly on the
-        // liquid-glass tab bar's own selection-morph animation and making
-        // only this tab visibly stall mid-transition.
-        case .ask: return "bubble.left.and.text.bubble.right.fill"
+        // Swapping this away from "sparkles" (the multi-layer-symbol
+        // theory) did NOT fix the tab-bar stall — confirmed on-device, so
+        // that theory is out. Reverted. See CavnarOrb.swift for the next
+        // (evidence-based, not yet confirmed) attempt at the real cause.
+        case .ask: return "sparkles"
         case .account: return "person.crop.circle"
         }
     }

@@ -21,6 +21,13 @@ struct HomeActionDeck: View {
     /// instant `advance()` updates `index` mid-transition. See advance()'s
     /// comment for the flash this used to cause when the two were conflated.
     @State private var draggingID: String?
+    /// The id of a card that's about to become the front card WITHOUT
+    /// having been visible as a ghost first — only ever the "previous"
+    /// item, since `stack` only ever peeks forward (index, index+1,
+    /// index+2). See advance()'s comment for why "next" doesn't need this
+    /// and "previous" does.
+    @State private var enteringID: String?
+    @State private var enterOffset: CGFloat = 0
 
     static let cardHeight: CGFloat = 150
     private static let ghostStep: CGFloat = 14
@@ -53,7 +60,10 @@ struct HomeActionDeck: View {
                         onSecondary: { onSecondary(entry.item) }
                     )
                     .scaleEffect(1 - CGFloat(entry.depth) * 0.045, anchor: .bottom)
-                    .offset(x: entry.id == draggingID ? dragX : 0, y: CGFloat(entry.depth) * Self.ghostStep)
+                    .offset(
+                        x: (entry.id == draggingID ? dragX : 0) + (entry.id == enteringID ? enterOffset : 0),
+                        y: CGFloat(entry.depth) * Self.ghostStep
+                    )
                     .rotationEffect(.degrees(entry.id == draggingID ? Double(dragX) / 28 : 0), anchor: .bottom)
                     .opacity(entry.depth == 0 ? 1 : (entry.depth == 1 ? 0.72 : 0.42))
                     .saturation(entry.depth == 0 ? 1 : 0.75)
@@ -119,16 +129,41 @@ struct HomeActionDeck: View {
     /// was reported. Tracking `draggingID` — the ACTUAL card being
     /// dragged — instead of a depth means the incoming card never reads
     /// dragX at all, in any frame, so there's nothing left to race.
+    ///
+    /// That fix made "next" (swipe left) smooth but left "previous" (swipe
+    /// right) just as choppy, for a completely separate reason: `stack`
+    /// only ever peeks FORWARD (index, index+1, index+2). Going next, the
+    /// incoming card was already on screen as a ghost with a well-defined
+    /// smaller/dimmer starting state to grow from. Going previous, the
+    /// incoming card (index-1) was never part of the stack at all — it
+    /// doesn't exist in the tree until `index` changes, so it just pops in
+    /// via the plain .opacity insertion transition instead of animating
+    /// into place, which is the "snappy" feel. Giving it a starting
+    /// offset (enterOffset, off to the left) that resolves to 0 in the
+    /// SAME transaction as the index change turns that pop into a slide,
+    /// mirroring the outgoing card's own fly-off. Only needed when that
+    /// card genuinely wasn't already visible — for 2-3 total items the
+    /// "previous" card overlaps with an existing ghost, and forcing an
+    /// artificial slide onto an already-positioned ghost would itself be
+    /// the same kind of jump this exists to prevent.
     private func advance(_ direction: Int) {
         guard count > 1, !flying else { return }
         flying = true
         if draggingID == nil { draggingID = stack.first?.id }
         Haptic.selection()
         withAnimation(.easeIn(duration: 0.22)) { dragX = CGFloat(direction < 0 ? 1 : -1) * 520 }
+        if direction < 0 {
+            let incoming = items[(index - 1 + count) % count]
+            if !stack.contains(where: { $0.item.id == incoming.id }) {
+                enteringID = incoming.id
+                enterOffset = -460
+            }
+        }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(220))
             withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
                 index = (index + direction + count) % count
+                enterOffset = 0
             }
             flying = false
         }

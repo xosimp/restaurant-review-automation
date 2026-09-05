@@ -73,6 +73,21 @@ struct HomeView: View {
             ZStack(alignment: .top) {
                 HomeObsidianField(paused: backgroundMotionPaused)
 
+                // A custom card, not .confirmationDialog — moving that
+                // modifier down from the screen root onto the deck card's
+                // own frame (an earlier attempt at this) had zero effect on
+                // where it actually rendered, confirming its on-screen
+                // position isn't governed by tree attachment the way an
+                // .overlay's is. This is fully our own view, so its
+                // position, its haptics, and its own "Working…" state are
+                // all things we actually control rather than delegating to
+                // system chrome that wasn't behaving as documented.
+                if let item = pendingPublish {
+                    publishConfirmCard(item)
+                        .zIndex(3)
+                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                }
+
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         if let summary = viewModel.summary {
@@ -95,29 +110,6 @@ struct HomeView: View {
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
                                 .belowFold(heroAppeared, delay: 0.35)
-                                // Anchored here, not at the screen root — a
-                                // confirmationDialog's on-screen position is
-                                // derived from the frame of whatever it's
-                                // attached to, and attached to the whole
-                                // NavigationStack (the full screen) it was
-                                // rendering up near the very top, nowhere
-                                // near the card/button that opened it. This
-                                // frame is the deck card itself.
-                                .confirmationDialog(
-                                    pendingPublish?.cta ?? "Publish replies",
-                                    isPresented: Binding(
-                                        get: { pendingPublish != nil },
-                                        set: { if !$0 { pendingPublish = nil } }
-                                    ),
-                                    titleVisibility: .visible
-                                ) {
-                                    Button(pendingPublish?.cta ?? "Publish") {
-                                        Task { await publishReplies() }
-                                    }
-                                    Button("Cancel", role: .cancel) { pendingPublish = nil }
-                                } message: {
-                                    Text("Each reply was drafted in your voice. Google-connected replies post right away; the rest are marked approved.")
-                                }
 
                             HomeValueBand(
                                 total: summary.totalValueDelivered,
@@ -166,6 +158,7 @@ struct HomeView: View {
                 // left to render.
                 .cavnarPostedOverlay(postedLabel) { postedLabel = nil }
             }
+            .animation(.easeOut(duration: 0.2), value: pendingPublish != nil)
             .navigationDestination(for: ModuleRoute.self) { route in
                 ModuleDestinationView(moduleKey: route.key, moduleLabel: route.label)
             }
@@ -494,17 +487,98 @@ struct HomeView: View {
         }
     }
 
+    /// The card STAYS open (showing "Working…" via viewModel
+    /// .isPublishingReplies) for the whole network round trip now, instead
+    /// of dismissing the instant the button is tapped — a tap that then
+    /// waits in silence for however long the request takes was the
+    /// "nothing happened" complaint just as much as the missing overlay
+    /// was. It closes only once there's an actual outcome, at which point
+    /// the success checkmark overlay (cavnarPostedOverlay, screen-level)
+    /// takes over.
     private func publishReplies() async {
         guard pendingPublish != nil else { return }
-        pendingPublish = nil
         // A nil result means the call failed — APIClient has already played
         // the error haptic, and the deck stays exactly as it was.
-        guard let result = await viewModel.publishAllReplies(), result.approved > 0 else { return }
+        guard let result = await viewModel.publishAllReplies(), result.approved > 0 else {
+            pendingPublish = nil
+            return
+        }
+        pendingPublish = nil
         Haptic.success()
         if result.posted > 0 {
             postedLabel = "Published \(result.posted) to Google"
         } else {
             postedLabel = "Approved \(result.approved) \(result.approved == 1 ? "reply" : "replies")"
+        }
+    }
+
+    /// The confirm step itself — a plain custom card, centered, dimming
+    /// the screen behind it. Shows "Working…" for the duration of the
+    /// publish call (see publishReplies()) rather than disappearing the
+    /// instant it's tapped.
+    private func publishConfirmCard(_ item: NeedsAttentionItem) -> some View {
+        ZStack {
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    guard !viewModel.isPublishingReplies else { return }
+                    pendingPublish = nil
+                }
+            VStack(spacing: 18) {
+                Text(item.cta ?? "Publish replies")
+                    .font(.cavnarHeadline(19))
+                    .foregroundStyle(Color.cavnarInk)
+                    .multilineTextAlignment(.center)
+                Text("Each reply was drafted in your voice. Google-connected replies post right away; the rest are marked approved.")
+                    .font(.cavnarBody(14.5))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if viewModel.isPublishingReplies {
+                    CavnarShimmerText(text: "Publishing…", color: Color.cavnarInk)
+                        .padding(.top, 2)
+                } else {
+                    VStack(spacing: 10) {
+                        Button {
+                            // Fires the instant the tap lands, before the
+                            // network call even starts — the confirm never
+                            // reads as "did that register?" regardless of
+                            // how long the request takes.
+                            Haptic.medium()
+                            Task { await publishReplies() }
+                        } label: {
+                            Text(item.cta ?? "Publish")
+                                .font(.cavnarBody(15.5, weight: 700))
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 13)
+                                .background(
+                                    LinearGradient(colors: [Color.cavnarEmber2, Color.cavnarEmber], startPoint: .top, endPoint: .bottom)
+                                )
+                                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            Haptic.light()
+                            pendingPublish = nil
+                        } label: {
+                            Text("Cancel")
+                                .font(.cavnarBody(15, weight: 600))
+                                .foregroundStyle(Color.cavnarInk3)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: 340)
+            .background(Color.cavnarPaper2)
+            .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card).strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
+            .shadow(color: .black.opacity(0.45), radius: 24, y: 12)
+            .padding(.horizontal, 36)
         }
     }
 

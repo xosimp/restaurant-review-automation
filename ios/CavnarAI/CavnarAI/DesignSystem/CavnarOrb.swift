@@ -65,7 +65,18 @@ struct CavnarOrb: View {
     var body: some View {
         let preset = CavnarOrbEngine.resolvePreset(state: state, size: size)
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: paused || reduceMotion)) { timeline in
-            Canvas(rendersAsynchronously: true) { context, canvasSize in
+            // Synchronous, not rendersAsynchronously: true — an async
+            // Canvas commits its draw commands back to the main thread's
+            // layer on its own schedule, decoupled from SwiftUI's own
+            // frame timing. HomeObsidianField's three Canvas layers use
+            // the plain synchronous form and Home doesn't show the
+            // tab-bar glass-morph stall reported for this tab; this orb
+            // was the one screen opted into async rendering. The paint
+            // work here is a few hundred dots/lines — cheap enough
+            // in-line — so this trades a theoretical async win for
+            // removing an out-of-band commit landing at an unpredictable
+            // moment relative to the tab bar's own transition.
+            Canvas { context, canvasSize in
                 let t = reduceMotion ? 0.6 : timeline.date.timeIntervalSince(start) * preset.speed * speed
                 let frame = preset.frame(Double(size), t, preset.opts)
                 CavnarOrbEngine.paint(frame, in: &context, dark: colorScheme == .dark)
