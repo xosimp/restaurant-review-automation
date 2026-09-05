@@ -22,7 +22,7 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "Home"
         case .modules: return "Modules"
-        case .ask: return "Ask Cavnar"
+        case .ask: return "Ask Cavnar AI"
         case .account: return "Account"
         }
     }
@@ -31,7 +31,13 @@ enum AppTab: String, CaseIterable, Identifiable {
         switch self {
         case .home: return "house.fill"
         case .modules: return "square.grid.2x2.fill"
-        case .ask: return "sparkles"
+        // Not "sparkles" — every other tab icon here is a single solid
+        // shape; "sparkles" is a multi-layer symbol whose built-in
+        // selection bounce needs extra per-layer frames the system has to
+        // generate on the fly, which is what was landing exactly on the
+        // liquid-glass tab bar's own selection-morph animation and making
+        // only this tab visibly stall mid-transition.
+        case .ask: return "bubble.left.and.text.bubble.right.fill"
         case .account: return "person.crop.circle"
         }
     }

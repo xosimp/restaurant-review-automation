@@ -87,7 +87,12 @@ struct AskCavnarHistoryView: View {
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
-                        .tint(Color.cavnarRed)
+                        // No explicit tint — inherits the app-wide ember
+                        // tint (RootView), same as Schedule History's
+                        // identical delete swipe. An explicit .tint(.cavnarRed)
+                        // here used to override that with system red, so
+                        // this was the one delete swipe in the app that
+                        // didn't match the other's orange.
                     }
                 }
             } header: {
@@ -96,10 +101,13 @@ struct AskCavnarHistoryView: View {
                     .tracking(1.2)
                     .textCase(.uppercase)
                     .foregroundStyle(Color.cavnarInk3)
-                    .padding(.leading, 4)
                     .padding(.bottom, 2)
+                    // Matches the rows' own leading inset (20, set below)
+                    // exactly, rather than relying on the list style's
+                    // own default header inset — that default was what
+                    // left this sitting to the left of the row cards.
+                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 8, trailing: 20))
             }
-            .listRowInsets(EdgeInsets())
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)

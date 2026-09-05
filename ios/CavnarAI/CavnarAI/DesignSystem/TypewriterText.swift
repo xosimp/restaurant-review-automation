@@ -39,27 +39,106 @@ struct TypewriterText: View {
     /// record that this message need never retype again.
     var onComplete: (() -> Void)? = nil
 
-    @State private var visibleWordCount = 0
-    /// Precomputed cumulative prefixes: `prefixes[i]` is the first i words
-    /// already joined. Rendering frame i is then an O(1) array read.
-    ///
-    /// `words` used to be a computed property, so every one of n body
-    /// evaluations re-split the entire answer AND rebuilt a growing joined
-    /// string — O(n²) character work across a reveal, on the main actor,
-    /// between animation frames (audit 3.1).
-    @State private var prefixes: [String] = [""]
+    /// Precomputed cumulative prefixes plus the timing to walk through
+    /// them, built once per fullText rather than every frame.
+    private struct Plan {
+        let prefixes: [String]
+        let total: Int
+        let step: Double
+        let wordsPerTick: Int
+
+        func revealedCount(elapsed: Double) -> Int {
+            guard step > 0, elapsed > 0 else { return 0 }
+            return min(total, Int(elapsed / step) * wordsPerTick)
+        }
+    }
+
+    @State private var plan: Plan?
+    @State private var start = Date()
     /// Measured once per message rather than per frame. As a computed
     /// property this was a full TextKit layout pass (NSString.boundingRect
     /// over the whole answer) on every body evaluation (audit 3.2).
     @State private var measuredWidth: CGFloat?
 
-
     var body: some View {
-        // Measured against the FULL final text (not the partially-revealed
-        // string), so the bubble's width is fixed for the whole reveal
-        // instead of jittering wider/narrower word by word — only height
-        // grows as it types.
-        Text(prefixes.indices.contains(visibleWordCount) ? prefixes[visibleWordCount] : fullText)
+        Group {
+            // Already fully played: render once, no TimelineView at all —
+            // a reopened chat's history is all in this branch, and it
+            // costs nothing per frame.
+            if startRevealed {
+                textView(fullText)
+            } else if let plan {
+                // TimelineView, not a Task.sleep loop — the previous
+                // version advanced the reveal by sleeping between steps,
+                // which drifts under any main-thread contention (a scroll,
+                // another tool-call frame painting) and reads as choppy,
+                // uneven pacing. Deriving the revealed word count purely
+                // from elapsed wall-clock time on every scheduled tick
+                // means a delayed frame just catches up to where it should
+                // already be instead of compounding a lag — the same
+                // wall-clock-driven approach this app's own motion (orbs,
+                // HomeObsidianField) already uses, applied here to text.
+                TimelineView(.periodic(from: start, by: 1.0 / 30.0)) { timeline in
+                    let revealed = plan.revealedCount(elapsed: timeline.date.timeIntervalSince(start))
+                    textView(plan.prefixes[revealed])
+                        .onChange(of: revealed) { _, new in
+                            onReveal?()
+                            if new >= plan.total { onComplete?() }
+                        }
+                }
+            } else {
+                // One frame only, before .task below builds the plan —
+                // empty, not the full text, so a new answer never flashes
+                // its whole text before dropping back to typing it out.
+                textView("")
+            }
+        }
+        .task(id: fullText) {
+            if let maxWidth, let measuringFont {
+                measuredWidth = cavnarMeasuredTextWidth(fullText, font: measuringFont, maxWidth: maxWidth)
+            }
+            guard !startRevealed else {
+                plan = nil
+                return
+            }
+            let split = fullText.split(separator: " ").map(String.init)
+            let total = split.count
+            guard total > 0 else {
+                plan = nil
+                onComplete?()
+                return
+            }
+
+            // Build every prefix once, up front.
+            var running: [String] = [""]
+            running.reserveCapacity(total + 1)
+            var accumulated = ""
+            for word in split {
+                accumulated += accumulated.isEmpty ? word : " " + word
+                running.append(accumulated)
+            }
+
+            // Total reveal duration is CAPPED, not per-word. The old
+            // formula clamped the per-word delay at a 16ms floor, so
+            // total time grew linearly past ~87 words: a typical 240-word
+            // answer spent 3.8s, and a long one 6.4s, typing out text the
+            // device had already received in full — pure added latency on
+            // top of generation (audit 5.3). Past the cap, whole words are
+            // revealed per tick instead of slowing the whole thing down.
+            let targetDuration = 1.4
+            let minStep = 0.016
+            let rawStep = targetDuration / Double(total)
+            let step = min(max(rawStep, minStep), 0.055)
+            // How many words to advance per tick to still finish on time.
+            let wordsPerTick = max(1, Int((minStep / rawStep).rounded(.up)))
+
+            start = Date()
+            plan = Plan(prefixes: running, total: total, step: step, wordsPerTick: wordsPerTick)
+        }
+    }
+
+    private func textView(_ text: String) -> some View {
+        Text(text)
             .font(font)
             .foregroundStyle(color)
             .lineSpacing(lineSpacing)
@@ -76,59 +155,5 @@ struct TypewriterText: View {
             // nil) is a no-op, so this only takes effect for callers that
             // opted in.
             .frame(width: measuredWidth, alignment: .leading)
-            .task(id: fullText) {
-                let split = fullText.split(separator: " ").map(String.init)
-
-                // Build every prefix once, up front.
-                var running: [String] = [""]
-                running.reserveCapacity(split.count + 1)
-                var accumulated = ""
-                for word in split {
-                    accumulated += accumulated.isEmpty ? word : " " + word
-                    running.append(accumulated)
-                }
-                prefixes = running
-
-                if let maxWidth, let measuringFont {
-                    measuredWidth = cavnarMeasuredTextWidth(fullText, font: measuringFont, maxWidth: maxWidth)
-                }
-
-                let total = split.count
-                if startRevealed {
-                    visibleWordCount = total
-                    return
-                }
-
-                visibleWordCount = 0
-                guard total > 0 else {
-                    onComplete?()
-                    return
-                }
-
-                // Total reveal duration is CAPPED, not per-word. The old
-                // formula clamped the per-word delay at a 16ms floor, so
-                // total time grew linearly past ~87 words: a typical 240-word
-                // answer spent 3.8s, and a long one 6.4s, typing out text the
-                // device had already received in full — pure added latency on
-                // top of generation (audit 5.3). Past the cap, whole words are
-                // revealed per tick instead of slowing the whole thing down.
-                let targetDuration = 1.4
-                let minStep = 0.016
-                let rawStep = targetDuration / Double(total)
-                let step = min(max(rawStep, minStep), 0.055)
-                // How many words to advance per tick to still finish on time.
-                let wordsPerTick = max(1, Int((minStep / rawStep).rounded(.up)))
-                let delayNanos = UInt64(step * 1_000_000_000)
-
-                var revealed = 0
-                while revealed < total {
-                    try? await Task.sleep(nanoseconds: delayNanos)
-                    if Task.isCancelled { return }
-                    revealed = min(revealed + wordsPerTick, total)
-                    visibleWordCount = revealed
-                    onReveal?()
-                }
-                onComplete?()
-            }
     }
 }
