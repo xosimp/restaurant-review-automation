@@ -894,7 +894,7 @@ def mkt_performance_api(current_user):
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
-def _do_ask_cavnar(restaurant_id, question, history=None, surface="web", user_id=None):
+def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None):
     """The AI copilot's shared body — answers a plain-English question about
     the restaurant's own live data (reviews/labor/food cost/marketing,
     whichever modules are active) instead of the owner having to piece it
@@ -927,7 +927,7 @@ def _do_ask_cavnar(restaurant_id, question, history=None, surface="web", user_id
                        for h in get_ask_history(restaurant_id)]
 
         answer, truncated, proposals = ask_with_tools(
-            restaurant, question, history=history, surface=surface)
+            restaurant, question, history=history)
 
         try:
             save_ask_message(restaurant_id, "user", question, user_id=user_id)
@@ -959,7 +959,7 @@ def ask_cavnar_api(current_user):
     rid = current_user["restaurant_id"]
     data = request.get_json() or {}
     payload, status = _do_ask_cavnar(rid, data.get("question"), history=data.get("history"),
-                                     surface="web", user_id=current_user.get("id"))
+                                     user_id=current_user.get("id"))
     return jsonify(**payload), status
 
 
@@ -1001,7 +1001,7 @@ def ask_cavnar_stream(current_user):
                 return
             history = [{"role": h["role"], "content": h["content"]} for h in get_ask_history(rid)]
             answer, truncated, proposals = ask_with_tools(
-                restaurant, question, history=history, surface="web",
+                restaurant, question, history=history,
                 on_progress=lambda label: events.put({"type": "progress", "label": label}))
             try:
                 save_ask_message(rid, "user", question, user_id=uid)
@@ -1057,14 +1057,29 @@ def ask_cavnar_record_action(current_user):
     route its button already uses — this only writes the audit line, so
     there is still exactly one code path that can send a supplier order.
     """
-    from models import log_ask_action
+    from models import log_ask_action, save_ask_message
     data = request.get_json(silent=True) or {}
     action = (data.get("action") or "").strip()
     outcome = (data.get("outcome") or "").strip()
     if not action or outcome not in ("confirmed", "dismissed"):
         return jsonify(ok=False, error="action and outcome (confirmed|dismissed) are required"), 400
-    log_ask_action(current_user["restaurant_id"], action, summary=data.get("summary"),
-                   body=data.get("body"), outcome=outcome, user_id=current_user.get("id"))
+    rid = current_user["restaurant_id"]
+    uid = current_user.get("id")
+    log_ask_action(rid, action, summary=data.get("summary"),
+                   body=data.get("body"), outcome=outcome, user_id=uid)
+
+    # Also write it into the transcript. Without this the model never learns
+    # what happened to its own proposal: asked "did that order go out?" after
+    # the owner confirmed, it answered "no, nothing has been sent" — stating a
+    # false fact about the account with complete confidence. Recorded as a
+    # user turn because confirming genuinely is the owner's action, and it
+    # keeps the user/assistant alternation the Messages API expects.
+    try:
+        label = data.get("summary") or action.replace("_", " ")
+        verb = "Confirmed" if outcome == "confirmed" else "Dismissed"
+        save_ask_message(rid, "user", f"[{verb}: {label}]", user_id=uid)
+    except Exception:
+        pass
     return jsonify(ok=True)
 
 @client_bp.route("/api/mkt-insight")

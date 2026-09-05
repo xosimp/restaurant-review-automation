@@ -4174,6 +4174,11 @@ def email_type_label(email_type: str) -> str:
 _ASK_HISTORY_LIMIT = 40
 
 
+# Transcripts are conveniences, not records — the action audit in
+# ask_cavnar_actions is the part that must survive, and it is never pruned.
+_ASK_TRANSCRIPT_KEEP = 200
+
+
 def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None, db_path: str = DB_PATH):
     import json as _json
     conn = get_conn(db_path)
@@ -4183,6 +4188,13 @@ def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None,
             "VALUES (?,?,?,?,?)",
             (restaurant_id, user_id, role, content,
              _json.dumps(proposals) if proposals else None)
+        )
+        # Trim as we go. Only the most recent turns are ever replayed, so an
+        # unbounded table would grow forever to hold rows nothing reads.
+        conn.execute(
+            "DELETE FROM ask_cavnar_messages WHERE restaurant_id=? AND id NOT IN "
+            "(SELECT id FROM ask_cavnar_messages WHERE restaurant_id=? ORDER BY id DESC LIMIT ?)",
+            (restaurant_id, restaurant_id, _ASK_TRANSCRIPT_KEEP)
         )
         conn.commit()
     finally:

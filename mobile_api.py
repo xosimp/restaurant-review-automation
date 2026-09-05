@@ -1125,7 +1125,7 @@ def mobile_ask_cavnar(current_user):
     data = request.get_json() or {}
     payload, status = _capi._do_ask_cavnar(
         current_user["restaurant_id"], data.get("question"), history=data.get("history"),
-        surface="mobile", user_id=current_user.get("id"),
+        user_id=current_user.get("id"),
     )
     return jsonify(**payload), status
 
@@ -1150,14 +1150,24 @@ def mobile_ask_cavnar_clear_history(current_user):
 def mobile_ask_cavnar_record_action(current_user):
     """Audit line only — the confirmed action is executed by the app calling
     the same route its own button uses."""
-    from models import log_ask_action
+    from models import log_ask_action, save_ask_message
     data = request.get_json(silent=True) or {}
     action = (data.get("action") or "").strip()
     outcome = (data.get("outcome") or "").strip()
     if not action or outcome not in ("confirmed", "dismissed"):
         return jsonify(ok=False, error="action and outcome (confirmed|dismissed) are required"), 400
-    log_ask_action(current_user["restaurant_id"], action, summary=data.get("summary"),
-                   body=data.get("body"), outcome=outcome, user_id=current_user.get("id"))
+    rid = current_user["restaurant_id"]
+    uid = current_user.get("id")
+    log_ask_action(rid, action, summary=data.get("summary"),
+                   body=data.get("body"), outcome=outcome, user_id=uid)
+    # See client_api's twin: the transcript has to carry the outcome or the
+    # model will confidently deny an action the owner actually confirmed.
+    try:
+        label = data.get("summary") or action.replace("_", " ")
+        verb = "Confirmed" if outcome == "confirmed" else "Dismissed"
+        save_ask_message(rid, "user", f"[{verb}: {label}]", user_id=uid)
+    except Exception:
+        pass
     return jsonify(ok=True)
 
 
