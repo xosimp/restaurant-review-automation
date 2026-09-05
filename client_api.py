@@ -894,7 +894,37 @@ def mkt_performance_api(current_user):
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
-def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None):
+def _parse_conversation_id(raw):
+    """A conversation id from a request body: a positive int, or None when
+    absent. Anything else (a string, zero, a float) is treated as absent
+    rather than rejected — the chat then lands in the current conversation."""
+    try:
+        cid = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return cid if cid > 0 else None
+
+
+def _resolve_ask_conversation(restaurant_id, conversation_id, new_conversation=False, user_id=None):
+    """For a question: which chat it belongs in. An explicit id must be one
+    of this restaurant's own (404 otherwise — the caller never learns whether
+    it exists for someone else); `new_conversation` starts a fresh chat for
+    this question (the app's "New chat" — created here, on the first
+    question, so an untouched New chat never leaves an empty row in the
+    history); no id means "the current chat, or a fresh one if there are
+    none yet". Returns (conversation_id, error_payload)."""
+    from models import get_ask_conversation, current_ask_conversation_id, create_ask_conversation
+    if new_conversation:
+        return create_ask_conversation(restaurant_id, user_id=user_id), None
+    if conversation_id is not None:
+        if get_ask_conversation(restaurant_id, conversation_id) is None:
+            return None, ({"ok": False, "error": "That conversation doesn't exist."}, 404)
+        return conversation_id, None
+    return current_ask_conversation_id(restaurant_id), None
+
+
+def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None, conversation_id=None,
+                   new_conversation=False):
     """The AI copilot's shared body — answers a plain-English question about
     the restaurant's own live data (reviews/labor/food cost/marketing,
     whichever modules are active) instead of the owner having to piece it
@@ -903,7 +933,10 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None):
     `history` is the caller's own prior message list for this chat session
     (list of {"role", "content"} dicts, oldest first, NOT including
     `question`) — ask_cavnar.ask() sanitizes/caps it itself, so this is a
-    thin passthrough, not a second place that needs to re-validate it."""
+    thin passthrough, not a second place that needs to re-validate it.
+
+    `conversation_id` picks the chat the turn belongs to (the app's chat
+    history); None means the restaurant's current chat."""
     question = (question or "").strip()
     if not question:
         return {"ok": False, "error": "Ask a question first."}, 400
@@ -912,6 +945,11 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None):
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"askcavnar:{restaurant_id}", max_calls=5, window_secs=60):
         return {"ok": False, "error": "Too many questions — please wait a moment and try again."}, 429
+    # After the rate limit, so a hammered "New chat" can't mint 50 empty rows.
+    conversation_id, err = _resolve_ask_conversation(restaurant_id, conversation_id,
+                                                     new_conversation=new_conversation, user_id=user_id)
+    if err:
+        return err
     try:
         from ask_cavnar import ask_with_tools
         from models import save_ask_message, get_ask_history, log_ask_action
@@ -924,15 +962,17 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None):
         # for callers that haven't migrated.
         if history is None:
             history = [{"role": h["role"], "content": h["content"]}
-                       for h in get_ask_history(restaurant_id)]
+                       for h in get_ask_history(restaurant_id, conversation_id=conversation_id)]
 
         answer, truncated, proposals = ask_with_tools(
             restaurant, question, history=history)
 
         try:
-            save_ask_message(restaurant_id, "user", question, user_id=user_id)
+            conversation_id = save_ask_message(restaurant_id, "user", question, user_id=user_id,
+                                               conversation_id=conversation_id)
             save_ask_message(restaurant_id, "assistant", answer,
-                             proposals=proposals or None, user_id=user_id)
+                             proposals=proposals or None, user_id=user_id,
+                             conversation_id=conversation_id)
             for p in (proposals or []):
                 log_ask_action(restaurant_id, p["action"], summary=p.get("summary"),
                                body=p.get("body"), outcome="proposed", user_id=user_id)
@@ -945,8 +985,10 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None):
         # than finishing, so it can say so instead of presenting a half
         # sentence as complete advice. `proposals` are confirm cards — actions
         # the assistant wants to take and deliberately cannot take itself.
+        # `conversation_id` tells a client that started a fresh chat which
+        # one it is now in.
         return {"ok": True, "answer": answer, "truncated": truncated,
-                "proposals": proposals or []}, 200
+                "proposals": proposals or [], "conversation_id": conversation_id}, 200
     except Exception as e:
         import ops
         ops.capture(e, job="ask_cavnar", context=f"restaurant_id={restaurant_id}")
@@ -959,11 +1001,13 @@ def ask_cavnar_api(current_user):
     rid = current_user["restaurant_id"]
     data = request.get_json() or {}
     payload, status = _do_ask_cavnar(rid, data.get("question"), history=data.get("history"),
-                                     user_id=current_user.get("id"))
+                                     user_id=current_user.get("id"),
+                                     conversation_id=_parse_conversation_id(data.get("conversation_id")),
+                                     new_conversation=bool(data.get("new_conversation")))
     return jsonify(**payload), status
 
 
-def _ask_cavnar_stream_response(rid, uid, question):
+def _ask_cavnar_stream_response(rid, uid, question, conversation_id=None, new_conversation=False):
     """Server-sent events: progress while tools run, then the answer.
 
     Shared by the web and mobile stream routes so iOS gets the same live
@@ -987,10 +1031,16 @@ def _ask_cavnar_stream_response(rid, uid, question):
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"askcavnar:{rid}", max_calls=5, window_secs=60):
         return jsonify(ok=False, error="Too many questions — please wait a moment."), 429
+    conversation_id, err = _resolve_ask_conversation(rid, conversation_id,
+                                                     new_conversation=new_conversation, user_id=uid)
+    if err:
+        payload, status = err
+        return jsonify(**payload), status
 
     events = queue.Queue()
 
     def work():
+        cid = conversation_id
         try:
             from ask_cavnar import ask_with_tools
             from models import save_ask_message, get_ask_history, log_ask_action
@@ -998,21 +1048,24 @@ def _ask_cavnar_stream_response(rid, uid, question):
             if not restaurant:
                 events.put({"type": "error", "error": "Restaurant not found"})
                 return
-            history = [{"role": h["role"], "content": h["content"]} for h in get_ask_history(rid)]
+            history = [{"role": h["role"], "content": h["content"]}
+                       for h in get_ask_history(rid, conversation_id=cid)]
             answer, truncated, proposals = ask_with_tools(
                 restaurant, question, history=history,
                 on_progress=lambda label, state: events.put(
                     {"type": "progress", "label": label, "state": state}))
             try:
-                save_ask_message(rid, "user", question, user_id=uid)
-                save_ask_message(rid, "assistant", answer, proposals=proposals or None, user_id=uid)
+                cid = save_ask_message(rid, "user", question, user_id=uid, conversation_id=cid)
+                save_ask_message(rid, "assistant", answer, proposals=proposals or None,
+                                 user_id=uid, conversation_id=cid)
                 for p in (proposals or []):
                     log_ask_action(rid, p["action"], summary=p.get("summary"),
                                    body=p.get("body"), outcome="proposed", user_id=uid)
             except Exception:
                 pass
             events.put({"type": "answer", "answer": answer,
-                        "truncated": truncated, "proposals": proposals or []})
+                        "truncated": truncated, "proposals": proposals or [],
+                        "conversation_id": cid})
         except Exception as e:
             import ops
             ops.capture(e, job="ask_cavnar_stream", context=f"restaurant_id={rid}")
@@ -1038,7 +1091,9 @@ def _ask_cavnar_stream_response(rid, uid, question):
 def ask_cavnar_stream(current_user):
     data = request.get_json(silent=True) or {}
     return _ask_cavnar_stream_response(
-        current_user["restaurant_id"], current_user.get("id"), data.get("question"))
+        current_user["restaurant_id"], current_user.get("id"), data.get("question"),
+        conversation_id=_parse_conversation_id(data.get("conversation_id")),
+        new_conversation=bool(data.get("new_conversation")))
 
 
 @client_bp.route("/api/ask-cavnar/history")
@@ -1056,9 +1111,68 @@ def ask_cavnar_clear_history(current_user):
     return jsonify(ok=True)
 
 
-@client_bp.route("/api/ask-cavnar/action", methods=["POST"])
+# ── Chat history: one row per conversation ────────────────────────────────
+#
+# Shared bodies, so the web and mobile routes can't drift. Every one is
+# scoped to the caller's restaurant inside models — an id that belongs to
+# someone else reads as "doesn't exist", never as theirs.
+
+def _do_list_ask_conversations(restaurant_id):
+    from models import list_ask_conversations
+    return {"ok": True, "conversations": list_ask_conversations(restaurant_id)}, 200
+
+
+def _do_create_ask_conversation(restaurant_id, user_id=None):
+    from models import create_ask_conversation
+    cid = create_ask_conversation(restaurant_id, user_id=user_id)
+    return {"ok": True, "conversation_id": cid}, 200
+
+
+def _do_get_ask_conversation(restaurant_id, conversation_id):
+    from models import get_ask_conversation, get_ask_history, _ASK_TRANSCRIPT_KEEP
+    convo = get_ask_conversation(restaurant_id, conversation_id)
+    if convo is None:
+        return {"ok": False, "error": "That conversation doesn't exist."}, 404
+    messages = get_ask_history(restaurant_id, limit=_ASK_TRANSCRIPT_KEEP, conversation_id=conversation_id)
+    return {"ok": True, "conversation": convo, "messages": messages}, 200
+
+
+def _do_delete_ask_conversation(restaurant_id, conversation_id):
+    from models import delete_ask_conversation
+    if not delete_ask_conversation(restaurant_id, conversation_id):
+        return {"ok": False, "error": "That conversation doesn't exist."}, 404
+    return {"ok": True}, 200
+
+
+@client_bp.route("/api/ask-cavnar/conversations")
 @login_required
-def ask_cavnar_record_action(current_user):
+def ask_cavnar_conversations(current_user):
+    payload, status = _do_list_ask_conversations(current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/ask-cavnar/conversations", methods=["POST"])
+@login_required
+def ask_cavnar_new_conversation(current_user):
+    payload, status = _do_create_ask_conversation(current_user["restaurant_id"], current_user.get("id"))
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/ask-cavnar/conversations/<int:conversation_id>")
+@login_required
+def ask_cavnar_conversation(current_user, conversation_id):
+    payload, status = _do_get_ask_conversation(current_user["restaurant_id"], conversation_id)
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/ask-cavnar/conversations/<int:conversation_id>", methods=["DELETE"])
+@login_required
+def ask_cavnar_delete_conversation(current_user, conversation_id):
+    payload, status = _do_delete_ask_conversation(current_user["restaurant_id"], conversation_id)
+    return jsonify(**payload), status
+
+
+def _do_record_ask_action(restaurant_id, user_id, data):
     """Record what the owner did with a proposal.
 
     The confirmed action itself is executed by the client calling the same
@@ -1066,29 +1180,36 @@ def ask_cavnar_record_action(current_user):
     there is still exactly one code path that can send a supplier order.
     """
     from models import log_ask_action, save_ask_message
-    data = request.get_json(silent=True) or {}
     action = (data.get("action") or "").strip()
     outcome = (data.get("outcome") or "").strip()
     if not action or outcome not in ("confirmed", "dismissed"):
-        return jsonify(ok=False, error="action and outcome (confirmed|dismissed) are required"), 400
-    rid = current_user["restaurant_id"]
-    uid = current_user.get("id")
-    log_ask_action(rid, action, summary=data.get("summary"),
-                   body=data.get("body"), outcome=outcome, user_id=uid)
+        return {"ok": False, "error": "action and outcome (confirmed|dismissed) are required"}, 400
+    log_ask_action(restaurant_id, action, summary=data.get("summary"),
+                   body=data.get("body"), outcome=outcome, user_id=user_id)
 
     # Also write it into the transcript. Without this the model never learns
     # what happened to its own proposal: asked "did that order go out?" after
     # the owner confirmed, it answered "no, nothing has been sent" — stating a
     # false fact about the account with complete confidence. Recorded as a
     # user turn because confirming genuinely is the owner's action, and it
-    # keeps the user/assistant alternation the Messages API expects.
+    # keeps the user/assistant alternation the Messages API expects. Lands in
+    # the chat the proposal came from when the client says which.
     try:
         label = data.get("summary") or action.replace("_", " ")
         verb = "Confirmed" if outcome == "confirmed" else "Dismissed"
-        save_ask_message(rid, "user", f"[{verb}: {label}]", user_id=uid)
+        save_ask_message(restaurant_id, "user", f"[{verb}: {label}]", user_id=user_id,
+                         conversation_id=_parse_conversation_id(data.get("conversation_id")))
     except Exception:
         pass
-    return jsonify(ok=True)
+    return {"ok": True}, 200
+
+
+@client_bp.route("/api/ask-cavnar/action", methods=["POST"])
+@login_required
+def ask_cavnar_record_action(current_user):
+    data = request.get_json(silent=True) or {}
+    payload, status = _do_record_ask_action(current_user["restaurant_id"], current_user.get("id"), data)
+    return jsonify(**payload), status
 
 @client_bp.route("/api/mkt-insight")
 @login_required

@@ -210,6 +210,14 @@ actor APIClient {
         let truncated: Bool?
         let proposals: [AskProposal]?
         let error: String?
+        /// Which chat the answer was filed under — tells a client that
+        /// started a fresh conversation what its id is now.
+        let conversationId: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case type, label, state, answer, truncated, proposals, error
+            case conversationId = "conversation_id"
+        }
     }
 
     /// POSTs `path` and yields each `data: {...}` line as it arrives.

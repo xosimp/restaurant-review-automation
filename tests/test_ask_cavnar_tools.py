@@ -9,6 +9,7 @@ import json
 import pytest
 from flask import Flask
 
+import ai_utils
 import ask_cavnar
 import ask_cavnar_tools as tools
 import auth
@@ -25,6 +26,11 @@ def _redirect_db(monkeypatch, db_path):
     for mod in (models, auth, client_api, tools):
         monkeypatch.setattr(mod, "get_conn", redirect, raising=False)
     monkeypatch.setattr(models, "DB_PATH", db_path)
+    # The 5/min Ask Cavnar limiter is process-global and keyed by restaurant
+    # id — and every test's fresh database hands out id 1 again. Enough
+    # route tests in one minute tripped it, and a later test's stream came
+    # back 429 with no events. Its own coverage lives in test_email_delivery.
+    monkeypatch.setattr(ai_utils, "ai_rate_limited", lambda *a, **kw: False)
 
 
 @pytest.fixture
@@ -314,6 +320,186 @@ def test_history_routes_round_trip(client, db_path, monkeypatch):
     assert len(client.get("/api/ask-cavnar/history").get_json()["messages"]) == 1
     assert client.delete("/api/ask-cavnar/history").get_json()["ok"] is True
     assert client.get("/api/ask-cavnar/history").get_json()["messages"] == []
+
+
+# ── Chat history: conversations ──────────────────────────────────────────
+
+def test_a_message_with_no_conversation_lands_in_the_current_chat(db_path):
+    """The web panel never names a chat — its turns go to the most recent
+    one, and the very first turn creates it."""
+    from models import save_ask_message, list_ask_conversations, get_ask_history
+    rid = _restaurant(db_path)
+    cid = save_ask_message(rid, "user", "How are my reviews?", db_path=db_path)
+    assert save_ask_message(rid, "assistant", "Great.", db_path=db_path) == cid
+    chats = list_ask_conversations(rid, db_path=db_path)
+    assert [c["id"] for c in chats] == [cid]
+    assert chats[0]["title"] == "How are my reviews?"
+    assert chats[0]["message_count"] == 2
+    assert chats[0]["preview"] == "Great."
+    assert [h["content"] for h in get_ask_history(rid, db_path=db_path)] == ["How are my reviews?", "Great."]
+
+
+def test_a_new_chat_keeps_its_turns_apart_from_the_old_one(db_path):
+    from models import save_ask_message, create_ask_conversation, get_ask_history, list_ask_conversations
+    rid = _restaurant(db_path)
+    first = save_ask_message(rid, "user", "first chat", db_path=db_path)
+    second = create_ask_conversation(rid, db_path=db_path)
+    save_ask_message(rid, "user", "second chat", conversation_id=second, db_path=db_path)
+    assert [h["content"] for h in get_ask_history(rid, conversation_id=first, db_path=db_path)] == ["first chat"]
+    assert [h["content"] for h in get_ask_history(rid, conversation_id=second, db_path=db_path)] == ["second chat"]
+    # The newest activity sorts first in the history list.
+    assert [c["id"] for c in list_ask_conversations(rid, db_path=db_path)] == [second, first]
+    # And with no id named, "current" is the one most recently written to.
+    assert get_ask_history(rid, db_path=db_path)[0]["content"] == "second chat"
+
+
+def test_a_chat_is_named_by_its_first_question_only(db_path):
+    from models import save_ask_message, list_ask_conversations, _ASK_TITLE_MAX
+    rid = _restaurant(db_path)
+    long_q = "word " * 60
+    cid = save_ask_message(rid, "user", long_q, db_path=db_path)
+    save_ask_message(rid, "user", "a later question", conversation_id=cid, db_path=db_path)
+    title = list_ask_conversations(rid, db_path=db_path)[0]["title"]
+    assert title.startswith("word word") and title.endswith("…")
+    assert len(title) <= _ASK_TITLE_MAX
+
+
+def test_an_audit_line_never_becomes_a_chat_title(db_path):
+    from models import create_ask_conversation, save_ask_message, list_ask_conversations
+    rid = _restaurant(db_path)
+    cid = create_ask_conversation(rid, db_path=db_path)
+    save_ask_message(rid, "user", "[Confirmed: Email Fresh Co]", conversation_id=cid, db_path=db_path)
+    assert list_ask_conversations(rid, db_path=db_path)[0]["title"] == "New conversation"
+
+
+def test_deleting_a_chat_is_permanent_and_scoped(db_path):
+    from models import (save_ask_message, delete_ask_conversation, list_ask_conversations,
+                        get_ask_history, log_ask_action, get_ask_actions)
+    mine, theirs = _restaurant(db_path), _restaurant(db_path, name="Other Co")
+    cid = save_ask_message(mine, "user", "delete me", db_path=db_path)
+    log_ask_action(mine, "send_supplier_order", outcome="confirmed", db_path=db_path)
+    # Another restaurant holding a valid id deletes nothing.
+    assert delete_ask_conversation(theirs, cid, db_path=db_path) is False
+    assert len(list_ask_conversations(mine, db_path=db_path)) == 1
+    assert delete_ask_conversation(mine, cid, db_path=db_path) is True
+    assert list_ask_conversations(mine, db_path=db_path) == []
+    assert get_ask_history(mine, conversation_id=cid, db_path=db_path) == []
+    # What was actually done to the account survives the chat's deletion.
+    assert len(get_ask_actions(mine, db_path=db_path)) == 1
+
+
+def test_another_restaurants_chat_id_reads_as_nonexistent(db_path):
+    from models import save_ask_message, get_ask_conversation, get_ask_history
+    mine, theirs = _restaurant(db_path), _restaurant(db_path, name="Other Co")
+    cid = save_ask_message(theirs, "user", "their secret", db_path=db_path)
+    assert get_ask_conversation(mine, cid, db_path=db_path) is None
+    assert get_ask_history(mine, conversation_id=cid, db_path=db_path) == []
+    with pytest.raises(ValueError):
+        save_ask_message(mine, "user", "sneak in", conversation_id=cid, db_path=db_path)
+
+
+def test_the_history_list_is_bounded_oldest_chats_fall_off(db_path):
+    from models import create_ask_conversation, list_ask_conversations, _ASK_CONVERSATIONS_KEEP
+    rid = _restaurant(db_path)
+    ids = [create_ask_conversation(rid, db_path=db_path) for _ in range(_ASK_CONVERSATIONS_KEEP + 3)]
+    kept = [c["id"] for c in list_ask_conversations(rid, limit=1000, db_path=db_path)]
+    assert len(kept) == _ASK_CONVERSATIONS_KEEP
+    assert ids[0] not in kept and ids[-1] in kept
+
+
+def test_pre_conversation_messages_are_adopted_into_one_chat(db_path):
+    """Rows written before chats existed carry no conversation_id. init_db
+    folds them into a single chat per restaurant so nothing an owner already
+    said vanishes from their history."""
+    from models import init_db, list_ask_conversations, get_ask_history
+    rid = _restaurant(db_path)
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO ask_cavnar_messages (restaurant_id, role, content) VALUES (?,?,?)",
+                 (rid, "user", "old question"))
+    conn.execute("INSERT INTO ask_cavnar_messages (restaurant_id, role, content) VALUES (?,?,?)",
+                 (rid, "assistant", "old answer"))
+    conn.commit()
+    conn.close()
+    init_db(db_path)
+    chats = list_ask_conversations(rid, db_path=db_path)
+    assert len(chats) == 1 and chats[0]["title"] == "old question"
+    assert [h["content"] for h in get_ask_history(rid, conversation_id=chats[0]["id"], db_path=db_path)] \
+        == ["old question", "old answer"]
+    # Idempotent — a second boot doesn't make a second chat.
+    init_db(db_path)
+    assert len(list_ask_conversations(rid, db_path=db_path)) == 1
+
+
+def test_conversation_routes_round_trip(client, db_path, monkeypatch):
+    from models import save_ask_message
+    rid = _restaurant(db_path)
+    _login_as(monkeypatch, rid)
+    cid = save_ask_message(rid, "user", "hello there", db_path=db_path)
+    listed = client.get("/api/ask-cavnar/conversations").get_json()
+    assert listed["ok"] and listed["conversations"][0]["id"] == cid
+    one = client.get(f"/api/ask-cavnar/conversations/{cid}").get_json()
+    assert one["conversation"]["title"] == "hello there"
+    assert [m["content"] for m in one["messages"]] == ["hello there"]
+    fresh = client.post("/api/ask-cavnar/conversations").get_json()
+    assert fresh["ok"] and fresh["conversation_id"] != cid
+    assert client.delete(f"/api/ask-cavnar/conversations/{cid}").get_json()["ok"] is True
+    assert client.get(f"/api/ask-cavnar/conversations/{cid}").status_code == 404
+    assert client.delete(f"/api/ask-cavnar/conversations/{cid}").status_code == 404
+
+
+def test_asking_in_a_named_chat_stays_in_that_chat(client, db_path, monkeypatch):
+    from models import create_ask_conversation, get_ask_history
+    rid = _restaurant(db_path)
+    _login_as(monkeypatch, rid)
+    monkeypatch.setattr(ask_cavnar, "ask_with_tools", lambda *a, **kw: ("an answer", False, []))
+    monkeypatch.setattr(client_api, "ai_rate_limited", lambda *a, **kw: False, raising=False)
+    older = create_ask_conversation(rid, db_path=db_path)
+    newer = create_ask_conversation(rid, db_path=db_path)
+    resp = client.post("/api/ask-cavnar", json={"question": "in the older chat", "conversation_id": older})
+    body = resp.get_json()
+    assert body["ok"] and body["conversation_id"] == older
+    assert [h["content"] for h in get_ask_history(rid, conversation_id=older, db_path=db_path)] \
+        == ["in the older chat", "an answer"]
+    assert get_ask_history(rid, conversation_id=newer, db_path=db_path) == []
+
+
+def test_new_conversation_opens_a_fresh_chat_on_the_first_question(client, db_path, monkeypatch):
+    """The app's "New chat" creates nothing until a question is answered —
+    then that answer lands in a chat of its own, not the current one."""
+    from models import save_ask_message, list_ask_conversations, get_ask_history
+    rid = _restaurant(db_path)
+    _login_as(monkeypatch, rid)
+    monkeypatch.setattr(ask_cavnar, "ask_with_tools", lambda *a, **kw: ("fresh answer", False, []))
+    existing = save_ask_message(rid, "user", "older chat", db_path=db_path)
+    body = client.post("/api/ask-cavnar", json={"question": "brand new topic", "new_conversation": True}).get_json()
+    assert body["ok"] and body["conversation_id"] != existing
+    assert [c["id"] for c in list_ask_conversations(rid, db_path=db_path)] == [body["conversation_id"], existing]
+    assert [h["content"] for h in get_ask_history(rid, conversation_id=existing, db_path=db_path)] == ["older chat"]
+    assert get_ask_history(rid, conversation_id=body["conversation_id"], db_path=db_path)[0]["content"] == "brand new topic"
+
+
+def test_asking_in_someone_elses_chat_is_a_404(client, db_path, monkeypatch):
+    from models import create_ask_conversation
+    mine, theirs = _restaurant(db_path), _restaurant(db_path, name="Other Co")
+    _login_as(monkeypatch, mine)
+    cid = create_ask_conversation(theirs, db_path=db_path)
+    resp = client.post("/api/ask-cavnar", json={"question": "hi", "conversation_id": cid})
+    assert resp.status_code == 404
+    resp = client.post("/api/ask-cavnar/stream", json={"question": "hi", "conversation_id": cid})
+    assert resp.status_code == 404
+
+
+def test_a_confirm_lands_in_the_chat_the_proposal_came_from(client, db_path, monkeypatch):
+    from models import create_ask_conversation, get_ask_history
+    rid = _restaurant(db_path)
+    _login_as(monkeypatch, rid)
+    older = create_ask_conversation(rid, db_path=db_path)
+    newer = create_ask_conversation(rid, db_path=db_path)
+    client.post("/api/ask-cavnar/action",
+                json={"action": "send_supplier_order", "outcome": "confirmed",
+                      "summary": "Email Fresh Co", "conversation_id": older})
+    assert "[Confirmed: Email Fresh Co]" in [h["content"] for h in get_ask_history(rid, conversation_id=older, db_path=db_path)]
+    assert get_ask_history(rid, conversation_id=newer, db_path=db_path) == []
 
 
 # ── Roster / shifts (the gap that caused wrong refusals) ─────────────────

@@ -1126,6 +1126,8 @@ def mobile_ask_cavnar(current_user):
     payload, status = _capi._do_ask_cavnar(
         current_user["restaurant_id"], data.get("question"), history=data.get("history"),
         user_id=current_user.get("id"),
+        conversation_id=_capi._parse_conversation_id(data.get("conversation_id")),
+        new_conversation=bool(data.get("new_conversation")),
     )
     return jsonify(**payload), status
 
@@ -1143,7 +1145,9 @@ def mobile_ask_cavnar_stream(current_user):
     """
     data = request.get_json(silent=True) or {}
     return _capi._ask_cavnar_stream_response(
-        current_user["restaurant_id"], current_user.get("id"), data.get("question"))
+        current_user["restaurant_id"], current_user.get("id"), data.get("question"),
+        conversation_id=_capi._parse_conversation_id(data.get("conversation_id")),
+        new_conversation=bool(data.get("new_conversation")))
 
 
 @mobile_bp.route("/ask-cavnar/history")
@@ -1161,30 +1165,46 @@ def mobile_ask_cavnar_clear_history(current_user):
     return jsonify(ok=True)
 
 
+# Chat history — one row per conversation. Bodies live in client_api so the
+# web and the app can't drift; every one is restaurant-scoped in models.
+
+@mobile_bp.route("/ask-cavnar/conversations")
+@mobile_login_required
+def mobile_ask_cavnar_conversations(current_user):
+    payload, status = _capi._do_list_ask_conversations(current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/ask-cavnar/conversations", methods=["POST"])
+@mobile_login_required
+def mobile_ask_cavnar_new_conversation(current_user):
+    payload, status = _capi._do_create_ask_conversation(current_user["restaurant_id"], current_user.get("id"))
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/ask-cavnar/conversations/<int:conversation_id>")
+@mobile_login_required
+def mobile_ask_cavnar_conversation(current_user, conversation_id):
+    payload, status = _capi._do_get_ask_conversation(current_user["restaurant_id"], conversation_id)
+    return jsonify(**payload), status
+
+
+@mobile_bp.route("/ask-cavnar/conversations/<int:conversation_id>", methods=["DELETE"])
+@mobile_login_required
+def mobile_ask_cavnar_delete_conversation(current_user, conversation_id):
+    payload, status = _capi._do_delete_ask_conversation(current_user["restaurant_id"], conversation_id)
+    return jsonify(**payload), status
+
+
 @mobile_bp.route("/ask-cavnar/action", methods=["POST"])
 @mobile_login_required
 def mobile_ask_cavnar_record_action(current_user):
     """Audit line only — the confirmed action is executed by the app calling
-    the same route its own button uses."""
-    from models import log_ask_action, save_ask_message
+    the same route its own button uses. See client_api's shared body."""
     data = request.get_json(silent=True) or {}
-    action = (data.get("action") or "").strip()
-    outcome = (data.get("outcome") or "").strip()
-    if not action or outcome not in ("confirmed", "dismissed"):
-        return jsonify(ok=False, error="action and outcome (confirmed|dismissed) are required"), 400
-    rid = current_user["restaurant_id"]
-    uid = current_user.get("id")
-    log_ask_action(rid, action, summary=data.get("summary"),
-                   body=data.get("body"), outcome=outcome, user_id=uid)
-    # See client_api's twin: the transcript has to carry the outcome or the
-    # model will confidently deny an action the owner actually confirmed.
-    try:
-        label = data.get("summary") or action.replace("_", " ")
-        verb = "Confirmed" if outcome == "confirmed" else "Dismissed"
-        save_ask_message(rid, "user", f"[{verb}: {label}]", user_id=uid)
-    except Exception:
-        pass
-    return jsonify(ok=True)
+    payload, status = _capi._do_record_ask_action(
+        current_user["restaurant_id"], current_user.get("id"), data)
+    return jsonify(**payload), status
 
 
 # ── Food cost quick-entry ─────────────────────────────────────────────────

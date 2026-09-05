@@ -60,8 +60,13 @@ struct HomeView: View {
     // kept compositing every frame through a sheet's presentation and any
     // interactive swipe-to-dismiss, which is what made both feel laggy.
     private var backgroundMotionPaused: Bool {
-        showingValueDetail || showingNotifications || showingLocationSwitcher
+        showingValueDetail || showingNotifications || showingLocationSwitcher || !tabVisible
     }
+    // False while another tab is selected. TabView keeps Home mounted (and
+    // its TimelineViews ticking) behind the other tabs — three Canvas
+    // layers repainting at 30fps under the Ask Cavnar chat was pure wasted
+    // main-thread time on the exact screen that needs it for scrolling.
+    var tabVisible: Bool = true
 
     var body: some View {
         NavigationStack(path: $path) {

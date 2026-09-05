@@ -37,23 +37,16 @@ struct RootView: View {
     // the page, before the ScrollView had its width — hence "a big C in the
     // top-left") for the reload before the hero came back.
     @State private var homeViewModel = HomeViewModel()
-    @State private var showingAskCavnar = false
-    // Owned here, not inside the sheet — a sheet-owned @State view model is
-    // destroyed on every dismissal, wiping the whole conversation (audit 5.6).
-    // Same rationale as homeViewModel/homePath above.
+    // Owned here so the conversation survives the LockedView swap (audit
+    // 5.6) — same rationale as homeViewModel/homePath above.
     @State private var askCavnarViewModel = AskCavnarViewModel()
     // Raised at .inactive, BEFORE iOS takes the app-switcher snapshot, so the
     // thumbnail shows the seal instead of the live dashboard (audit 1.6).
     @State private var privacyShieldUp = false
-    // Single shared flip that drives BOTH Home's hero fade-in and the FAB's
-    // — owned up here (not by HomeView, which lives in a separate subtree
-    // from the FAB overlay) so one withAnimation call moves both at once
-    // instead of two separately-timed onAppear checks that could drift out
-    // of sync. The three that follow are the FAB's own post-fade stages.
+    // Drives Home's hero fade-in on the first landing of a sign-in. Owned
+    // up here rather than by HomeView so it survives the LockedView swap
+    // and the launch-splash handoff below.
     @State private var introAppeared = false
-    @State private var fabPopped = false
-    @State private var fabIconSpun = false
-    @State private var fabCollapsed = false
     // See SessionStore.pendingPasscodeSetup.
     @State private var showingPasscodeSetup = false
 
@@ -286,7 +279,8 @@ struct RootView: View {
     // control haptic convention for a discrete-choice change.
     private var mainTabs: some View {
         TabView(selection: $selectedTab) {
-            HomeView(viewModel: homeViewModel, path: $homePath, heroAppeared: introAppeared, onHeroAppear: startIntroSequence)
+            HomeView(viewModel: homeViewModel, path: $homePath, heroAppeared: introAppeared,
+                     onHeroAppear: startIntroSequence, tabVisible: selectedTab == .home)
                 .tabItem { Label(AppTab.home.title, systemImage: AppTab.home.systemImage) }
                 .tag(AppTab.home)
 
@@ -295,6 +289,14 @@ struct RootView: View {
             ModulesGridView(path: $modulesPath, initialModules: homeViewModel.summary?.modules ?? [])
                 .tabItem { Label(AppTab.modules.title, systemImage: AppTab.modules.systemImage) }
                 .tag(AppTab.modules)
+
+            // A tab, not a floating button + sheet: the FAB sat over tap
+            // targets on every screen, and a sheet's own swipe-to-dismiss
+            // recognizer fought the chat's keyboard for every tap. The orb
+            // freezes while another tab is up — TabView keeps this mounted.
+            AskCavnarView(viewModel: askCavnarViewModel, motionPaused: selectedTab != .ask)
+                .tabItem { Label(AppTab.ask.title, systemImage: AppTab.ask.systemImage) }
+                .tag(AppTab.ask)
 
             AccountView()
                 .tabItem { Label(AppTab.account.title, systemImage: AppTab.account.systemImage) }
@@ -312,35 +314,10 @@ struct RootView: View {
         // Fallback only — the real trigger is HomeView's onHeroAppear
         // (fires the moment Home's data has actually loaded and the hero is
         // on screen). Without this, a failed/very slow Home load would
-        // leave the FAB invisible for the rest of the session with no way
-        // to reach Ask Cavnar at all.
+        // leave the hero faded out for the rest of the session.
         .task {
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             startIntroSequence()
-        }
-        // .overlay (not a ZStack sibling) so the FAB actually receives taps —
-        // a ZStack sibling next to TabView silently lost hit-testing to the
-        // tab content underneath it.
-        .overlay(alignment: .bottomTrailing) {
-            AskCavnarFAB(
-                appeared: introAppeared,
-                popped: fabPopped,
-                iconSpun: fabIconSpun,
-                collapsed: fabCollapsed
-            ) {
-                Haptic.light()
-                showingAskCavnar = true
-            }
-                .padding(.trailing, 20)
-                .padding(.bottom, 70)  // clears the tab bar
-                // Never ride the keyboard inset — see LoginView's Sign In
-                // action for the launch-time glitch this caused.
-                .ignoresSafeArea(.keyboard)
-                .accessibilityLabel("Ask Cavnar AI")
-                .accessibilityHint("Opens a chat with your restaurant intelligence consultant")
-        }
-        .sheet(isPresented: $showingAskCavnar) {
-            AskCavnarView(viewModel: askCavnarViewModel)
         }
     }
 
@@ -360,8 +337,6 @@ struct RootView: View {
     private func startIntroSequence() {
         guard !sessionStore.hasShownHomeIntro else {
             introAppeared = true
-            fabIconSpun = true
-            fabCollapsed = true
             return
         }
         // Don't burn the one-time landing reveal while the launch splash is
@@ -374,158 +349,13 @@ struct RootView: View {
         Task { await playIntroSequence() }
     }
 
-    /// Hero + FAB fade/rise in together (one withAnimation call drives
-    /// both, so they're pixel-synced) → a short pop → the FAB's icon spins
-    /// once → the FAB collapses down to an icon-only button, since a
-    /// permanently full-width "Ask Cavnar AI" pill was sitting over tap
-    /// targets on the rest of the screen. Only ever reached once per
-    /// sign-in — see startIntroSequence()'s guard above.
+    /// Home's hero fades/rises in. Only ever reached once per sign-in —
+    /// see startIntroSequence()'s guard above. (This used to also choreograph
+    /// the Ask Cavnar FAB's pop/spin/collapse; Ask Cavnar is a tab now.)
     private func playIntroSequence() async {
         withAnimation(.easeOut(duration: 0.7).delay(0.15)) {
             introAppeared = true
         }
-        try? await Task.sleep(nanoseconds: 1_300_000_000)
-
-        withAnimation(.easeOut(duration: 0.32)) { fabPopped = true }
-        withAnimation(.easeInOut(duration: 0.9)) { fabIconSpun = true }
-        try? await Task.sleep(nanoseconds: 320_000_000)
-        withAnimation(.spring(response: 0.5, dampingFraction: 0.55)) { fabPopped = false }
-        try? await Task.sleep(nanoseconds: 650_000_000)
-
-        withAnimation(.easeInOut(duration: 0.6)) {
-            fabCollapsed = true
-        }
-    }
-}
-
-/// Persistent floating action button reachable from any tab — matches the
-/// web dashboard's own Ask Cavnar bubble (a FAB there too, not a tab), and
-/// frees a permanent tab slot as more modules ship (see the architecture plan).
-/// Lands as a labeled glass pill on the client's first landing this
-/// session (see RootView.startIntroSequence), then pops, runs its halo
-/// once, and collapses to the icon-only tile for the rest of the
-/// session — the permanently-labeled pill was wide enough to sit over tap
-/// targets on the screen behind it.
-private struct AskCavnarFAB: View {
-    var appeared: Bool
-    var popped: Bool
-    var iconSpun: Bool
-    var collapsed: Bool
-    var action: () -> Void
-
-    // Ambient "alive" loop for the collapsed icon-only state — a slow
-    // continuous spin plus a breathing glow pulse, so it reads as an always-
-    // listening presence instead of a static leftover icon. Self-contained
-    // here rather than driven from RootView since it's purely cosmetic and
-    // has no one-time/session-scoped requirement the way the intro does.
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var ambientRotation = false
-    @State private var ambientGlow = false
-
-    private var pill: RoundedRectangle { RoundedRectangle(cornerRadius: 15, style: .continuous) }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: collapsed ? 0 : 8) {
-                ZStack {
-                    // Soft halo behind the icon, pulsing — only visible once
-                    // collapsed (opacity rides the same pulse either way,
-                    // but it's negligible while the material pill is still
-                    // covering it).
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(Color.cavnarEmber)
-                        .frame(width: 30, height: 30)
-                        .blur(radius: 10)
-                        .opacity(collapsed ? (ambientGlow ? 0.55 : 0.2) : 0)
-
-                    // Only the badge's outer star rotates (GlowBadge's own
-                    // `rotation:` param) — the sparkles icon on top of it
-                    // stays fixed, per the ask that just the orange star
-                    // spin, not the whole badge including its icon.
-                    GlowBadge(
-                        systemImage: "sparkles", size: 30,
-                        // Intro's one-time spin, then the ambient loop keeps
-                        // turning from wherever that left off — both are
-                        // full 360s so the handoff between them never jumps.
-                        // Only the thin ember halo turns (see GlowBadge);
-                        // the tile and its sparkle stay still.
-                        rotation: .degrees((iconSpun ? 360 : 0) + (ambientRotation ? 360 : 0)),
-                        halo: true
-                    )
-                }
-                if !collapsed {
-                    Text("Ask Cavnar AI")
-                        .font(.cavnarBody(14.5, weight: 700))
-                        .foregroundStyle(Color.cavnarInk)
-                        .fixedSize()
-                        .transition(.opacity.combined(with: .scale(scale: 0.01, anchor: .leading)))
-                }
-            }
-            .padding(.leading, 6)
-            .padding(.trailing, collapsed ? 6 : 14)
-            .padding(.vertical, 6)
-            // Faded out (not removed) as `collapsed` flips, in the same
-            // container as the text above — keeps the pill's shrink and the
-            // chrome's fade as one continuous collapse instead of a jump
-            // cut, ending with nothing left behind the icon but its own
-            // built-in glow, per the "just the icon itself" ask.
-            //
-            // Deliberately NOT using CavnarPremiumButtonSurface/the shared
-            // button system — this is a one-of-one custom-animated control
-            // (GlowBadge rotation, ambient halo pulse, expand/collapse),
-            // not a generic button, and doesn't need to track the shared
-            // style's changes.
-            //
-            // The pill is a rounded rectangle concentric with the tile
-            // (tile radius 9 + 6pt padding = 15), not a Capsule — a capsule
-            // shrinking around a rounded-square badge ended the collapse as
-            // a circle with a square inside it, two shapes fighting. Now
-            // the pill, the badge, and its halo are one family and the
-            // collapse ends on the badge's own outline.
-            .background(pill.fill(.ultraThinMaterial).opacity(collapsed ? 0 : 1))
-            .overlay(
-                pill
-                    .strokeBorder(Color.cavnarEmber.opacity(0.35), lineWidth: 1)
-                    .opacity(collapsed ? 0 : 1)
-            )
-            .shadow(color: .black.opacity(collapsed ? 0 : 0.25), radius: 8, y: 4)
-        }
-        .buttonStyle(FABPressStyle())
-        // Same opacity/offset curve as HomeView's hero, driven by the same
-        // `introAppeared` flip from RootView, so the two reveal in lockstep.
-        .opacity(appeared ? 1 : 0)
-        .offset(y: appeared ? 0 : 26)
-        .scaleEffect(popped ? 1.15 : 1.0)
-        .task(id: collapsed) {
-            guard collapsed else { return }
-            // Reduce Motion settles this straight to its resting state rather
-            // than looping forever — required for accessibility, and it also
-            // stops a decorative loop keeping the GPU awake on a phone parked
-            // on a pass counter all service (audit 3.6 / 7.6).
-            guard !reduceMotion else {
-                ambientRotation = false
-                ambientGlow = false
-                return
-            }
-            withAnimation(.linear(duration: 16).repeatForever(autoreverses: false)) {
-                ambientRotation = true
-            }
-            withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
-                ambientGlow = true
-            }
-        }
-    }
-}
-
-/// A separate simultaneousGesture(DragGesture(minimumDistance: 0)) used to
-/// power the press-scale animation previously competed with the Button's own
-/// tap recognition and could swallow the tap entirely. configuration.isPressed
-/// gets the same visual feedback without a second gesture in the mix.
-private struct FABPressStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.9 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

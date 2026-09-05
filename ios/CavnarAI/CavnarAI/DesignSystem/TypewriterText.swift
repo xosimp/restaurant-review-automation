@@ -29,6 +29,15 @@ struct TypewriterText: View {
     // default so every existing call site (AIConsultantView's insight
     // boxes) is unaffected.
     var onReveal: (() -> Void)? = nil
+    /// True for a message that has already fully played its reveal once
+    /// before (tracked by the caller, e.g. across a sheet dismiss/reopen
+    /// where this view's own @State doesn't survive) — renders the full
+    /// text immediately instead of animating it again.
+    var startRevealed: Bool = false
+    /// Fires once, the moment the reveal actually finishes animating (not
+    /// when startRevealed skips straight to the end) — lets the caller
+    /// record that this message need never retype again.
+    var onComplete: (() -> Void)? = nil
 
     @State private var visibleWordCount = 0
     /// Precomputed cumulative prefixes: `prefixes[i]` is the first i words
@@ -84,9 +93,17 @@ struct TypewriterText: View {
                     measuredWidth = cavnarMeasuredTextWidth(fullText, font: measuringFont, maxWidth: maxWidth)
                 }
 
-                visibleWordCount = 0
                 let total = split.count
-                guard total > 0 else { return }
+                if startRevealed {
+                    visibleWordCount = total
+                    return
+                }
+
+                visibleWordCount = 0
+                guard total > 0 else {
+                    onComplete?()
+                    return
+                }
 
                 // Total reveal duration is CAPPED, not per-word. The old
                 // formula clamped the per-word delay at a 16ms floor, so
@@ -111,6 +128,7 @@ struct TypewriterText: View {
                     visibleWordCount = revealed
                     onReveal?()
                 }
+                onComplete?()
             }
     }
 }
