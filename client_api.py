@@ -825,7 +825,7 @@ def mkt_performance_api(current_user):
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
-def _do_ask_cavnar(restaurant_id, question, history=None):
+def _do_ask_cavnar(restaurant_id, question, history=None, surface="web", user_id=None):
     """The AI copilot's shared body — answers a plain-English question about
     the restaurant's own live data (reviews/labor/food cost/marketing,
     whichever modules are active) instead of the owner having to piece it
@@ -838,21 +838,46 @@ def _do_ask_cavnar(restaurant_id, question, history=None):
     question = (question or "").strip()
     if not question:
         return {"ok": False, "error": "Ask a question first."}, 400
-    if len(question) > 500:
-        return {"ok": False, "error": "That question is too long — try to keep it under 500 characters."}, 400
+    if len(question) > 2000:
+        return {"ok": False, "error": "That question is too long — try to keep it under 2000 characters."}, 400
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"askcavnar:{restaurant_id}", max_calls=10, window_secs=60):
         return {"ok": False, "error": "Too many questions — please wait a moment and try again."}, 429
     try:
-        from ask_cavnar import ask as _ask_cavnar
+        from ask_cavnar import ask_with_tools
+        from models import save_ask_message, get_ask_history, log_ask_action
         restaurant = get_restaurant(restaurant_id)
         if not restaurant:
             return {"ok": False, "error": "Restaurant not found"}, 404
-        answer, truncated = _ask_cavnar(restaurant, question, history=history)
+
+        # Stored history is the source of truth so the conversation survives
+        # a reload or an app restart; a client-supplied list is still honoured
+        # for callers that haven't migrated.
+        if history is None:
+            history = [{"role": h["role"], "content": h["content"]}
+                       for h in get_ask_history(restaurant_id)]
+
+        answer, truncated, proposals = ask_with_tools(
+            restaurant, question, history=history, surface=surface)
+
+        try:
+            save_ask_message(restaurant_id, "user", question, user_id=user_id)
+            save_ask_message(restaurant_id, "assistant", answer,
+                             proposals=proposals or None, user_id=user_id)
+            for p in (proposals or []):
+                log_ask_action(restaurant_id, p["action"], summary=p.get("summary"),
+                               body=p.get("body"), outcome="proposed", user_id=user_id)
+        except Exception as e:
+            # Never fail a good answer because the transcript couldn't be written.
+            import ops
+            ops.capture(e, job="ask_cavnar_persist", context=f"restaurant_id={restaurant_id}")
+
         # `truncated` tells the client the answer stopped at max_tokens rather
         # than finishing, so it can say so instead of presenting a half
-        # sentence as complete advice.
-        return {"ok": True, "answer": answer, "truncated": truncated}, 200
+        # sentence as complete advice. `proposals` are confirm cards — actions
+        # the assistant wants to take and deliberately cannot take itself.
+        return {"ok": True, "answer": answer, "truncated": truncated,
+                "proposals": proposals or []}, 200
     except Exception as e:
         import ops
         ops.capture(e, job="ask_cavnar", context=f"restaurant_id={restaurant_id}")
@@ -864,8 +889,114 @@ def _do_ask_cavnar(restaurant_id, question, history=None):
 def ask_cavnar_api(current_user):
     rid = current_user["restaurant_id"]
     data = request.get_json() or {}
-    payload, status = _do_ask_cavnar(rid, data.get("question"), history=data.get("history"))
+    payload, status = _do_ask_cavnar(rid, data.get("question"), history=data.get("history"),
+                                     surface="web", user_id=current_user.get("id"))
     return jsonify(**payload), status
+
+
+@client_bp.route("/api/ask-cavnar/stream", methods=["POST"])
+@login_required
+def ask_cavnar_stream(current_user):
+    """Server-sent events: progress while tools run, then the answer.
+
+    The tool loop can take several round trips, and a silent spinner for
+    that long reads as broken. Streaming the tool labels ("Reading your
+    reviews") shows the work rather than token-by-token text, which is both
+    more useful here and far simpler than threading a token stream through
+    a loop that pauses for tool results.
+    """
+    import queue
+    import threading
+
+    rid = current_user["restaurant_id"]
+    uid = current_user.get("id")
+    data = request.get_json(silent=True) or {}
+    question = (data.get("question") or "").strip()
+    if not question:
+        return jsonify(ok=False, error="Ask a question first."), 400
+    if len(question) > 2000:
+        return jsonify(ok=False, error="That question is too long — keep it under 2000 characters."), 400
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"askcavnar:{rid}", max_calls=10, window_secs=60):
+        return jsonify(ok=False, error="Too many questions — please wait a moment."), 429
+
+    events = queue.Queue()
+
+    def work():
+        try:
+            from ask_cavnar import ask_with_tools
+            from models import save_ask_message, get_ask_history, log_ask_action
+            restaurant = get_restaurant(rid)
+            if not restaurant:
+                events.put({"type": "error", "error": "Restaurant not found"})
+                return
+            history = [{"role": h["role"], "content": h["content"]} for h in get_ask_history(rid)]
+            answer, truncated, proposals = ask_with_tools(
+                restaurant, question, history=history, surface="web",
+                on_progress=lambda label: events.put({"type": "progress", "label": label}))
+            try:
+                save_ask_message(rid, "user", question, user_id=uid)
+                save_ask_message(rid, "assistant", answer, proposals=proposals or None, user_id=uid)
+                for p in (proposals or []):
+                    log_ask_action(rid, p["action"], summary=p.get("summary"),
+                                   body=p.get("body"), outcome="proposed", user_id=uid)
+            except Exception:
+                pass
+            events.put({"type": "answer", "answer": answer,
+                        "truncated": truncated, "proposals": proposals or []})
+        except Exception as e:
+            import ops
+            ops.capture(e, job="ask_cavnar_stream", context=f"restaurant_id={rid}")
+            events.put({"type": "error", "error": "Couldn't get an answer right now — try again."})
+        finally:
+            events.put(None)
+
+    threading.Thread(target=work, daemon=True).start()
+
+    def generate():
+        while True:
+            item = events.get()
+            if item is None:
+                break
+            yield f"data: {json.dumps(item)}\n\n"
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@client_bp.route("/api/ask-cavnar/history")
+@login_required
+def ask_cavnar_history(current_user):
+    from models import get_ask_history
+    return jsonify(ok=True, messages=get_ask_history(current_user["restaurant_id"]))
+
+
+@client_bp.route("/api/ask-cavnar/history", methods=["DELETE"])
+@login_required
+def ask_cavnar_clear_history(current_user):
+    from models import clear_ask_history
+    clear_ask_history(current_user["restaurant_id"])
+    return jsonify(ok=True)
+
+
+@client_bp.route("/api/ask-cavnar/action", methods=["POST"])
+@login_required
+def ask_cavnar_record_action(current_user):
+    """Record what the owner did with a proposal.
+
+    The confirmed action itself is executed by the client calling the same
+    route its button already uses — this only writes the audit line, so
+    there is still exactly one code path that can send a supplier order.
+    """
+    from models import log_ask_action
+    data = request.get_json(silent=True) or {}
+    action = (data.get("action") or "").strip()
+    outcome = (data.get("outcome") or "").strip()
+    if not action or outcome not in ("confirmed", "dismissed"):
+        return jsonify(ok=False, error="action and outcome (confirmed|dismissed) are required"), 400
+    log_ask_action(current_user["restaurant_id"], action, summary=data.get("summary"),
+                   body=data.get("body"), outcome=outcome, user_id=current_user.get("id"))
+    return jsonify(ok=True)
 
 @client_bp.route("/api/mkt-insight")
 @login_required

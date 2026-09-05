@@ -429,7 +429,7 @@ def test_ask_truncates_overly_long_questions(db_path, monkeypatch):
     # final message rather than embedded inside a larger templated prompt,
     # so this checks the message content directly instead of a substring
     # search that used to need to account for surrounding instruction text.
-    assert captured["messages"][-1]["content"] == "a" * 500
+    assert captured["messages"][-1]["content"] == "a" * 2000
 
 
 def test_ask_forwards_sanitized_history_as_prior_messages(db_path, monkeypatch):
@@ -556,7 +556,9 @@ def test_do_ask_cavnar_route_forwards_truncated_flag(db_path, monkeypatch):
     import client_api
     r = _restaurant(db_path)
     monkeypatch.setattr(client_api, "get_restaurant", lambda rid: r)
-    monkeypatch.setattr(ask_cavnar, "ask", lambda restaurant, question, history=None: ("cut off mid-", True))
+    monkeypatch.setattr(ask_cavnar, "ask_with_tools",
+                        lambda restaurant, question, history=None, surface="web", on_progress=None:
+                            ("cut off mid-", True, []))
 
     payload, status = client_api._do_ask_cavnar(r.id, "How do I get labor down?")
 
@@ -573,8 +575,8 @@ def test_do_ask_cavnar_route_rejects_overly_long_question(db_path):
     import client_api
     r = _restaurant(db_path)
 
-    payload, status = client_api._do_ask_cavnar(r.id, "a" * 501)
+    payload, status = client_api._do_ask_cavnar(r.id, "a" * 2001)
 
     assert status == 400
     assert payload["ok"] is False
-    assert "500 characters" in payload["error"]
+    assert "2000 characters" in payload["error"]

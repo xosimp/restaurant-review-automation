@@ -4064,7 +4064,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div style="font-size:12px;color:var(--ink3);line-height:1.6">Ask me anything — your reviews, labor, food cost, and marketing numbers, or general advice on running the place. I'll pull in your real data whenever it's relevant.</div>
   </div>
   <div style="padding:12px 14px;border-top:1px solid var(--paper3);display:flex;gap:8px;flex-shrink:0">
-    <input type="text" id="ask-cavnar-input" placeholder="e.g. How's my labor cost trending?" maxlength="500"
+    <input type="text" id="ask-cavnar-input" placeholder="Ask anything — or tell me to do it" maxlength="2000"
       style="flex:1;padding:9px 12px;border:1px solid var(--paper3);border-radius:8px;font-size:12px;font-family:'Apfel Grotezk',sans-serif;outline:none;background:var(--paper2);color:var(--ink)"
       onkeydown="if(event.key==='Enter'){event.preventDefault();sendAskCavnar();}">
     <button onclick="sendAskCavnar()" class="btn-primary" id="ask-cavnar-send-btn" style="padding:0 14px;font-size:12px">Ask</button>
@@ -4114,6 +4114,74 @@ function _appendAskCavnarLoadingBubble() {
   return bubble;
 }
 
+function _appendAskCavnarProposal(p) {
+  var messages = document.getElementById('ask-cavnar-messages');
+  var card = document.createElement('div');
+  card.style.cssText = 'align-self:flex-start;max-width:92%;background:var(--paper2);border:1px solid var(--ember);border-radius:12px;padding:11px 13px';
+  var title = document.createElement('div');
+  title.style.cssText = 'font-size:11.5px;font-weight:700;color:var(--ink);margin-bottom:8px';
+  title.textContent = p.summary || 'Confirm this action';
+  card.appendChild(title);
+
+  var row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:8px';
+
+  var confirm = document.createElement('button');
+  confirm.className = 'btn-primary';
+  confirm.style.cssText = 'font-size:11px;padding:5px 12px';
+  confirm.textContent = 'Confirm';
+  confirm.onclick = function() { _runAskCavnarProposal(p, card, confirm); };
+
+  var dismiss = document.createElement('button');
+  dismiss.className = 'btn';
+  dismiss.style.cssText = 'font-size:11px;padding:5px 12px;background:transparent;color:var(--ink3);border:1px solid var(--paper3)';
+  dismiss.textContent = 'Not now';
+  dismiss.onclick = function() {
+    _recordAskCavnarAction(p, 'dismissed');
+    card.innerHTML = '<div style="font-size:11.5px;color:var(--ink3)">Dismissed.</div>';
+  };
+
+  row.appendChild(confirm);
+  row.appendChild(dismiss);
+  card.appendChild(row);
+  messages.appendChild(card);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function _recordAskCavnarAction(p, outcome) {
+  // Audit line only — never the thing itself.
+  fetch('/api/ask-cavnar/action', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({action: p.action, outcome: outcome, summary: p.summary, body: p.body})
+  }).catch(function(){});
+}
+
+function _runAskCavnarProposal(p, card, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Working…';
+  var route = (p.route && p.route.web) || '';
+  var method = (p.route && p.route.method) || 'POST';
+  if (!route) { card.innerHTML = '<div style="font-size:11.5px;color:#ef4444">No route for that action.</div>'; return; }
+  var opts = {method: method, headers: {'Content-Type': 'application/json'}};
+  if (method !== 'GET') opts.body = JSON.stringify(p.body || {});
+  // The proposal fires the very same authenticated endpoint the button in
+  // the UI uses, so it can never reach anything the user couldn't do.
+  fetch(route, opts).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.ok) {
+      _recordAskCavnarAction(p, 'confirmed');
+      card.innerHTML = '<div style="font-size:11.5px;color:#6fcf97;font-weight:700">Done \u2713</div>';
+    } else {
+      btn.disabled = false; btn.textContent = 'Confirm';
+      var err = document.createElement('div');
+      err.style.cssText = 'font-size:11px;color:#ef4444;margin-top:7px';
+      err.textContent = d.error || "That didn't go through.";
+      card.appendChild(err);
+    }
+  }).catch(function() {
+    btn.disabled = false; btn.textContent = 'Confirm';
+  });
+}
+
 window.sendAskCavnar = function() {
   var input = document.getElementById('ask-cavnar-input');
   var question = input.value.trim();
@@ -4128,26 +4196,70 @@ window.sendAskCavnar = function() {
   input.disabled = true;
   btn.disabled = true;
   var loadingBubble = _appendAskCavnarLoadingBubble();
-  fetch('/api/ask-cavnar', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({question: question, history: historyToSend})
-  }).then(function(r) { return r.json(); }).then(function(d) {
+  var statusLine = document.createElement('div');
+  statusLine.style.cssText = 'align-self:flex-start;font-size:11px;color:var(--ink3);padding:0 4px';
+  document.getElementById('ask-cavnar-messages').appendChild(statusLine);
+
+  function _finish(d) {
     input.disabled = false;
     btn.disabled = false;
     input.focus();
     loadingBubble.remove();
+    statusLine.remove();
     var answer = d.ok ? d.answer : (d.error || 'Something went wrong — try again.');
     _appendAskCavnarMessage(answer, false);
     if (d.ok) {
       _askCavnarHistory.push({role: 'user', content: question});
       _askCavnarHistory.push({role: 'assistant', content: answer});
+      // Anything that leaves the building comes back as a proposal, never
+      // as something already done — render the confirm card.
+      (d.proposals || []).forEach(_appendAskCavnarProposal);
     }
+  }
+
+  // Streamed, because the tool loop can take several round trips and a
+  // silent spinner for that long reads as broken. Falls back to the plain
+  // JSON endpoint if the stream fails for any reason.
+  fetch('/api/ask-cavnar/stream', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({question: question})
+  }).then(function(resp) {
+    if (!resp.ok || !resp.body) throw new Error('stream unavailable');
+    var reader = resp.body.getReader();
+    var decoder = new TextDecoder();
+    var buffer = '';
+    function pump() {
+      return reader.read().then(function(res) {
+        if (res.done) return;
+        buffer += decoder.decode(res.value, {stream: true});
+        var chunks = buffer.split('\n\n');
+        buffer = chunks.pop();
+        chunks.forEach(function(chunk) {
+          var line = chunk.replace(/^data: /, '').trim();
+          if (!line) return;
+          var evt;
+          try { evt = JSON.parse(line); } catch (e) { return; }
+          if (evt.type === 'progress') {
+            statusLine.textContent = evt.label + '…';
+          } else if (evt.type === 'answer') {
+            _finish({ok: true, answer: evt.answer, truncated: evt.truncated, proposals: evt.proposals});
+          } else if (evt.type === 'error') {
+            _finish({ok: false, error: evt.error});
+          }
+        });
+        return pump();
+      });
+    }
+    return pump();
   }).catch(function() {
-    input.disabled = false;
-    btn.disabled = false;
-    loadingBubble.remove();
-    _appendAskCavnarMessage('Network error — try again.', false);
+    fetch('/api/ask-cavnar', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question: question, history: historyToSend})
+    }).then(function(r) { return r.json(); }).then(_finish).catch(function() {
+      _finish({ok: false, error: 'Network error — try again.'});
+    });
   });
 };
 </script>

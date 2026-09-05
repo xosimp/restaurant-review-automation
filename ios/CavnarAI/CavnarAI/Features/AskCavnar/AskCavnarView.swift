@@ -35,7 +35,7 @@ struct AskCavnarView: View {
                                 emptyState
                             }
                             ForEach(viewModel.messages) { message in
-                                ChatBubble(message: message) {
+                                ChatBubble(message: message, viewModel: viewModel) {
                                     // Fires on every word TypewriterText
                                     // reveals — the bubble grows taller
                                     // over that ~1.4s window entirely on
@@ -288,6 +288,7 @@ private func chatBubbleShape(isUser: Bool) -> UnevenRoundedRectangle {
 
 private struct ChatBubble: View {
     let message: ChatMessage
+    var viewModel: AskCavnarViewModel? = nil
     var onReveal: (() -> Void)? = nil
 
     // Bubble's outer cap, minus its own horizontal padding (15pt each
@@ -368,6 +369,10 @@ private struct ChatBubble: View {
                             .foregroundStyle(Color.cavnarAmber)
                             .padding(.top, 4)
                     }
+                    ForEach(message.proposals) { proposal in
+                        ProposalCard(proposal: proposal, viewModel: viewModel)
+                            .padding(.top, 10)
+                    }
                 }
             }
             .padding(.horizontal, 15)
@@ -421,5 +426,83 @@ private struct LoadingBubble: View {
         // Same edge-positioning approach as ChatBubble, for consistency —
         // see its comment for why this replaced a trailing Spacer.
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+
+/// A proposed action, awaiting the owner's tap.
+///
+/// The assistant can compose and explain an action but never perform one
+/// that leaves the building — this card is the confirmation step, and
+/// confirming calls the same endpoint the app's own button uses.
+private struct ProposalCard: View {
+    let proposal: AskProposal
+    var viewModel: AskCavnarViewModel?
+
+    @State private var state: State = .pending
+    private enum State { case pending, working, done, failed }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(proposal.summary)
+                .font(.cavnarBody(15, weight: 700))
+                .foregroundStyle(Color.cavnarInk)
+                .fixedSize(horizontal: false, vertical: true)
+
+            switch state {
+            case .done:
+                Label("Done", systemImage: "checkmark.circle.fill")
+                    .font(.cavnarBody(14, weight: 700))
+                    .foregroundStyle(Color.cavnarGreen)
+            case .working:
+                CavnarShimmerText(text: "Working…", font: .cavnarBody(14, weight: 600))
+            case .pending, .failed:
+                HStack(spacing: 8) {
+                    Button {
+                        Task {
+                            state = .working
+                            let ok = await viewModel?.confirm(proposal) ?? false
+                            state = ok ? .done : .failed
+                        }
+                    } label: {
+                        Text("Confirm")
+                            .font(.cavnarBody(14, weight: 700))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16).padding(.vertical, 8)
+                            .background(Color.cavnarEmber)
+                            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        Task { await viewModel?.dismiss(proposal) }
+                        state = .done
+                    } label: {
+                        Text("Not now")
+                            .font(.cavnarBody(14, weight: 600))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: CavnarRadius.control)
+                                    .strokeBorder(Color.cavnarPaper3, lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+                if state == .failed {
+                    Text("That didn't go through — try again.")
+                        .font(.cavnarBody(13))
+                        .foregroundStyle(Color.cavnarRed)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color.cavnarPaper2.opacity(0.8))
+        .overlay(
+            RoundedRectangle(cornerRadius: CavnarRadius.card)
+                .strokeBorder(Color.cavnarEmber.opacity(0.45), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
 }

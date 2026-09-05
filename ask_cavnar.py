@@ -15,6 +15,7 @@ source of truth for this restaurant's actual figures — that half of the
 rule never loosens — but it's no longer the model's only allowed source
 of information overall.
 """
+import json
 import os
 import anthropic
 from ai_utils import create_with_retry, extract_text
@@ -177,7 +178,11 @@ def _reviews_context(restaurant_id):
         f"- Need a response drafted (no AI draft written yet — owner must click 'Generate response'): {s['needs_response']}\n"
         f"- Have a draft already written, awaiting the owner's final approval to post: {s['awaiting_approval']}\n"
         f"- Received this month: {s['received_this_month']}\n"
-        f"- Average response time: {_fmt(s['avg_response_hours'])} hours\n"
+        # Omitted entirely rather than rendered as "n/a hours" — a metric
+        # the model can't use is better absent than present-but-empty,
+        # which invites it to comment on the gap.
+        + (f"- Average response time: {s['avg_response_hours']} hours\n"
+           if s.get('avg_response_hours') else "")
     )
 
 
@@ -282,16 +287,37 @@ def _guest_text_club_summary(restaurant_id):
 
 
 def _intel_context(restaurant_id):
+    """competitor_intel is stored as JSON — {"competitors": [...],
+    "insight": str, "generated_at": str} — and the recommendations live
+    inside the `insight` text, not as a top-level key.
+
+    This used to hand the whole raw JSON string to parse_competitor_intel,
+    a line-based markdown parser, which found "Recommendations:" somewhere
+    inside the serialized blob and returned a single garbage entry full of
+    escaped \\n and trailing JSON debris. The model was being fed that
+    verbatim. Now parses the JSON and runs extract_recs over `insight` —
+    the same helper the Home tile and the web action-items tile use, so all
+    three finally agree on the count.
+    """
+    import json as _json
     from models import get_restaurant
-    from competitor_intel_format import parse_competitor_intel
+    from competitor_intel_format import extract_recs
     restaurant = get_restaurant(restaurant_id)
     if not restaurant or not restaurant.competitor_intel:
         return "COMPETITOR INTEL\n- No competitor analysis run yet.\n"
+    raw = restaurant.competitor_intel
     try:
-        parsed = parse_competitor_intel(restaurant.competitor_intel)
+        # Current rows are JSON (competitor.py writes json.dumps). Older rows
+        # predate that and hold the insight text directly — fall back to
+        # treating the value as the insight rather than dropping analysis
+        # that is genuinely on file.
+        insight = _json.loads(raw).get("insight", "") or ""
+    except Exception:
+        insight = raw if isinstance(raw, str) else ""
+    try:
+        recs = extract_recs(insight)
     except Exception:
         return "COMPETITOR INTEL\n- No competitor analysis run yet.\n"
-    recs = parsed.get("recommendations") or []
     updated = restaurant.competitor_updated_at or "unknown date"
     lines = [f"COMPETITOR INTEL (last updated {updated})"]
     if recs:
@@ -356,6 +382,20 @@ ASK_CAVNAR_SYSTEM_PROMPT = """You are Cavnar AI, an AI-powered restaurant intell
 2. EVERYTHING ELSE — restaurant industry advice, marketing ideas, menu strategy, staffing/scheduling best practices, general business questions, or just conversation: answer using your own knowledge and expertise as an experienced restaurant consultant, same as you would in any other context. Weave in this restaurant's real data from the snapshot when it's genuinely relevant, but don't limit yourself to only what's in the snapshot for these — you're free to think and advise.
 
 Use judgment about which mode (or blend) a question calls for — "how do I get my labor cost down" wants both this restaurant's real labor % AND general scheduling advice, for example.
+
+TOOLS. You can look things up and you can propose actions.
+
+Reading is free — use it. The snapshot carries totals only, so whenever a question is about specific things rather than counts ("which reviews mention the patio", "what's my worst-margin dish", "who hasn't opened their schedule"), call the matching read tool instead of answering from the totals or saying you don't have the detail. You do.
+
+Actions work differently, on purpose. Anything that leaves the building — emailing a supplier, texting guests, posting review replies publicly, sending staff their schedule — is PROPOSED, not performed. Calling one of those tools does not do the thing: it puts a confirmation card in front of the owner, and nothing happens until they tap it.
+
+So when the owner asks for one of those actions, CALL THE TOOL. Calling it IS how you ask them. Do not ask "want me to go ahead?" in prose and wait — that just makes them ask twice. Read whatever you need first so you can tell them what they're approving, then call the tool in the same turn.
+
+Then describe what is now waiting for them. Never say you have sent, posted, ordered or texted anything — say what's queued and that it needs their OK: "That's 4 items for Fresh Co, $186 — confirm below and it goes out."
+
+Two things not to do: don't propose an action nobody asked for, and don't call a write tool when the thing genuinely can't be done yet (no schedule generated, no drafts waiting, no supplier assigned). In that case say what's missing.
+
+But check before you refuse. The snapshot is a summary and can be thin or stale — it may say there's no labor data while a schedule does exist. Never tell an owner something isn't there based on the snapshot alone when a read tool could look: call the tool first, then answer. "There's no schedule yet" is only true after read_schedule says so.
 
 The DATA SNAPSHOT below always opens with a TODAY section — this restaurant's real current date (in its own local timezone) and its real upcoming holidays for the next 30 days. Always use that section directly for any date, day-of-week, "how many days until," or "what's coming up" question — you have real, live information here, not a training cutoff. Never say you don't have access to a calendar or can't check dates; you can, right there in TODAY.
 
@@ -423,7 +463,7 @@ def ask(restaurant, question, history=None):
     before calling this — it always makes a real Claude call."""
     context = build_context(restaurant)
     system_prompt = ASK_CAVNAR_SYSTEM_PROMPT.format(restaurant_name=restaurant.name, context=context)
-    messages = _sanitize_history(history) + [{"role": "user", "content": question.strip()[:500]}]
+    messages = _sanitize_history(history) + [{"role": "user", "content": question.strip()[:_MAX_QUESTION_LENGTH]}]
     message = create_with_retry(
         _client,
         model=os.getenv("ASK_CAVNAR_MODEL", "claude-sonnet-5"),
@@ -444,3 +484,130 @@ def ask(restaurant, question, history=None):
     )
     truncated = getattr(message, "stop_reason", None) == "max_tokens"
     return extract_text(message).strip(), truncated
+
+
+# A short answer wants a small ceiling; one that had to read reviews and
+# reason over them does not. 320 was tuned for the 2-4 sentence case and
+# silently truncated anything larger — labor advice and any tool-using
+# answer both need real headroom.
+_MAX_TOKENS_SIMPLE = 320
+_MAX_TOKENS_WITH_TOOLS = 1200
+_MAX_QUESTION_LENGTH = 2000
+_MAX_TOOL_ROUNDS = 4
+
+# Shown while a tool runs. Plain language — the owner should see what it's
+# doing, not a function name.
+_TOOL_LABELS = {
+    "read_reviews": "Reading your reviews",
+    "read_menu_margins": "Working out your menu margins",
+    "read_order_draft": "Checking this week's order",
+    "read_schedule": "Looking at your schedule",
+    "read_staff_availability": "Checking staff availability",
+    "read_email_history": "Checking what was sent",
+    "send_supplier_order": "Putting the supplier order together",
+    "publish_schedule": "Getting the schedule ready to send",
+    "approve_all_reviews": "Gathering the replies awaiting approval",
+    "send_guest_campaign": "Drafting the guest text",
+    "generate_schedule": "Preparing the schedule build",
+}
+
+
+def ask_with_tools(restaurant, question, history=None, surface="web", on_progress=None):
+    """Ask Cavnar, with the ability to look things up and to propose actions.
+
+    Returns (answer_text, truncated, proposals). `proposals` is the list of
+    confirm cards the client should render — actions the model wants to
+    take that it deliberately cannot take itself. An empty list means it
+    only answered.
+
+    Read tools execute inline and loop back into the model. Write tools do
+    not execute at all here: they become proposals, and the loop stops
+    asking for more tools once one is raised, so a single turn can't queue
+    up a chain of side effects behind one confirmation.
+
+    `on_progress(label)`, if given, is called as each tool runs so a
+    streaming caller can show what's happening — the tool loop can take
+    several round trips, and a silent spinner for that long reads as broken.
+    """
+    def _progress(label):
+        if on_progress:
+            try:
+                on_progress(label)
+            except Exception:
+                pass
+    import ask_cavnar_tools as tools
+
+    context = build_context(restaurant)
+    system_prompt = ASK_CAVNAR_SYSTEM_PROMPT.format(restaurant_name=restaurant.name, context=context)
+    messages = _sanitize_history(history) + [
+        {"role": "user", "content": question.strip()[:_MAX_QUESTION_LENGTH]}
+    ]
+
+    proposals = []
+    truncated = False
+    model = os.getenv("ASK_CAVNAR_MODEL", "claude-sonnet-5")
+
+    for _ in range(_MAX_TOOL_ROUNDS):
+        message = create_with_retry(
+            _client,
+            model=model,
+            max_tokens=_MAX_TOKENS_WITH_TOOLS,
+            system=system_prompt,
+            messages=messages,
+            tools=tools.tool_specs(),
+            restaurant_id=restaurant.id,
+            action="ask_cavnar",
+        )
+        truncated = getattr(message, "stop_reason", None) == "max_tokens"
+
+        if getattr(message, "stop_reason", None) != "tool_use":
+            return extract_text(message).strip(), truncated, proposals
+
+        # Echo the assistant turn back verbatim — the API requires the
+        # tool_use blocks it produced to be present before their results.
+        messages.append({"role": "assistant", "content": message.content})
+
+        results = []
+        for block in message.content:
+            if getattr(block, "type", None) != "tool_use":
+                continue
+            if tools.is_write_tool(block.name):
+                _progress(_TOOL_LABELS.get(block.name, "Preparing that action"))
+                proposal = tools.build_proposal(block.name, block.input)
+                if proposal:
+                    proposals.append(proposal)
+                # Told plainly, so the model explains what it's asking for
+                # rather than reporting it as already done.
+                results.append({
+                    "type": "tool_result", "tool_use_id": block.id,
+                    "content": json.dumps({
+                        "status": "awaiting_confirmation",
+                        "note": ("Not performed. The owner has been shown a confirmation card and must "
+                                 "approve it. Tell them what you are proposing and that it needs their OK."),
+                    }),
+                })
+            else:
+                _progress(_TOOL_LABELS.get(block.name, "Looking that up"))
+                results.append({
+                    "type": "tool_result", "tool_use_id": block.id,
+                    "content": tools.run_read_tool(block.name, restaurant.id, block.input),
+                })
+        messages.append({"role": "user", "content": results})
+
+        if proposals:
+            # One confirmation per turn. Ask for a plain summary and stop.
+            final = create_with_retry(
+                _client, model=model, max_tokens=_MAX_TOKENS_WITH_TOOLS,
+                system=system_prompt, messages=messages,
+                restaurant_id=restaurant.id, action="ask_cavnar",
+            )
+            return (extract_text(final).strip(),
+                    getattr(final, "stop_reason", None) == "max_tokens", proposals)
+
+    # Ran out of rounds — answer with what it has rather than looping.
+    final = create_with_retry(
+        _client, model=model, max_tokens=_MAX_TOKENS_WITH_TOOLS,
+        system=system_prompt, messages=messages,
+        restaurant_id=restaurant.id, action="ask_cavnar",
+    )
+    return extract_text(final).strip(), getattr(final, "stop_reason", None) == "max_tokens", proposals

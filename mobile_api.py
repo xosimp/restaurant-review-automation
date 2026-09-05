@@ -1169,9 +1169,41 @@ def mobile_changelog_unread_count(current_user):
 def mobile_ask_cavnar(current_user):
     data = request.get_json() or {}
     payload, status = _capi._do_ask_cavnar(
-        current_user["restaurant_id"], data.get("question"), history=data.get("history")
+        current_user["restaurant_id"], data.get("question"), history=data.get("history"),
+        surface="mobile", user_id=current_user.get("id"),
     )
     return jsonify(**payload), status
+
+
+@mobile_bp.route("/ask-cavnar/history")
+@mobile_login_required
+def mobile_ask_cavnar_history(current_user):
+    from models import get_ask_history
+    return jsonify(ok=True, messages=get_ask_history(current_user["restaurant_id"]))
+
+
+@mobile_bp.route("/ask-cavnar/history", methods=["DELETE"])
+@mobile_login_required
+def mobile_ask_cavnar_clear_history(current_user):
+    from models import clear_ask_history
+    clear_ask_history(current_user["restaurant_id"])
+    return jsonify(ok=True)
+
+
+@mobile_bp.route("/ask-cavnar/action", methods=["POST"])
+@mobile_login_required
+def mobile_ask_cavnar_record_action(current_user):
+    """Audit line only — the confirmed action is executed by the app calling
+    the same route its own button uses."""
+    from models import log_ask_action
+    data = request.get_json(silent=True) or {}
+    action = (data.get("action") or "").strip()
+    outcome = (data.get("outcome") or "").strip()
+    if not action or outcome not in ("confirmed", "dismissed"):
+        return jsonify(ok=False, error="action and outcome (confirmed|dismissed) are required"), 400
+    log_ask_action(current_user["restaurant_id"], action, summary=data.get("summary"),
+                   body=data.get("body"), outcome=outcome, user_id=current_user.get("id"))
+    return jsonify(ok=True)
 
 
 # ── Food cost quick-entry ─────────────────────────────────────────────────

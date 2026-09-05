@@ -8,6 +8,55 @@ struct ChatMessage: Identifiable {
     /// True when the model hit max_tokens — the answer stops mid-thought and
     /// must not be presented as a finished one (audit 5.1).
     var wasTruncated: Bool = false
+    /// Actions the assistant wants to take and deliberately cannot take
+    /// itself. Rendered as confirm cards under the answer; nothing happens
+    /// until the owner taps one.
+    var proposals: [AskProposal] = []
+}
+
+/// A proposed action. `route` is the same authenticated endpoint the app's
+/// own button uses, so confirming can never reach anything the user could
+/// not already do themselves.
+struct AskProposal: Decodable, Identifiable, Hashable {
+    let action: String
+    let summary: String
+    let route: Route
+    let body: [String: AnyCodableValue]?
+
+    var id: String { action + summary }
+
+    struct Route: Decodable, Hashable {
+        let mobile: String
+        let method: String
+    }
+}
+
+/// Minimal JSON value box — proposal bodies are small and untyped
+/// (a supplier email, a schedule id), and this avoids inventing a
+/// separate Swift type per action.
+enum AnyCodableValue: Decodable, Hashable, Encodable {
+    case string(String), int(Int), double(Double), bool(Bool), null
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() { self = .null }
+        else if let v = try? c.decode(Bool.self) { self = .bool(v) }
+        else if let v = try? c.decode(Int.self) { self = .int(v) }
+        else if let v = try? c.decode(Double.self) { self = .double(v) }
+        else if let v = try? c.decode(String.self) { self = .string(v) }
+        else { self = .null }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .string(let v): try c.encode(v)
+        case .int(let v):    try c.encode(v)
+        case .double(let v): try c.encode(v)
+        case .bool(let v):   try c.encode(v)
+        case .null:          try c.encodeNil()
+        }
+    }
 }
 
 /// Real multi-turn chat now, not one-off Q&A — the backend has no memory of
@@ -24,10 +73,10 @@ final class AskCavnarViewModel {
     /// weak connections this app runs on (audit 5.4). Also caps what is held
     /// in memory for the life of the sheet (audit 3.4).
     static let maxHistoryMessages = 12
-    /// Mirrors ask_cavnar.py's `question.strip()[:500]`. Enforced here so the
+    /// Mirrors ask_cavnar.py's `_MAX_QUESTION_LENGTH`. Enforced here so the
     /// user sees the limit rather than having the tail of their question
     /// silently cut server-side (audit 5.2).
-    static let maxQuestionLength = 500
+    static let maxQuestionLength = 2000
 
     var messages: [ChatMessage] = [] {
         didSet {
@@ -78,6 +127,45 @@ final class AskCavnarViewModel {
         let answer: String?
         let error: String?
         let truncated: Bool?
+        let proposals: [AskProposal]?
+    }
+
+    private struct ActionOutcomeBody: Encodable {
+        let action: String
+        let outcome: String
+        let summary: String
+    }
+
+    private struct PlainOK: Decodable { let ok: Bool; let error: String? }
+
+    /// Fire a confirmed proposal. Runs the app's own endpoint, then writes
+    /// the audit line — never the other way round, so a recorded
+    /// "confirmed" always means it really ran.
+    func confirm(_ proposal: AskProposal) async -> Bool {
+        do {
+            let response: PlainOK
+            if proposal.route.method == "GET" {
+                response = try await client.send(proposal.route.mobile)
+            } else {
+                response = try await client.send(proposal.route.mobile, method: .post,
+                                                 body: proposal.body ?? [:])
+            }
+            if response.ok { await record(proposal, outcome: "confirmed") }
+            return response.ok
+        } catch {
+            return false
+        }
+    }
+
+    func dismiss(_ proposal: AskProposal) async {
+        await record(proposal, outcome: "dismissed")
+    }
+
+    private func record(_ proposal: AskProposal, outcome: String) async {
+        let _: PlainOK? = try? await client.send(
+            "/mobile/api/ask-cavnar/action", method: .post,
+            body: ActionOutcomeBody(action: proposal.action, outcome: outcome,
+                                    summary: proposal.summary))
     }
 
     func submit() async {
@@ -106,7 +194,8 @@ final class AskCavnarViewModel {
                 ? "I didn't get an answer back that time — mind asking again?"
                 : cleaned
             messages.append(ChatMessage(
-                text: display, isUser: false, wasTruncated: response.truncated == true
+                text: display, isUser: false, wasTruncated: response.truncated == true,
+                proposals: response.proposals ?? []
             ))
         } catch is CancellationError {
             // The sheet went away mid-request — roll the turn back silently.

@@ -939,6 +939,30 @@ def init_db(db_path: str = DB_PATH):
             created_at  TEXT NOT NULL DEFAULT (datetime('now'))
         )""",
         "CREATE INDEX IF NOT EXISTS idx_email_suppressions_email ON email_suppressions(email)",
+        # Ask Cavnar conversations. Previously the chat lived only in the
+        # client's memory, so closing the app lost it entirely. Now that the
+        # assistant can propose actions, this doubles as the record of what
+        # was proposed and what the owner actually approved.
+        """CREATE TABLE IF NOT EXISTS ask_cavnar_messages (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
+            user_id       INTEGER,
+            role          TEXT NOT NULL CHECK(role IN ('user','assistant')),
+            content       TEXT NOT NULL,
+            proposals     TEXT,
+            created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_ask_cavnar_restaurant ON ask_cavnar_messages(restaurant_id, id)",
+        """CREATE TABLE IF NOT EXISTS ask_cavnar_actions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER NOT NULL REFERENCES restaurants(id),
+            user_id       INTEGER,
+            action        TEXT NOT NULL,
+            summary       TEXT,
+            body          TEXT,
+            outcome       TEXT NOT NULL DEFAULT 'proposed',
+            created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
         # event_type: 'recount' (qty = absolute counted amount) |
         # 'receiving' | 'depletion' | 'waste' (qty = signed delta).
         # source: 'toast' | 'manual' | 'admin' | 'inferred' | 'migration'.
@@ -2986,6 +3010,11 @@ def get_all_location_groups(db_path: str = DB_PATH) -> list:
     conn.close()
     return [r["location_group"] for r in rows]
 
+# 30 days. Past this, the figure reflects a backfill/import rather than how
+# fast anyone actually responds.
+RESPONSE_TIME_CAP_HOURS = 30 * 24
+
+
 def get_review_stats(restaurant_id):
     conn = get_conn()
     # Single query for sentiment/status counts
@@ -3035,8 +3064,15 @@ def get_review_stats(restaurant_id):
     response_rate = round((responded / total * 100) if total > 0 else 0, 1)
     avg_rating_30d = round(rows["avg_rating_30d"] or 0, 1)
     # Avg response time — cap at reasonable max for display
+    # The SQL above documents a 30-day display cap that was never actually
+    # implemented here — so seeded/backfilled reviews (approved long after
+    # they were written) produced figures like "11495.9 hours", which
+    # Ask Cavnar then stated to owners as fact. Values beyond the cap say
+    # more about when data was imported than about response behaviour, so
+    # they're reported as None ("no meaningful average yet") rather than as
+    # a number nobody should act on.
     avg_hrs_raw = rt_row["avg_hrs"] if rt_row and rt_row["avg_hrs"] else None
-    if avg_hrs_raw and avg_hrs_raw > 0:
+    if avg_hrs_raw and 0 < avg_hrs_raw <= RESPONSE_TIME_CAP_HOURS:
         avg_response_hours = round(avg_hrs_raw, 1)
     else:
         avg_response_hours = None
@@ -4131,3 +4167,89 @@ def email_type_label(email_type: str) -> str:
     if not email_type:
         return "Email"
     return EMAIL_TYPE_LABELS.get(email_type, email_type.replace("send_", "").replace("_", " ").strip().capitalize())
+
+
+# ── Ask Cavnar conversation + action log ────────────────────────────────────
+
+_ASK_HISTORY_LIMIT = 40
+
+
+def save_ask_message(restaurant_id, role, content, proposals=None, user_id=None, db_path: str = DB_PATH):
+    import json as _json
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO ask_cavnar_messages (restaurant_id, user_id, role, content, proposals) "
+            "VALUES (?,?,?,?,?)",
+            (restaurant_id, user_id, role, content,
+             _json.dumps(proposals) if proposals else None)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_ask_history(restaurant_id, limit: int = _ASK_HISTORY_LIMIT, db_path: str = DB_PATH) -> list:
+    """Oldest-first, so it can be handed straight to the model."""
+    import json as _json
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT role, content, proposals, created_at FROM ask_cavnar_messages "
+            "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (restaurant_id, limit)
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in reversed(rows):
+        d = dict(r)
+        if d.get("proposals"):
+            try:
+                d["proposals"] = _json.loads(d["proposals"])
+            except Exception:
+                d["proposals"] = None
+        out.append(d)
+    return out
+
+
+def clear_ask_history(restaurant_id, db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM ask_cavnar_messages WHERE restaurant_id=?", (restaurant_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def log_ask_action(restaurant_id, action, summary=None, body=None, outcome="proposed",
+                   user_id=None, db_path: str = DB_PATH):
+    """Audit trail for anything the assistant proposed.
+
+    Written at proposal time and again at confirm/dismiss, so "did the
+    assistant send that, and who approved it" is answerable after the fact.
+    """
+    import json as _json
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "INSERT INTO ask_cavnar_actions (restaurant_id, user_id, action, summary, body, outcome) "
+            "VALUES (?,?,?,?,?,?)",
+            (restaurant_id, user_id, action, summary,
+             _json.dumps(body) if body else None, outcome)
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def get_ask_actions(restaurant_id, limit: int = 50, db_path: str = DB_PATH) -> list:
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT id, action, summary, outcome, created_at FROM ask_cavnar_actions "
+            "WHERE restaurant_id=? ORDER BY id DESC LIMIT ?", (restaurant_id, limit)
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
