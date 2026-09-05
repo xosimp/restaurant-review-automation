@@ -497,6 +497,21 @@ _MAX_TOKENS_WITH_TOOLS = 1200
 _MAX_QUESTION_LENGTH = 2000
 _MAX_TOOL_ROUNDS = 4
 
+# The orb states a client can render — the nine hand-tuned motions in the
+# shared orb engine (static/cavnar-orb.js, DesignSystem/CavnarOrb.swift).
+# Every real moment in an Ask Cavnar turn maps onto one of these:
+#   connecting  stream opening, nothing has happened yet
+#   solving     the model deciding what to do (first call of the loop)
+#   searching   a read tool is running
+#   working     a direct action is executing
+#   shaping     a write proposal is being prepared for the confirm card
+#   composing   the final answer is being written after tools ran
+#   breathing   idle — the header orb, nothing in flight
+#   listening   reserved: voice input, not built
+#   weaving     reserved: multi-tool synthesis, not currently emitted
+ORB_STATES = ("connecting", "solving", "searching", "working", "shaping",
+              "composing", "breathing", "listening", "weaving")
+
 # Shown while a tool runs. Plain language — the owner should see what it's
 # doing, not a function name.
 _TOOL_LABELS = {
@@ -553,10 +568,13 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None):
     streaming caller can show what's happening — the tool loop can take
     several round trips, and a silent spinner for that long reads as broken.
     """
-    def _progress(label):
+    def _progress(label, state):
+        """`state` is one of ORB_STATES — what the orb should look like
+        while this happens. Sent alongside the label so clients render the
+        right motion without string-matching human-readable text."""
         if on_progress:
             try:
-                on_progress(label)
+                on_progress(label, state)
             except Exception:
                 pass
     import ask_cavnar_tools as tools
@@ -571,6 +589,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None):
     truncated = False
     model = os.getenv("ASK_CAVNAR_MODEL", "claude-sonnet-5")
 
+    _progress("Thinking", "solving")
     for _ in range(_MAX_TOOL_ROUNDS):
         message = create_with_retry(
             _client,
@@ -596,7 +615,7 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None):
             if getattr(block, "type", None) != "tool_use":
                 continue
             if tools.is_write_tool(block.name):
-                _progress(_TOOL_LABELS.get(block.name, "Preparing that action"))
+                _progress(_TOOL_LABELS.get(block.name, "Preparing that action"), "shaping")
                 proposal = tools.build_proposal(block.name, block.input)
                 if proposal is None:
                     # Bad or missing arguments (e.g. no review_id) — tell the
@@ -621,18 +640,26 @@ def ask_with_tools(restaurant, question, history=None, on_progress=None):
                     }),
                 })
             else:
-                # Reads and direct actions both execute; only the label differs.
+                # Reads and direct actions both execute; only the label and
+                # the orb state differ.
+                is_action = tools.is_action_tool(block.name)
                 _progress(_TOOL_LABELS.get(
-                    block.name, "Making that change" if tools.is_action_tool(block.name)
-                    else "Looking that up"))
+                    block.name, "Making that change" if is_action else "Looking that up"),
+                    "working" if is_action else "searching")
                 results.append({
                     "type": "tool_result", "tool_use_id": block.id,
                     "content": tools.run_read_tool(block.name, restaurant.id, block.input),
                 })
         messages.append({"role": "user", "content": results})
+        # Back to the model with results in hand: it is now composing the
+        # answer (or deciding on one more tool). Without this the orb would
+        # freeze on the last tool's motion for the whole final generation.
+        if not proposals:
+            _progress("Composing your answer", "composing")
 
         if proposals:
             # One confirmation per turn. Ask for a plain summary and stop.
+            _progress("Composing your answer", "composing")
             final = create_with_retry(
                 _client, model=model, max_tokens=_MAX_TOKENS_WITH_TOOLS,
                 system=system_prompt, messages=messages,

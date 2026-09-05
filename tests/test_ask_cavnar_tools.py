@@ -799,3 +799,76 @@ def test_web_and_mobile_stream_routes_use_the_identical_handler():
     mobile_src = inspect.getsource(mobile_api.mobile_ask_cavnar_stream)
     assert "_ask_cavnar_stream_response" in web_src
     assert "_ask_cavnar_stream_response" in mobile_src
+
+
+# ── Orb state contract ───────────────────────────────────────────────────
+# Progress events carry a `state` so the client picks the orb's motion
+# without string-matching human-readable labels.
+
+def _run_loop_with(monkeypatch, db_path, tool_name, tool_input=None):
+    rid = _restaurant(db_path)
+    restaurant = models.get_restaurant(rid, db_path=db_path)
+    calls = {"n": 0}
+    def fake_create(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _Msg("tool_use", [_Block(tool_name, tool_input or {})])
+        return _Msg("end_turn", [])
+    monkeypatch.setattr(ask_cavnar, "create_with_retry", fake_create)
+    monkeypatch.setattr(ask_cavnar, "extract_text", lambda m: "done")
+    seen = []
+    ask_cavnar.ask_with_tools(restaurant, "q", on_progress=lambda label, state: seen.append((label, state)))
+    return seen
+
+
+def test_every_emitted_orb_state_is_a_known_state(db_path, monkeypatch):
+    for tool in ("read_reviews", "change_setting", "send_supplier_order"):
+        inp = {"setting": "login_notify", "value": True} if tool == "change_setting" else {}
+        for _, state in _run_loop_with(monkeypatch, db_path, tool, inp):
+            assert state in ask_cavnar.ORB_STATES, f"{tool} emitted unknown state {state!r}"
+
+
+def test_a_turn_opens_with_solving_and_closes_with_composing(db_path, monkeypatch):
+    seen = _run_loop_with(monkeypatch, db_path, "read_reviews")
+    assert seen[0] == ("Thinking", "solving")
+    assert seen[-1] == ("Composing your answer", "composing")
+
+
+def test_read_tools_are_searching_actions_working_writes_shaping(db_path, monkeypatch):
+    def state_for(tool, inp=None):
+        seen = _run_loop_with(monkeypatch, db_path, tool, inp)
+        # the tool's own event sits between "solving" and "composing"
+        return [s for _, s in seen if s not in ("solving", "composing")]
+    assert state_for("read_reviews") == ["searching"]
+    assert state_for("change_setting", {"setting": "login_notify", "value": True}) == ["working"]
+    assert state_for("send_supplier_order") == ["shaping"]
+
+
+def test_a_proposal_turn_still_ends_in_composing(db_path, monkeypatch):
+    """The summary call after a proposal is a composing moment too — the
+    orb must not freeze on the write tool's motion while the model writes."""
+    seen = _run_loop_with(monkeypatch, db_path, "send_supplier_order")
+    assert seen[-1][1] == "composing"
+
+
+def test_every_tool_label_has_a_state_in_the_progress_call(db_path, monkeypatch):
+    """A label with no state would leave the orb stuck on the previous
+    motion — every progress event must carry both."""
+    for label, state in _run_loop_with(monkeypatch, db_path, "read_reviews"):
+        assert label and state
+
+
+def test_the_stream_event_carries_the_orb_state(client, db_path, monkeypatch):
+    """End to end through the SSE route: the JSON the browser and the app
+    parse must include `state`, not just `label`."""
+    rid = _restaurant(db_path)
+    _login_as(monkeypatch, rid)
+    def fake_ask(restaurant, question, history=None, on_progress=None):
+        on_progress("Reading your reviews", "searching")
+        return "answer", False, []
+    monkeypatch.setattr("ask_cavnar.ask_with_tools", fake_ask)
+    resp = client.post("/api/ask-cavnar/stream", json={"question": "anything"})
+    body = resp.get_data(as_text=True)
+    events = [json.loads(line[6:]) for line in body.split("\n") if line.startswith("data: ")]
+    progress = [e for e in events if e["type"] == "progress"]
+    assert progress and progress[0]["state"] == "searching" and progress[0]["label"] == "Reading your reviews"

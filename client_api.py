@@ -1001,7 +1001,8 @@ def _ask_cavnar_stream_response(rid, uid, question):
             history = [{"role": h["role"], "content": h["content"]} for h in get_ask_history(rid)]
             answer, truncated, proposals = ask_with_tools(
                 restaurant, question, history=history,
-                on_progress=lambda label: events.put({"type": "progress", "label": label}))
+                on_progress=lambda label, state: events.put(
+                    {"type": "progress", "label": label, "state": state}))
             try:
                 save_ask_message(rid, "user", question, user_id=uid)
                 save_ask_message(rid, "assistant", answer, proposals=proposals or None, user_id=uid)

@@ -100,6 +100,10 @@ final class AskCavnarViewModel {
     /// while the stream connects, so it never flashes stale text left over
     /// from the previous question.
     var statusLabel: String?
+    /// The orb's motion for the current moment, from the stream's `state`
+    /// field. `.connecting` from the instant a question is sent until the
+    /// first progress event arrives, so the orb never sits still.
+    var orbState: CavnarOrbState = .connecting
     /// Transient failure notice shown above the input bar. Deliberately not a
     /// ChatMessage: an error appended as an assistant turn ends up replayed to
     /// Claude in `history` as something it supposedly said (audit 2.5).
@@ -193,7 +197,8 @@ final class AskCavnarViewModel {
         question = ""
         isLoading = true
         statusLabel = nil
-        defer { isLoading = false; statusLabel = nil }
+        orbState = .connecting
+        defer { isLoading = false; statusLabel = nil; orbState = .connecting }
 
         do {
             try await streamAnswer(for: asked)
@@ -243,6 +248,9 @@ final class AskCavnarViewModel {
             switch event.type {
             case "progress":
                 statusLabel = event.label
+                if let raw = event.state, let mapped = CavnarOrbState(rawValue: raw) {
+                    orbState = mapped
+                }
             case "answer":
                 gotAnswer = true
                 appendAnswer(from: event.answer ?? "", truncated: event.truncated == true,

@@ -75,7 +75,7 @@ struct AskCavnarView: View {
                                 .id(message.id)
                             }
                             if viewModel.isLoading {
-                                LoadingBubble(label: viewModel.statusLabel)
+                                LoadingBubble(label: viewModel.statusLabel, orbState: viewModel.orbState)
                             }
                             // Scroll target for the in-progress reveal above
                             // — see its comment. Not part of the message
@@ -117,7 +117,8 @@ struct AskCavnarView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            GlowBadge(systemImage: "sparkles", size: 40)
+            // Idle orb — a slow breathing ring while nothing is in flight.
+            CavnarOrb(state: .breathing, size: 40)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Ask Cavnar AI")
                     .font(.cavnarHeadline(20.5))
@@ -404,10 +405,14 @@ private struct LoadingBubble: View {
     /// tool loop ("Reading your reviews"). nil while the stream is still
     /// connecting, or once it falls back to the plain non-streaming request.
     var label: String? = nil
+    /// Drives the orb's motion — connecting, searching, composing and so on.
+    var orbState: CavnarOrbState = .connecting
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            GlowBadge(systemImage: "sparkles", size: 28)
+            // The thinking orb replaces the static sparkles badge: its motion
+            // changes with what the agent is actually doing right now.
+            CavnarOrb(state: orbState, size: 28)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 10) {
                 Text("CAVNAR AI")
@@ -451,8 +456,10 @@ private struct ProposalCard: View {
     let proposal: AskProposal
     var viewModel: AskCavnarViewModel?
 
-    @State private var state: State = .pending
-    private enum State { case pending, working, done, failed }
+    // `Phase`, not `State`: a nested type named State shadows SwiftUI's
+    // @State wrapper and the file stops compiling.
+    @State private var phase: Phase = .pending
+    private enum Phase { case pending, working, done, failed }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -461,20 +468,22 @@ private struct ProposalCard: View {
                 .foregroundStyle(Color.cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
 
-            switch state {
+            switch phase {
             case .done:
                 Label("Done", systemImage: "checkmark.circle.fill")
                     .font(.cavnarBody(14, weight: 700))
                     .foregroundStyle(Color.cavnarGreen)
             case .working:
-                CavnarShimmerText(text: "Working…", font: .cavnarBody(14, weight: 600))
+                // CavnarShimmerText takes text + color only (see ViewModifiers);
+                // it sets its own type. Same call shape as AddCompetitorSheet.
+                CavnarShimmerText(text: "Working…", color: Color.cavnarInk)
             case .pending, .failed:
                 HStack(spacing: 8) {
                     Button {
                         Task {
-                            state = .working
+                            phase = .working
                             let ok = await viewModel?.confirm(proposal) ?? false
-                            state = ok ? .done : .failed
+                            phase = ok ? .done : .failed
                         }
                     } label: {
                         Text("Confirm")
@@ -488,7 +497,7 @@ private struct ProposalCard: View {
 
                     Button {
                         Task { await viewModel?.dismiss(proposal) }
-                        state = .done
+                        phase = .done
                     } label: {
                         Text("Not now")
                             .font(.cavnarBody(14, weight: 600))
@@ -501,7 +510,7 @@ private struct ProposalCard: View {
                     }
                     .buttonStyle(.plain)
                 }
-                if state == .failed {
+                if phase == .failed {
                     Text("That didn't go through — try again.")
                         .font(.cavnarBody(13))
                         .foregroundStyle(Color.cavnarRed)

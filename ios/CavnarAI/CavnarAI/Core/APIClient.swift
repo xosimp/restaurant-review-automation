@@ -202,6 +202,10 @@ actor APIClient {
     struct SSEEvent: Decodable {
         let type: String
         let label: String?
+        /// One of ask_cavnar.ORB_STATES — what the orb should look like
+        /// while this happens. Sent alongside the label so the client
+        /// renders the right motion without string-matching the text.
+        let state: String?
         let answer: String?
         let truncated: Bool?
         let proposals: [AskProposal]?
