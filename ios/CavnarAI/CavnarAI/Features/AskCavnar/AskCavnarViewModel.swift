@@ -273,9 +273,7 @@ final class AskCavnarViewModel {
             guard response.ok else { return }
             let stored = response.messages ?? []
             messages = stored.map { m in
-                let isUser = m.role == "user"
-                return ChatMessage(text: isUser ? m.content : cavnarPlainText(m.content),
-                                   isUser: isUser, hasRevealed: true)
+                ChatMessage(text: m.content, isUser: m.role == "user", hasRevealed: true)
             }
             conversationId = conversation.id
             wantsNewConversation = false
@@ -468,7 +466,7 @@ final class AskCavnarViewModel {
     }
 
     private func appendAnswer(from raw: String, truncated: Bool, proposals: [AskProposal]) {
-        let cleaned = cavnarPlainText(raw)
+        let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let display = cleaned.isEmpty
             ? "I didn't get an answer back that time — mind asking again?"
             : cleaned

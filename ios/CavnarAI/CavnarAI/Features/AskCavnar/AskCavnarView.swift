@@ -271,6 +271,13 @@ struct AskCavnarView: View {
         .padding(.bottom, 20)
     }
 
+    // No outer bar at all — the field and send button float directly on
+    // the module background, each carrying its own glass, the same way
+    // this app's other floating controls (the keyboard's Done pill, the
+    // toolbar icon chips) already do rather than sitting inside a flat
+    // full-width band. A flat .ultraThinMaterial strip behind the whole
+    // row used to double up on top of the field's own pill background —
+    // one piece of chrome the field didn't need.
     private var inputBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let error = viewModel.errorBanner {
@@ -291,52 +298,85 @@ struct AskCavnarView: View {
             inputRow
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .top) {
-            Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
-        }
+        .padding(.top, 8)
+        .padding(.bottom, 12)
     }
 
     private var inputRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            TextField("How can I help?", text: $viewModel.question, axis: .vertical)
-                .font(.cavnarBody(15.5))
-                .foregroundStyle(Color.cavnarInk)
-                .focused($inputFocused)
-                .lineLimit(1...5)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 11)
-                .background(Color.cavnarPaper2)
-                .overlay(
-                    RoundedRectangle(cornerRadius: CavnarRadius.sheet)
-                        .strokeBorder(inputFocused ? Color.cavnarEmber.opacity(0.5) : Color.white.opacity(0.06), lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.sheet))
-                .animation(.easeOut(duration: 0.15), value: inputFocused)
+            Group {
+                if #available(iOS 26.0, *) {
+                    // Real Liquid Glass — same tint-strong-enough-to-
+                    // dominate-the-background approach as the keyboard's
+                    // Done pill (cavnarToolbarPillGlass), so the field
+                    // reads as a predictable warm surface rather than
+                    // whatever's scrolling behind it refracting through.
+                    fieldContent
+                        .glassEffect(
+                            .regular.tint(Color.cavnarPaper2.opacity(0.92)).interactive(),
+                            in: RoundedRectangle(cornerRadius: CavnarRadius.sheet)
+                        )
+                } else {
+                    fieldContent
+                        .background(Color.cavnarPaper2)
+                        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.sheet))
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: CavnarRadius.sheet)
+                    .strokeBorder(inputFocused ? Color.cavnarEmber.opacity(0.5) : Color.white.opacity(0.06), lineWidth: 1)
+            )
+            .animation(.easeOut(duration: 0.15), value: inputFocused)
 
             Button {
                 Haptic.light()
                 Task { await viewModel.submit() }
             } label: {
-                ZStack {
-                    Circle().fill(sendButtonFill)
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(viewModel.canSubmit ? .white : Color.cavnarInk3)
-                }
-                .frame(width: 38, height: 38)
-                .shadow(color: viewModel.canSubmit ? Color.cavnarEmber.opacity(0.4) : .clear, radius: 8, y: 3)
-                // Visual stays 38pt; the hit region meets the 44pt HIG
-                // minimum — this is the primary action of the AI screen
-                // (audit 7.3).
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
+                sendGlyph
+                    .shadow(color: viewModel.canSubmit ? Color.cavnarEmber.opacity(0.4) : .clear, radius: 8, y: 3)
+                    // Visual stays 38pt; the hit region meets the 44pt HIG
+                    // minimum — this is the primary action of the AI
+                    // screen (audit 7.3).
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
             }
             .disabled(!viewModel.canSubmit)
             .animation(.easeOut(duration: 0.15), value: viewModel.canSubmit)
             .accessibilityLabel("Send question")
             .accessibilityHint(viewModel.canSubmit ? "" : "Type a question first")
+        }
+    }
+
+    private var fieldContent: some View {
+        TextField("How can I help?", text: $viewModel.question, axis: .vertical)
+            .font(.cavnarBody(15.5))
+            .foregroundStyle(Color.cavnarInk)
+            .focused($inputFocused)
+            .lineLimit(1...5)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+    }
+
+    /// The send button itself: real glass on iOS 26 (tinted ember when
+    /// there's something to send, a neutral glass when there isn't — same
+    /// prominent/plain distinction CavnarGlassButtonStyle uses for
+    /// Skip/Approve), the previous solid gradient/flat-fill circle as the
+    /// fallback below it.
+    @ViewBuilder
+    private var sendGlyph: some View {
+        let icon = Image(systemName: "arrow.up")
+            .font(.system(size: 16, weight: .bold))
+            .foregroundStyle(viewModel.canSubmit ? .white : Color.cavnarInk3)
+            .frame(width: 38, height: 38)
+        if #available(iOS 26.0, *) {
+            icon.glassEffect(
+                viewModel.canSubmit
+                    ? .regular.tint(Color.cavnarEmber.opacity(0.85)).interactive()
+                    : .regular.interactive(),
+                in: Circle()
+            )
+        } else {
+            icon.background(Circle().fill(sendButtonFill))
         }
     }
 
@@ -442,12 +482,13 @@ private struct ChatBubble: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(width: userTextWidth, alignment: .leading)
                 } else {
-                    // Word-by-word reveal — same "AI is composing" language
-                    // as AIConsultantView's insight boxes, instead of the
-                    // answer just snapping in. Plays once per message ever:
-                    // hasRevealed lives on the model (see ChatMessage).
+                    // Word-by-word reveal, block by block (paragraphs,
+                    // bullets, numbered lists, headings — see
+                    // CavnarMarkdown) instead of the answer just snapping
+                    // in. Plays once per message ever: hasRevealed lives on
+                    // the model (see ChatMessage).
                     TypewriterText(
-                        fullText: message.text, font: .cavnarBody(16), color: Color.cavnarInk, lineSpacing: 5,
+                        fullText: message.text, size: 16, color: Color.cavnarInk, lineSpacing: 5,
                         maxWidth: Self.maxTextWidth, measuringFont: Self.textFont,
                         onReveal: onReveal,
                         startRevealed: message.hasRevealed,
