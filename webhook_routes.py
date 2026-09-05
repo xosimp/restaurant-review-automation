@@ -419,3 +419,79 @@ def twilio_inbound_sms():
         safe = reply.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         return Response(f"<Response><Message>{safe}</Message></Response>", mimetype="text/xml")
     return Response("<Response></Response>", mimetype="text/xml")
+
+
+# ── Resend delivery events (bounces / complaints) ───────────────────────────
+# Resend signs with Svix headers. Without consuming these, a hard-bounced
+# address is retried forever and a spam complaint is invisible — both of
+# which degrade the sending reputation of the domain that also carries 2FA
+# and password-reset mail.
+
+RESEND_WEBHOOK_SECRET = os.getenv("RESEND_WEBHOOK_SECRET", "")
+
+# Statuses worth suppressing on. A soft bounce (full mailbox, temporary
+# defer) is deliberately not here — that address may well work tomorrow.
+_SUPPRESS_EVENTS = {
+    "email.bounced":   "bounced",
+    "email.complained": "complained",
+}
+
+
+def _verify_svix(payload_body: bytes, headers) -> bool:
+    """Svix signature: HMAC-SHA256 over "{id}.{timestamp}.{body}", keyed by
+    the base64 secret after the 'whsec_' prefix. Multiple space-separated
+    signatures may be present; any valid one passes."""
+    import base64, hashlib, hmac as _hmac
+    secret = RESEND_WEBHOOK_SECRET
+    svix_id = headers.get("svix-id", "")
+    svix_ts = headers.get("svix-timestamp", "")
+    svix_sig = headers.get("svix-signature", "")
+    if not (secret and svix_id and svix_ts and svix_sig):
+        return False
+    try:
+        key = base64.b64decode(secret.split("_", 1)[1] if secret.startswith("whsec_") else secret)
+    except Exception:
+        return False
+    signed = f"{svix_id}.{svix_ts}.".encode() + payload_body
+    expected = base64.b64encode(_hmac.new(key, signed, hashlib.sha256).digest()).decode()
+    for part in svix_sig.split():
+        candidate = part.split(",", 1)[1] if "," in part else part
+        if _hmac.compare_digest(candidate, expected):
+            return True
+    return False
+
+
+@webhook_bp.route("/webhooks/resend", methods=["POST"])
+def resend_webhook():
+    from models import suppress_email, mark_email_delivery_event
+
+    if not _verify_svix(request.get_data(), request.headers):
+        return jsonify(ok=False, error="bad signature"), 403
+
+    event = request.get_json(silent=True) or {}
+    etype = event.get("type") or ""
+    data = event.get("data") or {}
+    message_id = data.get("email_id") or data.get("id") or ""
+    to = data.get("to") or []
+    recipients = to if isinstance(to, list) else [to]
+    detail = ""
+    if isinstance(data.get("bounce"), dict):
+        detail = data["bounce"].get("message") or data["bounce"].get("type") or ""
+
+    status = {
+        "email.bounced": "bounced",
+        "email.complained": "complained",
+        "email.delivered": "delivered",
+        "email.delivery_delayed": "delayed",
+    }.get(etype)
+
+    if status:
+        mark_email_delivery_event(message_id, status, detail)
+
+    if etype in _SUPPRESS_EVENTS:
+        for addr in recipients:
+            suppress_email(addr, _SUPPRESS_EVENTS[etype], detail)
+
+    # Always 200 on a verified event — a non-2xx makes Resend retry, and
+    # nothing here is worth replaying.
+    return jsonify(ok=True)

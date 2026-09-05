@@ -1,27 +1,34 @@
 """Onboarding email rendering. The day-7 email shipped for weeks with literal
 "{restaurant_name}" text because of a double-brace bug inside an f-string —
 these tests make that class of bug loud."""
-import sys
-import types
-
 import emails
 
 
 class FakeEmails:
-    last = None
+    """Captures the payload emails.deliver() would have posted to Resend.
 
-    @staticmethod
-    def send(payload):
-        FakeEmails.last = payload
-        return {"id": "fake"}
+    Sends now go through one requests.post inside deliver() rather than the
+    resend library, so this intercepts there instead of stubbing the module.
+    """
+    last = None
 
 
 def _stub_resend(monkeypatch):
-    fake = types.ModuleType("resend")
-    fake.Emails = FakeEmails
-    fake.api_key = None
-    monkeypatch.setitem(sys.modules, "resend", fake)
-    monkeypatch.setattr(emails, "RESEND_API_KEY", "fake-key")
+    class _Resp:
+        status_code = 200
+        text = '{"id": "fake"}'
+        @staticmethod
+        def json():
+            return {"id": "fake"}
+
+    def _capture(url, headers=None, json=None, timeout=None, **kw):
+        FakeEmails.last = json
+        return _Resp()
+
+    monkeypatch.setattr(emails, "_resend_key", lambda: "fake-key")
+    monkeypatch.setattr("requests.post", _capture)
+    # Never touch the real database from a rendering test.
+    monkeypatch.setattr(emails, "_record", lambda *a, **kw: None)
 
 
 def test_personalization_falls_back_without_api_key(monkeypatch):

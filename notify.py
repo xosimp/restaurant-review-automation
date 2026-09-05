@@ -12,7 +12,7 @@ from models import get_conn, DB_PATH
 def _html_doc(fragment, bg="#f7f4ef"):
     """Wrap a bare fragment in a real HTML document so its background fills
     the mail client's viewport instead of stopping at the content's height
-    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
+    (the half-cut-off look). Imported lazily: emails.py reads _resend_key()
     at module scope, and a module-level import here could bind it before
     load_dotenv() runs. See emails._html_document."""
     from emails import html_document
@@ -23,8 +23,10 @@ def _html_doc(fragment, bg="#f7f4ef"):
 TWILIO_SID     = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN   = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_FROM    = os.getenv("TWILIO_FROM_NUMBER", "")
-RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-FROM_EMAIL     = os.getenv("FROM_EMAIL", "will@cavnar.ai")
+# Read fresh at call time — see emails.py for why binding these at import
+# time is a silent-total-failure mode.
+def _resend_key(): return os.getenv("RESEND_API_KEY", "")
+def _from_email(): return os.getenv("FROM_EMAIL", "will@cavnar.ai")
 
 HEALTH_KEYWORDS = [
     "food poison", "food poisoning", "foodborne", "sick after", "got sick",
@@ -125,14 +127,14 @@ def alert_recipients(owner_email: str, restaurant_id: int = None, db_path: str =
 
 def _send_alert_email(owner_email: str, subject: str, html: str, restaurant_id: int = None) -> bool:
     """Send an alert email via Resend. Returns True on success."""
-    if not RESEND_API_KEY or not owner_email:
+    if not _resend_key() or not owner_email:
         print(f"[notify] Resend not configured — would email {owner_email}: {subject}")
         return False
     try:
         import resend as _r
-        _r.api_key = RESEND_API_KEY
+        _r.api_key = _resend_key()
         _r.Emails.send({
-            "from": f"Cavnar AI Alerts <{FROM_EMAIL}>",
+            "from": f"Cavnar AI Alerts <{_from_email()}>",
             "to": alert_recipients(owner_email, restaurant_id),
             "subject": subject,
             "html": _html_doc(html),

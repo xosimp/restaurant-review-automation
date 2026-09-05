@@ -461,6 +461,14 @@ def ensure_columns(db_path: str = DB_PATH):
     """Ensure all required columns exist — runs on every startup."""
     conn = get_conn(db_path)
     columns_to_add = [
+        # Staff schedule links used to live forever: a former employee's
+        # link kept showing next week's roster indefinitely.
+        ("schedule_shares", "expires_at", "TEXT"),
+        # email_log.status existed from the start but nothing could write it:
+        # log_email() had no status parameter, so a failed send was recorded
+        # as 'sent' like every other row.
+        ("email_log", "error", "TEXT"),
+        ("email_log", "message_id", "TEXT"),
         ("restaurants", "temp_password", "TEXT"),
         ("restaurants", "ig_token", "TEXT"),
         ("restaurants", "competitor_intel", "TEXT"),
@@ -896,10 +904,41 @@ def init_db(db_path: str = DB_PATH):
             sent_to         TEXT,
             sent_at         TEXT NOT NULL DEFAULT (datetime('now')),
             viewed_at       TEXT,
-            view_count      INTEGER NOT NULL DEFAULT 0
+            view_count      INTEGER NOT NULL DEFAULT 0,
+            expires_at      TEXT
         )""",
         "CREATE INDEX IF NOT EXISTS idx_schedule_shares_schedule ON schedule_shares(schedule_id)",
         "CREATE INDEX IF NOT EXISTS idx_schedule_shares_token ON schedule_shares(token)",
+        # Also created lazily by init_email_log(), but a fresh database that
+        # logged an email before that ran hit "no such table" — the same
+        # lazy-init gap already fixed for schedule_history and
+        # staff_availability. Both paths are IF NOT EXISTS, so keeping both
+        # is harmless.
+        """CREATE TABLE IF NOT EXISTS email_log (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id INTEGER,
+            email_type    TEXT,
+            to_email      TEXT,
+            subject       TEXT,
+            sent_at       TEXT DEFAULT (datetime('now')),
+            status        TEXT DEFAULT 'sent',
+            error         TEXT,
+            message_id    TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_email_log_restaurant ON email_log(restaurant_id, sent_at)",
+        # Addresses Resend told us are undeliverable or that reported us as
+        # spam. Suppressed at send time: retrying a hard bounce forever, or
+        # continuing to mail someone who hit "report spam", is exactly what
+        # burns a sending domain — and this domain also carries 2FA and
+        # password-reset mail.
+        """CREATE TABLE IF NOT EXISTS email_suppressions (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            email       TEXT NOT NULL UNIQUE,
+            reason      TEXT NOT NULL,
+            detail      TEXT,
+            created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_email_suppressions_email ON email_suppressions(email)",
         # event_type: 'recount' (qty = absolute counted amount) |
         # 'receiving' | 'depletion' | 'waste' (qty = signed delta).
         # source: 'toast' | 'manual' | 'admin' | 'inferred' | 'migration'.
@@ -2204,12 +2243,15 @@ def init_email_log(db_path: str = DB_PATH):
         to_email TEXT,
         subject TEXT,
         sent_at TEXT DEFAULT (datetime('now')),
-        status TEXT DEFAULT 'sent'
+        status TEXT DEFAULT 'sent',
+        error TEXT,
+        message_id TEXT
     )""")
     conn.commit()
     conn.close()
 
-def log_email(restaurant_id, email_type, to_email, subject, db_path: str = DB_PATH):
+def log_email(restaurant_id, email_type, to_email, subject, db_path: str = DB_PATH,
+              status: str = "sent", error: str = None, message_id: str = None):
     from datetime import datetime, timezone, timedelta
     # Convert UTC to US/Chicago time
     try:
@@ -2221,8 +2263,9 @@ def log_email(restaurant_id, email_type, to_email, subject, db_path: str = DB_PA
         local_now = (datetime.now(timezone.utc) - timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn(db_path)
     conn.execute(
-        "INSERT INTO email_log (restaurant_id, email_type, to_email, subject, sent_at) VALUES (?,?,?,?,?)",
-        (restaurant_id, email_type, to_email, subject, local_now)
+        "INSERT INTO email_log (restaurant_id, email_type, to_email, subject, sent_at, status, error, message_id) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (restaurant_id, email_type, to_email, subject, local_now, status, error, message_id)
     )
     conn.commit()
     conn.close()
@@ -2245,6 +2288,36 @@ def get_email_log(restaurant_id=None, limit=100, db_path: str = DB_PATH):
         ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def get_email_log_for_client(restaurant_id: int, limit: int = 50, db_path: str = DB_PATH) -> list:
+    """One restaurant's own email history, labelled for display.
+
+    get_email_log() already supported a restaurant filter but nothing
+    client-facing ever called it — an owner had no way to confirm whether a
+    staff schedule or supplier order actually went out, and the admin panel
+    was the only place any of this was visible.
+    """
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT email_type, to_email, subject, sent_at, status, error "
+            "FROM email_log WHERE restaurant_id=? ORDER BY id DESC LIMIT ?",
+            (restaurant_id, limit)
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["label"] = email_type_label(d.get("email_type"))
+        # Never surface a raw provider error to a restaurant owner; it's
+        # noise to them and can echo internal detail. The status is the
+        # actionable part.
+        d["failed"] = (d.get("status") or "sent") not in ("sent", "delivered")
+        d.pop("error", None)
+        out.append(d)
+    return out
 
 def init_staff_notes(db_path: str = DB_PATH):
     conn = sqlite3.connect(db_path)
@@ -3815,6 +3888,9 @@ def set_staff_contact(restaurant_id: int, employee_name: str, email: str = None,
         conn.close()
 
 
+SCHEDULE_SHARE_TTL_DAYS = 60
+
+
 def create_schedule_share(restaurant_id: int, schedule_id: int, employee_name: str,
                           sent_to: str = None, db_path: str = DB_PATH) -> str:
     """One tokenised link for one employee's view of one schedule.
@@ -3822,8 +3898,17 @@ def create_schedule_share(restaurant_id: int, schedule_id: int, employee_name: s
     Re-publishing the same schedule to the same person reuses their existing
     token rather than minting a second one, so a link already sitting in
     someone's inbox never goes dead because the manager hit Publish twice.
+    Re-publishing also pushes the expiry out again, since the link was just
+    deliberately re-sent.
+
+    Links expire after SCHEDULE_SHARE_TTL_DAYS. Without that they were
+    permanent: someone who left the restaurant a year ago still had a working
+    URL showing current staffing, and the only way to cut it off was deleting
+    the row by hand.
     """
     import secrets as _secrets
+    from datetime import datetime as _dt, timedelta as _td
+    expires = (_dt.utcnow() + _td(days=SCHEDULE_SHARE_TTL_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn(db_path)
     try:
         existing = conn.execute(
@@ -3831,16 +3916,16 @@ def create_schedule_share(restaurant_id: int, schedule_id: int, employee_name: s
             (schedule_id, employee_name)
         ).fetchone()
         if existing:
-            conn.execute("UPDATE schedule_shares SET sent_at=datetime('now'), sent_to=? "
+            conn.execute("UPDATE schedule_shares SET sent_at=datetime('now'), sent_to=?, expires_at=? "
                          "WHERE schedule_id=? AND employee_name=?",
-                         (sent_to, schedule_id, employee_name))
+                         (sent_to, expires, schedule_id, employee_name))
             conn.commit()
             return existing["token"]
         token = _secrets.token_urlsafe(24)
         conn.execute("""
-            INSERT INTO schedule_shares (restaurant_id, schedule_id, employee_name, token, sent_to)
-            VALUES (?, ?, ?, ?, ?)
-        """, (restaurant_id, schedule_id, employee_name, token, sent_to))
+            INSERT INTO schedule_shares (restaurant_id, schedule_id, employee_name, token, sent_to, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (restaurant_id, schedule_id, employee_name, token, sent_to, expires))
         conn.commit()
         return token
     finally:
@@ -3855,6 +3940,7 @@ def get_schedule_share(token: str, db_path: str = DB_PATH) -> dict:
     try:
         row = conn.execute("""
             SELECT s.id, s.restaurant_id, s.schedule_id, s.employee_name, s.viewed_at, s.view_count,
+                   s.expires_at,
                    h.week_start, h.week_end, h.schedule_csv, r.name AS restaurant_name
             FROM schedule_shares s
             JOIN schedule_history h ON h.id = s.schedule_id
@@ -3863,7 +3949,27 @@ def get_schedule_share(token: str, db_path: str = DB_PATH) -> dict:
         """, (token,)).fetchone()
     finally:
         conn.close()
-    return dict(row) if row else None
+    if not row:
+        return None
+    share = dict(row)
+    # Distinguished from "no such token" so the page can say "this link has
+    # expired, ask your manager to resend" instead of a bare 404 that reads
+    # like the app is broken to someone who just wants their shifts.
+    share["expired"] = _share_is_expired(share.get("expires_at"))
+    return share
+
+
+def _share_is_expired(expires_at) -> bool:
+    """Rows created before expires_at existed have NULL and never expire —
+    they predate the policy, and silently cutting off links already in
+    people's inboxes would strand them mid-week."""
+    if not expires_at:
+        return False
+    from datetime import datetime as _dt
+    try:
+        return _dt.utcnow() > _dt.fromisoformat(str(expires_at).replace("T", " "))
+    except Exception:
+        return False
 
 
 def mark_schedule_share_viewed(token: str, db_path: str = DB_PATH):
@@ -3892,3 +3998,136 @@ def get_schedule_share_status(restaurant_id: int, schedule_id: int, db_path: str
     finally:
         conn.close()
     return [dict(r) for r in rows]
+
+
+# ── Email suppression list ──────────────────────────────────────────────────
+
+def suppress_email(email: str, reason: str, detail: str = None, db_path: str = DB_PATH):
+    """Stop sending to an address. Idempotent; the first reason wins so a
+    later soft signal can't overwrite a hard bounce."""
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO email_suppressions (email, reason, detail) VALUES (?,?,?)",
+            (email, reason, (detail or "")[:500])
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return True
+
+
+def is_email_suppressed(email: str, db_path: str = DB_PATH) -> bool:
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    conn = get_conn(db_path)
+    try:
+        row = conn.execute("SELECT 1 FROM email_suppressions WHERE email=?", (email,)).fetchone()
+    finally:
+        conn.close()
+    return bool(row)
+
+
+def unsuppress_email(email: str, db_path: str = DB_PATH):
+    """Manual reinstatement — a bounce can be a full mailbox that got emptied,
+    or an address fixed after a typo."""
+    conn = get_conn(db_path)
+    try:
+        conn.execute("DELETE FROM email_suppressions WHERE email=?", ((email or "").strip().lower(),))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_email_suppressions(limit: int = 200, db_path: str = DB_PATH) -> list:
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT email, reason, detail, created_at FROM email_suppressions "
+            "ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def mark_email_delivery_event(message_id: str, status: str, detail: str = None, db_path: str = DB_PATH):
+    """Reconcile a Resend webhook back onto the row we logged at send time."""
+    if not message_id:
+        return False
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "UPDATE email_log SET status=?, error=COALESCE(?, error) WHERE message_id=?",
+            (status, (detail or None), message_id)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+# ── Marketing unsubscribe tokens ────────────────────────────────────────────
+
+def unsubscribe_token(restaurant_id: int) -> str:
+    """Signed, stateless one-click unsubscribe token.
+
+    Signed rather than stored so an old link in an old email never stops
+    working, and HMAC'd so nobody can unsubscribe a restaurant by walking
+    ids. Scoped to marketing only — it never touches security email.
+    """
+    import hmac, hashlib, base64, os as _os
+    secret = (_os.getenv("SECRET_KEY") or _os.getenv("RESEND_API_KEY") or "cavnar-fallback").encode()
+    sig = hmac.new(secret, f"unsub:{restaurant_id}".encode(), hashlib.sha256).digest()
+    return f"{restaurant_id}.{base64.urlsafe_b64encode(sig).decode().rstrip('=')[:24]}"
+
+
+def verify_unsubscribe_token(token: str):
+    """Return the restaurant_id a token authorises, or None."""
+    import hmac as _hmac
+    try:
+        rid_str, _ = (token or "").split(".", 1)
+        rid = int(rid_str)
+    except Exception:
+        return None
+    return rid if _hmac.compare_digest(unsubscribe_token(rid), token or "") else None
+
+
+# Human labels for email_log.email_type. The stored value is the sender
+# function name — precise and greppable — but "send_onboarding_day2" is not
+# what an owner should read in their own email history.
+EMAIL_TYPE_LABELS = {
+    "send_2fa_code":                  "Two-factor code",
+    "send_login_notification":        "New sign-in alert",
+    "send_password_reset_email":      "Password reset",
+    "send_password_reset_code_email": "Password reset code",
+    "send_password_changed_email":    "Password changed",
+    "send_email_changed_email":       "Sign-in email changed",
+    "send_recovery_email_code":       "Recovery email code",
+    "send_signup_welcome_email":      "Welcome",
+    "send_welcome_email":             "Dashboard access",
+    "send_team_invite_email":         "Team invite",
+    "send_payment_email":             "Payment link",
+    "send_payment_failed_client_email": "Payment issue",
+    "send_staff_schedule_email":      "Staff schedule",
+    "send_supplier_order_email":      "Supplier order",
+    "send_onboarding_day2":           "Getting started",
+    "send_onboarding_day7":           "One week in",
+    "send_onboarding_day30":          "30-day check-in",
+    "send_monthly_summary_email":     "Monthly summary",
+    "send_reactivation_email":        "Welcome back",
+    "send_bug_report_email":          "Bug report",
+    "send_signup_admin_alert":        "New signup (internal)",
+}
+
+
+def email_type_label(email_type: str) -> str:
+    """Falls back to the raw value so an untyped or newly added sender still
+    shows something rather than blank."""
+    if not email_type:
+        return "Email"
+    return EMAIL_TYPE_LABELS.get(email_type, email_type.replace("send_", "").replace("_", " ").strip().capitalize())

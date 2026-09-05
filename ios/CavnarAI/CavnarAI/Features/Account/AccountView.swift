@@ -68,6 +68,7 @@ struct AccountView: View {
                 case "billing": showingBilling = true
                 case "team": showingTeam = true
                 case "export": showingExportData = true
+                case "emailhistory": showingEmailHistory = true
                 case "close-account": showingCloseAccount = true
                 case "help": showingHelp = true
                 default: break
@@ -169,6 +170,7 @@ struct AccountView: View {
     @State private var showingChangelog = false
     @State private var showingTeam = false
     @State private var showingExportData = false
+    @State private var showingEmailHistory = false
     @State private var showingCloseAccount = false
     @State private var showingHelp = false
     @State private var showingReportBug = false
@@ -286,6 +288,12 @@ struct AccountView: View {
                 }
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
                 settingsRow {
+                    row("Email history", systemImage: "envelope")
+                } action: {
+                    showingEmailHistory = true
+                }
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                settingsRow {
                     row("Export my data", systemImage: "square.and.arrow.up")
                 } action: {
                     showingExportData = true
@@ -303,6 +311,9 @@ struct AccountView: View {
             }
             .sheet(isPresented: $showingChangelog) {
                 ChangelogView()
+            }
+            .sheet(isPresented: $showingEmailHistory) {
+                AccountEmailHistoryView(viewModel: viewModel)
             }
             .sheet(isPresented: $showingExportData) {
                 AccountExportDataView(viewModel: viewModel)

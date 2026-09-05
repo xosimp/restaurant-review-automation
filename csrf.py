@@ -25,15 +25,27 @@ _on_railway = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJEC
 
 def ensure_csrf_cookie(resp):
     """after_request: make sure every browser session carries the token.
-    Idempotent — only sets when absent so the value stays stable across
-    open tabs."""
+
+    Idempotent in both directions. Checking only the *incoming* cookie was
+    not enough: a route that mints its own token for a plain HTML form (the
+    public staff schedule page) sets the cookie on the response, and this
+    hook then saw no incoming cookie and set a second, different one. The
+    browser kept the later value, the form submitted the earlier one, and
+    every first-time submission was rejected as a CSRF failure — which is
+    every staff member, since they arrive from an email link with no prior
+    cookie. So skip when the response already carries one too.
+    """
     try:
-        if not request.cookies.get(CSRF_COOKIE):
-            resp.set_cookie(
-                CSRF_COOKIE, secrets.token_urlsafe(32),
-                max_age=30 * 24 * 3600,
-                httponly=False, secure=_on_railway, samesite="Lax",
-            )
+        if request.cookies.get(CSRF_COOKIE):
+            return resp
+        for header_value in resp.headers.getlist("Set-Cookie"):
+            if header_value.startswith(f"{CSRF_COOKIE}="):
+                return resp
+        resp.set_cookie(
+            CSRF_COOKIE, secrets.token_urlsafe(32),
+            max_age=30 * 24 * 3600,
+            httponly=False, secure=_on_railway, samesite="Lax",
+        )
     except Exception:
         pass
     return resp

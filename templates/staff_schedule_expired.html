@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Link expired</title>
+<style>
+  body{margin:0;background:#0c0c0c;color:#f0ebe0;
+       font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
+       -webkit-font-smoothing:antialiased;padding:28px 18px;
+       display:flex;align-items:center;justify-content:center;min-height:80vh}
+  .wrap{max-width:420px;text-align:center}
+  .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#e8956a}
+  h1{font-size:22px;line-height:1.25;margin:12px 0 10px;letter-spacing:-.01em}
+  p{color:#8f847b;font-size:14.5px;line-height:1.6;margin:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  {% if restaurant_name %}<div class="kicker">{{ restaurant_name }}</div>{% endif %}
+  <h1>This schedule link has expired</h1>
+  <p>Schedule links stop working after a while for privacy. Ask your manager to send you a fresh one.</p>
+</div>
+</body>
+</html>

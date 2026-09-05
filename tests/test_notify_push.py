@@ -14,7 +14,7 @@ from models import (
 @pytest.fixture(autouse=True)
 def _no_network(monkeypatch):
     # Guards _send_alert_email() into a no-op print instead of a real Resend call.
-    monkeypatch.setattr(notify, "RESEND_API_KEY", "")
+    monkeypatch.setattr(notify, "_resend_key", lambda: "")
 
 
 def _restaurant(db_path, **kw):

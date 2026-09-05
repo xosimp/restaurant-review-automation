@@ -29,6 +29,10 @@ final class AccountViewModel {
     var loginHistory: [LoginHistoryEntry] = []
     var isLoadingLoginHistory = false
 
+    // Email history — what we've actually sent for this restaurant
+    var emailHistory: [SentEmail] = []
+    var isLoadingEmailHistory = false
+
     // Export my data
     var isExportingData = false
     var exportDataError: String?
@@ -307,6 +311,20 @@ final class AccountViewModel {
             loginHistory = response.history
         } catch {
             // Non-fatal — sheet just shows an empty state.
+        }
+    }
+
+    private struct EmailHistoryResponse: Decodable { let ok: Bool; let emails: [SentEmail] }
+
+    func loadEmailHistory() async {
+        isLoadingEmailHistory = true
+        defer { isLoadingEmailHistory = false }
+        do {
+            let response: EmailHistoryResponse = try await client.send(
+                "/mobile/api/account/email-history", hapticOnError: false)
+            emailHistory = response.emails
+        } catch {
+            // Non-fatal — the sheet shows its empty state.
         }
     }
 

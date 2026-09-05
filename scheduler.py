@@ -771,9 +771,9 @@ def run_onboarding_sequence():
                     restaurant_name=r.name,
                     owner_name=r.owner_name,
                     modules=modules,
+                    restaurant_id=r.id,
                 )
                 mark_onboarding_sent(r.id, "day_2")
-                log_email(r.id, "Onboarding Day 2", r.owner_email, f"Getting started — {r.name}")
                 log.info(f"Onboarding day 2 sent to {r.owner_email} ({r.name})")
             except Exception as e:
                 log.error(f"Onboarding day 2 failed for {r.name}: {e}")
@@ -811,7 +811,6 @@ def run_onboarding_sequence():
                     restaurant_id=r.id,
                 )
                 mark_onboarding_sent(r.id, "day_7")
-                log_email(r.id, "Onboarding Day 7", r.owner_email, f"One week in — {r.name}")
                 log.info(f"Onboarding day 7 sent to {r.owner_email} ({r.name})")
             except Exception as e:
                 log.error(f"Onboarding day 7 failed for {r.name}: {e}")
@@ -828,7 +827,6 @@ def run_onboarding_sequence():
                     restaurant_id=r.id,
                 )
                 mark_onboarding_sent(r.id, "day_30")
-                log_email(r.id, "Onboarding Day 30", r.owner_email, f"30-day check-in — {r.name}")
                 log.info(f"Onboarding day 30 sent to {r.owner_email} ({r.name})")
             except Exception as e:
                 log.error(f"Onboarding day 30 failed for {r.name}: {e}")

@@ -3826,6 +3826,78 @@ def guest_optin_submit(restaurant_id):
     return jsonify(ok=True)
 
 
+# ── Email history + preview send (web parity) ───────────────────────────────
+
+@client_bp.route("/api/email-history")
+@login_required
+def email_history(current_user):
+    """What Cavnar has actually sent on this restaurant's behalf, and
+    whether it landed. Until email_log carried a real status this could
+    only ever have said "sent"."""
+    from models import get_email_log_for_client
+    try:
+        limit = min(int(request.args.get("limit", 50)), 200)
+    except (TypeError, ValueError):
+        limit = 50
+    return jsonify(ok=True, emails=get_email_log_for_client(current_user["restaurant_id"], limit=limit))
+
+
+@client_bp.route("/api/send-test-digest", methods=["POST"])
+@login_required
+def send_test_digest_web(current_user):
+    """Web twin of mobile_api's /account/send-test-digest — same build and
+    render, sent to whoever is logged in."""
+    rid = current_user["restaurant_id"]
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return jsonify(ok=False, error="Restaurant not found"), 404
+    to_email = current_user.get("email") or restaurant.owner_email
+    if not to_email:
+        return jsonify(ok=False, error="No email on file for your account."), 400
+    try:
+        from reporter import build_report_from_db, render_html
+        from emails import deliver, _from_email
+        report = build_report_from_db(rid, restaurant.name, days=7)
+        html = render_html(report, restaurant.name, owner_name=restaurant.owner_name, restaurant_id=rid)
+        result = deliver({
+            "from": f"Cavnar AI <{_from_email()}>",
+            "to": [to_email],
+            "subject": f"[Preview] Your weekly review digest — {restaurant.name}",
+            "html": _html_doc(html),
+        }, restaurant_id=rid, email_type="digest_preview")
+        if not result.ok:
+            return jsonify(ok=False, error="Couldn't send the preview — try again in a moment."), 502
+        return jsonify(ok=True, email=to_email)
+    except Exception as e:
+        import ops
+        ops.capture(e, job="send_test_digest_web", context=f"restaurant_id={rid}")
+        return jsonify(ok=False, error="Couldn't build the preview digest."), 500
+
+
+# ── Public marketing unsubscribe ────────────────────────────────────────────
+# Deliberately public and login-free: the person who wants out is reading an
+# email, not signed into a dashboard. Only ever sets the marketing flag —
+# security mail (2FA, password resets) is unaffected, and there is no way to
+# reach any other setting from this token.
+
+@client_bp.route("/u/<token>", methods=["GET", "POST"])
+def marketing_unsubscribe(token):
+    from models import verify_unsubscribe_token
+    rid = verify_unsubscribe_token(token)
+    if not rid:
+        return render_template("unsubscribed.html", ok=False, restaurant_name=""), 404
+    restaurant = get_restaurant(rid)
+    if not restaurant:
+        return render_template("unsubscribed.html", ok=False, restaurant_name=""), 404
+
+    # RFC 8058 one-click: a POST from the mail client unsubscribes directly.
+    # A GET shows the same confirmation, so a human clicking the link in the
+    # footer gets a page rather than a silent no-op.
+    update_restaurant(rid, {"marketing_emails_opt_out": 1})
+    return render_template("unsubscribed.html", ok=True,
+                           restaurant_name=restaurant.name or "")
+
+
 def _do_switch_location(current_user, target_id, token):
     if current_user.get("role") != "owner":
         return {"ok": False, "error": "Not an owner account"}, 403
@@ -3963,6 +4035,12 @@ def staff_schedule_page(token):
     share = get_schedule_share(token)
     if not share:
         return "This schedule link isn't valid. Ask your manager for a new one.", 404
+    if share.get("expired"):
+        # 410 Gone, not 404: the link was real, it has simply aged out. Says
+        # so plainly so someone who no longer works here isn't left guessing,
+        # and doesn't leak any shift data.
+        return render_template("staff_schedule_expired.html",
+                               restaurant_name=share.get("restaurant_name") or ""), 410
 
     from models import get_staff_availability
     import json as _json_av
@@ -4039,6 +4117,11 @@ def staff_availability_submit(token):
     share = get_schedule_share(token)
     if not share:
         return "This link isn't valid. Ask your manager for a new one.", 404
+    if share.get("expired"):
+        # An expired link is read-only-gone in both directions — it must not
+        # keep writing availability that would shape next week's schedule.
+        return render_template("staff_schedule_expired.html",
+                               restaurant_name=share.get("restaurant_name") or ""), 410
 
     ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr or "unknown"
     if ai_rate_limited(f"staffavail:{ip}", max_calls=20, window_secs=300):

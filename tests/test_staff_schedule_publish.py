@@ -235,3 +235,86 @@ def test_the_page_issues_a_csrf_token_on_the_very_first_visit(client, db_path):
     body = resp.get_data(as_text=True)
     assert 'name="csrf_token"' in body
     assert "csrf_js" in resp.headers.get("Set-Cookie", "")
+
+
+# ── Link expiration ──────────────────────────────────────────────────────
+
+def _expire_share(db_path, token, days_ago=1):
+    """Backdate a share's expiry so it reads as already lapsed."""
+    from datetime import datetime, timedelta
+    stamp = (datetime.utcnow() - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn(db_path)
+    conn.execute("UPDATE schedule_shares SET expires_at=? WHERE token=?", (stamp, token))
+    conn.commit()
+    conn.close()
+
+
+def test_a_new_share_gets_an_expiry_about_sixty_days_out(db_path):
+    from models import create_schedule_share, SCHEDULE_SHARE_TTL_DAYS
+    from datetime import datetime
+    rid = _restaurant(db_path)
+    sid = _schedule(db_path, rid)
+    token = create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
+    row = get_conn(db_path).execute(
+        "SELECT expires_at FROM schedule_shares WHERE token=?", (token,)).fetchone()
+    days_out = (datetime.fromisoformat(row["expires_at"]) - datetime.utcnow()).days
+    assert SCHEDULE_SHARE_TTL_DAYS - 1 <= days_out <= SCHEDULE_SHARE_TTL_DAYS
+
+
+def test_an_expired_link_is_flagged_rather_than_vanishing(db_path):
+    from models import create_schedule_share, get_schedule_share
+    rid = _restaurant(db_path)
+    sid = _schedule(db_path, rid)
+    token = create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
+    assert get_schedule_share(token, db_path=db_path)["expired"] is False
+    _expire_share(db_path, token)
+    share = get_schedule_share(token, db_path=db_path)
+    assert share is not None and share["expired"] is True
+
+
+def test_links_predating_the_policy_never_expire(db_path):
+    """Rows with NULL expires_at were already in people's inboxes when the
+    policy landed — cutting them off mid-week would strand real staff."""
+    from models import create_schedule_share, get_schedule_share
+    rid = _restaurant(db_path)
+    sid = _schedule(db_path, rid)
+    token = create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE schedule_shares SET expires_at=NULL WHERE token=?", (token,))
+    conn.commit(); conn.close()
+    assert get_schedule_share(token, db_path=db_path)["expired"] is False
+
+
+def test_republishing_pushes_the_expiry_back_out(db_path):
+    from models import create_schedule_share, get_schedule_share
+    rid = _restaurant(db_path)
+    sid = _schedule(db_path, rid)
+    token = create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
+    _expire_share(db_path, token)
+    again = create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
+    assert again == token                                    # same link, still valid
+    assert get_schedule_share(token, db_path=db_path)["expired"] is False
+
+
+def test_the_public_page_says_expired_instead_of_serving_shifts(client, db_path):
+    from models import create_schedule_share
+    rid = _restaurant(db_path)
+    sid = _schedule(db_path, rid)
+    token = create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
+    _expire_share(db_path, token)
+    resp = client.get(f"/s/{token}")
+    assert resp.status_code == 410
+    body = resp.get_data(as_text=True)
+    assert "expired" in body.lower()
+    assert "Sofia R." not in body            # no shift data leaks
+
+
+def test_an_expired_link_cannot_submit_availability(client, db_path):
+    from models import create_schedule_share, get_staff_availability
+    rid = _restaurant(db_path)
+    sid = _schedule(db_path, rid)
+    token = create_schedule_share(rid, sid, "Sofia R.", db_path=db_path)
+    _expire_share(db_path, token)
+    resp = _submit_availability(client, token, ["Monday"])
+    assert resp.status_code == 410
+    assert not get_staff_availability(rid, db_path=db_path)

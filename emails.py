@@ -3,8 +3,14 @@ emails.py — Cavnar AI email sending functions
 """
 import logging
 import os
-RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-FROM_EMAIL     = os.getenv("FROM_EMAIL", "will@cavnar.ai")
+# Read fresh at call time, never bound at import. Binding these at module
+# scope meant that importing this module before load_dotenv() ran froze the
+# key to "" and silently dropped every send in this file — the same bug
+# already fixed in scheduler/admin_routes/audit_app/webhook_routes/mobile_api.
+# It happened to work only because hosted_dashboard.py calls load_dotenv()
+# before importing us; one import reorder was all it would have taken.
+def _resend_key(): return os.getenv("RESEND_API_KEY", "")
+def _from_email(): return os.getenv("FROM_EMAIL", "will@cavnar.ai")
 log = logging.getLogger(__name__)
 
 
@@ -44,7 +50,7 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
 
 def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: str = None):
     """Send 2FA verification code email."""
-    if not RESEND_API_KEY:
+    if not _resend_key():
         log.warning("send_2fa_code: RESEND_API_KEY not set — nothing sent")
         return False
     import requests
@@ -68,14 +74,9 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
 </div>
     """
     try:
-        resp = requests.post("https://api.resend.com/emails",
-            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-            json={"from": f"Cavnar AI <{FROM_EMAIL}>", "to": [to_email],
-                  "subject": f"Your Cavnar AI verification code: {code}", "html": _html_document(html)},
-            timeout=10)
-        if resp.status_code != 200:
-            log.warning("send_2fa_code: Resend returned %s: %s", resp.status_code, resp.text[:300])
-        return resp.status_code == 200
+        _res = deliver(email_type="send_2fa_code", payload={"from": f"Cavnar AI <{_from_email()}>", "to": [to_email],
+                  "subject": f"Your Cavnar AI verification code: {code}", "html": _html_document(html)})
+        return _res
     except Exception as e:
         log.warning("send_2fa_code: request to Resend failed: %s", e)
         return False
@@ -83,7 +84,7 @@ def send_2fa_code(to_email: str, restaurant_name: str, code: str, owner_name: st
 def send_login_notification(to_email: str, restaurant_name: str,
                             ip: str = None, user_agent: str = None, report_url: str = None):
     """Send sign-in notification email."""
-    if not RESEND_API_KEY:
+    if not _resend_key():
         return False
     import requests
     from datetime import datetime
@@ -126,17 +127,206 @@ def send_login_notification(to_email: str, restaurant_name: str,
 </div>
     """
     try:
-        resp = requests.post("https://api.resend.com/emails",
-            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-            json={"from": f"Cavnar AI <{FROM_EMAIL}>", "to": [to_email],
-                  "subject": f"New sign-in to your Cavnar AI dashboard", "html": _html_document(html)},
-            timeout=10)
-        if resp.status_code != 200:
-            log.warning(f"send_login_notification failed ({resp.status_code}): {resp.text[:300]}")
-        return resp.status_code == 200
+        _res = deliver(email_type="send_login_notification", payload={"from": f"Cavnar AI <{_from_email()}>", "to": [to_email],
+                  "subject": f"New sign-in to your Cavnar AI dashboard", "html": _html_document(html)})
+        return _res
     except Exception as e:
         log.warning(f"send_login_notification error: {e}")
         return False
+
+
+# ── Delivery core ───────────────────────────────────────────────────────────
+
+class SendResult:
+    """What actually happened to one send.
+
+    Every sender used to return a bare bool that no call site read, so a
+    failed 2FA code, staff schedule or supplier order was indistinguishable
+    from a delivered one — and email_log recorded 'sent' either way. This
+    carries enough to log the truth and to let a caller react.
+    """
+    __slots__ = ("ok", "message_id", "error", "status_code", "attempts")
+
+    def __init__(self, ok, message_id=None, error=None, status_code=None, attempts=1):
+        self.ok = ok
+        self.message_id = message_id
+        self.error = error
+        self.status_code = status_code
+        self.attempts = attempts
+
+    def __bool__(self):
+        """Back-compatible with `if send_x(...)` and with the old bool
+        returns, so existing call sites keep working unchanged."""
+        return bool(self.ok)
+
+    def __repr__(self):
+        return f"<SendResult ok={self.ok} status={self.status_code} attempts={self.attempts} err={self.error!r}>"
+
+
+# 429 and 5xx are worth another go; 4xx (bad address, unverified domain) is
+# not — retrying those just burns time and makes the same mistake three times.
+_RETRY_STATUS = {408, 429, 500, 502, 503, 504}
+
+# A suppressed address still gets security mail — locking someone out of
+# their own account because a newsletter bounced would be a worse failure
+# than the one suppression is protecting against.
+_SUPPRESSION_EXEMPT = {
+    "send_2fa_code",
+    "send_password_reset_email",
+    "send_password_reset_code_email",
+    "send_password_changed_email",
+    "send_email_changed_email",
+    "send_recovery_email_code",
+    "send_login_notification",
+}
+_MAX_ATTEMPTS = 3
+_BACKOFF_BASE = 0.5   # 0.5s, 1s — deliberately short; these run inline in
+                      # request handlers and scheduler ticks, not a queue.
+
+
+def deliver(payload: dict = None, restaurant_id=None, email_type=None, log_send: bool = True) -> SendResult:
+    """Send one email through Resend, with retry on transient failures, and
+    record the real outcome in email_log.
+
+    Single choke point on purpose: retry, logging and status all used to be
+    absent, and adding them at 17 separate call sites would have guaranteed
+    they drifted.
+    """
+    import time as _time
+    import requests as _requests
+
+    key = _resend_key()
+    to = payload.get("to")
+    to_email = (to[0] if isinstance(to, (list, tuple)) and to else to) or ""
+    subject = payload.get("subject", "")
+
+    if not key or not to_email:
+        result = SendResult(False, error="RESEND_API_KEY or recipient missing", attempts=0)
+        _record(restaurant_id, email_type, to_email, subject, result, log_send)
+        return result
+
+    # Marketing mail carries a working opt-out; CAN-SPAM requires one and
+    # until now none of these four had any. Applied centrally so a new
+    # marketing template can't be added without it.
+    if email_type in _MARKETING_TYPES and restaurant_id:
+        payload = _add_unsubscribe(payload, restaurant_id)
+
+    # Suppression is enforced here rather than at call sites so a bounced or
+    # complained address is dropped no matter which of the 26 senders fires.
+    # Security mail is exempt: someone whose marketing bounced must still be
+    # able to receive a 2FA code or a password reset.
+    if email_type not in _SUPPRESSION_EXEMPT:
+        try:
+            from models import is_email_suppressed
+            if is_email_suppressed(to_email):
+                result = SendResult(False, error="recipient suppressed (bounced/complained)", attempts=0)
+                _record(restaurant_id, email_type, to_email, subject, result, log_send)
+                return result
+        except Exception as e:
+            log.warning("suppression check failed for %s: %s", to_email, e)
+
+    last = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            resp = _requests.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json=payload, timeout=15,
+            )
+            if resp.status_code == 200:
+                mid = None
+                try:
+                    mid = (resp.json() or {}).get("id")
+                except Exception:
+                    pass
+                result = SendResult(True, message_id=mid, status_code=200, attempts=attempt)
+                _record(restaurant_id, email_type, to_email, subject, result, log_send)
+                return result
+
+            last = SendResult(False, error=(resp.text or "")[:300],
+                              status_code=resp.status_code, attempts=attempt)
+            if resp.status_code not in _RETRY_STATUS:
+                break
+        except Exception as e:
+            last = SendResult(False, error=str(e)[:300], attempts=attempt)
+
+        if attempt < _MAX_ATTEMPTS:
+            _time.sleep(_BACKOFF_BASE * (2 ** (attempt - 1)))
+
+    # `last or ...` would be wrong here: SendResult.__bool__ reports .ok, so a
+    # failed result is falsy and would be silently replaced by the fallback,
+    # throwing away the real status code, body and attempt count.
+    result = last if last is not None else SendResult(False, error="unknown send failure")
+    log.warning("email %r to %s failed after %s attempt(s): %s",
+                subject, to_email, result.attempts, result.error)
+    _record(restaurant_id, email_type, to_email, subject, result, log_send)
+    return result
+
+
+# The four templates that are product marketing rather than transactional.
+# Everything else — receipts, codes, schedules, supplier orders, alerts — is
+# mail the recipient asked for by using the product, and must not carry an
+# unsubscribe that would silently turn off operational email.
+_MARKETING_TYPES = {
+    "send_onboarding_day2",
+    "send_onboarding_day7",
+    "send_onboarding_day30",
+    "send_monthly_summary_email",
+}
+
+
+def _add_unsubscribe(payload: dict, restaurant_id: int) -> dict:
+    """Append a visible footer link and the one-click headers.
+
+    List-Unsubscribe-Post is what lets Gmail/Apple render their own native
+    "Unsubscribe" affordance instead of routing people to the spam button —
+    which is the outcome that actually damages a sending domain.
+    """
+    try:
+        from models import unsubscribe_token
+        base = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+        url = f"{base}/u/{unsubscribe_token(restaurant_id)}"
+    except Exception as e:
+        log.warning("unsubscribe link build failed for restaurant %s: %s", restaurant_id, e)
+        return payload
+
+    footer = (
+        '<div style="text-align:center;margin:18px auto 0;max-width:560px;'
+        'font-family:-apple-system,BlinkMacSystemFont,\'Helvetica Neue\',Arial,sans-serif">'
+        '<p style="font-size:11px;color:#9a9088;line-height:1.6;margin:0">'
+        'You get this because you use Cavnar AI. '
+        f'<a href="{url}" style="color:#9a9088;text-decoration:underline">Unsubscribe from product emails</a>.'
+        '<br>Account and security emails are sent regardless.'
+        '</p></div>'
+    )
+    html = payload.get("html") or ""
+    if "</body>" in html:
+        html = html.replace("</body>", footer + "</body>", 1)
+    else:
+        html += footer
+
+    out = dict(payload)
+    out["html"] = html
+    out["headers"] = {
+        **(payload.get("headers") or {}),
+        "List-Unsubscribe": f"<{url}>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    }
+    return out
+
+
+def _record(restaurant_id, email_type, to_email, subject, result: SendResult, log_send: bool):
+    """Best-effort logging — a logging failure must never turn a delivered
+    email into an exception at the call site."""
+    if not log_send or not email_type:
+        return
+    try:
+        from models import log_email
+        log_email(restaurant_id, email_type, to_email, subject,
+                  status=("sent" if result.ok else "failed"),
+                  error=result.error, message_id=result.message_id)
+    except Exception as e:
+        log.warning("email_log write failed for %r: %s", subject, e)
 
 
 def _html_document(fragment: str, bg: str = "#f7f4ef") -> str:
@@ -196,22 +386,8 @@ def _branded_email(inner_html: str) -> str:
 
 
 def _send_branded(to_email: str, subject: str, inner_html: str, from_label: str = "Cavnar AI") -> bool:
-    if not RESEND_API_KEY or not to_email:
-        log.warning(f"{subject!r} not sent — RESEND_API_KEY or recipient missing")
-        return False
-    import requests
-    try:
-        resp = requests.post("https://api.resend.com/emails",
-            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-            json={"from": f"{from_label} <{FROM_EMAIL}>", "to": [to_email],
-                  "subject": subject, "html": _branded_email(inner_html)},
-            timeout=10)
-        if resp.status_code != 200:
-            log.warning(f"{subject!r} failed ({resp.status_code}): {resp.text[:300]}")
-        return resp.status_code == 200
-    except Exception as e:
-        log.warning(f"{subject!r} error: {e}")
-        return False
+    return deliver(email_type="send_login_notification", payload={"from": f"{from_label} <{_from_email()}>", "to": [to_email],
+                    "subject": subject, "html": _branded_email(inner_html)})
 
 
 def send_password_reset_email(to_email: str, reset_url: str) -> bool:
@@ -275,7 +451,7 @@ def send_signup_admin_alert(restaurant_name: str, owner_name: str, email: str, p
 def send_payment_email(to_email, restaurant_name, tier=None,
                        module_count: int = None):
     """Send payment email with a dynamically generated Stripe checkout link."""
-    if not RESEND_API_KEY:
+    if not _resend_key():
         return
 
     # Determine module count
@@ -306,8 +482,6 @@ def send_payment_email(to_email, restaurant_name, tier=None,
     annual_monthly  = f"${module_count * 250:,}/mo"
 
     try:
-        import resend as _resend
-        _resend.api_key = RESEND_API_KEY
         if checkout_monthly and checkout_annual:
             btn_html = f"""
 <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:4px">
@@ -329,8 +503,8 @@ def send_payment_email(to_email, restaurant_name, tier=None,
             btn_html = f'<a href="{checkout_monthly}" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">Complete payment →</a>'
         else:
             btn_html = '<p style="font-size:13px;color:#3a3530;margin-top:8px">Your payment link will arrive in a separate email shortly.</p>' 
-        _resend.Emails.send({
-            "from": f"Will Cavnar <{FROM_EMAIL}>",
+        deliver(email_type="send_payment_email", payload={
+            "from": f"Will Cavnar <{_from_email()}>",
             "to": [to_email],
             "subject": f"Your Cavnar AI payment link — {restaurant_name}",
             "html": _html_document(f"""
@@ -398,8 +572,6 @@ def send_welcome_email(to_email, restaurant_name, username, password,
                        module_reviews=0, module_labor=0,
                        module_inventory=0, module_marketing=0):
     """Send branded welcome email to new client with their login credentials."""
-    import resend as _resend
-    _resend.api_key = RESEND_API_KEY
     # Build module list
     active_modules = []
     if module_reviews:  active_modules.append("Review Intelligence")
@@ -452,8 +624,8 @@ def send_welcome_email(to_email, restaurant_name, username, password,
   </p>
 </div>
 </div>"""
-    _resend.Emails.send({
-        "from": f"Will Cavnar <{FROM_EMAIL}>",
+    deliver(email_type="send_welcome_email", payload={
+        "from": f"Will Cavnar <{_from_email()}>",
         "to": [to_email],
         "subject": f"Your Cavnar AI dashboard is live — {restaurant_name}",
         "html": _html_document(html),
@@ -468,8 +640,6 @@ def send_staff_schedule_email(to_email, employee_name, restaurant_name, week_lab
     phone between jobs, and making them tap through to find out whether
     they work Tuesday defeats the point. The link is for the always-current
     version, since a schedule can change after it's sent."""
-    import resend as _resend
-    _resend.api_key = RESEND_API_KEY
     if shifts:
         rows = "".join(
             f'''<tr>
@@ -501,17 +671,18 @@ def send_staff_schedule_email(to_email, employee_name, restaurant_name, week_lab
   </p>
 </div></div>
 """
+    _etype = "send_staff_schedule_email"
     params = {
         # The restaurant is the visible sender — staff know the restaurant,
         # not Cavnar.
-        "from": f"{restaurant_name} <{FROM_EMAIL}>",
+        "from": f"{restaurant_name} <{_from_email()}>",
         "to": [to_email],
         "subject": f"Your schedule — {week_label}",
         "html": _html_document(html),
     }
     if reply_to:
         params["reply_to"] = reply_to
-    return _resend.Emails.send(params)
+    return deliver(params, email_type=_etype)
 
 
 def send_supplier_order_email(to_email, supplier_name, restaurant_name, po_number,
@@ -522,8 +693,6 @@ def send_supplier_order_email(to_email, supplier_name, restaurant_name, po_numbe
     a warehouse, so it's a quantity table and a PO number, not a branded
     marketing layout. `reply_to` is the restaurant's own address so the
     supplier replies to the restaurant, not to Cavnar."""
-    import resend as _resend
-    _resend.api_key = RESEND_API_KEY
     rows = "".join(
         f'''<tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e0dbd0;font-size:14px">{i.get("item","")}</td>
@@ -560,18 +729,19 @@ def send_supplier_order_email(to_email, supplier_name, restaurant_name, po_numbe
   </p>
 </div></div>
 """
+    _etype = "send_supplier_order_email"
     params = {
         # The supplier knows the restaurant, not Cavnar — so the restaurant
-        # is the visible sender, on the same verified FROM_EMAIL domain
+        # is the visible sender, on the same verified _from_email() domain
         # every other send in this file uses.
-        "from": f"{restaurant_name} <{FROM_EMAIL}>",
+        "from": f"{restaurant_name} <{_from_email()}>",
         "to": [to_email],
         "subject": f"Order {po_number} — {restaurant_name}",
         "html": _html_document(html),
     }
     if reply_to:
         params["reply_to"] = reply_to
-    return _resend.Emails.send(params)
+    return deliver(params, email_type=_etype)
 
 
 def send_team_invite_email(to_email, restaurant_name, username, password, inviter_name=None):
@@ -579,8 +749,6 @@ def send_team_invite_email(to_email, restaurant_name, username, password, invite
     same credentials-in-an-email shape (matches the risk profile already
     accepted for every restaurant's primary login), reworded for "added
     to an existing dashboard" instead of "your dashboard is live"."""
-    import resend as _resend
-    _resend.api_key = RESEND_API_KEY
     added_by = f" by {inviter_name}" if inviter_name else ""
     html = f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
@@ -612,8 +780,8 @@ def send_team_invite_email(to_email, restaurant_name, username, password, invite
   </p>
 </div>
 </div>"""
-    _resend.Emails.send({
-        "from": f"Will Cavnar <{FROM_EMAIL}>",
+    deliver(email_type="send_team_invite_email", payload={
+        "from": f"Will Cavnar <{_from_email()}>",
         "to": [to_email],
         "subject": f"You've been added to {restaurant_name}'s Cavnar AI dashboard",
         "html": _html_document(html),
@@ -719,13 +887,11 @@ def create_stripe_checkout(module_count: int, owner_email: str,
 # ── Onboarding email sequence ─────────────────────────────────────────────────
 
 def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = None,
-                          modules: list = None):
+                          modules: list = None, restaurant_id: int = None):
     """Day 2 — Getting started: highlight their primary module, not always reviews."""
-    if not RESEND_API_KEY:
+    if not _resend_key():
         return
     try:
-        import resend as _resend
-        _resend.api_key = RESEND_API_KEY
         first = owner_name.split()[0] if owner_name else "there"
         modules = modules or ["Review Intelligence"]
         modules_text = " and ".join(modules) if len(modules) <= 2 else ", ".join(modules[:-1]) + f", and {modules[-1]}"
@@ -780,8 +946,8 @@ def send_onboarding_day2(to_email: str, restaurant_name: str, owner_name: str = 
         else:
             callout = ""
 
-        _resend.Emails.send({
-            "from": f"Will Cavnar <{FROM_EMAIL}>",
+        deliver(email_type="send_onboarding_day2", restaurant_id=restaurant_id, payload={
+            "from": f"Will Cavnar <{_from_email()}>",
             "to": [to_email],
             "subject": f"Getting started with your Cavnar AI dashboard",
             "html": _html_document(f"""
@@ -823,11 +989,9 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
                           approved_count: int = 0, pending_count: int = 0,
                           restaurant_id: int = None):
     """Day 7 — First week check-in with real activity data + prompt to upload CSV."""
-    if not RESEND_API_KEY:
+    if not _resend_key():
         return
     try:
-        import resend as _resend
-        _resend.api_key = RESEND_API_KEY
         first = owner_name.split()[0] if owner_name else "there"
 
         # Build upload prompt only if they have labor or inventory modules
@@ -876,8 +1040,8 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
         )
         body_paragraph = generate_email_personalization(ai_context, fallback_paragraph, restaurant_id=restaurant_id)
 
-        _resend.Emails.send({
-            "from": f"Will Cavnar <{FROM_EMAIL}>",
+        deliver(email_type="send_onboarding_day7", restaurant_id=restaurant_id, payload={
+            "from": f"Will Cavnar <{_from_email()}>",
             "to": [to_email],
             "subject": f"One week in — how's the dashboard feeling?",
             "html": _html_document(f"""
@@ -915,14 +1079,12 @@ def send_onboarding_day7(to_email: str, restaurant_name: str, owner_name: str = 
 def send_reactivation_email(to_email: str, restaurant_name: str, owner_name: str = None,
                              db_path: str = None):
     """Send a welcome-back email when a client is reactivated."""
-    if not RESEND_API_KEY:
+    if not _resend_key():
         return
     try:
-        import resend as _resend
-        _resend.api_key = RESEND_API_KEY
         first = owner_name.split()[0] if owner_name else "there"
-        _resend.Emails.send({
-            "from": f"Will Cavnar <{FROM_EMAIL}>",
+        deliver(email_type="send_reactivation_email", payload={
+            "from": f"Will Cavnar <{_from_email()}>",
             "to": [to_email],
             "subject": f"Welcome back to Cavnar AI — {restaurant_name}",
             "html": _html_document(f"""
@@ -959,12 +1121,10 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
                                 has_reviews: bool = True, has_labor: bool = False,
                                 has_inventory: bool = False, has_marketing: bool = False):
     """Send a monthly summary email with AI-generated insights for the past month."""
-    if not RESEND_API_KEY:
+    if not _resend_key():
         return
     try:
-        import resend as _resend
         from datetime import datetime, timedelta
-        _resend.api_key = RESEND_API_KEY
         first = owner_name.split()[0] if owner_name else "there"
         now = datetime.now()
         month_name = (now.replace(day=1) - timedelta(days=1)).strftime("%B")  # previous month
@@ -1032,8 +1192,8 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
         )
         summary_paragraph = generate_email_personalization(ai_context, fallback_paragraph, restaurant_id=restaurant_id)
 
-        _resend.Emails.send({
-            "from": f"Will Cavnar <{FROM_EMAIL}>",
+        deliver(email_type="send_monthly_summary_email", restaurant_id=restaurant_id, payload={
+            "from": f"Will Cavnar <{_from_email()}>",
             "to": [to_email],
             "subject": f"{month_name} {year} — your monthly Cavnar AI summary",
             "html": _html_document(f"""
@@ -1069,11 +1229,9 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
 def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str = None,
                            modules: list = None, restaurant_id: int = None):
     """Day 30 — 30-day check-in, celebrate milestone, soft feedback ask."""
-    if not RESEND_API_KEY:
+    if not _resend_key():
         return
     try:
-        import resend as _resend
-        _resend.api_key = RESEND_API_KEY
         first = owner_name.split()[0] if owner_name else "there"
         modules = modules or []
 
@@ -1113,8 +1271,8 @@ def send_onboarding_day30(to_email: str, restaurant_name: str, owner_name: str =
         )
         body_paragraph = generate_email_personalization(ai_context, fallback_paragraph, restaurant_id=restaurant_id)
 
-        _resend.Emails.send({
-            "from": f"Will Cavnar <{FROM_EMAIL}>",
+        deliver(email_type="send_onboarding_day30", restaurant_id=restaurant_id, payload={
+            "from": f"Will Cavnar <{_from_email()}>",
             "to": [to_email],
             "subject": f"30 days of Cavnar AI — a quick check-in",
             "html": _html_document(f"""
@@ -1164,7 +1322,7 @@ def send_password_changed_email(to_email: str, restaurant_name: str, owner_name:
     """Confirms a password change back to the account — same security-
     notification family as send_login_notification, deliberately (this is
     exactly as sensitive an event)."""
-    if not RESEND_API_KEY:
+    if not _resend_key():
         log.warning("send_password_changed_email: RESEND_API_KEY not set — nothing sent")
         return False
     import requests
@@ -1189,14 +1347,9 @@ def send_password_changed_email(to_email: str, restaurant_name: str, owner_name:
     </div>
     """
     try:
-        resp = requests.post("https://api.resend.com/emails",
-            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-            json={"from": f"Cavnar AI <{FROM_EMAIL}>", "to": [to_email],
-                  "subject": "Your Cavnar AI password was changed", "html": _html_document(html)},
-            timeout=10)
-        if resp.status_code != 200:
-            log.warning("send_password_changed_email: Resend returned %s: %s", resp.status_code, resp.text[:300])
-        return resp.status_code == 200
+        _res = deliver(email_type="send_password_changed_email", payload={"from": f"Cavnar AI <{_from_email()}>", "to": [to_email],
+                  "subject": "Your Cavnar AI password was changed", "html": _html_document(html)})
+        return _res
     except Exception as e:
         log.warning("send_password_changed_email: request to Resend failed: %s", e)
         return False
@@ -1207,7 +1360,7 @@ def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str
     security-critical direction (the new address already knows, since they
     just typed it in; the old address is where an actual account takeover
     would otherwise go unnoticed)."""
-    if not RESEND_API_KEY:
+    if not _resend_key():
         log.warning("send_email_changed_email: RESEND_API_KEY not set — nothing sent")
         return False
     import requests
@@ -1233,14 +1386,9 @@ def send_email_changed_email(to_email: str, restaurant_name: str, new_email: str
     </div>
     """
     try:
-        resp = requests.post("https://api.resend.com/emails",
-            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-            json={"from": f"Cavnar AI <{FROM_EMAIL}>", "to": [to_email],
-                  "subject": "Your Cavnar AI sign-in email was changed", "html": _html_document(html)},
-            timeout=10)
-        if resp.status_code != 200:
-            log.warning("send_email_changed_email: Resend returned %s: %s", resp.status_code, resp.text[:300])
-        return resp.status_code == 200
+        _res = deliver(email_type="send_email_changed_email", payload={"from": f"Cavnar AI <{_from_email()}>", "to": [to_email],
+                  "subject": "Your Cavnar AI sign-in email was changed", "html": _html_document(html)})
+        return _res
     except Exception as e:
         log.warning("send_email_changed_email: request to Resend failed: %s", e)
         return False
@@ -1251,7 +1399,7 @@ def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount
     stripe_webhook() already alerts Will on invoice.payment_failed, but the
     client themselves never found out except by Will personally reaching
     out. This is what actually gets a card fixed quickly."""
-    if not RESEND_API_KEY:
+    if not _resend_key():
         log.warning("send_payment_failed_client_email: RESEND_API_KEY not set — nothing sent")
         return False
     import requests
@@ -1273,14 +1421,9 @@ def send_payment_failed_client_email(to_email: str, restaurant_name: str, amount
     </div>
     """
     try:
-        resp = requests.post("https://api.resend.com/emails",
-            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-            json={"from": f"Will Cavnar <{FROM_EMAIL}>", "to": [to_email],
-                  "subject": f"Payment issue — {restaurant_name}", "html": _html_document(html)},
-            timeout=10)
-        if resp.status_code != 200:
-            log.warning("send_payment_failed_client_email: Resend returned %s: %s", resp.status_code, resp.text[:300])
-        return resp.status_code == 200
+        _res = deliver(email_type="send_payment_failed_client_email", payload={"from": f"Will Cavnar <{_from_email()}>", "to": [to_email],
+                  "subject": f"Payment issue — {restaurant_name}", "html": _html_document(html)})
+        return _res
     except Exception as e:
         log.warning("send_payment_failed_client_email: request to Resend failed: %s", e)
         return False

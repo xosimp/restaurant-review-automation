@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>{% if ok %}Unsubscribed{% else %}Link not valid{% endif %}</title>
+<style>
+  body{margin:0;background:#0c0c0c;color:#f0ebe0;
+       font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;
+       -webkit-font-smoothing:antialiased;padding:28px 18px;
+       display:flex;align-items:center;justify-content:center;min-height:80vh}
+  .wrap{max-width:440px;text-align:center}
+  .kicker{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#e8956a}
+  h1{font-size:22px;line-height:1.25;margin:12px 0 10px;letter-spacing:-.01em}
+  p{color:#8f847b;font-size:14.5px;line-height:1.6;margin:0 0 10px}
+  a{color:#e8956a}
+</style>
+</head>
+<body>
+<div class="wrap">
+  {% if ok %}
+    {% if restaurant_name %}<div class="kicker">{{ restaurant_name }}</div>{% endif %}
+    <h1>You're unsubscribed</h1>
+    <p>You won't get product tips or summary emails from Cavnar AI any more.</p>
+    <p>You'll still receive account and security email — sign-in codes, password
+       changes and billing notices — because those aren't marketing.</p>
+    <p>Changed your mind? Turn it back on under Account → Automation &amp; data.</p>
+  {% else %}
+    <h1>This link isn't valid</h1>
+    <p>It may have been mistyped. You can change email preferences under
+       Account → Automation &amp; data, or email
+       <a href="mailto:will@cavnar.ai">will@cavnar.ai</a>.</p>
+  {% endif %}
+</div>
+</body>
+</html>

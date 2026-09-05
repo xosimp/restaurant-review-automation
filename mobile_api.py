@@ -3261,6 +3261,18 @@ def mobile_send_test_digest(current_user):
         return jsonify(ok=False, error=str(e)), 500
 
 
+@mobile_bp.route("/account/email-history")
+@mobile_login_required
+def mobile_email_history(current_user):
+    """Twin of client_api's /api/email-history."""
+    from models import get_email_log_for_client
+    try:
+        limit = min(int(request.args.get("limit", 50)), 200)
+    except (TypeError, ValueError):
+        limit = 50
+    return jsonify(ok=True, emails=get_email_log_for_client(current_user["restaurant_id"], limit=limit))
+
+
 @mobile_bp.route("/account/export-data", methods=["POST"])
 @mobile_login_required
 def mobile_export_data(current_user):

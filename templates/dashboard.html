@@ -3884,6 +3884,16 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
   </div>
 
+  <div class="acct-card" style="padding:18px 22px;margin-bottom:14px" id="email-history-card">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <div class="acct-card-title">Email history</div>
+      <button onclick="sendTestDigest(this)" class="btn" style="background:rgba(200,75,47,.14);color:#e8956a;border:1px solid rgba(200,75,47,.32);font-size:11px;padding:5px 12px">Send me a preview digest</button>
+    </div>
+    <div class="acct-card-sub">Everything Cavnar AI has sent for you, and whether it landed.</div>
+    <div id="eh-body" style="margin-top:12px;font-size:12px;color:var(--ink3)">Loading…</div>
+  </div>
+
+
   <div class="acct-card" style="padding:18px 22px;margin-bottom:14px">
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);margin-bottom:12px">Help &amp; FAQ</div>
     <div id="faq-list">
@@ -4935,7 +4945,7 @@ function switchTab(n,btn){
     // countUp animations and insight load triggered by switchFcTab when analytics tab is shown
   }
   if(n==='labor'){renderBars();loadLaborTrend(false);}
-  if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();loadAccountSettings();}
+  if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();loadAccountSettings();loadEmailHistory();}
   if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();startMetricsPoller();}else{stopMetricsPoller();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
@@ -6785,6 +6795,45 @@ function buildAccountHoursGrid(open, close) {
          +  '<input type="time" id="as-close-' + d + '" value="' + ((close && close[d]) || '') + '" style="font-family:inherit;font-size:12px;padding:4px 6px;border:1px solid var(--paper3);border-radius:6px;background:var(--paper1);color:var(--ink)">';
   }
   grid.innerHTML = html;
+}
+
+function _ehEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function loadEmailHistory(){
+  var el = document.getElementById('eh-body');
+  if(!el) return;
+  el.innerHTML = 'Loading…';
+  fetch('/api/email-history').then(function(r){return r.json();}).then(function(d){
+    if(!d.ok){ el.innerHTML = '<span style="color:#ef4444">Couldn\'t load email history</span>'; return; }
+    if(!d.emails || !d.emails.length){
+      el.innerHTML = '<span style="color:var(--ink3)">No email sent yet.</span>';
+      return;
+    }
+    var html = '<table style="width:100%;border-collapse:collapse;font-size:11.5px"><tbody>';
+    d.emails.forEach(function(e){
+      var badge = e.failed
+        ? '<span style="font-size:9px;font-weight:700;background:rgba(239,68,68,.15);color:#ef4444;padding:2px 7px;border-radius:10px">' + _ehEsc(e.status || 'failed') + '</span>'
+        : '<span style="font-size:9px;font-weight:700;background:rgba(111,207,151,.14);color:#6fcf97;padding:2px 7px;border-radius:10px">' + _ehEsc(e.status || 'sent') + '</span>';
+      html += '<tr style="border-bottom:1px solid var(--paper3)">';
+      html += '<td style="padding:7px 4px;color:var(--ink)">' + _ehEsc(e.label) + '</td>';
+      html += '<td style="padding:7px 4px;color:var(--ink3)">' + _ehEsc(e.to_email) + '</td>';
+      html += '<td style="padding:7px 4px;color:var(--ink3);white-space:nowrap">' + _ehEsc(e.sent_at) + '</td>';
+      html += '<td style="padding:7px 4px;text-align:right">' + badge + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    el.innerHTML = html;
+  }).catch(function(){ el.innerHTML = '<span style="color:#ef4444">Couldn\'t load email history</span>'; });
+}
+
+function sendTestDigest(btn){
+  var original = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Sending…';
+  fetch('/api/send-test-digest', {method:'POST'}).then(function(r){return r.json();}).then(function(d){
+    btn.disabled = false; btn.textContent = original;
+    if(d.ok){ toast('Preview sent to ' + d.email, 'success'); loadEmailHistory(); }
+    else { toast(d.error || 'Couldn\'t send preview', 'error'); }
+  }).catch(function(){ btn.disabled=false; btn.textContent=original; toast('Network error','error'); });
 }
 
 function loadAccountSettings() {
