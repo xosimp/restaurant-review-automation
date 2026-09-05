@@ -36,6 +36,18 @@ from models import get_restaurant, update_restaurant, get_conn
 
 import client_api as _capi
 
+
+def _html_doc(fragment, bg="#f7f4ef"):
+    """Wrap a bare fragment in a real HTML document so its background fills
+    the mail client's viewport instead of stopping at the content's height
+    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
+    at module scope, and a module-level import here could bind it before
+    load_dotenv() runs. See emails._html_document."""
+    from emails import html_document
+    return html_document(fragment, bg)
+
+
+
 mobile_bp = Blueprint('mobile_api', __name__, url_prefix='/mobile/api')
 
 
@@ -3239,7 +3251,7 @@ def mobile_send_test_digest(current_user):
             "from": f"Cavnar AI <{_from_email()}>",
             "to": [to_email],
             "subject": f"[Preview] Your weekly review digest — {restaurant.name}",
-            "html": html,
+            "html": _html_doc(html),
         })
         try:
             log_email(rid, "digest", to_email, f"[Preview] Weekly digest — {restaurant.name}")
@@ -3290,7 +3302,7 @@ def mobile_export_data(current_user):
             "from": f"Cavnar AI <{_from_email()}>",
             "to": [to_email],
             "subject": f"Your Cavnar AI data export — {restaurant.name}",
-            "html": "<p>Attached: " + ", ".join(labels) + ".</p>",
+            "html": _html_doc("<p>Attached: " + ", ".join(labels) + ".</p>"),
             "attachments": attachments,
         })
         try:

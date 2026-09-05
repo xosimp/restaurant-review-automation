@@ -8,8 +8,20 @@ import time
 
 from models import get_conn, get_restaurant, update_restaurant
 from auth import (verify_password, create_session, delete_session,
+
                   get_user_by_restaurant_id, get_sessions_for_user,
                   revoke_other_sessions, update_password, login_required)
+
+
+def _html_doc(fragment, bg="#f7f4ef"):
+    """Wrap a bare fragment in a real HTML document so its background fills
+    the mail client's viewport instead of stopping at the content's height
+    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
+    at module scope, and a module-level import here could bind it before
+    load_dotenv() runs. See emails._html_document."""
+    from emails import html_document
+    return html_document(fragment, bg)
+
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -82,7 +94,7 @@ def forgot_password():
                     "from": f"Cavnar AI <{os.getenv('FROM_EMAIL', 'will@cavnar.ai')}>",
                     "to": [email],
                     "subject": "Reset your Cavnar AI password",
-                    "html": f"""
+                    "html": _html_doc(f"""
                     <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
                     <div style="font-family:'DM Sans',sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:white;border-radius:12px;box-sizing:border-box">
                       <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin-bottom:24px">
@@ -95,7 +107,7 @@ def forgot_password():
                       <hr style="border:none;border-top:1px solid #e5e0db;margin:24px 0">
                       <p style="font-size:11px;color:#9ca3af">Cavnar AI · will@cavnar.ai · cavnar.ai</p>
                     </div>
-                    </div>"""
+                    </div>"""),
                 })
         except Exception as e:
             print(f"[forgot-password] error: {e}")

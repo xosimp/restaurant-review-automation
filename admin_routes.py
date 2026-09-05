@@ -18,6 +18,18 @@ from auth import (create_session, get_session_user, delete_session,
                   admin_required, login_required)
 from emails import send_payment_email, send_welcome_email, create_stripe_checkout
 
+
+def _html_doc(fragment, bg="#f7f4ef"):
+    """Wrap a bare fragment in a real HTML document so its background fills
+    the mail client's viewport instead of stopping at the content's height
+    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
+    at module scope, and a module-level import here could bind it before
+    load_dotenv() runs. See emails._html_document."""
+    from emails import html_document
+    return html_document(fragment, bg)
+
+
+
 admin_bp = Blueprint('admin', __name__)
 
 def sanitize(value, max_len=1000):
@@ -763,7 +775,7 @@ def reset_password(user_id, current_user):
                     "from": f"Will Cavnar <{_from_email()}>",
                     "to": [row["email"]],
                     "subject": "Your Cavnar AI password has been reset",
-                    "html": f"""<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+                    "html": _html_doc(f"""<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
                     <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:500px;margin:0 auto;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
                         <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin:0 0 20px">
                         <h3 style="color:#0e0c0a">Password reset</h3>
@@ -775,7 +787,7 @@ def reset_password(user_id, current_user):
                         <p>Log in and update your password in the Account tab.</p>
                         <p style="color:#7a736a;font-size:12px">— Will Cavnar · will@cavnar.ai</p>
                     </div>
-                    </div>"""
+                    </div>"""),
                 })
         except Exception as e:
             print(f"Reset email failed: {e}")
@@ -1582,7 +1594,7 @@ def test_digest(restaurant_id, current_user):
             "from": f"Cavnar AI <{_from_email()}>",
             "to": [owner_email],
             "subject": f"[TEST] Your weekly review digest — {restaurant.name}",
-            "html": html,
+            "html": _html_doc(html),
         })
         try:
             log_email(restaurant_id, "digest", owner_email, f"[TEST] Weekly digest — {restaurant.name}")
@@ -1752,14 +1764,14 @@ def send_referral(current_user):
             "from": f"Will Cavnar <{_from_email()}>",
             "to": [ref_email],
             "subject": f"{owner_name} thinks you should check out Cavnar AI",
-            "html": html,
+            "html": _html_doc(html),
         })
         # Notify Will
         _resend.Emails.send({
             "from": f"Cavnar AI <{_from_email()}>",
             "to": [_from_email()],
             "subject": f"New referral from {referrer} — {ref_name}",
-            "html": f"<p>{referrer} referred {ref_name} ({ref_email}).</p><p>Note: {note or 'none'}</p>",
+            "html": _html_doc(f"<p>{referrer} referred {ref_name} ({ref_email}).</p><p>Note: {note or 'none'}</p>"),
         })
         try:
             log_email(current_user["restaurant_id"], "referral", ref_email, f"Referral to {ref_name}")

@@ -4,6 +4,18 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from models import get_reviews_since, save_weekly_report, WeeklyReport
 
+
+def _html_doc(fragment, bg="#f7f4ef"):
+    """Wrap a bare fragment in a real HTML document so its background fills
+    the mail client's viewport instead of stopping at the content's height
+    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
+    at module scope, and a module-level import here could bind it before
+    load_dotenv() runs. See emails._html_document."""
+    from emails import html_document
+    return html_document(fragment, bg)
+
+
+
 SENTIMENT_COLOR = {"positive": "#16a34a", "neutral": "#6b7280", "negative": "#dc2626"}
 STAR_FILLED = "★"
 STAR_EMPTY  = "☆"
@@ -684,7 +696,7 @@ def send_digest(report: WeeklyReport, restaurant_name: str, to_email: str):
     msg["Subject"] = f"Your weekly reviews — {restaurant_name}"
     msg["From"]    = smtp_from
     msg["To"]      = to_email
-    msg.attach(MIMEText(html, "html"))
+    msg.attach(MIMEText(_html_doc(html), "html"))
 
     with smtplib.SMTP_SSL(smtp_host, 465) as server:
         server.login(smtp_user, smtp_pass)

@@ -20,6 +20,18 @@ from reportlab.platypus import Flowable
 import resend
 
 from dotenv import load_dotenv
+
+
+def _html_doc(fragment, bg="#f7f4ef"):
+    """Wrap a bare fragment in a real HTML document so its background fills
+    the mail client's viewport instead of stopping at the content's height
+    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
+    at module scope, and a module-level import here could bind it before
+    load_dotenv() runs. See emails._html_document."""
+    from emails import html_document
+    return html_document(fragment, bg)
+
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -374,7 +386,7 @@ def send_email(to_email, restaurant, pdf_buf):
         "from": f"Will Cavnar <{_from_email()}>",
         "to": [to_email],
         "subject": f"Your AI Audit Report — {restaurant}",
-        "html": f"""
+        "html": _html_doc(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
@@ -404,7 +416,7 @@ def send_email(to_email, restaurant, pdf_buf):
     <a href="https://cavnar.ai" style="color:#c84b2f;text-decoration:none">cavnar.ai</a>
   </p>
 </div>
-</div>""",
+</div>"""),
         "attachments": [{
             "filename": f"Cavnar_AI_Audit_{restaurant.replace(chr(32), chr(95))}.pdf",
             "content": pdf_data,

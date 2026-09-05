@@ -11,6 +11,18 @@ from models import (get_conn, get_restaurant, update_restaurant, approve_respons
                     get_top_issues, get_topic_heatmap)
 from auth import login_required
 
+
+def _html_doc(fragment, bg="#f7f4ef"):
+    """Wrap a bare fragment in a real HTML document so its background fills
+    the mail client's viewport instead of stopping at the content's height
+    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
+    at module scope, and a module-level import here could bind it before
+    load_dotenv() runs. See emails._html_document."""
+    from emails import html_document
+    return html_document(fragment, bg)
+
+
+
 client_bp = Blueprint('client', __name__)
 
 # Simple in-memory insight cache: {cache_key: (timestamp, value)}
@@ -2665,7 +2677,7 @@ def client_upload_data(current_user):
                     "from": "Cavnar AI Labor Alerts <" + _from_ot + ">",
                     "to": [_r_ot.owner_email],
                     "subject": "⚠ Overtime detected — " + _r_ot.name,
-                    "html": (
+                    "html": _html_doc(
                         "<div style='background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box'>"
                         "<div style='font-family:-apple-system,BlinkMacSystemFont,\"Helvetica Neue\",Arial,sans-serif;max-width:520px;margin:0 auto;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box'>"
                         "<img src='https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png' width='150' height='26' alt='Cavnar AI' style='display:block;width:150px;height:26px;border:0;outline:none;margin-bottom:16px'>"
@@ -2722,7 +2734,7 @@ def client_upload_data(current_user):
                 "from": f"Cavnar AI Alerts <{_from_email}>",
                 "to": [_will_email],
                 "subject": f"📂 {r.name} uploaded their first {_module} data",
-                "html": f"""<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+                "html": _html_doc(f"""<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
                     <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:500px;margin:0 auto;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
                     <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin-bottom:16px">
                     <div style="border-top:3px solid #c84b2f;padding-top:16px;margin-bottom:16px">
@@ -2737,7 +2749,7 @@ def client_upload_data(current_user):
                         <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">View in admin →</a>
                     </p>
                 </div>
-                    </div>"""
+                    </div>"""),
             })
     except Exception:
         pass
@@ -3012,7 +3024,7 @@ def _do_send_review_request(rid, data):
             "from":    "reviews@cavnar.ai",
             "to":      [customer_email],
             "subject": f"How was your visit to {rest_name}?",
-            "html":    html_body,
+            "html":    _html_doc(html_body),
         })
 
         # Log the request

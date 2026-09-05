@@ -167,6 +167,15 @@ def _html_document(fragment: str, bg: str = "#f7f4ef") -> str:
 </html>"""
 
 
+# Public alias. The wrapper originally lived here as a private helper and so
+# only ever got applied to this file's own templates — every other module
+# that talks to Resend directly (ops, scheduler, admin_routes, webhook_routes,
+# client_api, notify, auth_routes, mobile_api, audit_app, reporter) kept
+# handing over a bare fragment and kept showing the cut-off background. They
+# import this.
+html_document = _html_document
+
+
 def _branded_email(inner_html: str) -> str:
     """The shared full-bleed wrapper + wordmark header + seal footer every
     client-facing email here uses — for the two new self-serve emails below
@@ -498,7 +507,7 @@ def send_staff_schedule_email(to_email, employee_name, restaurant_name, week_lab
         "from": f"{restaurant_name} <{FROM_EMAIL}>",
         "to": [to_email],
         "subject": f"Your schedule — {week_label}",
-        "html": html,
+        "html": _html_document(html),
     }
     if reply_to:
         params["reply_to"] = reply_to
@@ -558,7 +567,7 @@ def send_supplier_order_email(to_email, supplier_name, restaurant_name, po_numbe
         "from": f"{restaurant_name} <{FROM_EMAIL}>",
         "to": [to_email],
         "subject": f"Order {po_number} — {restaurant_name}",
-        "html": html,
+        "html": _html_document(html),
     }
     if reply_to:
         params["reply_to"] = reply_to

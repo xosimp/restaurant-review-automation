@@ -55,3 +55,40 @@ def restaurant_now_by_id(restaurant_id: int, naive: bool = False) -> datetime:
         return restaurant_now(get_restaurant(restaurant_id), naive=naive)
     except Exception:
         return restaurant_now(None, naive=naive)
+
+
+def parse_stored_dt(value, tz=OPERATOR_TZ):
+    """Parse a timestamp out of the database into a NAIVE local datetime.
+
+    Stored timestamps are not consistent: SQLite's datetime('now') writes
+    "2026-07-06T13:48:36" (naive UTC) while anything built from
+    datetime.now(timezone.utc).isoformat() writes
+    "2026-05-08T00:04:01+00:00" (offset-aware). Subtracting one from the
+    other raises "can't subtract offset-naive and offset-aware datetimes",
+    which is exactly what killed the onboarding_emails job — and, more
+    quietly, made check_inactive_clients skip those same rows.
+
+    Anything offset-aware is converted into `tz` and stripped, so the result
+    is always comparable with restaurant_now(naive=True) / _chi_now().
+    Returns None on anything unparseable, so callers can skip a bad row
+    instead of taking down a whole sweep.
+    """
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        text = str(value).strip().replace(" ", "T")
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(text)
+        except Exception:
+            return None
+    if dt.tzinfo is not None:
+        try:
+            dt = dt.astimezone(ZoneInfo(tz) if isinstance(tz, str) else tz)
+        except Exception:
+            pass
+        dt = dt.replace(tzinfo=None)
+    return dt

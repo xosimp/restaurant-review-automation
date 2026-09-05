@@ -8,6 +8,18 @@ import html as _html
 import requests
 from models import get_conn, DB_PATH
 
+
+def _html_doc(fragment, bg="#f7f4ef"):
+    """Wrap a bare fragment in a real HTML document so its background fills
+    the mail client's viewport instead of stopping at the content's height
+    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
+    at module scope, and a module-level import here could bind it before
+    load_dotenv() runs. See emails._html_document."""
+    from emails import html_document
+    return html_document(fragment, bg)
+
+
+
 TWILIO_SID     = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_TOKEN   = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_FROM    = os.getenv("TWILIO_FROM_NUMBER", "")
@@ -123,7 +135,7 @@ def _send_alert_email(owner_email: str, subject: str, html: str, restaurant_id: 
             "from": f"Cavnar AI Alerts <{FROM_EMAIL}>",
             "to": alert_recipients(owner_email, restaurant_id),
             "subject": subject,
-            "html": html,
+            "html": _html_doc(html),
         })
         return True
     except Exception as e:

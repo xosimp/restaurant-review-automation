@@ -16,10 +16,23 @@ from status_manager import record_scheduler_heartbeat, run_health_checks
 import ops as _ops
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo as _ZI_sch
+from time_utils import parse_stored_dt
 def _chi_now():
     return datetime.now(_ZI_sch('America/Chicago')).replace(tzinfo=None)
 from dotenv import load_dotenv
 import pathlib
+
+
+def _html_doc(fragment, bg="#f7f4ef"):
+    """Wrap a bare fragment in a real HTML document so its background fills
+    the mail client's viewport instead of stopping at the content's height
+    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
+    at module scope, and a module-level import here could bind it before
+    load_dotenv() runs. See emails._html_document."""
+    from emails import html_document
+    return html_document(fragment, bg)
+
+
 
 load_dotenv(pathlib.Path(__file__).parent / ".env")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [scheduler] %(message)s")
@@ -89,7 +102,7 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
             "from": f"Cavnar AI Alerts <{_from_email()}>",
             "to": [owner_email],
             "subject": f"\u26a0 Urgent review alert \u2014 {restaurant_name}",
-            "html": f"""
+            "html": _html_doc(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
@@ -122,7 +135,7 @@ def send_urgent_alert(restaurant_name, owner_email, urgent_reviews):
     <a href="mailto:{_from_email()}" style="color:#c84b2f;text-decoration:none">{_from_email()}</a>
   </p>
 </div>
-</div>"""
+</div>"""),
         })
         log.info(f"Urgent alert sent to {owner_email} for {restaurant_name}")
         try:
@@ -331,7 +344,7 @@ def run_weekly_digests():
                     "from": f"Cavnar AI <{_from_email()}>",
                     "to": [owner_email],
                     "subject": f"Your weekly review digest \u2014 {restaurant.name}",
-                    "html": html,
+                    "html": _html_doc(html),
                 })
                 log.info(f"Digest sent to {owner_email} for {restaurant.name}")
                 try:
@@ -419,7 +432,7 @@ def check_stale_inventory():
             "from": f"Cavnar AI <{_from_email()}>",
             "to": [os.getenv("WILL_EMAIL", "will@cavnar.ai")],
             "subject": f"⚠ Stale inventory data — {len(stale)} client(s) need updating",
-            "html": f"""
+            "html": _html_doc(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
@@ -446,7 +459,7 @@ def check_stale_inventory():
     → client → Manage Data.
   </p>
 </div>
-</div>"""
+</div>"""),
         })
         log.info(f"Stale inventory alert sent for {len(stale)} client(s)")
         try:
@@ -667,7 +680,7 @@ def backup_db():
             "from": f"Cavnar AI Backups <{_from_email()}>",
             "to":   [WILL_EMAIL],
             "subject": f"Daily DB backup — {timestamp} ({size_kb} KB)",
-            "html": f"""
+            "html": _html_doc(f"""
 <div style="font-family:-apple-system,sans-serif;max-width:480px;color:#1a1714">
   <p style="font-size:14px">Daily backup of <strong>reviews.db</strong> attached.</p>
   <table style="font-size:13px;color:#3a3530;border-collapse:collapse">
@@ -678,7 +691,7 @@ def backup_db():
   <p style="font-size:12px;color:#7a736a;margin-top:16px">
     To restore: download the attachment, rename to reviews.db, and replace the file on Railway.
   </p>
-</div>""",
+</div>"""),
             "attachments": [{
                 "filename": filename,
                 "content":  db_b64,
@@ -726,9 +739,13 @@ def run_onboarding_sequence():
         if getattr(r, "marketing_emails_opt_out", 0):
             continue
 
-        try:
-            created = datetime.fromisoformat(r.created_at.replace("Z", ""))
-        except Exception:
+        # parse_stored_dt normalises both stored shapes (naive SQLite
+        # datetimes and offset-aware isoformat strings) to naive local.
+        # Comparing the two directly used to raise TypeError here, which
+        # escaped the loop and killed the whole sweep on the first
+        # offset-aware restaurant — so nobody got onboarding email at all.
+        created = parse_stored_dt(r.created_at)
+        if created is None:
             continue
 
         days_since = (now - created).days
@@ -741,8 +758,13 @@ def run_onboarding_sequence():
         if r.module_inventory: modules.append("Food Cost Control")
         if r.module_marketing: modules.append("Marketing Autopilot")
 
-        # Day 2 — send on day 2 or 3 (small buffer in case scheduler runs slightly late)
-        if days_since >= 2 and "day_2" not in already_sent:
+        # Day 2 — a window, not ">= 2". These sends were open-ended, which
+        # was harmless only while the whole job was crashing before it could
+        # send anything: with the crash fixed and onboarding_emails empty,
+        # ">=" would mail a "getting started" note to clients who signed up
+        # months ago. An upper bound keeps a late/paused scheduler catching
+        # up without ever backfilling stale onboarding at a settled client.
+        if 2 <= days_since <= 6 and "day_2" not in already_sent:
             try:
                 send_onboarding_day2(
                     to_email=r.owner_email,
@@ -756,8 +778,8 @@ def run_onboarding_sequence():
             except Exception as e:
                 log.error(f"Onboarding day 2 failed for {r.name}: {e}")
 
-        # Day 7 — send on day 7, 8, or 9
-        elif days_since >= 7 and "day_7" not in already_sent:
+        # Day 7 — same windowing rationale as day 2 above.
+        elif 7 <= days_since <= 29 and "day_7" not in already_sent:
             try:
                 # Pull actual activity stats for personalization
                 try:
@@ -794,8 +816,9 @@ def run_onboarding_sequence():
             except Exception as e:
                 log.error(f"Onboarding day 7 failed for {r.name}: {e}")
 
-        # Day 30 — send on day 30+
-        elif days_since >= 30 and "day_30" not in already_sent:
+        # Day 30 — same windowing rationale; two weeks of grace, then the
+        # onboarding sequence is simply over for that client.
+        elif 30 <= days_since <= 44 and "day_30" not in already_sent:
             try:
                 send_onboarding_day30(
                     to_email=r.owner_email,
@@ -856,15 +879,15 @@ def check_inactive_clients():
                 # Never logged in — check if they've been a client for 3+ days
                 if r.created_at:
                     try:
-                        created = datetime.fromisoformat(r.created_at.replace("Z",""))
-                        if (now - created).days >= 3:
+                        created = parse_stored_dt(r.created_at)
+                        if created is not None and (now - created).days >= 3:
                             inactive.append({"name": r.name, "email": r.owner_email, "last_login": "Never logged in", "days": (now - created).days})
                     except Exception:
                         pass
             else:
                 try:
-                    ll = datetime.fromisoformat(last_login.replace("Z",""))
-                    if ll < cutoff:
+                    ll = parse_stored_dt(last_login)
+                    if ll is not None and ll < cutoff:
                         days_ago = (now - ll).days
                         inactive.append({"name": r.name, "email": r.owner_email, "last_login": ll.strftime("%b %d"), "days": days_ago})
                 except Exception:
@@ -891,7 +914,7 @@ def check_inactive_clients():
             "from": f"Cavnar AI Alerts <{FROM_EMAIL_LOCAL}>",
             "to": [WILL_EMAIL_LOCAL],
             "subject": f"👋 {len(inactive)} inactive client{'s' if len(inactive)>1 else ''} — check in this week",
-            "html": f"""<div style="font-family:sans-serif;max-width:580px;margin:0 auto">
+            "html": _html_doc(f"""<div style="font-family:sans-serif;max-width:580px;margin:0 auto">
                 <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:16px">
                     <h3 style="color:#0e0c0a;margin:0">Inactive clients</h3>
                     <p style="font-size:12px;color:#7a736a;margin:4px 0 0">Clients who haven't logged in for 14+ days</p>
@@ -912,7 +935,7 @@ def check_inactive_clients():
                 <p style="font-size:11px;color:#7a736a">
                     <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">Manage clients →</a>
                 </p>
-            </div>"""
+            </div>"""),
         })
         log.info(f"Inactive client alert sent — {len(inactive)} client(s)")
     except Exception as e:

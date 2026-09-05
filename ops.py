@@ -11,6 +11,18 @@ configured, and rolled up into a daily 8am digest email if anything failed.
 import logging
 import os
 
+
+def _html_doc(fragment, bg="#f7f4ef"):
+    """Wrap a bare fragment in a real HTML document so its background fills
+    the mail client's viewport instead of stopping at the content's height
+    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
+    at module scope, and a module-level import here could bind it before
+    load_dotenv() runs. See emails._html_document."""
+    from emails import html_document
+    return html_document(fragment, bg)
+
+
+
 log = logging.getLogger("ops")
 
 _TABLE_SQL = """
@@ -107,7 +119,7 @@ def send_failure_digest():
             "from": f"Cavnar AI Ops <{os.getenv('FROM_EMAIL', 'will@cavnar.ai')}>",
             "to": [will],
             "subject": f"⚠ {total} background job failure{'s' if total != 1 else ''} in the last 24h",
-            "html": f"""
+            "html": _html_doc(f"""
 <div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
 <div style="font-family:-apple-system,sans-serif;max-width:640px;margin:0 auto;color:#1a1714;background:white;border-radius:12px;padding:28px 24px;box-sizing:border-box">
   <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:16px">
@@ -124,7 +136,7 @@ def send_failure_digest():
   </table>
   <p style="font-size:12px;color:#7a736a;margin-top:16px">Full stack traces are in Sentry (if configured) and Railway logs.</p>
 </div>
-</div>""",
+</div>"""),
         })
         log.info(f"Failure digest sent to {will} ({total} failures)")
         return True

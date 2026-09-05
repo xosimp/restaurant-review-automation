@@ -10,6 +10,18 @@ from models import get_conn, get_restaurant, update_restaurant, log_email
 from auth import admin_required
 from emails import send_payment_email, send_welcome_email
 
+
+def _html_doc(fragment, bg="#f7f4ef"):
+    """Wrap a bare fragment in a real HTML document so its background fills
+    the mail client's viewport instead of stopping at the content's height
+    (the half-cut-off look). Imported lazily: emails.py reads RESEND_API_KEY
+    at module scope, and a module-level import here could bind it before
+    load_dotenv() runs. See emails._html_document."""
+    from emails import html_document
+    return html_document(fragment, bg)
+
+
+
 webhook_bp = Blueprint('webhook', __name__)
 
 # Read fresh at call time — see scheduler.py's identical note.
@@ -44,7 +56,7 @@ def stripe_webhook():
                 "from": f"Cavnar AI Alerts <{FROM_EMAIL}>",
                 "to": [WILL_EMAIL],
                 "subject": subject,
-                "html": f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+                "html": _html_doc(f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
                     <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
                         <h3 style="color:#0e0c0a;margin:0">Cavnar AI — Payment Alert</h3>
                     </div>
@@ -56,7 +68,7 @@ def stripe_webhook():
                             dashboard.cavnar.ai/admin
                         </a>
                     </p>
-                </div>"""
+                </div>"""),
             })
         except Exception as e:
             print(f"Alert email failed: {e}")
@@ -163,7 +175,7 @@ def stripe_webhook():
                                 "from": f"Cavnar AI Alerts <{FROM_EMAIL}>",
                                 "to": [WILL_EMAIL],
                                 "subject": f"💳 New paying client — {rname}",
-                                "html": f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
+                                "html": _html_doc(f"""<div style="font-family:sans-serif;max-width:500px;margin:0 auto">
                                     <div style="border-top:3px solid #2d6a4f;padding-top:20px;margin-bottom:16px">
                                         <h3 style="color:#0e0c0a;margin:0">New paying client</h3>
                                     </div>
@@ -177,7 +189,7 @@ def stripe_webhook():
                                     <p style="font-size:11px;color:#7a736a">
                                         <a href="https://dashboard.cavnar.ai/admin" style="color:#c84b2f">View in admin →</a>
                                     </p>
-                                </div>"""
+                                </div>"""),
                             })
                             log_email(dict(row)["id"], "Admin Alert", WILL_EMAIL, f"New paying client — {rname}")
 
@@ -189,7 +201,7 @@ def stripe_webhook():
                                     "from": f"Will Cavnar <{FROM_EMAIL}>",
                                     "to": [email],
                                     "subject": f"Payment confirmed — Cavnar AI",
-                                    "html": f"""<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
+                                    "html": _html_doc(f"""<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
                                     <div style="font-family:'DM Sans',sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:white;border-radius:12px;box-sizing:border-box">
                                       <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin-bottom:24px">
                                       <h2 style="font-size:18px;font-weight:600;margin-bottom:8px;color:#0e0c0a">Payment confirmed ✓</h2>
@@ -211,7 +223,7 @@ def stripe_webhook():
                                       <hr style="border:none;border-top:1px solid #e5e0db;margin:24px 0">
                                       <p style="font-size:11px;color:#9ca3af">Cavnar AI · will@cavnar.ai · cavnar.ai</p>
                                     </div>
-                                    </div>"""
+                                    </div>"""),
                                 })
                                 log_email(dict(row)["id"], "Payment Receipt", email, f"Payment confirmed — ${amount:.2f}")
                             except Exception as re_err:
