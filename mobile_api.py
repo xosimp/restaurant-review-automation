@@ -886,57 +886,12 @@ def mobile_approve_review(review_id, current_user):
 @mobile_bp.route("/reviews/approve-all", methods=["POST"])
 @mobile_login_required
 def mobile_approve_all_reviews(current_user):
-    """Home's action deck: publish every drafted reply in one tap. Each
-    review goes through the exact same _do_approve path a single approve
-    uses (response_action, activity log, webhook, background Google post),
-    so nothing about a bulk publish is a shortcut. Capped at 25 per call —
-    a restaurant with a bigger backlog taps again, and the deck's label
-    only ever promises what one tap will do."""
-    rid = current_user["restaurant_id"]
+    """Home's action deck: publish every drafted reply in one tap.
+    Delegates to client_api._do_approve_all so the web route, this one and
+    Ask Cavnar's proposal all run the identical bulk-approve path."""
     data = request.get_json(silent=True) or {}
-    try:
-        limit = max(1, min(int(data.get("limit", 25)), 25))
-    except (TypeError, ValueError):
-        limit = 25
-    conn = get_conn()
-    rows = conn.execute("""
-        SELECT id FROM reviews
-        WHERE restaurant_id=? AND response_status='drafted' AND deleted_at IS NULL
-          AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
-        ORDER BY (urgency='high') DESC, review_date DESC, id DESC
-        LIMIT ?
-    """, (rid, limit)).fetchall()
-    conn.close()
-    approved = posted = failed = 0
-    for row in rows:
-        try:
-            payload, status = _capi._do_approve(row["id"], rid)
-            if status == 200 and payload.get("ok"):
-                approved += 1
-                if payload.get("auto_posted"):
-                    posted += 1
-            else:
-                failed += 1
-        except Exception:
-            failed += 1
-    remaining = 0
-    try:
-        conn = get_conn()
-        remaining = conn.execute("""
-            SELECT COUNT(*) FROM reviews
-            WHERE restaurant_id=? AND response_status='drafted' AND deleted_at IS NULL
-              AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
-        """, (rid,)).fetchone()[0] or 0
-        conn.close()
-    except Exception:
-        pass
-    if approved:
-        try:
-            from models import log_event
-            log_event(rid, "reviews_bulk_approved", {"count": approved, "posted": posted})
-        except Exception:
-            pass
-    return jsonify(ok=True, approved=approved, posted=posted, failed=failed, remaining=int(remaining)), 200
+    payload, status = _capi._do_approve_all(current_user["restaurant_id"], data.get("limit", 25))
+    return jsonify(**payload), status
 
 
 @mobile_bp.route("/reviews/<int:review_id>/skip", methods=["POST"])

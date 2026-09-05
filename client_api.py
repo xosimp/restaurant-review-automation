@@ -120,6 +120,75 @@ def _do_approve(rid, restaurant_id):
     return {"ok": True, "auto_posted": False}, 200
 
 
+def _do_approve_all(restaurant_id, limit=25):
+    """Publish every drafted reply in one go.
+
+    Each review goes through the same _do_approve path a single approve
+    uses — response_action, activity log, webhook, background Google post —
+    so a bulk publish is never a shortcut. Capped at 25 per call; a bigger
+    backlog takes another run.
+
+    Lives here rather than in mobile_api so the web route and Ask Cavnar's
+    proposal share one implementation. It was mobile-only, which meant the
+    assistant's approve-all card pointed at a web URL that did not exist.
+    """
+    try:
+        limit = max(1, min(int(limit), 25))
+    except (TypeError, ValueError):
+        limit = 25
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT id FROM reviews
+        WHERE restaurant_id=? AND response_status='drafted' AND deleted_at IS NULL
+          AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
+        ORDER BY (urgency='high') DESC, review_date DESC, id DESC
+        LIMIT ?
+    """, (restaurant_id, limit)).fetchall()
+    conn.close()
+
+    approved = posted = failed = 0
+    for row in rows:
+        try:
+            payload, status = _do_approve(row["id"], restaurant_id)
+            if status == 200 and payload.get("ok"):
+                approved += 1
+                if payload.get("auto_posted"):
+                    posted += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+
+    remaining = 0
+    try:
+        conn = get_conn()
+        remaining = conn.execute("""
+            SELECT COUNT(*) FROM reviews
+            WHERE restaurant_id=? AND response_status='drafted' AND deleted_at IS NULL
+              AND draft_response IS NOT NULL AND TRIM(draft_response) != ''
+        """, (restaurant_id,)).fetchone()[0] or 0
+        conn.close()
+    except Exception:
+        pass
+
+    if approved:
+        try:
+            from models import log_event
+            log_event(restaurant_id, "reviews_bulk_approved", {"count": approved, "posted": posted})
+        except Exception:
+            pass
+    return {"ok": True, "approved": approved, "posted": posted,
+            "failed": failed, "remaining": int(remaining)}, 200
+
+
+@client_bp.route("/api/reviews/approve-all", methods=["POST"])
+@login_required
+def approve_all_reviews_api(current_user):
+    data = request.get_json(silent=True) or {}
+    payload, status = _do_approve_all(current_user["restaurant_id"], data.get("limit", 25))
+    return jsonify(**payload), status
+
+
 def _do_skip(rid, restaurant_id):
     conn = get_conn()
     conn.execute("UPDATE reviews SET response_status='skipped' WHERE id=? AND restaurant_id=?",

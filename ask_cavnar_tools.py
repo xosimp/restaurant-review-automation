@@ -345,6 +345,167 @@ def _apply_setting(restaurant_id, setting=None, value=None, **extra):
     return {"ok": status == 200 and result.get("ok", False), "setting": setting, "result": result}
 
 
+
+def _read_review_trends(restaurant_id, weeks=8, days=90):
+    """Direction, not just totals.
+
+    "Are my reviews getting worse?" and "what do people complain about
+    most?" are the two questions owners ask most, and neither is answerable
+    from the snapshot's counts.
+    """
+    from models import get_sentiment_trend, get_topic_heatmap, get_response_performance
+    try:
+        trend = get_sentiment_trend(restaurant_id, weeks=min(int(weeks or 8), 26))
+    except Exception:
+        trend = []
+    try:
+        topics = get_topic_heatmap(restaurant_id, days=min(int(days or 90), 365))
+    except Exception:
+        topics = []
+    try:
+        performance = get_response_performance(restaurant_id, days=min(int(days or 90), 365))
+    except Exception:
+        performance = {}
+    return {
+        "weekly_sentiment": trend[-_MAX_ROWS:],
+        "topics": [t for t in topics if (t.get("count") or 0) > 0][:_MAX_ROWS],
+        "response_performance": performance,
+    }
+
+
+def _read_ai_visibility(restaurant_id):
+    """Whether this restaurant shows up when someone asks an AI where to eat.
+
+    An entire module the assistant previously could not see at all.
+    """
+    import client_api
+    payload, status = client_api._do_ai_visibility(restaurant_id)
+    if status != 200 or not payload.get("ok", True):
+        return {"has_data": False, "error": payload.get("error", "AI visibility unavailable")}
+    return {
+        "has_data": True,
+        "ai_score": payload.get("ai_score"),
+        "gbp_score": payload.get("gbp_score"),
+        "gbp_connected": payload.get("gbp_connected"),
+        "appeared_in": payload.get("appeared_count"),
+        "queries_tested": (payload.get("queries") or [])[:_MAX_ROWS],
+        "checklist": (payload.get("checklist") or [])[:_MAX_ROWS],
+        "social_posts_30d": payload.get("social_posts_30d"),
+    }
+
+
+def _read_labor_detail(restaurant_id, weeks=8):
+    """Per-day labour, not just the overstaffed/understaffed counts — which
+    is what "which day is killing me?" actually needs."""
+    from models import get_labor_daily, get_labor_history
+    try:
+        daily = get_labor_daily(restaurant_id)
+    except Exception:
+        daily = []
+    try:
+        # Same source the web Labor tab's trend chart uses; oldest first so
+        # the direction reads left to right.
+        history = get_labor_history(restaurant_id, limit=min(int(weeks or 8), 26)) or []
+        trend = [{"period_start": h.get("period_start"), "period_end": h.get("period_end"),
+                  "labor_pct": h.get("labor_pct"), "labor_cost": h.get("labor_cost"),
+                  "sales": h.get("sales")}
+                 for h in history[::-1]]
+    except Exception:
+        trend = []
+    return {
+        "daily": (daily or [])[-_MAX_ROWS:],
+        "weekly_trend": trend[-_MAX_ROWS:],
+    }
+
+
+def _read_schedule_history(restaurant_id, limit=8):
+    """Past schedules, so "how does next week compare to last?" is
+    answerable — read_schedule only ever sees the most recent one."""
+    from models import get_schedule_history
+    rows = get_schedule_history(restaurant_id, limit=min(int(limit or 8), _MAX_ROWS)) or []
+    return {
+        "count": len(rows),
+        "schedules": [
+            {"schedule_id": r.get("id"), "week_start": r.get("week_start"),
+             "week_end": r.get("week_end"), "hours_scheduled": r.get("hours_scheduled"),
+             "hours_budget": r.get("hours_budget"), "created_at": r.get("created_at")}
+            for r in rows[:_MAX_ROWS]
+        ],
+    }
+
+
+def _set_staff_contact(restaurant_id, employee_name=None, email=None, phone=None):
+    """Add or correct how a member of staff is reached.
+
+    Direct rather than proposed: it changes a private contact record, sends
+    nothing, and is trivially reversible. It also unblocks publish_schedule,
+    which otherwise proposes a send that reaches nobody because the roster
+    has no addresses on it.
+    """
+    from models import set_staff_contact
+    name = (employee_name or "").strip()
+    if not name:
+        return {"ok": False, "error": "Which member of staff?"}
+    email = (email or "").strip()
+    if email and "@" not in email:
+        return {"ok": False, "error": "That doesn't look like an email address."}
+    if not set_staff_contact(restaurant_id, name, email, (phone or "").strip()):
+        return {"ok": False, "error": "Couldn't save that contact."}
+    return {"ok": True, "employee_name": name, "email": email or None}
+
+
+def _generate_marketing_content(restaurant_id, content_type="instagram_post", topic=""):
+    """Draft a post in the restaurant's own brand voice and log it.
+
+    Direct: it writes copy and records it, but publishes nothing. The
+    assistant could compose text itself — routing through marketing.py means
+    the result carries the same brand voice, menu context and
+    no-repetition history the Marketing tab's own generator uses, and shows
+    up in the content log rather than living only in a chat bubble.
+    """
+    from marketing import generate_content, CONTENT_TYPES
+    valid = {c["id"] for c in CONTENT_TYPES}
+    if content_type not in valid:
+        return {"ok": False, "error": f"Unknown content type.", "valid_types": sorted(valid)}
+    try:
+        text = generate_content(content_type, (topic or "").strip(), restaurant_id=restaurant_id)
+    except Exception as e:
+        log.warning("generate_marketing_content failed: %s", e)
+        return {"ok": False, "error": "Couldn't draft that right now."}
+    return {"ok": True, "content_type": content_type, "topic": topic, "content": text}
+
+
+def _edit_review_reply(restaurant_id, review_id=None, draft=None):
+    """Replace a drafted reply's text.
+
+    Direct: it edits an unpublished draft and posts nothing. Previously the
+    only option was regenerate, so "make that reply shorter" threw away a
+    good draft and rolled the dice on a new one.
+    """
+    import client_api
+    try:
+        rid = int(review_id)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Which review? Use read_reviews to get the id."}
+    text = (draft or "").strip()
+    if not text:
+        return {"ok": False, "error": "Provide the replacement reply text."}
+    result, status = client_api._do_save_draft(rid, restaurant_id, text)
+    return {"ok": status == 200 and result.get("ok", False), "review_id": rid, "result": result}
+
+
+def _skip_review(restaurant_id, review_id=None):
+    """Take a review out of the queue. Direct — it publishes nothing and
+    /undo reverses it."""
+    import client_api
+    try:
+        rid = int(review_id)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "Which review? Use read_reviews to get the id."}
+    result, status = client_api._do_skip(rid, restaurant_id)
+    return {"ok": status == 200 and result.get("ok", False), "review_id": rid}
+
+
 # ── Tool registry ───────────────────────────────────────────────────────────
 # `kind` drives everything: "read" executes, "write" only ever proposes.
 
@@ -478,6 +639,112 @@ TOOLS = [
         },
     },
     {
+        "kind": "read",
+        "fn": _read_review_trends,
+        "spec": {
+            "name": "read_review_trends",
+            "description": (
+                "Whether reviews are getting better or worse over time, what topics guests "
+                "raise most, and how fast replies go out. Call this for any question about "
+                "direction or trend — the snapshot only has totals."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "weeks": {"type": "integer", "description": "Weeks of sentiment history (default 8)."},
+                "days": {"type": "integer", "description": "Window for topics (default 90)."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_ai_visibility,
+        "spec": {
+            "name": "read_ai_visibility",
+            "description": (
+                "Whether this restaurant shows up when someone asks an AI assistant where to "
+                "eat: the visibility score, which test queries it appeared in, and the "
+                "checklist of what would improve it."
+            ),
+            "input_schema": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_labor_detail,
+        "spec": {
+            "name": "read_labor_detail",
+            "description": "Labour day by day and week by week — for 'which day is costing me most' rather than the overall percentage.",
+            "input_schema": {"type": "object", "properties": {
+                "weeks": {"type": "integer", "description": "Weeks of history (default 8)."}}},
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_schedule_history,
+        "spec": {
+            "name": "read_schedule_history",
+            "description": "Past generated schedules with hours vs budget, so this week can be compared with previous ones. read_schedule only sees the latest.",
+            "input_schema": {"type": "object", "properties": {
+                "limit": {"type": "integer", "description": "How many past schedules (default 8)."}}},
+        },
+    },
+    {
+        "kind": "action",
+        "fn": _set_staff_contact,
+        "spec": {
+            "name": "set_staff_contact",
+            "description": (
+                "Add or correct how a member of staff is reached. Sends nothing. Do this "
+                "before proposing publish_schedule for anyone with no email on file — "
+                "otherwise the schedule goes out to nobody."
+            ),
+            "input_schema": {"type": "object", "required": ["employee_name"], "properties": {
+                "employee_name": {"type": "string", "description": "Exactly as they appear on the schedule."},
+                "email": {"type": "string"},
+                "phone": {"type": "string"}}},
+        },
+    },
+    {
+        "kind": "action",
+        "fn": _generate_marketing_content,
+        "spec": {
+            "name": "generate_marketing_content",
+            "description": (
+                "Draft marketing copy in this restaurant's own brand voice and log it. "
+                "Publishes nothing. Types: instagram_post, weekly_email, google_promo, "
+                "loyalty_nudge, happy_hour, event_announcement. Show the draft in your reply."
+            ),
+            "input_schema": {"type": "object", "properties": {
+                "content_type": {"type": "string", "enum": ["instagram_post", "weekly_email",
+                                                             "google_promo", "loyalty_nudge",
+                                                             "happy_hour", "event_announcement"]},
+                "topic": {"type": "string", "description": "What it should be about."}}},
+        },
+    },
+    {
+        "kind": "action",
+        "fn": _edit_review_reply,
+        "spec": {
+            "name": "edit_review_reply",
+            "description": (
+                "Replace a review's drafted reply with your own wording. Posts nothing. Use "
+                "this for 'make that shorter/warmer' instead of draft_review_reply, which "
+                "throws the existing draft away and regenerates from scratch."
+            ),
+            "input_schema": {"type": "object", "required": ["review_id", "draft"], "properties": {
+                "review_id": {"type": "integer"},
+                "draft": {"type": "string", "description": "The full replacement reply."}}},
+        },
+    },
+    {
+        "kind": "action",
+        "fn": _skip_review,
+        "spec": {
+            "name": "skip_review",
+            "description": "Take a review out of the response queue. Publishes nothing and can be undone.",
+            "input_schema": {"type": "object", "required": ["review_id"], "properties": {
+                "review_id": {"type": "integer"}}},
+        },
+    },
+    {
         # Reversible, account-private, and visible in the UI the moment it
         # changes — so this one runs rather than proposing.
         "kind": "action",
@@ -588,6 +855,74 @@ TOOLS = [
     {
         "kind": "write",
         "confirm": True,
+        "route": {"web": "/retract/{review_id}", "mobile": "/mobile/api/reviews/{review_id}/retract", "method": "POST"},
+        "summary": "Take down the posted reply to review #{review_id}",
+        "spec": {
+            "name": "retract_review_reply",
+            "description": "Propose pulling back a reply that has already been posted publicly. Changes what the public sees, so the owner confirms.",
+            "input_schema": {"type": "object", "required": ["review_id"], "properties": {
+                "review_id": {"type": "integer"}}},
+        },
+    },
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/post-to-instagram", "mobile": "/mobile/api/marketing/post-to-instagram", "method": "POST"},
+        "summary": "Publish this post to Instagram",
+        "spec": {
+            "name": "publish_instagram_post",
+            "description": (
+                "Propose publishing a caption to Instagram. Publishes publicly, so the owner "
+                "confirms. Draft with generate_marketing_content first and show them the "
+                "caption before proposing."
+            ),
+            "input_schema": {"type": "object", "required": ["caption"], "properties": {
+                "caption": {"type": "string"},
+                "image_url": {"type": "string"},
+                "topic": {"type": "string"}}},
+        },
+    },
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/post-to-facebook", "mobile": "/mobile/api/marketing/post-to-facebook", "method": "POST"},
+        "summary": "Publish this post to Facebook",
+        "spec": {
+            "name": "publish_facebook_post",
+            "description": "Propose publishing a caption to the Facebook page. Publishes publicly, so the owner confirms.",
+            "input_schema": {"type": "object", "required": ["caption"], "properties": {
+                "caption": {"type": "string"},
+                "image_url": {"type": "string"},
+                "topic": {"type": "string"}}},
+        },
+    },
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/send-review-request", "mobile": "/mobile/api/send-review-request", "method": "POST"},
+        "summary": "Email a review request to {name}",
+        "spec": {
+            "name": "send_review_request",
+            "description": "Propose emailing one guest a request to leave a review. Emails someone outside the business, so the owner confirms.",
+            "input_schema": {"type": "object", "required": ["email"], "properties": {
+                "name": {"type": "string"},
+                "email": {"type": "string"}}},
+        },
+    },
+    {
+        "kind": "write",
+        "confirm": True,
+        "route": {"web": "/api/refresh-competitor-intel", "mobile": "/mobile/api/intel/refresh-competitors", "method": "POST"},
+        "summary": "Refresh competitor data",
+        "spec": {
+            "name": "refresh_competitors",
+            "description": "Propose re-pulling competitor ratings and reviews. Costs external API calls and takes a minute, so the owner confirms.",
+            "input_schema": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "kind": "write",
+        "confirm": True,
         "route": {"web": "/api/generate-schedule", "mobile": "/mobile/api/labor/generate-schedule", "method": "GET"},
         "summary": "Generate next week's schedule",
         "spec": {
@@ -655,6 +990,8 @@ def build_proposal(name, tool_input):
     summary = tool["summary"]
     if "{supplier}" in summary:
         summary = summary.replace("{supplier}", args.get("supplier_email") or "every supplier")
+    if "{name}" in summary:
+        summary = summary.replace("{name}", args.get("name") or args.get("email") or "that guest")
 
     # Per-review actions address one row, so the id belongs in the path, not
     # the body. Substituted here (and stripped from the body) so the client

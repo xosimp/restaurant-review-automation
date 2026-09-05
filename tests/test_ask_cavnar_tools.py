@@ -473,3 +473,166 @@ def test_read_food_cost_flags_sample_data_instead_of_quoting_it(db_path):
     out = json.loads(tools.run_read_tool("read_food_cost", rid, {}))
     assert out["is_live"] is False
     assert "weekly_waste_cost" not in out
+
+
+# ── Registry ↔ app wiring ────────────────────────────────────────────────
+
+def test_every_write_tool_points_at_a_route_that_actually_exists():
+    """The guard that would have caught two live bugs.
+
+    approve_all_reviews and refresh_competitors both shipped pointing at web
+    URLs that did not exist — mobile-only routes wired as if they had web
+    twins — so confirming either card in a browser would have 404'd. This
+    walks the real Flask url_map rather than trusting the registry.
+    """
+    import re
+    from flask import Flask
+
+    # Registered on a throwaway app rather than importing hosted_dashboard:
+    # that module starts the scheduler and runs seeding, which fights the
+    # redirected test database and made this pass alone but fail in a suite.
+    from admin_routes import admin_bp
+    from client_api import client_bp
+    from mobile_api import mobile_bp
+    from social_routes import social_bp
+
+    # admin_bp too: refresh-competitor-intel lives there but is
+    # @login_required, not admin-gated, so clients legitimately call it.
+    probe_app = Flask(__name__)
+    for bp in (client_bp, mobile_bp, social_bp, admin_bp):
+        probe_app.register_blueprint(bp)
+    rules = [str(r) for r in probe_app.url_map.iter_rules()]
+
+    def route_exists(path):
+        probe = re.sub(r"\{[a-z_]+\}", "1", path)
+        return any(re.match("^" + re.sub(r"<[^>]+>", "[^/]+", rule) + "$", probe)
+                   for rule in rules)
+
+    missing = [
+        (t["spec"]["name"], surface, t["route"][surface])
+        for t in tools.TOOLS if t["kind"] == "write"
+        for surface in ("web", "mobile")
+        if not route_exists(t["route"][surface])
+    ]
+    assert not missing, f"write tools pointing at non-existent routes: {missing}"
+
+
+def test_every_read_and_action_tool_is_callable():
+    """A registry entry whose fn signature doesn't match its schema fails
+    only at runtime, inside a live conversation. Call each one."""
+    import inspect
+    for t in tools.TOOLS:
+        if t["kind"] not in ("read", "action"):
+            continue
+        sig = inspect.signature(t["fn"])
+        params = set(sig.parameters) - {"restaurant_id"}
+        declared = set(t["spec"]["input_schema"].get("properties", {}))
+        unknown = declared - params
+        takes_kwargs = any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
+        assert takes_kwargs or not unknown, (
+            f"{t['spec']['name']} declares {unknown} which its function cannot accept")
+
+
+def test_required_schema_fields_are_real_parameters():
+    import inspect
+    for t in tools.TOOLS:
+        required = t["spec"]["input_schema"].get("required", [])
+        if not required or t["kind"] == "write":
+            continue
+        params = set(inspect.signature(t["fn"]).parameters)
+        assert set(required) <= params, f"{t['spec']['name']}: {set(required) - params}"
+
+
+def test_tool_names_are_unique():
+    names = [t["spec"]["name"] for t in tools.TOOLS]
+    assert len(names) == len(set(names))
+
+
+# ── Direct actions: validation and tenancy ───────────────────────────────
+
+def test_set_staff_contact_validates_before_saving(db_path):
+    rid = _restaurant(db_path)
+    ok = json.loads(tools.run_read_tool("set_staff_contact", rid,
+                                        {"employee_name": "Sofia R.", "email": "sofia@x.test"}))
+    assert ok["ok"] is True
+    assert json.loads(tools.run_read_tool("set_staff_contact", rid,
+                                          {"employee_name": "X", "email": "notanemail"}))["ok"] is False
+    assert json.loads(tools.run_read_tool("set_staff_contact", rid,
+                                          {"email": "a@b.test"}))["ok"] is False
+
+
+def _drafted_review(db_path, rid, draft="We're sorry to hear this."):
+    import uuid
+    conn = get_conn(db_path)
+    conn.execute(
+        "INSERT INTO reviews (restaurant_id, platform, external_id, author, rating, text, "
+        "review_date, fetched_at, processed, sentiment, urgency, draft_response, response_status) "
+        "VALUES (?,?,?,?,?,?,date('now'),datetime('now'),1,?,?,?,'drafted')",
+        (rid, "google", f"ext-{uuid.uuid4().hex[:10]}", "Guest", 2, "Slow service.",
+         "negative", "normal", draft))
+    conn.commit()
+    review_id = conn.execute("SELECT id FROM reviews WHERE restaurant_id=? ORDER BY id DESC LIMIT 1",
+                             (rid,)).fetchone()["id"]
+    conn.close()
+    return review_id
+
+
+def test_edit_review_reply_replaces_the_draft(db_path):
+    """Previously the only option was regenerate, which threw a good draft
+    away to roll the dice on a new one."""
+    rid = _restaurant(db_path)
+    review_id = _drafted_review(db_path, rid)
+    out = json.loads(tools.run_read_tool("edit_review_reply", rid,
+                                         {"review_id": review_id, "draft": "Short and warmer."}))
+    assert out["ok"] is True
+    row = get_conn(db_path).execute("SELECT draft_response FROM reviews WHERE id=?", (review_id,)).fetchone()
+    assert row["draft_response"] == "Short and warmer."
+
+
+def test_edit_review_reply_rejects_empty_or_bad_input(db_path):
+    rid = _restaurant(db_path)
+    review_id = _drafted_review(db_path, rid)
+    assert json.loads(tools.run_read_tool("edit_review_reply", rid,
+                                          {"review_id": review_id, "draft": "   "}))["ok"] is False
+    assert json.loads(tools.run_read_tool("edit_review_reply", rid,
+                                          {"review_id": "abc", "draft": "x"}))["ok"] is False
+
+
+def test_a_direct_action_cannot_touch_another_restaurants_review(db_path):
+    """Tenancy is enforced by the shared _do_* handler, not by the model —
+    restaurant_id comes from the session, so this holds even if the model
+    is handed someone else's id."""
+    mine = _restaurant(db_path)
+    theirs = _restaurant(db_path, name="Other Co")
+    review_id = _drafted_review(db_path, theirs, draft="Their draft.")
+    out = json.loads(tools.run_read_tool("edit_review_reply", mine,
+                                         {"review_id": review_id, "draft": "HACKED"}))
+    assert out["ok"] is False
+    row = get_conn(db_path).execute("SELECT draft_response FROM reviews WHERE id=?", (review_id,)).fetchone()
+    assert row["draft_response"] == "Their draft."
+
+
+def test_skip_review_takes_it_out_of_the_queue(db_path):
+    rid = _restaurant(db_path)
+    review_id = _drafted_review(db_path, rid)
+    assert json.loads(tools.run_read_tool("skip_review", rid, {"review_id": review_id}))["ok"] is True
+    row = get_conn(db_path).execute("SELECT response_status FROM reviews WHERE id=?", (review_id,)).fetchone()
+    assert row["response_status"] == "skipped"
+
+
+def test_generate_marketing_content_rejects_an_unknown_type(db_path):
+    """Refused before any model call — a bad type should cost nothing."""
+    out = json.loads(tools.run_read_tool("generate_marketing_content", _restaurant(db_path),
+                                         {"content_type": "tiktok_dance"}))
+    assert out["ok"] is False and "valid_types" in out
+
+
+def test_new_read_tools_return_their_expected_shape(db_path):
+    rid = _restaurant(db_path)
+    for name, keys in [
+        ("read_review_trends", {"weekly_sentiment", "topics", "response_performance"}),
+        ("read_labor_detail", {"daily", "weekly_trend"}),
+        ("read_schedule_history", {"count", "schedules"}),
+    ]:
+        out = json.loads(tools.run_read_tool(name, rid, {}))
+        assert keys <= set(out), f"{name} missing {keys - set(out)}"
