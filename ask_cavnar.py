@@ -504,6 +504,14 @@ _TOOL_LABELS = {
     "read_schedule": "Looking at your schedule",
     "read_staff_availability": "Checking staff availability",
     "read_email_history": "Checking what was sent",
+    "read_shifts": "Looking at your roster",
+    "read_food_cost": "Going through your food cost",
+    "read_competitors": "Checking your competitors",
+    "read_marketing_posts": "Reviewing what you've published",
+    "read_guest_club": "Checking your text club",
+    "change_setting": "Updating that setting",
+    "draft_review_reply": "Getting that reply ready to draft",
+    "approve_review": "Getting that reply ready to post",
     "send_supplier_order": "Putting the supplier order together",
     "publish_schedule": "Getting the schedule ready to send",
     "approve_all_reviews": "Gathering the replies awaiting approval",
@@ -574,6 +582,16 @@ def ask_with_tools(restaurant, question, history=None, surface="web", on_progres
             if tools.is_write_tool(block.name):
                 _progress(_TOOL_LABELS.get(block.name, "Preparing that action"))
                 proposal = tools.build_proposal(block.name, block.input)
+                if proposal is None:
+                    # Bad or missing arguments (e.g. no review_id) — tell the
+                    # model rather than raising a half-built card at the owner.
+                    results.append({
+                        "type": "tool_result", "tool_use_id": block.id,
+                        "content": json.dumps({
+                            "error": "Could not build that action — check the arguments, "
+                                     "especially any id, and try again."}),
+                    })
+                    continue
                 if proposal:
                     proposals.append(proposal)
                 # Told plainly, so the model explains what it's asking for
@@ -587,7 +605,10 @@ def ask_with_tools(restaurant, question, history=None, surface="web", on_progres
                     }),
                 })
             else:
-                _progress(_TOOL_LABELS.get(block.name, "Looking that up"))
+                # Reads and direct actions both execute; only the label differs.
+                _progress(_TOOL_LABELS.get(
+                    block.name, "Making that change" if tools.is_action_tool(block.name)
+                    else "Looking that up"))
                 results.append({
                     "type": "tool_result", "tool_use_id": block.id,
                     "content": tools.run_read_tool(block.name, restaurant.id, block.input),

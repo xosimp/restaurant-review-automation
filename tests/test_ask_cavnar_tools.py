@@ -67,7 +67,7 @@ def _review(db_path, rid, text, rating=2, sentiment="negative", urgency="normal"
 
 def test_every_tool_declares_a_kind_and_a_schema():
     for t in tools.TOOLS:
-        assert t["kind"] in ("read", "write")
+        assert t["kind"] in ("read", "write", "action")
         spec = t["spec"]
         assert spec["name"] and spec["description"]
         assert spec["input_schema"]["type"] == "object"
@@ -314,3 +314,162 @@ def test_history_routes_round_trip(client, db_path, monkeypatch):
     assert len(client.get("/api/ask-cavnar/history").get_json()["messages"]) == 1
     assert client.delete("/api/ask-cavnar/history").get_json()["ok"] is True
     assert client.get("/api/ask-cavnar/history").get_json()["messages"] == []
+
+
+# ── Roster / shifts (the gap that caused wrong refusals) ─────────────────
+
+def _shifts_csv(db_path, rid):
+    from models import save_client_data
+    rows = ["date,day,employee,role,shift_start,shift_end,scheduled_hours,sales"]
+    rows += [f"2026-09-0{d},Monday,Sofia R.,Server,16:00,22:00,6.0,4200" for d in range(1, 6)]
+    rows += [f"2026-09-0{d},Monday,Marcus T.,Cook,08:00,20:00,12.0,4200" for d in range(1, 6)]
+    save_client_data(rid, "shifts", "\n".join(rows), source="test", db_path=db_path)
+
+
+def test_read_shifts_surfaces_the_roster(db_path, monkeypatch):
+    """It used to say "no staff added" with weeks of shift data on file,
+    because nothing exposed the roster."""
+    rid = _restaurant(db_path)
+    _shifts_csv(db_path, rid)
+    monkeypatch.setattr("labor.get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
+    out = json.loads(tools.run_read_tool("read_shifts", rid, {}))
+    assert out["has_data"] is True
+    assert {e["name"] for e in out["employees"]} == {"Sofia R.", "Marcus T."}
+
+
+def test_read_shifts_can_filter_to_one_person(db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    _shifts_csv(db_path, rid)
+    monkeypatch.setattr("labor.get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
+    out = json.loads(tools.run_read_tool("read_shifts", rid, {"employee": "sofia"}))
+    assert {s["employee"] for s in out["recent_shifts"]} == {"Sofia R."}
+
+
+def test_read_shifts_reports_no_data_rather_than_failing(db_path):
+    out = json.loads(tools.run_read_tool("read_shifts", _restaurant(db_path), {}))
+    assert out["has_data"] is False
+
+
+# ── Per-review write tools ───────────────────────────────────────────────
+
+def test_approve_review_puts_the_id_in_the_path_not_the_body(db_path):
+    p = tools.build_proposal("approve_review", {"review_id": 42})
+    assert p["route"]["web"] == "/approve/42"
+    assert p["route"]["mobile"] == "/mobile/api/reviews/42/approve"
+    assert p["body"] == {}
+    assert "42" in p["summary"]
+
+
+def test_draft_review_reply_routes_to_regenerate(db_path):
+    p = tools.build_proposal("draft_review_reply", {"review_id": 7})
+    assert p["route"]["web"] == "/api/regenerate-draft/7"
+    assert p["requires_confirmation"] is True
+
+
+def test_a_per_review_action_without_an_id_is_refused(db_path):
+    """Better to hand the model an error than build a card pointing at
+    /approve/{review_id}."""
+    assert tools.build_proposal("approve_review", {}) is None
+    assert tools.build_proposal("approve_review", {"review_id": "not-a-number"}) is None
+
+
+# ── Direct settings action ───────────────────────────────────────────────
+
+def test_change_setting_applies_immediately_without_a_proposal(db_path):
+    """Settings are reversible and account-private, so this one acts."""
+    rid = _restaurant(db_path)
+    assert tools.is_action_tool("change_setting") is True
+    assert tools.is_write_tool("change_setting") is False
+    out = json.loads(tools.run_read_tool("change_setting", rid, {"setting": "login_notify", "value": True}))
+    assert out["ok"] is True
+    assert models.get_restaurant(rid, db_path=db_path).login_notify == 1
+
+
+def test_change_setting_honours_the_handlers_own_validation(db_path):
+    """Routed through client_api's _do_* handlers so the assistant and the
+    settings screen can't disagree about what's valid."""
+    rid = _restaurant(db_path)
+    out = json.loads(tools.run_read_tool("change_setting", rid, {"setting": "data_retention", "value": 7}))
+    assert out["ok"] is False
+
+
+def test_change_setting_refuses_anything_not_on_the_list(db_path):
+    out = json.loads(tools.run_read_tool("change_setting", _restaurant(db_path),
+                                         {"setting": "owner_email", "value": "attacker@x.test"}))
+    assert out["ok"] is False and "settable" in out
+
+
+# ── The three context readers ────────────────────────────────────────────
+
+def test_read_competitors_returns_the_set_behind_the_summary(db_path):
+    import json as _json
+    rid = _restaurant(db_path)
+    models.update_restaurant(rid, {"competitor_intel": _json.dumps({
+        "competitors": [{"name": "Mio Modo", "rating": 4.5, "review_count": 300,
+                         "vicinity": "Main St",
+                         "reviews": [{"author": "A", "rating": 5, "text": "Great pasta", "time": "1 month ago"}]}],
+        "insight": "Recommendations:\n- Push the patio\n", "generated_at": "2026-09-01"})},
+        db_path=db_path)
+    out = json.loads(tools.run_read_tool("read_competitors", rid, {}))
+    assert out["has_data"] is True
+    assert out["competitors"][0]["name"] == "Mio Modo"
+    assert out["competitors"][0]["sample_reviews"][0]["text"] == "Great pasta"
+
+
+def test_read_competitors_says_so_when_none_has_been_run(db_path):
+    assert json.loads(tools.run_read_tool("read_competitors", _restaurant(db_path), {}))["has_data"] is False
+
+
+def test_read_guest_club_separates_textable_from_on_file(db_path, monkeypatch):
+    """Only a self-opted-in guest can be texted, so "how big is my list" and
+    "how many can I message" are different numbers."""
+    import guest_marketing as gm
+    monkeypatch.setattr(gm, "get_conn", lambda *a, **k: models.get_conn(db_path))
+    monkeypatch.setattr(gm, "DB_PATH", db_path)
+    gm.init_guest_marketing(db_path)
+    rid = _restaurant(db_path)
+    gm.add_guest_contact_public_optin(rid, "5551110001", name="Opted In", db_path=db_path)
+    gm.add_guest_contact_manual(rid, "5551110002", name="Owner Added", db_path=db_path)
+    out = json.loads(tools.run_read_tool("read_guest_club", rid, {}))
+    assert out["total_on_file"] == 2
+    assert out["textable"] == 1
+    assert out["awaiting_optin"] == 1
+
+
+def test_read_marketing_posts_distinguishes_published_from_drafted(db_path):
+    rid = _restaurant(db_path)
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO marketing_content_log (restaurant_id, content_type, topic) VALUES (?,?,?)",
+                 (rid, "social", "wine wednesday"))
+    conn.execute("INSERT INTO marketing_content_log (restaurant_id, content_type, topic, post_platform, reach) "
+                 "VALUES (?,?,?,?,?)", (rid, "social", "patio", "instagram", 900))
+    conn.commit(); conn.close()
+    out = json.loads(tools.run_read_tool("read_marketing_posts", rid, {}))
+    assert out["total_logged"] == 2 and out["published_count"] == 1
+
+
+def test_read_food_cost_returns_item_level_detail(db_path, monkeypatch):
+    rid = _restaurant(db_path)
+    monkeypatch.setattr("inventory.get_conn", lambda *a, **k: models.get_conn(db_path), raising=False)
+    out = json.loads(tools.run_read_tool("read_food_cost", rid, {}))
+    # An unconfigured restaurant falls back to a built-in sample set, and the
+    # tool must say so rather than passing sample stock off as real.
+    assert out["is_live"] is False and "note" in out
+
+
+def test_read_shifts_never_passes_sample_staff_off_as_real(db_path):
+    """labor.load_shifts_for_restaurant falls back to a built-in sample
+    roster. Routing the tool through it would have handed the model invented
+    employees to discuss as this restaurant's actual staff."""
+    rid = _restaurant(db_path)
+    out = json.loads(tools.run_read_tool("read_shifts", rid, {}))
+    assert out["has_data"] is False
+    assert out["employees"] == []
+    assert "note" in out
+
+
+def test_read_food_cost_flags_sample_data_instead_of_quoting_it(db_path):
+    rid = _restaurant(db_path)
+    out = json.loads(tools.run_read_tool("read_food_cost", rid, {}))
+    assert out["is_live"] is False
+    assert "weekly_waste_cost" not in out
