@@ -507,6 +507,7 @@ _TOOL_LABELS = {
     "read_staff_availability": "Checking staff availability",
     "read_email_history": "Checking what was sent",
     "read_shifts": "Looking at your roster",
+    "read_menu": "Pulling up your menu",
     "read_food_cost": "Going through your food cost",
     "read_competitors": "Checking your competitors",
     "read_marketing_posts": "Reviewing what you've published",

@@ -910,7 +910,7 @@ def _do_ask_cavnar(restaurant_id, question, history=None, user_id=None):
     if len(question) > 2000:
         return {"ok": False, "error": "That question is too long — try to keep it under 2000 characters."}, 400
     from ai_utils import ai_rate_limited
-    if ai_rate_limited(f"askcavnar:{restaurant_id}", max_calls=10, window_secs=60):
+    if ai_rate_limited(f"askcavnar:{restaurant_id}", max_calls=5, window_secs=60):
         return {"ok": False, "error": "Too many questions — please wait a moment and try again."}, 429
     try:
         from ask_cavnar import ask_with_tools
@@ -963,30 +963,29 @@ def ask_cavnar_api(current_user):
     return jsonify(**payload), status
 
 
-@client_bp.route("/api/ask-cavnar/stream", methods=["POST"])
-@login_required
-def ask_cavnar_stream(current_user):
+def _ask_cavnar_stream_response(rid, uid, question):
     """Server-sent events: progress while tools run, then the answer.
 
+    Shared by the web and mobile stream routes so iOS gets the same live
+    "Reading your reviews" progress the web client already shows, instead
+    of a spinner for however long the tool loop takes.
+
     The tool loop can take several round trips, and a silent spinner for
-    that long reads as broken. Streaming the tool labels ("Reading your
-    reviews") shows the work rather than token-by-token text, which is both
-    more useful here and far simpler than threading a token stream through
-    a loop that pauses for tool results.
+    that long reads as broken. Streaming the tool labels shows the work
+    rather than token-by-token text, which is both more useful here and far
+    simpler than threading a token stream through a loop that pauses for
+    tool results.
     """
     import queue
     import threading
 
-    rid = current_user["restaurant_id"]
-    uid = current_user.get("id")
-    data = request.get_json(silent=True) or {}
-    question = (data.get("question") or "").strip()
+    question = (question or "").strip()
     if not question:
         return jsonify(ok=False, error="Ask a question first."), 400
     if len(question) > 2000:
         return jsonify(ok=False, error="That question is too long — keep it under 2000 characters."), 400
     from ai_utils import ai_rate_limited
-    if ai_rate_limited(f"askcavnar:{rid}", max_calls=10, window_secs=60):
+    if ai_rate_limited(f"askcavnar:{rid}", max_calls=5, window_secs=60):
         return jsonify(ok=False, error="Too many questions — please wait a moment."), 429
 
     events = queue.Queue()
@@ -1031,6 +1030,14 @@ def ask_cavnar_stream(current_user):
 
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@client_bp.route("/api/ask-cavnar/stream", methods=["POST"])
+@login_required
+def ask_cavnar_stream(current_user):
+    data = request.get_json(silent=True) or {}
+    return _ask_cavnar_stream_response(
+        current_user["restaurant_id"], current_user.get("id"), data.get("question"))
 
 
 @client_bp.route("/api/ask-cavnar/history")

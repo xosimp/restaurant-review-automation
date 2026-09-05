@@ -525,6 +525,38 @@ def _skip_review(restaurant_id, review_id=None):
     return {"ok": status == 200 and result.get("ok", False), "review_id": rid}
 
 
+
+def _read_menu(restaurant_id, limit=30):
+    """Every active menu item by name, whether or not it has a recipe or
+    price on file.
+
+    read_menu_margins deliberately hides this: it only returns full detail
+    for priced dishes and just a count for the rest, so "what's on my
+    menu?" came back as a number instead of a list. This is the plain
+    listing that question actually needs.
+    """
+    from models import get_conn
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, name, sell_price FROM menu_items WHERE restaurant_id=? AND is_active=1 "
+            "ORDER BY name LIMIT ?", (restaurant_id, min(int(limit or 30), _MAX_ROWS * 2))
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return {"has_data": False, "items": [],
+                "note": "No menu items on file yet — none have been discovered from a Toast sync "
+                        "or added manually."}
+    return {
+        "has_data": True,
+        "count": len(rows),
+        "items": [{"id": r["id"], "name": r["name"],
+                   "sell_price": round(r["sell_price"], 2) if r["sell_price"] else None}
+                  for r in rows],
+    }
+
+
 # ── Tool registry ───────────────────────────────────────────────────────────
 # `kind` drives everything: "read" executes, "write" only ever proposes.
 
@@ -551,6 +583,17 @@ TOOLS = [
                     "limit": {"type": "integer", "description": "Max reviews to return (default 10, max 20)."},
                 },
             },
+        },
+    },
+    {
+        "kind": "read",
+        "fn": _read_menu,
+        "module": "module_inventory",
+        "spec": {
+            "name": "read_menu",
+            "description": "Every active dish by name and its listed price, whether or not it has a recipe or margin data. Use this for 'what's on my menu' — read_menu_margins only lists priced dishes in full.",
+            "input_schema": {"type": "object", "properties": {
+                "limit": {"type": "integer", "description": "Max items (default 30)."}}},
         },
     },
     {

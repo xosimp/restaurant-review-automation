@@ -75,7 +75,7 @@ struct AskCavnarView: View {
                                 .id(message.id)
                             }
                             if viewModel.isLoading {
-                                LoadingBubble()
+                                LoadingBubble(label: viewModel.statusLabel)
                             }
                             // Scroll target for the in-progress reveal above
                             // — see its comment. Not part of the message
@@ -400,6 +400,11 @@ private struct ChatBubble: View {
 // two short bars read as "Cavnar AI is composing a short answer" rather
 // than an indeterminate spin.
 private struct LoadingBubble: View {
+    /// What the assistant is doing right now, streamed from the backend's
+    /// tool loop ("Reading your reviews"). nil while the stream is still
+    /// connecting, or once it falls back to the plain non-streaming request.
+    var label: String? = nil
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             GlowBadge(systemImage: "sparkles", size: 28)
@@ -409,10 +414,17 @@ private struct LoadingBubble: View {
                     .font(.cavnarBody(13.5, weight: 700))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarEmber2)
-                // "Composing" — an ember caret writing lines into place
-                // while Cavnar thinks (see CavnarMotion).
-                CavnarComposingLines(widths: [0.8, 0.45, 0.65], lineHeight: 8, spacing: 8)
-                    .frame(width: 150)
+                if let label {
+                    Text(label)
+                        .font(.cavnarBody(13.5))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .transition(.opacity)
+                } else {
+                    // "Composing" — an ember caret writing lines into place
+                    // while Cavnar thinks (see CavnarMotion).
+                    CavnarComposingLines(widths: [0.8, 0.45, 0.65], lineHeight: 8, spacing: 8)
+                        .frame(width: 150)
+                }
             }
             .padding(.horizontal, 15)
             .padding(.vertical, 12)

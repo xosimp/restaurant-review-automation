@@ -335,3 +335,14 @@ def test_web_preview_digest_reports_a_send_failure(client, db_path, monkeypatch)
     resp = client.post("/api/send-test-digest")
     assert resp.status_code == 502
     assert resp.get_json()["ok"] is False
+
+
+def test_ask_cavnar_rate_limit_is_five_per_minute():
+    """Lowered from 10; each question can now cost up to _MAX_TOOL_ROUNDS
+    model calls, so 10/min under-priced the actual cost."""
+    import inspect
+    import client_api
+    src = inspect.getsource(client_api._do_ask_cavnar)
+    assert 'max_calls=5' in src
+    src2 = inspect.getsource(client_api._ask_cavnar_stream_response)
+    assert 'max_calls=5' in src2

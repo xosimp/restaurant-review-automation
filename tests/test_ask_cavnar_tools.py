@@ -725,3 +725,77 @@ def test_dismissing_is_recorded_too(client, db_path, monkeypatch):
     client.post("/api/ask-cavnar/action",
                 json={"action": "publish_schedule", "outcome": "dismissed", "summary": "Send schedule"})
     assert "[Dismissed: Send schedule]" in [h["content"] for h in get_ask_history(rid, db_path=db_path)]
+
+
+# ── read_menu ─────────────────────────────────────────────────────────────
+
+def test_read_menu_lists_every_active_item_regardless_of_pricing(db_path):
+    """read_menu_margins hides unpriced/unmapped items behind a count —
+    "what's on my menu" needs the actual names."""
+    rid = _restaurant(db_path)
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO menu_items (restaurant_id, name, sell_price, is_active) VALUES (?,?,?,1)",
+                 (rid, "Priced Dish", 18.0))
+    conn.execute("INSERT INTO menu_items (restaurant_id, name, sell_price, is_active) VALUES (?,?,?,1)",
+                 (rid, "No Price Yet", None))
+    conn.execute("INSERT INTO menu_items (restaurant_id, name, sell_price, is_active) VALUES (?,?,?,0)",
+                 (rid, "Retired Dish", 12.0))
+    conn.commit(); conn.close()
+    out = json.loads(tools.run_read_tool("read_menu", rid, {}))
+    names = {i["name"] for i in out["items"]}
+    assert names == {"Priced Dish", "No Price Yet"}   # inactive item excluded
+    priced = next(i for i in out["items"] if i["name"] == "Priced Dish")
+    assert priced["sell_price"] == 18.0
+    unpriced = next(i for i in out["items"] if i["name"] == "No Price Yet")
+    assert unpriced["sell_price"] is None
+
+
+def test_read_menu_reports_no_data_honestly(db_path):
+    out = json.loads(tools.run_read_tool("read_menu", _restaurant(db_path), {}))
+    assert out["has_data"] is False and out["items"] == []
+
+
+def test_read_menu_never_crosses_restaurants(db_path):
+    mine, theirs = _restaurant(db_path), _restaurant(db_path, name="Other Co")
+    conn = get_conn(db_path)
+    conn.execute("INSERT INTO menu_items (restaurant_id, name, is_active) VALUES (?,?,1)",
+                 (theirs, "Their Secret Dish"))
+    conn.commit(); conn.close()
+    out = json.loads(tools.run_read_tool("read_menu", mine, {}))
+    assert out["has_data"] is False
+
+
+def test_read_menu_is_gated_to_the_inventory_module(db_path):
+    from models import Restaurant
+    no_inventory = Restaurant(name="R", owner_email="r@x.test", module_inventory=0)
+    assert "read_menu" not in {s["name"] for s in tools.tool_specs(no_inventory)}
+    has_inventory = Restaurant(name="R2", owner_email="r2@x.test", module_inventory=1)
+    assert "read_menu" in {s["name"] for s in tools.tool_specs(has_inventory)}
+
+
+# ── Streaming: web and mobile share one implementation ───────────────────
+
+def test_mobile_stream_route_exists_and_delegates_to_the_shared_function():
+    """iOS streaming was wired by adding a mobile twin of the web SSE route.
+    This is the guard that would have caught it pointing at nothing, or
+    duplicating the logic instead of sharing it."""
+    import inspect
+    import mobile_api
+    src = inspect.getsource(mobile_api.mobile_ask_cavnar_stream)
+    assert "_ask_cavnar_stream_response" in src
+
+    from flask import Flask
+    probe = Flask(__name__)
+    probe.register_blueprint(mobile_api.mobile_bp)
+    rules = [str(r) for r in probe.url_map.iter_rules()]
+    assert any("/mobile/api/ask-cavnar/stream" in r for r in rules)
+
+
+def test_web_and_mobile_stream_routes_use_the_identical_handler():
+    import inspect
+    import client_api
+    import mobile_api
+    web_src = inspect.getsource(client_api.ask_cavnar_stream)
+    mobile_src = inspect.getsource(mobile_api.mobile_ask_cavnar_stream)
+    assert "_ask_cavnar_stream_response" in web_src
+    assert "_ask_cavnar_stream_response" in mobile_src

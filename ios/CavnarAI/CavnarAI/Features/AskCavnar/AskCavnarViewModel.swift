@@ -95,6 +95,11 @@ final class AskCavnarViewModel {
     }
 
     var isLoading = false
+    /// What the assistant is doing right now — "Reading your reviews" — shown
+    /// while a multi-tool answer is in flight. nil outside a request, and
+    /// while the stream connects, so it never flashes stale text left over
+    /// from the previous question.
+    var statusLabel: String?
     /// Transient failure notice shown above the input bar. Deliberately not a
     /// ChatMessage: an error appended as an assistant turn ends up replayed to
     /// Claude in `history` as something it supposedly said (audit 2.5).
@@ -120,6 +125,10 @@ final class AskCavnarViewModel {
     private struct AskBody: Encodable {
         let question: String
         let history: [HistoryTurn]
+    }
+
+    private struct StreamBody: Encodable {
+        let question: String
     }
 
     private struct AskResponse: Decodable {
@@ -183,33 +192,81 @@ final class AskCavnarViewModel {
         messages.append(ChatMessage(text: asked, isUser: true))
         question = ""
         isLoading = true
-        defer { isLoading = false }
+        statusLabel = nil
+        defer { isLoading = false; statusLabel = nil }
+
         do {
-            let response: AskResponse = try await client.send(
-                "/mobile/api/ask-cavnar", method: .post, body: AskBody(question: asked, history: history)
-            )
-            let raw = response.ok ? (response.answer ?? "") : (response.error ?? "Something went wrong.")
-            let cleaned = cavnarPlainText(raw)
-            let display = cleaned.isEmpty
-                ? "I didn't get an answer back that time — mind asking again?"
-                : cleaned
-            messages.append(ChatMessage(
-                text: display, isUser: false, wasTruncated: response.truncated == true,
-                proposals: response.proposals ?? []
-            ))
+            try await streamAnswer(for: asked)
         } catch is CancellationError {
             // The sheet went away mid-request — roll the turn back silently.
             if messages.last?.isUser == true { messages.removeLast() }
             question = asked
         } catch {
-            // Roll the turn back rather than leaving a dead end: the question
-            // returns to the input box ready to resend (it used to be cleared
-            // and lost, making "try again" harder to follow than it sounds),
-            // and the failure never enters `history` (audit 2.5).
-            if messages.last?.isUser == true { messages.removeLast() }
-            question = asked
-            errorBanner = (error as? APIClient.APIError)?.message
-                ?? "Couldn't reach Cavnar AI — check your connection and try again."
+            // Streaming failed before any answer arrived (connection refused,
+            // a proxy stripping the response, decode failure on the first
+            // line) — fall back to the plain request rather than surface a
+            // dead end. A failure partway through, after some progress
+            // already rendered, is not retried here: the loop already ran
+            // real tool calls server-side, and re-running it would risk a
+            // second attempt at the same write-tool proposal.
+            do {
+                let response: AskResponse = try await client.send(
+                    "/mobile/api/ask-cavnar", method: .post, body: AskBody(question: asked, history: history)
+                )
+                appendAnswer(from: response.ok ? (response.answer ?? "") : (response.error ?? "Something went wrong."),
+                            truncated: response.truncated == true, proposals: response.proposals ?? [])
+            } catch is CancellationError {
+                if messages.last?.isUser == true { messages.removeLast() }
+                question = asked
+            } catch {
+                // Roll the turn back rather than leaving a dead end: the
+                // question returns to the input box ready to resend (it used
+                // to be cleared and lost, making "try again" harder to follow
+                // than it sounds), and the failure never enters `history`
+                // (audit 2.5).
+                if messages.last?.isUser == true { messages.removeLast() }
+                question = asked
+                errorBanner = (error as? APIClient.APIError)?.message
+                    ?? "Couldn't reach Cavnar AI — check your connection and try again."
+            }
         }
+    }
+
+    /// Consumes the SSE stream: "progress" updates statusLabel as each tool
+    /// runs, "answer" appends the final message, "error" surfaces the
+    /// server's own message. Mirrors the web client's fetch/ReadableStream
+    /// loop — same events, same fallback-on-failure shape.
+    private func streamAnswer(for question: String) async throws {
+        var gotAnswer = false
+        for try await event in await client.stream("/mobile/api/ask-cavnar/stream",
+                                                    body: StreamBody(question: question)) {
+            switch event.type {
+            case "progress":
+                statusLabel = event.label
+            case "answer":
+                gotAnswer = true
+                appendAnswer(from: event.answer ?? "", truncated: event.truncated == true,
+                            proposals: event.proposals ?? [])
+            case "error":
+                gotAnswer = true
+                appendAnswer(from: event.error ?? "Something went wrong.", truncated: false, proposals: [])
+            default:
+                break
+            }
+        }
+        if !gotAnswer {
+            // The stream closed with no "answer"/"error" event at all — a
+            // proxy that buffers/drops SSE, most likely. Let the caller's
+            // catch block run the plain-request fallback.
+            throw APIClient.APIError(message: "Stream ended without an answer.")
+        }
+    }
+
+    private func appendAnswer(from raw: String, truncated: Bool, proposals: [AskProposal]) {
+        let cleaned = cavnarPlainText(raw)
+        let display = cleaned.isEmpty
+            ? "I didn't get an answer back that time — mind asking again?"
+            : cleaned
+        messages.append(ChatMessage(text: display, isUser: false, wasTruncated: truncated, proposals: proposals))
     }
 }

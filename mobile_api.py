@@ -1130,6 +1130,22 @@ def mobile_ask_cavnar(current_user):
     return jsonify(**payload), status
 
 
+@mobile_bp.route("/ask-cavnar/stream", methods=["POST"])
+@mobile_login_required
+def mobile_ask_cavnar_stream(current_user):
+    """SSE twin of client_api's stream route — same progress events, same
+    tool loop, so the app can show "Reading your reviews" instead of a bare
+    spinner for however long a multi-tool answer takes.
+
+    Bearer-authed like every other /mobile/api/ route: no cookie jar on a
+    native client, so the token comes from the Authorization header that
+    @mobile_login_required already validated to resolve current_user.
+    """
+    data = request.get_json(silent=True) or {}
+    return _capi._ask_cavnar_stream_response(
+        current_user["restaurant_id"], current_user.get("id"), data.get("question"))
+
+
 @mobile_bp.route("/ask-cavnar/history")
 @mobile_login_required
 def mobile_ask_cavnar_history(current_user):

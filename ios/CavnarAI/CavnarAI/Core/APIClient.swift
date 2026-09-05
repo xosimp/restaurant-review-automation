@@ -193,6 +193,65 @@ actor APIClient {
         }
     }
 
+    // MARK: - Server-sent events
+
+    /// One event from an SSE stream — Ask Cavnar's /stream routes only, for
+    /// now. Same envelope shape both the web client and the backend's
+    /// generator emit: "progress" while a tool runs, "answer" once, or
+    /// "error".
+    struct SSEEvent: Decodable {
+        let type: String
+        let label: String?
+        let answer: String?
+        let truncated: Bool?
+        let proposals: [AskProposal]?
+        let error: String?
+    }
+
+    /// POSTs `path` and yields each `data: {...}` line as it arrives.
+    ///
+    /// Built on URLSession's native byte stream rather than a third-party
+    /// SSE client — the app only ever consumes one shape of event, on one
+    /// route family, so a dependency would outweigh what it replaces.
+    /// Ends the stream (rather than throwing) on a decode failure for a
+    /// single line: one malformed progress event should not blow up an
+    /// answer that already arrived.
+    func stream<Body: Encodable>(
+        _ path: String, body: Body
+    ) -> AsyncThrowingStream<SSEEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let request = try buildRequest(path: path, method: "POST", body: body, query: [:])
+                    let (bytes, response) = try await session.bytes(for: request)
+                    if let http = response as? HTTPURLResponse, http.statusCode == 401 {
+                        onSessionExpired?()
+                        continuation.finish(throwing: SessionExpiredError())
+                        return
+                    }
+                    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                        continuation.finish(throwing: APIError(message: "Couldn't reach Cavnar AI — try again."))
+                        return
+                    }
+                    for try await line in bytes.lines {
+                        guard line.hasPrefix("data: ") else { continue }
+                        let jsonText = String(line.dropFirst(6))
+                        guard let data = jsonText.data(using: .utf8),
+                              let event = try? JSONDecoder.cavnar.decode(SSEEvent.self, from: data)
+                        else { continue }
+                        continuation.yield(event)
+                    }
+                    continuation.finish()
+                } catch is CancellationError {
+                    continuation.finish(throwing: CancellationError())
+                } catch {
+                    continuation.finish(throwing: Self.classify(error))
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     private func buildRequest(
         path: String, method: String, body: (any Encodable)?, query: [String: String]
     ) throws -> URLRequest {
