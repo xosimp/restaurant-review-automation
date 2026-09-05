@@ -124,3 +124,42 @@ def test_no_block_at_all_when_there_is_nothing_to_say(db_path):
     assert labor.format_demand_block(labor.build_demand_forecast(rid)) == ""
     assert labor.format_demand_block({"ok": False}) == ""
     assert labor.format_demand_block(None) == ""
+
+
+# ── Optional-column tolerance ────────────────────────────────────────────
+
+def test_overtime_risk_survives_a_csv_without_actual_hours():
+    """actual_hours is optional everywhere else — the labour-cost and
+    role-summary passes both read it with .get(... or 0). The overtime-risk
+    block used a hard subscript, so any shifts source omitting the column
+    raised KeyError and took down the whole schedule generation.
+    """
+    from labor import analyse_shifts
+    shifts = [
+        {"date": "2026-09-07", "day": "Monday", "employee": "Sofia R.",
+         "role": "Server", "shift_start": "16:00", "shift_end": "22:00",
+         "scheduled_hours": "6.0", "sales": "4200"},
+        {"date": "2026-09-08", "day": "Tuesday", "employee": "Sofia R.",
+         "role": "Server", "shift_start": "16:00", "shift_end": "22:00",
+         "scheduled_hours": "6.0", "sales": "3900"},
+    ]
+    result = analyse_shifts(shifts)          # must not raise
+    assert result["total_labor_cost"] >= 0
+    assert "overtime_risk" in result
+
+
+def test_overtime_risk_falls_back_to_scheduled_hours():
+    """With no actual_hours, scheduled is the honest stand-in — treating it
+    as zero would hide genuine overtime."""
+    from labor import analyse_shifts
+    shifts = [
+        {"date": f"2026-09-0{d}", "day": "Monday", "employee": "Marcus T.",
+         "role": "Cook", "shift_start": "08:00", "shift_end": "20:00",
+         "scheduled_hours": "12.0", "sales": "5000"}
+        for d in range(1, 6)
+    ]
+    result = analyse_shifts(shifts)
+    # 5 x 12h with no actual_hours column: overtime is still caught, because
+    # the fallback counts scheduled rather than treating the week as zero.
+    flagged = {o["employee"]: o["hours"] for o in result["overtime_risk"]}
+    assert flagged.get("Marcus T.") == 60.0

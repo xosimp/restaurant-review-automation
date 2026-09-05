@@ -220,8 +220,13 @@ def analyse_shifts(shifts: list[dict],
     # Overtime risk — bucket by week, flag anyone who hit 40h in any single week
     weekly_hours = {}  # {employee: {week_num: hours}}
     for s in shifts:
-        emp    = s["employee"]
-        actual = float(s["actual_hours"])
+        emp    = s.get("employee") or "Unknown"
+        # Read the same tolerant way as the other two places this field is
+        # used (see the labor-cost and role-summary passes). A hard subscript
+        # here meant any shifts CSV without an actual_hours column raised
+        # KeyError out of the overtime-risk block and took down the whole
+        # schedule generation — the column is optional everywhere else.
+        actual = float(s.get("actual_hours") or s.get("scheduled_hours") or 0)
         try:
             _d = datetime.strptime(s["date"], "%Y-%m-%d")
             # Store Monday of the week as key so we can show "Week of Jun 8"
