@@ -95,6 +95,29 @@ struct HomeView: View {
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
                                 .belowFold(heroAppeared, delay: 0.35)
+                                // Anchored here, not at the screen root — a
+                                // confirmationDialog's on-screen position is
+                                // derived from the frame of whatever it's
+                                // attached to, and attached to the whole
+                                // NavigationStack (the full screen) it was
+                                // rendering up near the very top, nowhere
+                                // near the card/button that opened it. This
+                                // frame is the deck card itself.
+                                .confirmationDialog(
+                                    pendingPublish?.cta ?? "Publish replies",
+                                    isPresented: Binding(
+                                        get: { pendingPublish != nil },
+                                        set: { if !$0 { pendingPublish = nil } }
+                                    ),
+                                    titleVisibility: .visible
+                                ) {
+                                    Button(pendingPublish?.cta ?? "Publish") {
+                                        Task { await publishReplies() }
+                                    }
+                                    Button("Cancel", role: .cancel) { pendingPublish = nil }
+                                } message: {
+                                    Text("Each reply was drafted in your voice. Google-connected replies post right away; the rest are marked approved.")
+                                }
 
                             HomeValueBand(
                                 total: summary.totalValueDelivered,
@@ -131,6 +154,17 @@ struct HomeView: View {
                     }
                 }
                 .cavnarEmberRefreshable { await viewModel.load() }
+                // Anchored to the whole screen, not to HomeActionDeck —
+                // publishing can be the LAST needs-attention item, and the
+                // reload that follows a successful publish (inside
+                // publishAllReplies(), before this label is even set) can
+                // swap the deck out for AllClearRow the instant the list
+                // empties. The overlay used to live on the deck itself, so
+                // it lost its home in the view tree at the exact moment it
+                // needed to appear — this was the "nothing happened" bug:
+                // the publish worked, but its own confirmation had nowhere
+                // left to render.
+                .cavnarPostedOverlay(postedLabel) { postedLabel = nil }
             }
             .navigationDestination(for: ModuleRoute.self) { route in
                 ModuleDestinationView(moduleKey: route.key, moduleLabel: route.label)
@@ -236,21 +270,6 @@ struct HomeView: View {
             }
             .sheet(isPresented: $showingValueDetail) {
                 valueDetailSheet
-            }
-            .confirmationDialog(
-                pendingPublish?.cta ?? "Publish replies",
-                isPresented: Binding(
-                    get: { pendingPublish != nil },
-                    set: { if !$0 { pendingPublish = nil } }
-                ),
-                titleVisibility: .visible
-            ) {
-                Button(pendingPublish?.cta ?? "Publish") {
-                    Task { await publishReplies() }
-                }
-                Button("Cancel", role: .cancel) { pendingPublish = nil }
-            } message: {
-                Text("Each reply was drafted in your voice. Google-connected replies post right away; the rest are marked approved.")
             }
             // Opening the sheet marks alert_log seen server-side (see
             // NotificationsListViewModel.load()), so refreshing again right
@@ -375,7 +394,6 @@ struct HomeView: View {
                     navigate(to: ModuleRoute(key: item.module, label: moduleLabel(item.module, in: summary)))
                 }
             )
-            .cavnarPostedOverlay(postedLabel) { postedLabel = nil }
         }
     }
 

@@ -16,6 +16,11 @@ struct HomeActionDeck: View {
     @State private var index = 0
     @State private var dragX: CGFloat = 0
     @State private var flying = false
+    /// The id of the card actually being dragged/flown off — not
+    /// "whichever card is currently depth 0," which is a moving target the
+    /// instant `advance()` updates `index` mid-transition. See advance()'s
+    /// comment for the flash this used to cause when the two were conflated.
+    @State private var draggingID: String?
 
     static let cardHeight: CGFloat = 150
     private static let ghostStep: CGFloat = 14
@@ -48,8 +53,8 @@ struct HomeActionDeck: View {
                         onSecondary: { onSecondary(entry.item) }
                     )
                     .scaleEffect(1 - CGFloat(entry.depth) * 0.045, anchor: .bottom)
-                    .offset(x: entry.depth == 0 ? dragX : 0, y: CGFloat(entry.depth) * Self.ghostStep)
-                    .rotationEffect(.degrees(entry.depth == 0 ? Double(dragX) / 28 : 0), anchor: .bottom)
+                    .offset(x: entry.id == draggingID ? dragX : 0, y: CGFloat(entry.depth) * Self.ghostStep)
+                    .rotationEffect(.degrees(entry.id == draggingID ? Double(dragX) / 28 : 0), anchor: .bottom)
                     .opacity(entry.depth == 0 ? 1 : (entry.depth == 1 ? 0.72 : 0.42))
                     .saturation(entry.depth == 0 ? 1 : 0.75)
                     .allowsHitTesting(entry.depth == 0 && !flying)
@@ -76,6 +81,12 @@ struct HomeActionDeck: View {
         DragGesture(minimumDistance: 16, coordinateSpace: .local)
             .onChanged { value in
                 guard !flying else { return }
+                // Kept in sync with the actual current front card on every
+                // tick, not just once — so a fresh drag starting right
+                // after a previous advance() always targets whichever card
+                // is really on top now, with no explicit reset needed
+                // in between (see advance()'s comment).
+                draggingID = stack.first?.id
                 // Only follow a mostly-horizontal drag — a vertical one is
                 // the page scrolling, and belongs to the ScrollView.
                 if abs(value.translation.width) > abs(value.translation.height) {
@@ -95,16 +106,27 @@ struct HomeActionDeck: View {
 
     /// The top card flies off in the swipe's direction, then the deck
     /// re-stacks around the next item. `direction` 1 = next, -1 = previous.
+    ///
+    /// The card that was flying off used to be identified by depth (`entry
+    /// .depth == 0`), which is a POSITION, not the card itself — the
+    /// instant `index` advances below, the card that had been showing at
+    /// depth 1 (offset x: 0 the whole time) becomes depth 0 too, and reads
+    /// dragX for that one frame before it's separately reset. Getting that
+    /// reset and the index change into perfectly the same commit relied on
+    /// two back-to-back but separate transactions (one with animations
+    /// disabled, one animated) landing as a single render — timing that
+    /// wasn't guaranteed, and the miss is exactly the flash-then-snap that
+    /// was reported. Tracking `draggingID` — the ACTUAL card being
+    /// dragged — instead of a depth means the incoming card never reads
+    /// dragX at all, in any frame, so there's nothing left to race.
     private func advance(_ direction: Int) {
         guard count > 1, !flying else { return }
         flying = true
+        if draggingID == nil { draggingID = stack.first?.id }
         Haptic.selection()
         withAnimation(.easeIn(duration: 0.22)) { dragX = CGFloat(direction < 0 ? 1 : -1) * 520 }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(220))
-            var snap = Transaction()
-            snap.disablesAnimations = true
-            withTransaction(snap) { dragX = 0 }
             withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
                 index = (index + direction + count) % count
             }
@@ -123,6 +145,12 @@ struct HomeActionDeck: View {
                     .onTapGesture {
                         guard i != index, !flying else { return }
                         Haptic.selection()
+                        // A dot jump never carries a drag offset — clear
+                        // both so a stale draggingID from an earlier swipe
+                        // can't reapply if it happens to land back on the
+                        // same card the dots just jumped to.
+                        draggingID = nil
+                        dragX = 0
                         withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { index = i }
                     }
             }
