@@ -195,7 +195,7 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
 <div class="page-hero">
   <div class="section-eyebrow reveal">Transparent pricing</div>
   <h1 class="page-headline reveal">Pay for what you use.<br><em>Nothing else.</em></h1>
-  <p class="page-sub reveal">Start with one module. Add more when you're ready. No long-term contracts, no hidden fees — just AI systems that pay for themselves.</p>
+  <p class="page-sub reveal">Start with one module. Add more when you're ready. Setup is paid up front; your first 30 days of the retainer are free.</p>
   <div class="toggle-wrap reveal">
     <span class="toggle-label">Monthly</span>
     <div class="toggle-track on" id="billing-toggle" onclick="toggleBilling()">
@@ -230,7 +230,7 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
     <div class="plan-card featured reveal">
       <div class="plan-badge">Most popular</div>
       <div class="plan-name">Starter Module</div>
-      <div class="plan-price"><sup>$</sup>750<span class="per" id="starter-mo"> · $299/mo</span></div>
+      <div class="plan-price"><sup>$</sup>750<span class="per" id="starter-mo"> · $3,490/yr</span></div>
       <div class="plan-setup" id="starter-note">One-time setup · billed annually</div>
       <p class="plan-desc">One AI module, fully built and managed for your restaurant. Start with your biggest pain point — reviews, labor, food cost, or marketing.</p>
       <ul class="plan-features">
@@ -246,7 +246,7 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
     <!-- Full System -->
     <div class="plan-card reveal">
       <div class="plan-name">Full System</div>
-      <div class="plan-price"><sup>$</sup>3,000<span class="per" id="full-mo"> · $999/mo</span></div>
+      <div class="plan-price"><sup>$</sup>3,000<span class="per" id="full-mo"> · $11,990/yr</span></div>
       <div class="plan-setup" id="full-note">One-time setup · billed annually</div>
       <p class="plan-desc">All four modules running together. Reviews, labor, food cost, and marketing — unified in one dashboard with weekly AI digests.</p>
       <ul class="plan-features">
@@ -421,7 +421,7 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
 
     <div class="faq-item reveal">
       <div class="faq-q" onclick="toggleFaq(this)">Is there a contract or minimum commitment?</div>
-      <div class="faq-a">No long-term contracts. Month-to-month on the monthly plan — cancel anytime with 30 days notice. Annual plans are paid upfront and non-refundable after the first 14 days.</div>
+      <div class="faq-a">Yes. Every plan starts with a short service agreement covering setup, the retainer and cancellation terms — I walk you through it before anything is signed. Setup is paid up front; the retainer doesn't start until your first 30 days are up.</div>
     </div>
     <div class="faq-item reveal">
       <div class="faq-q" onclick="toggleFaq(this)">What does "one-time setup" include?</div>
@@ -433,7 +433,7 @@ footer{background:#080706;padding:40px 80px;display:flex;align-items:center;just
     </div>
     <div class="faq-item reveal">
       <div class="faq-q" onclick="toggleFaq(this)">Can I add or remove modules later?</div>
-      <div class="faq-a">Yes. Start with one and add more anytime. Each additional module is $349/mo plus a $750 one-time setup for that module (two modules run $649/mo, three $899/mo, all four $1,199/mo). Removing a module takes effect at the next billing cycle.</div>
+      <div class="faq-a">Yes. Start with one and add more anytime. Each additional module is $349/mo plus a $750 one-time setup for that module. Two modules run $649/mo, three $899/mo, all four $1,199/mo — or $6,490, $8,990 and $11,990 a year with two months free. Removing a module takes effect at the next billing cycle.</div>
     </div>
     <div class="faq-item reveal">
       <div class="faq-q" onclick="toggleFaq(this)">How long does setup take?</div>
@@ -473,10 +473,10 @@ var annualOn = true;
 function toggleBilling(){
   annualOn = !annualOn;
   document.getElementById('billing-toggle').className = 'toggle-track' + (annualOn ? ' on' : '');
-  document.getElementById('starter-mo').textContent = annualOn ? ' · $299/mo' : ' · $349/mo';
-  document.getElementById('full-mo').textContent = annualOn ? ' · $999/mo' : ' · $1,199/mo';
-  document.getElementById('starter-note').textContent = annualOn ? 'One-time setup · billed annually' : 'One-time setup · month-to-month';
-  document.getElementById('full-note').textContent = annualOn ? 'One-time setup · billed annually' : 'One-time setup · month-to-month';
+  document.getElementById('starter-mo').textContent = annualOn ? ' · $3,490/yr' : ' · $349/mo';
+  document.getElementById('full-mo').textContent = annualOn ? ' · $11,990/yr' : ' · $1,199/mo';
+  document.getElementById('starter-note').textContent = annualOn ? 'One-time setup · billed annually' : 'One-time setup · billed monthly';
+  document.getElementById('full-note').textContent = annualOn ? 'One-time setup · billed annually' : 'One-time setup · billed monthly';
 }
 
 function toggleFaq(el){
