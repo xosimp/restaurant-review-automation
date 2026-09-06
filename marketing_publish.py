@@ -306,6 +306,65 @@ def cancel_scheduled(post_id, restaurant_id, db_path: str = DB_PATH) -> dict:
     return {"ok": True}
 
 
+def _explain_failure(platform, error):
+    """Turn a platform's refusal into the thing the owner has to go do.
+
+    A scheduled post that fails is invisible — the owner planned it days ago
+    and it simply never appeared — so the alert has to say what broke AND
+    what fixes it, not just repeat Meta's error string.
+    """
+    raw = (error or "").lower()
+    if "not connected" in raw or "token" in raw or "expired" in raw or "oauth" in raw:
+        return (f"{platform.title()} looks disconnected. Reconnect it under "
+                "Account → Connections, then schedule the post again.")
+    if "photo" in raw or "image" in raw or "media" in raw:
+        return "The photo couldn't be used. Re-add it and schedule the post again."
+    if "limit" in raw or "character" in raw:
+        return "The post was over the platform's length limit. Trim it and schedule it again."
+    if "missed its slot" in raw:
+        return ("It wasn't published because too much time had passed — a lunch post "
+                "landing at dinner is worse than none. Reschedule it when you're ready.")
+    return "Open Marketing → Scheduled to see it and try again."
+
+
+def _alert_failed_post(row, error, db_path: str = DB_PATH):
+    """Tell the owner their post didn't go out.
+
+    Fires once, when a post reaches `failed` for good — not on the retries in
+    between, which are expected and usually recover. Best-effort: an alert
+    that raises must never take down the queue runner behind it.
+    """
+    try:
+        restaurant = get_restaurant(row["restaurant_id"])
+        if not restaurant or not restaurant.owner_email:
+            return
+        import notify
+        platform = (row["platform"] or "").title()
+        when = str(row["scheduled_for"] or "").replace("T", " ")[:16]
+        body = (row["body"] or "").strip()
+        preview = body[:120] + ("…" if len(body) > 120 else "")
+        html = notify._alert_email_html(
+            restaurant.name,
+            f"Your {platform} post didn't go out",
+            [
+                f"It was scheduled for <strong>{when}</strong> and Cavnar AI couldn't publish it.",
+                f"<em>{notify._html.escape(preview)}</em>",
+                f"<strong>{notify._html.escape(str(error or 'The platform rejected it.'))}</strong>",
+                _explain_failure(row["platform"] or "", error),
+            ],
+            cta_label="Open Marketing",
+            restaurant_id=row["restaurant_id"],
+        )
+        notify._send_alert_email(
+            restaurant.owner_email,
+            f"Post didn't go out — {restaurant.name}",
+            html,
+            restaurant_id=row["restaurant_id"],
+        )
+    except Exception as e:
+        log.warning("scheduled post failure alert failed for %s: %s", row["restaurant_id"], e)
+
+
 def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH) -> dict:
     """Publish everything whose slot has arrived. Called from scheduler.py.
 
@@ -336,8 +395,9 @@ def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH
             continue
         if now - when > timedelta(hours=LATE_TOLERANCE_HOURS):
             # A brunch post landing at dinner is worse than one that didn't land.
-            _finish(row["id"], "failed",
-                    error=f"Missed its slot by more than {LATE_TOLERANCE_HOURS} hours", db_path=db_path)
+            late = f"Missed its slot by more than {LATE_TOLERANCE_HOURS} hours"
+            _finish(row["id"], "failed", error=late, db_path=db_path)
+            _alert_failed_post(row, late, db_path=db_path)
             failed += 1
             continue
 
@@ -358,6 +418,20 @@ def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH
             _finish(row["id"], status, error=result.get("error"), attempts=attempts, db_path=db_path)
             if status == "failed":
                 failed += 1
+                # Once, on the way out — not on each retry.
+                _alert_failed_post(row, result.get("error"), db_path=db_path)
+    if failed:
+        # Into the daily operator digest (ops.failures_last_24h). One post
+        # failing is the owner's problem; a run where several fail is usually
+        # one cause — an expired Meta token, a Google outage — and that is
+        # worth seeing across restaurants rather than per-inbox.
+        try:
+            import ops
+            ops.capture(RuntimeError(f"{failed} scheduled post(s) failed to publish"),
+                        job="scheduled_posts",
+                        context=f"published={published} failed={failed} pending={skipped}")
+        except Exception:
+            pass
     return {"published": published, "failed": failed, "pending": skipped}
 
 

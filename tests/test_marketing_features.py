@@ -578,3 +578,115 @@ def test_regenerating_the_same_topic_does_not_contradict_the_brief(rid, db_path,
     avoid = prompt.split("Do NOT repeat these themes")[0].split("recently generated content about:")[-1]
     assert "fall truffle menu" not in avoid
     assert "Sunday brunch" in avoid
+
+
+# ── Failure alerting ───────────────────────────────────────────────────────
+# A scheduled post that fails is invisible: the owner planned it days ago and
+# it simply never appeared. Nothing surfaced that except the queue screen,
+# which is the one place they have no reason to look.
+
+def test_the_owner_is_told_when_a_post_finally_fails(rid, db_path, monkeypatch):
+    _connect_all(db_path, rid)
+    marketing_publish.schedule_post(rid, "facebook", "Now", _in_hours(0), db_path=db_path)
+    monkeypatch.setattr("social_routes._do_post_to_facebook",
+                        lambda *a, **k: ({"ok": False, "error": "Facebook not connected"}, 200))
+    alerts = []
+    monkeypatch.setattr("notify._send_alert_email",
+                        lambda email, subject, html, restaurant_id=None:
+                            alerts.append((subject, html)) or True)
+
+    for _ in range(marketing_publish.MAX_ATTEMPTS):
+        marketing_publish.run_due_posts(db_path=db_path)
+
+    assert len(alerts) == 1, "one alert, when it fails for good"
+    subject, html = alerts[0]
+    assert "didn't go out" in subject
+    assert "Reconnect it under Account → Connections" in html
+
+
+def test_the_retries_before_that_are_silent(rid, db_path, monkeypatch):
+    """Alerting on every attempt would train the owner to ignore it."""
+    _connect_all(db_path, rid)
+    marketing_publish.schedule_post(rid, "facebook", "Now", _in_hours(0), db_path=db_path)
+    monkeypatch.setattr("social_routes._do_post_to_facebook",
+                        lambda *a, **k: ({"ok": False, "error": "Meta 500"}, 200))
+    alerts = []
+    monkeypatch.setattr("notify._send_alert_email",
+                        lambda *a, **k: alerts.append(1) or True)
+
+    marketing_publish.run_due_posts(db_path=db_path)
+
+    assert alerts == []
+    assert marketing_publish.list_scheduled(rid, db_path=db_path)[0]["status"] == "scheduled"
+
+
+def test_a_post_that_missed_its_slot_also_tells_the_owner(rid, db_path, monkeypatch):
+    _connect_all(db_path, rid)
+    created = marketing_publish.schedule_post(rid, "facebook", "Brunch", _in_hours(1), db_path=db_path)
+    conn = get_conn(db_path)
+    stale = datetime.now() - timedelta(hours=marketing_publish.LATE_TOLERANCE_HOURS + 2)
+    conn.execute("UPDATE marketing_scheduled_posts SET scheduled_for=? WHERE id=?",
+                 (stale.strftime("%Y-%m-%dT%H:%M:%S"), created["id"]))
+    conn.commit(); conn.close()
+    alerts = []
+    monkeypatch.setattr("notify._send_alert_email",
+                        lambda email, subject, html, restaurant_id=None:
+                            alerts.append(html) or True)
+
+    marketing_publish.run_due_posts(db_path=db_path)
+
+    assert len(alerts) == 1
+    assert "Reschedule it" in alerts[0]
+
+
+def test_an_alert_that_throws_does_not_take_down_the_queue_runner(rid, db_path, monkeypatch):
+    """The post still has to be marked failed even if the email blows up."""
+    _connect_all(db_path, rid)
+    marketing_publish.schedule_post(rid, "facebook", "Now", _in_hours(0), db_path=db_path)
+    monkeypatch.setattr("social_routes._do_post_to_facebook",
+                        lambda *a, **k: ({"ok": False, "error": "nope"}, 200))
+    monkeypatch.setattr("notify._send_alert_email",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("SMTP down")))
+
+    for _ in range(marketing_publish.MAX_ATTEMPTS):
+        result = marketing_publish.run_due_posts(db_path=db_path)
+
+    assert result["failed"] == 1
+    assert marketing_publish.list_scheduled(rid, db_path=db_path)[0]["status"] == "failed"
+
+
+def test_repeated_failures_reach_the_operator_digest(rid, db_path, monkeypatch):
+    """One failure is the owner's problem. A run where several fail is usually
+    one cause, and that belongs across restaurants rather than per-inbox."""
+    _connect_all(db_path, rid)
+    for _ in range(2):
+        marketing_publish.schedule_post(rid, "facebook", "Now", _in_hours(0), db_path=db_path)
+    monkeypatch.setattr("social_routes._do_post_to_facebook",
+                        lambda *a, **k: ({"ok": False, "error": "token expired"}, 200))
+    monkeypatch.setattr("notify._send_alert_email", lambda *a, **k: True)
+    captured = []
+    monkeypatch.setattr("ops.capture",
+                        lambda exc, job=None, context="": captured.append((job, str(exc), context)))
+
+    for _ in range(marketing_publish.MAX_ATTEMPTS):
+        marketing_publish.run_due_posts(db_path=db_path)
+
+    assert captured, "nothing reached ops"
+    job, message, context = captured[-1]
+    assert job == "scheduled_posts"
+    assert "failed to publish" in message
+    assert "failed=2" in context
+
+
+def test_a_successful_run_stays_silent(rid, db_path, monkeypatch):
+    _connect_all(db_path, rid)
+    marketing_publish.schedule_post(rid, "facebook", "Now", _in_hours(0), db_path=db_path)
+    monkeypatch.setattr("social_routes._do_post_to_facebook",
+                        lambda *a, **k: ({"ok": True, "post_id": "fb_1"}, 200))
+    noise = []
+    monkeypatch.setattr("notify._send_alert_email", lambda *a, **k: noise.append("email"))
+    monkeypatch.setattr("ops.capture", lambda *a, **k: noise.append("ops"))
+
+    marketing_publish.run_due_posts(db_path=db_path)
+
+    assert noise == [], "silence has to stay meaningful"

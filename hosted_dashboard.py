@@ -106,14 +106,43 @@ def inv_banner_gradient(annual_waste, annual_recoverable):
 
 @app.route("/health")
 def health():
-    """Health check for UptimeRobot and Railway. Verifies DB is reachable."""
+    """Health check for UptimeRobot and Railway.
+
+    Checks the database AND the background scheduler's heartbeat. The
+    scheduler runs as a thread inside this process and cannot notice its own
+    death — so if it stops, nothing raises and nothing 500s. Scheduled
+    marketing posts, nightly POS syncs and review fetches simply stop
+    happening, quietly, and the first sign is a client asking why their post
+    never appeared. Checking it from a REQUEST thread is the only place that
+    can see it.
+
+    Deliberately still 200 when the scheduler is stale: the web app is up and
+    serving, and returning 500 here would make Railway restart-loop a
+    container that is fine. The signal goes in the body and on the status
+    page, where the operator digest and /status can act on it.
+    """
     try:
         conn = get_conn()
         conn.execute("SELECT 1").fetchone()
         conn.close()
-        return jsonify(status="ok", db="ok"), 200
     except Exception as e:
         return jsonify(status="error", db=str(e)), 500
+
+    scheduler_state, age = "ok", None
+    try:
+        from status_manager import check_scheduler_liveness, SCHEDULER_STALE_MINUTES
+        age = check_scheduler_liveness()
+        if age is None:
+            scheduler_state = "unknown"
+        elif age > SCHEDULER_STALE_MINUTES:
+            scheduler_state = "stale"
+    except Exception:
+        scheduler_state = "unknown"
+
+    payload = {"status": "ok", "db": "ok", "scheduler": scheduler_state}
+    if age is not None:
+        payload["scheduler_heartbeat_age_minutes"] = round(age, 1)
+    return jsonify(**payload), 200
 
 @app.template_filter("format_num")
 def format_num(v):

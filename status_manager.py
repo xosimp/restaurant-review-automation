@@ -15,7 +15,14 @@ SERVICES = [
     {"key": "email",            "name": "Email Delivery",        "description": "Outbound email notifications"},
     {"key": "labor_analytics",  "name": "Labor & Analytics",     "description": "Labor data processing and insights"},
     {"key": "scheduler",        "name": "Background Scheduler",  "description": "Automated tasks and nightly syncs"},
+    {"key": "scheduled_posts",  "name": "Scheduled Posting",     "description": "Publishing queued marketing posts"},
 ]
+
+# How long the scheduler's heartbeat may go unstamped before the thread is
+# presumed dead. It ticks every SCHEDULER_TICK_SECONDS (300), so three missed
+# ticks plus slack — long enough that a slow nightly job can't trip it, short
+# enough that a scheduled post is not silently hours late.
+SCHEDULER_STALE_MINUTES = 20
 
 
 def _conn():
@@ -130,14 +137,112 @@ def record_scheduler_heartbeat():
     update_service_status("scheduler", "operational", None)
 
 
+def scheduler_heartbeat_age_minutes():
+    """Minutes since the scheduler last stamped itself, or None if it never
+    has. Read from a REQUEST thread (see hosted_dashboard's /health) — the
+    scheduler cannot notice its own death, so nothing inside it can be the
+    thing that checks.
+
+    This matters because scheduled posts publish from that thread: if it
+    stops, nothing throws and nothing 500s. Posts just quietly never go out.
+    """
+    conn = _conn()
+    try:
+        row = conn.execute(
+            "SELECT updated_at FROM service_status WHERE service_key='scheduler'"
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row or not row["updated_at"]:
+        return None
+    try:
+        stamped = datetime.strptime(str(row["updated_at"])[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+    # service_status stamps with SQLite's datetime('now'), which is UTC.
+    return max(0.0, (datetime.utcnow() - stamped).total_seconds() / 60.0)
+
+
+def check_scheduler_liveness():
+    """Mark the scheduler down when its heartbeat has gone stale. Returns the
+    age in minutes (None if it has never run)."""
+    age = scheduler_heartbeat_age_minutes()
+    if age is None:
+        return None
+    if age > SCHEDULER_STALE_MINUTES:
+        update_service_status(
+            "scheduler", "outage",
+            f"No heartbeat for {int(age)} minutes — scheduled posts and nightly syncs are not running")
+    return age
+
+
 def run_health_checks():
-    """Automatically check all services and update their status. Called hourly by scheduler."""
-    for fn in (_check_dashboard, _check_ai_drafting, _check_review_sync, _check_email, _check_labor_analytics):
+    """Check every service and update its status. Called from the scheduler.
+
+    Seeds first. update_service_status is a bare UPDATE, so a service added to
+    SERVICES after a database was created has no row to update and every check
+    for it is a silent no-op — the status page just never mentions it. Seeding
+    here rather than only on a /status visit means a new service starts
+    reporting as soon as the scheduler ticks, which is well before anyone
+    thinks to look at the page.
+    """
+    try:
+        seed_default_services()
+    except Exception as e:
+        log.error(f"Seeding default services failed: {e}")
+    for fn in (_check_dashboard, _check_ai_drafting, _check_review_sync, _check_email,
+               _check_labor_analytics, _check_scheduled_posts):
         try:
             fn()
         except Exception as e:
             log.error(f"Health check {fn.__name__} error: {e}")
     log.info("Status health checks complete")
+
+
+def _check_scheduled_posts():
+    """Degrade when queued posts are failing, not when one did.
+
+    A single failure is the owner's to fix and they are emailed about it
+    (marketing_publish._alert_failed_post). Several across the last day is
+    usually one cause — an expired Meta token, a Google outage — and that is
+    what belongs on a status page.
+    """
+    conn = _conn()
+    try:
+        row = conn.execute(
+            "SELECT "
+            "  SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, "
+            "  SUM(CASE WHEN status='posted' THEN 1 ELSE 0 END) AS posted "
+            "FROM marketing_scheduled_posts "
+            "WHERE COALESCE(posted_at, created_at) >= datetime('now','-1 day')"
+        ).fetchone()
+        overdue = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM marketing_scheduled_posts "
+            "WHERE status='scheduled' AND scheduled_for < datetime('now','-2 hours')"
+        ).fetchone()["cnt"]
+    except Exception:
+        # The table only exists once the marketing migration has run.
+        update_service_status("scheduled_posts", "operational", None)
+        return
+    finally:
+        conn.close()
+
+    failed = (row["failed"] if row else 0) or 0
+    posted = (row["posted"] if row else 0) or 0
+
+    if overdue:
+        # Queued, due, and still sitting there — the shape a stopped
+        # scheduler makes, which is exactly the failure nothing else notices.
+        update_service_status("scheduled_posts", "outage",
+                              f"{overdue} post(s) past their scheduled time and unpublished")
+    elif failed and not posted:
+        update_service_status("scheduled_posts", "outage",
+                              f"{failed} post(s) failed to publish in the last 24h")
+    elif failed >= 3:
+        update_service_status("scheduled_posts", "degraded",
+                              f"{failed} of {failed + posted} posts failed in the last 24h")
+    else:
+        update_service_status("scheduled_posts", "operational", None)
 
 
 def _check_dashboard():
