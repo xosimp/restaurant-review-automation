@@ -201,7 +201,7 @@ tr.full td .num{{color:var(--accent);font-weight:700}}
   <div>
     <h2>See what Cavnar AI can uncover in your restaurant.</h2>
     <p>Scan to book a free 30-minute walkthrough. I'll look at your numbers with you and show you exactly what's fixable — no commitment.</p>
-    <div class="contact"><div><span>Will Cavnar</span>will@cavnar.ai</div><div><span>Call</span><span class="num" style="opacity:1;font-weight:700">334-568-9292</span></div><div><span>Web</span>cavnar.ai</div></div>
+    <div class="contact"><div><span>Will Cavnar</span>will@cavnar.ai</div><div><span>Call or text</span><span class="num" style="opacity:1;font-weight:700">334-568-9292</span></div><div><span>Web</span>cavnar.ai</div></div>
   </div>
   <div><div class="qr">{qr_svg}</div><div class="qr-cap">Scan to book</div></div>
 </div>
