@@ -227,6 +227,15 @@ struct LoginView: View {
             .loginRise(Cue.primary, enabled: introReady)
         }
         .animation(.easeOut(duration: 0.25), value: viewModel.errorMessage != nil)
+        // Password AutoFill fills both fields at once, which is the moment
+        // canSubmit flips true — and it's also the moment the engine is
+        // coldest, because the Face ID / AutoFill flow has just torn the
+        // app's haptic connection down (see Haptic). Warming it here means
+        // the engine is already spinning by the time the finger lands on
+        // Sign In, which is the tap that had no buzz.
+        .onChange(of: viewModel.canSubmit) { _, ready in
+            if ready { Haptic.warmUp() }
+        }
     }
 
     // MARK: - Divider + social

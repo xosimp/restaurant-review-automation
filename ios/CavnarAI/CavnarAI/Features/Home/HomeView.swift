@@ -61,6 +61,15 @@ struct HomeView: View {
     // interactive swipe-to-dismiss, which is what made both feel laggy.
     private var backgroundMotionPaused: Bool {
         showingValueDetail || showingNotifications || showingLocationSwitcher || !tabVisible
+            // Also frozen until the landing is done. Home mounts during
+            // RootView's own crossfade out of the sign-in screen, and the
+            // field's three Canvas layers used to start ticking right then
+            // — competing with that transition, the first data render, and
+            // every section's reveal, all in the same handful of frames.
+            // It's slow ambient drift; starting it once the page has
+            // settled is invisible, and it takes real work out of exactly
+            // the moment that was skipping.
+            || !heroAppeared
     }
     // False while another tab is selected. TabView keeps Home mounted (and
     // its TimelineViews ticking) behind the other tabs — three Canvas
@@ -97,36 +106,40 @@ struct HomeView: View {
                                 navigate(to: ModuleRoute(key: module.key, label: module.label))
                             }
                             .padding(.top, 18)
-                            .belowFold(heroAppeared, delay: 0.25)
+                            .belowFold(heroAppeared, delay: 0.1)
 
                             if summary.quietHoursActive {
                                 quietHoursBanner(summary)
                                     .padding(.horizontal, 20)
                                     .padding(.top, 16)
-                                    .belowFold(heroAppeared, delay: 0.25)
+                                    .belowFold(heroAppeared, delay: 0.1)
                             }
 
                             attentionSection(summary)
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
-                                .belowFold(heroAppeared, delay: 0.35)
+                                .belowFold(heroAppeared, delay: 0.3)
 
                             HomeValueBand(
                                 total: summary.totalValueDelivered,
                                 history: summary.valueHistory,
-                                activeModuleKeys: summary.modules.filter(\.isAvailable).map(\.key)
+                                activeModuleKeys: summary.modules.filter(\.isAvailable).map(\.key),
+                                // Its count-up and line reveal wait for this
+                                // rather than for onAppear — see the flag's
+                                // own comment in HomeValueBand.
+                                revealed: heroAppeared
                             ) {
                                 Haptic.light()
                                 showingValueDetail = true
                             }
                             .padding(.top, 24)
-                            .belowFold(heroAppeared, delay: 0.45)
+                            .belowFold(heroAppeared, delay: 0.52)
 
                             if let receipts = summary.weeklyReceipts, !receipts.isEmpty {
                                 HomeWeeklyReceipts(receipts: receipts)
                                     .padding(.horizontal, 20)
                                     .padding(.top, 30)
-                                    .belowFold(heroAppeared, delay: 0.5)
+                                    .belowFold(heroAppeared, delay: 0.74)
                             }
 
                             // Clears the FAB's reserved band above the tab
@@ -616,7 +629,12 @@ private struct BelowFoldReveal: ViewModifier {
         content
             .opacity(appeared ? 1 : 0)
             .offset(y: appeared ? 0 : 20)
-            .animation(.easeOut(duration: 0.55).delay(delay), value: appeared)
+            // 0.5s each, spaced ~0.2s apart by the call sites. They used to
+            // be 0.25/0.25/0.35/0.45/0.5 against a 0.55s duration, which
+            // overlapped so heavily that five sections read as one
+            // simultaneous fade rather than a sequence landing top to
+            // bottom — two of them were on the same delay outright.
+            .animation(.easeOut(duration: 0.5).delay(delay), value: appeared)
     }
 }
 

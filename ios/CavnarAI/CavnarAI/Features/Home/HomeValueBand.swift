@@ -9,6 +9,20 @@ struct HomeValueBand: View {
     let total: Int
     let history: [ValueSnapshot]
     let activeModuleKeys: [String]
+    /// True once this band has actually been revealed on screen.
+    ///
+    /// Both animations in here — the count-up and the sparkline's line
+    /// reveal — used to start from `onAppear`, which fires the moment the
+    /// band enters the view tree. But the band lands below the fold and is
+    /// staggered in by `belowFold(heroAppeared, delay:)`, so onAppear
+    /// happens while it is still fully transparent. By the time it faded
+    /// in, roughly a second of a 1.6s reveal had already elapsed and the
+    /// green line appeared to start drawing from the middle of the chart,
+    /// with the number already most of the way counted. Gating on the same
+    /// flag that reveals it means both start when they are actually
+    /// visible — and the sparkline's 60fps timeline isn't running during
+    /// the landing frame either, which is its own share of the hitch.
+    var revealed: Bool = true
     let onOpen: () -> Void
 
     @State private var animatedTotal: Double = 0
@@ -22,7 +36,8 @@ struct HomeValueBand: View {
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            ValueBandSparkline(values: hasRealTrend ? history.map { Double($0.value) } : Self.sampleTrend)
+            ValueBandSparkline(values: hasRealTrend ? history.map { Double($0.value) } : Self.sampleTrend,
+                               revealed: revealed)
                 .opacity(hasRealTrend ? 1 : 0.35)
 
             VStack(alignment: .leading, spacing: 8) {
@@ -39,8 +54,8 @@ struct HomeValueBand: View {
                 .foregroundStyle(Color.cavnarGreen)
                 .cavnarNumberGlow(.cavnarGreen)
                 .cavnarSensitive()
-                .onAppear {
-                    guard !hasCountedUp else { return }
+                .onChange(of: revealed, initial: true) { _, isRevealed in
+                    guard isRevealed, !hasCountedUp else { return }
                     hasCountedUp = true
                     withAnimation(.easeOut(duration: 1.6)) { animatedTotal = Double(total) }
                 }
@@ -157,24 +172,37 @@ struct HomeValueBand: View {
 /// pauses itself once the line has landed.
 private struct ValueBandSparkline: View {
     let values: [Double]
+    /// See HomeValueBand.revealed — the clock does not start until the
+    /// band is actually on screen, so the line always draws from its own
+    /// left edge rather than picking up wherever the reveal had already
+    /// got to while it was invisible.
+    var revealed: Bool = true
 
-    @State private var start = Date()
+    @State private var start: Date?
     @State private var done = false
 
     private static let revealDuration: Double = 1.6
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: done)) { timeline in
+        // 1/30, matching every other continuous motion in this app (the
+        // orb, HomeObsidianField) rather than double it — this used to run
+        // at 60fps through the exact frame where Home builds all of its
+        // content at once.
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: done || start == nil)) { timeline in
             Canvas { context, size in
-                let raw = min(1, timeline.date.timeIntervalSince(start) / Self.revealDuration)
+                let elapsed = start.map { timeline.date.timeIntervalSince($0) } ?? 0
+                let raw = min(1, max(0, elapsed) / Self.revealDuration)
                 let progress = 1 - pow(1 - raw, 3)
                 draw(&context, size: size, progress: progress)
             }
         }
-        .onAppear { start = Date() }
-        .task {
-            try? await Task.sleep(for: .seconds(Self.revealDuration + 0.1))
-            done = true
+        .onChange(of: revealed, initial: true) { _, isRevealed in
+            guard isRevealed, start == nil else { return }
+            start = Date()
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(Self.revealDuration + 0.1))
+                done = true
+            }
         }
         .allowsHitTesting(false)
     }
