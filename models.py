@@ -797,6 +797,20 @@ def init_db(db_path: str = DB_PATH):
         "ALTER TABLE marketing_content_log ADD COLUMN comments INTEGER DEFAULT 0",
         "ALTER TABLE marketing_content_log ADD COLUMN shares INTEGER DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS idx_mkt_content_restaurant ON marketing_content_log(restaurant_id, created_at)",
+        # One generated content calendar per restaurant per week. It used to be
+        # regenerated from scratch on every read: the web tab did it on a
+        # button press, but /mobile/api/marketing called it on EVERY load, so
+        # opening the Marketing tab on the phone fired a Sonnet call, blocked
+        # the whole tab on it, and handed back a different "this week" every
+        # time — while the generator's own comment claimed the week never
+        # changes until Sunday. Now it's generated once and read after that.
+        """CREATE TABLE IF NOT EXISTS content_calendar_cache (
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            week_start      TEXT    NOT NULL,
+            ideas_json      TEXT    NOT NULL,
+            generated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (restaurant_id, week_start)
+        )""",
         # Toast-driven food cost engine — persistent per-ingredient records
         # replacing the old re-parsed inventory_csv blob, plus a stock-event
         # ledger (recount/receiving/depletion/waste) and a recipe/BOM mapping

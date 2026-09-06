@@ -36,6 +36,19 @@ def _redirect_db(monkeypatch, db_path):
     monkeypatch.setattr(models, "get_conn", lambda *a, **k: real_get_conn(db_path))
 
 
+@pytest.fixture(autouse=True)
+def _inside_texting_hours(monkeypatch):
+    """Guest marketing texts are now held outside 8am-9pm local (TCPA — see
+    guest_marketing.guest_sms_allowed_now). The suite has to run at 2am on CI
+    and still mean what it says, so the clock the WINDOW reads is pinned to
+    midday here. run_review_request_followups' own visit-age arithmetic
+    deliberately reads the real clock through a different call, so pinning
+    this one doesn't quietly neutralise the delay tests."""
+    from datetime import datetime as _dt
+    monkeypatch.setattr(guest_marketing, "_sms_local_now",
+                        lambda rid: _dt.now().replace(hour=12, minute=0))
+
+
 def _restaurant(db_path, **kw):
     rid = create_restaurant(Restaurant(name=kw.pop("name", "Guest Marketing Co"), owner_email="g@x.com", **kw), db_path=db_path)
     return get_restaurant(rid, db_path=db_path)
@@ -216,7 +229,7 @@ def test_send_campaign_logs_to_guest_campaigns_table(db_path):
 def test_send_campaign_with_no_consented_contacts_sends_nothing(db_path):
     r = _restaurant(db_path)
     result = send_campaign(r.id, "Hello", db_path=db_path)
-    assert result == {"sent": 0, "failed": 0, "total": 0}
+    assert result == {"ok": True, "sent": 0, "failed": 0, "total": 0}
 
 
 def test_send_campaign_appends_stop_instructions(db_path, monkeypatch):
@@ -305,7 +318,7 @@ def test_review_request_followup_sends_after_delay(db_path):
 
     # TWILIO_* unset in this test env, so send_sms() always returns False —
     # this exercises the eligibility/logging logic, not a real Twilio send.
-    assert result == {"sent": 0, "failed": 1, "skipped_no_place_id": 0}
+    assert result == {"sent": 0, "failed": 1, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
     contacts = get_guest_contacts(r.id, db_path=db_path)
     assert contacts[0]["last_review_requested_at"] is not None
     conn = get_conn(db_path)
@@ -323,7 +336,7 @@ def test_review_request_followup_skips_contact_within_delay_window(db_path):
 
     result = run_review_request_followups(delay_hours=3, db_path=db_path)
 
-    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0}
+    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
     assert get_guest_contacts(r.id, db_path=db_path)[0]["last_review_requested_at"] is None
 
 
@@ -334,7 +347,7 @@ def test_review_request_followup_skips_restaurant_without_place_id(db_path):
 
     result = run_review_request_followups(delay_hours=3, db_path=db_path)
 
-    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 1}
+    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 1, "deferred_quiet_hours": 0}
 
 
 def test_review_request_followup_skips_restaurant_without_marketing_module(db_path):
@@ -347,7 +360,7 @@ def test_review_request_followup_skips_restaurant_without_marketing_module(db_pa
 
     result = run_review_request_followups(delay_hours=3, db_path=db_path)
 
-    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0}
+    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
 
 
 def test_review_request_followup_skips_unconsented_contact(db_path):
@@ -358,7 +371,7 @@ def test_review_request_followup_skips_unconsented_contact(db_path):
 
     result = run_review_request_followups(delay_hours=3, db_path=db_path)
 
-    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0}
+    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
 
 
 def test_review_request_followup_skips_unsubscribed_contact(db_path):
@@ -369,7 +382,7 @@ def test_review_request_followup_skips_unsubscribed_contact(db_path):
 
     result = run_review_request_followups(delay_hours=3, db_path=db_path)
 
-    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0}
+    assert result == {"sent": 0, "failed": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
 
 
 def test_review_request_followup_is_idempotent(db_path):
@@ -381,7 +394,7 @@ def test_review_request_followup_is_idempotent(db_path):
     run_review_request_followups(delay_hours=3, db_path=db_path)
     second = run_review_request_followups(delay_hours=3, db_path=db_path)
 
-    assert second == {"sent": 0, "failed": 0, "skipped_no_place_id": 0}
+    assert second == {"sent": 0, "failed": 0, "skipped_no_place_id": 0, "deferred_quiet_hours": 0}
     conn = get_conn(db_path)
     count = conn.execute("SELECT COUNT(*) AS c FROM review_requests WHERE restaurant_id=?", (r.id,)).fetchone()["c"]
     conn.close()
@@ -440,3 +453,92 @@ def test_review_request_followup_message_includes_review_link(db_path, monkeypat
     assert "ChIJtestplace" in captured["message"]
     assert "Jane" in captured["message"]
     assert "STOP" in captured["message"]
+
+
+# ── Quiet hours ─────────────────────────────────────────────────────────────
+# TCPA restricts marketing texts to 8am-9pm in the recipient's local time.
+# Nothing enforced that: send_campaign fired whenever the owner pressed the
+# button, and run_review_request_followups is an HOURLY job that texts a guest
+# three hours after their visit — so a 9pm dinner produced a review-request
+# text at midnight, automatically, every night.
+
+def _pin_hour(monkeypatch, hour):
+    from datetime import datetime as _dt
+    monkeypatch.setattr(guest_marketing, "_sms_local_now",
+                        lambda rid: _dt.now().replace(hour=hour, minute=0))
+
+
+@pytest.mark.parametrize("hour,allowed", [
+    (0, False), (6, False), (7, False),
+    (8, True), (12, True), (20, True),
+    (21, False), (23, False),
+])
+def test_the_texting_window_opens_at_eight_and_closes_at_nine(monkeypatch, hour, allowed):
+    _pin_hour(monkeypatch, hour)
+    assert guest_marketing.guest_sms_allowed_now(1) is allowed
+
+
+def test_an_unresolvable_clock_blocks_the_send_rather_than_allowing_it(monkeypatch):
+    """Fails closed — a timezone lookup that throws must not become consent to
+    text someone at 3am."""
+    def _boom(rid):
+        raise RuntimeError("no timezone")
+    monkeypatch.setattr(guest_marketing, "_sms_local_now", _boom)
+    assert guest_marketing.guest_sms_allowed_now(1) is False
+
+
+def test_a_campaign_outside_the_window_is_held_not_sent(db_path, monkeypatch):
+    r = _restaurant(db_path)
+    add_guest_contact_public_optin(r.id, "555-222-2222", db_path=db_path)
+    sent = []
+    monkeypatch.setattr(guest_marketing, "send_sms", lambda *a, **kw: sent.append(a) or True)
+    _pin_hour(monkeypatch, 23)
+
+    result = send_campaign(r.id, "Half-price wine tonight", db_path=db_path)
+
+    assert result["ok"] is False
+    assert result["blocked"] == "quiet_hours"
+    assert sent == []
+    # And nothing is logged as a campaign that never went out.
+    conn = get_conn(db_path)
+    assert conn.execute("SELECT COUNT(*) FROM guest_campaigns WHERE restaurant_id=?", (r.id,)).fetchone()[0] == 0
+    conn.close()
+
+
+def test_a_held_campaign_tells_the_owner_when_it_can_go(db_path, monkeypatch):
+    r = _restaurant(db_path)
+    _pin_hour(monkeypatch, 2)
+    error = send_campaign(r.id, "Hello", db_path=db_path)["error"]
+    assert "8:00 AM" in error and "9:00 PM" in error
+
+
+def test_a_due_review_request_waits_for_morning_instead_of_texting_at_midnight(db_path, monkeypatch):
+    """The exact case: dinner at 9pm, three-hour delay, hourly job. This used
+    to send at midnight."""
+    r = _restaurant(db_path, google_place_id="ChIJtestplace")
+    cid = add_guest_contact_public_optin(r.id, "555-123-4567", name="Jane", db_path=db_path)
+    _backdate_visit(db_path, r.id, cid, hours_ago=4)
+    sent = []
+    monkeypatch.setattr(guest_marketing, "send_sms", lambda *a, **kw: sent.append(a) or True)
+    _pin_hour(monkeypatch, 0)
+
+    result = run_review_request_followups(delay_hours=3, db_path=db_path)
+
+    assert result["sent"] == 0
+    assert result["deferred_quiet_hours"] == 1
+    assert sent == []
+
+
+def test_a_deferred_review_request_still_goes_out_the_next_morning(db_path, monkeypatch):
+    """Deferring must not consume the guest's turn — eligibility is
+    "older than", never an exact window, so the 8am tick picks them up."""
+    r = _restaurant(db_path, google_place_id="ChIJtestplace")
+    cid = add_guest_contact_public_optin(r.id, "555-123-4567", name="Jane", db_path=db_path)
+    _backdate_visit(db_path, r.id, cid, hours_ago=4)
+    monkeypatch.setattr(guest_marketing, "send_sms", lambda *a, **kw: True)
+
+    _pin_hour(monkeypatch, 0)
+    assert run_review_request_followups(delay_hours=3, db_path=db_path)["deferred_quiet_hours"] == 1
+
+    _pin_hour(monkeypatch, 9)
+    assert run_review_request_followups(delay_hours=3, db_path=db_path)["sent"] == 1

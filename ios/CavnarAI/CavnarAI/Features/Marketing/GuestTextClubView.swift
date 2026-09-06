@@ -7,6 +7,7 @@ private enum CampaignField: Hashable, CaseIterable {
 struct GuestTextClubView: View {
     @State private var viewModel = GuestTextClubViewModel()
     @State private var showingAddContact = false
+    @State private var copied = false
     @FocusState private var focusedField: CampaignField?
 
     var body: some View {
@@ -34,12 +35,69 @@ struct GuestTextClubView: View {
     }
 
     private func joinLinkCard(_ url: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Guest join link").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarInk3)
-            Text(url)
+            Text("Guests join by scanning or tapping this themselves — that's the only way anyone becomes text-eligible.")
                 .font(.cavnarBody(14))
-                .foregroundStyle(Color.cavnarInk)
-                .textSelection(.enabled)
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 10) {
+                Text(url)
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk)
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                Button {
+                    UIPasteboard.general.string = url
+                    Haptic.success()
+                    copied = true
+                } label: {
+                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        .labelStyle(.iconOnly)
+                        .foregroundStyle(Color.cavnarEmber)
+                }
+            }
+
+            // A QR on a screen helps nobody — the whole point is that it gets
+            // printed, so it's rendered here at print size and handed to the
+            // share sheet. This was web-only.
+            if let qr = viewModel.joinQRCode() {
+                HStack(spacing: 14) {
+                    Image(uiImage: qr)
+                        .interpolation(.none)
+                        .resizable()
+                        .frame(width: 84, height: 84)
+                        .padding(6)
+                        .background(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Print this where guests can scan it")
+                            .font(.cavnarBody(14.5, weight: 600))
+                            .foregroundStyle(Color.cavnarInk)
+                        ShareLink(item: Image(uiImage: qr),
+                                  preview: SharePreview("Guest text club QR", image: Image(uiImage: qr))) {
+                            Text("Share QR code")
+                                .font(.cavnarBody(14, weight: 600))
+                                .foregroundStyle(Color.cavnarEmber)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+
+            if let hint = viewModel.receiptHint {
+                DisclosureGroup("Add this to your receipts") {
+                    Text(hint)
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 6)
+                }
+                .font(.cavnarBody(14, weight: 600))
+                .tint(Color.cavnarEmber)
+            }
         }
         .cavnarCard()
     }
@@ -48,16 +106,26 @@ struct GuestTextClubView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Send a campaign").font(.cavnarBody(14.5, weight: 700)).foregroundStyle(Color.cavnarInk)
 
+            // guest_marketing.CAMPAIGN_PROMPTS. "Promo" used to sit here and
+            // matched nothing on the backend, so it quietly became "general".
             CavnarSegmentedControl(
                 selection: $viewModel.campaignType,
-                options: ["general", "promo", "event"]
+                options: GuestTextClubViewModel.campaignTypes
             ) { type in
                 switch type {
-                case "promo": return "Promo"
+                case "win_back": return "Win-back"
                 case "event": return "Event"
+                case "loyalty": return "Loyalty"
                 default: return "General"
                 }
             }
+
+            (Text("Goes to your ")
+                + Text("\(viewModel.textableCount)").font(.cavnarNumber(14, weight: 700))
+                + Text(" text-eligible guest\(viewModel.textableCount == 1 ? "" : "s"), between 8:00 AM and 9:00 PM."))
+                .font(.cavnarBody(14))
+                .foregroundStyle(Color.cavnarInk3)
+                .fixedSize(horizontal: false, vertical: true)
 
             TextField("Topic (optional)", text: $viewModel.campaignTopic)
                 .cavnarTextFieldStyle()
@@ -99,7 +167,7 @@ struct GuestTextClubView: View {
                 if viewModel.didSend {
                     // "Posted" — plays once on the real send, then clears
                     // itself so the form is ready for the next campaign.
-                    CavnarInlinePosted(label: "Campaign sent") {
+                    CavnarInlinePosted(label: viewModel.sentCount.map { "Sent to \($0)" } ?? "Campaign sent") {
                         viewModel.didSend = false
                     }
                     .padding(.top, 6)
@@ -116,9 +184,17 @@ struct GuestTextClubView: View {
     private var contactsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                (Text("Guest contacts (") + Text("\(viewModel.contacts.count)").font(.cavnarNumber(14.5, weight: 700)) + Text(")"))
-                    .font(.cavnarBody(14.5, weight: 700))
-                    .foregroundStyle(Color.cavnarInk)
+                VStack(alignment: .leading, spacing: 2) {
+                    (Text("Guest contacts (") + Text("\(viewModel.contacts.count)").font(.cavnarNumber(14.5, weight: 700)) + Text(")"))
+                        .font(.cavnarBody(14.5, weight: 700))
+                        .foregroundStyle(Color.cavnarInk)
+                    if !viewModel.contacts.isEmpty {
+                        (Text("\(viewModel.textableCount)").font(.cavnarNumber(14, weight: 700))
+                            + Text(" text-eligible"))
+                            .font(.cavnarBody(14))
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
+                }
                 Spacer()
                 Button {
                     showingAddContact = true
@@ -130,31 +206,81 @@ struct GuestTextClubView: View {
                 CavnarWorkingLine().padding(.vertical, 8)
             } else if let error = viewModel.errorMessage {
                 Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+            } else if viewModel.contacts.isEmpty {
+                Text("Nobody has joined yet. Share the QR code above where guests can scan it.")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 ForEach(viewModel.contacts) { contact in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(contact.name?.isEmpty == false ? contact.name! : "Guest")
-                                .font(.cavnarBody(14.5, weight: 600))
-                                .foregroundStyle(Color.cavnarInk)
-                            Text(contact.phone).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
-                        }
-                        Spacer()
-                        if contact.consent == true {
-                            Text("Consented").font(.cavnarBody(14, weight: 700)).foregroundStyle(Color.cavnarGreen)
-                        }
-                        Button {
-                            Haptic.selection()
-                            Task { await viewModel.deleteContact(contact) }
-                        } label: {
-                            Image(systemName: "trash").foregroundStyle(Color.cavnarRed)
-                        }
-                    }
-                    .padding(.vertical, 4)
+                    contactRow(contact)
                 }
             }
         }
         .cavnarCard()
+    }
+
+    /// Three states, not one badge. A guest who consented and then replied
+    /// STOP used to render exactly like one who consented and stayed — the app
+    /// never decoded `unsubscribed` at all.
+    private func contactRow(_ contact: GuestContact) -> some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(contact.name?.isEmpty == false ? contact.name! : "Guest")
+                    .font(.cavnarBody(14.5, weight: 600))
+                    .foregroundStyle(Color.cavnarInk)
+                Text(contact.phone).font(.cavnarNumber(14)).foregroundStyle(Color.cavnarInk3)
+                Text(contact.statusLabel)
+                    .font(.cavnarBody(14, weight: 700))
+                    .foregroundStyle(statusColor(contact.status))
+                if let visit = contact.lastVisit, !visit.isEmpty {
+                    Text("Last visit \(shortDate(visit))")
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarInk3)
+                }
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 10) {
+                // Starts the post-visit review-request countdown. The route
+                // existed; nothing in the app could call it.
+                Button {
+                    Task { await viewModel.markVisit(contact) }
+                } label: {
+                    Text("Mark visit")
+                        .font(.cavnarBody(14, weight: 600))
+                        .foregroundStyle(Color.cavnarEmber)
+                }
+                Button {
+                    Haptic.selection()
+                    Task { await viewModel.deleteContact(contact) }
+                } label: {
+                    Image(systemName: "trash").foregroundStyle(Color.cavnarEmber)
+                }
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func statusColor(_ status: GuestContact.Status) -> Color {
+        switch status {
+        case .textable: return .cavnarGreen
+        case .unsubscribed: return .cavnarInk3
+        case .noConsent: return .cavnarEmber2
+        }
+    }
+
+    /// last_visit is stored in the restaurant's own local time, not UTC (see
+    /// guest_marketing.py), so it is read as a wall clock rather than being
+    /// reinterpreted against the phone's timezone and shifted.
+    private func shortDate(_ iso: String) -> String {
+        let parser = DateFormatter()
+        parser.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        parser.timeZone = TimeZone(identifier: "UTC")
+        guard let date = parser.date(from: String(iso.prefix(19))) else { return iso }
+        let out = DateFormatter()
+        out.dateFormat = "MMM d"
+        out.timeZone = TimeZone(identifier: "UTC")
+        return out.string(from: date)
     }
 }
 

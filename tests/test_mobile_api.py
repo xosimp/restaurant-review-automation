@@ -1260,7 +1260,10 @@ def test_guest_campaign_send_requires_message(client, db_path):
 def test_guest_campaign_send_returns_ok(client, db_path, monkeypatch):
     rid = _restaurant(db_path, module_marketing=1)
     token = _login(client, db_path, rid)
-    monkeypatch.setattr("guest_marketing.send_campaign", lambda *a, **kw: {"sent": 0})
+    # send_campaign now reports its own ok — it refuses outside guest texting
+    # hours rather than sending a marketing text at midnight, and the route
+    # passes that verdict straight through instead of asserting ok=True.
+    monkeypatch.setattr("guest_marketing.send_campaign", lambda *a, **kw: {"ok": True, "sent": 0})
 
     resp = client.post(
         "/mobile/api/guest-campaign/send", json={"message": "Hi there"}, headers=_auth_headers(token)
@@ -1268,6 +1271,22 @@ def test_guest_campaign_send_returns_ok(client, db_path, monkeypatch):
     data = resp.get_json()
     assert data["ok"] is True
     assert data["sent"] == 0
+
+
+def test_guest_campaign_send_surfaces_a_quiet_hours_refusal(client, db_path, monkeypatch):
+    """The owner has to be told the campaign was held, not told it sent."""
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("guest_marketing.send_campaign",
+                        lambda *a, **kw: {"ok": False, "blocked": "quiet_hours", "sent": 0,
+                                          "failed": 0, "total": 0, "error": "held until morning"})
+
+    resp = client.post(
+        "/mobile/api/guest-campaign/send", json={"message": "Hi there"}, headers=_auth_headers(token)
+    )
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert data["error"] == "held until morning"
 
 
 def test_guest_join_link_requires_marketing_module(client, db_path):
@@ -3340,3 +3359,141 @@ def test_staff_schedule_routes_require_authentication(client, db_path):
     assert client.post("/mobile/api/labor/staff-contacts", json={}).status_code == 401
     assert client.post("/mobile/api/labor/publish-schedule").status_code == 401
     assert client.get("/mobile/api/labor/schedule-share-status").status_code == 401
+
+
+# ── /marketing payload ─────────────────────────────────────────────────────
+# Three things the app had to guess at and got wrong: which content types
+# exist (it hardcoded five of six, with different labels), which publish
+# destinations are actually connected (it showed Post to Instagram and Post
+# to Facebook unconditionally, and there is no connect flow in the app), and
+# whether reading the tab should pay for a calendar generation (it did).
+
+def test_marketing_payload_serves_the_real_content_types(client, db_path):
+    from marketing import CONTENT_TYPES
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+
+    data = client.get("/mobile/api/marketing", headers=_auth_headers(token)).get_json()
+
+    ids = [t["id"] for t in data["content_types"]]
+    assert ids == [t["id"] for t in CONTENT_TYPES]
+    assert "event_announcement" in ids, "the type the app was missing"
+    assert all(t.get("description") for t in data["content_types"])
+
+
+def test_marketing_payload_reports_no_channels_when_nothing_is_connected(client, db_path):
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+
+    channels = client.get("/mobile/api/marketing", headers=_auth_headers(token)).get_json()["channels"]
+
+    assert channels == {"instagram": False, "facebook": False, "google": False}
+
+
+def test_marketing_payload_reports_a_connected_channel(client, db_path):
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE restaurants SET ig_token=?, ig_user_id=? WHERE id=?", ("tok", "123", rid))
+    conn.commit()
+    conn.close()
+
+    channels = client.get("/mobile/api/marketing", headers=_auth_headers(token)).get_json()["channels"]
+
+    assert channels["instagram"] is True
+    assert channels["facebook"] is False
+
+
+def test_a_half_connected_instagram_is_not_a_channel(client, db_path):
+    """ig_token without ig_user_id can't publish — _do_post_to_instagram
+    rejects it — so the button must not appear."""
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    conn = get_conn(db_path)
+    conn.execute("UPDATE restaurants SET ig_token=? WHERE id=?", ("tok", rid))
+    conn.commit()
+    conn.close()
+
+    channels = client.get("/mobile/api/marketing", headers=_auth_headers(token)).get_json()["channels"]
+
+    assert channels["instagram"] is False
+
+
+def test_opening_the_marketing_tab_does_not_generate_a_calendar(client, db_path, monkeypatch):
+    """The tab used to fire a Sonnet call on every single load."""
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    calls = []
+    monkeypatch.setattr("marketing.create_with_retry", lambda *a, **kw: calls.append(1))
+
+    data = client.get("/mobile/api/marketing", headers=_auth_headers(token)).get_json()
+
+    assert calls == []
+    assert data["calendar"] == []
+
+
+def test_generating_a_calendar_is_an_explicit_action(client, db_path, monkeypatch):
+    import json as _json
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    ideas = [{"day": "Monday", "platform": "Instagram & FB", "angle": "Truffle pasta",
+              "type": "instagram_post"}]
+    monkeypatch.setattr("marketing.create_with_retry", lambda *a, **kw: ideas)
+    monkeypatch.setattr("marketing.extract_text", lambda m: _json.dumps(m))
+
+    resp = client.post("/mobile/api/marketing/calendar", headers=_auth_headers(token))
+
+    assert resp.get_json()["ok"] is True
+    assert resp.get_json()["calendar"][0]["angle"] == "Truffle pasta"
+    # and the plain read now returns it without generating again
+    assert client.get("/mobile/api/marketing",
+                      headers=_auth_headers(token)).get_json()["calendar"][0]["angle"] == "Truffle pasta"
+
+
+def test_generating_from_a_calendar_idea_is_logged_for_the_next_draw(client, db_path, monkeypatch):
+    """The web route has always recorded this so the next calendar avoids
+    repeating itself; the mobile route never did."""
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("marketing.generate_content", lambda *a, **kw: "some copy")
+    used = []
+    monkeypatch.setattr("marketing.mark_calendar_idea_used",
+                        lambda r, t, topic: used.append((r, t, topic)))
+
+    client.post("/mobile/api/marketing/generate-content", headers=_auth_headers(token),
+                json={"type": "instagram_post", "topic": "Truffle pasta", "from_calendar": True})
+
+    assert used == [(rid, "instagram_post", "Truffle pasta")]
+
+
+def test_generating_without_the_calendar_flag_is_not_logged_as_a_calendar_idea(client, db_path, monkeypatch):
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    monkeypatch.setattr("marketing.generate_content", lambda *a, **kw: "some copy")
+    used = []
+    monkeypatch.setattr("marketing.mark_calendar_idea_used",
+                        lambda r, t, topic: used.append((r, t, topic)))
+
+    client.post("/mobile/api/marketing/generate-content", headers=_auth_headers(token),
+                json={"type": "instagram_post", "topic": "Truffle pasta"})
+
+    assert used == []
+
+
+def test_the_join_link_carries_the_receipt_guidance_for_this_pos(client, db_path):
+    rid = _restaurant(db_path, module_marketing=1, pos_system="Toast")
+    token = _login(client, db_path, rid)
+
+    data = client.get("/mobile/api/guest-join-link", headers=_auth_headers(token)).get_json()
+
+    assert "Toast Web" in data["receipt_hint"]
+    assert data["pos_system"] == "Toast"
+
+
+def test_the_join_link_still_advises_a_restaurant_with_no_pos(client, db_path):
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+
+    hint = client.get("/mobile/api/guest-join-link", headers=_auth_headers(token)).get_json()["receipt_hint"]
+
+    assert hint and "table tent" in hint

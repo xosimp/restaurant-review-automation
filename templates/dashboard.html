@@ -3002,7 +3002,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
   <div style="font-size:11px;color:var(--ink3);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
     <span>Pick a content type, add a topic, hit Generate. The AI writes in {{restaurant.name}}'s voice.</span>
-    <a href="mailto:will@cavnar.ai?subject=Update my marketing voice profile — {{restaurant.name}}" style="color:var(--ember);font-size:11px;font-weight:600;text-decoration:none">Update brand voice<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+    <button onclick="openBrandVoice()" style="background:none;border:none;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;color:var(--ember);font-size:11px;font-weight:600;padding:0">Update brand voice<svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:5px;flex-shrink:0"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
   <div class="slabel">Content type</div>
   <div class="ct-grid">{% for ct in ctypes %}
@@ -3028,9 +3028,22 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="position:absolute;left:14px;top:50%;transform:translateY(-50%);pointer-events:none" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" stroke="#e1306c" stroke-width="1.8"/><circle cx="12" cy="12" r="4.2" stroke="#e1306c" stroke-width="1.8"/><circle cx="17.2" cy="6.8" r="1.1" fill="#e1306c"/></svg>
       <input type="text" id="ig-image-url" class="topic-input" placeholder="Image URL — required for Instagram" style="padding-left:36px;width:100%">
     </div>
+    <div id="gg-cta-row" style="display:none;gap:6px;flex:1;min-width:260px">
+      <select id="gg-cta-type" class="topic-input" style="flex:0 0 150px">
+        <option value="">No button</option>
+        <option value="LEARN_MORE">Learn more</option>
+        <option value="ORDER">Order online</option>
+        <option value="BOOK">Book</option>
+        <option value="SHOP">Shop</option>
+        <option value="SIGN_UP">Sign up</option>
+        <option value="CALL">Call now</option>
+      </select>
+      <input type="text" id="gg-cta-url" class="topic-input" placeholder="Link for the button" style="flex:1;min-width:150px">
+    </div>
     <button class="btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').innerText||document.getElementById('mkoutput').textContent).then(function(){toast('Copied','success');})">Copy</button>
     <button class="btn-primary" onclick="genContent()">Regenerate <span style="font-size:15px;margin-left:6px">↺</span></button>
     <button class="btn-primary btn-instagram" id="ig-post-btn" onclick="postToInstagram()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>Post to Instagram</button>
+    <button class="btn-primary" id="gg-post-btn" onclick="postToGoogle()" style="display:none;background:#4285f4"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3a3 3 0 110 6 3 3 0 010-6zm0 14.2a7.2 7.2 0 01-6-3.22c.03-1.99 4-3.08 6-3.08s5.97 1.09 6 3.08a7.2 7.2 0 01-6 3.22z"/></svg>Post to Google</button>
     <button class="btn-primary btn-facebook" id="fb-post-btn" onclick="postToFacebook()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>Post to Facebook</button>
     <span id="output-hint" style="display:none;font-size:10px;color:var(--ink3);margin-left:4px">✏ Edit above before posting</span>
   </div>
@@ -3162,6 +3175,34 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </div>
     </div>
   </div><!-- /mkt-tab-analytics -->
+
+  <!-- Brand voice — the three fields that steer every generated piece. This
+       was a mailto to Will for something the same client could already edit
+       on their phone (Account -> Profile). -->
+  <div id="brand-voice-modal" style="display:none;position:fixed;inset:0;z-index:900;background:rgba(14,12,10,.6);align-items:center;justify-content:center;padding:20px">
+    <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:12px;max-width:520px;width:100%;max-height:85vh;overflow:auto;padding:22px 24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="font-size:14px;font-weight:700;color:var(--ink)">Brand voice</div>
+        <button onclick="closeBrandVoice()" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;line-height:1;padding:0">&times;</button>
+      </div>
+      <p style="font-size:11.5px;color:var(--ink3);line-height:1.6;margin:0 0 16px">Every caption, email and text is written from these three fields. Changes apply to the next thing you generate.</p>
+
+      <div class="slabel" style="margin-bottom:4px">How you sound</div>
+      <textarea id="bv-voice" rows="2" class="topic-input" style="width:100%;box-sizing:border-box;resize:vertical" placeholder="e.g. genuine and warm, a little witty, never corporate — speaks like a person, not a brand"></textarea>
+
+      <div class="slabel" style="margin:14px 0 4px">Words to never use</div>
+      <input type="text" id="bv-never" class="topic-input" style="width:100%;box-sizing:border-box" placeholder="e.g. culinary journey, indulge, delightful">
+
+      <div class="slabel" style="margin:14px 0 4px">Menu &amp; current specials</div>
+      <textarea id="bv-menu" rows="4" class="topic-input" style="width:100%;box-sizing:border-box;resize:vertical" placeholder="Signature dishes and what's running now — the AI only names dishes you list here, never invented ones"></textarea>
+
+      <div style="display:flex;align-items:center;gap:10px;margin-top:18px">
+        <button class="btn-primary" id="bv-save-btn" onclick="saveBrandVoice()" style="padding:8px 16px;font-size:12px">Save</button>
+        <button class="btn-secondary" onclick="closeBrandVoice()" style="padding:8px 16px;font-size:12px">Cancel</button>
+        <span id="bv-status" style="font-size:12px;color:var(--ink3);display:none"></span>
+      </div>
+    </div>
+  </div>
 
 </div>
 </div>
@@ -4367,6 +4408,7 @@ function saveDraft(id) {
 var _csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
 var _igConnected = {% if restaurant.ig_token %}true{% else %}false{% endif %};
 var _fbConnected = {% if restaurant.fb_page_token and restaurant.fb_page_id %}true{% else %}false{% endif %};
+var _ggConnected = {% if restaurant.gmb_refresh_token and restaurant.gmb_account_id and restaurant.gmb_location_id %}true{% else %}false{% endif %};
 
 var _toastTimer=null;
 function toggleRows(tbodyId, btnId, total) {
@@ -5080,7 +5122,7 @@ function switchTab(n,btn){
   }
   if(n==='labor'){renderBars();loadLaborTrend(false);}
   if(n==='account'){loadBillingInfo();loadSessions();loadAlertsSummary();loadAccountSettings();loadEmailHistory();}
-  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();startMetricsPoller();}else{stopMetricsPoller();}
+  if(n==='marketing'){var _mi=document.getElementById('mkt-insight');if(_mi&&(_mi.classList.contains('insight-loading')||_mi.textContent.trim()==='Loading marketing brief…'||!mktLoaded)){loadMktInsight();}loadRecentTopics();startMetricsPoller();if(!window._calLoaded){window._calLoaded=true;loadCalCached();}}else{stopMetricsPoller();}
   // Calendar is generated on demand only — no auto-generate to avoid wasteful API calls on reconnect/reload
   history.replaceState(null,null,'#'+n);
   fetch('/api/log-activity',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tab:n})});
@@ -5928,6 +5970,66 @@ function postToFacebook(){
       toast('Post failed — check connection','error');
     });
 }
+function openBrandVoice(){
+  var m=document.getElementById('brand-voice-modal');
+  if(!m)return;
+  m.style.display='flex';
+  var st=document.getElementById('bv-status');if(st)st.style.display='none';
+  fetch('/api/brand-voice').then(function(r){return r.json();}).then(function(d){
+    if(!d.ok)return;
+    document.getElementById('bv-voice').value=d.voice_notes||'';
+    document.getElementById('bv-never').value=d.never_say||'';
+    document.getElementById('bv-menu').value=d.menu_notes||'';
+  }).catch(function(){});
+}
+function closeBrandVoice(){
+  var m=document.getElementById('brand-voice-modal');
+  if(m)m.style.display='none';
+}
+function saveBrandVoice(){
+  var btn=document.getElementById('bv-save-btn');
+  var st=document.getElementById('bv-status');
+  if(btn){btn.disabled=true;btn.style.opacity='0.6';}
+  fetch('/api/brand-voice',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    voice_notes:document.getElementById('bv-voice').value,
+    never_say:document.getElementById('bv-never').value,
+    menu_notes:document.getElementById('bv-menu').value
+  })}).then(function(r){return r.json();}).then(function(d){
+    if(btn){btn.disabled=false;btn.style.opacity='';}
+    if(d.ok){toast('Brand voice saved','success');closeBrandVoice();}
+    else{if(st){st.textContent=d.error||'Could not save';st.style.display='inline';}}
+  }).catch(function(){
+    if(btn){btn.disabled=false;btn.style.opacity='';}
+    if(st){st.textContent='Could not save — try again';st.style.display='inline';}
+  });
+}
+function postToGoogle(){
+  var el=document.getElementById('mkoutput');
+  var content=(el.innerText||el.textContent||'').trim();
+  if(!content||content==='Select a type and click Generate.')return toast('Generate content first','warning');
+  if(content.length>1500)return toast('Google posts cap at 1,500 characters — trim it first','error');
+  var ctaType=(document.getElementById('gg-cta-type')||{}).value||'';
+  var ctaUrl=((document.getElementById('gg-cta-url')||{}).value||'').trim();
+  if(ctaType&&ctaType!=='CALL'&&!ctaUrl)return toast('That button needs a link','warning');
+  if(ctaType==='CALL'&&ctaUrl)return toast("A Call button uses your listing's number — clear the link",'warning');
+  var overlay=document.getElementById('posting-overlay');
+  var msg=document.getElementById('posting-overlay-msg');
+  var btn=document.getElementById('gg-post-btn');
+  if(msg)msg.textContent='Posting to Google…';
+  if(overlay)overlay.style.display='flex';
+  if(btn){btn.style.opacity='0.6';btn.disabled=true;}
+  fetch('/api/post-to-google',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({summary:content,cta_type:ctaType,cta_url:ctaUrl,topic:window._lastPostedTopic||''})})
+    .then(function(r){return r.json();}).then(function(d){
+      if(overlay)overlay.style.display='none';
+      if(btn){btn.style.opacity='1';btn.disabled=false;}
+      if(d.ok){toast('Posted to Google ✓','success');markTopicPosted('Google');_cmMktPosted('Posted to Google');loadMktPerformance();}
+      else{toast(d.error||'Post failed — try again','error');}
+    }).catch(function(){
+      if(overlay)overlay.style.display='none';
+      if(btn){btn.style.opacity='1';btn.disabled=false;}
+      toast('Post failed — check connection','error');
+    });
+}
 // "Posted" in the output box itself — plays the ember-to-checkmark once the
 // real POST comes back ok, then clears the box as before.
 function _cmMktPosted(label){
@@ -6734,8 +6836,23 @@ function genContent(fromCalendar){
       var igBtn=document.getElementById('ig-post-btn');
       var fbBtn=document.getElementById('fb-post-btn');
       var igImgRow=document.getElementById('ig-image-row');
-      if(_igConnected&&igBtn){igBtn.style.display='inline-block';if(igImgRow)igImgRow.style.display='block';}
-if(_fbConnected&&fbBtn)fbBtn.style.display='inline-block';
+      var ggBtn=document.getElementById('gg-post-btn');
+      var ggCta=document.getElementById('gg-cta-row');
+      var _isGooglePost=selCt==='google_promo';
+      // A Google Promo belongs on the Google listing, not Instagram — so that
+      // one type swaps the destinations rather than adding a third button.
+      if(_isGooglePost){
+        if(igBtn)igBtn.style.display='none';
+        if(igImgRow)igImgRow.style.display='none';
+        if(fbBtn)fbBtn.style.display='none';
+        if(_ggConnected&&ggBtn)ggBtn.style.display='inline-block';
+        if(_ggConnected&&ggCta)ggCta.style.display='flex';
+      } else {
+        if(ggBtn)ggBtn.style.display='none';
+        if(ggCta)ggCta.style.display='none';
+        if(_igConnected&&igBtn){igBtn.style.display='inline-block';if(igImgRow)igImgRow.style.display='block';}
+        if(_fbConnected&&fbBtn)fbBtn.style.display='inline-block';
+      }
       loadRecentTopics();
       loadMktPerformance();
       var selBtn=document.querySelector('.ct-btn.selected');
@@ -6803,11 +6920,25 @@ function downloadCal(){
   URL.revokeObjectURL(url);
 }
 
+// Split so the tab can show THIS WEEK'S already-generated calendar on open
+// (a plain read, no AI call) while "Generate week" still forces a new draw.
+function loadCalCached(){
+  fetch('/api/content-calendar').then(function(r){return r.json();}).then(function(d){
+    if(d.ideas&&d.ideas.length)renderCal(d.ideas);
+  }).catch(function(){});
+}
 function loadCal(){
   var g=document.getElementById('cal-grid');
   g.innerHTML='<div class="no-data" style="grid-column:1/-1;padding:16px">Generating…</div>';
-  fetch('/api/content-calendar').then(function(r){return r.json();}).then(function(d){
-    if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate.</div>';return;}
+  fetch('/api/content-calendar?force=1').then(function(r){return r.json();}).then(function(d){
+    if(!d.ideas||!d.ideas.length){g.innerHTML='<div class="no-data" style="grid-column:1/-1">'+(d.error||'Could not generate.')+'</div>';return;}
+    renderCal(d.ideas);
+  }).catch(function(){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate — try again.</div>';});
+}
+function renderCal(ideas){
+  var g=document.getElementById('cal-grid');
+  var d={ideas:ideas};
+  {
     var calDownBtn=document.getElementById('cal-download-btn');
     if(calDownBtn) calDownBtn.style.display='inline-block';
     var weekRange = d.ideas[0] && d.ideas[0].week_range;
@@ -6831,7 +6962,8 @@ function loadCal(){
       html += '</div>';
     }
     g.innerHTML=html;
-  }).catch(function(){g.innerHTML='<div class="no-data" style="grid-column:1/-1">Could not generate — try again.</div>';});}
+  }
+}
 function generateFromCalIdx(idx) {
   var i = window._calIdeas && window._calIdeas[idx];
   if (!i) return;

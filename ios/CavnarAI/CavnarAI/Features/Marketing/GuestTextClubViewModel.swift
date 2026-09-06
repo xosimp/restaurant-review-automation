@@ -1,16 +1,44 @@
+import CoreImage
+import CoreImage.CIFilterBuiltins
 import Foundation
 import Observation
+import UIKit
 
 struct GuestContact: Codable, Identifiable {
     let id: Int
     let name: String?
     let phone: String
     let consent: Bool?
+    /// The app never decoded this, so an unsubscribed guest looked identical
+    /// to one who had simply never opted in — and a guest who HAD consented
+    /// and then opted out still showed the green "Consented" badge.
+    let unsubscribed: Bool?
+    let consentAt: String?
     let lastVisit: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, phone, consent
+        case id, name, phone, consent, unsubscribed
+        case consentAt = "consent_at"
         case lastVisit = "last_visit"
+    }
+
+    /// The three states the web contact list has always distinguished. Only
+    /// `.textable` may legally receive a campaign (guest_marketing enforces
+    /// it server-side); showing the difference here is what stops an owner
+    /// wondering why their list of 200 reached 40.
+    enum Status { case textable, unsubscribed, noConsent }
+
+    var status: Status {
+        if unsubscribed == true { return .unsubscribed }
+        return consent == true ? .textable : .noConsent
+    }
+
+    var statusLabel: String {
+        switch status {
+        case .textable: return "Text-eligible"
+        case .unsubscribed: return "Unsubscribed"
+        case .noConsent: return "No consent yet"
+        }
     }
 }
 
@@ -22,15 +50,26 @@ final class GuestTextClubViewModel {
     var errorMessage: String?
 
     var joinURL: String?
+    var receiptHint: String?
 
-    // Campaign
-    var campaignType = "general"
+    // Campaign. These four are guest_marketing.CAMPAIGN_PROMPTS — the app
+    // used to offer general/promo/event, and "promo" matched nothing, so it
+    // silently fell through to the generic prompt while win-back and loyalty,
+    // the two with actual lifecycle intent, were unreachable from the phone.
+    static let campaignTypes = ["win_back", "event", "loyalty", "general"]
+    var campaignType = "win_back"
     var campaignTopic = ""
     var draftMessage = ""
     var isDrafting = false
     var isSending = false
     var campaignError: String?
     var didSend = false
+    var sentCount: Int?
+
+    /// Only these can legally be texted, and the gap between this and the full
+    /// list is the single most confusing thing about a text club — an owner
+    /// with 200 contacts whose campaign reaches 40 needs to see why.
+    var textableCount: Int { contacts.filter { $0.status == .textable }.count }
 
     private let client: APIClient
 
@@ -65,15 +104,48 @@ final class GuestTextClubViewModel {
     private struct JoinLinkResponse: Decodable {
         let ok: Bool
         let joinUrl: String?
+        let receiptHint: String?
 
         enum CodingKeys: String, CodingKey {
             case ok
             case joinUrl = "join_url"
+            case receiptHint = "receipt_hint"
         }
     }
 
     func loadJoinLink() async {
-        joinURL = try? await (client.send("/mobile/api/guest-join-link") as JoinLinkResponse).joinUrl
+        guard let response: JoinLinkResponse = try? await client.send("/mobile/api/guest-join-link") else { return }
+        joinURL = response.joinUrl
+        receiptHint = response.receiptHint
+    }
+
+    /// The join link as a scannable code, rendered on device — the same
+    /// artifact the web tab offers as a PNG download. A QR code on a screen
+    /// helps nobody; the point is that it leaves this screen and ends up on a
+    /// table tent, so it is generated at a size worth printing and handed to
+    /// the share sheet.
+    func joinQRCode() -> UIImage? {
+        guard let joinURL, let data = joinURL.data(using: .ascii),
+              let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(data, forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        guard let output = filter.outputImage else { return nil }
+        let scaled = output.transformed(by: CGAffineTransform(scaleX: 20, y: 20))
+        let context = CIContext()
+        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return nil }
+        return UIImage(cgImage: cgImage)
+    }
+
+    /// Starts the automated post-visit review-request countdown
+    /// (guest_marketing.run_review_request_followups). The route existed;
+    /// the app had no way to call it, so a guest with no natural scan moment
+    /// never triggered one.
+    func markVisit(_ contact: GuestContact) async {
+        _ = try? await client.send(
+            "/mobile/api/guest-contacts/\(contact.id)/mark-visit", method: .post
+        ) as OKErrorResponse
+        Haptic.success()
+        await load()
     }
 
     private struct AddContactBody: Encodable {
@@ -146,14 +218,22 @@ final class GuestTextClubViewModel {
         let message: String
     }
 
+    private struct SendResponse: Decodable {
+        let ok: Bool
+        let sent: Int?
+        let total: Int?
+        let error: String?
+    }
+
     func sendCampaign() async {
         isSending = true
         campaignError = nil
         defer { isSending = false }
         do {
-            let response: OKErrorResponse = try await client.send(
+            let response: SendResponse = try await client.send(
                 "/mobile/api/guest-campaign/send", method: .post, body: SendBody(message: draftMessage)
             )
+            sentCount = response.sent
             if response.ok {
                 Haptic.success()
                 didSend = true

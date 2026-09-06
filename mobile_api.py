@@ -2191,14 +2191,43 @@ def _do_mobile_marketing_stats(restaurant_id):
         return {"generated": 0, "published": 0, "this_month": 0}
 
 
+def _marketing_channels(restaurant_id):
+    """Which publish destinations are actually usable right now.
+
+    The app was showing Post to Instagram and Post to Facebook
+    unconditionally, so a restaurant with neither connected got a button that
+    could only fail — and Instagram/Facebook has no connect flow in the app,
+    so there was nowhere to go to fix it. The web tab has always hidden these
+    (see _igConnected/_fbConnected in dashboard.html); this is that same
+    truth, served instead of templated, plus Google, which mobile can post to
+    and web currently can't.
+    """
+    r = get_restaurant(restaurant_id)
+    return {
+        "instagram": bool(r and getattr(r, "ig_token", None) and getattr(r, "ig_user_id", None)),
+        "facebook": bool(r and getattr(r, "fb_page_token", None) and getattr(r, "fb_page_id", None)),
+        "google": bool(r and getattr(r, "gmb_refresh_token", None)
+                       and getattr(r, "gmb_account_id", None)
+                       and getattr(r, "gmb_location_id", None)),
+    }
+
+
 def _do_mobile_marketing(restaurant_id):
-    from marketing import get_content_calendar_ideas
+    # Cached read only. This used to call get_content_calendar_ideas()
+    # unconditionally, so every open of the Marketing tab fired a Sonnet
+    # generation, blocked the tab on it, and produced a different "this week"
+    # each time. Generating is now an explicit act (/marketing/calendar).
+    from marketing import get_cached_calendar, CONTENT_TYPES
     stats = _do_mobile_marketing_stats(restaurant_id)
-    try:
-        calendar = get_content_calendar_ideas(restaurant_id=restaurant_id)
-    except Exception:
-        calendar = []
-    return {"ok": True, "stats": stats, "calendar": calendar}, 200
+    return {
+        "ok": True,
+        "stats": stats,
+        "calendar": get_cached_calendar(restaurant_id) or [],
+        # Served rather than hardcoded in the app, which had drifted to five
+        # types with different labels and no descriptions.
+        "content_types": CONTENT_TYPES,
+        "channels": _marketing_channels(restaurant_id),
+    }, 200
 
 
 @mobile_bp.route("/marketing")
@@ -2208,16 +2237,45 @@ def mobile_marketing(current_user):
     return jsonify(**payload), status
 
 
-def _do_mobile_generate_content(restaurant_id, content_type, topic):
-    from marketing import generate_content
+@mobile_bp.route("/marketing/calendar", methods=["POST"])
+@mobile_login_required
+def mobile_generate_calendar(current_user):
+    """The "Generate week" action the app never had — the web tab's own
+    button, which is the only place a calendar draw should be paid for."""
+    from marketing import get_content_calendar_ideas
+    from ai_utils import ai_rate_limited
+    rid = current_user["restaurant_id"]
+    if ai_rate_limited(f"calendar:{rid}", max_calls=4, window_secs=300):
+        return jsonify(ok=False, error="Too many calendar regenerations — try again in a few minutes."), 429
+    try:
+        ideas = get_content_calendar_ideas(restaurant_id=rid, force=True)
+    except Exception:
+        ideas = []
+    if not ideas:
+        return jsonify(ok=False, error="Couldn't build a calendar right now — try again in a moment."), 200
+    return jsonify(ok=True, calendar=ideas), 200
+
+
+def _do_mobile_generate_content(restaurant_id, content_type, topic, from_calendar=False):
+    from marketing import generate_content, mark_calendar_idea_used
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"gencontent:{restaurant_id}", max_calls=8, window_secs=60):
         return {"ok": False, "error": "Too many requests — please wait a moment and try again."}, 429
+    content_type = content_type or "instagram_post"
+    topic = topic or ""
     try:
-        result = generate_content(content_type or "instagram_post", topic or "", restaurant_id=restaurant_id)
-        return {"ok": True, "content": result}, 200
+        result = generate_content(content_type, topic, restaurant_id=restaurant_id)
     except Exception as e:
         return {"ok": False, "error": str(e)}, 500
+    # The web route has always logged this; mobile never did, so a calendar
+    # idea generated on the phone never fed the "avoid repeating these"
+    # signal the next calendar draw reads.
+    if from_calendar:
+        try:
+            mark_calendar_idea_used(restaurant_id, content_type, topic)
+        except Exception:
+            pass
+    return {"ok": True, "content": result}, 200
 
 
 @mobile_bp.route("/marketing/generate-content", methods=["POST"])
@@ -2225,7 +2283,8 @@ def _do_mobile_generate_content(restaurant_id, content_type, topic):
 def mobile_generate_content(current_user):
     data = request.get_json() or {}
     payload, status = _do_mobile_generate_content(
-        current_user["restaurant_id"], data.get("type"), data.get("topic")
+        current_user["restaurant_id"], data.get("type"), data.get("topic"),
+        from_calendar=bool(data.get("from_calendar")),
     )
     return jsonify(**payload), status
 
@@ -2320,7 +2379,9 @@ def mobile_guest_campaign_send(current_user):
     try:
         from guest_marketing import send_campaign
         result = send_campaign(rid, message)
-        return jsonify(ok=True, **result)
+        # send_campaign reports its own ok — it refuses outside the guest-text
+        # quiet-hours window rather than sending a marketing text at midnight.
+        return jsonify(**result), 200
     except Exception as e:
         return jsonify(ok=False, error="Couldn't send the campaign — try again in a moment."), 500
 
@@ -2387,6 +2448,36 @@ def mobile_marketing_performance(current_user):
         return jsonify(ok=False, error=str(e)), 500
 
 
+@mobile_bp.route("/marketing/recent-topics")
+@mobile_login_required
+def mobile_recent_topics(current_user):
+    """What was generated lately and what it did. The web Analytics tab has
+    always shown these as chips with live reach/likes/comments; the app showed
+    three all-time totals and nothing per piece."""
+    return jsonify(ok=True, **_capi._do_recent_topics(current_user["restaurant_id"]))
+
+
+@mobile_bp.route("/marketing/refresh-metrics", methods=["POST"])
+@mobile_login_required
+def mobile_refresh_metrics(current_user):
+    """Pull fresh numbers from Meta for this restaurant's posts.
+
+    The web tab polls this every 60s while it is open. The app never did, so
+    a post's metrics sat at whatever the nightly scheduler last wrote — the
+    numbers an owner saw on their phone the evening they posted were always
+    zero. Rate limited because it is a real Meta round trip per post."""
+    from ai_utils import ai_rate_limited
+    rid = current_user["restaurant_id"]
+    if ai_rate_limited(f"mktmetrics:{rid}", max_calls=4, window_secs=120):
+        return jsonify(ok=True, refreshed=0, throttled=True), 200
+    try:
+        from social_routes import refresh_post_metrics
+        result = refresh_post_metrics(rid) or {}
+        return jsonify(ok=True, refreshed=len(result.get("posts") or [])), 200
+    except Exception:
+        return jsonify(ok=True, refreshed=0), 200
+
+
 @mobile_bp.route("/marketing/insight")
 @mobile_login_required
 def mobile_marketing_insight(current_user):
@@ -2427,7 +2518,30 @@ def mobile_guest_join_link(current_user):
     if not _capi._restaurant_has_marketing_module(rid):
         return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
     join_url = request.url_root.rstrip("/") + f"/join/{rid}"
-    return jsonify(ok=True, join_url=join_url)
+    # The web tab prints POS-specific instructions for where this link belongs
+    # (dashboard.html's "Add this to your receipts"), which is the step that
+    # actually gets guests into the club. Served here so the app shows the
+    # same guidance instead of hardcoding a second copy that drifts.
+    r = get_restaurant(rid)
+    pos = (getattr(r, "pos_system", "") or "").lower()
+    if "square" in pos:
+        hint = ("Square lets you add a custom receipt footer under Square Dashboard "
+                "→ Settings → Checkout → Receipts. Paste the link in there — Square's "
+                "footer editor takes text, not an image, so use the link rather than the QR.")
+    elif "toast" in pos:
+        hint = ("Toast Web has a custom footer message field under your restaurant's "
+                "receipt/order settings — paste the link there. If you don't see it, "
+                "Toast support can usually enable it.")
+    elif "clover" in pos:
+        hint = ("Clover Dashboard → Setup → Receipts has a custom message option. "
+                "If your device doesn't have one, the Clover App Market has "
+                "receipt-customization apps that add it.")
+    else:
+        hint = ("Most POS systems let you add a custom line to the receipt footer — "
+                "that's where this link belongs. If yours doesn't, the QR code on a "
+                "table tent or by the register works just as well.")
+    return jsonify(ok=True, join_url=join_url, pos_system=getattr(r, "pos_system", None) or "",
+                   receipt_hint=hint)
 
 
 # ── Intel ─────────────────────────────────────────────────────────────────

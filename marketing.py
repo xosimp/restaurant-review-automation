@@ -1,6 +1,7 @@
 """
 marketing.py — AI-powered marketing content generation for restaurants
 """
+import json
 import os
 import anthropic
 from ai_utils import create_with_retry, extract_text
@@ -430,8 +431,69 @@ def mark_calendar_idea_used(restaurant_id: int, content_type: str, topic: str):
     log_content(restaurant_id, f"calendar_{content_type}", topic)
 
 
-def get_content_calendar_ideas(restaurant_id: int = None) -> list[dict]:
-    """Generate a week of content ideas using Claude. v2"""
+def _week_start(restaurant_id):
+    """The Sunday that starts this restaurant's current week, in its own
+    local time — the cache key, and the same boundary the generator has
+    always used for its day/date map."""
+    from datetime import timedelta as _td
+    from time_utils import restaurant_now_by_id as _rnbi
+    now = _rnbi(restaurant_id, naive=True)
+    return now - _td(days=(now.weekday() + 1) % 7)
+
+
+def get_cached_calendar(restaurant_id: int):
+    """This week's calendar if one has already been generated, else None."""
+    if not restaurant_id:
+        return None
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                "SELECT ideas_json FROM content_calendar_cache WHERE restaurant_id=? AND week_start=?",
+                (restaurant_id, _week_start(restaurant_id).strftime("%Y-%m-%d")),
+            ).fetchone()
+        finally:
+            conn.close()
+        return json.loads(row["ideas_json"]) if row and row["ideas_json"] else None
+    except Exception:
+        return None
+
+
+def _cache_calendar(restaurant_id: int, ideas: list):
+    if not (restaurant_id and ideas):
+        return
+    try:
+        from models import get_conn
+        conn = get_conn()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO content_calendar_cache "
+                "(restaurant_id, week_start, ideas_json, generated_at) "
+                "VALUES (?,?,?,datetime('now'))",
+                (restaurant_id, _week_start(restaurant_id).strftime("%Y-%m-%d"), json.dumps(ideas)),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log_msg = f"content calendar cache write failed for {restaurant_id}: {e}"
+        print(log_msg)
+
+
+def get_content_calendar_ideas(restaurant_id: int = None, force: bool = False) -> list[dict]:
+    """A week of content ideas. Generated once per restaurant per week and
+    cached from then on; `force=True` is the owner explicitly asking for a
+    different week (the "Generate week" button).
+
+    Before the cache, every single read ran a Sonnet generation — including
+    the mobile Marketing tab's own load, which meant the calendar you saw on
+    Tuesday was not the calendar you saw on Monday.
+    """
+    if not force:
+        cached = get_cached_calendar(restaurant_id)
+        if cached:
+            return cached
     p = get_profile_for_restaurant(restaurant_id)
     from datetime import datetime as _dt, timedelta as _td
     from time_utils import restaurant_now_by_id as _rnbi
@@ -518,9 +580,7 @@ Rules:
         # Attach week_range to first idea for the UI to read
         if ideas:
             ideas[0]["week_range"] = week_range
+        _cache_calendar(restaurant_id, ideas)
         return ideas
     except Exception:
         return []
-
-
-import json

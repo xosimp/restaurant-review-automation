@@ -757,19 +757,20 @@ def _do_review_insight(rid):
             return {"insight": stale[1]}, 200
         return {"insight": "Analysis unavailable — check back shortly.", "error": str(_re)}, 500
 
-@client_bp.route("/api/recent-topics")
-@login_required
-def recent_topics_api(current_user):
+def _do_recent_topics(rid):
+    """The last few things this restaurant generated, folded by topic, with
+    whether each one actually got posted and what it did. Shared with
+    mobile_api.py — the app's Analytics tab had no equivalent at all, so a
+    post's real numbers were only ever visible on the web.
+
+    The per-request ALTER TABLEs that used to sit here added reach/likes/
+    comments as TEXT, contradicting the canonical INTEGER schema in models.py
+    (see the comment above marketing_content_log there). They were no-ops on
+    every database that had already been migrated, and wrong on any that
+    hadn't — models.py owns this table's shape."""
     try:
         from models import get_conn
-        rid = current_user["restaurant_id"]
         conn = get_conn()
-        for col in ("post_id", "post_platform", "reach", "impressions", "likes", "comments"):
-            try:
-                conn.execute("ALTER TABLE marketing_content_log ADD COLUMN " + col + " TEXT")
-                conn.commit()
-            except Exception:
-                pass
         rows = conn.execute(
             """SELECT topic, post_id, post_platform, reach, impressions, likes, comments
                FROM marketing_content_log
@@ -812,9 +813,15 @@ def recent_topics_api(current_user):
             seen.append(entry)
             if len(seen) >= 8:
                 break
-        return jsonify(topics=seen)
-    except Exception as e:
-        return jsonify(topics=[])
+        return {"topics": seen}
+    except Exception:
+        return {"topics": []}
+
+
+@client_bp.route("/api/recent-topics")
+@login_required
+def recent_topics_api(current_user):
+    return jsonify(**_do_recent_topics(current_user["restaurant_id"]))
 
 @client_bp.route("/api/mkt-stats")
 @login_required
@@ -1428,12 +1435,53 @@ def gen_content(current_user):
             pass
     return jsonify(content=result)
 
+@client_bp.route("/api/post-to-google", methods=["POST"])
+@login_required
+def post_to_google(current_user):
+    """Publish generated copy to the connected Google Business Profile.
+
+    Marketing has always written `google_promo` copy and the dashboard has
+    always offered Instagram and Facebook buttons next to it — with no way to
+    put a Google post on Google. Mobile got this route first
+    (mobile_api.mobile_create_google_post); this is the web half."""
+    import gmb as _gmb
+    rid = current_user["restaurant_id"]
+    data = request.get_json() or {}
+    if not _gmb.is_connected(rid):
+        return jsonify(ok=False, error="Connect Google Business first — Settings → Connections."), 200
+    summary = (data.get("summary") or "").strip()
+    if not summary:
+        return jsonify(ok=False, error="Post text is required"), 400
+    result = _gmb.create_local_post(
+        rid, summary,
+        cta_type=(data.get("cta_type") or "").strip() or None,
+        cta_url=(data.get("cta_url") or "").strip() or None,
+    )
+    if not result.get("ok"):
+        return jsonify(ok=False, error=result.get("error") or "Google rejected the post"), 200
+    try:
+        from marketing import log_content
+        log_content(rid, "google_promo", (data.get("topic") or summary)[:80],
+                    post_id=result.get("name") or None, post_platform="google")
+    except Exception:
+        pass
+    return jsonify(ok=True, post_id=result.get("name"))
+
+
 @client_bp.route("/api/content-calendar")
 @login_required
 def content_calendar(current_user):
+    """?force=1 is the "Generate week" button asking for a fresh draw; a plain
+    read returns this week's cached calendar (see get_content_calendar_ideas).
+    The web tab has always driven this from an explicit press, so it forces —
+    what changed is that the result is now kept."""
     from marketing import get_content_calendar_ideas
-    return jsonify(ideas=get_content_calendar_ideas(
-        restaurant_id=current_user["restaurant_id"]))
+    from ai_utils import ai_rate_limited
+    rid = current_user["restaurant_id"]
+    force = request.args.get("force") not in (None, "", "0", "false")
+    if force and ai_rate_limited(f"calendar:{rid}", max_calls=4, window_secs=300):
+        return jsonify(ideas=[], error="Too many calendar regenerations — try again in a few minutes."), 429
+    return jsonify(ideas=get_content_calendar_ideas(restaurant_id=rid, force=force))
 
 def _do_regenerate_draft(review_id, restaurant_id):
     """Regenerate AI draft for a review — delegates to drafter.draft_response()
@@ -4112,7 +4160,9 @@ def guest_campaign_send(current_user):
     try:
         from guest_marketing import send_campaign
         result = send_campaign(rid, message)
-        return jsonify(ok=True, **result)
+        # send_campaign reports its own ok — it refuses outside the guest-text
+        # quiet-hours window rather than sending a marketing text at midnight.
+        return jsonify(**result), 200
     except Exception as e:
         import ops
         ops.capture(e, job="guest_campaign_send", context=f"restaurant_id={rid}")
@@ -4603,6 +4653,34 @@ def _do_marketing_opt_out(rid, data, current_user=None):
     return {"ok": True}, 200
 
 
+def _do_brand_voice(rid, data, current_user=None):
+    """The three freeform fields that steer every piece of generated copy.
+
+    These were editable on iOS (Account -> Profile) and admin-only on web, so
+    the dashboard's Marketing tab offered "Update brand voice" as a mailto to
+    Will for something the same client could already change themselves on
+    their phone. Same three fields, same sanitising and same length caps as
+    mobile_api.mobile_update_profile — deliberately NOT name/neighborhood/
+    vibe/known_for, which feed string matching in competitor lookups and stay
+    admin-set (see that route's docstring)."""
+    import re as _re_bv
+
+    def _clean(value, max_len):
+        if value is None:
+            return None
+        value = _re_bv.sub(r"<[^>]+>", "", str(value))
+        value = _re_bv.sub(r"(?i)javascript\s*:", "", value)
+        return value[:max_len].strip() or None
+
+    update_restaurant(rid, {
+        "voice_notes": _clean((data or {}).get("voice_notes"), 1000),
+        "never_say": _clean((data or {}).get("never_say"), 1000),
+        "menu_notes": _clean((data or {}).get("menu_notes"), 2000),
+    })
+    log_account_event(rid, "brand_voice_changed", current_user)
+    return {"ok": True}, 200
+
+
 def _do_login_notify(rid, data, current_user=None):
     enabled = bool((data or {}).get("enabled"))
     update_restaurant(rid, {"login_notify": int(enabled)})
@@ -4647,6 +4725,20 @@ def _account_settings_payload(rid):
 @login_required
 def get_account_settings(current_user):
     payload, status = _account_settings_payload(current_user["restaurant_id"])
+    return jsonify(**payload), status
+
+
+@client_bp.route("/api/brand-voice", methods=["GET", "POST"])
+@login_required
+def brand_voice(current_user):
+    rid = current_user["restaurant_id"]
+    if request.method == "GET":
+        r = get_restaurant(rid)
+        return jsonify(ok=True,
+                       voice_notes=getattr(r, "voice_notes", "") or "",
+                       never_say=getattr(r, "never_say", "") or "",
+                       menu_notes=getattr(r, "menu_notes", "") or "")
+    payload, status = _do_brand_voice(rid, request.get_json(silent=True) or {}, current_user)
     return jsonify(**payload), status
 
 

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 struct MarketingStats: Codable {
     let generated: Int
@@ -10,6 +11,63 @@ struct MarketingStats: Codable {
         case generated, published
         case thisMonth = "this_month"
     }
+}
+
+/// Served by the backend rather than hardcoded here. The app carried its own
+/// list of five, missing `event_announcement` entirely and renaming three of
+/// the others ("Loyalty Nudge" for what the product calls a re-engagement
+/// text), so the two platforms disagreed about what Cavnar AI can even write.
+struct MarketingContentType: Decodable, Identifiable, Hashable {
+    let id: String
+    let label: String
+    let description: String
+
+    /// Platform ceilings, used for the live counter under the editor. The web
+    /// tab has always shown these; the app let an owner send a 3,000-character
+    /// caption to Instagram and find out from Meta.
+    var characterLimit: Int? {
+        switch id {
+        case "instagram_post", "happy_hour", "event_announcement": return 2_200
+        case "google_promo": return 1_500
+        case "loyalty_nudge": return 160
+        default: return nil
+        }
+    }
+
+    var limitLabel: String {
+        switch id {
+        case "google_promo": return "Google post limit"
+        case "loyalty_nudge": return "SMS limit"
+        default: return "Instagram limit"
+        }
+    }
+}
+
+/// Where this restaurant can actually publish right now.
+struct MarketingChannels: Decodable {
+    var instagram = false
+    var facebook = false
+    var google = false
+
+    var none: Bool { !instagram && !facebook && !google }
+
+    init(instagram: Bool = false, facebook: Bool = false, google: Bool = false) {
+        self.instagram = instagram
+        self.facebook = facebook
+        self.google = google
+    }
+
+    /// Decoded key by key so an older build of the backend, which sends no
+    /// channels at all, degrades to "nothing connected" rather than failing
+    /// the whole Marketing payload.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        instagram = try c.decodeIfPresent(Bool.self, forKey: .instagram) ?? false
+        facebook = try c.decodeIfPresent(Bool.self, forKey: .facebook) ?? false
+        google = try c.decodeIfPresent(Bool.self, forKey: .google) ?? false
+    }
+
+    enum CodingKeys: String, CodingKey { case instagram, facebook, google }
 }
 
 struct ContentCalendarIdea: Codable, Identifiable {
@@ -26,11 +84,42 @@ struct ContentCalendarIdea: Codable, Identifiable {
     var id: String { "\(day)-\(type)" }
 }
 
+/// Google Business posts carry an optional action button, and it is the half
+/// of the post that converts. `create_local_post` has always accepted one —
+/// the app just never offered it.
+enum GoogleCallToAction: String, CaseIterable, Identifiable {
+    case none = ""
+    case learnMore = "LEARN_MORE"
+    case order = "ORDER"
+    case book = "BOOK"
+    case shop = "SHOP"
+    case signUp = "SIGN_UP"
+    case call = "CALL"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .none: return "No button"
+        case .learnMore: return "Learn more"
+        case .order: return "Order online"
+        case .book: return "Book"
+        case .shop: return "Shop"
+        case .signUp: return "Sign up"
+        case .call: return "Call now"
+        }
+    }
+
+    /// CALL uses the listing's own number and Google rejects a url alongside it.
+    var needsLink: Bool { self != .none && self != .call }
+}
+
 @Observable
 @MainActor
 final class MarketingViewModel {
     var stats: MarketingStats?
     var calendar: [ContentCalendarIdea] = []
+    var channels = MarketingChannels()
     var isLoading = false
     var errorMessage: String?
 
@@ -38,22 +127,45 @@ final class MarketingViewModel {
     var selectedType = "instagram_post"
     var topic = ""
     var isGenerating = false
-    var generatedContent: String?
+    /// The draft itself, editable. It used to be rendered as read-only `Text`
+    /// while a one-tap Post button sat under it — and the prompts for three of
+    /// the six types ask Claude for TWO versions, so tapping Post published
+    /// "Option 1 (Short & Punchy): …" and both drafts, verbatim, with no way
+    /// to trim it anywhere in the app.
+    var draft = ""
+    var hasDraft = false
     var generateError: String?
+    private var lastGeneratedTopic = ""
 
     // Social posting
     var imageURL = ""
+    var googleCTA: GoogleCallToAction = .none
+    var googleCTALink = ""
     var isPosting = false
     var postError: String?
     var postedPlatform: String?
 
-    let contentTypes = [
-        ("instagram_post", "Instagram Post"),
-        ("weekly_email", "Weekly Email"),
-        ("google_promo", "Google Promo"),
-        ("happy_hour", "Happy Hour"),
-        ("loyalty_nudge", "Loyalty Nudge"),
+    // Calendar
+    var isGeneratingCalendar = false
+    var calendarError: String?
+
+    /// Fallback only — the live list arrives with /marketing. Kept so the
+    /// generator still works if that call fails.
+    static let fallbackContentTypes = [
+        MarketingContentType(id: "instagram_post", label: "Instagram/FB post",
+                             description: "Caption + hashtags for a food or ambiance photo"),
+        MarketingContentType(id: "weekly_email", label: "Weekly email",
+                             description: "Short newsletter to regulars — specials, events, updates"),
+        MarketingContentType(id: "google_promo", label: "Google post",
+                             description: "Short promotional post for Google Business Profile"),
+        MarketingContentType(id: "loyalty_nudge", label: "Re-engagement text",
+                             description: "SMS to guests who haven't visited in 3+ weeks"),
+        MarketingContentType(id: "happy_hour", label: "Happy hour promo",
+                             description: "Social post driving traffic to Mon-Thu 4-6pm deals"),
+        MarketingContentType(id: "event_announcement", label: "Event announcement",
+                             description: "Post announcing a special dinner, wine night, or seasonal menu"),
     ]
+    var contentTypes: [MarketingContentType] = MarketingViewModel.fallbackContentTypes
 
     private let client: APIClient
 
@@ -61,10 +173,42 @@ final class MarketingViewModel {
         self.client = client
     }
 
+    // MARK: - Derived
+
+    var selectedContentType: MarketingContentType? {
+        contentTypes.first { $0.id == selectedType }
+    }
+
+    var selectedTypeLabel: String { selectedContentType?.label ?? "Content" }
+
+    var characterLimit: Int? { selectedContentType?.characterLimit }
+
+    var isOverLimit: Bool {
+        guard let limit = characterLimit else { return false }
+        return draft.count > limit
+    }
+
+    /// A Google Promo belongs on the Google listing, not on Instagram — so
+    /// that one type swaps the destinations rather than adding a third button.
+    var isGooglePost: Bool { selectedType == "google_promo" }
+
+    var canPostSomewhere: Bool {
+        isGooglePost ? channels.google : (channels.instagram || channels.facebook)
+    }
+
+    // MARK: - Load
+
     private struct MarketingResponse: Decodable {
         let ok: Bool
         let stats: MarketingStats
         let calendar: [ContentCalendarIdea]
+        let contentTypes: [MarketingContentType]?
+        let channels: MarketingChannels?
+
+        enum CodingKeys: String, CodingKey {
+            case ok, stats, calendar, channels
+            case contentTypes = "content_types"
+        }
     }
 
     func load() async {
@@ -75,6 +219,13 @@ final class MarketingViewModel {
             let response: MarketingResponse = try await client.send("/mobile/api/marketing")
             stats = response.stats
             calendar = response.calendar
+            channels = response.channels ?? MarketingChannels()
+            if let types = response.contentTypes, !types.isEmpty {
+                contentTypes = types
+                if !types.contains(where: { $0.id == selectedType }) {
+                    selectedType = types[0].id
+                }
+            }
         } catch let error as APIClient.APIError {
             errorMessage = error.message
         } catch {
@@ -82,9 +233,17 @@ final class MarketingViewModel {
         }
     }
 
+    // MARK: - Generate
+
     private struct GenerateBody: Encodable {
         let type: String
         let topic: String
+        let fromCalendar: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case type, topic
+            case fromCalendar = "from_calendar"
+        }
     }
 
     private struct GenerateResponse: Decodable {
@@ -93,18 +252,24 @@ final class MarketingViewModel {
         let error: String?
     }
 
-    func generate() async {
+    func generate(fromCalendar: Bool = false) async {
         isGenerating = true
         generateError = nil
-        generatedContent = nil
+        postedPlatform = nil
+        postError = nil
+        draft = ""
+        hasDraft = false
         defer { isGenerating = false }
+        let requestedTopic = topic
         do {
             let response: GenerateResponse = try await client.send(
                 "/mobile/api/marketing/generate-content", method: .post,
-                body: GenerateBody(type: selectedType, topic: topic)
+                body: GenerateBody(type: selectedType, topic: requestedTopic, fromCalendar: fromCalendar)
             )
-            if response.ok {
-                generatedContent = response.content
+            if response.ok, let content = response.content {
+                draft = content
+                hasDraft = true
+                lastGeneratedTopic = requestedTopic
             } else {
                 generateError = response.error ?? "Couldn't generate content."
             }
@@ -114,6 +279,64 @@ final class MarketingViewModel {
             generateError = "Couldn't generate content."
         }
     }
+
+    /// Load a calendar idea into the generator and write it, which also tells
+    /// the backend the idea was used so next week's calendar doesn't repeat it.
+    func generate(from idea: ContentCalendarIdea) async {
+        selectedType = idea.type
+        topic = idea.angle
+        await generate(fromCalendar: true)
+    }
+
+    func copyDraft() {
+        UIPasteboard.general.string = draft
+        Haptic.success()
+    }
+
+    // MARK: - Calendar
+
+    private struct CalendarResponse: Decodable {
+        let ok: Bool
+        let calendar: [ContentCalendarIdea]?
+        let error: String?
+    }
+
+    /// Generating a week is an explicit act now. It used to happen on every
+    /// single load of this tab, which paid for a Sonnet call each time and
+    /// handed back a different "this week" on every open.
+    func generateCalendar() async {
+        isGeneratingCalendar = true
+        calendarError = nil
+        defer { isGeneratingCalendar = false }
+        do {
+            let response: CalendarResponse = try await client.send(
+                "/mobile/api/marketing/calendar", method: .post
+            )
+            if response.ok, let ideas = response.calendar, !ideas.isEmpty {
+                calendar = ideas
+            } else {
+                calendarError = response.error ?? "Couldn't build a calendar right now."
+            }
+        } catch let error as APIClient.APIError {
+            calendarError = error.message
+        } catch {
+            calendarError = "Couldn't build a calendar right now."
+        }
+    }
+
+    /// The web tab's "Download CSV", as something a phone can actually do with
+    /// a file — the same four columns, handed to the share sheet.
+    var calendarCSV: String {
+        var rows = ["Day,Date,Platform,Content Idea,Type"]
+        for idea in calendar {
+            let cells = [idea.day, idea.date ?? "", idea.platform, idea.angle, idea.type]
+            rows.append(cells.map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"" }
+                .joined(separator: ","))
+        }
+        return rows.joined(separator: "\n")
+    }
+
+    // MARK: - Publish
 
     private struct PostBody: Encodable {
         let caption: String
@@ -138,77 +361,72 @@ final class MarketingViewModel {
         }
     }
 
-    func postToInstagram() async {
-        guard let caption = generatedContent else { return }
+    private func publish(_ path: String, body: any Encodable, platform: String) async {
         isPosting = true
         postError = nil
         defer { isPosting = false }
         do {
-            let response: PostResponse = try await client.send(
-                "/mobile/api/marketing/post-to-instagram", method: .post,
-                body: PostBody(caption: caption, imageUrl: imageURL, topic: topic)
-            )
+            let response: PostResponse = try await client.send(path, method: .post, body: body)
             if response.ok {
-                postedPlatform = "Instagram"
+                postedPlatform = platform
+                Haptic.success()
             } else {
-                postError = response.error ?? "Couldn't post to Instagram."
+                postError = response.error ?? "Couldn't post to \(platform)."
             }
         } catch let error as APIClient.APIError {
             postError = error.message
         } catch {
-            postError = "Couldn't post to Instagram."
+            postError = "Couldn't post to \(platform)."
         }
+    }
+
+    func postToInstagram() async {
+        guard hasDraft else { return }
+        guard !imageURL.trimmingCharacters(in: .whitespaces).isEmpty else {
+            postError = "Instagram needs an image — paste a public image link first."
+            return
+        }
+        await publish("/mobile/api/marketing/post-to-instagram",
+                      body: PostBody(caption: draft, imageUrl: imageURL, topic: lastGeneratedTopic),
+                      platform: "Instagram")
+    }
+
+    func postToFacebook() async {
+        guard hasDraft else { return }
+        await publish("/mobile/api/marketing/post-to-facebook",
+                      body: PostBody(caption: draft, imageUrl: nil, topic: lastGeneratedTopic),
+                      platform: "Facebook")
     }
 
     private struct GooglePostBody: Encodable {
         let summary: String
-        enum CodingKeys: String, CodingKey { case summary }
+        let ctaType: String
+        let ctaUrl: String
+
+        enum CodingKeys: String, CodingKey {
+            case summary
+            case ctaType = "cta_type"
+            case ctaUrl = "cta_url"
+        }
     }
 
     /// Publishes the generated Google Promo copy to the connected Google
     /// Business Profile listing — the step this content type was always
     /// written for but never had.
     func postToGoogle() async {
-        guard let summary = generatedContent else { return }
-        isPosting = true
-        postError = nil
-        defer { isPosting = false }
-        do {
-            let response: PostResponse = try await client.send(
-                "/mobile/api/marketing/google-post", method: .post,
-                body: GooglePostBody(summary: summary)
-            )
-            if response.ok {
-                postedPlatform = "Google"
-            } else {
-                postError = response.error ?? "Couldn't post to Google."
-            }
-        } catch let error as APIClient.APIError {
-            postError = error.message
-        } catch {
-            postError = "Couldn't post to Google."
+        guard hasDraft else { return }
+        let link = googleCTALink.trimmingCharacters(in: .whitespaces)
+        if googleCTA.needsLink && link.isEmpty {
+            postError = "That button needs a link."
+            return
         }
-    }
-
-    func postToFacebook() async {
-        guard let caption = generatedContent else { return }
-        isPosting = true
-        postError = nil
-        defer { isPosting = false }
-        do {
-            let response: PostResponse = try await client.send(
-                "/mobile/api/marketing/post-to-facebook", method: .post,
-                body: PostBody(caption: caption, imageUrl: nil, topic: topic)
-            )
-            if response.ok {
-                postedPlatform = "Facebook"
-            } else {
-                postError = response.error ?? "Couldn't post to Facebook."
-            }
-        } catch let error as APIClient.APIError {
-            postError = error.message
-        } catch {
-            postError = "Couldn't post to Facebook."
+        if googleCTA == .call && !link.isEmpty {
+            postError = "A Call button uses your listing's own number — clear the link."
+            return
         }
+        await publish("/mobile/api/marketing/google-post",
+                      body: GooglePostBody(summary: draft, ctaType: googleCTA.rawValue,
+                                           ctaUrl: googleCTA.needsLink ? link : ""),
+                      platform: "Google")
     }
 }

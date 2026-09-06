@@ -31,6 +31,16 @@ def _redirect_db(monkeypatch, db_path):
     monkeypatch.setattr(gm, "DB_PATH", db_path)
 
 
+@pytest.fixture(autouse=True)
+def _inside_texting_hours(monkeypatch):
+    """Guest texts are held outside 8am-9pm local (see
+    guest_marketing.guest_sms_allowed_now). Pin the clock the window reads so
+    the suite means the same thing at 2am on CI as it does at noon."""
+    from datetime import datetime as _dt
+    monkeypatch.setattr(gm, "_sms_local_now",
+                        lambda rid: _dt.now().replace(hour=12, minute=0))
+
+
 @pytest.fixture
 def app():
     flask_app = Flask(__name__)

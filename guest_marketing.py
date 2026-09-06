@@ -75,6 +75,52 @@ def init_guest_marketing(db_path=DB_PATH):
     conn.close()
 
 
+# ── Quiet hours for guest texts ────────────────────────────────────────────
+# TCPA restricts marketing calls and texts to 8am–9pm in the RECIPIENT's local
+# time. Nothing in this module enforced that: send_campaign fired the moment
+# the owner pressed the button, and run_review_request_followups is an hourly
+# job that texts a guest three hours after their visit — so a 9pm dinner got a
+# review request at midnight, automatically, every night, without anyone
+# touching the app.
+#
+# models.is_in_quiet_hours is deliberately NOT reused here. That one is the
+# owner's own alert preference: it is opt-in (no window set means no quiet
+# hours at all) and it is hard-coded to America/Chicago. This is a legal floor
+# that applies whether or not anyone configured anything, and it has to follow
+# the restaurant's own timezone — which is the closest proxy available for the
+# guest's, since a restaurant's guests are overwhelmingly local to it.
+GUEST_SMS_EARLIEST_HOUR = 8    # 8:00 AM local
+GUEST_SMS_LATEST_HOUR = 21     # 9:00 PM local — last send starts at 8:59 PM
+
+
+def _sms_local_now(restaurant_id):
+    """The restaurant's own wall clock. Its own function so tests can pin it
+    to a specific hour without also freezing the visit-age arithmetic in
+    run_review_request_followups, which reads the same clock for a different
+    purpose."""
+    from time_utils import restaurant_now_by_id
+    return restaurant_now_by_id(restaurant_id, naive=True)
+
+
+def guest_sms_allowed_now(restaurant_id) -> bool:
+    """True when a marketing text may legally be sent to this restaurant's
+    guests right now. Fails CLOSED: if the restaurant's local time can't be
+    resolved, no marketing text goes out."""
+    try:
+        return GUEST_SMS_EARLIEST_HOUR <= _sms_local_now(restaurant_id).hour < GUEST_SMS_LATEST_HOUR
+    except Exception:
+        return False
+
+
+def guest_sms_window_label() -> str:
+    """"8:00 AM and 9:00 PM" — for the message an owner sees when a campaign
+    is held back, so the refusal reads as a rule and not a failure."""
+    def _fmt(h):
+        suffix = "AM" if h < 12 else "PM"
+        return f"{h % 12 or 12}:00 {suffix}"
+    return f"{_fmt(GUEST_SMS_EARLIEST_HOUR)} and {_fmt(GUEST_SMS_LATEST_HOUR)}"
+
+
 def get_guest_contacts(restaurant_id, consent_only=False, db_path=DB_PATH):
     """consent_only=True is the enforcement point for actually sending SMS —
     same shape as notify.get_alert_contacts. Management UI wants
@@ -363,8 +409,17 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
 
 def send_campaign(restaurant_id, message, db_path=DB_PATH):
     """Send `message` to every consented, non-unsubscribed guest contact.
-    Returns {"sent": n, "failed": n, "total": n}. Never raises — a bad
-    number failing to send shouldn't stop the rest of the list."""
+    Returns {"sent": n, "failed": n, "total": n}, or
+    {"ok": False, "error": ...} when the quiet-hours window is closed.
+    Never raises — a bad number failing to send shouldn't stop the rest.
+
+    The window check is here rather than in the routes so that every caller
+    -- web, mobile, Ask Cavnar, a future scheduled campaign -- inherits it."""
+    if not guest_sms_allowed_now(restaurant_id):
+        return {"ok": False, "blocked": "quiet_hours", "sent": 0, "failed": 0, "total": 0,
+                "error": ("Guest texts only go out between "
+                          f"{guest_sms_window_label()} in your local time. "
+                          "Your message is ready — send it in the morning.")}
     contacts = get_guest_contacts(restaurant_id, consent_only=True, db_path=db_path)
     full_message = message.strip() + "\n\nReply STOP to unsubscribe."
     sent, failed = 0, 0
@@ -383,7 +438,7 @@ def send_campaign(restaurant_id, message, db_path=DB_PATH):
     )
     conn.commit()
     conn.close()
-    return {"sent": sent, "failed": failed, "total": len(contacts)}
+    return {"ok": True, "sent": sent, "failed": failed, "total": len(contacts)}
 
 
 # ── Automated post-visit review request ─────────────────────────────────────
@@ -422,9 +477,16 @@ def run_toast_optin_invites(business_date=None, db_path=DB_PATH):
     ).fetchall()
     conn.close()
 
-    invited, skipped, failed = 0, 0, 0
+    invited, skipped, failed, deferred = 0, 0, 0, 0
     for r in restaurants:
         rid = r["id"]
+        # This job is pinned to 11am on the SERVER's clock while restaurants
+        # keep their own timezones, so "11am" is not 11am everywhere. An
+        # opt-in invite is asking for marketing consent, which makes it a
+        # marketing text — same window as everything else here.
+        if not guest_sms_allowed_now(rid):
+            deferred += 1
+            continue
         try:
             customers = _toast.fetch_order_customers(rid, business_date)
         except Exception:
@@ -473,7 +535,8 @@ def run_toast_optin_invites(business_date=None, db_path=DB_PATH):
             except Exception:
                 failed += 1
 
-    return {"invited": invited, "skipped": skipped, "failed": failed}
+    return {"invited": invited, "skipped": skipped, "failed": failed,
+            "deferred_quiet_hours": deferred}
 
 
 def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
@@ -513,7 +576,7 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
         """
     ).fetchall()
 
-    sent, failed, skipped = 0, 0, 0
+    sent, failed, skipped, deferred = 0, 0, 0, 0
     for row in rows:
         try:
             visited_at = datetime.fromisoformat(row["last_visit"])
@@ -522,6 +585,14 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
         now_local = restaurant_now_by_id(row["restaurant_id"], naive=True)
         if now_local - visited_at < timedelta(hours=delay_hours):
             continue  # not due yet
+        # A 9pm dinner came due at midnight and this job, which runs hourly,
+        # texted them. Eligibility here is "older than", never an exact
+        # window, so holding a guest until 8am costs nothing — the next tick
+        # inside the window picks them up and last_review_requested_at is
+        # only written on an actual send.
+        if not guest_sms_allowed_now(row["restaurant_id"]):
+            deferred += 1
+            continue
 
         review_url = _google_review_link(row["google_place_id"])
         if not review_url:
@@ -554,4 +625,5 @@ def run_review_request_followups(delay_hours=None, db_path=DB_PATH):
         )
     conn.commit()
     conn.close()
-    return {"sent": sent, "failed": failed, "skipped_no_place_id": skipped}
+    return {"sent": sent, "failed": failed, "skipped_no_place_id": skipped,
+            "deferred_quiet_hours": deferred}

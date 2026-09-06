@@ -40,6 +40,58 @@ struct MarketingAnalyticsSection: View {
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
+
+            if !viewModel.recentTopics.isEmpty {
+                recentlyGenerated
+            }
+        }
+    }
+
+    /// Per-piece history — what was written, whether it went out, and what it
+    /// did. Pull to refresh pulls fresh numbers from Meta first.
+    private var recentlyGenerated: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Recently generated")
+                    .font(.cavnarBody(14.5, weight: 700))
+                    .foregroundStyle(Color.cavnarInk)
+                Spacer()
+                if viewModel.isRefreshingMetrics {
+                    CavnarShimmerText(text: "Refreshing…")
+                }
+            }
+
+            ForEach(viewModel.recentTopics) { topic in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(topic.topic)
+                            .font(.cavnarBody(14.5, weight: 600))
+                            .foregroundStyle(Color.cavnarInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        if topic.posted {
+                            Label(topic.platformLabel ?? "Posted", systemImage: "checkmark")
+                                .font(.cavnarBody(14, weight: 700))
+                                .foregroundStyle(Color.cavnarGreen)
+                        } else {
+                            Text("Draft")
+                                .font(.cavnarBody(14, weight: 700))
+                                .foregroundStyle(Color.cavnarEmber2)
+                        }
+                    }
+                    if let line = topic.metricsLine {
+                        Text(line).font(.cavnarNumber(14)).foregroundStyle(Color.cavnarInk3)
+                    } else if topic.posted {
+                        Text("No numbers back from Meta yet")
+                            .font(.cavnarBody(14))
+                            .foregroundStyle(Color.cavnarInk3)
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.cavnarPaper2)
+                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+            }
         }
     }
 
