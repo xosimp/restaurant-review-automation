@@ -53,7 +53,7 @@ struct LoginView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                LoginBackground()
+                LoginBackground(paused: sessionStore.isAuthenticated)
 
                 // GeometryReader + minHeight is what centers the block:
                 // shorter than the screen, it floats to the middle; taller

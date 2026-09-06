@@ -20,15 +20,22 @@ import SwiftUI
 /// built on it) stutter under a scroll. The blooms are now soft-edged by
 /// their own radial gradient instead of a post-blur, which is nearly free.
 struct LoginBackground: View {
+    /// Frozen from the moment a session arrives: Home mounts underneath
+    /// this screen and then crossfades through it, and two full-screen
+    /// Canvas layers repainting at 30fps under an opacity transition were
+    /// work the landing didn't need (see RootView.loginLifted).
+    var paused: Bool = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     static let frameInterval: Double = 1.0 / 30.0
 
+    private var frozen: Bool { reduceMotion || paused }
+
     var body: some View {
         ZStack {
             Color.cavnarPaper
-            LoginAurora(frozen: reduceMotion)
-            LoginConstellation(frozen: reduceMotion)
+            LoginAurora(frozen: frozen)
+            LoginConstellation(frozen: frozen)
             LinearGradient(
                 stops: [
                     .init(color: Color.cavnarPaper.opacity(0), location: 0),

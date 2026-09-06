@@ -15,6 +15,16 @@ struct CachedResource<T: Codable> {
         return try? Self.decoder.decode(T.self, from: data)
     }
 
+    /// Same as load(), with the file read on a background thread. Home's
+    /// first load runs in the sign-in frame; a synchronous disk read there
+    /// was part of that frame's stall (DebugFrameWatchdog).
+    func loadOffMain() async -> T? {
+        let key = self.key
+        let data = await Task.detached(priority: .userInitiated) { SecureCache.read(key: key) }.value
+        guard let data else { return nil }
+        return try? Self.decoder.decode(T.self, from: data)
+    }
+
     func save(_ value: T) {
         guard let data = try? Self.encoder.encode(value) else { return }
         SecureCache.write(data, key: key)

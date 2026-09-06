@@ -49,41 +49,71 @@ struct RootView: View {
     @State private var introAppeared = false
     // See SessionStore.pendingPasscodeSetup.
     @State private var showingPasscodeSetup = false
+    // The sign-in landing, measured (DebugFrameWatchdog, simulator): the
+    // frame in which isAuthenticated flipped took ~560ms, because SwiftUI
+    // built the entire tab tree — all four tabs, their navigation stacks,
+    // every SF Symbol and font used on them, the Swift runtime's one-time
+    // generic metadata for all of it — synchronously in that one frame,
+    // and the login→Home crossfade was trying to run through it. That is
+    // the "skip" on landing; the keyboard and the animated backgrounds
+    // were only ever riding on top of it.
+    //
+    // So the login screen no longer leaves when the session arrives. It
+    // stays on top, opaque, while mainTabs mounts UNDERNEATH it and pays
+    // that build; the crossfade only starts once the frame rate has
+    // recovered (FrameSettle), so the animation never shares a frame with
+    // the build. The other three tabs are built lazily (LazyTab), which
+    // takes most of the work out of that frame in the first place.
+    //
+    // nil until the sign-in screen has been on screen this session: false
+    // while it is up (set on its appearance), true once it has lifted. A
+    // cold launch straight into the Face ID gate never shows it and never
+    // touches this.
+    @State private var loginLifted: Bool?
+    @State private var introWaitingOnLogin = false
+    // Tabs whose content has been built ahead of being selected — filled in
+    // one at a time, on settled frames, a beat after the landing.
+    @State private var warmedTabs: Set<AppTab> = []
+
+    private var loginCoverUp: Bool { !sessionStore.isAuthenticated || loginLifted == false }
 
     var body: some View {
-        Group {
-            if !sessionStore.isAuthenticated {
+        ZStack {
+            if sessionStore.isAuthenticated {
+                if sessionStore.isLocked {
+                    // introReady: on a cold launch this mounts UNDER the splash;
+                    // without the gate its draw-in played hidden and the user
+                    // only ever saw the settled end state once the splash lifted.
+                    LockedView(introReady: !showLaunchSplash, coldLaunch: coldLaunchIntroPending)
+                        // Fetch Home's summary while the gate is up (the
+                        // session is signed in, just locked), so the moment the
+                        // user unlocks, Home mounts straight onto its hero — no
+                        // loading state at all. Without this, every cold-launch
+                        // unlock landed on an empty Home whose loading seal
+                        // flashed for the length of the fetch.
+                        .task {
+                            if homeViewModel.summary == nil { await homeViewModel.load() }
+                        }
+                } else {
+                    mainTabs
+                        // Revealed by the login screen fading out above it,
+                        // not by fading in itself; on sign-out it fades
+                        // under the returning login screen.
+                        .transition(.asymmetric(insertion: .identity, removal: .opacity))
+                }
+            }
+            if loginCoverUp {
                 LoginView(sessionStore: sessionStore, introReady: !showLaunchSplash, coldLaunch: coldLaunchIntroPending)
                     .transition(.opacity)
-            } else if sessionStore.isLocked {
-                // introReady: on a cold launch this mounts UNDER the splash;
-                // without the gate its draw-in played hidden and the user
-                // only ever saw the settled end state once the splash lifted.
-                LockedView(introReady: !showLaunchSplash, coldLaunch: coldLaunchIntroPending)
-                    // Fetch Home's summary while the gate is up (the
-                    // session is signed in, just locked), so the moment the
-                    // user unlocks, Home mounts straight onto its hero — no
-                    // loading state at all. Without this, every cold-launch
-                    // unlock landed on an empty Home whose loading seal
-                    // flashed for the length of the fetch.
-                    .task {
-                        if homeViewModel.summary == nil { await homeViewModel.load() }
-                    }
-            } else {
-                mainTabs
-                    .transition(.opacity)
+                    .zIndex(1)
+                    .onAppear { loginLifted = false }
             }
         }
-        // Home's own hero/FAB already fade their CONTENT in (see
-        // playIntroSequence below) — this covers the screen SWAP itself,
-        // which was a hard, unanimated cut straight from the login screen
-        // to the fully-built tab bar + nav chrome underneath that content,
-        // reading as "it just appears" a beat before the hero's own fade
-        // even started. Scoped to isAuthenticated only — the Face ID
-        // lock/unlock swap (isLocked) stays an instant cut deliberately,
-        // since that's a frequent, security-relevant action where snappy
-        // reads as trustworthy and a fade would just feel like lag.
-        .animation(.easeOut(duration: 0.35), value: sessionStore.isAuthenticated)
+        // The sign-in → Home crossfade. The Face ID lock/unlock swap
+        // (isLocked) stays an instant cut deliberately — a frequent,
+        // security-relevant action where snappy reads as trustworthy and a
+        // fade would just feel like lag.
+        .animation(.easeOut(duration: 0.35), value: loginCoverUp)
         .environment(deepLinkRouter)
         .environment(network)
         // Mobile's in-app interface is dark-only by design — what's
@@ -161,6 +191,7 @@ struct RootView: View {
         .overlay {
             if showLaunchSplash {
                 LaunchSplashView {
+                    DebugFrameWatchdog.mark("splash finished")
                     withAnimation(.easeOut(duration: 0.45)) { showLaunchSplash = false }
                     if introWaitingOnSplash {
                         introWaitingOnSplash = false
@@ -193,6 +224,13 @@ struct RootView: View {
             guard !sessionStore.isAuthenticated,
                   let user = ProcessInfo.processInfo.environment["CAVNAR_DEBUG_AUTOLOGIN_USER"],
                   let pass = ProcessInfo.processInfo.environment["CAVNAR_DEBUG_AUTOLOGIN_PASS"] else { return }
+            // Optional hold before signing in, so the sign-in screen is fully
+            // up and animating (splash gone) when the auth flip happens —
+            // the same frame sequence a real tap on Sign in produces, which
+            // is what a profiler needs to see to find a landing stutter.
+            if let ms = ProcessInfo.processInfo.environment["CAVNAR_DEBUG_AUTOLOGIN_DELAY_MS"].flatMap(Int.init) {
+                try? await Task.sleep(for: .milliseconds(ms))
+            }
             _ = try? await sessionStore.login(username: user, password: pass)
             if ProcessInfo.processInfo.environment["CAVNAR_DEBUG_OPEN_SHEET"] != nil {
                 // The onChange(of: sessionStore.isAuthenticated) reset to
@@ -261,6 +299,11 @@ struct RootView: View {
             if !locked { coldLaunchIntroPending = false }
         }
         .onChange(of: sessionStore.isAuthenticated) { _, authenticated in
+            DebugFrameWatchdog.mark("isAuthenticated=\(authenticated)")
+            if !authenticated {
+                warmedTabs = []
+                introWaitingOnLogin = false
+            }
             if authenticated {
                 // Drop the keyboard at the UIKit level before Home mounts.
                 // LoginView's own focusedField = nil is only SwiftUI's side
@@ -309,21 +352,40 @@ struct RootView: View {
 
             // Seeded with the modules Home already fetched, so the tab's
             // first open renders the grid instead of a loading seal.
-            ModulesGridView(path: $modulesPath, initialModules: homeViewModel.summary?.modules ?? [])
-                .tabItem { Label(AppTab.modules.title, systemImage: AppTab.modules.systemImage) }
-                .tag(AppTab.modules)
+            LazyTab(active: tabIsBuilt(.modules)) {
+                ModulesGridView(path: $modulesPath, initialModules: homeViewModel.summary?.modules ?? [])
+            }
+            .tabItem { Label(AppTab.modules.title, systemImage: AppTab.modules.systemImage) }
+            .tag(AppTab.modules)
 
             // A tab, not a floating button + sheet: the FAB sat over tap
             // targets on every screen, and a sheet's own swipe-to-dismiss
             // recognizer fought the chat's keyboard for every tap. The orb
             // freezes while another tab is up — TabView keeps this mounted.
-            AskCavnarView(viewModel: askCavnarViewModel, motionPaused: selectedTab != .ask)
-                .tabItem { Label(AppTab.ask.title, systemImage: AppTab.ask.systemImage) }
-                .tag(AppTab.ask)
+            LazyTab(active: tabIsBuilt(.ask)) {
+                AskCavnarView(viewModel: askCavnarViewModel, motionPaused: selectedTab != .ask)
+            }
+            .tabItem { Label(AppTab.ask.title, systemImage: AppTab.ask.systemImage) }
+            .tag(AppTab.ask)
 
-            AccountView()
-                .tabItem { Label(AppTab.account.title, systemImage: AppTab.account.systemImage) }
-                .tag(AppTab.account)
+            LazyTab(active: tabIsBuilt(.account)) {
+                AccountView()
+            }
+            .tabItem { Label(AppTab.account.title, systemImage: AppTab.account.systemImage) }
+            .tag(AppTab.account)
+        }
+        .onAppear {
+            DebugFrameWatchdog.mark("mainTabs onAppear")
+            if loginLifted == false {
+                // Built. Now let the frame rate come back, then reveal.
+                Task {
+                    await FrameSettle.wait()
+                    liftLogin()
+                }
+            }
+            if warmedTabs.isEmpty {
+                Task { await warmRemainingTabs() }
+            }
         }
         .sensoryFeedback(.impact(weight: .medium), trigger: selectedTab) { _, _ in AppPreferences.hapticsEnabledSnapshot }
         // True-black tab bar chrome, distinct from the warm near-black
@@ -332,6 +394,7 @@ struct RootView: View {
         .toolbarBackground(Color.cavnarChrome, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
         .task {
+            DebugFrameWatchdog.mark("mainTabs task (push auth)")
             PushManager.shared.requestAuthorizationAndRegister()
         }
         // Fallback only — the real trigger is HomeView's onHeroAppear
@@ -358,6 +421,7 @@ struct RootView: View {
     /// flag wouldn't reset on logout, and a client who signs out and back
     /// in should get the intro again.
     private func startIntroSequence() {
+        DebugFrameWatchdog.mark("startIntroSequence hasShown=\(sessionStore.hasShownHomeIntro) splash=\(showLaunchSplash) cover=\(loginCoverUp)")
         guard !sessionStore.hasShownHomeIntro else {
             introAppeared = true
             return
@@ -368,8 +432,48 @@ struct RootView: View {
             introWaitingOnSplash = true
             return
         }
+        // Same for the sign-in screen: Home mounts under it and the hero
+        // reports itself on screen before the crossfade has begun. liftLogin
+        // replays this the moment the cover starts to go.
+        guard !loginCoverUp else {
+            introWaitingOnLogin = true
+            return
+        }
         sessionStore.hasShownHomeIntro = true
         Task { await playIntroSequence() }
+    }
+
+    /// A tab's content is built when it is selected or once it has been
+    /// warmed — never in the sign-in frame.
+    private func tabIsBuilt(_ tab: AppTab) -> Bool {
+        selectedTab == tab || warmedTabs.contains(tab)
+    }
+
+    /// The crossfade out of the sign-in screen, and the landing intro that
+    /// was waiting on it.
+    private func liftLogin() {
+        guard loginLifted == false else { return }
+        DebugFrameWatchdog.mark("login lifted")
+        withAnimation(.easeOut(duration: 0.35)) { loginLifted = true }
+        if introWaitingOnLogin {
+            introWaitingOnLogin = false
+            startIntroSequence()
+        }
+    }
+
+    /// Build the three other tabs one at a time, each on a settled frame,
+    /// once the landing has played out — so the first tap on any tab is
+    /// instant, and the build never lands in the sign-in frame or the
+    /// intro.
+    private func warmRemainingTabs() async {
+        try? await Task.sleep(for: .seconds(1.6))
+        for tab in [AppTab.modules, .ask, .account] {
+            guard sessionStore.isAuthenticated, !sessionStore.isLocked else { return }
+            await FrameSettle.wait()
+            DebugFrameWatchdog.mark("warm \(tab)")
+            warmedTabs.insert(tab)
+            try? await Task.sleep(for: .milliseconds(400))
+        }
     }
 
     /// Home's hero fades/rises in. Only ever reached once per sign-in —
@@ -744,5 +848,29 @@ private extension View {
     /// One step of LockedView's staggered reveal — fades and rises in.
     func lockReveal(_ shown: Bool) -> some View {
         opacity(shown ? 1 : 0).offset(y: shown ? 0 : 14)
+    }
+}
+
+
+/// A tab whose content is only built once it is needed. SwiftUI's TabView
+/// builds every tab's view tree the moment the TabView mounts — measured on
+/// the sign-in landing, that was Account's grouped list, Ask Cavnar's chat
+/// and the Modules grid all being constructed in the frame Home appeared.
+/// Until `active`, this is a plain paper-colored panel; once built, it stays
+/// built, so a tab's own state (scroll position, loaded data) survives the
+/// user switching away.
+private struct LazyTab<Content: View>: View {
+    let active: Bool
+    @ViewBuilder let content: () -> Content
+    @State private var built = false
+
+    var body: some View {
+        if active || built {
+            content()
+                .onAppear { built = true }
+                .onChange(of: active, initial: true) { _, isActive in if isActive { built = true } }
+        } else {
+            Color.cavnarPaper.ignoresSafeArea()
+        }
     }
 }

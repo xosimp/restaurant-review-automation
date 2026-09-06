@@ -71,9 +71,6 @@ struct MarketingAnalyticsSection: View {
                     }
                     .padding(.vertical, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .overlay(alignment: .top) {
-                        Rectangle().fill(Color.cavnarEmber2.opacity(0.18)).frame(height: 1)
-                    }
                 }
 
                 if let forecast = insight.forecast, !forecast.isEmpty {

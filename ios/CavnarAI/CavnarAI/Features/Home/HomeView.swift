@@ -319,7 +319,7 @@ struct HomeView: View {
         .opacity(heroAppeared ? 1 : 0)
         .offset(y: heroAppeared ? 0 : 26)
         .animation(Self.introAnimation, value: heroAppeared)
-        .onAppear { onHeroAppear() }
+        .onAppear { DebugFrameWatchdog.mark("hero onAppear"); onHeroAppear() }
     }
 
     private func heroHeadline(_ summary: HomeSummary) -> some View {

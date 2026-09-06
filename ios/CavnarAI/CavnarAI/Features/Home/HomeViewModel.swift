@@ -56,12 +56,13 @@ final class HomeViewModel {
     func load() async {
         // Warm start: paint cached numbers immediately rather than a loading
         // seal, and keep them on screen if the fetch fails.
-        if summary == nil { summary = cache.load() }
+        if summary == nil { summary = await cache.loadOffMain() }
         isLoading = summary == nil
         errorMessage = nil
         defer { isLoading = false }
         do {
             let fetched: HomeSummary = try await client.send("/mobile/api/home")
+            DebugFrameWatchdog.mark("home summary fetched")
             summary = fetched
             cache.save(fetched)
             lastLoadedAt = Date()

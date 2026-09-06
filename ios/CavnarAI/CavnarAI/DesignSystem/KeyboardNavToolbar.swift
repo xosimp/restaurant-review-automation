@@ -91,12 +91,25 @@ func keyboardIconButton(systemName: String, enabled: Bool, action: @escaping @Ma
         action()
     } label: {
         Image(systemName: systemName)
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: 14, weight: .bold))
+            .foregroundStyle(enabled ? Color.white : Color.cavnarInk3)
+            .frame(width: 34, height: 34)
+            // Opaque, not the 14% ember wash the other toolbar icons use.
+            // On iOS 26 the keyboard toolbar has no bar of its own (see
+            // cavnarToolbarItemGroup — the shared glass is hidden so it
+            // stops double-wrapping) — these buttons float straight over
+            // whatever the page has scrolled under the keyboard, and a
+            // translucent circle over a header row or a share icon was
+            // unreadable and looked like a stray overlay. A solid fill with
+            // a hairline and a drop shadow reads as a button on top of
+            // anything.
+            .background(enabled ? Color.cavnarEmber : Color.cavnarPaper3, in: Circle())
+            .overlay(Circle().strokeBorder(Color.white.opacity(enabled ? 0.22 : 0.08), lineWidth: 1))
+            .shadow(color: .black.opacity(0.45), radius: 6, y: 3)
+            .contentShape(Circle())
     }
     .disabled(!enabled)
-    .foregroundStyle(enabled ? Color.cavnarEmber : Color.cavnarInk3)
     .fixedSize()
-    .cavnarToolbarIconGlass(size: 30)
     .buttonStyle(.plain)
     .tint(nil)
 }
