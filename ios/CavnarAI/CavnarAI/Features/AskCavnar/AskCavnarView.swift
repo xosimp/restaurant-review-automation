@@ -285,13 +285,22 @@ struct AskCavnarView: View {
         .padding(.bottom, 20)
     }
 
-    // No outer bar at all — the field and send button float directly on
-    // the module background, each carrying its own glass, the same way
-    // this app's other floating controls (the keyboard's Done pill, the
-    // toolbar icon chips) already do rather than sitting inside a flat
-    // full-width band. A flat .ultraThinMaterial strip behind the whole
-    // row used to double up on top of the field's own pill background —
-    // one piece of chrome the field didn't need.
+    // The gray band is gone (that was .ultraThinMaterial doubling up on
+    // top of the field's own pill) — what's here instead is the PAGE
+    // colour, which is invisible against the background behind it, so the
+    // field and send button still read as floating with no container.
+    //
+    // Deliberately opaque rather than nothing, and deliberately not glass.
+    // This is the only tab that puts anything in the bottom safe area, so
+    // it was the only one whose bottom edge sat a translucent surface
+    // (first the material band, then .glassEffect controls) immediately
+    // above the tab bar's own Liquid Glass. Two glass surfaces meeting
+    // there is exactly the kind of thing the tab bar has to reconcile on
+    // appearance, which fits the reported "the whole row lags for a second
+    // then goes even more transparent — only on this tab". An opaque
+    // backdrop gives the bar the same ordinary surface to composite
+    // against that Home, Modules and Account all give it. It also stops
+    // chat text scrolling visibly behind the floating pill.
     private var inputBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let error = viewModel.errorBanner {
@@ -314,33 +323,22 @@ struct AskCavnarView: View {
         .padding(.horizontal, 14)
         .padding(.top, 8)
         .padding(.bottom, 12)
+        .background(Color.cavnarPaper)
     }
 
     private var inputRow: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            Group {
-                if #available(iOS 26.0, *) {
-                    // Real Liquid Glass — same tint-strong-enough-to-
-                    // dominate-the-background approach as the keyboard's
-                    // Done pill (cavnarToolbarPillGlass), so the field
-                    // reads as a predictable warm surface rather than
-                    // whatever's scrolling behind it refracting through.
-                    fieldContent
-                        .glassEffect(
-                            .regular.tint(Color.cavnarPaper2.opacity(0.92)).interactive(),
-                            in: RoundedRectangle(cornerRadius: CavnarRadius.sheet)
-                        )
-                } else {
-                    fieldContent
-                        .background(Color.cavnarPaper2)
-                        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.sheet))
-                }
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: CavnarRadius.sheet)
-                    .strokeBorder(inputFocused ? Color.cavnarEmber.opacity(0.5) : Color.white.opacity(0.06), lineWidth: 1)
-            )
-            .animation(.easeOut(duration: 0.15), value: inputFocused)
+            // A solid pill, not .glassEffect — see inputBar's comment. Glass
+            // this close to the tab bar's own glass is the thing being
+            // ruled out; the pill looked the same either way.
+            fieldContent
+                .background(Color.cavnarPaper2)
+                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.sheet))
+                .overlay(
+                    RoundedRectangle(cornerRadius: CavnarRadius.sheet)
+                        .strokeBorder(inputFocused ? Color.cavnarEmber.opacity(0.5) : Color.white.opacity(0.06), lineWidth: 1)
+                )
+                .animation(.easeOut(duration: 0.15), value: inputFocused)
 
             Button {
                 Haptic.light()
@@ -371,27 +369,15 @@ struct AskCavnarView: View {
             .padding(.vertical, 11)
     }
 
-    /// The send button itself: real glass on iOS 26 (tinted ember when
-    /// there's something to send, a neutral glass when there isn't — same
-    /// prominent/plain distinction CavnarGlassButtonStyle uses for
-    /// Skip/Approve), the previous solid gradient/flat-fill circle as the
-    /// fallback below it.
-    @ViewBuilder
+    /// A solid ember circle, not glass — same reasoning as the field (see
+    /// inputBar). It also keeps the app's own convention that the primary
+    /// action on a screen is solid ember, not a translucent surface.
     private var sendGlyph: some View {
-        let icon = Image(systemName: "arrow.up")
+        Image(systemName: "arrow.up")
             .font(.system(size: 16, weight: .bold))
             .foregroundStyle(viewModel.canSubmit ? .white : Color.cavnarInk3)
             .frame(width: 38, height: 38)
-        if #available(iOS 26.0, *) {
-            icon.glassEffect(
-                viewModel.canSubmit
-                    ? .regular.tint(Color.cavnarEmber.opacity(0.85)).interactive()
-                    : .regular.interactive(),
-                in: Circle()
-            )
-        } else {
-            icon.background(Circle().fill(sendButtonFill))
-        }
+            .background(Circle().fill(sendButtonFill))
     }
 
     private var sendButtonFill: AnyShapeStyle {

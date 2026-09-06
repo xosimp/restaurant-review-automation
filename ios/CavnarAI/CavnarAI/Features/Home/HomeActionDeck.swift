@@ -21,13 +21,9 @@ struct HomeActionDeck: View {
     /// instant `advance()` updates `index` mid-transition. See advance()'s
     /// comment for the flash this used to cause when the two were conflated.
     @State private var draggingID: String?
-    /// The id of a card that's about to become the front card WITHOUT
-    /// having been visible as a ghost first — only ever the "previous"
-    /// item, since `stack` only ever peeks forward (index, index+1,
-    /// index+2). See advance()'s comment for why "next" doesn't need this
-    /// and "previous" does.
-    @State private var enteringID: String?
-    @State private var enterOffset: CGFloat = 0
+    /// Which way the deck last moved — drives which transition an inserted
+    /// card gets (see `cardTransition`).
+    @State private var lastDirection = 1
 
     static let cardHeight: CGFloat = 150
     private static let ghostStep: CGFloat = 14
@@ -49,6 +45,24 @@ struct HomeActionDeck: View {
         return (0..<min(3, count)).map { Entry(depth: $0, item: items[(index + $0) % count]) }
     }
 
+    /// Going BACK, the incoming card was never on screen at all (`stack`
+    /// only ever peeks forward), so it has to travel in from the leading
+    /// edge rather than appear in place. Going forward, an inserted card is
+    /// a new GHOST at the back of the deck, which should just fade up where
+    /// it stands.
+    ///
+    /// A transition, NOT a hand-rolled offset animated away a frame later:
+    /// a freshly-inserted view has no previous frame to interpolate from,
+    /// so "set an offset, then animate it to zero" animates nothing unless
+    /// a real frame lands in between — a race against Task.sleep, and
+    /// exactly why two earlier attempts at this changed nothing on device.
+    /// Insertion transitions are built for this and need no timing at all.
+    private var cardTransition: AnyTransition {
+        lastDirection < 0
+            ? .asymmetric(insertion: .offset(x: -Self.slideIn), removal: .opacity)
+            : .opacity
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HomeSectionHeader(kicker: "Needs attention", title: "Start here",
@@ -64,15 +78,13 @@ struct HomeActionDeck: View {
                         onSecondary: { onSecondary(entry.item) }
                     )
                     .scaleEffect(1 - CGFloat(entry.depth) * 0.045, anchor: .bottom)
-                    .offset(
-                        x: (entry.id == draggingID ? dragX : 0) + (entry.id == enteringID ? enterOffset : 0),
-                        y: CGFloat(entry.depth) * Self.ghostStep
-                    )
+                    .offset(x: entry.id == draggingID ? dragX : 0,
+                            y: CGFloat(entry.depth) * Self.ghostStep)
                     .rotationEffect(.degrees(entry.id == draggingID ? Double(dragX) / 28 : 0), anchor: .bottom)
                     .opacity(entry.depth == 0 ? 1 : (entry.depth == 1 ? 0.72 : 0.42))
                     .saturation(entry.depth == 0 ? 1 : 0.75)
                     .allowsHitTesting(entry.depth == 0 && !flying)
-                    .transition(.opacity)
+                    .transition(cardTransition)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -135,21 +147,21 @@ struct HomeActionDeck: View {
     /// dragX at all, in any frame, so there's nothing left to race.
     ///
     /// That fix made "next" (swipe left) smooth but left "previous" (swipe
-    /// right) just as choppy, for a completely separate reason: `stack`
-    /// only ever peeks FORWARD (index, index+1, index+2). Going next, the
-    /// incoming card was already on screen as a ghost with a well-defined
-    /// smaller/dimmer starting state to grow from. Going previous, the
-    /// incoming card (index-1) was never part of the stack at all — it
-    /// doesn't exist in the tree until `index` changes, so it just pops in
-    /// via the plain .opacity insertion transition instead of animating
-    /// into place, which is the "snappy" feel. Giving it a starting
-    /// offset (enterOffset, off to the left) that resolves to 0 in the
-    /// SAME transaction as the index change turns that pop into a slide,
-    /// mirroring the outgoing card's own fly-off. Only needed when that
-    /// card genuinely wasn't already visible — for 2-3 total items the
-    /// "previous" card overlaps with an existing ghost, and forcing an
-    /// artificial slide onto an already-positioned ghost would itself be
-    /// the same kind of jump this exists to prevent.
+    /// right) choppy for two further, separate reasons, both now handled:
+    ///
+    /// 1. `stack` only ever peeks FORWARD (index, index+1, index+2). Going
+    ///    next, the incoming card was already on screen as a ghost with a
+    ///    well-defined state to grow from. Going previous, the incoming
+    ///    card (index-1) isn't in the tree at all until `index` changes, so
+    ///    it popped in. It now arrives on an insertion transition (see
+    ///    `cardTransition`) rather than a hand-rolled offset — which is the
+    ///    part two earlier attempts got wrong, since a freshly-inserted
+    ///    view has no previous frame to animate an offset FROM.
+    /// 2. Going back, the outgoing card does NOT leave the deck — it lands
+    ///    at depth 1, still on screen. Flinging it to +520 like the forward
+    ///    case stranded it off-screen at a dragX nothing ever reset, and it
+    ///    snapped back on the next touch: the reported "double render". It
+    ///    now settles back to centre as it demotes instead.
     private func advance(_ direction: Int) {
         guard count > 1, !flying else { return }
         flying = true
@@ -161,6 +173,7 @@ struct HomeActionDeck: View {
             // card flies off in the swipe's direction and genuinely LEAVES
             // the deck (for 4+ items its id is no longer in `stack`), so it
             // fades out where it is while the ghost behind grows forward.
+            lastDirection = 1
             withAnimation(.easeIn(duration: 0.22)) { dragX = -520 }
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(220))
@@ -182,25 +195,15 @@ struct HomeActionDeck: View {
         // front almost like a double render" that was reported. So instead
         // it settles back to centre as it demotes, and the incoming card
         // slides in over the top.
-        let incoming = items[(index - 1 + count) % count]
-        if !stack.contains(where: { $0.item.id == incoming.id }) {
-            enteringID = incoming.id
-            enterOffset = -Self.slideIn
-        }
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+        // `cardTransition` reads this, so it has to be set before the
+        // transaction that performs the insertion.
+        lastDirection = -1
+        withAnimation(.spring(response: 0.44, dampingFraction: 0.84)) {
             dragX = 0
             index = (index - 1 + count) % count
         }
         Task { @MainActor in
-            // One real frame with the incoming card mounted AT its offset
-            // before animating it home. A freshly-inserted view has no
-            // previous frame to interpolate from, so setting the offset and
-            // animating it away inside the same transaction that inserts
-            // the card animates nothing at all — which is exactly why the
-            // first attempt at this changed nothing on device.
-            try? await Task.sleep(for: .milliseconds(16))
-            withAnimation(.spring(response: 0.46, dampingFraction: 0.84)) { enterOffset = 0 }
-            try? await Task.sleep(for: .milliseconds(420))
+            try? await Task.sleep(for: .milliseconds(440))
             flying = false
         }
     }
@@ -222,6 +225,10 @@ struct HomeActionDeck: View {
                         // same card the dots just jumped to.
                         draggingID = nil
                         dragX = 0
+                        // A dot can jump any distance in either direction, so
+                        // a directional slide would read as wrong half the
+                        // time — cross-fade instead.
+                        lastDirection = 1
                         withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { index = i }
                     }
             }
