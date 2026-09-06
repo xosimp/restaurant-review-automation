@@ -54,7 +54,7 @@ struct MarketingView: View {
                             CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                         } else if let error = viewModel.errorMessage {
                             VStack(spacing: 8) {
-                                Text(error).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarInk3)
+                                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
                                 Button("Retry") { Task { await viewModel.load() } }
                             }
                             .padding(.top, 60)
@@ -174,8 +174,8 @@ struct MarketingView: View {
 
     private func statTile(value: String, label: String) -> some View {
         VStack(spacing: 4) {
-            Text(value).font(.cavnarNumber(30, weight: 500)).foregroundStyle(Color.cavnarInk).cavnarNumberGlow()
-            Text(label).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarInk3)
+            Text(value).font(.cavnarNumber(24, weight: 500)).foregroundStyle(Color.cavnarInk).cavnarNumberGlow()
+            Text(label).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity)
     }
@@ -206,11 +206,11 @@ struct MarketingView: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: icon).foregroundStyle(Color.cavnarEmber)
-                Text(title).font(.cavnarBody(19, weight: 600))
+                Text(title).font(.cavnarBody(16.5, weight: 600))
                 Spacer()
                 if let badge {
                     Text(badge)
-                        .font(.cavnarNumber(19, weight: 700))
+                        .font(.cavnarNumber(16.5, weight: 700))
                         .foregroundStyle(Color.cavnarEmber)
                 }
                 Image(systemName: "chevron.right").foregroundStyle(Color.cavnarInk3)
@@ -227,12 +227,12 @@ struct MarketingView: View {
     private var generatorSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Generate content")
-                .font(.cavnarBody(18, weight: 700))
+                .font(.cavnarBody(16, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
 
             if let type = viewModel.selectedContentType {
                 Text(type.description)
-                    .font(.cavnarBody(17.5))
+                    .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -277,7 +277,7 @@ struct MarketingView: View {
             }
 
             if let error = viewModel.generateError {
-                Text(error).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
             }
 
             if viewModel.hasDraft {
@@ -307,7 +307,7 @@ struct MarketingView: View {
             // small type. 17.5pt with real line spacing and 14pt of inset is
             // the difference between skimming it and working in it.
             TextEditor(text: $viewModel.draft)
-                .font(.cavnarBody(19))
+                .font(.cavnarBody(16.5))
                 .lineSpacing(5)
                 .foregroundStyle(Color.cavnarInk)
                 .scrollContentBackground(.hidden)
@@ -322,16 +322,16 @@ struct MarketingView: View {
 
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("Trim it to the version you want before posting")
-                    .font(.cavnarBody(17.5))
+                    .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 if let limit = viewModel.characterLimit, let type = viewModel.selectedContentType {
-                    (Text("\(viewModel.draft.count)").font(.cavnarNumber(18, weight: 600))
+                    (Text("\(viewModel.draft.count)").font(.cavnarNumber(16, weight: 600))
                         + Text(" / ")
-                        + Text("\(limit)").font(.cavnarNumber(18))
+                        + Text("\(limit)").font(.cavnarNumber(16))
                         + Text(viewModel.isOverLimit ? " over \(type.limitLabel)" : ""))
-                        .font(.cavnarBody(17.5))
+                        .font(.cavnarBody(15))
                         .foregroundStyle(viewModel.isOverLimit ? Color.cavnarRed : Color.cavnarInk3)
                         .layoutPriority(1)
                 }
@@ -346,70 +346,67 @@ struct MarketingView: View {
     /// screen. Now the tap carries the reader up to it.
     static let draftEditorAnchor = "marketing-draft-editor"
 
-    /// Check it, keep it, or queue it — the three things you could not do
-    /// with a generated post before.
-    private var composeActions: some View {
-        HStack(spacing: 10) {
-            Button {
-                showingPreview = true
-            } label: {
-                Label("Preview", systemImage: "eye").frame(maxWidth: .infinity)
+    /// Copy, Regenerate, Preview, Save draft — four cells of one grid, so
+    /// they are the same size whatever their labels say. They were two
+    /// HStacks, and an HStack hands each child its ideal width first: when
+    /// Copy became "Copied ✓" it measured wider, the row re-split, and the
+    /// button visibly grew and shrank back. A grid's .flexible() columns are
+    /// equal by definition, and a fixed cell height keeps a two-line label
+    /// from ever changing the row.
+    private var draftActions: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                  spacing: 10) {
+            actionCell(viewModel.didCopyDraft ? "Copied" : "Copy",
+                       systemImage: viewModel.didCopyDraft ? "checkmark" : "doc.on.doc",
+                       tint: viewModel.didCopyDraft ? Color.cavnarGreen : nil) {
+                viewModel.copyDraft()
             }
-            .buttonStyle(CavnarSecondaryButtonStyle())
-
-            Button {
+            actionCell("Regenerate", systemImage: "arrow.triangle.2.circlepath",
+                       disabled: viewModel.isGenerating) {
+                Task { await viewModel.generate() }
+            }
+            actionCell("Preview", systemImage: "eye") {
+                showingPreview = true
+            }
+            actionCell(compose.isSavingDraft ? "Saving…" : "Save draft",
+                       systemImage: "tray.and.arrow.down", disabled: compose.isSavingDraft) {
                 Task {
                     await compose.saveDraft(body: viewModel.draft, topic: viewModel.topic,
                                             contentType: viewModel.selectedType)
                 }
-            } label: {
-                if compose.isSavingDraft {
-                    CavnarShimmerText(text: "Saving…")
-                } else {
-                    Label("Save draft", systemImage: "tray.and.arrow.down").frame(maxWidth: .infinity)
-                }
-            }
-            .buttonStyle(CavnarSecondaryButtonStyle())
-            .disabled(compose.isSavingDraft)
-
-            if viewModel.canPostSomewhere {
-                Button {
-                    schedulePlatform = viewModel.isGooglePost
-                        ? "google" : (viewModel.channels.instagram ? "instagram" : "facebook")
-                    showingSchedule = true
-                } label: {
-                    Label("Schedule", systemImage: "calendar.badge.clock").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(CavnarSecondaryButtonStyle())
             }
         }
+        .animation(.easeOut(duration: 0.2), value: viewModel.didCopyDraft)
     }
 
-    private var draftActions: some View {
-        HStack(spacing: 10) {
-            Button {
-                viewModel.copyDraft()
-            } label: {
-                // Says it copied, rather than only buzzing about it. A
-                // haptic on its own is deniable — a phone face-down on a bar
-                // or in a pocket gives no confirmation at all, and there is
-                // nothing on screen that changes when the clipboard does.
-                Label(viewModel.didCopyDraft ? "Copied" : "Copy",
-                      systemImage: viewModel.didCopyDraft ? "checkmark" : "doc.on.doc")
-                    .frame(maxWidth: .infinity)
-                    .foregroundStyle(viewModel.didCopyDraft ? Color.cavnarGreen : Color.cavnarEmber)
-                    .contentTransition(.symbolEffect(.replace))
-            }
-            .buttonStyle(CavnarSecondaryButtonStyle())
-            .animation(.easeOut(duration: 0.2), value: viewModel.didCopyDraft)
+    private func actionCell(_ title: String, systemImage: String, tint: Color? = nil,
+                            disabled: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .frame(maxWidth: .infinity)
+                .frame(height: 22)
+                .foregroundStyle(tint ?? Color.cavnarEmber)
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(CavnarSecondaryButtonStyle(isDisabled: disabled))
+        .disabled(disabled)
+    }
 
+    /// Queue it — kept apart from the four editing actions above because it
+    /// publishes, and only appears once a destination is connected.
+    @ViewBuilder
+    private var composeActions: some View {
+        if viewModel.canPostSomewhere {
             Button {
-                Task { await viewModel.generate() }
+                schedulePlatform = viewModel.isGooglePost
+                    ? "google" : (viewModel.channels.instagram ? "instagram" : "facebook")
+                showingSchedule = true
             } label: {
-                Label("Regenerate", systemImage: "arrow.triangle.2.circlepath").frame(maxWidth: .infinity)
+                Label("Schedule", systemImage: "calendar.badge.clock").frame(maxWidth: .infinity)
             }
             .buttonStyle(CavnarSecondaryButtonStyle())
-            .disabled(viewModel.isGenerating)
         }
     }
 
@@ -431,7 +428,7 @@ struct MarketingView: View {
                 .padding(.top, 6)
         }
         if let error = viewModel.postError {
-            Text(error).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarRed)
+            Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
         }
     }
 
@@ -444,7 +441,7 @@ struct MarketingView: View {
             Text(viewModel.isGooglePost
                  ? "Connect Google Business under Account → Connections to publish this to your listing."
                  : "Connect Instagram or Facebook under Account → Connections to publish from here. You can still copy the caption and post it yourself.")
-                .font(.cavnarBody(17.5))
+                .font(.cavnarBody(15))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -516,7 +513,7 @@ struct MarketingView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("This week's content calendar")
-                    .font(.cavnarBody(18, weight: 700))
+                    .font(.cavnarBody(16, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Spacer()
                 if !viewModel.calendar.isEmpty {
@@ -529,7 +526,7 @@ struct MarketingView: View {
 
             if viewModel.calendar.isEmpty && !viewModel.isGeneratingCalendar {
                 Text("Seven ideas for the week, built from your menu, your voice and what's coming up.")
-                    .font(.cavnarBody(17.5))
+                    .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -553,7 +550,7 @@ struct MarketingView: View {
             }
 
             if let error = viewModel.calendarError {
-                Text(error).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
             }
 
             ForEach(viewModel.calendar) { idea in
@@ -567,18 +564,18 @@ struct MarketingView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(idea.day)
-                    .font(.cavnarBody(17.5, weight: 700))
+                    .font(.cavnarBody(15, weight: 700))
                     .foregroundStyle(Color.cavnarEmber)
                 if let date = idea.date, !date.isEmpty {
-                    Text(date).font(.cavnarNumber(17.5)).foregroundStyle(Color.cavnarInk3)
+                    Text(date).font(.cavnarNumber(15)).foregroundStyle(Color.cavnarInk3)
                 }
                 Spacer()
                 Text(idea.platform)
-                    .font(.cavnarBody(17.5, weight: 600))
+                    .font(.cavnarBody(15, weight: 600))
                     .foregroundStyle(Color.cavnarInk3)
             }
             Text(idea.angle)
-                .font(.cavnarBody(18))
+                .font(.cavnarBody(16))
                 .foregroundStyle(Color.cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
 

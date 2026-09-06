@@ -262,6 +262,17 @@ struct RootView: View {
         }
         .onChange(of: sessionStore.isAuthenticated) { _, authenticated in
             if authenticated {
+                // Drop the keyboard at the UIKit level before Home mounts.
+                // LoginView's own focusedField = nil is only SwiftUI's side
+                // of it; after Password AutoFill the UIKit input session can
+                // outlive that (the "dismissAutoFillPanel ... requires a
+                // valid sessionID" console lines are it being torn down
+                // late), so the keyboard was still animating down while the
+                // hero and the animated background were mounting on top of a
+                // login screen that is itself still crossfading out. That
+                // is the first-sign-in stutter.
+                UIApplication.shared.sendAction(
+                    #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 coldLaunchIntroPending = false
                 // selectedTab is @State on RootView, which is never recreated
                 // across sign-out/sign-in (only isAuthenticated flips) — so it

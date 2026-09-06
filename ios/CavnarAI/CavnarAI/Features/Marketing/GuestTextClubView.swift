@@ -43,15 +43,15 @@ struct GuestTextClubView: View {
 
     private func joinLinkCard(_ url: String) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Guest join link").font(.cavnarBody(17.5, weight: 700)).foregroundStyle(Color.cavnarInk3)
+            Text("Guest join link").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk3)
             Text("Guests join by scanning or tapping this themselves — that's the only way anyone becomes text-eligible.")
-                .font(.cavnarBody(17.5))
+                .font(.cavnarBody(15))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 10) {
                 Text(url)
-                    .font(.cavnarBody(17.5))
+                    .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarInk)
                     .textSelection(.enabled)
                     .lineLimit(2)
@@ -81,12 +81,12 @@ struct GuestTextClubView: View {
                         .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Print this where guests can scan it")
-                            .font(.cavnarBody(18, weight: 600))
+                            .font(.cavnarBody(16, weight: 600))
                             .foregroundStyle(Color.cavnarInk)
                         ShareLink(item: Image(uiImage: qr),
                                   preview: SharePreview("Guest text club QR", image: Image(uiImage: qr))) {
                             Text("Share QR code")
-                                .font(.cavnarBody(17.5, weight: 600))
+                                .font(.cavnarBody(15, weight: 600))
                                 .foregroundStyle(Color.cavnarEmber)
                         }
                     }
@@ -97,12 +97,12 @@ struct GuestTextClubView: View {
             if let hint = viewModel.receiptHint {
                 DisclosureGroup("Add this to your receipts") {
                     Text(hint)
-                        .font(.cavnarBody(17.5))
+                        .font(.cavnarBody(15))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 6)
                 }
-                .font(.cavnarBody(17.5, weight: 600))
+                .font(.cavnarBody(15, weight: 600))
                 .tint(Color.cavnarEmber)
             }
         }
@@ -111,7 +111,7 @@ struct GuestTextClubView: View {
 
     private var campaignCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Send a campaign").font(.cavnarBody(18, weight: 700)).foregroundStyle(Color.cavnarInk)
+            Text("Send a campaign").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
 
             // guest_marketing.CAMPAIGN_PROMPTS. "Promo" used to sit here and
             // matched nothing on the backend, so it quietly became "general".
@@ -138,16 +138,16 @@ struct GuestTextClubView: View {
 
                 if let help = viewModel.selectedSegmentHelp {
                     Text(help)
-                        .font(.cavnarBody(17.5))
+                        .font(.cavnarBody(15))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
             (Text("Goes to ")
-                + Text("\(viewModel.selectedSegmentCount)").font(.cavnarNumber(17.5, weight: 700))
+                + Text("\(viewModel.selectedSegmentCount)").font(.cavnarNumber(15, weight: 700))
                 + Text(" guest\(viewModel.selectedSegmentCount == 1 ? "" : "s"), between 8:00 AM and 9:00 PM. Nobody gets two campaigns inside three days."))
-                .font(.cavnarBody(17.5))
+                .font(.cavnarBody(15))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -179,7 +179,7 @@ struct GuestTextClubView: View {
 
             if !viewModel.draftMessage.isEmpty {
                 TextEditor(text: $viewModel.draftMessage)
-                    .font(.cavnarBody(18))
+                    .font(.cavnarBody(16))
                     .frame(minHeight: 80)
                     .padding(8)
                     .background(Color.cavnarPaper2)
@@ -209,7 +209,7 @@ struct GuestTextClubView: View {
             }
 
             if let error = viewModel.campaignError {
-                Text(error).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
             }
         }
         .cavnarCard()
@@ -220,22 +220,22 @@ struct GuestTextClubView: View {
     private var newsletterCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Email newsletter").font(.cavnarBody(18, weight: 700)).foregroundStyle(Color.cavnarInk)
+                Text("Email newsletter").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
                 Spacer()
-                (Text("\(viewModel.subscriberCount)").font(.cavnarNumber(17.5, weight: 700))
+                (Text("\(viewModel.subscriberCount)").font(.cavnarNumber(15, weight: 700))
                     + Text(" subscribed"))
-                    .font(.cavnarBody(17.5))
+                    .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarInk3)
             }
 
             if viewModel.subscriberCount == 0 {
                 Text("Nobody has opted in to email yet. The join page asks for an address, separately from the text club — a guest can say yes to one and not the other.")
-                    .font(.cavnarBody(17.5))
+                    .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("Paste in a Weekly email you generated on the Content tab. The subject line block gets stripped out — guests never see the scaffolding.")
-                    .font(.cavnarBody(17.5))
+                    .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -243,7 +243,7 @@ struct GuestTextClubView: View {
                     .cavnarTextFieldStyle()
 
                 TextEditor(text: $viewModel.newsletterBody)
-                    .font(.cavnarBody(18))
+                    .font(.cavnarBody(16))
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 110)
                     .padding(8)
@@ -264,10 +264,10 @@ struct GuestTextClubView: View {
                 .disabled(viewModel.isSendingNewsletter || viewModel.newsletterBody.isEmpty)
 
                 if let result = viewModel.newsletterResult {
-                    Text(result).font(.cavnarBody(17.5, weight: 600)).foregroundStyle(Color.cavnarGreen)
+                    Text(result).font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarGreen)
                 }
                 if let error = viewModel.newsletterError {
-                    Text(error).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarRed)
+                    Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
                 }
             }
         }
@@ -281,28 +281,28 @@ struct GuestTextClubView: View {
     private var historyCard: some View {
         if !viewModel.campaigns.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Campaigns sent").font(.cavnarBody(18, weight: 700)).foregroundStyle(Color.cavnarInk)
+                Text("Campaigns sent").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
                 ForEach(viewModel.campaigns) { campaign in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text(campaign.whenLabel)
-                                .font(.cavnarBody(17.5, weight: 700))
+                                .font(.cavnarBody(15, weight: 700))
                                 .foregroundStyle(Color.cavnarEmber)
                             Spacer()
-                            (Text("\(campaign.sentCount)").font(.cavnarNumber(17.5, weight: 700))
+                            (Text("\(campaign.sentCount)").font(.cavnarNumber(15, weight: 700))
                                 + Text(" sent")
                                 + Text(campaign.clicks > 0 ? " · " : "")
                                 + (campaign.clicks > 0
-                                   ? Text("\(campaign.clicks)").font(.cavnarNumber(17.5, weight: 700)) + Text(" taps")
+                                   ? Text("\(campaign.clicks)").font(.cavnarNumber(15, weight: 700)) + Text(" taps")
                                    : Text("")))
-                                .font(.cavnarBody(17.5))
+                                .font(.cavnarBody(15))
                                 .foregroundStyle(Color.cavnarInk3)
                         }
                         if let label = campaign.segmentLabel {
-                            Text(label).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarInk3)
+                            Text(label).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
                         }
                         Text(campaign.message)
-                            .font(.cavnarBody(17.5))
+                            .font(.cavnarBody(15))
                             .foregroundStyle(Color.cavnarInk)
                             .lineLimit(3)
                             .fixedSize(horizontal: false, vertical: true)
@@ -322,7 +322,7 @@ struct GuestTextClubView: View {
     private var ledgerCard: some View {
         if let ledger = viewModel.ledger {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Consent & sending").font(.cavnarBody(18, weight: 700)).foregroundStyle(Color.cavnarInk)
+                Text("Consent & sending").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
                 HStack(spacing: 0) {
                     ledgerTile("\(ledger.textable)", "Text-eligible", .cavnarGreen)
                     Divider()
@@ -330,11 +330,11 @@ struct GuestTextClubView: View {
                     Divider()
                     ledgerTile("\(ledger.unsubscribed)", "Unsubscribed", .cavnarInk3)
                 }
-                (Text("\(ledger.textsThisMonth)").font(.cavnarNumber(17.5, weight: 700))
+                (Text("\(ledger.textsThisMonth)").font(.cavnarNumber(15, weight: 700))
                     + Text(" texts sent this month across ")
-                    + Text("\(ledger.campaignsThisMonth)").font(.cavnarNumber(17.5, weight: 700))
+                    + Text("\(ledger.campaignsThisMonth)").font(.cavnarNumber(15, weight: 700))
                     + Text(" campaigns. Texts go out between \(ledger.window) only, and no guest gets two inside \(ledger.minDaysBetween) days."))
-                    .font(.cavnarBody(17.5))
+                    .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -344,8 +344,8 @@ struct GuestTextClubView: View {
 
     private func ledgerTile(_ value: String, _ label: String, _ tint: Color) -> some View {
         VStack(spacing: 4) {
-            Text(value).font(.cavnarNumber(26, weight: 500)).foregroundStyle(tint)
-            Text(label).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarInk3)
+            Text(value).font(.cavnarNumber(22, weight: 500)).foregroundStyle(tint)
+            Text(label).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity)
     }
@@ -354,13 +354,13 @@ struct GuestTextClubView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    (Text("Guest contacts (") + Text("\(viewModel.contacts.count)").font(.cavnarNumber(18, weight: 700)) + Text(")"))
-                        .font(.cavnarBody(18, weight: 700))
+                    (Text("Guest contacts (") + Text("\(viewModel.contacts.count)").font(.cavnarNumber(16, weight: 700)) + Text(")"))
+                        .font(.cavnarBody(16, weight: 700))
                         .foregroundStyle(Color.cavnarInk)
                     if !viewModel.contacts.isEmpty {
-                        (Text("\(viewModel.textableCount)").font(.cavnarNumber(17.5, weight: 700))
+                        (Text("\(viewModel.textableCount)").font(.cavnarNumber(15, weight: 700))
                             + Text(" text-eligible"))
-                            .font(.cavnarBody(17.5))
+                            .font(.cavnarBody(15))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                 }
@@ -374,10 +374,10 @@ struct GuestTextClubView: View {
             if viewModel.isLoading {
                 CavnarWorkingLine().padding(.vertical, 8)
             } else if let error = viewModel.errorMessage {
-                Text(error).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
             } else if viewModel.contacts.isEmpty {
                 Text("Nobody has joined yet. Share the QR code above where guests can scan it.")
-                    .font(.cavnarBody(17.5))
+                    .font(.cavnarBody(15))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -396,15 +396,15 @@ struct GuestTextClubView: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(contact.name?.isEmpty == false ? contact.name! : "Guest")
-                    .font(.cavnarBody(18, weight: 600))
+                    .font(.cavnarBody(16, weight: 600))
                     .foregroundStyle(Color.cavnarInk)
-                Text(contact.phone).font(.cavnarNumber(17.5)).foregroundStyle(Color.cavnarInk3)
+                Text(contact.phone).font(.cavnarNumber(15)).foregroundStyle(Color.cavnarInk3)
                 Text(contact.statusLabel)
-                    .font(.cavnarBody(17.5, weight: 700))
+                    .font(.cavnarBody(15, weight: 700))
                     .foregroundStyle(statusColor(contact.status))
                 if let visit = contact.lastVisit, !visit.isEmpty {
                     Text("Last visit \(shortDate(visit))")
-                        .font(.cavnarBody(17.5))
+                        .font(.cavnarBody(15))
                         .foregroundStyle(Color.cavnarInk3)
                 }
             }
@@ -416,7 +416,7 @@ struct GuestTextClubView: View {
                     Task { await viewModel.markVisit(contact) }
                 } label: {
                     Text("Mark visit")
-                        .font(.cavnarBody(17.5, weight: 600))
+                        .font(.cavnarBody(15, weight: 600))
                         .foregroundStyle(Color.cavnarEmber)
                 }
                 Button {

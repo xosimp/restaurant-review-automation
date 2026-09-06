@@ -50,7 +50,7 @@ struct CavnarSplitButton<MenuContent: View>: View {
                         Text(label)
                     }
                 }
-                .font(.cavnarBody(17, weight: 600))
+                .font(.cavnarBody(16, weight: 600))
                 .foregroundStyle(.white)
                 .padding(.leading, icon != nil ? 10 : 18)
                 .padding(.trailing, 14)
