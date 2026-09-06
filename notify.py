@@ -147,28 +147,21 @@ def _send_alert_email(owner_email: str, subject: str, html: str, restaurant_id: 
 
 def _alert_email_html(restaurant_name: str, headline: str, body_lines: list, cta_label: str = "View on dashboard", restaurant_id: int = None) -> str:
     def _safe(s): return _html.escape(str(s)) if s else ""
-    is_dark = True
-    if restaurant_id is not None:
-        try:
-            from models import get_restaurant as _gr_n
-            _r = _gr_n(restaurant_id)
-            is_dark = not (_r and getattr(_r, "email_theme", "dark") == "light")
-        except Exception:
-            pass
-    if is_dark:
-        page_bg, card_bg, card_border = "#0e0a06", "#15100b", "rgba(200,75,47,.3)"
-        text_primary, text_body, header_sub = "#f0ebe0", "rgba(255,255,255,.65)", "#9a8f85"
-        footer_border, footer_text = "rgba(200,75,47,.2)", "#7a6f65"
-    else:
-        page_bg, card_bg, card_border = "#f7f4ef", "#ffffff", "rgba(0,0,0,.08)"
-        text_primary, text_body, header_sub = "#1a1410", "rgba(0,0,0,.65)", "#7a6f65"
-        footer_border, footer_text = "rgba(0,0,0,.08)", "#9a8f85"
+    # Light, always. This used to read restaurants.email_theme — a column the
+    # web dashboard silently POSTs its OWN dark-mode switch into on every page
+    # load (/api/theme), so a client who preferred a dark dashboard started
+    # getting dark alert emails they never asked for, while every other email
+    # Cavnar AI sends stayed a light card. A UI preference is not an email
+    # design decision; the column is left alone, it just no longer steers this.
+    page_bg, card_bg, card_border = "#f7f4ef", "#ffffff", "rgba(0,0,0,.08)"
+    text_primary, text_body, header_sub = "#1a1410", "rgba(0,0,0,.65)", "#7a6f65"
+    footer_border, footer_text = "rgba(0,0,0,.08)", "#9a8f85"
     body_html = "".join(f'<p style="font-size:14px;color:{text_body};line-height:1.6;margin:0 0 10px">{l}</p>' for l in body_lines)
     return f"""
 <div style="background:{page_bg};padding:24px 0">
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;background:{card_bg};border:1px solid {card_border};border-radius:12px;padding:28px;color:{text_primary}">
   <div style="border-top:3px solid #c84b2f;padding-top:20px;margin-bottom:20px">
-    <img src="{'https://dashboard.cavnar.ai/static/brand/wordmark-light-email.png' if is_dark else 'https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png'}" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin:0 0 6px">
+    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none;margin:0 0 6px">
     <p style="font-size:11px;color:{header_sub};margin:0;letter-spacing:1px;text-transform:uppercase">Alert &mdash; {_safe(restaurant_name)}</p>
   </div>
   <h3 style="font-size:16px;font-weight:600;margin:0 0 12px;color:{text_primary}">{_safe(headline)}</h3>

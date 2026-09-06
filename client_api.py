@@ -443,6 +443,10 @@ def changelog_unread_count(current_user):
 @client_bp.route("/api/theme", methods=["POST"])
 @login_required
 def save_theme_api(current_user):
+    """Persists the DASHBOARD's dark-mode preference. It no longer affects
+    email: reporter.py and notify.py used to read this column, so a dark
+    dashboard silently produced dark digests and alerts while every other
+    Cavnar AI email stayed a light card. Emails have one design now."""
     from models import update_restaurant
     data = request.get_json() or {}
     theme = data.get("theme")

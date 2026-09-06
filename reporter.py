@@ -262,7 +262,13 @@ def generate_ai_digest_summary(report, restaurant_name, owner_name=None, restaur
             if notable:
                 lines = []
                 for r in notable:
-                    reviewer = (r.review_name or "A guest").split()[0]
+                    # `review_name` is the Google API's RESOURCE name for the
+                    # review ("accounts/…/reviews/…"), used for auto-posting —
+                    # not a person. Reading it here meant the model was handed
+                    # either a URL path or the fallback "A guest", whose first
+                    # word is "A" — which is why weekly digests kept naming
+                    # "reviewer A". The guest's name is `author`.
+                    reviewer = ((r.author or "").strip() or "A guest").split()[0]
                     snippet = (r.text or "")[:100].strip()
                     stars = f"{r.rating}★"
                     lines.append("- " + reviewer + " left a " + stars + " review: " + snippet[:80])
@@ -383,24 +389,63 @@ Rules:
 
 def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = None,
                 restaurant_id: int = None) -> str:
+    """The weekly digest, on the same layout as every other Cavnar AI email.
+
+    Two things were wrong with this and both were structural. It rendered
+    DARK while everything else Cavnar AI sends is a light card — not because
+    anyone chose a dark email, but because the web dashboard quietly POSTs
+    its own dark-mode switch to /api/theme, and this template read that
+    column. A UI preference for the dashboard was deciding how outbound mail
+    looked. And it stacked five separately bordered, separately tinted cards
+    inside a sixth, each repeating the same label/pill/figures furniture, so
+    a week with four modules arrived as a wall of boxes.
+
+    Now: one card, hairline rules, one section per module, and the AI
+    consultant's sentence about a module sits under that module's own
+    numbers instead of in a second block that said it all over again.
+    """
+    from emails import (BRAND, report_shell, report_stats, report_eyebrow,
+                        report_quote, report_action, report_paragraph)
+
+    _SANS = "-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif"
+
+    def snip(text, limit=150):
+        """Cut a quote at a word boundary. A hard character slice left guests
+        mid-word ("borderline r…"), which reads like the email broke."""
+        text = (text or "").strip()
+        if len(text) <= limit:
+            return _html.escape(text)
+        cut = text[:limit]
+        space = cut.rfind(" ")
+        if space > limit * 0.6:
+            cut = cut[:space]
+        return _html.escape(cut.rstrip(" ,.;:-")) + "&hellip;"
+
+    def note(text, top=14):
+        """The consultant's one sentence about a module, set directly under that
+        module's own figures — it used to live in a separate card above them and
+        say the same things a second time."""
+        if not text:
+            return ""
+        return (f'<div style="font-family:{_SANS};font-size:13.5px;color:{BRAND["body"]};'
+                f'line-height:1.6;margin-top:{top}px">{_html.escape(text)}</div>')
+
     reviews = getattr(report, "_reviews", [])
-    urgent  = [r for r in reviews if r.urgency == "high"]
+    urgent = [r for r in reviews if r.urgency == "high"]
     pos_count = report.sentiment.get("positive", 0)
     neg_count = report.sentiment.get("negative", 0)
     first_name = (owner_name or "").split()[0] if owner_name else "there"
 
-    # Rating trend indicator
     rating = report.avg_rating or 0
     if rating >= 4.5:
-        rating_color = "#6fcf97"; rating_label = "Excellent"
+        rating_color, rating_label = BRAND["good"], "Excellent"
     elif rating >= 4.0:
-        rating_color = "#6fcf97"; rating_label = "Good"
+        rating_color, rating_label = BRAND["good"], "Good"
     elif rating >= 3.5:
-        rating_color = "#ffc266"; rating_label = "Fair"
+        rating_color, rating_label = BRAND["warn"], "Fair"
     else:
-        rating_color = "#ff5a5a"; rating_label = "Needs work"
+        rating_color, rating_label = BRAND["bad"], "Needs work"
 
-    # Fetch restaurant record once — used for location header, module flags, and scorecards
     _rest = None
     try:
         from models import get_restaurant as _gr_d
@@ -409,67 +454,28 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
         pass
     location_label = ""
     if _rest and getattr(_rest, "location_name", None):
-        location_label = f" — {_rest.location_name}"
+        location_label = f" &middot; {_html.escape(_rest.location_name)}"
 
-    # Theme — per-client toggle in account settings. Defaults to LIGHT now:
-    # every other email Cavnar AI sends is a light card on #f7f4ef, and this
-    # one defaulting to dark made the weekly digest look like it came from a
-    # different product. Dark is still available for anyone who sets it.
-    is_dark = bool(_rest and getattr(_rest, "email_theme", "light") == "dark")
-    if is_dark:
-        T = {
-            "page_bg": "#0e0a06", "outer_bg": "#15100b", "outer_border": "rgba(200,75,47,.3)",
-            "text_primary": "#f0ebe0", "text_muted": "rgba(255,255,255,.4)", "text_body": "rgba(255,255,255,.6)",
-            "header_sub": "#9a8f85", "card_style": "background:#15100b;background:linear-gradient(135deg,#1a0f0a 0%,#120c08 60%,#0e0a06 100%)",
-            "footer_bg": "#0e0a06", "footer_border": "rgba(200,75,47,.2)", "footer_text": "#7a6f65",
-            "stat_sub": "rgba(255,255,255,.4)",
-        }
-    else:
-        T = {
-            "page_bg": "#f7f4ef", "outer_bg": "#ffffff", "outer_border": "rgba(0,0,0,.08)",
-            "text_primary": "#1a1410", "text_muted": "rgba(0,0,0,.45)", "text_body": "rgba(0,0,0,.6)",
-            "header_sub": "#7a6f65", "card_style": "background:#fbf8f3",
-            "footer_bg": "#f7f4ef", "footer_border": "rgba(0,0,0,.08)", "footer_text": "#9a8f85",
-            "stat_sub": "rgba(0,0,0,.45)",
-        }
-
-    # AI consultant summary — structured dict: headline, reviews, labor, inventory, marketing, action
     ai_summary = generate_ai_digest_summary(report, restaurant_name, owner_name,
-                                             restaurant_id=restaurant_id)
-    _module_colors = {"reviews": "#ff8a65", "labor": "#6fcf97", "inventory": "#ffc266", "marketing": "#7fb8e6"}
-    _module_labels = {"reviews": "Reviews", "labor": "Labor", "inventory": "Inventory", "marketing": "Marketing"}
-    ai_headline = ai_summary.get("headline") or f"Hi {first_name}, here is your weekly summary for {restaurant_name}."
-    ai_module_rows = ""
-    for _key in ("reviews", "labor", "inventory", "marketing"):
-        _val = ai_summary.get(_key)
-        if _val:
-            ai_module_rows += f"""
-<tr><td style="padding:0 0 10px">
-  <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{_module_colors[_key]};margin-bottom:3px">{_module_labels[_key]}</div>
-  <div style="font-size:13px;color:{T['text_primary']};line-height:1.55">{_html.escape(_val)}</div>
-</td></tr>"""
-    ai_action_block = ""
-    if ai_summary.get("action"):
-        ai_action_block = f"""
-<div style="margin-top:14px;padding-top:12px;border-top:1px solid {T['outer_border']}">
-  <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#c84b2f">→ This week's action</span>
-  <p style="margin:5px 0 0;font-size:13px;color:{T['text_primary']};line-height:1.55;font-weight:600">{_html.escape(ai_summary.get("action"))}</p>
-</div>"""
+                                            restaurant_id=restaurant_id)
+    ai_headline = (ai_summary.get("headline")
+                   or f"Here's the week at {restaurant_name}, {first_name}.")
 
-    _card_bg = T["card_style"]
-    _card_grad = ""  # folded into card_style per theme
-    _SG = "font-family:'Space Grotesk',sans-serif"
+    sections = [report_paragraph(_html.escape(ai_headline))]
 
-    def _stat_pill(color, label):
-        return f'<span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:{color};background:{color}26;padding:3px 9px;border-radius:20px">{label}</span>'
+    # ── Review Intelligence ────────────────────────────────────────────────
+    sections.append(
+        report_eyebrow("Review Intelligence", tag=rating_label, tag_color=rating_color) +
+        report_stats([
+            (f"{rating}&#9733;", "avg rating", rating_color),
+            (report.total_reviews, "reviews"),
+            (pos_count, "positive", BRAND["good"] if pos_count else None),
+            (neg_count, "negative", BRAND["bad"] if neg_count else None),
+            ((len(urgent), "urgent", BRAND["bad"]) if urgent else None),
+        ]) + note(ai_summary.get("reviews"))
+    )
 
-    def _stat_num(value, sub, color=None):
-        color = color or T["text_primary"]
-        return f'<div><div style="{_SG};font-size:24px;font-weight:700;color:{color}">{value}</div><div style="font-size:10px;color:{T["stat_sub"]};margin-top:2px">{sub}</div></div>'
-
-    # Pull labor and inventory data for module scorecards
-    labor_card = ""
-    inventory_card = ""
+    # ── Labor Optimizer ────────────────────────────────────────────────────
     try:
         if _rest and _rest.module_labor:
             from labor import analyse_shifts_for_restaurant
@@ -478,22 +484,21 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
                 lp = labor_data.get("overall_labor_pct", 0)
                 ls = labor_data.get("total_sales", 0)
                 lc = labor_data.get("total_labor_cost", 0)
-                l_color = "#6fcf97" if lp <= 32 else ("#ffc266" if lp <= 36 else "#ff5a5a")
+                l_color = BRAND["good"] if lp <= 32 else (BRAND["warn"] if lp <= 36 else BRAND["bad"])
                 l_label = "On target" if lp <= 32 else ("Watch closely" if lp <= 36 else "Over budget")
-                labor_card = f"""
-<tr><td style="padding:0 0 12px">
-  <div style="{_card_bg};border:1px solid rgba(111,207,151,.4);border-radius:12px;padding:16px 18px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#6fcf97">Labor Optimizer</span>
-      {_stat_pill(l_color, l_label)}
-    </div>
-    <div style="display:flex;gap:22px">
-      {_stat_num(f"{lp}%", "labor ratio", l_color)}
-      {_stat_num(f"${lc:,.0f}", "labor cost")}
-      {_stat_num(f"${ls:,.0f}", "in sales")}
-    </div>
-  </div>
-</td></tr>"""
+                sections.append(
+                    report_eyebrow("Labor Optimizer", tag=l_label, tag_color=l_color) +
+                    report_stats([
+                        (f"{lp}%", "labor ratio", l_color),
+                        (f"${lc:,.0f}", "labor cost"),
+                        (f"${ls:,.0f}", "in sales"),
+                    ]) + note(ai_summary.get("labor"))
+                )
+    except Exception:
+        pass
+
+    # ── Food Cost Control ──────────────────────────────────────────────────
+    try:
         if _rest and _rest.module_inventory:
             from inventory import load_inventory_for_restaurant, analyse_inventory
             items, _ = load_inventory_for_restaurant(restaurant_id)
@@ -501,152 +506,61 @@ def render_html(report: WeeklyReport, restaurant_name: str, owner_name: str = No
             waste = inv.get("total_waste_cost_week", 0)
             recoverable = inv.get("recoverable_monthly", 0)
             top_waste = inv.get("waste_items", [])
-            top_item = top_waste[0]["item"] if top_waste else "None"
-            i_color = "#6fcf97" if waste < 200 else ("#ffc266" if waste < 500 else "#ff5a5a")
+            i_color = BRAND["good"] if waste < 200 else (BRAND["warn"] if waste < 500 else BRAND["bad"])
             i_label = "Low waste" if waste < 200 else ("Moderate" if waste < 500 else "High waste")
-            inventory_card = f"""
-<tr><td style="padding:0 0 12px">
-  <div style="{_card_bg};border:1px solid rgba(255,194,102,.4);border-radius:12px;padding:16px 18px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#ffc266">Food Cost Control</span>
-      {_stat_pill(i_color, i_label)}
-    </div>
-    <div style="display:flex;gap:22px">
-      {_stat_num(f"${waste:,.0f}", "waste this week", i_color)}
-      {_stat_num(f"${recoverable:,.0f}", "recoverable/mo")}
-    </div>
-    <div style="margin-top:12px;padding-top:10px;border-top:1px solid {T['outer_border']}">
-      <div style="font-size:10px;color:{T['stat_sub']};text-transform:uppercase;letter-spacing:.06em">Top waste item</div>
-      <div style="font-size:14px;font-weight:600;color:{T['text_primary']};margin-top:3px">{_html.escape(top_item)}</div>
-    </div>
-  </div>
-</td></tr>"""
+            top_line = ""
+            if top_waste:
+                top_line = (f'<div style="font-family:{_SANS};font-size:12px;color:{BRAND["muted"]};'
+                            f'margin-top:12px">Biggest single loss: '
+                            f'<span style="color:{BRAND["ink"]};font-weight:600">'
+                            f'{_html.escape(str(top_waste[0]["item"]))}</span></div>')
+            sections.append(
+                report_eyebrow("Food Cost Control", tag=i_label, tag_color=i_color) +
+                report_stats([
+                    (f"${waste:,.0f}", "waste this week", i_color),
+                    (f"${recoverable:,.0f}", "recoverable / mo"),
+                ]) + top_line + note(ai_summary.get("inventory"))
+            )
     except Exception:
         pass
 
-    # Urgent reviews section
-    urgent_rows = ""
-    if urgent:
-        for r in urgent[:3]:
-            stars = "★" * r.rating + "☆" * (5 - r.rating)
-            name = _html.escape((r.author or "Guest")[:20])
-            snippet = _html.escape((r.text or "")[:120])
-            urgent_rows += f"""
-<tr><td style="padding:0 0 8px">
-  <div style="{_card_bg};border:1px solid rgba(255,90,90,.4);border-radius:10px;padding:12px 14px">
-    <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-      <span style="font-size:12px;font-weight:600;color:{T['text_primary']}">{name}</span>
-      <span style="{_SG};font-size:12px;color:#ff5a5a">{stars}</span>
-    </div>
-    <p style="font-size:12px;color:{T['text_body']};margin:0;line-height:1.5">"{snippet}{"..." if len(r.text or "") > 120 else ""}"</p>
-  </div>
-</td></tr>"""
+    # ── Marketing (no weekly figures to report — the sentence is the whole
+    #    section, so it only appears when there is genuinely something) ─────
+    if _rest and getattr(_rest, "module_marketing", False) and ai_summary.get("marketing"):
+        sections.append(report_eyebrow("Marketing Autopilot")
+                        + note(ai_summary.get("marketing"), top=0))
 
-    # Top positive review
+    # ── The reviews themselves ─────────────────────────────────────────────
+    if urgent:
+        quotes = ""
+        for r in urgent[:2]:
+            quotes += report_quote(
+                _html.escape((r.author or "Guest")[:24]),
+                "★" * r.rating, snip(r.text), BRAND["bad"])
+        sections.append(report_eyebrow("Needs a reply", BRAND["bad"]) + quotes)
+
     top_pos = next((r for r in reviews if r.sentiment == "positive" and r.rating >= 4), None)
-    pos_row = ""
     if top_pos:
-        stars = "★" * top_pos.rating
-        name = _html.escape((top_pos.author or "Guest")[:20])
-        snippet = _html.escape((top_pos.text or "")[:120])
-        pos_row = f"""
-<tr><td style="padding:0 0 8px">
-  <div style="{_card_bg};border:1px solid rgba(111,207,151,.4);border-radius:10px;padding:12px 14px">
-    <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-      <span style="font-size:12px;font-weight:600;color:{T['text_primary']}">{name}</span>
-      <span style="{_SG};font-size:12px;color:#6fcf97">{stars}</span>
-    </div>
-    <p style="font-size:12px;color:{T['text_body']};margin:0;line-height:1.5">"{snippet}{"..." if len(top_pos.text or "") > 120 else ""}"</p>
-  </div>
-</td></tr>"""
+        sections.append(
+            report_eyebrow("Highlight of the week", BRAND["good"]) +
+            report_quote(
+                _html.escape((top_pos.author or "Guest")[:24]),
+                "★" * top_pos.rating, snip(top_pos.text), BRAND["good"]))
+
+    if ai_summary.get("action"):
+        sections.append(report_action("This week's move", _html.escape(ai_summary["action"])))
 
     from time_utils import restaurant_now_by_id as _rnbi_html
     week_label = (_rnbi_html(restaurant_id or report.restaurant_id)
-                  .strftime("Week of %B %d, %Y"))
+                  .strftime("Week of %B %-d, %Y"))
 
-    # Pre-build conditional HTML sections to avoid f-string nesting issues
-    urgent_section_html = ""
-    if urgent:
-        urgent_section_html = ('<tr><td style="padding:0 32px 12px">' +
-            f'<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px"><span style="width:7px;height:7px;border-radius:50%;background:#ff5a5a"></span><span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{T["text_primary"]}">Needs immediate response</span></div>' +
-            '<table width="100%" cellpadding="0" cellspacing="0">' + urgent_rows + '</table></td></tr>')
-    pos_section_html = ""
-    if pos_row:
-        pos_section_html = ('<tr><td style="padding:0 32px 12px">' +
-            f'<div style="display:flex;align-items:center;gap:7px;margin-bottom:10px"><span style="width:7px;height:7px;border-radius:50%;background:#6fcf97"></span><span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{T["text_primary"]}">Highlight of the week</span></div>' +
-            '<table width="100%" cellpadding="0" cellspacing="0">' + pos_row + '</table></td></tr>')
-    urgent_stat = (_stat_num(f"⚠ {len(urgent)}", "urgent", "#ff5a5a") if urgent else "")
-
-    return f"""<html>
-<head>
-<style>@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap');</style>
-</head>
-<body style="margin:0;padding:0;background:{T['page_bg']};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:{T['page_bg']};padding:24px 0">
-<tr><td align="center">
-<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:{T['outer_bg']};border-radius:12px;overflow:hidden;border:1px solid {T['outer_border']}">
-
-<!-- HEADER -->
-<tr><td style="background:{T['outer_bg']};border-bottom:1px solid {T['outer_border']};padding:24px 32px">
-  <table width="100%" cellpadding="0" cellspacing="0"><tr>
-    <td><img src="{'https://dashboard.cavnar.ai/static/brand/wordmark-light-email.png' if is_dark else 'https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png'}" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none"></td>
-    <td align="right"><span style="font-size:11px;color:{T['header_sub']};letter-spacing:.1em;text-transform:uppercase">Weekly Digest</span></td>
-  </tr></table>
-  <div style="margin-top:6px;font-size:13px;color:{T['header_sub']}">{_html.escape(restaurant_name)}{location_label} &nbsp;·&nbsp; {week_label}</div>
-</td></tr>
-
-<!-- AI CONSULTANT SUMMARY -->
-<tr><td style="padding:24px 32px 0">
-  <div style="{_card_bg};border:1px solid rgba(200,75,47,.45);border-radius:12px;padding:18px 20px">
-    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#c84b2f;margin-bottom:10px">Cavnar AI Consultant</div>
-    <p style="font-size:14px;font-weight:600;color:{T['text_primary']};line-height:1.55;margin:0 0 12px">{_html.escape(ai_headline)}</p>
-    {f'<table cellpadding="0" cellspacing="0" width="100%">{ai_module_rows}</table>' if ai_module_rows else ''}
-    {ai_action_block}
-  </div>
-</td></tr>
-
-<!-- REVIEW SCORECARD -->
-<tr><td style="padding:24px 32px 12px">
-  <table width="100%" cellpadding="0" cellspacing="0">
-  <tr><td style="padding:0 0 12px">
-    <div style="{_card_bg};border:1px solid rgba(255,138,101,.4);border-radius:12px;padding:16px 18px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#ff8a65">Review Intelligence</span>
-        {_stat_pill(rating_color, rating_label)}
-      </div>
-      <div style="display:flex;gap:18px;flex-wrap:wrap">
-        {_stat_num(f"{rating}★", "avg rating", rating_color)}
-        {_stat_num(report.total_reviews, "total reviews")}
-        {_stat_num(pos_count, "positive", "#6fcf97")}
-        {_stat_num(neg_count, "negative", "#ff5a5a")}
-        {urgent_stat}
-      </div>
-    </div>
-  </td></tr>
-
-  {labor_card}
-  {inventory_card}
-  </table>
-</td></tr>
-
-    {urgent_section_html}
-
-    {pos_section_html}
-
-<!-- CTA -->
-<tr><td style="padding:0 32px 24px">
-  <a href="https://dashboard.cavnar.ai" style="display:block;background:#c84b2f;color:white;text-align:center;padding:13px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;letter-spacing:.04em">View Dashboard & Approve Responses →</a>
-</td></tr>
-
-<!-- FOOTER -->
-<tr><td style="background:{T['footer_bg']};padding:16px 32px;border-top:1px solid {T['footer_border']}">
-  <p style="font-size:11px;color:{T['footer_text']};margin:0;text-align:center"><img src="{'https://dashboard.cavnar.ai/static/brand/seal-light-email.png' if is_dark else 'https://dashboard.cavnar.ai/static/brand/seal-dark-email.png'}" width="13" height="13" alt="" style="vertical-align:middle;margin-right:5px;border:0">Cavnar AI &nbsp;·&nbsp; will@cavnar.ai &nbsp;·&nbsp; <a href="https://cavnar.ai" style="color:{T['footer_text']}">cavnar.ai</a></p>
-</td></tr>
-
-</table>
-</td></tr>
-</table>
-</body></html>"""
+    return report_shell(
+        kicker="Weekly Digest",
+        title=_html.escape(restaurant_name),
+        subtitle=f"{week_label}{location_label}",
+        sections=sections,
+        cta_label="Open your dashboard →",
+    )
 
 
 def print_console_report(report: WeeklyReport, restaurant_name: str):

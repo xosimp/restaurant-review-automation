@@ -14,7 +14,8 @@ def _from_email(): return os.getenv("FROM_EMAIL", "will@cavnar.ai")
 log = logging.getLogger(__name__)
 
 
-def generate_email_personalization(context: str, fallback: str, restaurant_id: int = None) -> str:
+def generate_email_personalization(context: str, fallback: str, restaurant_id: int = None,
+                                   brief: bool = False) -> str:
     """Ask Claude for one short, warm paragraph personalizing an onboarding/
     summary email using the real activity data passed in `context`. Falls
     back to static copy if the API isn't configured or the call fails —
@@ -26,13 +27,22 @@ def generate_email_personalization(context: str, fallback: str, restaurant_id: i
         import anthropic
         from ai_utils import create_with_retry, extract_text
         client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        # `brief` is for the report emails, which open on ONE line above a stat
+        # row that already shows the figures. Left on the default the model
+        # writes a 30-word run-up ("I wanted to share some really encouraging
+        # news...") and then recites the same numbers the table below is about
+        # to show, which is most of what made these read as generated.
+        shape = ("a single sentence of no more than 22 words"
+                 if brief else "a short, warm, genuine paragraph (2-4 sentences)")
         prompt = (
-            "You are Will, writing a short, warm, genuine paragraph (2-4 sentences) "
+            f"You are Will, writing {shape} "
             "in a client email for a restaurant using the Cavnar AI dashboard. "
             "Write in first person as Will. No greeting ('Hi X') and no sign-off — "
-            "just the paragraph itself, it will be inserted into an existing email. "
+            "just the text itself, it will be inserted into an existing email. "
             "Reference the specific data given below naturally, not as a list. "
-            "Plain text only, no markdown.\n\n" + context
+            + ("Open on the substance — no run-up like 'I wanted to share' or "
+               "'Great news'. State what happened, plainly. " if brief else "")
+            + "Plain text only, no markdown.\n\n" + context
         )
         msg = create_with_retry(
             client,
@@ -470,6 +480,11 @@ def _html_document(fragment: str, bg: str = "#f7f4ef") -> str:
     all the way down (html -> body -> a 100%-height presentation table),
     which is the long-standing bulletproof-email answer to this and the
     only one Gmail, Outlook and Apple Mail all honour."""
+    # Idempotent. reporter.py builds a whole document and its five callers
+    # then wrapped it in this one, nesting <!doctype><html> inside a <td>.
+    stripped = (fragment or "").lstrip().lower()
+    if stripped.startswith("<!doctype") or stripped.startswith("<html"):
+        return fragment
     return f"""<!doctype html>
 <html style="height:100%;margin:0;padding:0;background:{bg}">
 <head>
@@ -477,6 +492,7 @@ def _html_document(fragment: str, bg: str = "#f7f4ef") -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light">
 <meta name="supported-color-schemes" content="light">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 </head>
 <body style="margin:0;padding:0;height:100%;width:100%;background:{bg}">
 <table role="presentation" width="100%" height="100%" cellpadding="0" cellspacing="0" border="0" style="background:{bg};height:100%;width:100%;margin:0;padding:0;border-collapse:collapse">
@@ -521,6 +537,169 @@ def _branded_email(inner_html: str) -> str:
 def _send_branded(to_email: str, subject: str, inner_html: str, from_label: str = "Cavnar AI") -> bool:
     return deliver(email_type="send_login_notification", payload={"from": f"{from_label} <{_from_email()}>", "to": [to_email],
                     "subject": subject, "html": _branded_email(inner_html)})
+
+
+# ── Report-email kit ───────────────────────────────────────────────────────
+# The monthly summary and the weekly digest are the only two emails Cavnar AI
+# sends that REPORT numbers rather than announce one thing, and both had
+# drifted away from everything else: the digest into a dark theme (silently
+# inherited from the web dashboard's own dark-mode switch) and five nested
+# bordered cards, the summary into `display:flex` stat rows — which Outlook
+# and parts of Gmail don't implement, so they collapsed into a ragged stack —
+# plus a paragraph of generic prose per module.
+#
+# This is the one layout they now share: a single card with hairline rules
+# instead of nested borders, stat rows built out of real <table> cells,
+# numbers in Space Grotesk per the house rule, and ember spent in exactly
+# three places (the card's top rule, the one action, the button).
+BRAND = {
+    "paper": "#f7f4ef", "card": "#ffffff", "border": "#e0dbd0", "rule": "#ece7dd",
+    "strong": "#0e0c0a", "ink": "#1a1714", "body": "#4a443d", "muted": "#7a736a",
+    "ember": "#c84b2f", "ember2": "#e8956a",
+    "good": "#2d6a4f", "warn": "#a8681c", "bad": "#c0392b",
+}
+_SANS = "-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif"
+_NUM = "'Space Grotesk','Helvetica Neue',Arial,sans-serif"
+_TINT = {
+    BRAND["good"]: "#e7f0ea", BRAND["warn"]: "#f6eddf",
+    BRAND["bad"]: "#f8e9e7", BRAND["ember"]: "#fbf1ec",
+}
+_WORDMARK = "https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png"
+_SEAL = "https://dashboard.cavnar.ai/static/brand/seal-dark-email.png"
+
+
+def report_rule(space: int = 20) -> str:
+    """A hairline. This is what every one of those nested bordered cards was
+    trying to do, at five times the visual weight."""
+    return f'<div style="border-top:1px solid {BRAND["rule"]};margin:{space}px 0"></div>'
+
+
+def report_eyebrow(label: str, color: str = None, tag: str = None,
+                   tag_color: str = None) -> str:
+    """Section label, with an optional status pill on the right."""
+    right = ""
+    if tag:
+        tc = tag_color or BRAND["muted"]
+        right = (f'<td align="right" valign="middle"><span style="font-family:{_SANS};font-size:10px;'
+                 f'font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:{tc};'
+                 f'background:{_TINT.get(tc, "#f2efe9")};padding:3px 9px;border-radius:20px;'
+                 f'white-space:nowrap">{tag}</span></td>')
+    return ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+            'style="border-collapse:collapse;margin:0 0 12px"><tr>'
+            f'<td valign="middle"><span style="font-family:{_SANS};font-size:10px;font-weight:700;'
+            f'text-transform:uppercase;letter-spacing:.11em;color:{color or BRAND["muted"]}">'
+            f'{label}</span></td>{right}</tr></table>')
+
+
+def report_stats(stats) -> str:
+    """A stat row as real table cells — the thing `display:flex` was pretending
+    to be. Rows of up to four; every figure is set in Space Grotesk."""
+    stats = [s for s in stats if s]
+    if not stats:
+        return ""
+    # Balanced rows. A straight chunk-of-four left five figures as 4 + 1, and
+    # the orphan read like a mistake; five goes 3 + 2 instead.
+    n = len(stats)
+    per = n if n <= 4 else -(-n // -(-n // 4))
+    per = min(per, 4) or 1
+    chunks = [stats[i:i + per] for i in range(0, n, per)]
+    rows = ""
+    for ci, chunk in enumerate(chunks):
+        w = 100 // len(chunk)
+        cells = ""
+        for entry in chunk:
+            value, label = entry[0], entry[1]
+            color = entry[2] if len(entry) > 2 and entry[2] else BRAND["strong"]
+            cells += (f'<td width="{w}%" align="left" valign="top" style="padding:0 12px 0 0">'
+                      f'<div style="font-family:{_NUM};font-size:25px;font-weight:700;line-height:1.1;'
+                      f'color:{color}">{value}</div>'
+                      f'<div style="font-family:{_SANS};font-size:10px;text-transform:uppercase;'
+                      f'letter-spacing:.07em;color:{BRAND["muted"]};margin-top:5px">{label}</div></td>')
+        # Pad the short row so its cells keep the same width as the row above.
+        cells += ('<td width="%d%%"></td>' % w) * (per - len(chunk))
+        rows += f"<tr>{cells}</tr>"
+        if ci + 1 < len(chunks):
+            rows += f'<tr><td colspan="{per}" style="height:18px;font-size:0;line-height:0">&nbsp;</td></tr>'
+    # table-layout:fixed, or the browser ignores the per-cell widths and lets
+    # whichever figure has the longest label eat the row.
+    return ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+            f'style="border-collapse:collapse;table-layout:fixed">{rows}</table>')
+
+
+def report_lines(lines) -> str:
+    """LABEL + one true sentence, on a quiet left rule. Replaces the
+    paragraph-per-module blocks, which said the same generic thing to every
+    restaurant whether or not it was true of them."""
+    out = ""
+    for label, text in lines:
+        if not text:
+            continue
+        out += (f'<div style="border-left:2px solid {BRAND["border"]};padding:1px 0 1px 13px;'
+                f'margin:0 0 14px">'
+                f'<div style="font-family:{_SANS};font-size:10px;font-weight:700;'
+                f'text-transform:uppercase;letter-spacing:.08em;color:{BRAND["muted"]}">{label}</div>'
+                f'<div style="font-family:{_SANS};font-size:13.5px;color:{BRAND["body"]};'
+                f'line-height:1.55;margin-top:4px">{text}</div></div>')
+    return out.rstrip()
+
+
+def report_quote(name: str, meta: str, text: str, accent: str) -> str:
+    return (f'<div style="border-left:2px solid {accent};padding:1px 0 1px 13px;margin:0 0 14px">'
+            f'<div style="font-family:{_SANS};font-size:12px;font-weight:600;color:{BRAND["ink"]}">'
+            f'{name}<span style="font-family:{_NUM};font-weight:700;color:{accent};'
+            f'margin-left:7px">{meta}</span></div>'
+            f'<div style="font-family:{_SANS};font-size:13px;color:{BRAND["body"]};line-height:1.55;'
+            f'margin-top:4px">&ldquo;{text}&rdquo;</div></div>')
+
+
+def report_action(label: str, text: str) -> str:
+    """The single do-this-next line — the one loud thing on the page."""
+    return (f'<div style="background:{_TINT[BRAND["ember"]]};border-left:3px solid {BRAND["ember"]};'
+            f'border-radius:0 8px 8px 0;padding:15px 17px">'
+            + report_eyebrow(label, BRAND["ember"]) +
+            f'<div style="font-family:{_SANS};font-size:14px;font-weight:600;color:{BRAND["strong"]};'
+            f'line-height:1.55">{text}</div></div>')
+
+
+def report_paragraph(text: str) -> str:
+    return (f'<p style="font-family:{_SANS};font-size:14.5px;color:{BRAND["ink"]};line-height:1.65;'
+            f'margin:0">{text}</p>')
+
+
+def report_shell(kicker: str, title: str, subtitle: str, sections,
+                 cta_label: str = None, cta_url: str = "https://dashboard.cavnar.ai") -> str:
+    body = report_rule().join(s for s in sections if s)
+    cta = ""
+    if cta_label:
+        cta = (f'<div style="margin-top:26px"><a href="{cta_url}" style="display:block;'
+               f'background:{BRAND["ember"]};color:#ffffff;text-align:center;padding:14px 20px;'
+               f'border-radius:8px;text-decoration:none;font-family:{_SANS};font-size:13px;'
+               f'font-weight:600;letter-spacing:.03em">{cta_label}</a></div>')
+    return _html_document(f"""
+<div style="background:{BRAND['paper']};width:100%;padding:36px 20px;box-sizing:border-box">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse">
+<tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;border-collapse:collapse">
+  <tr>
+    <td valign="middle"><img src="{_WORDMARK}" width="150" height="26" alt="Cavnar AI" style="display:block;width:150px;height:26px;border:0;outline:none"></td>
+    <td valign="middle" align="right"><span style="font-family:{_SANS};font-size:10px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:{BRAND['muted']}">{kicker}</span></td>
+  </tr>
+  <tr><td colspan="2" style="padding-top:16px">
+    <div style="background:{BRAND['card']};border:1px solid {BRAND['border']};border-top:3px solid {BRAND['ember']};border-radius:12px;padding:28px 26px">
+      <h1 style="font-family:{_SANS};font-size:21px;font-weight:700;letter-spacing:-.01em;color:{BRAND['strong']};margin:0">{title}</h1>
+      <div style="font-family:{_SANS};font-size:12px;color:{BRAND['muted']};margin-top:6px">{subtitle}</div>
+      {report_rule(22)}
+      {body}
+      {cta}
+    </div>
+  </td></tr>
+  <tr><td colspan="2" align="center" style="padding-top:18px">
+    <p style="font-family:{_SANS};font-size:11px;color:{BRAND['muted']};margin:0;text-align:center"><img src="{_SEAL}" width="13" height="13" alt="" style="vertical-align:middle;margin-right:6px;border:0"><span style="vertical-align:middle">Cavnar AI &nbsp;&middot;&nbsp; <a href="mailto:will@cavnar.ai" style="color:{BRAND['muted']};text-decoration:none">will@cavnar.ai</a> &nbsp;&middot;&nbsp; <a href="https://cavnar.ai" style="color:{BRAND['muted']};text-decoration:none">cavnar.ai</a></span></p>
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</div>""")
 
 
 def send_password_reset_email(to_email: str, reset_url: str) -> bool:
@@ -1301,107 +1480,151 @@ def send_monthly_summary_email(to_email: str, restaurant_name: str, owner_name: 
                                 restaurant_id: int = None,
                                 has_reviews: bool = True, has_labor: bool = False,
                                 has_inventory: bool = False, has_marketing: bool = False):
-    """Send a monthly summary email with AI-generated insights for the past month."""
+    """The month in review, on the shared report layout (see report_shell).
+
+    What this used to be: a flex stat row that collapsed in Outlook, then one
+    generic paragraph per module — "Your labor data has been analyzed all
+    month. Log in to see your latest cost breakdown." — which was written
+    once and sent to everyone, true or not. It now reads this restaurant's
+    own rows and says one short, checkable thing per module, or nothing.
+    """
     if not _resend_key():
         return
     try:
         from datetime import datetime, timedelta
         first = owner_name.split()[0] if owner_name else "there"
         now = datetime.now()
-        month_name = (now.replace(day=1) - timedelta(days=1)).strftime("%B")  # previous month
-        year = (now.replace(day=1) - timedelta(days=1)).year
+        last_day = now.replace(day=1) - timedelta(days=1)
+        month_name, year = last_day.strftime("%B"), last_day.year
 
-        # Pull review stats for the month
-        review_block = ""
-        total = avg = pos = neg = 0
-        if has_reviews and restaurant_id:
+        usage = restaurant_usage(restaurant_id)
+        owns, used = usage.get("owns") or {}, usage.get("used") or {}
+
+        def owned(key, fallback):
+            return bool(owns[key]) if key in owns else bool(fallback)
+
+        r_reviews = owned("reviews", has_reviews)
+        r_labor = owned("labor", has_labor)
+        r_inventory = owned("inventory", has_inventory)
+        r_marketing = owned("marketing", has_marketing)
+
+        # ── Reviews, from this restaurant's own reviews table ──────────────
+        total = pos = neg = 0
+        avg = 0.0
+        if r_reviews and restaurant_id:
             try:
                 from models import get_reviews_since
-                from datetime import timezone
                 month_start = now.replace(day=1, hour=0, minute=0, second=0) - timedelta(days=30)
                 reviews = get_reviews_since(restaurant_id, month_start.isoformat())
                 total = len(reviews)
-                if total > 0:
+                if total:
                     avg = round(sum(r.rating for r in reviews) / total, 1)
                     pos = sum(1 for r in reviews if r.rating >= 4)
                     neg = sum(1 for r in reviews if r.rating <= 2)
-                    review_block = f"""
-  <div style="background:#f5f3f0;border-radius:8px;padding:16px 20px;margin-bottom:16px">
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#7a736a;margin-bottom:10px">Review Intelligence</div>
-    <div style="display:flex;gap:24px;flex-wrap:wrap">
-      <div><div style="font-size:28px;font-weight:600;color:#0e0c0a">{total}</div><div style="font-size:11px;color:#7a736a">Total reviews</div></div>
-      <div><div style="font-size:28px;font-weight:600;color:#0e0c0a">{avg}★</div><div style="font-size:11px;color:#7a736a">Avg rating</div></div>
-      <div><div style="font-size:28px;font-weight:600;color:#2d6a4f">{pos}</div><div style="font-size:11px;color:#7a736a">Positive</div></div>
-      <div><div style="font-size:28px;font-weight:600;color:#c84b2f">{neg}</div><div style="font-size:11px;color:#7a736a">Negative</div></div>
-    </div>
-  </div>"""
             except Exception:
                 pass
 
-        # Module summary blocks
-        module_blocks = ""
-        if has_labor:
-            module_blocks += """
-  <div style="background:#f5f3f0;border-radius:8px;padding:14px 20px;margin-bottom:12px">
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#7a736a;margin-bottom:6px">Labor Optimizer</div>
-    <p style="font-size:13px;color:#3a3530;margin:0;line-height:1.6">Your labor data has been analyzed all month. Log in to see your latest cost breakdown and schedule recommendations.</p>
-  </div>"""
-        if has_inventory:
-            module_blocks += """
-  <div style="background:#f5f3f0;border-radius:8px;padding:14px 20px;margin-bottom:12px">
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#7a736a;margin-bottom:6px">Food Cost Control</div>
-    <p style="font-size:13px;color:#3a3530;margin:0;line-height:1.6">Food cost and waste tracking has been running. Check your dashboard for this month's waste report and ordering recommendations.</p>
-  </div>"""
-        if has_marketing:
-            module_blocks += f"""
-  <div style="background:#f5f3f0;border-radius:8px;padding:14px 20px;margin-bottom:12px">
-    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:#7a736a;margin-bottom:6px">Marketing Autopilot</div>
-    <p style="font-size:13px;color:#3a3530;margin:0;line-height:1.6">Your AI content engine has been ready all month. Log in to generate your content calendar and social posts for {now.strftime("%B")}.</p>
-  </div>"""
+        stats_section = ""
+        if r_reviews and total:
+            stats_section = (
+                report_eyebrow("Reviews in " + month_name) +
+                report_stats([
+                    (total, "new reviews"),
+                    (f"{avg}&#9733;", "avg rating",
+                     BRAND["good"] if avg >= 4.2 else (BRAND["warn"] if avg >= 3.5 else BRAND["bad"])),
+                    (pos, "positive", BRAND["good"] if pos else None),
+                    (neg, "negative", BRAND["bad"] if neg else None),
+                ])
+            )
 
-        # AI-personalized summary paragraph, using the real stats pulled above
-        fallback_paragraph = f"Here's a look at how {restaurant_name} performed on Cavnar AI in {month_name}."
+        # ── One checkable line per module they actually own ────────────────
+        pending = usage.get("pending_reviews", 0)
+        approved = usage.get("approved_reviews", 0)
+        pos_name = usage.get("pos")
+        ingredients = usage.get("ingredient_count", 0)
+
+        lines = []
+        if r_reviews:
+            if approved:
+                txt = f"{approved} response{'' if approved == 1 else 's'} approved and posted to date."
+            elif total:
+                txt = "Draft responses are written and waiting on your approval."
+            else:
+                txt = f"No new reviews came in during {month_name}."
+            if pending:
+                txt += f" {pending} repl{'y is' if pending == 1 else 'ies are'} still waiting on you."
+            lines.append(("Review Intelligence", txt))
+        if r_labor:
+            if usage.get("has_schedule"):
+                lines.append(("Labor Optimizer",
+                              "Schedules are building"
+                              + (f" from your {pos_name} data." if pos_name else " from your shift history.")))
+            elif pos_name:
+                lines.append(("Labor Optimizer",
+                              f"{pos_name} is connected — no schedule has been generated yet."))
+            else:
+                lines.append(("Labor Optimizer",
+                              "No POS connected yet, so schedules are still being built by hand."))
+        if r_inventory:
+            lines.append(("Food Cost Control",
+                          f"{ingredients} ingredient{'' if ingredients == 1 else 's'} tracked."
+                          if ingredients else "No ingredients added yet, so waste isn't being tracked."))
+        if r_marketing:
+            lines.append(("Marketing Autopilot",
+                          "Content is generating from your profile."
+                          if used.get("marketing") else "No content generated yet this month."))
+        lines_section = report_lines(lines)
+
+        # ── One action, chosen from what's genuinely outstanding ───────────
+        action = None
+        if r_reviews and pending:
+            action = (f"Approve the {pending} drafted repl{'y' if pending == 1 else 'ies'} "
+                      "sitting in Reviews — it takes about five minutes.")
+        elif r_labor and not usage.get("has_schedule"):
+            action = ("Generate next month's opening schedule in Labor"
+                      + (f" — your {pos_name} history is already there." if pos_name
+                         else " once your POS is connected under Account → Connections."))
+        elif r_inventory and not ingredients:
+            action = ("Add the fifteen or twenty items you buy most weeks in Food Cost. "
+                      "That's enough for it to start flagging waste.")
+        elif r_marketing and not used.get("marketing"):
+            action = "Generate one post in Marketing — the first one takes about thirty seconds to approve."
+        action_section = report_action("Your next move", action) if action else ""
+
+        # ── Opening line, personalised on the real numbers above ───────────
+        fallback_paragraph = (
+            f"Here's how {restaurant_name} did on Cavnar AI in {month_name}."
+            if not total else
+            f"{restaurant_name} picked up {total} new review{'' if total == 1 else 's'} in "
+            f"{month_name} at a {avg}★ average."
+        )
         modules_in_use = ", ".join(m for m, on in [
-            ("Review Intelligence", has_reviews), ("Labor Optimizer", has_labor),
-            ("Food Cost Control", has_inventory), ("Marketing Autopilot", has_marketing),
+            ("Review Intelligence", r_reviews), ("Labor Optimizer", r_labor),
+            ("Food Cost Control", r_inventory), ("Marketing Autopilot", r_marketing),
         ] if on) or "Review Intelligence"
         ai_context = (
             f"Restaurant: {restaurant_name}. This is their {month_name} {year} monthly summary email.\n"
             f"Modules in use: {modules_in_use}.\n"
-            + (f"Reviews this month: {total} total, {avg}★ average, {pos} positive, {neg} negative.\n" if total else "No new reviews this month.\n")
-            + "Write the opening summary paragraph (1-2 sentences) referencing this real data naturally."
+            + (f"Reviews this month: {total} total, {avg} star average, {pos} positive, {neg} negative.\n"
+               if total else "No new reviews this month.\n")
+            + "Write the opening line. The stat row directly beneath it already shows the "
+              "totals, so do not recite them all — lead with the one thing that matters most."
         )
-        summary_paragraph = generate_email_personalization(ai_context, fallback_paragraph, restaurant_id=restaurant_id)
+        summary_paragraph = generate_email_personalization(
+            ai_context, fallback_paragraph, restaurant_id=restaurant_id, brief=True)
 
         deliver(email_type="send_monthly_summary_email", restaurant_id=restaurant_id, payload={
             "from": f"Will Cavnar <{_from_email()}>",
             "to": [to_email],
-            "subject": f"{month_name} {year} — your monthly Cavnar AI summary",
-            "html": _html_document(f"""
-<div style="background:#f7f4ef;width:100%;padding:40px 20px;box-sizing:border-box">
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1714;background:#f7f4ef;border-radius:12px;padding:32px 24px;box-sizing:border-box">
-  <div style="border-top:3px solid #c84b2f;padding-top:24px;margin-bottom:24px">
-    <img src="https://dashboard.cavnar.ai/static/brand/wordmark-dark-email.png" width="170" height="30" alt="Cavnar AI" style="display:block;width:170px;height:30px;border:0;outline:none;margin:0 0 6px">
-    <p style="font-size:11px;color:#7a736a;margin:0;letter-spacing:1px;text-transform:uppercase">{month_name} {year} Monthly Summary</p>
-  </div>
-  <p style="font-size:15px;line-height:1.7;margin-bottom:16px">Hi {first} —</p>
-  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin-bottom:20px">
-    {summary_paragraph}
-  </p>
-  {review_block}
-  {module_blocks}
-  <p style="font-size:14px;color:#3a3530;line-height:1.7;margin:20px 0">
-    Log in to your dashboard to see full details, approve any pending review responses, and generate your content for the month ahead.
-  </p>
-  <a href="https://dashboard.cavnar.ai" style="display:inline-block;background:#c84b2f;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,sans-serif">View dashboard →</a>
-  <hr style="border:none;border-top:1px solid #e0dbd0;margin:24px 0"/>
-  <p style="font-size:12px;color:#7a736a;margin:0">
-    Questions? Reply to this email or reach me at
-    <a href="mailto:will@cavnar.ai" style="color:#c84b2f;text-decoration:none">will@cavnar.ai</a>
-    · <a href="https://calendly.com/will-cavnar/30min" style="color:#c84b2f;text-decoration:none">Book a call</a>
-  </p>
-</div>
-</div>""")
+            "subject": f"{month_name} at {restaurant_name} — your Cavnar AI summary",
+            "html": report_shell(
+                kicker="Monthly Summary",
+                title=restaurant_name,
+                subtitle=f"{month_name} {year} &nbsp;&middot;&nbsp; for {first}",
+                sections=[report_paragraph(summary_paragraph), stats_section,
+                          lines_section, action_section],
+                cta_label="Open your dashboard →",
+            ),
         })
     except Exception as e:
         print(f"send_monthly_summary_email failed: {e}")
