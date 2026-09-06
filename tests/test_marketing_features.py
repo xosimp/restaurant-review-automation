@@ -532,3 +532,34 @@ def test_a_post_published_today_counts_toward_this_window(rid, db_path):
     assert window["posts"] == 1
     assert window["reach"] == 800
     assert window["posts"] == sum(p["posts"] for p in window["by_platform"])
+
+
+def test_regenerating_the_same_topic_does_not_contradict_the_brief(rid, db_path, monkeypatch):
+    """Pressing Regenerate handed the model "you have recently generated
+    content about X. Do NOT repeat these themes" while the instruction above
+    said to write about X — and it answered the contradiction instead of the
+    brief ("Since I already have two prior posts...")."""
+    import marketing
+    monkeypatch.setattr(marketing, "get_recent_content", lambda r, limit=5: [
+        {"type": "instagram_post", "topic": "fall truffle menu"},
+        {"type": "weekly_email", "topic": "Sunday brunch"},
+    ])
+    monkeypatch.setattr(marketing, "log_content", lambda *a, **k: None)
+    monkeypatch.setattr(marketing, "generation_context", lambda r: "", raising=False)
+    captured = {}
+
+    def _spy(client, **kw):
+        captured["prompt"] = kw["messages"][0]["content"]
+        return "copy"
+
+    monkeypatch.setattr(marketing, "create_with_retry", _spy)
+    monkeypatch.setattr(marketing, "extract_text", lambda m: m)
+
+    marketing.generate_content("instagram_post", "fall truffle menu", restaurant_id=rid)
+
+    prompt = captured["prompt"]
+    assert "Topic/occasion: fall truffle menu" in prompt
+    # The topic just asked for is not also listed as something to avoid.
+    avoid = prompt.split("Do NOT repeat these themes")[0].split("recently generated content about:")[-1]
+    assert "fall truffle menu" not in avoid
+    assert "Sunday brunch" in avoid

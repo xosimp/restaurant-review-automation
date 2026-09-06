@@ -137,8 +137,9 @@ final class MarketingViewModel {
     var generateError: String?
     private var lastGeneratedTopic = ""
 
-    // Social posting
-    var imageURL = ""
+    // Social posting. The image is no longer a URL the owner types — it's a
+    // photo they picked, uploaded by MarketingComposeViewModel, whose public
+    // URL is handed in at post time.
     var googleCTA: GoogleCallToAction = .none
     var googleCTALink = ""
     var isPosting = false
@@ -380,14 +381,15 @@ final class MarketingViewModel {
         }
     }
 
-    func postToInstagram() async {
+    func postToInstagram(imageURL: String?) async {
         guard hasDraft else { return }
-        guard !imageURL.trimmingCharacters(in: .whitespaces).isEmpty else {
-            postError = "Instagram needs an image — paste a public image link first."
+        let url = (imageURL ?? "").trimmingCharacters(in: .whitespaces)
+        guard !url.isEmpty else {
+            postError = "Instagram needs a photo — add one above first."
             return
         }
         await publish("/mobile/api/marketing/post-to-instagram",
-                      body: PostBody(caption: draft, imageUrl: imageURL, topic: lastGeneratedTopic),
+                      body: PostBody(caption: draft, imageUrl: url, topic: lastGeneratedTopic),
                       platform: "Instagram")
     }
 

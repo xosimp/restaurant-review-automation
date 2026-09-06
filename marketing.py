@@ -342,8 +342,15 @@ def generate_content(content_type: str, topic: str,
     prompt_template = PROMPTS.get(content_type, PROMPTS["instagram_post"])
     p = get_profile_for_restaurant(restaurant_id)
 
-    # Build recent content context to avoid repetition
+    # Avoid repeating recent themes — but never the topic the owner just
+    # asked for. Pressing Regenerate on the same topic used to hand the model
+    # "you have recently generated content about X. Do NOT repeat these
+    # themes" while the instruction above said to write about X, and it would
+    # answer the contradiction instead of the brief ("Since I already have two
+    # prior posts...").
     recent = get_recent_content(restaurant_id, limit=5)
+    asked_for = (topic or "").strip().lower()
+    recent = [r for r in recent if (r.get("topic") or "").strip().lower() != asked_for]
     recent_context = ""
     if recent:
         recent_topics = ", ".join(

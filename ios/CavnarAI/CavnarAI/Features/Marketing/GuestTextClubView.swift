@@ -1,7 +1,7 @@
 import SwiftUI
 
 private enum CampaignField: Hashable, CaseIterable {
-    case topic, draftMessage
+    case topic, link, draftMessage, newsletter
 }
 
 struct GuestTextClubView: View {
@@ -17,6 +17,9 @@ struct GuestTextClubView: View {
                     joinLinkCard(joinURL)
                 }
                 campaignCard
+                newsletterCard
+                historyCard
+                ledgerCard
                 contactsCard
             }
             .padding(20)
@@ -28,7 +31,11 @@ struct GuestTextClubView: View {
         .task {
             await viewModel.load()
             await viewModel.loadJoinLink()
+            await viewModel.loadSegments()
+            await viewModel.loadHistory()
+            await viewModel.loadNewsletter()
         }
+        .onChange(of: viewModel.campaignType) { _, _ in viewModel.campaignTypeChanged() }
         .sheet(isPresented: $showingAddContact) {
             AddGuestContactSheet(viewModel: viewModel)
         }
@@ -120,9 +127,26 @@ struct GuestTextClubView: View {
                 }
             }
 
-            (Text("Goes to your ")
-                + Text("\(viewModel.textableCount)").font(.cavnarNumber(14, weight: 700))
-                + Text(" text-eligible guest\(viewModel.textableCount == 1 ? "" : "s"), between 8:00 AM and 9:00 PM."))
+            if !viewModel.segments.isEmpty {
+                Picker("Audience", selection: $viewModel.selectedSegment) {
+                    ForEach(viewModel.segments) { segment in
+                        Text("\(segment.label) (\(segment.count))").tag(segment.key)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(Color.cavnarEmber)
+
+                if let help = viewModel.selectedSegmentHelp {
+                    Text(help)
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            (Text("Goes to ")
+                + Text("\(viewModel.selectedSegmentCount)").font(.cavnarNumber(14, weight: 700))
+                + Text(" guest\(viewModel.selectedSegmentCount == 1 ? "" : "s"), between 8:00 AM and 9:00 PM. Nobody gets two campaigns inside three days."))
                 .font(.cavnarBody(14))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -130,6 +154,16 @@ struct GuestTextClubView: View {
             TextField("Topic (optional)", text: $viewModel.campaignTopic)
                 .cavnarTextFieldStyle()
                 .focused($focusedField, equals: .topic)
+
+            // draft_campaign_message's own prompt forbids links, so a text
+            // could never carry one — meaning a text club could ask guests to
+            // come back and never learn whether one did. A short link is
+            // appended on send and the taps are counted.
+            TextField("Link to track (optional)", text: $viewModel.linkURL)
+                .cavnarTextFieldStyle()
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .focused($focusedField, equals: .link)
 
             Button {
                 Task { await viewModel.draftCampaign() }
@@ -179,6 +213,141 @@ struct GuestTextClubView: View {
             }
         }
         .cavnarCard()
+    }
+
+    /// `weekly_email` has generated newsletters since this product existed
+    /// with no list to send them to and no way to send one.
+    private var newsletterCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Email newsletter").font(.cavnarBody(14.5, weight: 700)).foregroundStyle(Color.cavnarInk)
+                Spacer()
+                (Text("\(viewModel.subscriberCount)").font(.cavnarNumber(14, weight: 700))
+                    + Text(" subscribed"))
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+            }
+
+            if viewModel.subscriberCount == 0 {
+                Text("Nobody has opted in to email yet. The join page asks for an address, separately from the text club — a guest can say yes to one and not the other.")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Paste in a Weekly email you generated on the Content tab. The subject line block gets stripped out — guests never see the scaffolding.")
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                TextField("Subject (optional)", text: $viewModel.newsletterSubject)
+                    .cavnarTextFieldStyle()
+
+                TextEditor(text: $viewModel.newsletterBody)
+                    .font(.cavnarBody(14.5))
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 110)
+                    .padding(8)
+                    .background(Color.cavnarPaper2)
+                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                    .focused($focusedField, equals: .newsletter)
+
+                Button {
+                    Task { await viewModel.sendNewsletter() }
+                } label: {
+                    if viewModel.isSendingNewsletter {
+                        CavnarShimmerText(text: "Sending…")
+                    } else {
+                        Text("Send to subscribers").frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(CavnarPrimaryButtonStyle())
+                .disabled(viewModel.isSendingNewsletter || viewModel.newsletterBody.isEmpty)
+
+                if let result = viewModel.newsletterResult {
+                    Text(result).font(.cavnarBody(14, weight: 600)).foregroundStyle(Color.cavnarGreen)
+                }
+                if let error = viewModel.newsletterError {
+                    Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                }
+            }
+        }
+        .cavnarCard()
+    }
+
+    /// What has already gone out. This was recorded from the beginning and
+    /// displayed nowhere, so "did we already text about the wine dinner?"
+    /// had no answer.
+    @ViewBuilder
+    private var historyCard: some View {
+        if !viewModel.campaigns.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Campaigns sent").font(.cavnarBody(14.5, weight: 700)).foregroundStyle(Color.cavnarInk)
+                ForEach(viewModel.campaigns) { campaign in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(campaign.whenLabel)
+                                .font(.cavnarBody(14, weight: 700))
+                                .foregroundStyle(Color.cavnarEmber)
+                            Spacer()
+                            (Text("\(campaign.sentCount)").font(.cavnarNumber(14, weight: 700))
+                                + Text(" sent")
+                                + Text(campaign.clicks > 0 ? " · " : "")
+                                + (campaign.clicks > 0
+                                   ? Text("\(campaign.clicks)").font(.cavnarNumber(14, weight: 700)) + Text(" taps")
+                                   : Text("")))
+                                .font(.cavnarBody(14))
+                                .foregroundStyle(Color.cavnarInk3)
+                        }
+                        if let label = campaign.segmentLabel {
+                            Text(label).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                        }
+                        Text(campaign.message)
+                            .font(.cavnarBody(14))
+                            .foregroundStyle(Color.cavnarInk)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.cavnarPaper2)
+                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                }
+            }
+            .cavnarCard()
+        }
+    }
+
+    /// The rules this list runs under, stated rather than assumed.
+    @ViewBuilder
+    private var ledgerCard: some View {
+        if let ledger = viewModel.ledger {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Consent & sending").font(.cavnarBody(14.5, weight: 700)).foregroundStyle(Color.cavnarInk)
+                HStack(spacing: 0) {
+                    ledgerTile("\(ledger.textable)", "Text-eligible", .cavnarGreen)
+                    Divider()
+                    ledgerTile("\(ledger.noConsent)", "No consent", .cavnarEmber2)
+                    Divider()
+                    ledgerTile("\(ledger.unsubscribed)", "Unsubscribed", .cavnarInk3)
+                }
+                (Text("\(ledger.textsThisMonth)").font(.cavnarNumber(14, weight: 700))
+                    + Text(" texts sent this month across ")
+                    + Text("\(ledger.campaignsThisMonth)").font(.cavnarNumber(14, weight: 700))
+                    + Text(" campaigns. Texts go out between \(ledger.window) only, and no guest gets two inside \(ledger.minDaysBetween) days."))
+                    .font(.cavnarBody(14))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .cavnarCard()
+        }
+    }
+
+    private func ledgerTile(_ value: String, _ label: String, _ tint: Color) -> some View {
+        VStack(spacing: 4) {
+            Text(value).font(.cavnarNumber(20, weight: 500)).foregroundStyle(tint)
+            Text(label).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var contactsCard: some View {

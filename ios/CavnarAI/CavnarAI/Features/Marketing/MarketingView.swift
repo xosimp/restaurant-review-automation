@@ -7,13 +7,17 @@ private enum MarketingSubTab: String, CaseIterable, Identifiable {
 }
 
 private enum MarketingContentField: Hashable, CaseIterable {
-    case topic, draft, imageURL, ctaLink
+    case topic, draft, ctaLink
 }
 
 struct MarketingView: View {
     @State private var viewModel = MarketingViewModel()
     @State private var analyticsViewModel = MarketingAnalyticsViewModel()
+    @State private var compose = MarketingComposeViewModel()
     @State private var subTab: MarketingSubTab = .content
+    @State private var showingPreview = false
+    @State private var showingSchedule = false
+    @State private var schedulePlatform = "instagram"
     @FocusState private var focusedField: MarketingContentField?
 
     var body: some View {
@@ -28,7 +32,7 @@ struct MarketingView: View {
                     if subTab == .content {
                         if let stats = viewModel.stats {
                             statsCard(stats)
-                            guestTextClubRow
+                            shelfRows
                             generatorSection
                             calendarSection
                         } else if viewModel.isLoading {
@@ -71,6 +75,25 @@ struct MarketingView: View {
         .task(id: subTab) {
             if subTab == .analytics { await analyticsViewModel.load() }
         }
+        .task {
+            await compose.loadScheduled()
+            await compose.loadDrafts()
+        }
+        .sheet(isPresented: $showingPreview) {
+            MarketingPreviewSheet(
+                platform: viewModel.isGooglePost ? "google" : "instagram",
+                text: viewModel.draft,
+                ctaType: viewModel.isGooglePost ? viewModel.googleCTA.rawValue : nil,
+                viewModel: compose)
+        }
+        .sheet(isPresented: $showingSchedule) {
+            MarketingScheduleSheet(
+                platform: schedulePlatform, text: viewModel.draft, topic: viewModel.topic,
+                contentType: viewModel.selectedType,
+                ctaType: viewModel.isGooglePost ? viewModel.googleCTA.rawValue : nil,
+                ctaURL: viewModel.isGooglePost ? viewModel.googleCTALink : nil,
+                viewModel: compose)
+        }
     }
 
     // MARK: - Header
@@ -95,14 +118,40 @@ struct MarketingView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private var guestTextClubRow: some View {
+    private var shelfRows: some View {
+        VStack(spacing: 10) {
+            shelfRow("Guest Text Club", icon: "message", badge: nil) { GuestTextClubView() }
+            shelfRow("Scheduled", icon: "calendar.badge.clock",
+                     badge: compose.pendingCount > 0 ? "\(compose.pendingCount)" : nil) {
+                MarketingQueueView(viewModel: compose)
+            }
+            shelfRow("Drafts", icon: "square.and.pencil",
+                     badge: compose.drafts.isEmpty ? nil : "\(compose.drafts.count)") {
+                MarketingDraftsView(viewModel: compose) { draft in
+                    viewModel.draft = draft.body
+                    viewModel.hasDraft = true
+                    if let type = draft.contentType { viewModel.selectedType = type }
+                    viewModel.topic = draft.topic ?? ""
+                }
+            }
+        }
+    }
+
+    private func shelfRow<Destination: View>(_ title: String, icon: String, badge: String?,
+                                             @ViewBuilder destination: @escaping () -> Destination) -> some View {
         NavigationLink {
-            GuestTextClubView()
+            destination()
         } label: {
-            HStack {
-                Text("Guest Text Club").font(.cavnarBody(14.5, weight: 600))
+            HStack(spacing: 10) {
+                Image(systemName: icon).foregroundStyle(Color.cavnarEmber)
+                Text(title).font(.cavnarBody(14.5, weight: 600))
                 Spacer()
-                Image(systemName: "chevron.right")
+                if let badge {
+                    Text(badge)
+                        .font(.cavnarNumber(14, weight: 700))
+                        .foregroundStyle(Color.cavnarEmber)
+                }
+                Image(systemName: "chevron.right").foregroundStyle(Color.cavnarInk3)
             }
             .foregroundStyle(Color.cavnarInk)
             .cavnarCard()
@@ -163,7 +212,13 @@ struct MarketingView: View {
 
             if viewModel.hasDraft {
                 draftEditor
+                // Instagram needs a photo; every other destination is better
+                // with one, so it lives with the draft rather than being
+                // buried under the Instagram button the way the old URL
+                // field was.
+                MarketingPhotoPicker(viewModel: compose)
                 draftActions
+                composeActions
                 publishSection
             }
         }
@@ -201,6 +256,45 @@ struct MarketingView: View {
                         .font(.cavnarBody(14))
                         .foregroundStyle(viewModel.isOverLimit ? Color.cavnarRed : Color.cavnarInk3)
                 }
+            }
+        }
+    }
+
+    /// Check it, keep it, or queue it — the three things you could not do
+    /// with a generated post before.
+    private var composeActions: some View {
+        HStack(spacing: 10) {
+            Button {
+                showingPreview = true
+            } label: {
+                Label("Preview", systemImage: "eye").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle())
+
+            Button {
+                Task {
+                    await compose.saveDraft(body: viewModel.draft, topic: viewModel.topic,
+                                            contentType: viewModel.selectedType)
+                }
+            } label: {
+                if compose.isSavingDraft {
+                    CavnarShimmerText(text: "Saving…")
+                } else {
+                    Label("Save draft", systemImage: "tray.and.arrow.down").frame(maxWidth: .infinity)
+                }
+            }
+            .buttonStyle(CavnarSecondaryButtonStyle())
+            .disabled(compose.isSavingDraft)
+
+            if viewModel.canPostSomewhere {
+                Button {
+                    schedulePlatform = viewModel.isGooglePost
+                        ? "google" : (viewModel.channels.instagram ? "instagram" : "facebook")
+                    showingSchedule = true
+                } label: {
+                    Label("Schedule", systemImage: "calendar.badge.clock").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarSecondaryButtonStyle())
             }
         }
     }
@@ -267,20 +361,15 @@ struct MarketingView: View {
 
     @ViewBuilder
     private var socialPublish: some View {
-        if viewModel.channels.instagram {
-            TextField("Image URL (required for Instagram)", text: $viewModel.imageURL)
-                .cavnarTextFieldStyle()
-                .focused($focusedField, equals: .imageURL)
-        }
         HStack(spacing: 10) {
             if viewModel.channels.instagram {
                 Button {
-                    Task { await viewModel.postToInstagram() }
+                    Task { await viewModel.postToInstagram(imageURL: compose.media?.url) }
                 } label: {
                     Text("Post to Instagram").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(CavnarPrimaryButtonStyle())
-                .disabled(viewModel.isPosting || viewModel.isOverLimit)
+                .disabled(viewModel.isPosting || viewModel.isOverLimit || compose.media == nil)
             }
             if viewModel.channels.facebook {
                 Button {

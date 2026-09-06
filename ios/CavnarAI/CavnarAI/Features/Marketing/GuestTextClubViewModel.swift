@@ -71,10 +71,114 @@ final class GuestTextClubViewModel {
     /// with 200 contacts whose campaign reaches 40 needs to see why.
     var textableCount: Int { contacts.filter { $0.status == .textable }.count }
 
+    // Segments, history and the consent picture.
+    var segments: [GuestSegment] = []
+    var segmentDefaults: [String: String] = [:]
+    var selectedSegment = "all"
+    var campaigns: [GuestCampaign] = []
+    var ledger: ConsentLedger?
+    var linkURL = ""
+
+    // Newsletter
+    var subscriberCount = 0
+    var newsletterBody = ""
+    var newsletterSubject = ""
+    var isSendingNewsletter = false
+    var newsletterResult: String?
+    var newsletterError: String?
+
     private let client: APIClient
 
     init(client: APIClient = .shared) {
         self.client = client
+    }
+
+    /// How many this campaign would actually reach, which is the number an
+    /// owner wants before pressing send, not after.
+    var selectedSegmentCount: Int {
+        segments.first { $0.key == selectedSegment }?.count ?? 0
+    }
+
+    var selectedSegmentHelp: String? {
+        segments.first { $0.key == selectedSegment }?.help
+    }
+
+    private struct SegmentsResponse: Decodable {
+        let ok: Bool
+        let segments: [GuestSegment]
+        let defaults: [String: String]
+    }
+
+    func loadSegments() async {
+        guard let response: SegmentsResponse = try? await client.send("/mobile/api/guest-segments") else { return }
+        segments = response.segments
+        segmentDefaults = response.defaults
+        // Picking a tone suggests the audience it was written for, instead of
+        // leaving the two unrelated the way "win-back to everyone" was.
+        if let suggested = response.defaults[campaignType] { selectedSegment = suggested }
+    }
+
+    func campaignTypeChanged() {
+        if let suggested = segmentDefaults[campaignType] { selectedSegment = suggested }
+    }
+
+    private struct HistoryResponse: Decodable {
+        let ok: Bool
+        let campaigns: [GuestCampaign]
+        let ledger: ConsentLedger
+    }
+
+    func loadHistory() async {
+        guard let response: HistoryResponse = try? await client.send("/mobile/api/guest-campaigns") else { return }
+        campaigns = response.campaigns
+        ledger = response.ledger
+    }
+
+    private struct NewsletterStatus: Decodable {
+        let ok: Bool
+        let subscribers: Int
+    }
+
+    func loadNewsletter() async {
+        let response: NewsletterStatus? = try? await client.send("/mobile/api/guest-newsletter")
+        subscriberCount = response?.subscribers ?? 0
+    }
+
+    private struct NewsletterBody: Encodable {
+        let body: String
+        let subject: String?
+    }
+
+    private struct NewsletterResponse: Decodable {
+        let ok: Bool
+        let sent: Int?
+        let total: Int?
+        let subject: String?
+        let error: String?
+    }
+
+    func sendNewsletter() async {
+        isSendingNewsletter = true
+        newsletterError = nil
+        newsletterResult = nil
+        defer { isSendingNewsletter = false }
+        do {
+            let response: NewsletterResponse = try await client.send(
+                "/mobile/api/guest-newsletter", method: .post,
+                body: NewsletterBody(body: newsletterBody,
+                                     subject: newsletterSubject.isEmpty ? nil : newsletterSubject))
+            if response.ok {
+                Haptic.success()
+                newsletterResult = "Sent to \(response.sent ?? 0) of \(response.total ?? 0)"
+                newsletterBody = ""
+            } else {
+                newsletterError = response.error ?? "Couldn't send that newsletter."
+            }
+        } catch let error as APIClient.APIError {
+            newsletterError = error.message
+        } catch {
+            newsletterError = "Couldn't send that newsletter."
+        }
     }
 
     private struct ContactsResponse: Decodable {
@@ -216,6 +320,13 @@ final class GuestTextClubViewModel {
 
     private struct SendBody: Encodable {
         let message: String
+        let segment: String
+        let linkUrl: String?
+
+        enum CodingKeys: String, CodingKey {
+            case message, segment
+            case linkUrl = "link_url"
+        }
     }
 
     private struct SendResponse: Decodable {
@@ -231,12 +342,16 @@ final class GuestTextClubViewModel {
         defer { isSending = false }
         do {
             let response: SendResponse = try await client.send(
-                "/mobile/api/guest-campaign/send", method: .post, body: SendBody(message: draftMessage)
+                "/mobile/api/guest-campaign/send", method: .post,
+                body: SendBody(message: draftMessage, segment: selectedSegment,
+                               linkUrl: linkURL.isEmpty ? nil : linkURL)
             )
             sentCount = response.sent
             if response.ok {
                 Haptic.success()
                 didSend = true
+                await loadHistory()
+                await load()
             } else {
                 campaignError = response.error ?? "Couldn't send the campaign."
             }

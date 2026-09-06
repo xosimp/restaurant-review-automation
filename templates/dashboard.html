@@ -2983,6 +2983,7 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
   <div style="display:flex;justify-content:flex-end;margin-bottom:20px">
     <div style="display:inline-flex;border:1px solid var(--paper3);border-radius:8px;overflow:hidden;background:var(--paper2)">
       <button id="mkt-tab-content-btn"   onclick="switchMktTab('content')"   class="rv-tab-active" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;transition:background .15s,color .15s">Content</button>
+      <button id="mkt-tab-queue-btn" onclick="switchMktTab('queue')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Scheduled</button>
       <button id="mkt-tab-analytics-btn" onclick="switchMktTab('analytics')" style="border:none;padding:6px 18px;font-size:12px;font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif;background:transparent;color:var(--ink3);transition:background .15s,color .15s">Analytics</button>
     </div>
   </div>
@@ -3024,9 +3025,14 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     <div id="sms-counter" style="display:none;position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--ink3);pointer-events:none;user-select:none;background:rgba(255,255,255,0.9);padding:1px 6px;border-radius:8px"><span id="sms-char-count">0</span>/160<span id="sms-over" style="color:var(--red);display:none"> over</span></div>
   </div>
   <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;align-items:center">
-    <div id="ig-image-row" style="display:none;position:relative;flex:1;min-width:220px">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="position:absolute;left:14px;top:50%;transform:translateY(-50%);pointer-events:none" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="5" stroke="#e1306c" stroke-width="1.8"/><circle cx="12" cy="12" r="4.2" stroke="#e1306c" stroke-width="1.8"/><circle cx="17.2" cy="6.8" r="1.1" fill="#e1306c"/></svg>
-      <input type="text" id="ig-image-url" class="topic-input" placeholder="Image URL — required for Instagram" style="padding-left:36px;width:100%">
+    <!-- The photo. This was a text field asking for a public image URL,
+         which is not something an owner has for a picture on their phone. -->
+    <div id="mkt-photo-row" style="display:none;align-items:center;gap:10px;flex:1;min-width:240px">
+      <img id="mkt-photo-thumb" alt="" style="display:none;width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid var(--paper3)">
+      <input type="file" id="mkt-photo-input" accept="image/*" style="display:none" onchange="uploadMktPhoto(this)">
+      <button class="btn-secondary" style="font-size:11px;padding:6px 12px" onclick="document.getElementById('mkt-photo-input').click()" id="mkt-photo-btn">Add a photo</button>
+      <button class="btn-secondary" style="font-size:11px;padding:6px 12px;display:none" onclick="clearMktPhoto()" id="mkt-photo-clear">Remove</button>
+      <span id="mkt-photo-status" style="font-size:11px;color:var(--ink3)"></span>
     </div>
     <div id="gg-cta-row" style="display:none;gap:6px;flex:1;min-width:260px">
       <select id="gg-cta-type" class="topic-input" style="flex:0 0 150px">
@@ -3042,6 +3048,9 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
     </div>
     <button class="btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('mkoutput').innerText||document.getElementById('mkoutput').textContent).then(function(){toast('Copied','success');})">Copy</button>
     <button class="btn-primary" onclick="genContent()">Regenerate <span style="font-size:15px;margin-left:6px">↺</span></button>
+    <button class="btn-secondary" style="padding:8px 14px;font-size:12px" onclick="openMktPreview()">Preview</button>
+    <button class="btn-secondary" style="padding:8px 14px;font-size:12px" onclick="saveMktDraft()" id="mkt-save-draft-btn">Save draft</button>
+    <button class="btn-secondary" style="padding:8px 14px;font-size:12px" onclick="openMktSchedule()">Schedule</button>
     <button class="btn-primary btn-instagram" id="ig-post-btn" onclick="postToInstagram()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>Post to Instagram</button>
     <button class="btn-primary" id="gg-post-btn" onclick="postToGoogle()" style="display:none;background:#4285f4"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3a3 3 0 110 6 3 3 0 010-6zm0 14.2a7.2 7.2 0 01-6-3.22c.03-1.99 4-3.08 6-3.08s5.97 1.09 6 3.08a7.2 7.2 0 01-6 3.22z"/></svg>Post to Google</button>
     <button class="btn-primary btn-facebook" id="fb-post-btn" onclick="postToFacebook()" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="white" style="vertical-align:-2px;margin-right:5px"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>Post to Facebook</button>
@@ -3113,28 +3122,114 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
 
     <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">Send a campaign</div>
     <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-      <select id="guest-campaign-type" class="topic-input" style="flex:1;min-width:140px">
+      <select id="guest-campaign-type" class="topic-input" style="flex:1;min-width:140px" onchange="guestTypeChanged()">
         <option value="win_back">Win-back</option>
         <option value="event">Event / special</option>
         <option value="loyalty">Loyalty thank-you</option>
         <option value="general">General</option>
       </select>
+      <!-- Who it goes to. "Win-back" used to be a TONE the copy was written
+           in, never an AUDIENCE it was sent to. -->
+      <select id="guest-campaign-segment" class="topic-input" style="flex:1;min-width:180px" onchange="renderSegmentHelp()"></select>
       <input type="text" id="guest-campaign-topic" class="topic-input" placeholder="Optional details (e.g. half-price wine Wednesdays)" style="flex:2;min-width:200px">
       <button onclick="generateGuestCampaign()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-generate-btn">Generate</button>
     </div>
+    <div id="guest-segment-help" style="font-size:11px;color:var(--ink3);line-height:1.55;margin-bottom:10px"></div>
+    <!-- draft_campaign_message's own prompt forbids links, so a text could
+         never carry one — meaning a text club could ask guests to come back
+         and never learn whether one did. -->
+    <input type="text" id="guest-campaign-link" class="topic-input" placeholder="Link to track (optional) — e.g. your menu or booking page" style="width:100%;box-sizing:border-box;margin-bottom:10px">
     <textarea id="guest-campaign-message" rows="3" placeholder="Generated message will appear here — edit before sending" maxlength="300" style="width:100%;padding:10px 12px;border:1px solid var(--paper3);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:var(--paper2);outline:none;resize:vertical;margin-bottom:10px;box-sizing:border-box"></textarea>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <button onclick="sendGuestCampaign()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-send-btn">Send to consented guests</button>
+      <button onclick="sendGuestCampaign()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-send-btn">Send to this audience</button>
       <span id="guest-campaign-status" style="font-size:12px;display:none"></span>
+    </div>
+
+    <!-- What has already gone out. guest_campaigns has recorded every send
+         since the table existed and nothing ever displayed it. -->
+    <div id="guest-history-wrap" style="display:none;margin-top:18px;padding-top:16px;border-top:1px solid var(--paper3)">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:8px">Campaigns sent</div>
+      <div id="guest-history-list"></div>
+    </div>
+
+    <!-- The rules this list runs under, stated rather than assumed. -->
+    <div id="guest-ledger" style="display:none;margin-top:16px;padding-top:14px;border-top:1px solid var(--paper3);font-size:11.5px;color:var(--ink3);line-height:1.6"></div>
+  </div>
+
+  <!-- The newsletter channel. `weekly_email` has generated newsletters since
+       this product existed with no list and no way to send one. -->
+  <div class="acct-card no-accent" style="padding:18px 22px;margin-top:20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div style="font-size:13px;font-weight:700;color:var(--ink)">Email newsletter</div>
+      <span id="guest-newsletter-count" style="font-size:11px;color:var(--ink3)"></span>
+    </div>
+    <p style="font-size:12px;color:var(--ink3);line-height:1.6;margin:0 0 12px">Paste in a Weekly email you generated above. The subject-line block gets stripped out — guests never see the scaffolding. The join page asks for an address separately from the text club, so a guest can say yes to one and not the other.</p>
+    <input type="text" id="guest-newsletter-subject" class="topic-input" placeholder="Subject (optional — taken from the generated copy if blank)" style="width:100%;box-sizing:border-box;margin-bottom:10px">
+    <textarea id="guest-newsletter-body" rows="5" placeholder="Newsletter text" style="width:100%;padding:10px 12px;border:1px solid var(--paper3);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:13px;color:var(--ink);background:var(--paper2);outline:none;resize:vertical;margin-bottom:10px;box-sizing:border-box"></textarea>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button onclick="sendGuestNewsletter()" class="btn-primary" style="padding:8px 14px;font-size:12px" id="guest-newsletter-btn">Send to subscribers</button>
+      <span id="guest-newsletter-status" style="font-size:12px;display:none"></span>
     </div>
   </div>
 
-  </div><!-- /mkt-tab-content -->
+  <!-- Drafts. Generated copy used to survive exactly as long as the screen
+       it was on — write a caption, get called to the floor, come back, gone. -->
+  <div class="data-panel" style="margin-top:20px;padding:16px 20px;white-space:normal">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding-left:4px">
+      <div style="font-size:13px;font-weight:700;color:var(--ink)">Saved drafts</div>
+      <button class="btn-primary" style="font-size:10px;padding:5px 10px" onclick="loadMktDrafts()">Refresh</button>
+    </div>
+    <div id="mkt-drafts-list" style="padding:0 4px"><div class="no-data" style="padding:14px 0;font-size:12px;color:var(--ink3);font-style:italic">Nothing saved yet.</div></div>
+  </div>
+
+    </div><!-- /mkt-tab-content -->
+
+  <!-- Scheduled sub-tab: the queue. Everything this module did was
+       generate-now/post-now, and an owner does admin at 11pm. -->
+  <div id="mkt-tab-queue" style="display:none">
+    <div style="text-align:center;padding:8px 0 24px">
+      <div class="name-underlined-slow" style="font-family:'Clash Display',sans-serif;font-size:36px;color:var(--ink)">What's going out, and when</div>
+    </div>
+    <div id="mkt-queue-list"><div class="no-data" style="padding:24px;text-align:center;color:var(--ink3);font-size:13px;font-style:italic">Nothing queued. Write a post on the Content tab, then choose Schedule.</div></div>
+  </div>
 
   <!-- Analytics sub-tab: real Meta post performance, unlocked now that the app is Meta-approved -->
   <div id="mkt-tab-analytics" style="display:none">
     <div style="text-align:center;padding:8px 0 24px">
       <div class="name-underlined-slow" style="font-family:'Clash Display',sans-serif;font-size:36px;color:var(--ink)">How your posts are performing</div>
+    </div>
+
+    <!-- A period, against the period before it. The all-time totals below
+         are a number, not a metric: no denominator, no trend. -->
+    <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+      <select id="mkt-window-days" class="topic-input" style="width:auto;font-size:12px;padding:6px 10px" onchange="loadMktWindow()">
+        <option value="7">Last 7 days</option>
+        <option value="30" selected>Last 30 days</option>
+        <option value="90">Last 90 days</option>
+      </select>
+    </div>
+    <div id="mkt-window-body" style="display:none;margin-bottom:16px">
+      <div class="intel-stat-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div class="rv-stat-cell" style="padding:18px 16px">
+          <div class="rv-stat-n" id="mkt-win-reach" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(24px,2.6vw,32px);font-weight:500;letter-spacing:-.02em;line-height:1">—</div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Reach <span id="mkt-win-reach-d" style="font-family:'Space Grotesk',sans-serif"></span></div>
+        </div>
+        <div class="rv-stat-cell" style="padding:18px 16px">
+          <div class="rv-stat-n" id="mkt-win-eng" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(24px,2.6vw,32px);font-weight:500;letter-spacing:-.02em;line-height:1">—</div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Engagement <span id="mkt-win-eng-d" style="font-family:'Space Grotesk',sans-serif"></span></div>
+        </div>
+        <div class="rv-stat-cell" style="padding:18px 16px">
+          <div class="rv-stat-n" id="mkt-win-rate" style="font-family:'Space Grotesk',sans-serif;font-size:clamp(24px,2.6vw,32px);font-weight:500;letter-spacing:-.02em;line-height:1">—</div>
+          <div style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2);margin-top:10px">Engagement rate</div>
+        </div>
+      </div>
+      <div id="mkt-win-platforms" style="margin-top:12px"></div>
+    </div>
+
+    <!-- What posts did to the till. Correlational, and said so. -->
+    <div class="card" id="mkt-attr-card" style="display:none;margin-bottom:16px;padding:16px 18px">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.14em;color:var(--ember);margin-bottom:8px">What posts did to sales</div>
+      <div id="mkt-attr-body" style="font-size:12px;color:var(--ink3);line-height:1.6"></div>
     </div>
 
     <div id="mkt-perf-loading" class="intel-stat-row" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
@@ -3175,6 +3270,38 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       </div>
     </div>
   </div><!-- /mkt-tab-analytics -->
+
+  <!-- Preview: what the post will look like where it lands. -->
+  <div id="mkt-preview-modal" style="display:none;position:fixed;inset:0;z-index:900;background:rgba(14,12,10,.6);align-items:center;justify-content:center;padding:20px">
+    <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:12px;max-width:460px;width:100%;max-height:85vh;overflow:auto;padding:22px 24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-size:14px;font-weight:700;color:var(--ink)">Preview</div>
+        <button onclick="closeMktPreview()" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;line-height:1;padding:0">&times;</button>
+      </div>
+      <div id="mkt-preview-body"></div>
+    </div>
+  </div>
+
+  <!-- Schedule: an owner does admin at 11pm for a post that belongs on
+       Tuesday at lunch. -->
+  <div id="mkt-schedule-modal" style="display:none;position:fixed;inset:0;z-index:900;background:rgba(14,12,10,.6);align-items:center;justify-content:center;padding:20px">
+    <div style="background:var(--paper);border:1px solid var(--paper3);border-radius:12px;max-width:420px;width:100%;padding:22px 24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="font-size:14px;font-weight:700;color:var(--ink)">Schedule this post</div>
+        <button onclick="closeMktSchedule()" style="background:none;border:none;cursor:pointer;color:var(--ink3);font-size:18px;line-height:1;padding:0">&times;</button>
+      </div>
+      <p style="font-size:11.5px;color:var(--ink3);line-height:1.6;margin:0 0 16px">Cavnar AI publishes it for you. Times are your restaurant's own clock.</p>
+      <div class="slabel" style="margin-bottom:4px">Where</div>
+      <select id="mkt-schedule-platform" class="topic-input" style="width:100%;box-sizing:border-box;margin-bottom:14px"></select>
+      <div class="slabel" style="margin-bottom:4px">When</div>
+      <input type="datetime-local" id="mkt-schedule-when" class="topic-input" style="width:100%;box-sizing:border-box">
+      <div style="display:flex;align-items:center;gap:10px;margin-top:18px">
+        <button class="btn-primary" onclick="confirmMktSchedule()" style="padding:8px 16px;font-size:12px">Schedule it</button>
+        <button class="btn-secondary" onclick="closeMktSchedule()" style="padding:8px 16px;font-size:12px">Cancel</button>
+        <span id="mkt-schedule-status" style="font-size:12px;color:var(--red);display:none"></span>
+      </div>
+    </div>
+  </div>
 
   <!-- Brand voice — the three fields that steer every generated piece. This
        was a mailto to Will for something the same client could already edit
@@ -4900,17 +5027,24 @@ window.switchIntelTab = function(tab) {
   if (isComp) { animateBars('panel-competitor'); animateStatNums('panel-competitor'); }
 };
 
+// Three panels now, not two — the queue is its own place because "what is
+// going out and when" is a different question from "what should I write".
 window.switchMktTab = function(tab) {
-  var isContent = tab === 'content';
-  var contentEl = document.getElementById('mkt-tab-content');
-  var analyticsEl = document.getElementById('mkt-tab-analytics');
-  if (contentEl) contentEl.style.display = isContent ? '' : 'none';
-  if (analyticsEl) analyticsEl.style.display = isContent ? 'none' : '';
-  var tc = document.getElementById('mkt-tab-content-btn');
-  var ta = document.getElementById('mkt-tab-analytics-btn');
-  if (tc) { tc.classList.toggle('rv-tab-active', isContent); tc.style.background = isContent ? '' : 'transparent'; tc.style.color = isContent ? '' : 'var(--ink3)'; }
-  if (ta) { ta.classList.toggle('rv-tab-active', !isContent); ta.style.background = isContent ? 'transparent' : ''; ta.style.color = isContent ? 'var(--ink3)' : ''; }
-  if (!isContent && !mktPerfLoaded) { mktPerfLoaded = true; loadMktPerformance(); }
+  var panels = {content: 'mkt-tab-content', queue: 'mkt-tab-queue', analytics: 'mkt-tab-analytics'};
+  var buttons = {content: 'mkt-tab-content-btn', queue: 'mkt-tab-queue-btn', analytics: 'mkt-tab-analytics-btn'};
+  for (var key in panels) {
+    var panel = document.getElementById(panels[key]);
+    if (panel) panel.style.display = (key === tab) ? '' : 'none';
+    var btn = document.getElementById(buttons[key]);
+    if (btn) {
+      btn.classList.toggle('rv-tab-active', key === tab);
+      btn.style.background = (key === tab) ? '' : 'transparent';
+      btn.style.color = (key === tab) ? '' : 'var(--ink3)';
+    }
+  }
+  if (tab === 'analytics' && !mktPerfLoaded) { mktPerfLoaded = true; loadMktPerformance(); }
+  if (tab === 'analytics') { loadMktWindow(); loadMktAttribution(); }
+  if (tab === 'queue') loadMktQueue();
 };
 
 function loadSentimentTrend(){
@@ -5933,8 +6067,11 @@ function postToInstagram(){
   if(overlay)overlay.style.display='flex';
   if(btn){btn.style.opacity='0.6';btn.disabled=true;}
   var _igTopic=window._lastPostedTopic||'';
-  var igImgEl=document.getElementById('ig-image-url');
-  var igImgUrl=igImgEl?(igImgEl.value||'').trim():'';
+  var igImgUrl=window._mktPhotoUrl||'';
+  if(!igImgUrl){toast('Instagram needs a photo — add one first','warning');
+    if(overlay)overlay.style.display='none';
+    if(btn){btn.style.opacity='1';btn.disabled=false;}
+    return;}
   fetch('/api/post-to-instagram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({caption:content,topic:_igTopic,image_url:igImgUrl})})
     .then(function(r){return r.json();}).then(function(d){
       if(overlay)overlay.style.display='none';
@@ -5970,6 +6107,292 @@ function postToFacebook(){
       toast('Post failed — check connection','error');
     });
 }
+// ── Photos ──────────────────────────────────────────────────────────────────
+// Instagram requires an image, and the only way to give it one used to be a
+// text field asking for a public URL — which nobody has for a photo on their
+// phone or their desktop.
+window._mktPhotoId = null;
+window._mktPhotoUrl = '';
+function uploadMktPhoto(input){
+  var file = input.files && input.files[0];
+  if(!file) return;
+  var status = document.getElementById('mkt-photo-status');
+  if(status) status.textContent = 'Uploading…';
+  var form = new FormData();
+  form.append('file', file);
+  fetch('/api/marketing/media', {method:'POST', body: form})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      input.value = '';
+      if(!d.ok){ if(status) status.textContent = d.error || 'Upload failed'; return; }
+      window._mktPhotoId = d.media_id;
+      window._mktPhotoUrl = d.url;
+      var thumb = document.getElementById('mkt-photo-thumb');
+      if(thumb){ thumb.src = d.url; thumb.style.display = 'block'; }
+      document.getElementById('mkt-photo-clear').style.display = 'inline-block';
+      document.getElementById('mkt-photo-btn').textContent = 'Change photo';
+      if(status) status.textContent = '';
+    }).catch(function(){ if(status) status.textContent = 'Upload failed'; });
+}
+function clearMktPhoto(){
+  window._mktPhotoId = null;
+  window._mktPhotoUrl = '';
+  var thumb = document.getElementById('mkt-photo-thumb');
+  if(thumb){ thumb.src = ''; thumb.style.display = 'none'; }
+  document.getElementById('mkt-photo-clear').style.display = 'none';
+  document.getElementById('mkt-photo-btn').textContent = 'Add a photo';
+  document.getElementById('mkt-photo-status').textContent = '';
+}
+
+function _mktBody(){
+  var el = document.getElementById('mkoutput');
+  var text = (el.innerText || el.textContent || '').trim();
+  return (text === 'Select a type and click Generate.') ? '' : text;
+}
+function _mktPlatform(){
+  return selCt === 'google_promo' ? 'google' : 'instagram';
+}
+
+// ── Preview ─────────────────────────────────────────────────────────────────
+// You used to find out a caption was over the limit from Meta, after pressing
+// Post — and a draft that still had both generated options in it went out with
+// the labels attached.
+function openMktPreview(){
+  var body = _mktBody();
+  if(!body) return toast('Generate content first','warning');
+  var modal = document.getElementById('mkt-preview-modal');
+  var out = document.getElementById('mkt-preview-body');
+  modal.style.display = 'flex';
+  out.innerHTML = '<div style="font-size:12px;color:var(--ink3)">Checking…</div>';
+  fetch('/api/marketing/preview', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({platform: _mktPlatform(), body: body, media_id: window._mktPhotoId,
+                          cta_type: (document.getElementById('gg-cta-type')||{}).value || ''})})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var html = '';
+      if(d.ready){
+        html += '<div style="font-size:12px;font-weight:600;color:#2d6a4f;margin-bottom:12px">Ready to post</div>';
+      } else {
+        html += '<div style="margin-bottom:12px">';
+        for(var i=0;i<d.problems.length;i++){
+          html += '<div style="font-size:12px;color:var(--red);margin-bottom:5px">' + _escHtml(d.problems[i]) + '</div>';
+        }
+        html += '</div>';
+      }
+      html += '<div style="border:1px solid var(--paper3);border-radius:10px;overflow:hidden;background:var(--paper2)">';
+      if(d.image_url) html += '<img src="' + d.image_url + '" alt="" style="width:100%;max-height:260px;object-fit:cover;display:block">';
+      html += '<div style="padding:12px;font-size:13px;line-height:1.6;color:var(--ink);white-space:pre-wrap">' + _escHtml(d.visible_before_more) + '</div>';
+      if(d.truncated) html += '<div style="padding:0 12px 12px;font-size:12px;color:var(--ink3)">… more <span style="opacity:.8">— everything after this is hidden until someone taps.</span></div>';
+      html += '</div>';
+      html += '<div style="display:flex;gap:18px;margin-top:14px;font-size:12px;color:var(--ink3)">'
+           + '<span><strong style="font-family:\'Space Grotesk\',sans-serif;color:' + (d.over_limit ? 'var(--red)' : 'var(--ink)') + '">' + d.characters + '</strong> characters</span>'
+           + '<span><strong style="font-family:\'Space Grotesk\',sans-serif;color:var(--ink)">' + (d.limit || '—') + '</strong> limit</span>'
+           + '<span><strong style="font-family:\'Space Grotesk\',sans-serif;color:var(--ink)">' + d.hashtag_count + '</strong> hashtags</span>'
+           + '</div>';
+      out.innerHTML = html;
+    }).catch(function(){ out.innerHTML = '<div style="font-size:12px;color:var(--red)">Could not build a preview.</div>'; });
+}
+function closeMktPreview(){ document.getElementById('mkt-preview-modal').style.display = 'none'; }
+
+// ── Drafts ──────────────────────────────────────────────────────────────────
+function saveMktDraft(){
+  var body = _mktBody();
+  if(!body) return toast('Generate content first','warning');
+  var btn = document.getElementById('mkt-save-draft-btn');
+  if(btn){ btn.disabled = true; btn.style.opacity = '0.6'; }
+  fetch('/api/marketing/drafts', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({body: body, topic: document.getElementById('mktopic').value.trim(),
+                          content_type: selCt, media_id: window._mktPhotoId})})
+    .then(function(r){ return r.json(); }).then(function(d){
+      if(btn){ btn.disabled = false; btn.style.opacity = ''; }
+      if(d.ok){ toast('Draft saved','success'); loadMktDrafts(); }
+      else toast(d.error || 'Could not save','error');
+    }).catch(function(){ if(btn){ btn.disabled = false; btn.style.opacity = ''; } toast('Could not save','error'); });
+}
+function loadMktDrafts(){
+  var list = document.getElementById('mkt-drafts-list');
+  if(!list) return;
+  fetch('/api/marketing/drafts').then(function(r){ return r.json(); }).then(function(d){
+    if(!d.ok || !d.drafts.length){
+      list.innerHTML = '<div class="no-data" style="padding:14px 0;font-size:12px;color:var(--ink3);font-style:italic">Nothing saved yet.</div>';
+      return;
+    }
+    var html = '';
+    for(var i=0;i<d.drafts.length;i++){
+      var x = d.drafts[i];
+      var approved = x.status === 'approved';
+      html += '<div style="padding:11px 0;border-bottom:1px solid var(--paper3)">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
+        + '<span style="font-size:12px;font-weight:600;color:var(--ink)">' + _escHtml(x.topic || 'Untitled') + '</span>'
+        + '<span style="font-size:11px;font-weight:700;color:' + (approved ? '#2d6a4f' : 'var(--ember2)') + '">' + (approved ? 'Approved' : 'Draft') + '</span>'
+        + '</div>'
+        + '<div style="font-size:12px;color:var(--ink3);line-height:1.5;margin-top:3px;max-height:38px;overflow:hidden">' + _escHtml(x.body) + '</div>'
+        + '<div style="display:flex;gap:14px;margin-top:6px">'
+        + '<button onclick="useMktDraft(' + x.id + ')" style="background:none;border:none;cursor:pointer;font-family:\'Apfel Grotezk\',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0">Open</button>'
+        + (approved ? '' : '<button onclick="approveMktDraft(' + x.id + ')" style="background:none;border:none;cursor:pointer;font-family:\'Apfel Grotezk\',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:0">Approve</button>')
+        + '<button onclick="deleteMktDraft(' + x.id + ')" style="background:none;border:none;cursor:pointer;font-family:\'Apfel Grotezk\',sans-serif;font-size:11px;font-weight:600;color:var(--red);padding:0">Delete</button>'
+        + '</div></div>';
+    }
+    list.innerHTML = html;
+    window._mktDrafts = d.drafts;
+  }).catch(function(){});
+}
+function useMktDraft(id){
+  var drafts = window._mktDrafts || [];
+  for(var i=0;i<drafts.length;i++){
+    if(drafts[i].id === id){
+      document.getElementById('mkoutput').textContent = drafts[i].body;
+      document.getElementById('mktopic').value = drafts[i].topic || '';
+      updateCharCount();
+      document.getElementById('mkoutput').scrollIntoView({behavior:'smooth', block:'center'});
+      return;
+    }
+  }
+}
+function approveMktDraft(id){
+  fetch('/api/marketing/drafts/' + id + '/approve', {method:'POST'})
+    .then(function(r){ return r.json(); }).then(function(d){
+      if(d.ok){ toast('Approved','success'); loadMktDrafts(); }
+      else toast(d.error || 'Could not approve','error');
+    }).catch(function(){});
+}
+function deleteMktDraft(id){
+  fetch('/api/marketing/drafts/' + id, {method:'DELETE'})
+    .then(function(){ loadMktDrafts(); }).catch(function(){});
+}
+
+// ── Scheduling ──────────────────────────────────────────────────────────────
+function openMktSchedule(){
+  var body = _mktBody();
+  if(!body) return toast('Generate content first','warning');
+  var modal = document.getElementById('mkt-schedule-modal');
+  modal.style.display = 'flex';
+  var when = document.getElementById('mkt-schedule-when');
+  var d = new Date(Date.now() + 3600000);
+  // datetime-local wants the LOCAL wall clock, which is exactly what the
+  // backend stores — an owner picking 11am means 11am in their dining room.
+  var pad = function(n){ return (n < 10 ? '0' : '') + n; };
+  when.value = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+             + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  var sel = document.getElementById('mkt-schedule-platform');
+  sel.innerHTML = '';
+  var options = selCt === 'google_promo'
+    ? (_ggConnected ? [['google','Google Business']] : [])
+    : [].concat(_igConnected ? [['instagram','Instagram']] : [], _fbConnected ? [['facebook','Facebook']] : []);
+  for(var i=0;i<options.length;i++){
+    var o = document.createElement('option');
+    o.value = options[i][0]; o.textContent = options[i][1];
+    sel.appendChild(o);
+  }
+  document.getElementById('mkt-schedule-status').style.display = options.length ? 'none' : 'block';
+  document.getElementById('mkt-schedule-status').textContent = options.length ? '' : 'Connect an account first — Settings → Connections.';
+}
+function closeMktSchedule(){ document.getElementById('mkt-schedule-modal').style.display = 'none'; }
+function confirmMktSchedule(){
+  var status = document.getElementById('mkt-schedule-status');
+  var platform = (document.getElementById('mkt-schedule-platform')||{}).value;
+  if(!platform){ status.style.display='block'; status.textContent='Pick a destination.'; return; }
+  var when = document.getElementById('mkt-schedule-when').value;
+  fetch('/api/marketing/schedule', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({platform: platform, body: _mktBody(), scheduled_for: when,
+                          topic: document.getElementById('mktopic').value.trim(),
+                          content_type: selCt, media_id: window._mktPhotoId,
+                          cta_type: (document.getElementById('gg-cta-type')||{}).value || '',
+                          cta_url: ((document.getElementById('gg-cta-url')||{}).value || '').trim()})})
+    .then(function(r){ return r.json(); }).then(function(d){
+      if(d.ok){ toast('Scheduled','success'); closeMktSchedule(); loadMktQueue(); }
+      else { status.style.display='block'; status.textContent = d.error || 'Could not schedule.'; }
+    }).catch(function(){ status.style.display='block'; status.textContent='Could not schedule.'; });
+}
+function loadMktQueue(){
+  var list = document.getElementById('mkt-queue-list');
+  if(!list) return;
+  fetch('/api/marketing/schedule').then(function(r){ return r.json(); }).then(function(d){
+    if(!d.ok || !d.posts.length){
+      list.innerHTML = '<div class="no-data" style="padding:24px;text-align:center;color:var(--ink3);font-size:13px;font-style:italic">Nothing queued. Write a post on the Content tab, then choose Schedule.</div>';
+      return;
+    }
+    var colors = {posted:'#2d6a4f', failed:'var(--red)', cancelled:'var(--ink3)', scheduled:'var(--ember)'};
+    var labels = {posted:'Posted', failed:"Didn't go out", cancelled:'Cancelled', scheduled:'Scheduled'};
+    var html = '';
+    for(var i=0;i<d.posts.length;i++){
+      var p = d.posts[i];
+      html += '<div class="acct-card no-accent" style="padding:14px 18px;margin-bottom:10px">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
+        + '<span style="font-size:12px;font-weight:700;color:var(--ember)">' + _escHtml(p.scheduled_for.replace('T',' ').slice(0,16)) + '</span>'
+        + '<span style="font-size:11px;font-weight:700;color:' + (colors[p.status]||'var(--ink3)') + '">' + (labels[p.status]||p.status) + '</span>'
+        + '</div>'
+        + '<div style="font-size:11px;color:var(--ink3);margin-top:2px">' + _escHtml(p.platform) + '</div>'
+        + '<div style="font-size:13px;color:var(--ink);line-height:1.55;margin-top:6px;max-height:60px;overflow:hidden">' + _escHtml(p.body) + '</div>'
+        + (p.error ? '<div style="font-size:11px;color:var(--red);margin-top:5px">' + _escHtml(p.error) + '</div>' : '')
+        + (p.status === 'scheduled' ? '<button onclick="cancelMktScheduled(' + p.id + ')" style="background:none;border:none;cursor:pointer;font-family:\'Apfel Grotezk\',sans-serif;font-size:11px;font-weight:600;color:var(--ember);padding:6px 0 0">Cancel this post</button>' : '')
+        + '</div>';
+    }
+    list.innerHTML = html;
+  }).catch(function(){});
+}
+function cancelMktScheduled(id){
+  fetch('/api/marketing/schedule/' + id, {method:'DELETE'})
+    .then(function(r){ return r.json(); }).then(function(d){
+      if(d.ok){ toast('Cancelled','success'); loadMktQueue(); }
+      else toast(d.error || 'Could not cancel','error');
+    }).catch(function(){});
+}
+
+// ── Windowed analytics + attribution ────────────────────────────────────────
+function loadMktWindow(){
+  var days = (document.getElementById('mkt-window-days')||{}).value || 30;
+  fetch('/api/marketing/performance-window?days=' + days).then(function(r){ return r.json(); }).then(function(d){
+    if(!d.ok) return;
+    document.getElementById('mkt-window-body').style.display = 'block';
+    document.getElementById('mkt-win-reach').textContent = (d.reach||0).toLocaleString();
+    document.getElementById('mkt-win-eng').textContent = (d.engagement||0).toLocaleString();
+    document.getElementById('mkt-win-rate').textContent = (d.engagement_rate||0) + '%';
+    var delta = function(el, v){
+      var node = document.getElementById(el);
+      if(!node) return;
+      if(v === null || typeof v === 'undefined'){ node.textContent = ''; return; }
+      node.textContent = (v > 0 ? '+' : '') + Math.round(v) + '%';
+      node.style.color = v >= 0 ? '#2d6a4f' : 'var(--red)';
+    };
+    delta('mkt-win-reach-d', d.change.reach);
+    delta('mkt-win-eng-d', d.change.engagement);
+    var plats = document.getElementById('mkt-win-platforms');
+    var html = '';
+    for(var i=0;i<(d.by_platform||[]).length;i++){
+      var p = d.by_platform[i];
+      html += '<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--paper3);font-size:12px">'
+        + '<span style="color:var(--ink);font-weight:600;text-transform:capitalize">' + _escHtml(p.platform) + '</span>'
+        + '<span style="color:var(--ink3);font-family:\'Space Grotesk\',sans-serif">' + p.posts + ' posts · ' + p.reach.toLocaleString() + ' reach · ' + p.engagement_rate + '%</span>'
+        + '</div>';
+    }
+    plats.innerHTML = html;
+  }).catch(function(){});
+}
+function loadMktAttribution(){
+  fetch('/api/marketing/attribution').then(function(r){ return r.json(); }).then(function(d){
+    var card = document.getElementById('mkt-attr-card');
+    var body = document.getElementById('mkt-attr-body');
+    if(!card || !body) return;
+    card.style.display = 'block';
+    if(!d.ok || !(d.posts||[]).length){
+      body.innerHTML = d.reason === 'no_pos_data'
+        ? 'Connect your POS under Settings → Connections and this will start showing what each post did to sales.'
+        : 'Not enough sales history yet to compare a post against the same weekday before it.';
+      return;
+    }
+    var html = '<div style="margin-bottom:10px">Sales in the two days after each post, against the same weekday before it. This is a correlation, not proof — a busy Friday is still a busy Friday.</div>';
+    for(var i=0;i<d.posts.length;i++){
+      var p = d.posts[i];
+      html += '<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--paper3)">'
+        + '<span style="color:var(--ink)">' + _escHtml(p.topic || 'Untitled') + '</span>'
+        + '<span style="font-family:\'Space Grotesk\',sans-serif;font-weight:700;color:' + (p.lift_pct >= 0 ? '#2d6a4f' : 'var(--ink3)') + '">' + (p.lift_pct > 0 ? '+' : '') + Math.round(p.lift_pct) + '%</span>'
+        + '</div>';
+    }
+    body.innerHTML = html;
+  }).catch(function(){});
+}
+
 function openBrandVoice(){
   var m=document.getElementById('brand-voice-modal');
   if(!m)return;
@@ -6835,22 +7258,22 @@ function genContent(fromCalendar){
       var hint=document.getElementById('output-hint');if(hint)hint.style.display='block';
       var igBtn=document.getElementById('ig-post-btn');
       var fbBtn=document.getElementById('fb-post-btn');
-      var igImgRow=document.getElementById('ig-image-row');
       var ggBtn=document.getElementById('gg-post-btn');
       var ggCta=document.getElementById('gg-cta-row');
+      var photoRow=document.getElementById('mkt-photo-row');
       var _isGooglePost=selCt==='google_promo';
+      if(photoRow)photoRow.style.display=(_igConnected&&!_isGooglePost)?'flex':'none';
       // A Google Promo belongs on the Google listing, not Instagram — so that
       // one type swaps the destinations rather than adding a third button.
       if(_isGooglePost){
         if(igBtn)igBtn.style.display='none';
-        if(igImgRow)igImgRow.style.display='none';
         if(fbBtn)fbBtn.style.display='none';
         if(_ggConnected&&ggBtn)ggBtn.style.display='inline-block';
         if(_ggConnected&&ggCta)ggCta.style.display='flex';
       } else {
         if(ggBtn)ggBtn.style.display='none';
         if(ggCta)ggCta.style.display='none';
-        if(_igConnected&&igBtn){igBtn.style.display='inline-block';if(igImgRow)igImgRow.style.display='block';}
+        if(_igConnected&&igBtn)igBtn.style.display='inline-block';
         if(_fbConnected&&fbBtn)fbBtn.style.display='inline-block';
       }
       loadRecentTopics();
@@ -8483,7 +8906,14 @@ function revokeOtherSessions(btn){
   window.switchTab = function(n, btn) {
     _origSwitchTab(n, btn);
     if (n === 'account' && !_whLoaded) { _whLoaded = true; loadWebhook(); }
-    if (n === 'marketing' && !_gcLoaded) { _gcLoaded = true; loadGuestContactsSummary(); }
+    if (n === 'marketing' && !_gcLoaded) {
+      _gcLoaded = true;
+      loadGuestContactsSummary();
+      loadGuestSegments();
+      loadGuestHistory();
+      loadGuestNewsletter();
+      loadMktDrafts();
+    }
   };
 })();
 
@@ -8497,6 +8927,119 @@ function loadGuestContactsSummary() {
     document.getElementById('guest-contacts-summary').textContent =
       consented + ' text-eligible · ' + total + ' total contact' + (total === 1 ? '' : 's');
   }).catch(function(){});
+}
+
+// ── Audience, history, compliance and the newsletter ────────────────────────
+window._guestSegments = [];
+window._guestDefaults = {};
+function loadGuestSegments(){
+  fetch('/api/guest-segments').then(function(r){ return r.json(); }).then(function(d){
+    if(!d.ok) return;
+    window._guestSegments = d.segments;
+    window._guestDefaults = d.defaults || {};
+    var sel = document.getElementById('guest-campaign-segment');
+    if(!sel) return;
+    var current = sel.value;
+    sel.innerHTML = '';
+    for(var i=0;i<d.segments.length;i++){
+      var s = d.segments[i];
+      var o = document.createElement('option');
+      o.value = s.key;
+      o.textContent = s.label + ' (' + s.count + ')';
+      sel.appendChild(o);
+    }
+    // Picking a tone suggests the audience it was written for, instead of
+    // leaving the two unrelated the way "win-back to everyone" was.
+    var type = (document.getElementById('guest-campaign-type')||{}).value;
+    sel.value = current || window._guestDefaults[type] || 'all';
+    renderSegmentHelp();
+  }).catch(function(){});
+}
+function guestTypeChanged(){
+  var type = document.getElementById('guest-campaign-type').value;
+  var sel = document.getElementById('guest-campaign-segment');
+  if(sel && window._guestDefaults[type]){ sel.value = window._guestDefaults[type]; renderSegmentHelp(); }
+}
+function renderSegmentHelp(){
+  var sel = document.getElementById('guest-campaign-segment');
+  var help = document.getElementById('guest-segment-help');
+  if(!sel || !help) return;
+  for(var i=0;i<window._guestSegments.length;i++){
+    if(window._guestSegments[i].key === sel.value){
+      var s = window._guestSegments[i];
+      help.textContent = s.help + ' Goes to ' + s.count + ' guest' + (s.count === 1 ? '' : 's')
+        + ', between 8:00 AM and 9:00 PM. Nobody gets two campaigns inside three days.';
+      return;
+    }
+  }
+  help.textContent = '';
+}
+function loadGuestHistory(){
+  fetch('/api/guest-campaigns').then(function(r){ return r.json(); }).then(function(d){
+    if(!d.ok) return;
+    var wrap = document.getElementById('guest-history-wrap');
+    var list = document.getElementById('guest-history-list');
+    if(list && d.campaigns.length){
+      var html = '';
+      for(var i=0;i<d.campaigns.length;i++){
+        var c = d.campaigns[i];
+        html += '<div style="padding:9px 0;border-bottom:1px solid var(--paper3)">'
+          + '<div style="display:flex;justify-content:space-between;gap:8px">'
+          + '<span style="font-size:11px;font-weight:600;color:var(--ember)">' + _escHtml((c.created_at||'').slice(0,10)) + '</span>'
+          + '<span style="font-size:11px;color:var(--ink3);font-family:\'Space Grotesk\',sans-serif">' + c.sent_count + ' sent'
+          + (c.clicks ? ' · ' + c.clicks + ' taps' : '') + '</span></div>'
+          + (c.segment_label ? '<div style="font-size:11px;color:var(--ink3)">' + _escHtml(c.segment_label) + '</div>' : '')
+          + '<div style="font-size:12px;color:var(--ink);line-height:1.5;margin-top:2px">' + _escHtml(c.message) + '</div>'
+          + '</div>';
+      }
+      list.innerHTML = html;
+      if(wrap) wrap.style.display = 'block';
+    }
+    var led = document.getElementById('guest-ledger');
+    if(led && d.ledger){
+      var L = d.ledger;
+      led.style.display = 'block';
+      led.innerHTML = '<strong style="color:var(--ink)">Consent &amp; sending.</strong> '
+        + '<span style="font-family:\'Space Grotesk\',sans-serif;color:#2d6a4f;font-weight:700">' + L.textable + '</span> text-eligible, '
+        + '<span style="font-family:\'Space Grotesk\',sans-serif;font-weight:700">' + L.no_consent + '</span> without consent, '
+        + '<span style="font-family:\'Space Grotesk\',sans-serif;font-weight:700">' + L.unsubscribed + '</span> unsubscribed. '
+        + '<span style="font-family:\'Space Grotesk\',sans-serif;font-weight:700">' + L.texts_this_month + '</span> texts this month across '
+        + '<span style="font-family:\'Space Grotesk\',sans-serif;font-weight:700">' + L.campaigns_this_month + '</span> campaigns. '
+        + 'Texts go out between ' + _escHtml(L.window) + ' only, and no guest gets two inside ' + L.min_days_between + ' days.';
+    }
+  }).catch(function(){});
+}
+function loadGuestNewsletter(){
+  fetch('/api/guest-newsletter').then(function(r){ return r.json(); }).then(function(d){
+    if(!d.ok) return;
+    var el = document.getElementById('guest-newsletter-count');
+    if(el) el.textContent = d.subscribers + ' subscribed';
+  }).catch(function(){});
+}
+function sendGuestNewsletter(){
+  var body = document.getElementById('guest-newsletter-body').value.trim();
+  var status = document.getElementById('guest-newsletter-status');
+  if(!body){ status.textContent = 'Paste in the newsletter text first.'; status.style.color='var(--red)'; status.style.display='inline'; return; }
+  if(!confirm('Email this to every subscriber? This can\'t be undone.')) return;
+  var btn = document.getElementById('guest-newsletter-btn');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  fetch('/api/guest-newsletter', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({body: body, subject: document.getElementById('guest-newsletter-subject').value.trim()})})
+    .then(function(r){ return r.json(); }).then(function(d){
+      btn.disabled = false; btn.textContent = 'Send to subscribers';
+      status.style.display = 'inline';
+      if(d.ok){
+        status.textContent = 'Sent to ' + d.sent + ' of ' + d.total + '.';
+        status.style.color = '#2d6a4f';
+        document.getElementById('guest-newsletter-body').value = '';
+      } else {
+        status.textContent = d.error || 'Could not send.';
+        status.style.color = 'var(--red)';
+      }
+    }).catch(function(){
+      btn.disabled = false; btn.textContent = 'Send to subscribers';
+      status.textContent = 'Network error — try again.'; status.style.color='var(--red)'; status.style.display='inline';
+    });
 }
 
 window.copyGuestJoinLink = function() {
@@ -8635,19 +9178,26 @@ window.sendGuestCampaign = function() {
     status.style.display = 'inline';
     return;
   }
-  if (!confirm('Send this text to every consented guest? This can\'t be undone.')) { return; }
+  var segEl = document.getElementById('guest-campaign-segment');
+  var segment = segEl ? segEl.value : 'all';
+  var segLabel = (segEl && segEl.selectedOptions.length) ? segEl.selectedOptions[0].textContent : 'this audience';
+  if (!confirm('Send this text to ' + segLabel + '? This can\'t be undone.')) { return; }
   var btn = document.getElementById('guest-send-btn');
   btn.disabled = true;
   btn.textContent = 'Sending…';
   fetch('/api/guest-campaign/send', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({message: message})
+    body: JSON.stringify({message: message, segment: segment, type: document.getElementById('guest-campaign-type').value,
+                          link_url: (document.getElementById('guest-campaign-link')||{}).value || ''})
   }).then(function(r){ return r.json(); }).then(function(d){
     btn.disabled = false;
-    btn.textContent = 'Send to consented guests';
+    btn.textContent = 'Send to this audience';
     if (d.ok) {
-      status.textContent = 'Sent to ' + d.sent + ' of ' + d.total + ' guests.';
+      status.textContent = 'Sent to ' + d.sent + ' of ' + d.total + ' guests.'
+        + (d.skipped_recent ? ' ' + d.skipped_recent + ' skipped — texted in the last few days.' : '');
       status.style.color = '#2d6a4f';
+      loadGuestSegments();
+      loadGuestHistory();
     } else {
       status.textContent = d.error || 'Could not send campaign.';
       status.style.color = 'var(--red)';
@@ -8655,7 +9205,7 @@ window.sendGuestCampaign = function() {
     status.style.display = 'inline';
   }).catch(function(){
     btn.disabled = false;
-    btn.textContent = 'Send to consented guests';
+    btn.textContent = 'Send to this audience';
     status.textContent = 'Network error — try again.';
     status.style.color = 'var(--red)';
     status.style.display = 'inline';

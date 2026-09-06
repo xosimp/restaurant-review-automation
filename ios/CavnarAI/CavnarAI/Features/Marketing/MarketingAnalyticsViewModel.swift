@@ -75,6 +75,12 @@ final class MarketingAnalyticsViewModel {
     var isLoading = false
     var isRefreshingMetrics = false
 
+    /// Windowed and compared, which the all-time totals never were.
+    var window: MarketingWindow?
+    var windowDays = 30
+    /// What a post did to the till. Correlational, and said so on screen.
+    var attribution: MarketingAttribution?
+
     private let client: APIClient
 
     init(client: APIClient = .shared) {
@@ -94,10 +100,15 @@ final class MarketingAnalyticsViewModel {
         async let performanceResult: MarketingPerformance? = try? client.send("/mobile/api/marketing/performance")
         async let insightResult: AIInsight? = try? client.send("/mobile/api/marketing/insight")
         async let topicsResult: RecentTopicsResponse? = try? client.send("/mobile/api/marketing/recent-topics")
+        async let windowResult: MarketingWindow? = try? client.send(
+            "/mobile/api/marketing/performance-window", query: ["days": String(windowDays)])
+        async let attributionResult: MarketingAttribution? = try? client.send("/mobile/api/marketing/attribution")
 
         performance = await performanceResult
         insight = await insightResult
         recentTopics = await topicsResult?.topics ?? []
+        window = await windowResult
+        attribution = await attributionResult
         isLoadingInsight = false
     }
 
@@ -110,6 +121,12 @@ final class MarketingAnalyticsViewModel {
     /// 60 seconds while it is open; the app never asked at all, so the metrics
     /// an owner saw the evening they posted were whatever the nightly job had
     /// last written — which is to say, zero.
+    func setWindow(_ days: Int) async {
+        windowDays = days
+        window = try? await client.send("/mobile/api/marketing/performance-window",
+                                        query: ["days": String(days)])
+    }
+
     func refresh() async {
         isRefreshingMetrics = true
         defer { isRefreshingMetrics = false }
