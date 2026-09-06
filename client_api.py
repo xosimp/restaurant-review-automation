@@ -1435,6 +1435,194 @@ def gen_content(current_user):
             pass
     return jsonify(content=result)
 
+# ── Marketing: media, scheduling, drafts, links, analytics ────────────────
+# The web halves of everything mobile_api.py now exposes, so a feature isn't
+# quietly phone-only the way Post to Google was.
+
+@client_bp.route("/api/marketing/media", methods=["GET", "POST"])
+@login_required
+def marketing_media_api(current_user):
+    rid = current_user["restaurant_id"]
+    if not _restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
+    from marketing_media import store_image, list_media, media_url, MediaError
+    if request.method == "GET":
+        items = list_media(rid)
+        for item in items:
+            item["url"] = media_url(request.url_root, item["token"])
+        return jsonify(ok=True, media=items)
+
+    upload = request.files.get("file") if request.files else None
+    if not upload:
+        return jsonify(ok=False, error="No photo was attached."), 400
+    try:
+        stored = store_image(rid, upload.read(), upload.mimetype or "")
+    except MediaError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    except Exception:
+        return jsonify(ok=False, error="Couldn't process that photo."), 500
+    return jsonify(ok=True, media_id=stored["id"], token=stored["token"],
+                   url=media_url(request.url_root, stored["token"]))
+
+
+@client_bp.route("/api/marketing/media/<int:media_id>", methods=["DELETE"])
+@login_required
+def marketing_media_delete(media_id, current_user):
+    from marketing_media import delete_media
+    delete_media(media_id, current_user["restaurant_id"])
+    return jsonify(ok=True)
+
+
+@client_bp.route("/api/marketing/schedule", methods=["GET", "POST"])
+@login_required
+def marketing_schedule_api(current_user):
+    import marketing_publish as _mp
+    rid = current_user["restaurant_id"]
+    if not _restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
+    if request.method == "GET":
+        return jsonify(ok=True, posts=_mp.list_scheduled(rid))
+    data = request.get_json() or {}
+    result = _mp.schedule_post(
+        rid, data.get("platform"), data.get("body"), data.get("scheduled_for"),
+        topic=data.get("topic") or "", content_type=data.get("content_type"),
+        media_id=data.get("media_id"), cta_type=data.get("cta_type"),
+        cta_url=data.get("cta_url"))
+    return jsonify(**result), (200 if result.get("ok") else 400)
+
+
+@client_bp.route("/api/marketing/schedule/<int:post_id>", methods=["DELETE"])
+@login_required
+def marketing_schedule_cancel(post_id, current_user):
+    import marketing_publish as _mp
+    result = _mp.cancel_scheduled(post_id, current_user["restaurant_id"])
+    return jsonify(**result), (200 if result.get("ok") else 400)
+
+
+@client_bp.route("/api/marketing/drafts", methods=["GET", "POST"])
+@login_required
+def marketing_drafts_api(current_user):
+    import marketing_drafts as _md
+    rid = current_user["restaurant_id"]
+    if not _restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
+    if request.method == "GET":
+        return jsonify(ok=True, drafts=_md.list_drafts(rid))
+    data = request.get_json() or {}
+    result = _md.save_draft(rid, data.get("body"), content_type=data.get("content_type"),
+                            topic=data.get("topic"), media_id=data.get("media_id"),
+                            draft_id=data.get("id"), user_id=current_user.get("id"))
+    return jsonify(**result), (200 if result.get("ok") else 400)
+
+
+@client_bp.route("/api/marketing/drafts/<int:draft_id>/approve", methods=["POST"])
+@login_required
+def marketing_draft_approve(draft_id, current_user):
+    import marketing_drafts as _md
+    result = _md.approve_draft(draft_id, current_user["restaurant_id"],
+                               user_id=current_user.get("id"), role=current_user.get("role"))
+    return jsonify(**result), (200 if result.get("ok") else 403)
+
+
+@client_bp.route("/api/marketing/drafts/<int:draft_id>", methods=["DELETE"])
+@login_required
+def marketing_draft_delete(draft_id, current_user):
+    import marketing_drafts as _md
+    return jsonify(**_md.delete_draft(draft_id, current_user["restaurant_id"]))
+
+
+@client_bp.route("/api/marketing/performance-window")
+@login_required
+def marketing_performance_window(current_user):
+    from marketing_signals import performance_window
+    try:
+        days = max(7, min(int(request.args.get("days", 30)), 365))
+    except (TypeError, ValueError):
+        days = 30
+    return jsonify(ok=True, **performance_window(current_user["restaurant_id"], days=days))
+
+
+@client_bp.route("/api/marketing/attribution")
+@login_required
+def marketing_attribution_api(current_user):
+    from marketing_signals import attribution_summary
+    return jsonify(**attribution_summary(current_user["restaurant_id"]))
+
+
+@client_bp.route("/api/marketing/links", methods=["GET", "POST"])
+@login_required
+def marketing_links_api(current_user):
+    import marketing_links as _ml
+    rid = current_user["restaurant_id"]
+    if not _restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
+    if request.method == "GET":
+        return jsonify(ok=True, links=_ml.link_stats(rid))
+    data = request.get_json() or {}
+    result = _ml.create_link(rid, data.get("target_url"), source=data.get("source") or "sms",
+                             campaign=data.get("campaign") or "", label=data.get("label") or "")
+    if result.get("ok"):
+        result["short_url"] = request.url_root.rstrip("/") + "/g/" + result["token"]
+    return jsonify(**result), (200 if result.get("ok") else 400)
+
+
+@client_bp.route("/api/guest-segments")
+@login_required
+def guest_segments_api(current_user):
+    from guest_marketing import SEGMENTS, segment_counts, CAMPAIGN_DEFAULT_SEGMENT
+    rid = current_user["restaurant_id"]
+    if not _restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
+    counts = segment_counts(rid)
+    return jsonify(ok=True, defaults=CAMPAIGN_DEFAULT_SEGMENT, segments=[
+        {"key": k, "label": v["label"], "help": v["help"], "count": counts.get(k, 0)}
+        for k, v in SEGMENTS.items()])
+
+
+@client_bp.route("/api/guest-campaigns")
+@login_required
+def guest_campaigns_api(current_user):
+    from guest_marketing import campaign_history, consent_ledger
+    rid = current_user["restaurant_id"]
+    if not _restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
+    return jsonify(ok=True, campaigns=campaign_history(rid), ledger=consent_ledger(rid))
+
+
+@client_bp.route("/api/guest-newsletter", methods=["GET", "POST"])
+@login_required
+def guest_newsletter_api(current_user):
+    import guest_email as _ge
+    rid = current_user["restaurant_id"]
+    if not _restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_NO_MARKETING_MODULE_ERROR), 403
+    if request.method == "GET":
+        return jsonify(ok=True, subscribers=_ge.subscriber_count(rid))
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"newsletter:{rid}", max_calls=2, window_secs=600):
+        return jsonify(ok=False, error="Too many newsletters sent recently — wait a few minutes."), 429
+    data = request.get_json() or {}
+    result = _ge.send_newsletter(rid, data.get("body") or "", subject=data.get("subject"))
+    return jsonify(**result), (200 if result.get("ok") else 400)
+
+
+@client_bp.route("/api/marketing/preview", methods=["POST"])
+@login_required
+def marketing_preview_api(current_user):
+    """What the post will look like where it lands, and whether it will be
+    accepted — computed server-side so the two platforms can't disagree."""
+    import marketing_publish as _mp
+    from marketing_media import get_media_token
+    data = request.get_json() or {}
+    token = None
+    if data.get("media_id"):
+        token = get_media_token(data["media_id"], current_user["restaurant_id"])
+    return jsonify(ok=True, **_mp.preview(
+        data.get("platform"), data.get("body") or "",
+        media_token=token, cta_type=data.get("cta_type"),
+        base_url=request.url_root))
+
+
 @client_bp.route("/api/post-to-google", methods=["POST"])
 @login_required
 def post_to_google(current_user):
@@ -4159,7 +4347,18 @@ def guest_campaign_send(current_user):
         return jsonify(ok=False, error="Too many campaigns sent recently — please wait a few minutes."), 429
     try:
         from guest_marketing import send_campaign
-        result = send_campaign(rid, message)
+        # A campaign now goes to a segment, not to everyone consented — and
+        # can carry a tracked link, which SMS could never carry at all.
+        link_token = None
+        target = (data.get("link_url") or "").strip()
+        if target:
+            import marketing_links as _ml
+            made = _ml.create_link(rid, target, source="sms",
+                                   campaign=(data.get("type") or "campaign"))
+            if made.get("ok"):
+                link_token = made["token"]
+        result = send_campaign(rid, message, segment=data.get("segment") or "all",
+                               link_token=link_token)
         # send_campaign reports its own ok — it refuses outside the guest-text
         # quiet-hours window rather than sending a marketing text at midnight.
         return jsonify(**result), 200
@@ -4187,6 +4386,49 @@ def guest_qr_code(current_user):
     download = request.args.get("download") == "1"
     return send_file(buf, mimetype="image/png", as_attachment=download,
                       download_name="guest-text-club-qr.png" if download else None)
+
+
+# ── Public, unauthenticated: media, short links, newsletter unsubscribe ────
+# All three are fetched by someone who cannot log in — Meta's servers pulling
+# an image, a guest tapping a link in a text, a mail client honouring
+# List-Unsubscribe — so each is guarded by an unguessable token instead, the
+# same trade the staff schedule share links already make.
+
+@client_bp.route("/m/<token>.jpg")
+def marketing_media_file(token):
+    """The photo Instagram and Google fetch at publish time."""
+    from marketing_media import get_image
+    found = get_image(token)
+    if not found:
+        return "Not found", 404
+    data, mime = found
+    import io
+    resp = send_file(io.BytesIO(data), mimetype=mime or "image/jpeg")
+    # Meta re-fetches on retries; a long cache keeps a scheduled post from
+    # hammering the database on every attempt.
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
+
+
+@client_bp.route("/g/<token>")
+def marketing_link_redirect(token):
+    """Counts the tap, then sends them where they were going."""
+    from marketing_links import resolve
+    target = resolve(token)
+    if not target:
+        return render_template("staff_schedule_invalid.html"), 404
+    return redirect(target, code=302)
+
+
+@client_bp.route("/e/<token>", methods=["GET", "POST"])
+def guest_newsletter_unsubscribe(token):
+    """Per-guest, and it works without signing in — CAN-SPAM requires the link
+    to work for someone who has no account here and never will."""
+    from guest_email import unsubscribe
+    name = unsubscribe(token)
+    if not name:
+        return render_template("unsubscribed.html", ok=False, restaurant_name=""), 404
+    return render_template("unsubscribed.html", ok=True, restaurant_name=name)
 
 
 # ── Public guest opt-in page — no login, printed on a table tent / QR code ──
@@ -4225,7 +4467,16 @@ def guest_optin_submit(restaurant_id):
     if not data.get("consent"):
         return jsonify(ok=False, error="Consent is required to join"), 400
     from guest_marketing import add_guest_contact_public_optin
-    add_guest_contact_public_optin(restaurant_id, phone, name=name)
+    contact_id = add_guest_contact_public_optin(restaurant_id, phone, name=name)
+
+    # Email is optional and separately consented — ticking the SMS box is not
+    # agreement to a newsletter, same principle the SMS side is built on. An
+    # address given without the box is stored but never mailed.
+    from guest_email import valid_email, set_guest_email
+    email = valid_email(data.get("email"))
+    if email and contact_id:
+        set_guest_email(contact_id, restaurant_id, email,
+                        consent=bool(data.get("email_consent")))
     return jsonify(ok=True)
 
 

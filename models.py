@@ -811,6 +811,124 @@ def init_db(db_path: str = DB_PATH):
             generated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
             PRIMARY KEY (restaurant_id, week_start)
         )""",
+
+        # ── Marketing: scheduling, media, drafts, links, attribution ────────
+        # Everything below exists because the module could only ever do one
+        # thing at one moment: generate now, post now, to whoever is on the
+        # list. A restaurant owner does admin at 11pm and posts on Tuesday
+        # lunch; the photo is in their camera roll; the person writing the
+        # copy often isn't the person who approves it; and nobody could say
+        # whether any of it sold a pizza.
+
+        # Uploaded photos live in the database rather than on disk or in
+        # object storage. Two reasons: Railway's container filesystem is
+        # rebuilt on every deploy, and Instagram fetches the image URL at
+        # PUBLISH time — which for a scheduled post can be days after the
+        # upload — so a file that disappears on deploy is a post that fails
+        # silently later. Storing bytes here gives photos exactly the same
+        # durability as every other piece of client data, with no new
+        # infrastructure to configure. Images are downscaled and re-encoded
+        # on upload (see marketing_media.py) so rows stay small.
+        """CREATE TABLE IF NOT EXISTS marketing_media (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            token           TEXT    NOT NULL UNIQUE,
+            mime            TEXT    NOT NULL,
+            data            BLOB    NOT NULL,
+            width           INTEGER,
+            height          INTEGER,
+            size_bytes      INTEGER,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_media_restaurant ON marketing_media(restaurant_id, created_at)",
+
+        # A post written now and published later. scheduled_for is stored in
+        # the RESTAURANT's local wall clock, not UTC — the owner picks
+        # "Tuesday 11am" meaning 11am in their dining room, and every other
+        # time-of-day column in this schema (last_visit, schedule shifts)
+        # already follows that convention.
+        """CREATE TABLE IF NOT EXISTS marketing_scheduled_posts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            platform        TEXT    NOT NULL,
+            content_type    TEXT,
+            topic           TEXT,
+            body            TEXT    NOT NULL,
+            media_id        INTEGER REFERENCES marketing_media(id),
+            cta_type        TEXT,
+            cta_url         TEXT,
+            scheduled_for   TEXT    NOT NULL,
+            status          TEXT    NOT NULL DEFAULT 'scheduled',
+            post_id         TEXT,
+            error           TEXT,
+            attempts        INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            posted_at       TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_sched_due ON marketing_scheduled_posts(status, scheduled_for)",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_sched_restaurant ON marketing_scheduled_posts(restaurant_id, scheduled_for)",
+
+        # Generated copy survived exactly as long as the screen it was on.
+        # A draft is the saved version; approving one is the separate act
+        # that says it may go out, which is what lets a GM write and an owner
+        # release.
+        """CREATE TABLE IF NOT EXISTS marketing_drafts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            content_type    TEXT,
+            topic           TEXT,
+            body            TEXT    NOT NULL,
+            media_id        INTEGER REFERENCES marketing_media(id),
+            status          TEXT    NOT NULL DEFAULT 'draft',
+            created_by      INTEGER,
+            approved_by     INTEGER,
+            approved_at     TEXT,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_drafts_restaurant ON marketing_drafts(restaurant_id, updated_at)",
+
+        # Nothing this module published was measurable once it left the
+        # platform. A short link is the only way to know a text drove a
+        # click, and SMS in particular carried no links at all.
+        """CREATE TABLE IF NOT EXISTS marketing_links (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id   INTEGER NOT NULL REFERENCES restaurants(id),
+            token           TEXT    NOT NULL UNIQUE,
+            target_url      TEXT    NOT NULL,
+            label           TEXT,
+            source          TEXT,
+            campaign        TEXT,
+            clicks          INTEGER NOT NULL DEFAULT 0,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            last_click_at   TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_mkt_links_restaurant ON marketing_links(restaurant_id, created_at)",
+
+        # What a post did to the till. Cached per post because it reads POS
+        # sales over a window and is not worth recomputing on every render.
+        """CREATE TABLE IF NOT EXISTS marketing_attribution (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            restaurant_id     INTEGER NOT NULL REFERENCES restaurants(id),
+            content_log_id    INTEGER NOT NULL,
+            window_hours      INTEGER NOT NULL,
+            baseline_sales    REAL,
+            window_sales      REAL,
+            lift_pct          REAL,
+            computed_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(content_log_id, window_hours)
+        )""",
+
+        # Campaign history was written and never read back. Segment says WHO
+        # it went to, which is the question an owner asks first when a list
+        # of 200 reaches 40.
+        # (guest_campaigns/guest_contacts columns live in
+        # guest_marketing.init_guest_marketing — those tables are created
+        # there, so an ALTER here runs before they exist and does nothing.)
+        "ALTER TABLE marketing_content_log ADD COLUMN scheduled_post_id INTEGER",
+        "ALTER TABLE marketing_content_log ADD COLUMN media_id INTEGER",
+        "ALTER TABLE marketing_content_log ADD COLUMN link_token TEXT",
+        "ALTER TABLE marketing_content_log ADD COLUMN posted_at TEXT",
         # Toast-driven food cost engine — persistent per-ingredient records
         # replacing the old re-parsed inventory_csv blob, plus a stock-event
         # ledger (recount/receiving/depletion/waste) and a recipe/BOM mapping

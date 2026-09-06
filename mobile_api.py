@@ -2378,7 +2378,18 @@ def mobile_guest_campaign_send(current_user):
         return jsonify(ok=False, error="Too many campaigns sent recently — please wait a few minutes."), 429
     try:
         from guest_marketing import send_campaign
-        result = send_campaign(rid, message)
+        # A campaign now goes to a segment, not to everyone consented — and
+        # can carry a tracked link, which SMS could never carry at all.
+        link_token = None
+        target = (data.get("link_url") or "").strip()
+        if target:
+            import marketing_links as _ml
+            made = _ml.create_link(rid, target, source="sms",
+                                   campaign=(data.get("type") or "campaign"))
+            if made.get("ok"):
+                link_token = made["token"]
+        result = send_campaign(rid, message, segment=data.get("segment") or "all",
+                               link_token=link_token)
         # send_campaign reports its own ok — it refuses outside the guest-text
         # quiet-hours window rather than sending a marketing text at midnight.
         return jsonify(**result), 200
@@ -2476,6 +2487,249 @@ def mobile_refresh_metrics(current_user):
         return jsonify(ok=True, refreshed=len(result.get("posts") or [])), 200
     except Exception:
         return jsonify(ok=True, refreshed=0), 200
+
+
+# ── Photos ────────────────────────────────────────────────────────────────
+
+@mobile_bp.route("/marketing/media", methods=["POST"])
+@mobile_login_required
+def mobile_upload_media(current_user):
+    """Upload a photo from the camera roll.
+
+    Instagram requires an image and the only way to give it one was a text
+    field asking for a public URL — on a phone, where the photo has no URL.
+    Accepts a multipart file or a base64 body, because the app has a picker
+    and the web tab has a file input."""
+    import base64
+    from marketing_media import store_image, MediaError, media_url
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+
+    raw, mime = None, ""
+    upload = request.files.get("file") if request.files else None
+    if upload:
+        raw, mime = upload.read(), (upload.mimetype or "")
+    else:
+        data = request.get_json(silent=True) or {}
+        encoded = data.get("image_base64") or ""
+        if encoded:
+            if "," in encoded[:64] and encoded.strip().startswith("data:"):
+                header, encoded = encoded.split(",", 1)
+                mime = header.split(":", 1)[-1].split(";")[0]
+            try:
+                raw = base64.b64decode(encoded, validate=False)
+            except Exception:
+                return jsonify(ok=False, error="That photo didn't decode."), 400
+    if not raw:
+        return jsonify(ok=False, error="No photo was attached."), 400
+
+    try:
+        stored = store_image(rid, raw, mime)
+    except MediaError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    except Exception:
+        return jsonify(ok=False, error="Couldn't process that photo."), 500
+
+    return jsonify(ok=True, media_id=stored["id"], token=stored["token"],
+                   url=media_url(request.url_root, stored["token"]),
+                   width=stored["width"], height=stored["height"])
+
+
+@mobile_bp.route("/marketing/media")
+@mobile_login_required
+def mobile_list_media(current_user):
+    from marketing_media import list_media, media_url
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    items = list_media(rid)
+    for item in items:
+        item["url"] = media_url(request.url_root, item["token"])
+    return jsonify(ok=True, media=items)
+
+
+@mobile_bp.route("/marketing/media/<int:media_id>", methods=["DELETE"])
+@mobile_login_required
+def mobile_delete_media(media_id, current_user):
+    from marketing_media import delete_media
+    rid = current_user["restaurant_id"]
+    delete_media(media_id, rid)
+    return jsonify(ok=True)
+
+
+# ── Scheduling ────────────────────────────────────────────────────────────
+
+@mobile_bp.route("/marketing/schedule", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_schedule(current_user):
+    """The queue. Everything this module did was generate-now/post-now, and an
+    owner does admin at 11pm for a post that belongs on Tuesday at lunch."""
+    import marketing_publish as _mp
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+
+    if request.method == "GET":
+        return jsonify(ok=True, posts=_mp.list_scheduled(rid))
+
+    data = request.get_json() or {}
+    result = _mp.schedule_post(
+        rid, data.get("platform"), data.get("body"), data.get("scheduled_for"),
+        topic=data.get("topic") or "", content_type=data.get("content_type"),
+        media_id=data.get("media_id"), cta_type=data.get("cta_type"),
+        cta_url=data.get("cta_url"),
+    )
+    return jsonify(**result), (200 if result.get("ok") else 400)
+
+
+@mobile_bp.route("/marketing/schedule/<int:post_id>", methods=["DELETE"])
+@mobile_login_required
+def mobile_cancel_scheduled(post_id, current_user):
+    import marketing_publish as _mp
+    result = _mp.cancel_scheduled(post_id, current_user["restaurant_id"])
+    return jsonify(**result), (200 if result.get("ok") else 400)
+
+
+# ── Drafts and approval ───────────────────────────────────────────────────
+
+@mobile_bp.route("/marketing/drafts", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_drafts(current_user):
+    """Generated copy used to survive exactly as long as the screen it was on.
+    A draft is the saved version; approving it is the separate act that says
+    it may go out, which is what lets a GM write and an owner release."""
+    import marketing_drafts as _md
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    if request.method == "GET":
+        return jsonify(ok=True, drafts=_md.list_drafts(rid))
+    data = request.get_json() or {}
+    result = _md.save_draft(rid, data.get("body"), content_type=data.get("content_type"),
+                            topic=data.get("topic"), media_id=data.get("media_id"),
+                            draft_id=data.get("id"), user_id=current_user.get("id"))
+    return jsonify(**result), (200 if result.get("ok") else 400)
+
+
+@mobile_bp.route("/marketing/drafts/<int:draft_id>/approve", methods=["POST"])
+@mobile_login_required
+def mobile_approve_draft(draft_id, current_user):
+    import marketing_drafts as _md
+    result = _md.approve_draft(draft_id, current_user["restaurant_id"],
+                               user_id=current_user.get("id"),
+                               role=current_user.get("role"))
+    return jsonify(**result), (200 if result.get("ok") else 403)
+
+
+@mobile_bp.route("/marketing/drafts/<int:draft_id>", methods=["DELETE"])
+@mobile_login_required
+def mobile_delete_draft(draft_id, current_user):
+    import marketing_drafts as _md
+    return jsonify(**_md.delete_draft(draft_id, current_user["restaurant_id"]))
+
+
+# ── Analytics, attribution, links ─────────────────────────────────────────
+
+@mobile_bp.route("/marketing/performance-window")
+@mobile_login_required
+def mobile_performance_window(current_user):
+    """Windowed and compared, unlike the all-time totals this replaced."""
+    from marketing_signals import performance_window
+    try:
+        days = max(7, min(int(request.args.get("days", 30)), 365))
+    except (TypeError, ValueError):
+        days = 30
+    return jsonify(ok=True, **performance_window(current_user["restaurant_id"], days=days))
+
+
+@mobile_bp.route("/marketing/attribution")
+@mobile_login_required
+def mobile_attribution(current_user):
+    from marketing_signals import attribution_summary
+    return jsonify(**attribution_summary(current_user["restaurant_id"]))
+
+
+@mobile_bp.route("/marketing/links", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_links(current_user):
+    import marketing_links as _ml
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    if request.method == "GET":
+        return jsonify(ok=True, links=_ml.link_stats(rid))
+    data = request.get_json() or {}
+    result = _ml.create_link(rid, data.get("target_url"), source=data.get("source") or "sms",
+                             campaign=data.get("campaign") or "", label=data.get("label") or "")
+    if result.get("ok"):
+        result["short_url"] = request.url_root.rstrip("/") + "/g/" + result["token"]
+    return jsonify(**result), (200 if result.get("ok") else 400)
+
+
+# ── Guest text club: segments, history, compliance ────────────────────────
+
+@mobile_bp.route("/guest-segments")
+@mobile_login_required
+def mobile_guest_segments(current_user):
+    """Who a campaign would actually reach, before it is sent."""
+    from guest_marketing import SEGMENTS, segment_counts, CAMPAIGN_DEFAULT_SEGMENT
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    counts = segment_counts(rid)
+    return jsonify(ok=True, defaults=CAMPAIGN_DEFAULT_SEGMENT, segments=[
+        {"key": k, "label": v["label"], "help": v["help"], "count": counts.get(k, 0)}
+        for k, v in SEGMENTS.items()
+    ])
+
+
+@mobile_bp.route("/guest-campaigns")
+@mobile_login_required
+def mobile_guest_campaign_history(current_user):
+    from guest_marketing import campaign_history, consent_ledger
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    return jsonify(ok=True, campaigns=campaign_history(rid), ledger=consent_ledger(rid))
+
+
+# ── Newsletter ────────────────────────────────────────────────────────────
+
+@mobile_bp.route("/guest-newsletter", methods=["GET", "POST"])
+@mobile_login_required
+def mobile_guest_newsletter(current_user):
+    """`weekly_email` has generated newsletters since this product existed
+    with no list to send them to and no way to send one."""
+    import guest_email as _ge
+    rid = current_user["restaurant_id"]
+    if not _capi._restaurant_has_marketing_module(rid):
+        return jsonify(ok=False, error=_capi._NO_MARKETING_MODULE_ERROR), 403
+    if request.method == "GET":
+        return jsonify(ok=True, subscribers=_ge.subscriber_count(rid))
+    from ai_utils import ai_rate_limited
+    if ai_rate_limited(f"newsletter:{rid}", max_calls=2, window_secs=600):
+        return jsonify(ok=False, error="Too many newsletters sent recently — wait a few minutes."), 429
+    data = request.get_json() or {}
+    result = _ge.send_newsletter(rid, data.get("body") or "", subject=data.get("subject"))
+    return jsonify(**result), (200 if result.get("ok") else 400)
+
+
+@mobile_bp.route("/marketing/preview", methods=["POST"])
+@mobile_login_required
+def mobile_marketing_preview(current_user):
+    """What the post will look like where it lands, and whether it will be
+    accepted — computed server-side so the two platforms can't disagree."""
+    import marketing_publish as _mp
+    from marketing_media import get_media_token
+    data = request.get_json() or {}
+    token = None
+    if data.get("media_id"):
+        token = get_media_token(data["media_id"], current_user["restaurant_id"])
+    return jsonify(ok=True, **_mp.preview(
+        data.get("platform"), data.get("body") or "",
+        media_token=token, cta_type=data.get("cta_type"),
+        base_url=request.url_root))
 
 
 @mobile_bp.route("/marketing/insight")

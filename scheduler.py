@@ -637,6 +637,11 @@ _last_onboard_date    = None
 _last_stale_inv_date  = None
 _last_inactive_date   = None
 _last_optin_invite_date = None
+_last_followup_hour = None
+
+# The loop used to sleep for an hour, which was fine when everything it did
+# was daily. Scheduled posts need finer granularity than "sometime this hour".
+SCHEDULER_TICK_SECONDS = int(os.getenv("SCHEDULER_TICK_SECONDS", "300"))
 _last_monthly_date    = None
 _last_opsdigest_date  = None
 _last_mktmetrics_date = None
@@ -944,7 +949,7 @@ def scheduler_loop():
     global _last_fetch_date, _last_digest_date, _last_backup_date
     global _last_toast_sync_date, _last_depletion_sync_date, _last_onboard_date, _last_stale_inv_date
     global _last_inactive_date, _last_monthly_date, _last_opsdigest_date, _last_mktmetrics_date
-    global _last_optin_invite_date
+    global _last_optin_invite_date, _last_followup_hour
     log.info("Scheduler started — review fetch every 4hr (8am/12pm/4pm/8pm CT), digests 9am on client's chosen day")
 
 
@@ -1086,11 +1091,27 @@ def scheduler_loop():
                 _ops.run_job("toast_optin_invites",
                              lambda: run_toast_optin_invites(business_date=_d.today() - _td(days=1)))
 
-            # Every tick (hourly) — automated post-visit review request texts.
-            # Needs hourly granularity (not a once-daily gate) since eligibility
-            # is "N hours since last_visit", checked per-restaurant local time.
-            from guest_marketing import run_review_request_followups
-            _ops.run_job("review_request_followups", run_review_request_followups)
+            # Hourly — automated post-visit review request texts. Eligibility
+            # is "N hours since last_visit" in each restaurant's local time, so
+            # this needs hourly granularity, but no more than that: the loop
+            # now ticks every few minutes for scheduled posts, and re-running
+            # this twelve times an hour would just be twelve queries.
+            if _last_followup_hour != f"{today}-{now.hour}":
+                _last_followup_hour = f"{today}-{now.hour}"
+                from guest_marketing import run_review_request_followups
+                _ops.run_job("review_request_followups", run_review_request_followups)
+
+            # Every tick — publish anything whose scheduled slot has arrived.
+            # This is why the loop no longer sleeps for an hour: a post the
+            # owner set for 11am should go out at 11am, not at 11:59.
+            try:
+                from marketing_publish import run_due_posts
+                _base = (os.getenv("BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+                _due = run_due_posts(base_url=_base)
+                if _due.get("published") or _due.get("failed"):
+                    log.info(f"Scheduled posts: {_due}")
+            except Exception as e:
+                log.error(f"Scheduled post run failed: {e}")
 
             try:
                 record_scheduler_heartbeat()
@@ -1101,7 +1122,11 @@ def scheduler_loop():
         except Exception as e:
             log.error(f"Scheduler loop error: {e}")
 
-        time.sleep(3600)
+        # Five minutes, not an hour. Every daily/hourly job above is gated on
+        # its own "already ran for this hour/date" marker, so a faster tick
+        # doesn't re-run any of them — it exists so a post scheduled for 11am
+        # publishes within a few minutes of 11am.
+        time.sleep(SCHEDULER_TICK_SECONDS)
 
 
 def start_scheduler():

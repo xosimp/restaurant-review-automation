@@ -15,7 +15,7 @@ body{font-family:'Apfel Grotezk',sans-serif;background:linear-gradient(160deg,#1
 h1{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;color:var(--ink);margin:2px 0 8px}
 p.sub{font-size:13px;color:var(--ink3);line-height:1.6;margin-bottom:22px}
 label{display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);margin-bottom:5px}
-input[type="text"],input[type="tel"]{width:100%;padding:11px 13px;border:1px solid var(--paper3);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:14px;color:var(--ink);outline:none;margin-bottom:16px}
+input[type="text"],input[type="tel"],input[type="email"]{width:100%;padding:11px 13px;border:1px solid var(--paper3);border-radius:8px;font-family:'Apfel Grotezk',sans-serif;font-size:14px;color:var(--ink);outline:none;margin-bottom:16px}
 input:focus{border-color:var(--ember)}
 .consent{display:flex;gap:10px;align-items:flex-start;margin-bottom:20px;font-size:11.5px;color:var(--ink3);line-height:1.5}
 .consent input{margin-top:3px;flex-shrink:0;accent-color:var(--ember)}
@@ -42,6 +42,14 @@ input:focus{border-color:var(--ember)}
       <input type="text" id="g-name" placeholder="Your name" required>
       <label for="g-phone">Mobile number</label>
       <input type="tel" id="g-phone" placeholder="(555) 123-4567" required>
+      <label for="g-email">Email <span style="font-weight:400;text-transform:none;letter-spacing:0">— optional</span></label>
+      <input type="email" id="g-email" placeholder="you@example.com">
+      <div class="consent">
+        <input type="checkbox" id="g-email-consent">
+        <label for="g-email-consent" style="display:inline;font-weight:400;text-transform:none;letter-spacing:0;color:var(--ink3)">
+          Also email me the occasional newsletter. Unsubscribe any time from the link in every email.
+        </label>
+      </div>
       <div class="consent">
         <input type="checkbox" id="g-consent" required>
         <label for="g-consent" style="display:inline;font-weight:400;text-transform:none;letter-spacing:0;color:var(--ink3)">
@@ -83,7 +91,9 @@ document.getElementById('optin-form').addEventListener('submit', function(e) {
   fetch(window.location.pathname.replace('/join/', '/api/public/guest-optin/'), {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({phone: phone, name: name, consent: true})
+    body: JSON.stringify({phone: phone, name: name, consent: true,
+                          email: document.getElementById('g-email').value.trim(),
+                          email_consent: document.getElementById('g-email-consent').checked})
   }).then(function(r) { return r.json(); }).then(function(d) {
     if (d.ok) {
       document.getElementById('form-view').style.display = 'none';

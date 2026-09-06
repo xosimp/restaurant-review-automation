@@ -1,0 +1,377 @@
+"""marketing_publish.py — one publish path, and the queue in front of it.
+
+Two things live here that used to be missing entirely.
+
+First, ONE place that actually publishes. Instagram, Facebook and Google each
+had their own route on web, their own route on mobile, and their own copy of
+"post it, then log it" — so a scheduled post would have needed a fourth. Now
+every caller lands on `publish_now`, and the content log is written once.
+
+Second, the queue. Everything this module did was generate-now/post-now, and
+a restaurant owner does admin at 11pm. The content calendar would tell them to
+post Tuesday lunch and then require them to be standing in the office on
+Tuesday at lunch. `schedule_post` writes the intent; `run_due_posts`, called
+from scheduler.py's tick, publishes it.
+
+Scheduled times are the restaurant's own wall clock — an owner picking
+"Tuesday 11am" means 11am in their dining room — matching every other
+time-of-day column in this schema.
+"""
+import logging
+from datetime import datetime, timedelta
+
+from models import get_conn, get_restaurant, DB_PATH
+
+log = logging.getLogger(__name__)
+
+PLATFORMS = ("instagram", "facebook", "google")
+
+# How long after its slot a post may still go out. The scheduler ticks every
+# few minutes, but a deploy or an outage can swallow a window — and a brunch
+# post landing at 4pm is worse than one that didn't land, so a badly late post
+# is failed rather than published.
+LATE_TOLERANCE_HOURS = 6
+
+MAX_ATTEMPTS = 3
+
+
+def _local_now(restaurant_id):
+    from time_utils import restaurant_now_by_id
+    return restaurant_now_by_id(restaurant_id, naive=True)
+
+
+def channels_for(restaurant_id, db_path: str = DB_PATH) -> dict:
+    """Which destinations this restaurant can actually publish to."""
+    r = get_restaurant(restaurant_id, db_path=db_path) if db_path != DB_PATH else get_restaurant(restaurant_id)
+    return {
+        "instagram": bool(r and getattr(r, "ig_token", None) and getattr(r, "ig_user_id", None)),
+        "facebook": bool(r and getattr(r, "fb_page_token", None) and getattr(r, "fb_page_id", None)),
+        "google": bool(r and getattr(r, "gmb_refresh_token", None)
+                       and getattr(r, "gmb_account_id", None)
+                       and getattr(r, "gmb_location_id", None)),
+    }
+
+
+# ── Publishing ─────────────────────────────────────────────────────────────
+
+def publish_now(restaurant_id, platform, body, *, topic="", media_token=None,
+                cta_type=None, cta_url=None, base_url="https://dashboard.cavnar.ai",
+                content_type=None, scheduled_post_id=None, link_token=None,
+                db_path: str = DB_PATH) -> dict:
+    """Publish to one platform and log it. {"ok": True, "post_id": ...} or
+    {"ok": False, "error": "..."} — never raises, so a queue runner can record
+    the failure and move on."""
+    platform = (platform or "").lower().strip()
+    body = (body or "").strip()
+    if not body:
+        return {"ok": False, "error": "There's no post text to publish."}
+
+    try:
+        if platform == "instagram":
+            from social_routes import _do_post_to_instagram
+            image_url = _media_url(base_url, media_token)
+            if not image_url:
+                return {"ok": False, "error": "Instagram needs a photo — add one before posting."}
+            payload, _ = _do_post_to_instagram(restaurant_id, body, image_url, topic)
+        elif platform == "facebook":
+            from social_routes import _do_post_to_facebook
+            payload, _ = _do_post_to_facebook(restaurant_id, body, topic)
+        elif platform == "google":
+            import gmb
+            if not gmb.is_connected(restaurant_id):
+                return {"ok": False, "error": "Google Business isn't connected."}
+            result = gmb.create_local_post(restaurant_id, body,
+                                           cta_type=cta_type or None, cta_url=cta_url or None)
+            payload = {"ok": bool(result.get("ok")),
+                       "post_id": result.get("name"),
+                       "error": result.get("error")}
+        else:
+            return {"ok": False, "error": f"Cavnar AI can't publish to {platform or 'that'}."}
+    except Exception as e:
+        log.warning("publish_now %s failed for %s: %s", platform, restaurant_id, e)
+        return {"ok": False, "error": "That platform rejected the post — try again in a moment."}
+
+    if not payload.get("ok"):
+        return {"ok": False, "error": payload.get("error") or "The post didn't go through."}
+
+    post_id = payload.get("post_id")
+    # Instagram and Facebook log their own content row inside social_routes;
+    # Google's doesn't, and neither records the scheduling/media provenance —
+    # so the row is written (or completed) here, in the one place that knows
+    # all of it.
+    _log_published(restaurant_id, content_type or _default_type(platform), topic or body[:80],
+                   post_id, platform, scheduled_post_id=scheduled_post_id,
+                   link_token=link_token, db_path=db_path)
+    return {"ok": True, "post_id": post_id}
+
+
+def _default_type(platform):
+    return "google_promo" if platform == "google" else "instagram_post"
+
+
+def _media_url(base_url, token):
+    if not token:
+        return None
+    from marketing_media import media_url
+    return media_url(base_url, token)
+
+
+def _log_published(restaurant_id, content_type, topic, post_id, platform,
+                   scheduled_post_id=None, link_token=None, db_path: str = DB_PATH):
+    """One content-log row per published piece.
+
+    social_routes already inserts a row for Instagram and Facebook, so this
+    updates that row rather than creating a duplicate that would double every
+    "pieces this month" count.
+    """
+    conn = get_conn(db_path)
+    try:
+        existing = conn.execute(
+            "SELECT id FROM marketing_content_log WHERE restaurant_id=? AND post_id=? LIMIT 1",
+            (restaurant_id, post_id),
+        ).fetchone() if post_id else None
+        if existing:
+            conn.execute(
+                "UPDATE marketing_content_log SET scheduled_post_id=?, link_token=?, "
+                "posted_at=COALESCE(posted_at, datetime('now')) WHERE id=?",
+                (scheduled_post_id, link_token, existing["id"]),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO marketing_content_log "
+                "(restaurant_id, content_type, topic, post_id, post_platform, "
+                " scheduled_post_id, link_token, posted_at) "
+                "VALUES (?,?,?,?,?,?,?,datetime('now'))",
+                (restaurant_id, content_type, (topic or "")[:120], post_id, platform,
+                 scheduled_post_id, link_token),
+            )
+        conn.commit()
+    except Exception as e:
+        log.warning("content log write failed for %s: %s", restaurant_id, e)
+    finally:
+        conn.close()
+
+
+# ── Preview ────────────────────────────────────────────────────────────────
+# You could write a 2,400-character Instagram caption and find out it was over
+# the limit from Meta, after pressing Post. This is what the copy will
+# actually look like where it lands, computed the same way on both platforms
+# so they can't disagree about whether something fits.
+
+PLATFORM_LIMITS = {
+    "instagram": 2_200,
+    "facebook": 63_206,
+    "google": 1_500,
+    "sms": 160,
+    "email": None,
+}
+
+# Instagram collapses a caption after roughly this much and hides the rest
+# behind "... more", which is where most captions actually lose people.
+TRUNCATE_AT = {"instagram": 125, "facebook": 250, "google": 0, "sms": 0, "email": 0}
+
+
+def preview(platform, body, *, media_token=None, cta_type=None, base_url=""):
+    """What this post will look like, and whether it will be accepted."""
+    platform = (platform or "").lower().strip()
+    body = body or ""
+    limit = PLATFORM_LIMITS.get(platform)
+    length = len(body)
+
+    problems = []
+    if not body.strip():
+        problems.append("There's no post text.")
+    if limit and length > limit:
+        problems.append(f"{length:,} characters — {platform.title()} caps at {limit:,}.")
+    if platform == "instagram" and not media_token:
+        problems.append("Instagram needs a photo.")
+    if platform == "sms" and length > 160:
+        segments = -(-length // 153)  # concatenated SMS parts are 153 chars each
+        problems.append(f"Sends as {segments} linked texts rather than one.")
+
+    # The prompts for instagram_post, loyalty_nudge and event_announcement ask
+    # Claude for TWO versions. Publishing that untouched posts both, plus the
+    # labels — the single worst thing this module could do, so it is caught
+    # here rather than discovered on the restaurant's real feed.
+    lowered = body.lower()
+    if "option 1" in lowered and "option 2" in lowered:
+        problems.append("This still has both drafts in it — keep the one you want.")
+
+    cutoff = TRUNCATE_AT.get(platform) or 0
+    visible = body[:cutoff] if cutoff and length > cutoff else body
+    hashtags = [w for w in body.split() if w.startswith("#") and len(w) > 1]
+
+    return {
+        "platform": platform,
+        "characters": length,
+        "limit": limit,
+        "over_limit": bool(limit and length > limit),
+        "visible_before_more": visible,
+        "truncated": bool(cutoff and length > cutoff),
+        "hashtags": hashtags[:30],
+        "hashtag_count": len(hashtags),
+        "image_url": _media_url(base_url, media_token) if media_token else None,
+        "cta": cta_type or None,
+        "problems": problems,
+        "ready": not problems,
+    }
+
+
+# ── The queue ──────────────────────────────────────────────────────────────
+
+def schedule_post(restaurant_id, platform, body, scheduled_for, *, topic="",
+                  content_type=None, media_id=None, cta_type=None, cta_url=None,
+                  db_path: str = DB_PATH) -> dict:
+    """Queue a post. `scheduled_for` is naive ISO in the restaurant's own local
+    time. Refuses a slot in the past, since silently publishing something
+    immediately when the owner asked for Tuesday is worse than saying no."""
+    platform = (platform or "").lower().strip()
+    if platform not in PLATFORMS:
+        return {"ok": False, "error": f"Cavnar AI can't schedule posts to {platform or 'that'}."}
+    body = (body or "").strip()
+    if not body:
+        return {"ok": False, "error": "There's no post text to schedule."}
+
+    when = _parse_local(scheduled_for)
+    if when is None:
+        return {"ok": False, "error": "That date and time didn't make sense."}
+    now = _local_now(restaurant_id)
+    if when < now - timedelta(minutes=2):
+        return {"ok": False, "error": "That time has already passed — pick a time from here on."}
+    if when > now + timedelta(days=180):
+        return {"ok": False, "error": "Scheduling only goes six months out."}
+
+    if platform == "instagram" and not media_id:
+        return {"ok": False, "error": "Instagram needs a photo — add one before scheduling."}
+
+    if not channels_for(restaurant_id, db_path=db_path).get(platform):
+        return {"ok": False, "error": f"{platform.title()} isn't connected yet."}
+
+    conn = get_conn(db_path)
+    try:
+        cur = conn.execute(
+            "INSERT INTO marketing_scheduled_posts "
+            "(restaurant_id, platform, content_type, topic, body, media_id, cta_type, cta_url, scheduled_for) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (restaurant_id, platform, content_type, topic, body, media_id or None,
+             cta_type or None, cta_url or None, when.strftime("%Y-%m-%dT%H:%M:%S")),
+        )
+        conn.commit()
+        return {"ok": True, "id": cur.lastrowid,
+                "scheduled_for": when.strftime("%Y-%m-%dT%H:%M:%S")}
+    finally:
+        conn.close()
+
+
+def _parse_local(value):
+    raw = str(value or "").strip().replace(" ", "T")
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
+        try:
+            return datetime.strptime(raw[:19] if len(raw) >= 19 else raw, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def list_scheduled(restaurant_id, include_done=True, limit=50, db_path: str = DB_PATH) -> list:
+    conn = get_conn(db_path)
+    try:
+        sql = ("SELECT s.*, m.token AS media_token FROM marketing_scheduled_posts s "
+               "LEFT JOIN marketing_media m ON m.id = s.media_id "
+               "WHERE s.restaurant_id=?")
+        if not include_done:
+            sql += " AND s.status='scheduled'"
+        sql += " ORDER BY s.scheduled_for ASC LIMIT ?"
+        rows = conn.execute(sql, (restaurant_id, limit)).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def cancel_scheduled(post_id, restaurant_id, db_path: str = DB_PATH) -> dict:
+    conn = get_conn(db_path)
+    try:
+        n = conn.execute(
+            "UPDATE marketing_scheduled_posts SET status='cancelled' "
+            "WHERE id=? AND restaurant_id=? AND status='scheduled'",
+            (post_id, restaurant_id),
+        ).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    if not n:
+        return {"ok": False, "error": "That post has already gone out or was cancelled."}
+    return {"ok": True}
+
+
+def run_due_posts(base_url="https://dashboard.cavnar.ai", db_path: str = DB_PATH) -> dict:
+    """Publish everything whose slot has arrived. Called from scheduler.py.
+
+    Due-ness is computed per restaurant in ITS local time, because that is
+    what the owner picked — two restaurants in different timezones asking for
+    "11am" are two different moments.
+    """
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT s.*, m.token AS media_token FROM marketing_scheduled_posts s "
+            "LEFT JOIN marketing_media m ON m.id = s.media_id "
+            "WHERE s.status='scheduled' ORDER BY s.scheduled_for ASC LIMIT 200"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    published = failed = skipped = 0
+    for row in rows:
+        when = _parse_local(row["scheduled_for"])
+        if when is None:
+            _finish(row["id"], "failed", error="Unreadable scheduled time", db_path=db_path)
+            failed += 1
+            continue
+        now = _local_now(row["restaurant_id"])
+        if now < when:
+            skipped += 1
+            continue
+        if now - when > timedelta(hours=LATE_TOLERANCE_HOURS):
+            # A brunch post landing at dinner is worse than one that didn't land.
+            _finish(row["id"], "failed",
+                    error=f"Missed its slot by more than {LATE_TOLERANCE_HOURS} hours", db_path=db_path)
+            failed += 1
+            continue
+
+        result = publish_now(
+            row["restaurant_id"], row["platform"], row["body"],
+            topic=row["topic"] or "", media_token=row["media_token"],
+            cta_type=row["cta_type"], cta_url=row["cta_url"], base_url=base_url,
+            content_type=row["content_type"], scheduled_post_id=row["id"], db_path=db_path,
+        )
+        if result.get("ok"):
+            _finish(row["id"], "posted", post_id=result.get("post_id"), db_path=db_path)
+            published += 1
+        else:
+            attempts = (row["attempts"] or 0) + 1
+            # Retried on the next tick unless it has clearly failed for good —
+            # a transient Meta 500 shouldn't burn the post.
+            status = "failed" if attempts >= MAX_ATTEMPTS else "scheduled"
+            _finish(row["id"], status, error=result.get("error"), attempts=attempts, db_path=db_path)
+            if status == "failed":
+                failed += 1
+    return {"published": published, "failed": failed, "pending": skipped}
+
+
+def _finish(row_id, status, *, post_id=None, error=None, attempts=None,
+            db_path: str = DB_PATH):
+    conn = get_conn(db_path)
+    try:
+        conn.execute(
+            "UPDATE marketing_scheduled_posts SET status=?, error=?, "
+            "attempts=COALESCE(?, attempts), post_id=COALESCE(?, post_id), "
+            "posted_at=CASE WHEN ?='posted' THEN datetime('now') ELSE posted_at END "
+            "WHERE id=?",
+            (status, error, attempts, post_id, status, row_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()

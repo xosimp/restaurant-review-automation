@@ -66,6 +66,25 @@ def init_guest_marketing(db_path=DB_PATH):
     for col_sql in (
         "ALTER TABLE guest_contacts ADD COLUMN last_visit TEXT",
         "ALTER TABLE guest_contacts ADD COLUMN last_review_requested_at TEXT",
+        # Segmentation: campaigns went to everyone consented, which is how a
+        # win-back text reaches someone who ate here last night.
+        "ALTER TABLE guest_contacts ADD COLUMN visit_count INTEGER DEFAULT 0",
+        "ALTER TABLE guest_contacts ADD COLUMN last_campaign_at TEXT",
+        # Campaign history was written and never read back; segment records
+        # who a campaign actually went to.
+        "ALTER TABLE guest_campaigns ADD COLUMN segment TEXT",
+        "ALTER TABLE guest_campaigns ADD COLUMN segment_label TEXT",
+        "ALTER TABLE guest_campaigns ADD COLUMN link_token TEXT",
+        # The email channel. `weekly_email` has generated newsletters — two
+        # subject-line options and all — since this module existed, and there
+        # was no list to send one to and no way to send it, so the output was
+        # something you copied into your own mail client by hand.
+        "ALTER TABLE guest_contacts ADD COLUMN email TEXT",
+        "ALTER TABLE guest_contacts ADD COLUMN email_consent INTEGER DEFAULT 0",
+        "ALTER TABLE guest_contacts ADD COLUMN email_consent_at TEXT",
+        "ALTER TABLE guest_contacts ADD COLUMN email_unsubscribed INTEGER DEFAULT 0",
+        "ALTER TABLE guest_contacts ADD COLUMN email_token TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_guest_email_token ON guest_contacts(email_token)",
     ):
         try:
             conn.execute(col_sql)
@@ -128,7 +147,8 @@ def get_guest_contacts(restaurant_id, consent_only=False, db_path=DB_PATH):
     consented or not."""
     conn = get_conn(db_path)
     query = ("SELECT id, name, phone, consent, consent_at, unsubscribed, "
-             "last_visit, last_review_requested_at FROM guest_contacts WHERE restaurant_id=?")
+             "last_visit, last_review_requested_at, visit_count, last_campaign_at "
+             "FROM guest_contacts WHERE restaurant_id=?")
     if consent_only:
         query += " AND consent=1 AND unsubscribed=0"
     rows = conn.execute(query + " ORDER BY id DESC", (restaurant_id,)).fetchall()
@@ -137,7 +157,9 @@ def get_guest_contacts(restaurant_id, consent_only=False, db_path=DB_PATH):
         {"id": r["id"], "name": r["name"] or "", "phone": r["phone"],
          "consent": bool(r["consent"]), "consent_at": r["consent_at"],
          "unsubscribed": bool(r["unsubscribed"]), "last_visit": r["last_visit"],
-         "last_review_requested_at": r["last_review_requested_at"]}
+         "last_review_requested_at": r["last_review_requested_at"],
+         "visit_count": int(r["visit_count"] or 0),
+         "last_campaign_at": r["last_campaign_at"]}
         for r in rows
     ]
 
@@ -189,7 +211,8 @@ def _upsert_contact(restaurant_id, phone, name, consent, db_path):
             # once though (COALESCE) — consent doesn't need re-timestamping.
             conn.execute(
                 "UPDATE guest_contacts SET consent=1, consent_at=COALESCE(consent_at,?), "
-                "unsubscribed=0, name=COALESCE(?,name), last_visit=? WHERE id=?",
+                "unsubscribed=0, name=COALESCE(?,name), last_visit=?, "
+                "visit_count=COALESCE(visit_count,0)+1 WHERE id=?",
                 (now_iso, name, now_iso, existing["id"])
             )
         elif name:
@@ -198,8 +221,10 @@ def _upsert_contact(restaurant_id, phone, name, consent, db_path):
         contact_id = existing["id"]
     else:
         cur = conn.execute(
-            "INSERT INTO guest_contacts (restaurant_id, name, phone, consent, consent_at, last_visit) VALUES (?,?,?,?,?,?)",
-            (restaurant_id, (name or "").strip() or None, phone, int(consent), now_iso, now_iso)
+            "INSERT INTO guest_contacts (restaurant_id, name, phone, consent, consent_at, "
+            "last_visit, visit_count) VALUES (?,?,?,?,?,?,?)",
+            (restaurant_id, (name or "").strip() or None, phone, int(consent), now_iso,
+             now_iso, 1 if consent else 0)
         )
         conn.commit()
         contact_id = cur.lastrowid
@@ -224,8 +249,12 @@ def mark_guest_visit(contact_id, restaurant_id, db_path=DB_PATH):
     from time_utils import restaurant_now_by_id
     now_iso = restaurant_now_by_id(restaurant_id, naive=True).isoformat()
     conn = get_conn(db_path)
+    # visit_count as well as last_visit — segmentation asks "how many times",
+    # which a single timestamp can't answer, so regulars and first-timers were
+    # indistinguishable.
     conn.execute(
-        "UPDATE guest_contacts SET last_visit=? WHERE id=? AND restaurant_id=?",
+        "UPDATE guest_contacts SET last_visit=?, visit_count=COALESCE(visit_count,0)+1 "
+        "WHERE id=? AND restaurant_id=?",
         (now_iso, contact_id, restaurant_id)
     )
     conn.commit()
@@ -371,6 +400,118 @@ CAMPAIGN_PROMPTS = {
 }
 
 
+# ── Audience segments ──────────────────────────────────────────────────────
+# A campaign went to every consented contact, full stop. That is how a
+# "we miss you" text reaches someone who ate here last night, and it is the
+# difference between a text club and a blast list: `win_back` was a TONE the
+# copy was written in, never an AUDIENCE it was sent to.
+#
+# Every segment is a filter on rows this module already keeps — last_visit,
+# visit_count — on top of the consent gate, which is never optional.
+
+SEGMENTS = {
+    "all": {
+        "label": "Everyone consented",
+        "help": "Every guest who opted in and hasn't unsubscribed.",
+    },
+    "lapsed_30": {
+        "label": "Haven't been in 30+ days",
+        "help": "Opted-in guests whose last recorded visit was over a month ago.",
+    },
+    "lapsed_60": {
+        "label": "Haven't been in 60+ days",
+        "help": "The ones drifting away rather than just busy.",
+    },
+    "regulars": {
+        "label": "Regulars (3+ visits)",
+        "help": "Guests you've recorded at least three visits for.",
+    },
+    "new": {
+        "label": "First-timers",
+        "help": "One recorded visit — the ones worth turning into regulars.",
+    },
+}
+
+# A default pairing, so picking a tone suggests the audience it was written
+# for instead of leaving the two unrelated.
+CAMPAIGN_DEFAULT_SEGMENT = {
+    "win_back": "lapsed_30",
+    "loyalty": "regulars",
+    "event": "all",
+    "general": "all",
+}
+
+
+def segment_contacts(restaurant_id, segment="all", db_path=DB_PATH):
+    """Consented, non-unsubscribed contacts matching `segment`.
+
+    Consent is applied first and unconditionally — a segment can only ever
+    narrow the eligible set, never widen it.
+    """
+    contacts = get_guest_contacts(restaurant_id, consent_only=True, db_path=db_path)
+    segment = (segment or "all").strip().lower()
+    if segment not in SEGMENTS:
+        segment = "all"
+    if segment == "all":
+        return contacts
+
+    from time_utils import restaurant_now_by_id
+    now = restaurant_now_by_id(restaurant_id, naive=True)
+
+    def days_since_visit(c):
+        raw = c.get("last_visit")
+        if not raw:
+            return None
+        try:
+            return (now - datetime.fromisoformat(str(raw)[:19])).days
+        except Exception:
+            return None
+
+    out = []
+    for c in contacts:
+        visits = int(c.get("visit_count") or 0)
+        gap = days_since_visit(c)
+        if segment == "lapsed_30":
+            # No recorded visit is not the same as a lapsed one — a guest who
+            # joined at the table and never got marked doesn't belong in a
+            # "we miss you" text.
+            if gap is not None and gap >= 30:
+                out.append(c)
+        elif segment == "lapsed_60":
+            if gap is not None and gap >= 60:
+                out.append(c)
+        elif segment == "regulars":
+            if visits >= 3:
+                out.append(c)
+        elif segment == "new":
+            if visits == 1:
+                out.append(c)
+    return out
+
+
+def segment_counts(restaurant_id, db_path=DB_PATH) -> dict:
+    """How many guests each segment would reach right now, so the owner picks
+    an audience seeing its size rather than after sending to it."""
+    return {key: len(segment_contacts(restaurant_id, key, db_path=db_path)) for key in SEGMENTS}
+
+
+# ── Send frequency ─────────────────────────────────────────────────────────
+# Nothing capped how often a guest could be texted. Quiet hours stop a message
+# at midnight; this stops four messages on a Tuesday, which is the other half
+# of not being the restaurant people mute.
+GUEST_SMS_MIN_DAYS_BETWEEN = 3
+
+
+def _too_soon(contact, now):
+    last = contact.get("last_campaign_at")
+    if not last:
+        return False
+    try:
+        return (now - datetime.fromisoformat(str(last)[:19])).days < GUEST_SMS_MIN_DAYS_BETWEEN
+    except Exception:
+        return False
+
+
 def draft_campaign_message(restaurant, campaign_type="general", topic=""):
     """AI-drafts a short SMS (under ~300 chars — a real SMS/MMS segment
     budget, not email) in the restaurant's own voice. Reuses marketing.py's
@@ -407,38 +548,131 @@ def draft_campaign_message(restaurant, campaign_type="general", topic=""):
     return extract_text(message).strip()
 
 
-def send_campaign(restaurant_id, message, db_path=DB_PATH):
-    """Send `message` to every consented, non-unsubscribed guest contact.
-    Returns {"sent": n, "failed": n, "total": n}, or
-    {"ok": False, "error": ...} when the quiet-hours window is closed.
-    Never raises — a bad number failing to send shouldn't stop the rest.
+def send_campaign(restaurant_id, message, db_path=DB_PATH, segment="all", link_token=None):
+    """Send `message` to one SEGMENT of consented, non-unsubscribed guests.
 
-    The window check is here rather than in the routes so that every caller
-    -- web, mobile, Ask Cavnar, a future scheduled campaign -- inherits it."""
+    Returns {"ok": True, "sent", "failed", "total", "skipped_recent", ...}, or
+    {"ok": False, "error"} when the quiet-hours window is closed.
+    Never raises — one bad number must not stop the rest of the list.
+
+    Three gates, in order, and all of them server-side so every caller (web,
+    mobile, Ask Cavnar, a future scheduled campaign) inherits them:
+      1. quiet hours   — nothing goes out between 9pm and 8am local
+      2. consent       — only guests who opted in themselves
+      3. frequency     — nobody gets two campaigns inside three days
+    """
     if not guest_sms_allowed_now(restaurant_id):
         return {"ok": False, "blocked": "quiet_hours", "sent": 0, "failed": 0, "total": 0,
                 "error": ("Guest texts only go out between "
                           f"{guest_sms_window_label()} in your local time. "
                           "Your message is ready — send it in the morning.")}
-    contacts = get_guest_contacts(restaurant_id, consent_only=True, db_path=db_path)
-    full_message = message.strip() + "\n\nReply STOP to unsubscribe."
+
+    from time_utils import restaurant_now_by_id
+    now = restaurant_now_by_id(restaurant_id, naive=True)
+
+    audience = segment_contacts(restaurant_id, segment, db_path=db_path)
+    eligible = [c for c in audience if not _too_soon(c, now)]
+    skipped_recent = len(audience) - len(eligible)
+
+    body = message.strip()
+    if link_token:
+        body = f"{body}\n{_short_link(link_token)}"
+    full_message = body + "\n\nReply STOP to unsubscribe."
+
     sent, failed = 0, 0
-    for c in contacts:
+    reached_ids = []
+    for c in eligible:
         try:
             if send_sms(c["phone"], full_message):
                 sent += 1
+                reached_ids.append(c["id"])
             else:
                 failed += 1
         except Exception:
             failed += 1
+
     conn = get_conn(db_path)
-    conn.execute(
-        "INSERT INTO guest_campaigns (restaurant_id, message, sent_count, failed_count) VALUES (?,?,?,?)",
-        (restaurant_id, message.strip(), sent, failed)
-    )
-    conn.commit()
-    conn.close()
-    return {"ok": True, "sent": sent, "failed": failed, "total": len(contacts)}
+    try:
+        conn.execute(
+            "INSERT INTO guest_campaigns "
+            "(restaurant_id, message, sent_count, failed_count, segment, segment_label, link_token) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (restaurant_id, message.strip(), sent, failed, segment,
+             SEGMENTS.get(segment, SEGMENTS["all"])["label"], link_token),
+        )
+        # Stamps the frequency cap. Only guests actually reached are stamped,
+        # so a failed send doesn't lock someone out of the next campaign.
+        for cid in reached_ids:
+            conn.execute("UPDATE guest_contacts SET last_campaign_at=? WHERE id=?",
+                         (now.strftime("%Y-%m-%dT%H:%M:%S"), cid))
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {"ok": True, "sent": sent, "failed": failed, "total": len(eligible),
+            "skipped_recent": skipped_recent, "segment": segment,
+            "segment_label": SEGMENTS.get(segment, SEGMENTS["all"])["label"]}
+
+
+def _short_link(token, base_url=None):
+    base = (base_url or os.getenv("PUBLIC_BASE_URL") or "https://dashboard.cavnar.ai").rstrip("/")
+    return f"{base}/g/{token}"
+
+
+def campaign_history(restaurant_id, limit=20, db_path=DB_PATH) -> list:
+    """What has been sent, to whom, and what it did.
+
+    guest_campaigns has recorded every send since the table existed and
+    nothing ever displayed it — an owner could not answer "did we already
+    text about the wine dinner?" without asking Ask Cavnar.
+    """
+    conn = get_conn(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT c.id, c.message, c.sent_count, c.failed_count, c.segment, "
+            "       c.segment_label, c.link_token, c.created_at, "
+            "       COALESCE(l.clicks, 0) AS clicks "
+            "FROM guest_campaigns c "
+            "LEFT JOIN marketing_links l ON l.token = c.link_token "
+            "WHERE c.restaurant_id=? ORDER BY c.id DESC LIMIT ?",
+            (restaurant_id, limit),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+def consent_ledger(restaurant_id, db_path=DB_PATH) -> dict:
+    """The compliance picture, in one call.
+
+    Consent has always been recorded — consent_at has been on every row since
+    the table existed — and never shown anywhere. If someone ever asks how a
+    number got on this list, this is the answer.
+    """
+    contacts = get_guest_contacts(restaurant_id, db_path=db_path)
+    conn = get_conn(db_path)
+    try:
+        this_month = conn.execute(
+            "SELECT COALESCE(SUM(sent_count),0) FROM guest_campaigns "
+            "WHERE restaurant_id=? AND created_at >= date('now','start of month')",
+            (restaurant_id,),
+        ).fetchone()[0] or 0
+        campaigns = conn.execute(
+            "SELECT COUNT(*) FROM guest_campaigns WHERE restaurant_id=? "
+            "AND created_at >= date('now','start of month')", (restaurant_id,),
+        ).fetchone()[0] or 0
+    finally:
+        conn.close()
+    return {
+        "total": len(contacts),
+        "textable": sum(1 for c in contacts if c["consent"] and not c["unsubscribed"]),
+        "unsubscribed": sum(1 for c in contacts if c["unsubscribed"]),
+        "no_consent": sum(1 for c in contacts if not c["consent"] and not c["unsubscribed"]),
+        "texts_this_month": int(this_month),
+        "campaigns_this_month": int(campaigns),
+        "window": guest_sms_window_label(),
+        "min_days_between": GUEST_SMS_MIN_DAYS_BETWEEN,
+    }
 
 
 # ── Automated post-visit review request ─────────────────────────────────────

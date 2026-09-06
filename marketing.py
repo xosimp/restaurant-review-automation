@@ -374,26 +374,17 @@ def generate_content(content_type: str, topic: str,
     # Build explicit location context so AI doesn't invent geography
     location_context = f"\nLocation context: {p['neighborhood']}. Setting/vibe: {p['vibe']}. Only use these details when describing the restaurant's physical setting — do not add any geographic details not mentioned here."
 
-    # Pull top-performing content topics from DB to guide style
-    perf_context = ""
+    # What worked, what guests just said, and what the sky is doing. This was
+    # a hand-rolled top-performers query that lived only here — the content
+    # calendar, which plans a whole week, got none of it, and neither ever saw
+    # a review or a forecast. See marketing_signals.generation_context.
+    signal_context = ""
     if restaurant_id:
         try:
-            from models import get_conn as _gc_mc
-            _conn_mc = _gc_mc()
-            _top = _conn_mc.execute(
-                """SELECT topic, post_platform, reach, impressions, likes
-                   FROM marketing_content_log
-                   WHERE restaurant_id=? AND post_id IS NOT NULL
-                     AND (reach > 0 OR impressions > 0 OR likes > 0)
-                   ORDER BY (COALESCE(reach,0) + COALESCE(impressions,0)) DESC LIMIT 3""",
-                (restaurant_id,)
-            ).fetchall()
-            _conn_mc.close()
-            if _top:
-                _top_lines = [r["topic"] + " (" + (r["post_platform"] or "social") + ", " + str(int((r["reach"] or 0) + (r["impressions"] or 0))) + " reach+impr)" for r in _top]
-                perf_context = "\nTop-performing past posts (highest reach/impressions) — use these as style and angle inspiration:\n" + "\n".join(_top_lines)
+            from marketing_signals import generation_context
+            signal_context = generation_context(restaurant_id)
         except Exception:
-            pass
+            signal_context = ""
 
     prompt = prompt_template.format(
         restaurant=p["name"],
@@ -402,7 +393,7 @@ def generate_content(content_type: str, topic: str,
         voice=p["voice"],
         known_for=p["known_for"],
         topic=topic,
-    ) + location_context + recent_context + seasonal_context + never_clause + menu_clause + perf_context
+    ) + location_context + recent_context + seasonal_context + never_clause + menu_clause + signal_context
 
     msg = create_with_retry(
         client,
@@ -523,6 +514,14 @@ def get_content_calendar_ideas(restaurant_id: int = None, force: bool = False) -
         upcoming_holidays = ', '.join(filtered) if filtered else None
 
     menu_context = f"\nMenu & current specials: {p['menu_notes']}\nReference specific dishes and specials in content ideas when relevant." if p.get('menu_notes') else ""
+    # The calendar plans a whole week and used to know only the profile and a
+    # fixed holiday list — not which posts landed, not what guests are saying,
+    # and not that Saturday is the first 75° day of the year.
+    try:
+        from marketing_signals import generation_context
+        signal_block = generation_context(restaurant_id) if restaurant_id else ""
+    except Exception:
+        signal_block = ""
     never_clause = f"Never use these words or phrases: {p['never_say']}." if p.get('never_say') else ""
 
     prompt = f"""Generate a 7-day social media content calendar for {p['name']}, 
@@ -534,6 +533,7 @@ Brand voice: {p['voice']}
 TODAY'S DATE: {today_str} (this is the real current date — do not assume any other date)
 Upcoming holidays/events in the next 30 days: {upcoming_holidays if upcoming_holidays else "No major holidays"}
 Recently generated content (avoid repeating these): {recent_topics}
+{signal_block}
 
 Return ONLY valid JSON — no markdown fences. Array of 7 objects with:
 {{"day": "Monday", "platform": "Instagram & FB|Email|Google|SMS", "angle": "one short sentence, max 20 words", "type": "instagram_post|weekly_email|google_promo|happy_hour|loyalty_nudge"}}

@@ -229,7 +229,8 @@ def test_send_campaign_logs_to_guest_campaigns_table(db_path):
 def test_send_campaign_with_no_consented_contacts_sends_nothing(db_path):
     r = _restaurant(db_path)
     result = send_campaign(r.id, "Hello", db_path=db_path)
-    assert result == {"ok": True, "sent": 0, "failed": 0, "total": 0}
+    assert result["ok"] is True
+    assert (result["sent"], result["failed"], result["total"]) == (0, 0, 0)
 
 
 def test_send_campaign_appends_stop_instructions(db_path, monkeypatch):

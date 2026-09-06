@@ -27,10 +27,15 @@ def _init_tables(db_path):
 
 @pytest.fixture(autouse=True)
 def _redirect_db(monkeypatch, db_path):
+    """guest_marketing does `from models import get_conn`, so it holds its own
+    reference — patching models alone left its reads pointing at the real
+    project database, which is where these tests were quietly running."""
+    import guest_marketing
     real_get_conn = models.get_conn
     redirect = lambda *a, **k: real_get_conn(db_path)
-    for mod in (models, auth, client_api):
+    for mod in (models, auth, client_api, guest_marketing):
         monkeypatch.setattr(mod, "get_conn", redirect)
+    monkeypatch.setattr(guest_marketing, "DB_PATH", db_path)
 
 
 def _restaurant(db_path, **kw):
