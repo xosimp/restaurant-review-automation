@@ -690,3 +690,38 @@ def test_a_successful_run_stays_silent(rid, db_path, monkeypatch):
     marketing_publish.run_due_posts(db_path=db_path)
 
     assert noise == [], "silence has to stay meaningful"
+
+
+# ── Caption post-processing ────────────────────────────────────────────────
+
+def test_hashtags_survive_the_markdown_stripper(rid, db_path, monkeypatch):
+    """The stripper removed a leading "#" with an OPTIONAL space after it, so
+    a caption whose hashtags started their own line lost the "#" off the first
+    one — "#GiaMia #TruffleSeason" went out as "GiaMia #TruffleSeason". One
+    broken tag on every Instagram post, silently."""
+    import marketing
+    monkeypatch.setattr(marketing, "get_recent_content", lambda r, limit=5: [])
+    monkeypatch.setattr(marketing, "log_content", lambda *a, **k: None)
+    monkeypatch.setattr(marketing, "generation_context", lambda r: "", raising=False)
+    monkeypatch.setattr(marketing, "create_with_retry", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        marketing, "extract_text",
+        lambda m: "Truffle season just landed.\n\n#GiaMia #TruffleSeason #WoodFired")
+
+    out = marketing.generate_content("instagram_post", "truffle", restaurant_id=rid)
+
+    assert "#GiaMia" in out
+    assert out.count("#") == 3
+
+
+def test_a_real_markdown_heading_is_still_stripped(rid, db_path, monkeypatch):
+    import marketing
+    monkeypatch.setattr(marketing, "get_recent_content", lambda r, limit=5: [])
+    monkeypatch.setattr(marketing, "log_content", lambda *a, **k: None)
+    monkeypatch.setattr(marketing, "generation_context", lambda r: "", raising=False)
+    monkeypatch.setattr(marketing, "create_with_retry", lambda *a, **kw: None)
+    monkeypatch.setattr(marketing, "extract_text", lambda m: "## Caption\nCome by tonight.")
+
+    out = marketing.generate_content("instagram_post", "x", restaurant_id=rid)
+
+    assert out.startswith("Caption")

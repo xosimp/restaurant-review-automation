@@ -1322,12 +1322,15 @@ def _do_mkt_insight(rid, raw=False):
             pass
         has_trend = bool(_trend_lines)
         forecast_instruction = (
-            '\n\nAfter the two paragraphs, add one final line starting with exactly "FORECAST:" '
-            "— one sentence predicting next week's reach/engagement trajectory based on the trend "
-            "above. Only include this if the trend is genuinely supported by the data given."
+            '\nFORECAST: one short sentence on where reach is heading, based only on the trend above.'
         ) if has_trend else ""
+        # Written to the shape parse_insight_sections() actually reads: a
+        # one-line intro, then numbered recommendations, then an optional
+        # FORECAST line. It used to ask for "two short paragraphs", which the
+        # parser has nowhere to put — the whole brief landed in `intro` and
+        # rendered as a wall of prose filling the sheet. The point of the
+        # consultant is a glance, not a read.
         prompt = f"""You are the Cavnar AI Marketing Consultant for {name}.
-Write a short, punchy weekly marketing brief for {owner or "the owner"} — 3-4 sentences max.
 
 Restaurant: {p["name"]} in {p["neighborhood"]}.
 Vibe: {p["vibe"]}.
@@ -1335,14 +1338,22 @@ Known for: {p["known_for"]}.
 Brand voice: {p["voice"]}.
 {menu_clause}
 {never_clause}
-ALL upcoming holidays in next 30 days (mention ALL of them, not just one): {upcoming if upcoming else "none"}.
-Recent content generated (do NOT repeat these): {recent_str}.{perf_clause}
+Upcoming holidays in the next 30 days: {upcoming if upcoming else "none"}.
+Recent content already generated (do NOT repeat these): {recent_str}.{perf_clause}
 
-Structure exactly like this — no headers, no bullets, just two short paragraphs:
-Paragraph 1: Start with "{greeting}" then give 1 specific marketing opportunity this week tied to the season, upcoming holidays, or a gap in recent content. If post performance data is available, mention what's working.
-Paragraph 2: One concrete content suggestion with a specific angle. Reference real menu items if provided. End with a one-line encouragement.
+Return EXACTLY this shape and nothing else:
 
-Tone: warm, direct, like a trusted advisor. Match the brand voice exactly. No corporate language. Under 120 words total. If multiple holidays are coming up, mention both briefly.{forecast_instruction}"""
+Line 1: "{greeting}" followed by ONE sentence, 20 words maximum, naming the single
+biggest marketing opportunity this week. This line is read on its own on a
+small screen — it has to stand alone.
+
+Then a blank line, then 2 recommendations, numbered "1." and "2.", each ONE
+sentence of 15 words or less. Each is a concrete thing to post or do, with a
+specific angle — reference a real menu item or a named holiday where it fits.
+No preamble on them, no closing encouragement, no sign-off.{forecast_instruction}
+
+Tone: warm, direct, a trusted advisor who knows the owner is busy. Match the
+brand voice. No corporate language. The whole brief must be under 60 words."""
         import anthropic as _anth
         from ai_utils import create_with_retry, extract_text
         _client = _anth.Anthropic(api_key=__import__("os").getenv("ANTHROPIC_API_KEY"))

@@ -204,6 +204,13 @@ struct RootView: View {
                 try? await Task.sleep(for: .milliseconds(100))
                 selectedTab = .account
             }
+            // Land straight on a module screen (Modules -> that module) so a
+            // pushed screen can be opened directly for inspection.
+            if let key = ProcessInfo.processInfo.environment["CAVNAR_DEBUG_OPEN_MODULE"] {
+                try? await Task.sleep(for: .milliseconds(150))
+                selectedTab = .modules
+                modulesPath.append(ModuleRoute(key: key, label: key.capitalized))
+            }
         }
         #endif
         .onChange(of: scenePhase) { _, newPhase in

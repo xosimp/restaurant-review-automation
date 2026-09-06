@@ -23,7 +23,7 @@ private struct AIConsultantStripContent: View {
                         Text("No analysis yet")
                     }
                 }
-                .font(.cavnarBody(15, weight: 500))
+                .font(.cavnarBody(16.5, weight: 500))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 // The sentence itself is body copy and reads as the app's
@@ -195,7 +195,7 @@ private struct AIConsultantSheet: View {
     /// in ember, every number in Space Grotesk, the rest in ink.
     private var openingLine: some View {
         let (name, rest) = Self.splitLeadingName(insight.intro)
-        let numberFont = Font.cavnarNumber(22, weight: 600)
+        let numberFont = Font.cavnarNumber(24, weight: 600)
         var text = Text("")
         if let name {
             text = text + Text(name).foregroundStyle(Color.cavnarEmber)
@@ -213,7 +213,7 @@ private struct AIConsultantSheet: View {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 11, weight: .bold))
                 Text("WHAT TO DO THIS WEEK")
-                    .font(.cavnarBody(13, weight: 700))
+                    .font(.cavnarBody(14.5, weight: 700))
                     .tracking(1.3)
             }
             .foregroundStyle(Color.cavnarEmber)
@@ -229,11 +229,11 @@ private struct AIConsultantSheet: View {
                             .contentShape(Rectangle())
                             .shadow(color: Color.cavnarEmber.opacity(0.6), radius: 7, x: 0, y: 0)
                         Text("\(index + 1)")
-                            .font(.cavnarNumber(14, weight: 700))
+                            .font(.cavnarNumber(15.5, weight: 700))
                             .foregroundStyle(.white)
                     }
-                    Self.mixedText(rec, numberFont: .cavnarNumber(16, weight: 600), color: Color.cavnarInk)
-                        .font(.cavnarBody(16))
+                    Self.mixedText(rec, numberFont: .cavnarNumber(17.5, weight: 600), color: Color.cavnarInk)
+                        .font(.cavnarBody(17.5))
                         .lineSpacing(5)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 4)
@@ -262,12 +262,12 @@ private struct AIConsultantSheet: View {
                 Image(systemName: "calendar.badge.clock")
                     .font(.system(size: 11, weight: .bold))
                 Text("LOOKING AHEAD")
-                    .font(.cavnarBody(13, weight: 700))
+                    .font(.cavnarBody(14.5, weight: 700))
                     .tracking(1.3)
             }
             .foregroundStyle(Color.cavnarAmber)
-            Self.mixedText(forecast, numberFont: .cavnarNumber(16, weight: 600), color: Color.cavnarInk2)
-                .font(.cavnarBody(16))
+            Self.mixedText(forecast, numberFont: .cavnarNumber(17.5, weight: 600), color: Color.cavnarInk2)
+                .font(.cavnarBody(17.5))
                 .lineSpacing(5)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -285,7 +285,7 @@ private struct AIConsultantSheet: View {
         HStack(spacing: 8) {
             CavnarSealMark(size: 20)
             Text("Cavnar AI · analysis of your latest synced data")
-                .font(.cavnarBody(13, weight: 600))
+                .font(.cavnarBody(14.5, weight: 600))
                 .foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity)

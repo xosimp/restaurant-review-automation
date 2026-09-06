@@ -14,6 +14,17 @@ struct CavnarSplitButton<MenuContent: View>: View {
     var isLoading: Bool = false
     var loadingText: String = "Working…"
     var isDisabled: Bool = false
+
+    /// Fill the available width instead of hugging the label.
+    ///
+    /// Off by default so existing call sites keep the compact pill they were
+    /// designed around. On, the chevron is pinned to the trailing edge — which
+    /// matters when the LABEL changes with the selection ("Generate Instagram
+    /// post" → "Generate Google post"): a hugging button resizes, the chevron
+    /// slides to a new x, and the menu's dismissal animation carries it there
+    /// with a visible bounce. Nothing to animate if it never moves.
+    var fillsWidth: Bool = false
+
     var action: () -> Void
     @ViewBuilder var menuContent: () -> MenuContent
 
@@ -22,7 +33,6 @@ struct CavnarSplitButton<MenuContent: View>: View {
     // CavnarPrimaryButtonStyle does — these had no haptic at all before.
     // A toggled trigger tied to the tap itself gets the same effect.
     @State private var actionTapTrigger = false
-    @State private var menuTapTrigger = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -40,11 +50,12 @@ struct CavnarSplitButton<MenuContent: View>: View {
                         Text(label)
                     }
                 }
-                .font(.cavnarBody(15, weight: 600))
+                .font(.cavnarBody(17, weight: 600))
                 .foregroundStyle(.white)
                 .padding(.leading, icon != nil ? 10 : 18)
                 .padding(.trailing, 14)
-                .padding(.vertical, 12)
+                .padding(.vertical, 13)
+                .frame(maxWidth: fillsWidth ? .infinity : nil)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -66,9 +77,12 @@ struct CavnarSplitButton<MenuContent: View>: View {
                     .contentShape(Rectangle())
             }
             // .simultaneousGesture, not a wrapping tap gesture, so this
-            // doesn't compete with Menu's own gesture for opening it.
-            .simultaneousGesture(TapGesture().onEnded { menuTapTrigger.toggle() })
-            .sensoryFeedback(.impact(weight: .light), trigger: menuTapTrigger)
+            // doesn't compete with Menu's own gesture for opening it. The
+            // haptic is fired imperatively rather than through
+            // .sensoryFeedback(trigger:): that needs the toggled state to be
+            // observed on a later update pass, and the Menu presenting itself
+            // pre-empts it, so the chevron buzzed inconsistently or not at all.
+            .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
         }
         // Explicit Capsule — this component's own reference match was a
         // full pill, unlike CavnarPrimaryButtonStyle's newer moderate

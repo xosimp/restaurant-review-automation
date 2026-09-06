@@ -28,6 +28,10 @@ struct MarketingView: View {
     @State private var showingSchedule = false
     @State private var schedulePlatform = "instagram"
     @State private var shelfDestination: MarketingShelfDestination?
+    /// Bumped when a calendar day's "Write this" finishes — the ScrollViewReader
+    /// watches it and moves to the caption box. A token rather than a Bool so
+    /// tapping a second day still scrolls.
+    @State private var scrollToDraft: UUID?
     @FocusState private var focusedField: MarketingContentField?
 
     var body: some View {
@@ -37,6 +41,7 @@ struct MarketingView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 16)
 
+            ScrollViewReader { scroll in
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if subTab == .content {
@@ -49,7 +54,7 @@ struct MarketingView: View {
                             CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                         } else if let error = viewModel.errorMessage {
                             VStack(spacing: 8) {
-                                Text(error).font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
+                                Text(error).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarInk3)
                                 Button("Retry") { Task { await viewModel.load() } }
                             }
                             .padding(.top, 60)
@@ -71,6 +76,38 @@ struct MarketingView: View {
                     await analyticsViewModel.refresh()
                 }
             }
+            .onChange(of: scrollToDraft) { _, token in
+                guard token != nil else { return }
+                // Land just above the caption box rather than on it, so the
+                // "Generate" control it came from stays in view and the jump
+                // reads as a move up the page instead of a teleport.
+                withAnimation(.easeOut(duration: 0.45)) {
+                    scroll.scrollTo(Self.draftEditorAnchor, anchor: .center)
+                }
+            }
+            }
+        }
+        // Declared here, at the top level of the view, NOT inside the
+        // ScrollView where the rows that trigger it live. A
+        // navigationDestination inside a scroll view is not a supported
+        // placement (Apple's own documentation says so) and the screen it
+        // pushes lays out against the wrong container — which is why the
+        // Drafts screen's gradient stopped short of the full width.
+        .navigationDestination(item: $shelfDestination) { destination in
+            switch destination {
+            case .guestTextClub:
+                GuestTextClubView()
+            case .scheduled:
+                MarketingQueueView(viewModel: compose)
+            case .drafts:
+                MarketingDraftsView(viewModel: compose) { draft in
+                    viewModel.draft = draft.body
+                    viewModel.hasDraft = true
+                    if let type = draft.contentType { viewModel.selectedType = type }
+                    viewModel.topic = draft.topic ?? ""
+                    shelfDestination = nil
+                }
+            }
         }
         .cavnarModuleBackground()
         .navigationTitle("Marketing")
@@ -89,6 +126,21 @@ struct MarketingView: View {
             await compose.loadScheduled()
             await compose.loadDrafts()
         }
+        #if DEBUG
+        // Debug-only deep link, same shape as RootView's autologin hook: only
+        // fires when the launching process explicitly sets it, so it can never
+        // reach a TestFlight or release build. Exists so a pushed marketing
+        // screen can be opened and looked at directly, rather than driven
+        // through the tile grid by hand.
+        .task {
+            switch ProcessInfo.processInfo.environment["CAVNAR_DEBUG_MARKETING_SHELF"] {
+            case "drafts": shelfDestination = .drafts
+            case "scheduled": shelfDestination = .scheduled
+            case "guest": shelfDestination = .guestTextClub
+            default: break
+            }
+        }
+        #endif
         .sheet(isPresented: $showingPreview) {
             MarketingPreviewSheet(
                 platform: viewModel.isGooglePost ? "google" : "instagram",
@@ -122,8 +174,8 @@ struct MarketingView: View {
 
     private func statTile(value: String, label: String) -> some View {
         VStack(spacing: 4) {
-            Text(value).font(.cavnarNumber(24, weight: 500)).foregroundStyle(Color.cavnarInk).cavnarNumberGlow()
-            Text(label).font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
+            Text(value).font(.cavnarNumber(30, weight: 500)).foregroundStyle(Color.cavnarInk).cavnarNumberGlow()
+            Text(label).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity)
     }
@@ -145,22 +197,6 @@ struct MarketingView: View {
         // handling (see HomeModuleGrid's identical reasoning); a Button's
         // action closure is deterministic, so the haptic and the push always
         // happen together.
-        .navigationDestination(item: $shelfDestination) { destination in
-            switch destination {
-            case .guestTextClub:
-                GuestTextClubView()
-            case .scheduled:
-                MarketingQueueView(viewModel: compose)
-            case .drafts:
-                MarketingDraftsView(viewModel: compose) { draft in
-                    viewModel.draft = draft.body
-                    viewModel.hasDraft = true
-                    if let type = draft.contentType { viewModel.selectedType = type }
-                    viewModel.topic = draft.topic ?? ""
-                    shelfDestination = nil
-                }
-            }
-        }
     }
 
     private func shelfRow(_ title: String, icon: String, badge: String?, action: @escaping () -> Void) -> some View {
@@ -170,11 +206,11 @@ struct MarketingView: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: icon).foregroundStyle(Color.cavnarEmber)
-                Text(title).font(.cavnarBody(18, weight: 600))
+                Text(title).font(.cavnarBody(19, weight: 600))
                 Spacer()
                 if let badge {
                     Text(badge)
-                        .font(.cavnarNumber(17.5, weight: 700))
+                        .font(.cavnarNumber(19, weight: 700))
                         .foregroundStyle(Color.cavnarEmber)
                 }
                 Image(systemName: "chevron.right").foregroundStyle(Color.cavnarInk3)
@@ -191,12 +227,12 @@ struct MarketingView: View {
     private var generatorSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Generate content")
-                .font(.cavnarBody(16.5, weight: 700))
+                .font(.cavnarBody(18, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
 
             if let type = viewModel.selectedContentType {
                 Text(type.description)
-                    .font(.cavnarBody(16))
+                    .font(.cavnarBody(17.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -212,6 +248,10 @@ struct MarketingView: View {
                 label: "Generate \(viewModel.selectedTypeLabel)",
                 isLoading: viewModel.isGenerating,
                 loadingText: "Generating…",
+                // Full width — the label carries the selected type, so a
+                // hugging pill resized on every change and dragged the
+                // chevron with it. See CavnarSplitButton.fillsWidth.
+                fillsWidth: true,
                 action: { Task { await viewModel.generate() } }
             ) {
                 ForEach(viewModel.contentTypes) { type in
@@ -237,7 +277,7 @@ struct MarketingView: View {
             }
 
             if let error = viewModel.generateError {
-                Text(error).font(.cavnarBody(16)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarRed)
             }
 
             if viewModel.hasDraft {
@@ -260,35 +300,51 @@ struct MarketingView: View {
     /// written as TWO options ("Option 1 (Short & Punchy): …"), so a draft
     /// that goes out untouched publishes both versions and the labels.
     private var draftEditor: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 10) {
+            // This is the one piece of text on the screen an owner has to
+            // READ CLOSELY and then EDIT, on a phone, in a dim back office.
+            // It was 16pt at default leading in a 10pt box — a solid wall of
+            // small type. 17.5pt with real line spacing and 14pt of inset is
+            // the difference between skimming it and working in it.
             TextEditor(text: $viewModel.draft)
-                .font(.cavnarBody(16))
+                .font(.cavnarBody(19))
+                .lineSpacing(5)
                 .foregroundStyle(Color.cavnarInk)
                 .scrollContentBackground(.hidden)
-                .frame(minHeight: 150)
-                .padding(10)
+                .frame(minHeight: 210)
+                .padding(14)
                 .background(Color.cavnarPaper)
                 .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control)
                     .stroke(viewModel.isOverLimit ? Color.cavnarRed : Color.cavnarEmber.opacity(0.3), lineWidth: 1))
                 .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
                 .focused($focusedField, equals: .draft)
+                .id(Self.draftEditorAnchor)
 
-            HStack(spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text("Trim it to the version you want before posting")
-                    .font(.cavnarBody(16))
+                    .font(.cavnarBody(17.5))
                     .foregroundStyle(Color.cavnarInk3)
-                Spacer()
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
                 if let limit = viewModel.characterLimit, let type = viewModel.selectedContentType {
-                    (Text("\(viewModel.draft.count)").font(.cavnarNumber(16, weight: 600))
+                    (Text("\(viewModel.draft.count)").font(.cavnarNumber(18, weight: 600))
                         + Text(" / ")
-                        + Text("\(limit)").font(.cavnarNumber(16))
+                        + Text("\(limit)").font(.cavnarNumber(18))
                         + Text(viewModel.isOverLimit ? " over \(type.limitLabel)" : ""))
-                        .font(.cavnarBody(16))
+                        .font(.cavnarBody(17.5))
                         .foregroundStyle(viewModel.isOverLimit ? Color.cavnarRed : Color.cavnarInk3)
+                        .layoutPriority(1)
                 }
             }
         }
     }
+
+    /// Scroll anchor for the caption box. "Write this" on a calendar day used
+    /// to leave the reader at the bottom of the page: it filled the topic
+    /// field and generated, but the draft appears hundreds of points ABOVE
+    /// the calendar, so the one thing the tap produced was the one thing off
+    /// screen. Now the tap carries the reader up to it.
+    static let draftEditorAnchor = "marketing-draft-editor"
 
     /// Check it, keep it, or queue it — the three things you could not do
     /// with a generated post before.
@@ -334,9 +390,18 @@ struct MarketingView: View {
             Button {
                 viewModel.copyDraft()
             } label: {
-                Label("Copy", systemImage: "doc.on.doc").frame(maxWidth: .infinity)
+                // Says it copied, rather than only buzzing about it. A
+                // haptic on its own is deniable — a phone face-down on a bar
+                // or in a pocket gives no confirmation at all, and there is
+                // nothing on screen that changes when the clipboard does.
+                Label(viewModel.didCopyDraft ? "Copied" : "Copy",
+                      systemImage: viewModel.didCopyDraft ? "checkmark" : "doc.on.doc")
+                    .frame(maxWidth: .infinity)
+                    .foregroundStyle(viewModel.didCopyDraft ? Color.cavnarGreen : Color.cavnarEmber)
+                    .contentTransition(.symbolEffect(.replace))
             }
             .buttonStyle(CavnarSecondaryButtonStyle())
+            .animation(.easeOut(duration: 0.2), value: viewModel.didCopyDraft)
 
             Button {
                 Task { await viewModel.generate() }
@@ -366,7 +431,7 @@ struct MarketingView: View {
                 .padding(.top, 6)
         }
         if let error = viewModel.postError {
-            Text(error).font(.cavnarBody(16)).foregroundStyle(Color.cavnarRed)
+            Text(error).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarRed)
         }
     }
 
@@ -379,7 +444,7 @@ struct MarketingView: View {
             Text(viewModel.isGooglePost
                  ? "Connect Google Business under Account → Connections to publish this to your listing."
                  : "Connect Instagram or Facebook under Account → Connections to publish from here. You can still copy the caption and post it yourself.")
-                .font(.cavnarBody(16))
+                .font(.cavnarBody(17.5))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -451,7 +516,7 @@ struct MarketingView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("This week's content calendar")
-                    .font(.cavnarBody(16.5, weight: 700))
+                    .font(.cavnarBody(18, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Spacer()
                 if !viewModel.calendar.isEmpty {
@@ -464,7 +529,7 @@ struct MarketingView: View {
 
             if viewModel.calendar.isEmpty && !viewModel.isGeneratingCalendar {
                 Text("Seven ideas for the week, built from your menu, your voice and what's coming up.")
-                    .font(.cavnarBody(16))
+                    .font(.cavnarBody(17.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -488,7 +553,7 @@ struct MarketingView: View {
             }
 
             if let error = viewModel.calendarError {
-                Text(error).font(.cavnarBody(16)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(17.5)).foregroundStyle(Color.cavnarRed)
             }
 
             ForEach(viewModel.calendar) { idea in
@@ -502,25 +567,34 @@ struct MarketingView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(idea.day)
-                    .font(.cavnarBody(16, weight: 700))
+                    .font(.cavnarBody(17.5, weight: 700))
                     .foregroundStyle(Color.cavnarEmber)
                 if let date = idea.date, !date.isEmpty {
-                    Text(date).font(.cavnarNumber(16)).foregroundStyle(Color.cavnarInk3)
+                    Text(date).font(.cavnarNumber(17.5)).foregroundStyle(Color.cavnarInk3)
                 }
                 Spacer()
                 Text(idea.platform)
-                    .font(.cavnarBody(16, weight: 600))
+                    .font(.cavnarBody(17.5, weight: 600))
                     .foregroundStyle(Color.cavnarInk3)
             }
             Text(idea.angle)
-                .font(.cavnarBody(16.5))
+                .font(.cavnarBody(18))
                 .foregroundStyle(Color.cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
 
             // Tapping a day writes it. The web tab has always done this; on
             // the phone a calendar idea was something you had to retype.
             Button {
-                Task { await viewModel.generate(from: idea) }
+                Haptic.light()
+                Task {
+                    await viewModel.generate(from: idea)
+                    // The draft lands hundreds of points ABOVE the calendar,
+                    // so tapping a day left the reader staring at the bottom
+                    // of the page with the one thing the tap produced off
+                    // screen. Only scroll once there is actually something
+                    // there to scroll to.
+                    if viewModel.hasDraft { scrollToDraft = UUID() }
+                }
             } label: {
                 Text("Write this").frame(maxWidth: .infinity)
             }

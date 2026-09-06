@@ -300,9 +300,20 @@ final class MarketingViewModel {
         await generate(fromCalendar: true)
     }
 
+    /// Set for a beat after a copy so the button can say it happened. A
+    /// haptic alone is deniable — an owner who didn't feel it (phone on a
+    /// bar, silent mode, gloves) had no way to tell whether the tap landed,
+    /// and copying twice is invisible.
+    var didCopyDraft = false
+
     func copyDraft() {
         UIPasteboard.general.string = draft
         Haptic.success()
+        didCopyDraft = true
+        Task {
+            try? await Task.sleep(for: .seconds(1.8))
+            didCopyDraft = false
+        }
     }
 
     // MARK: - Calendar

@@ -15,7 +15,7 @@ import SwiftUI
 struct CavnarWorkingOrb: View {
     var state: CavnarOrbState = .composing
     var label: String
-    var size: CGFloat = 30
+    var size: CGFloat = 34
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -23,7 +23,7 @@ struct CavnarWorkingOrb: View {
         HStack(spacing: 11) {
             CavnarOrb(state: state, size: size, paused: reduceMotion)
             Text(label)
-                .font(.cavnarBody(14.5))
+                .font(.cavnarBody(17.5))
                 .foregroundStyle(Color.cavnarInk3)
             Spacer(minLength: 0)
         }

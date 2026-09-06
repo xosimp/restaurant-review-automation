@@ -203,56 +203,71 @@ CONTENT_TYPES = [
     },
 ]
 
+# Every one of these used to ask for length. instagram_post wanted TWO
+# versions (a punchy one AND a 3-4 sentence story), google_promo allowed 100
+# words, event_announcement wanted a post plus an email opener — so a tap on
+# Generate returned a wall of text an owner had to read, choose from and cut
+# down before it was postable. The 2-version format was also the source of
+# posts going out with "Option 1 (Short & Punchy):" still in them.
+#
+# One piece, short, done. Regenerate is right there if the first one misses.
 PROMPTS = {
-    "instagram_post": """Write an Instagram caption for {restaurant} ({neighborhood}).
+    "instagram_post": """Write ONE Instagram caption for {restaurant} ({neighborhood}).
 Vibe: {vibe}. Voice: {voice}.
 Topic/occasion: {topic}
 Known for: {known_for}
 
-Write 2 versions:
-1st option (short, punchy — 1-2 sentences + hashtags)
-2nd option (storytelling — 3-4 sentences + hashtags)
+Length: 1-2 short sentences. Punchy. Say one thing well.
+Then 4-6 relevant hashtags on their own line.
 
-If menu items are provided below, reference specific dishes by name — never make up dishes.
+Reference specific dishes by name if menu items are given below — never invent one.
 IMPORTANT: Only reference location details (water views, surroundings, setting) that are provided in the restaurant profile. Never invent or assume geographic details like "river", "ocean", "mountains" — use only what you are told.
-Use 5-8 relevant hashtags per version. No emojis unless they feel totally natural.
+No emojis unless one feels completely natural. No preamble, no alternatives, no labels — return the caption itself.
 Do not use the phrases "indulge", "culinary journey", "delight", or "experience".""",
 
     "weekly_email": """Write a short weekly email for {restaurant} regulars.
 Voice: {voice}. Neighborhood: {neighborhood}. Known for: {known_for}.
 Topic/occasion: {topic}
 
-Format:
-SUBJECT LINE: (2 options)
-BODY: (4-6 sentences, conversational, like the owner wrote it personally)
+Format exactly:
+SUBJECT LINE: (one option, under 8 words)
+BODY: (3-4 short sentences, conversational, like the owner typed it between shifts)
 
-If menu items are provided below, mention specific dishes by name to make it feel personal and specific.
+Mention a specific dish by name if menu items are given below.
 No "Dear valued customer". No corporate sign-offs. End with a first name sign-off like "— Sarah" or "— the Maplewood team".""",
 
-    "google_promo": """Write a Google Business Profile promotional post for {restaurant} in {neighborhood}.
+    "google_promo": """Write a Google Business Profile post for {restaurant} in {neighborhood}.
 Topic: {topic}. Known for: {known_for}.
-Keep it under 100 words. Direct, local, specific. Include a soft call to action.
-Reference specific menu items if provided below. No hashtags. No emojis.""",
 
-    "loyalty_nudge": """Write an SMS re-engagement message for guests of {restaurant}.
+Length: 35-45 words, hard limit. Google truncates after the first line or two,
+so the first sentence has to carry it on its own.
+Direct, local, specific. One short call to action at the end.
+Reference a specific menu item if provided below. No hashtags. No emojis.
+Return the post only — no preamble, no alternatives.""",
+
+    "loyalty_nudge": """Write ONE SMS re-engagement message for guests of {restaurant}.
 Topic/offer: {topic}
 Voice: {voice}
 
-Rules: Under 160 characters. Feels personal not automated. Includes restaurant name. Soft incentive if relevant.
-Write 2 options.""",
+Rules: under 160 characters, hard limit. Personal, not automated. Includes the
+restaurant name. Soft incentive if relevant. Return the message only — no
+alternatives, no labels, no quotes around it.""",
 
-    "happy_hour": """Write a social media post promoting happy hour at {restaurant}.
+    "happy_hour": """Write ONE social post promoting happy hour at {restaurant}.
 Happy hour details: {topic}
 Voice: {voice}.
 
-Write for Instagram/Facebook. 2-4 sentences + hashtags. Make people actually want to leave work early.
-If the topic doesn't specify exact times or deals, write something that feels authentic without inventing specifics.""",
+Length: 1-2 short sentences, then 4-6 hashtags. Make people want to leave work early.
+If the topic doesn't specify exact times or deals, write something that feels authentic without inventing specifics.
+Return the post only — no alternatives, no labels.""",
 
-    "event_announcement": """Write a social media announcement for {restaurant}.
+    "event_announcement": """Write ONE social post announcing this for {restaurant}.
 Event details: {topic}
 Voice: {voice}. Neighborhood: {neighborhood}.
 
-Write 2 versions — one for Instagram (casual, visual), one for email subject line + first paragraph.""",
+Length: 2 short sentences — what it is, and when — then 4-6 hashtags.
+Never invent a date, time or price that isn't in the event details above.
+Return the post only — no alternatives, no labels.""",
 }
 
 
@@ -416,7 +431,11 @@ def generate_content(content_type: str, topic: str,
     import re as _re
     result = _re.sub('[*]{2}(.+?)[*]{2}', lambda m: m.group(1), result)
     result = _re.sub('[*](.+?)[*]', lambda m: m.group(1), result)
-    result = _re.sub(r'^#{1,3}\s*', '', result, flags=_re.MULTILINE)
+    # A markdown heading is "# Heading" — the space is required. Without it
+    # this ate the "#" off the first hashtag of every caption whose tags
+    # started a new line ("#GiaMia #TruffleSeason" came out "GiaMia
+    # #TruffleSeason"), quietly breaking one tag on every Instagram post.
+    result = _re.sub(r'^#{1,3}[ \t]+', '', result, flags=_re.MULTILINE)
 
     # Log this content for future memory
     log_content(restaurant_id, content_type, topic)
