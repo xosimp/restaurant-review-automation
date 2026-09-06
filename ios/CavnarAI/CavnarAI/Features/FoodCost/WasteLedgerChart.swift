@@ -61,9 +61,15 @@ struct WasteLedgerChart: View {
             }
             CavnarChart.text(&ctx, CavnarChart.label(row.name, size: 12, weight: 700, color: .cavnarInk), at: CGPoint(x: left + 12, y: y + bh / 2), anchor: .leading)
             CavnarChart.text(&ctx, CavnarChart.number("$\(Int((row.value * s).rounded()).formatted())", size: 14, weight: 700),
-                             at: CGPoint(x: size.width - 16, y: y + bh / 2 - (row.detail == nil ? 0 : 6)), anchor: .trailing)
+                             at: CGPoint(x: size.width - 16, y: y + bh / 2 - (row.detail == nil ? 0 : 7)), anchor: .trailing)
             if let detail = row.detail {
-                CavnarChart.text(&ctx, CavnarChart.label(detail, size: 10), at: CGPoint(x: size.width - 16, y: y + bh / 2 + 9), anchor: .trailing)
+                // 12pt, not 10 — "24% waste" / "10/14 par" is the line that
+                // says WHY the dollar figure above it is what it is, and at
+                // 10pt it was too small to read at arm's length. Through
+                // HomeMixedText so the figures in it land in Space Grotesk
+                // like every other number in the app.
+                CavnarChart.text(&ctx, HomeMixedText.make(detail, size: 12, weight: 600, color: .cavnarInk3),
+                                 at: CGPoint(x: size.width - 16, y: y + bh / 2 + 10), anchor: .trailing)
             }
         }
     }

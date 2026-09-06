@@ -115,10 +115,17 @@ struct FoodCostAnalyticsSection: View {
         return VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
+                    // Both kickers reserve two lines. "PROJECTED ANNUAL
+                    // WASTE" wraps to two at this width while "RECOVERABLE
+                    // / YEAR" fits on one, so with a .top-aligned HStack
+                    // the right column's number and subtext sat a full line
+                    // higher than the left's. Reserving the space on both
+                    // makes the two numbers share a baseline at any width.
                     Text("PROJECTED ANNUAL WASTE")
                         .font(.cavnarBody(13.5, weight: 700))
                         .tracking(1.4)
                         .foregroundStyle(Color.cavnarInk.opacity(0.6))
+                        .lineLimit(2, reservesSpace: true)
                     HeroAnimatedNumber(numericValue: a.annualWasteProjection ?? 0, tone: Color.cavnarRed, startFromZero: startFromZero)
                     Text("$\((a.monthlyWasteProjection ?? 0).commaFormatted)/mo at current rate")
                         .font(.cavnarBody(14))
@@ -130,6 +137,8 @@ struct FoodCostAnalyticsSection: View {
                         .font(.cavnarBody(13.5, weight: 700))
                         .tracking(1.4)
                         .foregroundStyle(Color.cavnarInk.opacity(0.6))
+                        .lineLimit(2, reservesSpace: true)
+                        .multilineTextAlignment(.trailing)
                     HeroAnimatedNumber(numericValue: a.annualRecoverable ?? 0, tone: Color.cavnarGreen, startFromZero: startFromZero)
                     Text("$\((a.recoverableMonthly ?? 0).commaFormatted)/mo with better ordering")
                         .font(.cavnarBody(14))

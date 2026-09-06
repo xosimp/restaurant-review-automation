@@ -14,7 +14,7 @@ struct VisibilityOrbitChart: View {
     }
 
     var body: some View {
-        CavnarAnimatedCanvas(duration: 1.6, height: 150, replayKey: "\(score)-\(runs.count)") { ctx, size, t, clock in
+        CavnarAnimatedCanvas(duration: 1.6, height: 150, replayKey: "\(score)-\(runs.count)", ambient: true) { ctx, size, t, clock in
             draw(&ctx, size: size, t: t, clock: clock)
         }
     }

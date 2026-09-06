@@ -107,6 +107,17 @@ struct TypewriterText: View {
                             if new >= plan.totalTokens { onComplete?() }
                         }
                 }
+            } else {
+                // A REAL (zero-size) node, not nothing. This branch is the
+                // one frame between the message arriving and .task below
+                // building the plan — and if every branch of this Group
+                // resolves to nothing, the Group is an EmptyView, which has
+                // no render node for `.task` to attach to, so the task
+                // never runs, the plan is never built, and the bubble stays
+                // blank forever. That is exactly what happened when this
+                // fallback was dropped during the rich-text rewrite: every
+                // answer rendered its "CAVNAR AI" label and no text at all.
+                Color.clear.frame(width: 0, height: 0)
             }
         }
         .task(id: fullText) {

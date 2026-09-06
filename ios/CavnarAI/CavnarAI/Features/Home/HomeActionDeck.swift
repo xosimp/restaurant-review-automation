@@ -31,6 +31,10 @@ struct HomeActionDeck: View {
 
     static let cardHeight: CGFloat = 150
     private static let ghostStep: CGFloat = 14
+    /// How far off the leading edge a "previous" card starts before it
+    /// slides into the front position — wide enough to be genuinely off
+    /// screen on every device, so its insertion fade happens unseen.
+    private static let slideIn: CGFloat = 460
 
     private struct Entry: Identifiable {
         let depth: Int
@@ -151,20 +155,52 @@ struct HomeActionDeck: View {
         flying = true
         if draggingID == nil { draggingID = stack.first?.id }
         Haptic.selection()
-        withAnimation(.easeIn(duration: 0.22)) { dragX = CGFloat(direction < 0 ? 1 : -1) * 520 }
-        if direction < 0 {
-            let incoming = items[(index - 1 + count) % count]
-            if !stack.contains(where: { $0.item.id == incoming.id }) {
-                enteringID = incoming.id
-                enterOffset = -460
+
+        guard direction < 0 else {
+            // NEXT — unchanged, and confirmed good on device. The front
+            // card flies off in the swipe's direction and genuinely LEAVES
+            // the deck (for 4+ items its id is no longer in `stack`), so it
+            // fades out where it is while the ghost behind grows forward.
+            withAnimation(.easeIn(duration: 0.22)) { dragX = -520 }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(220))
+                withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                    index = (index + 1) % count
+                }
+                flying = false
             }
+            return
+        }
+
+        // PREVIOUS — deliberately NOT a mirror of the above, because the
+        // situation isn't mirrored. Going back, the card leaving the front
+        // does NOT leave the deck: with `stack` peeking forward, index-1
+        // becomes the new front and the old front lands at depth 1, still
+        // on screen. Flinging it to +520 therefore stranded it off-screen
+        // at a dragX nothing ever reset, and it snapped back into place on
+        // the next touch — that's the "brings the card behind it to the
+        // front almost like a double render" that was reported. So instead
+        // it settles back to centre as it demotes, and the incoming card
+        // slides in over the top.
+        let incoming = items[(index - 1 + count) % count]
+        if !stack.contains(where: { $0.item.id == incoming.id }) {
+            enteringID = incoming.id
+            enterOffset = -Self.slideIn
+        }
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+            dragX = 0
+            index = (index - 1 + count) % count
         }
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(220))
-            withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
-                index = (index + direction + count) % count
-                enterOffset = 0
-            }
+            // One real frame with the incoming card mounted AT its offset
+            // before animating it home. A freshly-inserted view has no
+            // previous frame to interpolate from, so setting the offset and
+            // animating it away inside the same transaction that inserts
+            // the card animates nothing at all — which is exactly why the
+            // first attempt at this changed nothing on device.
+            try? await Task.sleep(for: .milliseconds(16))
+            withAnimation(.spring(response: 0.46, dampingFraction: 0.84)) { enterOffset = 0 }
+            try? await Task.sleep(for: .milliseconds(420))
             flying = false
         }
     }

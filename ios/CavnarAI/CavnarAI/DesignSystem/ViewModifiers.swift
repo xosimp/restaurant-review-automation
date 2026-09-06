@@ -948,8 +948,17 @@ extension View {
                     colors: [Color.cavnarEmber.opacity(0.38), Color.cavnarEmber.opacity(0)],
                     startPoint: .top, endPoint: .bottom
                 )
+                // maxWidth: .infinity explicitly — the gradient only had a
+                // height, leaving its width to whatever the ZStack was
+                // proposed. On a sheet whose content doesn't itself claim
+                // the full width (Menu margins), that resolved narrower
+                // than the sheet and the wash visibly stopped short of both
+                // edges. Both this and the stack below now claim the full
+                // width outright so the wash is full-bleed everywhere.
+                .frame(maxWidth: .infinity)
                 .frame(height: 340)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea()
         )
     }

@@ -15,6 +15,12 @@ struct CavnarAnimatedCanvas<Overlay: View>: View {
     var height: CGFloat = 250
     /// Runs the entrance again (e.g. when the data changes).
     var replayKey: AnyHashable = 0
+    /// True ONLY for a chart whose draw closure actually uses the
+    /// continuous `clock` for ongoing motion (the visibility orbit, the
+    /// sentiment river). Everything else is a one-shot entrance, and once
+    /// that entrance is done there is nothing left to animate — see
+    /// `settled` below for why that matters so much.
+    var ambient: Bool = false
     let draw: (inout GraphicsContext, CGSize, Double, Double) -> Void
     @ViewBuilder var overlay: () -> Overlay
 
@@ -32,17 +38,38 @@ struct CavnarAnimatedCanvas<Overlay: View>: View {
     @State private var start = Date()
 
     init(duration: Double = 1.6, height: CGFloat = 250, replayKey: AnyHashable = 0,
+         ambient: Bool = false,
          draw: @escaping (inout GraphicsContext, CGSize, Double, Double) -> Void,
          @ViewBuilder overlay: @escaping () -> Overlay = { EmptyView() }) {
         self.duration = duration
         self.height = height
         self.replayKey = replayKey
+        self.ambient = ambient
         self.draw = draw
         self.overlay = overlay
     }
 
+    /// Set once the one-shot entrance has finished, which PAUSES the
+    /// timeline for good.
+    ///
+    /// Without this every chart in the app kept a 60fps TimelineView
+    /// running for the entire life of its screen — redrawing a Canvas full
+    /// of blur/glow filter layers sixty times a second forever, long after
+    /// `t` had clamped to 1.0 and the picture stopped changing. Six of the
+    /// eight charts don't even read the clock. Stack three or four of them
+    /// in one analytics ScrollView (Food Cost has four; Intel's AI
+    /// visibility page has the orbit plus its content) and that is enough
+    /// sustained main-thread and GPU load to stop the screen responding to
+    /// touches at all — the reported "the whole screen freezes sometimes,
+    /// you can't swipe or do anything."
+    @State private var settled = false
+
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion)) { timeline in
+        // 1/30 for the two genuinely-ambient charts, matching the interval
+        // every other continuous motion in this app already uses (the orb,
+        // HomeObsidianField) rather than double that.
+        TimelineView(.animation(minimumInterval: ambient ? 1.0 / 30.0 : 1.0 / 60.0,
+                                paused: reduceMotion || settled)) { timeline in
             // Progress is resolved HERE, in the TimelineView closure, and
             // handed to the Canvas as plain values — see `start` above.
             let elapsed = max(0, timeline.date.timeIntervalSince(start))
@@ -59,6 +86,14 @@ struct CavnarAnimatedCanvas<Overlay: View>: View {
         // switch recreates it; a scroll back into view doesn't).
         .onAppear { start = Date() }
         .onChange(of: replayKey) { _, _ in start = Date() }
+        // Runs on appear and again on every replay, so a chart that
+        // re-animates gets its full entrance before settling again.
+        .task(id: replayKey) {
+            settled = false
+            guard !ambient else { return }
+            try? await Task.sleep(for: .seconds(duration + 0.15))
+            settled = true
+        }
     }
 }
 

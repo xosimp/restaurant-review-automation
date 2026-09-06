@@ -852,7 +852,7 @@ struct CavnarRadarSweep: View {
 
             if let caption {
                 Text(caption.uppercased())
-                    .font(.cavnarNumber(14, weight: 600))
+                    .font(.cavnarBody(14, weight: 600))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarInk3)
             }
@@ -1140,10 +1140,14 @@ struct CavnarPostedCheck: View {
                 .scaleEffect(landedPop ? 1 : 0.94)
             }
 
-            Text(label.uppercased())
-                .font(.cavnarNumber(14, weight: 600))
+            // Mixed prose + figures ("PUBLISHED 18 REPLIES"), so it goes
+            // through HomeMixedText rather than picking one face for the
+            // whole string: the words in Apfel, the number in Space
+            // Grotesk, per the app-wide numerals rule. Set entirely in
+            // cavnarNumber (as it was) the words rendered in the numerals
+            // face — the same mismatch the radar caption above had.
+            HomeMixedText.make(label.uppercased(), size: 14, weight: 600, color: Color.cavnarInk3)
                 .tracking(1.2)
-                .foregroundStyle(Color.cavnarInk3)
                 .opacity(labelShown ? 1 : 0)
         }
         .task {
@@ -1248,7 +1252,7 @@ struct CavnarHandshake: View {
 
             if let caption {
                 Text(caption.uppercased())
-                    .font(.cavnarNumber(14, weight: 600))
+                    .font(.cavnarBody(14, weight: 600))
                     .tracking(1.2)
                     .foregroundStyle(Color.cavnarInk3)
             }

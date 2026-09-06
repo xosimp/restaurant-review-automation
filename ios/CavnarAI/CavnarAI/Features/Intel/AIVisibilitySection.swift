@@ -273,7 +273,15 @@ struct AIVisibilitySection: View {
         let total = result.totalQueries ?? 0
         guard total > 0 else { return nil }
         if appeared == 0 {
-            return Text("Not yet appearing in AI search — normal for independent restaurants this early. More reviews and a complete Google Business Profile are what get you there.")
+            // The two phrases here are the whole point of the sentence —
+            // they're the actual work the owner has to do — so they carry
+            // their own bigger, ember style instead of sitting flat inside
+            // the surrounding prose (same technique as highlightedNumber).
+            return Text("Not yet appearing in AI search — normal for independent restaurants this early. ")
+                + highlightedPhrase("More reviews")
+                + Text(" and ")
+                + highlightedPhrase("a complete Google Business Profile")
+                + Text(" are what get you there.")
         }
         var text = Text("Appears in ")
             + highlightedNumber(appeared)
@@ -290,6 +298,14 @@ struct AIVisibilitySection: View {
         Text("\(value)")
             .font(.cavnarNumber(16, weight: 700))
             .foregroundStyle(Color.cavnarEmber)
+    }
+
+    /// The named thing the owner actually has to go do — set bigger and in
+    /// ember against the 14.5pt Ink2 prose the call site applies.
+    private func highlightedPhrase(_ phrase: String) -> Text {
+        Text(phrase)
+            .font(.cavnarBody(16.5, weight: 700))
+            .foregroundStyle(Color.cavnarEmber2)
     }
 
     private func aiScoreLabel(_ score: Int) -> String {

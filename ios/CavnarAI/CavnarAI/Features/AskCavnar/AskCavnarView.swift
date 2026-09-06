@@ -124,9 +124,23 @@ struct AskCavnarView: View {
                             }
                         }
                     }
+                    // .safeAreaInset, NOT a VStack sibling below the
+                    // ScrollView. This is the one structural thing that
+                    // made this tab different from Home/Modules/Account,
+                    // and it lines up with the reported symptom: on iOS 26
+                    // the tab bar's glass decides how translucent to be
+                    // from the scroll view that reaches its edge. With the
+                    // input bar as a sibling, this ScrollView STOPPED
+                    // short of the bottom — no scroll view at the tab
+                    // bar's edge to read — so the bar had to work that out
+                    // some other way on every switch to this tab, which is
+                    // the "whole row lags for a second then goes more
+                    // transparent" behaviour, and only here. As an inset,
+                    // the ScrollView owns the full height (content just
+                    // gets padded out from under the bar), exactly like
+                    // every other tab.
+                    .safeAreaInset(edge: .bottom, spacing: 0) { inputBar }
                 }
-
-                inputBar
             }
             .cavnarModuleBackground()
             .navigationBarTitleDisplayMode(.inline)
