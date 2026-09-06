@@ -28,7 +28,7 @@ struct ChangelogView: View {
                 // attached to, and a bare loading view hugging its own
                 // tiny size made it flash as a narrow rectangle instead of
                 // full-screen for the split second this state is visible.
-                CavnarLoadingSeal()
+                CavnarLoadingOrb()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = viewModel.errorMessage {
                 VStack(spacing: 8) {

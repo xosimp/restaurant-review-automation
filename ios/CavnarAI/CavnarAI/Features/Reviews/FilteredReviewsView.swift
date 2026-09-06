@@ -36,7 +36,7 @@ struct FilteredReviewsView: View {
             }
         }
         .overlay {
-            if viewModel.isLoading && viewModel.reviews.isEmpty { CavnarLoadingSeal() }
+            if viewModel.isLoading && viewModel.reviews.isEmpty { CavnarLoadingOrb() }
         }
         .cavnarEmberRefreshable { await viewModel.load(category: category, platform: platform) }
         .cavnarModuleBackground()

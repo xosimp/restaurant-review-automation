@@ -19,7 +19,11 @@ struct LaborRibbonChart: View {
         VStack(alignment: .leading, spacing: 14) {
             CavnarChartHeader(kicker: "Labor % · \(subtitle)", title: "Labor Ribbon",
                               detail: "Above the dashed line is over target — those days pulse red as the line passes.")
-            CavnarAnimatedCanvas(duration: 1.9, height: 250, replayKey: points.map(\.id).joined()) { ctx, size, t, _ in
+            // 3.2s, up from 1.9 — the line travelling across the week IS
+            // the chart's story, and at the old pace it was over before
+            // you'd finished looking at it. This is the one chart whose
+            // entrance is worth lingering on.
+            CavnarAnimatedCanvas(duration: 3.2, height: 250, replayKey: points.map(\.id).joined()) { ctx, size, t, _ in
                 draw(&ctx, size: size, t: t)
             }
         }

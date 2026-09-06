@@ -1011,7 +1011,15 @@ TOOLS = [
     {
         "kind": "write",
         "confirm": True,
-        "route": {"web": "/api/generate-schedule", "mobile": "/mobile/api/labor/generate-schedule", "method": "GET"},
+        # POST, not GET. The mobile route has always been POST-only, so a
+        # GET from the confirm card was answered 405 and the owner saw
+        # "that didn't go through" every single time they approved a
+        # schedule. The web route accepted GET (and the dashboard still
+        # calls it that way), which is why one surface worked and the
+        # other didn't. It now takes POST as well, so both confirm the
+        # same way — and POST is the honest verb for something that
+        # replaces the current draft.
+        "route": {"web": "/api/generate-schedule", "mobile": "/mobile/api/labor/generate-schedule", "method": "POST"},
         "summary": "Generate next week's schedule",
         "module": "module_labor",
         "spec": {

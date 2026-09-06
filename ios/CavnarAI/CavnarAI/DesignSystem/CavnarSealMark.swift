@@ -11,7 +11,9 @@ import SwiftUI
 /// `emberIntensity` (0...1) fans the ember: 0 is the resting mark exactly
 /// as drawn in the brand assets; 1 swells the glow halo, brightens it, and
 /// lights a hotter Ember2 core — a coal being breathed on. Static call
-/// sites leave it at 0; CavnarLoadingSeal animates it.
+/// sites leave it at 0; the launch splash and the Face ID lock screen
+/// animate it. (The loading state used to as well — that is the orb now,
+/// see CavnarLoadingOrb.)
 struct CavnarSealMark: View, Animatable {
     var size: CGFloat = 24
     var ringColor: Color = Color.cavnarInk

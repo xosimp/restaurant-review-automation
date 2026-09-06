@@ -39,7 +39,7 @@ struct AccountTrustedDevicesView: View {
                     }
 
                     if viewModel.isLoadingTrustedDevices && viewModel.trustedDevices.isEmpty {
-                        CavnarLoadingSeal().padding(.top, 20).frame(maxWidth: .infinity)
+                        CavnarLoadingOrb().padding(.top, 20).frame(maxWidth: .infinity)
                     } else if viewModel.trustedDevices.isEmpty {
                         AccountSection(kicker: "Remembered") {
                             Text("No remembered devices — every sign-in asks for a code.")

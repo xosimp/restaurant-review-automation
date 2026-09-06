@@ -133,7 +133,13 @@ struct AIVisibilitySection: View {
                     .font(.cavnarHeadline(21))
                     .foregroundStyle(Color.cavnarInk)
                     .lineSpacing(3)
-                Text("More guests are asking ChatGPT, Perplexity, and Google AI where to eat before they ever open Maps. This checks whether you actually show up in those answers — and exactly what to fix if you don't.")
+                // Precise about what actually runs. The old wording —
+                // "asking ChatGPT, Perplexity and Google AI … this checks
+                // whether you show up in those answers" — reads as a claim
+                // that all three are queried. Only Perplexity is (see
+                // client_api's ai-visibility check), so the copy now says
+                // so and explains why that stands in for the rest.
+                Text("More guests are asking AI where to eat before they ever open Maps. This runs real queries through Perplexity's live web search — the same public web, reviews and Google Business Profile data ChatGPT and Google AI read — and shows whether you came up.")
                     .font(.cavnarBody(14.5))
                     .foregroundStyle(Color.cavnarInk3)
                     .lineSpacing(4)
@@ -675,18 +681,13 @@ struct AIVisibilitySection: View {
 
 /// A query result's answer is truncated to one line by default — most of
 /// it gets cut off. Press and hold to read the full thing; release to
-/// collapse back. @GestureState (not plain @State) is what gives the
-/// "release collapses it" behavior for free: it automatically resets to
-/// its initial value the instant the gesture ends, whether that's a
-/// clean lift, a cancel, or the view disappearing — no separate onEnded
-/// handler needed to remember to reset anything. Needs its own View
-/// struct (not a plain function like the rest of this file's rows) since
-/// @GestureState requires real per-instance storage, one independent
-/// press-state per row rather than one shared across all of them.
+/// collapse back. Its own View struct (not a plain function like the rest
+/// of this file's rows) so each row owns an independent press state rather
+/// than sharing one across all of them.
 private struct QueryResultRow: View {
     let q: AIVisibilityQuery
 
-    @GestureState private var isPressed = false
+    @State private var isPressed = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -724,54 +725,31 @@ private struct QueryResultRow: View {
         .zIndex(isPressed ? 1 : 0)
         .animation(.spring(response: 0.32, dampingFraction: 0.75), value: isPressed)
         .contentShape(Rectangle())
-        // LongPressGesture, not DragGesture(minimumDistance: 0) — that
-        // was the ORIGINAL "too sensitive, fires on scroll" bug. A zero-
-        // distance DragGesture recognizes the instant a finger touches
-        // down, indistinguishable from the very start of a scroll.
-        // LongPressGesture requires the touch to stay put for
-        // minimumDuration before it succeeds at all (0.5s — the same
-        // default UIKit's own UILongPressGestureRecognizer uses); a
-        // scroll's own movement makes the gesture fail to recognize
-        // rather than firing early.
+        // .onLongPressGesture, NOT a LongPressGesture sequenced before a
+        // DragGesture(minimumDistance: 0).
         //
-        // But a BARE LongPressGesture + @GestureState turned out to have
-        // its own separate, independently-documented problem (confirmed
-        // against multiple reports, not guessed): it only reports its
-        // value ONCE, at the instant it succeeds — it never reports again
-        // while the finger stays down. With nothing else arriving,
-        // @GestureState reads that silence as "the gesture must be over"
-        // and resets to false almost immediately, which is exactly why
-        // the card was flashing and collapsing instead of staying up
-        // for the hold. Sequencing a zero-distance DragGesture AFTER the
-        // long press (Apple's own documented composition for this) fixes
-        // it: once the long press succeeds, that drag keeps reporting
-        // continuously for as long as the touch is down (even with zero
-        // movement), which is what keeps .second(true, _) — and so
-        // isPressed — genuinely true for the whole hold, only resetting
-        // when the finger actually lifts.
-        .gesture(
-            // 0.3s, not the 0.5s UIKit default — that reads as stiff for a
-            // quick "peek at the answer" interaction specifically (as
-            // opposed to something heavier like drag-to-reorder, which is
-            // what the 0.5s default is really tuned for). This doesn't
-            // reopen the original scroll-sensitivity bug: what actually
-            // disambiguates a hold from a scroll is LongPressGesture's own
-            // movement-tolerance check (it fails to recognize once the
-            // touch moves past a small threshold), not the duration — a
-            // real scroll starts moving immediately regardless of how
-            // short this number is.
-            LongPressGesture(minimumDuration: 0.3)
-                .sequenced(before: DragGesture(minimumDistance: 0))
-                .updating($isPressed) { value, state, _ in
-                    switch value {
-                    case .second(true, _):
-                        if !state { Haptic.light() }
-                        state = true
-                    default:
-                        state = false
-                    }
-                }
-        )
+        // That sequenced form is what froze this screen. Once the long
+        // press succeeded, the zero-distance drag behind it CLAIMED the
+        // touch stream — and while it holds the touch, the enclosing
+        // ScrollView cannot pan. Rest a finger on a query row for a beat
+        // and then try to scroll and nothing moves, which is exactly the
+        // reported "screen randomly gets stuck and won't scroll up or
+        // down". The drag was only ever there to work around a bare
+        // LongPressGesture reporting its value once and letting
+        // @GestureState immediately reset; fighting the scroll view for
+        // the touch is far too high a price for that.
+        //
+        // This API solves the same problem directly and without competing
+        // for the gesture: `perform` fires once the hold is recognised
+        // (so a scroll, which cancels the press, never expands a card),
+        // and `pressing` reports false on release OR cancellation, which
+        // is what collapses it again.
+        .onLongPressGesture(minimumDuration: 0.3, maximumDistance: 10) {
+            Haptic.light()
+            isPressed = true
+        } onPressingChanged: { pressing in
+            if !pressing { isPressed = false }
+        }
     }
 
     private var badge: some View {

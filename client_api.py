@@ -2575,10 +2575,15 @@ def _run_schedule_job(job_id, restaurant_id):
         _schedule_jobs[job_id] = {"status": "error", "result": {"ok": False, "error": str(e), "traceback": tb}}
 
 
-@client_bp.route("/api/generate-schedule", methods=["GET"])
+@client_bp.route("/api/generate-schedule", methods=["GET", "POST"])
 @login_required
 def generate_schedule_json(current_user):
-    """Start async schedule generation. Returns job_id for polling."""
+    """Start async schedule generation. Returns job_id for polling.
+
+    GET is kept because the dashboard's Labor tab has always called it that
+    way; POST is accepted so Ask Cavnar's confirm card can use one verb for
+    both surfaces (the mobile twin is POST-only).
+    """
     import threading, uuid
     from ai_utils import ai_rate_limited
     if ai_rate_limited(f"schedule:{current_user['restaurant_id']}", max_calls=3, window_secs=60):

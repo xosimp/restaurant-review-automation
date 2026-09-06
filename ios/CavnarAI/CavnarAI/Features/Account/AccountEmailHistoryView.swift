@@ -10,7 +10,7 @@ struct AccountEmailHistoryView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     if viewModel.isLoadingEmailHistory && viewModel.emailHistory.isEmpty {
-                        CavnarLoadingSeal().padding(.top, 60).frame(maxWidth: .infinity)
+                        CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                     } else if viewModel.emailHistory.isEmpty {
                         Text("No email sent yet.")
                             .font(.cavnarBody(15))

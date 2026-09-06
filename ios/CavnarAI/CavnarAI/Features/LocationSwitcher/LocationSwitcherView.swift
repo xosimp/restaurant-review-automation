@@ -58,7 +58,7 @@ struct LocationSwitcherView: View {
             }
             .scrollContentBackground(.hidden)
             .overlay {
-                if viewModel.isLoading { CavnarLoadingSeal() }
+                if viewModel.isLoading { CavnarLoadingOrb() }
             }
             // Top-aligned at the same offset as the Notifications sheet's
             // empty state, not floated to the vertical center.

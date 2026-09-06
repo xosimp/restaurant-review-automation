@@ -56,12 +56,16 @@ struct RecoverableGaugeChart: View {
             CavnarChart.text(&layer, CavnarChart.number("$\(Int((monthly * s).rounded()).formatted())", size: 34, weight: 700),
                              at: CGPoint(x: center.x, y: bowlMid))
         }
-        CavnarChart.text(&ctx, CavnarChart.kicker("Recoverable this month"), at: CGPoint(x: center.x, y: bowlMid + 28))
+        // +40 / +64, not +28 / +50. The big figure keeps its position; the
+        // caption drops away from it. At 28pt below a 34pt number the two
+        // were nearly touching — the number's own descenders ran into the
+        // caption's cap height — and the gauge has plenty of room here.
+        CavnarChart.text(&ctx, CavnarChart.kicker("Recoverable this month"), at: CGPoint(x: center.x, y: bowlMid + 40))
         let at = CavnarChart.window(t, from: 0.85, length: 0.15)
         ctx.drawLayer { layer in
             layer.opacity = at
             CavnarChart.text(&layer, CavnarChart.number("$\(Int(annual.rounded()).formatted()) / year at this pace", size: 13),
-                             at: CGPoint(x: center.x, y: bowlMid + 50))
+                             at: CGPoint(x: center.x, y: bowlMid + 64))
         }
         CavnarChart.text(&ctx, CavnarChart.label("$0", size: 10), at: CGPoint(x: center.x - R - 6, y: center.y + 22), anchor: .leading)
         CavnarChart.text(&ctx, CavnarChart.label("$\(Int(ceiling.rounded()).formatted())", size: 10), at: CGPoint(x: center.x + R + 6, y: center.y + 22), anchor: .trailing)

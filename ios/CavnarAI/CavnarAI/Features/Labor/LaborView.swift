@@ -64,7 +64,7 @@ struct LaborView: View {
                                 }
                                 .id(Self.availabilityID)
                             } else if viewModel.isLoading {
-                                CavnarLoadingSeal().padding(.top, 60).frame(maxWidth: .infinity)
+                                CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                             } else if let error = viewModel.errorMessage {
                                 VStack(spacing: 8) {
                                     Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)

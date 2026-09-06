@@ -22,7 +22,7 @@ struct AccountSignInHistoryView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     if viewModel.isLoadingLoginHistory && viewModel.loginHistory.isEmpty {
-                        CavnarLoadingSeal().padding(.top, 60).frame(maxWidth: .infinity)
+                        CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                     } else if viewModel.loginHistory.isEmpty {
                         Text("No sign-in activity yet.")
                             .font(.cavnarBody(15))

@@ -15,7 +15,7 @@ struct AskCavnarHistoryView: View {
     var body: some View {
         Group {
             if viewModel.isLoadingConversations && viewModel.conversations.isEmpty {
-                CavnarLoadingSeal()
+                CavnarLoadingOrb()
                     .padding(.top, 60)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else if viewModel.conversations.isEmpty {

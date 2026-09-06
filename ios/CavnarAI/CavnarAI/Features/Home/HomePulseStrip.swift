@@ -27,31 +27,39 @@ struct HomePulseStrip: View {
 
     var body: some View {
         if !chips.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(chips) { module in
-                        if let pulse = module.pulse {
-                            Button {
-                                onSelect(module)
-                            } label: {
-                                PulseChip(pulse: pulse, paused: paused)
+            VStack(spacing: 4) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(chips) { module in
+                            if let pulse = module.pulse {
+                                Button {
+                                    onSelect(module)
+                                } label: {
+                                    PulseChip(pulse: pulse, paused: paused)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("\(module.label): \(pulse.value) \(pulse.label)")
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("\(module.label): \(pulse.value) \(pulse.label)")
                         }
                     }
-                    if chips.count > 1 {
-                        PulsingSwipeArrow(size: 13)
-                            .padding(.leading, 2)
-                            .accessibilityHidden(true)
-                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 6)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 6)
+                // The chips carry a soft glow past their own bounds — let it
+                // show instead of clipping it at the scroll view's edge.
+                .scrollClipDisabled()
+
+                // Underneath the row, not inside it. As the last item in the
+                // HStack this sat at the far right END of the scroll
+                // content — i.e. only visible once you had already scrolled
+                // all the way over, which is precisely when the hint is no
+                // longer of any use. Below the strip it is on screen from
+                // the start, which is the entire point of a swipe hint.
+                if chips.count > 1 {
+                    PulsingSwipeArrow(size: 13)
+                        .accessibilityHidden(true)
+                }
             }
-            // The chips carry a soft glow past their own bounds — let it
-            // show instead of clipping it at the scroll view's edge.
-            .scrollClipDisabled()
         }
     }
 }

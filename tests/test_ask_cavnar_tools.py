@@ -702,6 +702,28 @@ def test_every_write_tool_points_at_a_route_that_actually_exists():
     ]
     assert not missing, f"write tools pointing at non-existent routes: {missing}"
 
+    # And that the route ACCEPTS the verb the confirm card will use. The
+    # path check above passed for generate_schedule while its declared GET
+    # hit a POST-only mobile route: every schedule the owner approved came
+    # back 405 as "that didn't go through". A right path with the wrong
+    # verb fails exactly as loudly as no path at all.
+    def methods_for(path):
+        probe = re.sub(r"\{[a-z_]+\}", "1", path)
+        allowed = set()
+        for rule in probe_app.url_map.iter_rules():
+            if re.match("^" + re.sub(r"<[^>]+>", "[^/]+", str(rule)) + "$", probe):
+                allowed |= rule.methods
+        return allowed
+
+    wrong_verb = [
+        (t["spec"]["name"], surface, t["route"][surface],
+         t["route"].get("method", "POST"), sorted(methods_for(t["route"][surface]) - {"HEAD", "OPTIONS"}))
+        for t in tools.TOOLS if t["kind"] == "write"
+        for surface in ("web", "mobile")
+        if t["route"].get("method", "POST") not in methods_for(t["route"][surface])
+    ]
+    assert not wrong_verb, f"write tools declaring a verb their route rejects: {wrong_verb}"
+
 
 def test_every_read_and_action_tool_is_callable():
     """A registry entry whose fn signature doesn't match its schema fails

@@ -37,7 +37,7 @@ struct AccountActivityLogView: View {
                     }
 
                     if viewModel.isLoadingActivity && viewModel.activity.isEmpty {
-                        CavnarLoadingSeal().padding(.top, 40).frame(maxWidth: .infinity)
+                        CavnarLoadingOrb().padding(.top, 40).frame(maxWidth: .infinity)
                     } else if viewModel.activity.isEmpty {
                         Text("Nothing has changed on your account yet.")
                             .font(.cavnarBody(15))

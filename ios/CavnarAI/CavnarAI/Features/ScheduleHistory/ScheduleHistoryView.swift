@@ -56,7 +56,7 @@ struct ScheduleHistoryView: View {
                 // fix — a bare loading view with no frame let
                 // .cavnarModuleBackground()'s wash flash as a narrow
                 // rectangle instead of full-screen.
-                CavnarLoadingSeal()
+                CavnarLoadingOrb()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = viewModel.errorMessage {
                 VStack(spacing: 8) {

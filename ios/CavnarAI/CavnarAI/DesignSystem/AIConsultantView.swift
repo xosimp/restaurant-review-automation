@@ -26,6 +26,12 @@ private struct AIConsultantStripContent: View {
                 .font(.cavnarBody(15, weight: 500))
                 .lineLimit(1)
                 .truncationMode(.tail)
+                // The sentence itself is body copy and reads as the app's
+                // other small text does — ember stays on the sparkle and
+                // the chevron, which is what actually says "this is the AI,
+                // and it opens." A whole line of orange competed with the
+                // hero's own figures right above it for no added meaning.
+                .foregroundStyle(Color.cavnarInk3)
                 Spacer(minLength: 8)
                 if insight != nil {
                     Image(systemName: "chevron.right")

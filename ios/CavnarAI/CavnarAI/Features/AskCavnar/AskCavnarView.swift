@@ -50,7 +50,7 @@ struct AskCavnarView: View {
                         // LazyVStack only builds what's on screen.
                         LazyVStack(alignment: .leading, spacing: 16) {
                             if viewModel.isOpeningConversation {
-                                CavnarLoadingSeal()
+                                CavnarLoadingOrb()
                                     .padding(.top, 60)
                                     .frame(maxWidth: .infinity)
                             } else if viewModel.messages.isEmpty {

@@ -219,6 +219,26 @@ final class AskCavnarViewModel {
 
     private struct PlainOK: Decodable { let ok: Bool; let error: String? }
 
+    /// A confirmed action's response. Most routes do the work inline and
+    /// just answer ok; schedule generation hands back a job id and
+    /// finishes on a background thread (see confirm()).
+    private struct JobOrOK: Decodable {
+        let ok: Bool
+        let error: String?
+        let jobId: String?
+
+        enum CodingKeys: String, CodingKey {
+            case ok, error
+            case jobId = "job_id"
+        }
+    }
+
+    private struct JobStatus: Decodable {
+        let ok: Bool
+        let status: String?
+        let error: String?
+    }
+
     private struct ConversationsResponse: Decodable {
         let ok: Bool
         let conversations: [AskConversation]?
@@ -321,18 +341,43 @@ final class AskCavnarViewModel {
     /// "confirmed" always means it really ran.
     func confirm(_ proposal: AskProposal) async -> Bool {
         do {
-            let response: PlainOK
+            let response: JobOrOK
             if proposal.route.method == "GET" {
                 response = try await client.send(proposal.route.mobile)
             } else {
                 response = try await client.send(proposal.route.mobile, method: .post,
                                                  body: proposal.body ?? [:])
             }
-            if response.ok { await record(proposal, outcome: "confirmed") }
-            return response.ok
+            guard response.ok else { return false }
+            // Schedule generation answers immediately with a job id and
+            // does the actual work on a background thread. Taking that
+            // first ok at face value meant the card said "Done" while the
+            // schedule was still being built — and stayed saying it even
+            // if the job then failed. Wait for the real outcome.
+            if let jobId = response.jobId, !(await scheduleJobSucceeded(jobId)) {
+                return false
+            }
+            await record(proposal, outcome: "confirmed")
+            return true
         } catch {
             return false
         }
+    }
+
+    /// Polls the async schedule job to its real conclusion. Generation
+    /// takes a little while (it's a live model call over the roster), so
+    /// this allows a generous window before giving up rather than
+    /// reporting a failure the owner would have to guess at.
+    private func scheduleJobSucceeded(_ jobId: String) async -> Bool {
+        for _ in 0..<40 {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard let status: JobStatus = try? await client.send(
+                "/mobile/api/labor/schedule-status/\(jobId)", hapticOnError: false)
+            else { continue }
+            if status.status == "pending" { continue }
+            return status.ok && status.status != "error"
+        }
+        return false
     }
 
     func dismiss(_ proposal: AskProposal) async {
