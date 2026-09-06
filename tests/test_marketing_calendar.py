@@ -158,3 +158,16 @@ def _age_calendar(rid, seconds):
         (f"-{int(seconds)} seconds", rid))
     conn.commit()
     conn.close()
+
+
+def test_each_idea_carries_an_unambiguous_iso_date(rid, monkeypatch):
+    """"9/6" is what the web tab prints; the phone needs the year to know
+    which day is today and to print the week's range."""
+    _fake_generation(monkeypatch, IDEAS, [])
+
+    idea = marketing.get_content_calendar_ideas(restaurant_id=rid)[0]
+
+    assert idea["date"].count("/") == 1
+    assert len(idea["iso_date"]) == 10 and idea["iso_date"].count("-") == 2
+    y, m, d = idea["iso_date"].split("-")
+    assert idea["date"] == f"{int(m)}/{int(d)}"

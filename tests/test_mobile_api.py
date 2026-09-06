@@ -3586,3 +3586,39 @@ def test_tapping_generate_again_does_not_burn_a_rate_limit_token(client, db_path
     assert all(r.status_code == 200 for r in responses), "an impatient retry got rate limited"
     assert all(r.get_json()["ok"] for r in responses)
     assert len(calls) == 1, "a retry paid for another generation"
+
+
+def test_a_calendar_idea_written_from_shows_as_written(client, db_path, monkeypatch):
+    """The week rail turns a day green once its idea has been written from —
+    read back from the content log, so it survives a relaunch."""
+    import json as _json
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    ideas = [{"day": "Monday", "platform": "Instagram & FB", "angle": "Truffle pasta", "type": "instagram_post"},
+             {"day": "Tuesday", "platform": "Google", "angle": "Patio hours", "type": "google_promo"}]
+    monkeypatch.setattr("marketing.create_with_retry", lambda *a, **kw: ideas)
+    monkeypatch.setattr("marketing.extract_text", lambda m: _json.dumps(m))
+    client.post("/mobile/api/marketing/calendar", headers=_auth_headers(token))
+    monkeypatch.setattr("marketing.generate_content", lambda *a, **kw: "copy")
+
+    client.post("/mobile/api/marketing/generate-content", headers=_auth_headers(token),
+                json={"type": "instagram_post", "topic": "Truffle pasta", "from_calendar": True})
+
+    cal = client.get("/mobile/api/marketing", headers=_auth_headers(token)).get_json()["calendar"]
+    assert {i["angle"]: i["written"] for i in cal} == {"Truffle pasta": True, "Patio hours": False}
+
+
+def test_marketing_payload_counts_textable_guests_for_the_shelf_tile(client, db_path):
+    from guest_marketing import init_guest_marketing
+    init_guest_marketing(db_path)
+    rid = _restaurant(db_path, module_marketing=1)
+    token = _login(client, db_path, rid)
+    conn = get_conn(db_path)
+    for phone, consent, unsub in (("+15550000301", 1, 0), ("+15550000302", 1, 1), ("+15550000303", 0, 0)):
+        conn.execute("INSERT INTO guest_contacts (restaurant_id, phone, consent, unsubscribed) VALUES (?,?,?,?)",
+                     (rid, phone, consent, unsub))
+    conn.commit(); conn.close()
+
+    data = client.get("/mobile/api/marketing", headers=_auth_headers(token)).get_json()
+
+    assert data["guest_textable"] == 1

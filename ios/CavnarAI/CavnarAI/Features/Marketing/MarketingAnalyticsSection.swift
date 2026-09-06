@@ -1,15 +1,14 @@
 import SwiftUI
 
+/// The Analytics tab, top to bottom: the brief (one headline, the numbered
+/// moves), the period, a glossy stats tile with the engagement-rate ring,
+/// thin platform bars, what posts did to sales, and the recent pieces.
 struct MarketingAnalyticsSection: View {
     let viewModel: MarketingAnalyticsViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            AIConsultantView(
-                title: "Cavnar AI Marketing Brief",
-                insight: viewModel.insight,
-                isLoading: viewModel.isLoadingInsight
-            )
+        VStack(alignment: .leading, spacing: 12) {
+            briefCard
 
             if viewModel.isLoading && viewModel.performance == nil {
                 // Analyzing performance/attribution across several requests
@@ -17,26 +16,21 @@ struct MarketingAnalyticsSection: View {
                 // shimmering placeholder line.
                 CavnarWorkingOrb(state: .solving, label: "Analyzing your marketing…")
                     .padding(.vertical, 24)
+                    .frame(maxWidth: .infinity)
             } else {
-                windowSection
-                attributionSection
-
-                if let perf = viewModel.performance, perf.hasData {
-                    if let top = perf.topPost {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Top post").font(.cavnarBody(15, weight: 700)).foregroundStyle(Color.cavnarInk3)
-                            Text(top.topic ?? "").font(.cavnarBody(16, weight: 600)).foregroundStyle(Color.cavnarInk)
-                            Text("\(top.reach) reach · \(top.likes) likes · \(top.comments) comments")
-                                .font(.cavnarNumber(15))
-                                .foregroundStyle(Color.cavnarInk3)
-                        }
-                        .cavnarCard()
+                periodSwitcher
+                if let window = viewModel.window {
+                    statsTile(window)
+                    if !window.byPlatform.isEmpty {
+                        platformBars(window)
                     }
                 } else if viewModel.performance != nil {
                     Text("No published post metrics yet.")
-                        .font(.cavnarBody(16))
+                        .font(.cavnarBody(15))
                         .foregroundStyle(Color.cavnarInk3)
+                        .cavnarCard()
                 }
+                attributionCard
             }
 
             if !viewModel.recentTopics.isEmpty {
@@ -45,129 +39,245 @@ struct MarketingAnalyticsSection: View {
         }
     }
 
-    /// A period, against the period before it. "Total reach 4,231" with no
-    /// denominator and no trend is a number, not a metric — and engagement
-    /// RATE is the one that survives a follower count changing.
-    @ViewBuilder
-    private var windowSection: some View {
-        if let window = viewModel.window {
-            VStack(alignment: .leading, spacing: 12) {
-                Picker("Period", selection: Binding(
-                    get: { viewModel.windowDays },
-                    // The haptic goes in the SETTER, not on a .sensoryFeedback
-                    // watching windowDays: the value is written here
-                    // synchronously and the reload it kicks off is async, so a
-                    // feedback modifier keyed to the published value fired late
-                    // (or not at all when the request failed). This buzzes on
-                    // the tap, like every other control in the app.
-                    set: { days in
-                        guard days != viewModel.windowDays else { return }
-                        Haptic.light()
-                        Task { await viewModel.setWindow(days) }
-                    })) {
-                    Text("7 days").tag(7)
-                    Text("30 days").tag(30)
-                    Text("90 days").tag(90)
-                }
-                .pickerStyle(.segmented)
+    // MARK: - Brief
 
-                HStack(spacing: 0) {
-                    trendTile("\(window.reach)", "Reach", window.change.reach)
-                    Divider()
-                    trendTile("\(window.engagement)", "Engagement", window.change.engagement)
-                    Divider()
-                    trendTile("\(window.engagementRate)%", "Rate", nil)
-                }
-                .cavnarGlassCard()
+    /// The consultant's read as one headline and the numbered moves — not
+    /// a strip of prose. The insight endpoint already writes in this shape
+    /// (Line 1, then "1." "2."); this just stops flattening it back out.
+    private var briefCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if viewModel.isLoadingInsight && viewModel.insight == nil {
+                CavnarWorkingOrb(state: .solving, label: "Reading your numbers…")
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+            } else if let insight = viewModel.insight {
+                Text(insight.intro)
+                    .font(.cavnarHeadline(18))
+                    .foregroundStyle(Color.cavnarInk)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, insight.recommendations.isEmpty ? 0 : 12)
 
-                if !window.byPlatform.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("By platform")
-                            .font(.cavnarBody(15, weight: 700))
-                            .foregroundStyle(Color.cavnarInk3)
-                        ForEach(window.byPlatform) { platform in
-                            HStack {
-                                Text(platform.label)
-                                    .font(.cavnarBody(16, weight: 600))
-                                    .foregroundStyle(Color.cavnarInk)
-                                Spacer()
-                                (Text("\(platform.posts)").font(.cavnarNumber(15, weight: 700))
-                                    + Text(" posts · ")
-                                    + Text("\(platform.reach)").font(.cavnarNumber(15, weight: 700))
-                                    + Text(" reach · ")
-                                    + Text("\(platform.engagementRate)%").font(.cavnarNumber(15, weight: 700)))
-                                    .font(.cavnarBody(15))
-                                    .foregroundStyle(Color.cavnarInk3)
-                            }
-                        }
+                ForEach(Array(insight.recommendations.enumerated()), id: \.offset) { index, rec in
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text("\(index + 1)")
+                            .font(.cavnarNumber(14.5, weight: 700))
+                            .foregroundStyle(Color.cavnarEmber2)
+                        Text(rec)
+                            .font(.cavnarBody(14.5))
+                            .foregroundStyle(Color.cavnarInk2)
+                            .lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .cavnarCard()
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(alignment: .top) {
+                        Rectangle().fill(Color.cavnarEmber2.opacity(0.18)).frame(height: 1)
+                    }
                 }
+
+                if let forecast = insight.forecast, !forecast.isEmpty {
+                    Text(forecast)
+                        .font(.cavnarBody(14))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 8)
+                }
+            } else {
+                Text("Publish a post or two and the brief will have something to say.")
+                    .font(.cavnarBody(15))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cavnarEmber.opacity(0.12))
+        .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card).strokeBorder(Color.cavnarEmber.opacity(0.35), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
     }
 
-    private func trendTile(_ value: String, _ label: String, _ change: Double?) -> some View {
-        VStack(spacing: 4) {
-            Text(value).font(.cavnarNumber(22, weight: 500)).foregroundStyle(Color.cavnarInk).cavnarNumberGlow()
-            Text(label).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+    // MARK: - Period
+
+    private var periodSwitcher: some View {
+        HStack(spacing: 0) {
+            ForEach([7, 30, 90], id: \.self) { days in
+                Button {
+                    // The haptic fires here on the tap, not off the published
+                    // value: the reload is async and a feedback modifier keyed
+                    // to windowDays fired late (or not at all on failure).
+                    guard days != viewModel.windowDays else { return }
+                    Haptic.light()
+                    Task { await viewModel.setWindow(days) }
+                } label: {
+                    (Text("\(days)").font(.cavnarNumber(15, weight: 700)) + Text(" days"))
+                        .font(.cavnarBody(15, weight: 700))
+                        .foregroundStyle(days == viewModel.windowDays ? Color.cavnarInk : Color.cavnarInk3)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(days == viewModel.windowDays ? Color.cavnarPaper3 : Color.clear)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(Color.white.opacity(0.04))
+        .overlay(Capsule().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+        .clipShape(Capsule())
+        .animation(.easeOut(duration: 0.2), value: viewModel.windowDays)
+    }
+
+    // MARK: - Stats
+
+    /// A period against the period before it. "Total reach 4,231" with no
+    /// denominator and no trend is a number, not a metric — and engagement
+    /// RATE is the one that survives a follower count changing.
+    private func statsTile(_ window: MarketingWindow) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            bigStat(window.reach.formatted(), "Reach", window.change.reach)
+            bigStat(window.engagement.formatted(), "Engagement", window.change.engagement)
+            rateRing(window.engagementRate)
+                .frame(width: 96)
+        }
+        .cavnarGlossyCard()
+    }
+
+    private func bigStat(_ value: String, _ label: String, _ change: Double?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value)
+                .font(.cavnarNumber(24, weight: 700))
+                .foregroundStyle(Color.cavnarInk)
+                .cavnarNumberGlow()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(label).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
             if let change {
                 Text("\(change > 0 ? "+" : "")\(change, specifier: "%.0f")%")
-                    .font(.cavnarNumber(15, weight: 700))
+                    .font(.cavnarNumber(13, weight: 700))
                     .foregroundStyle(change >= 0 ? Color.cavnarGreen : Color.cavnarRed)
             }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// What a post did to the till — the question a marketing director asks
-    /// first, and the one nothing in this product could answer. Labelled as a
-    /// correlation because that is what it is.
-    @ViewBuilder
-    private var attributionSection: some View {
-        if let attribution = viewModel.attribution {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("What posts did to sales")
-                    .font(.cavnarBody(16, weight: 700))
+    /// Engagement rate as a ring. Drawn against a 10% full scale — social
+    /// rates live between 1% and 6%, and against 100% every ring would be a
+    /// sliver that says nothing.
+    private func rateRing(_ rate: Double) -> some View {
+        ZStack {
+            Circle().stroke(Color.cavnarPaper3, lineWidth: 5)
+            Circle()
+                .trim(from: 0, to: min(max(rate / 10, 0), 1))
+                .stroke(Color.cavnarEmber, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(.easeOut(duration: 0.6), value: rate)
+            VStack(spacing: 1) {
+                Text("\(rate, specifier: "%.1f")%")
+                    .font(.cavnarNumber(17, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
+                Text("Rate").font(.cavnarBody(11)).foregroundStyle(Color.cavnarInk3)
+            }
+        }
+        .frame(width: 74, height: 74)
+        .padding(.vertical, 5)
+    }
+
+    // MARK: - Platforms
+
+    private func platformBars(_ window: MarketingWindow) -> some View {
+        let maxReach = max(window.byPlatform.map(\.reach).max() ?? 0, 1)
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("By platform")
+                .font(.cavnarBody(16, weight: 700))
+                .foregroundStyle(Color.cavnarInk)
+
+            ForEach(window.byPlatform) { platform in
+                HStack(spacing: 10) {
+                    Text(platform.label)
+                        .font(.cavnarBody(15))
+                        .foregroundStyle(Color.cavnarInk2)
+                        .lineLimit(1)
+                        .frame(width: 82, alignment: .leading)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.cavnarPaper3)
+                            Capsule()
+                                .fill(LinearGradient(colors: [Color.cavnarEmber, Color.cavnarEmber2],
+                                                     startPoint: .leading, endPoint: .trailing))
+                                .frame(width: geo.size.width * CGFloat(platform.reach) / CGFloat(maxReach))
+                        }
+                    }
+                    .frame(height: 8)
+                    Text(platform.reach > 0 ? platform.reach.formatted() : "—")
+                        .font(.cavnarNumber(15))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .frame(width: 52, alignment: .trailing)
+                }
+            }
+        }
+        .cavnarCard()
+    }
+
+    // MARK: - Attribution
+
+    /// What a post did to the till — the question a marketing director asks
+    /// first. Labelled as a comparison because that is what it is.
+    @ViewBuilder
+    private var attributionCard: some View {
+        if let attribution = viewModel.attribution {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("What posts did to sales")
+                        .font(.cavnarBody(16, weight: 700))
+                        .foregroundStyle(Color.cavnarInk)
+                        .fixedSize()
+                        .layoutPriority(1)
+                    Spacer(minLength: 6)
+                    Text("same weekday, before vs after")
+                        .font(.cavnarBody(12))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .multilineTextAlignment(.trailing)
+                        .lineLimit(2)
+                }
+                .padding(.bottom, 4)
 
                 if attribution.ok, !attribution.posts.isEmpty {
-                    Text("Sales in the two days after each post, against the same weekday before it. This is a correlation, not proof — a busy Friday is still a busy Friday.")
-                        .font(.cavnarBody(15))
-                        .foregroundStyle(Color.cavnarInk3)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    ForEach(attribution.posts) { post in
-                        HStack(alignment: .top) {
+                    ForEach(Array(attribution.posts.enumerated()), id: \.element.id) { index, post in
+                        HStack(alignment: .firstTextBaseline) {
                             Text(post.topic ?? "Untitled")
-                                .font(.cavnarBody(16, weight: 600))
+                                .font(.cavnarBody(15))
                                 .foregroundStyle(Color.cavnarInk)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 8)
                             Text("\(post.liftPct > 0 ? "+" : "")\(post.liftPct, specifier: "%.0f")%")
-                                .font(.cavnarNumber(16, weight: 700))
-                                .foregroundStyle(post.liftPct >= 0 ? Color.cavnarGreen : Color.cavnarInk3)
+                                .font(.cavnarNumber(15, weight: 700))
+                                .foregroundStyle(post.liftPct > 0 ? Color.cavnarGreen : Color.cavnarInk3)
                         }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.cavnarPaper2)
-                        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                        .padding(.vertical, 9)
+                        .overlay(alignment: .top) {
+                            if index > 0 { Rectangle().fill(Color.cavnarPaper3).frame(height: 1) }
+                        }
                     }
                 } else {
                     Text(attribution.emptyExplanation)
                         .font(.cavnarBody(15))
                         .foregroundStyle(Color.cavnarInk3)
                         .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 6)
                 }
             }
             .cavnarCard()
         }
     }
 
+    // MARK: - Recent
+
     /// Per-piece history — what was written, whether it went out, and what it
     /// did. Pull to refresh pulls fresh numbers from Meta first.
     private var recentlyGenerated: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("Recently generated")
                     .font(.cavnarBody(16, weight: 700))
@@ -177,46 +287,48 @@ struct MarketingAnalyticsSection: View {
                     CavnarShimmerText(text: "Refreshing…")
                 }
             }
+            .padding(.bottom, 4)
 
-            ForEach(viewModel.recentTopics) { topic in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .top, spacing: 8) {
+            ForEach(Array(viewModel.recentTopics.enumerated()), id: \.element.id) { index, topic in
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(topic.topic)
-                            .font(.cavnarBody(16, weight: 600))
+                            .font(.cavnarBody(15))
                             .foregroundStyle(Color.cavnarInk)
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 8)
                         if topic.posted {
-                            Label(topic.platformLabel ?? "Posted", systemImage: "checkmark")
-                                .font(.cavnarBody(15, weight: 700))
-                                .foregroundStyle(Color.cavnarGreen)
+                            pill("\(topic.platformLabel ?? "Posted") ✓", tone: Color.cavnarGreen)
                         } else {
-                            Text("Draft")
-                                .font(.cavnarBody(15, weight: 700))
-                                .foregroundStyle(Color.cavnarEmber2)
+                            pill("Draft", tone: Color.cavnarEmber2)
                         }
                     }
                     if let line = topic.metricsLine {
-                        Text(line).font(.cavnarNumber(15)).foregroundStyle(Color.cavnarInk3)
+                        Text(line).font(.cavnarNumber(13)).foregroundStyle(Color.cavnarInk3)
                     } else if topic.posted {
                         Text("No numbers back from Meta yet")
-                            .font(.cavnarBody(15))
+                            .font(.cavnarBody(13))
                             .foregroundStyle(Color.cavnarInk3)
                     }
                 }
-                .padding(12)
+                .padding(.vertical, 9)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.cavnarPaper2)
-                .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                .overlay(alignment: .top) {
+                    if index > 0 { Rectangle().fill(Color.cavnarPaper3).frame(height: 1) }
+                }
             }
         }
+        .cavnarCard()
     }
 
-    private func statTile(value: String, label: String) -> some View {
-        VStack(spacing: 4) {
-            Text(value).font(.cavnarNumber(22, weight: 500)).foregroundStyle(Color.cavnarInk).cavnarNumberGlow()
-            Text(label).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
-        }
-        .frame(maxWidth: .infinity)
+    private func pill(_ text: String, tone: Color) -> some View {
+        Text(text)
+            .font(.cavnarBody(12, weight: 700))
+            .foregroundStyle(tone)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 3)
+            .background(tone.opacity(0.14))
+            .clipShape(Capsule())
+            .lineLimit(1)
     }
 }

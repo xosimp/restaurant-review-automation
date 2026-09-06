@@ -42,16 +42,26 @@ struct MarketingPhotoPicker: View {
                 }
             }
 
+            // A dashed drop zone rather than another outlined button — it
+            // reads as "a photo goes here", which is what it is, and stops
+            // competing with the four editing actions under it.
             PhotosPicker(selection: $selection, matching: .images, photoLibrary: .shared()) {
-                if viewModel.isUploading {
-                    CavnarShimmerText(text: "Uploading…")
-                } else {
-                    Label(viewModel.media == nil ? "Add a photo" : "Change photo",
-                          systemImage: "photo.on.rectangle.angled")
-                        .frame(maxWidth: .infinity)
+                Group {
+                    if viewModel.isUploading {
+                        CavnarShimmerText(text: "Uploading…")
+                    } else {
+                        Label(viewModel.media == nil ? "Add a photo" : "Change photo", systemImage: "plus")
+                            .font(.cavnarBody(15, weight: 700))
+                    }
                 }
+                .foregroundStyle(Color.cavnarEmber2)
+                .frame(maxWidth: .infinity)
+                .padding(12)
+                .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control)
+                    .strokeBorder(Color.cavnarEmber2.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
+                .contentShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
             }
-            .buttonStyle(CavnarSecondaryButtonStyle())
+            .buttonStyle(.plain)
             .disabled(viewModel.isUploading)
 
             if let error = viewModel.mediaError {

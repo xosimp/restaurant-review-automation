@@ -76,12 +76,70 @@ struct ContentCalendarIdea: Codable, Identifiable {
     let platform: String
     let angle: String
     let type: String
+    /// "2026-09-06". Newer calendars carry it; `date` ("9/6") is what every
+    /// cached calendar has always had, so it stays the fallback.
+    let isoDate: String?
+    /// True once this idea has been written from this week. The backend reads
+    /// it back out of the content log, so the green tick on the week rail
+    /// survives a relaunch instead of living in view state.
+    var written: Bool
 
     enum CodingKeys: String, CodingKey {
-        case day, date, platform, angle, type
+        case day, date, platform, angle, type, written
+        case isoDate = "iso_date"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        day = try c.decode(String.self, forKey: .day)
+        date = try c.decodeIfPresent(String.self, forKey: .date)
+        platform = try c.decode(String.self, forKey: .platform)
+        angle = try c.decode(String.self, forKey: .angle)
+        type = try c.decode(String.self, forKey: .type)
+        isoDate = try c.decodeIfPresent(String.self, forKey: .isoDate)
+        written = try c.decodeIfPresent(Bool.self, forKey: .written) ?? false
     }
 
     var id: String { "\(day)-\(type)" }
+
+    /// The calendar day this idea is for, from iso_date when the backend
+    /// sent one, else from "9/6" in the current year.
+    var calendarDate: Date? {
+        let f = DateFormatter()
+        f.timeZone = .current
+        if let isoDate, !isoDate.isEmpty {
+            f.dateFormat = "yyyy-MM-dd"
+            if let d = f.date(from: isoDate) { return d }
+        }
+        guard let date, !date.isEmpty else { return nil }
+        f.dateFormat = "M/d/yyyy"
+        let year = Calendar.current.component(.year, from: Date())
+        return f.date(from: "\(date)/\(year)")
+    }
+
+    var isToday: Bool {
+        guard let d = calendarDate else { return false }
+        return Calendar.current.isDateInToday(d)
+    }
+
+    /// "Sun", "Mon" — the rail's day abbreviation.
+    var dayAbbrev: String { String(day.prefix(3)) }
+
+    /// The day-of-month ("6" out of "9/6"), as the rail's big number.
+    var dayNumber: String {
+        guard let date, let slash = date.lastIndex(of: "/") else { return "" }
+        return String(date[date.index(after: slash)...])
+    }
+
+    /// The glyph the rail shows under the day: which channel this one is for.
+    var platformGlyph: String {
+        let p = platform.lowercased()
+        if p.contains("instagram") || p.contains("facebook") { return "IG" }
+        if p.contains("google") { return "G" }
+        if p.contains("sms") || p.contains("text") { return "SMS" }
+        if p.contains("email") || p.contains("newsletter") { return "✉" }
+        return String(platform.prefix(2)).uppercased()
+    }
 }
 
 /// Google Business posts carry an optional action button, and it is the half
@@ -119,6 +177,8 @@ enum GoogleCallToAction: String, CaseIterable, Identifiable {
 final class MarketingViewModel {
     var stats: MarketingStats?
     var calendar: [ContentCalendarIdea] = []
+    /// Consented, not-unsubscribed guests — the number on the Text Club tile.
+    var guestTextable = 0
     var channels = MarketingChannels()
     var isLoading = false
     var errorMessage: String?
@@ -212,10 +272,12 @@ final class MarketingViewModel {
         let calendar: [ContentCalendarIdea]
         let contentTypes: [MarketingContentType]?
         let channels: MarketingChannels?
+        let guestTextable: Int?
 
         enum CodingKeys: String, CodingKey {
             case ok, stats, calendar, channels
             case contentTypes = "content_types"
+            case guestTextable = "guest_textable"
         }
     }
 
@@ -227,6 +289,7 @@ final class MarketingViewModel {
             let response: MarketingResponse = try await client.send("/mobile/api/marketing")
             stats = response.stats
             calendar = response.calendar
+            guestTextable = response.guestTextable ?? 0
             channels = response.channels ?? MarketingChannels()
             if let types = response.contentTypes, !types.isEmpty {
                 contentTypes = types
@@ -298,6 +361,11 @@ final class MarketingViewModel {
         selectedType = idea.type
         topic = idea.angle
         await generate(fromCalendar: true)
+        // The backend logs the use as part of the generate call; mirror it
+        // here so the rail ticks the day without a second round trip.
+        if hasDraft, let i = calendar.firstIndex(where: { $0.id == idea.id }) {
+            calendar[i].written = true
+        }
     }
 
     /// Set for a beat after a copy so the button can say it happened. A

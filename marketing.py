@@ -555,10 +555,14 @@ def get_content_calendar_ideas(restaurant_id: int = None, force: bool = False) -
     days_since_sunday = (now.weekday() + 1) % 7  # Sun=0, Mon=1, ..., Sat=6
     start = now - _td(days=days_since_sunday)  # Most recent Sunday
     days_map = {}
+    iso_map = {}
     for i in range(7):
         d = start + _td(days=i)
         dn = d.strftime("%A")
         days_map[dn] = d.strftime("%-m/%-d")
+        # The phone needs an unambiguous date to know which day is today
+        # and to print the week's range; "9/6" carries no year.
+        iso_map[dn] = d.strftime("%Y-%m-%d")
     week_range = f"{start.strftime('%-m/%-d')} – {(start + _td(days=6)).strftime('%-m/%-d/%y')}"
     current_month = now.strftime("%B")
     today_str = now.strftime("%B %d, %Y")
@@ -635,6 +639,7 @@ Rules:
                         break
             idea["day"] = day_name
             idea["date"] = days_map.get(day_name, "")
+            idea["iso_date"] = iso_map.get(day_name, "")
         # Sort by date so calendar always shows Mon→Sun order
         day_order = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
         ideas.sort(key=lambda x: day_order.index(x.get("day","Sunday")) if x.get("day","") in day_order else 7)

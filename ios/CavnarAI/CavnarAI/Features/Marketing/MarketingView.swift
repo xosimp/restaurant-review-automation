@@ -32,6 +32,11 @@ struct MarketingView: View {
     /// watches it and moves to the caption box. A token rather than a Bool so
     /// tapping a second day still scrolls.
     @State private var scrollToDraft: UUID?
+    /// Index into viewModel.calendar of the day the focus card is showing.
+    /// Starts on today when today is in the week, else the first day.
+    @State private var selectedDay = 0
+    /// True for a beat after "Write this" succeeds so the button can say so.
+    @State private var justWrote = false
     @FocusState private var focusedField: MarketingContentField?
 
     var body: some View {
@@ -46,10 +51,10 @@ struct MarketingView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     if subTab == .content {
                         if let stats = viewModel.stats {
-                            statsCard(stats)
-                            shelfRows
-                            generatorSection
-                            calendarSection
+                            pulseRow(stats)
+                            shelfTiles
+                            composerCard
+                            weekSection
                         } else if viewModel.isLoading {
                             CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                         } else if let error = viewModel.errorMessage {
@@ -116,6 +121,9 @@ struct MarketingView: View {
         .cavnarTabSwipeNavigation($subTab, primaryTab: .content, secondaryTab: .analytics)
         .keyboardNavToolbar($focusedField)
         .task { await viewModel.load() }
+        .onChange(of: viewModel.calendar.map(\.id)) { _, _ in
+            selectedDay = viewModel.calendar.firstIndex(where: \.isToday) ?? 0
+        }
         // Keyed to the tab so coming back to Analytics picks up numbers that
         // moved while you were writing, instead of holding the first load
         // forever.
@@ -158,65 +166,81 @@ struct MarketingView: View {
         }
     }
 
-    // MARK: - Header
+    // MARK: - Pulse
 
+    /// Three numbers in a row, no card — a heartbeat, not a dashboard. The
+    /// heavy stats card up top made the page open on a wall of chrome
+    /// before the thing you came to do.
     @ViewBuilder
-    private func statsCard(_ stats: MarketingStats) -> some View {
-        HStack(spacing: 0) {
-            statTile(value: "\(stats.thisMonth)", label: "This month")
-            Divider()
-            statTile(value: "\(stats.generated)", label: "Generated")
-            Divider()
-            statTile(value: "\(stats.published)", label: "Published")
+    private func pulseRow(_ stats: MarketingStats) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            pulseStat("\(stats.thisMonth)", "This month")
+            pulseStat("\(stats.generated)", "Generated")
+            pulseStat("\(stats.published)", "Published")
         }
-        .cavnarCard()
+        .padding(.horizontal, 4)
+        .padding(.bottom, 2)
     }
 
-    private func statTile(value: String, label: String) -> some View {
-        VStack(spacing: 4) {
-            Text(value).font(.cavnarNumber(24, weight: 500)).foregroundStyle(Color.cavnarInk).cavnarNumberGlow()
-            Text(label).font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+    private func pulseStat(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value)
+                .font(.cavnarNumber(24, weight: 700))
+                .foregroundStyle(Color.cavnarInk)
+                .cavnarNumberGlow()
+            Text(label).font(.cavnarBody(13)).foregroundStyle(Color.cavnarInk3)
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var shelfRows: some View {
-        VStack(spacing: 10) {
-            shelfRow("Guest Text Club", icon: "message", badge: nil) { shelfDestination = .guestTextClub }
-            shelfRow("Scheduled", icon: "calendar.badge.clock",
-                     badge: compose.pendingCount > 0 ? "\(compose.pendingCount)" : nil) {
+    // MARK: - Shelf
+
+    /// Text Club / Scheduled / Drafts as three compact tiles with their
+    /// counts, instead of three full-width rows stacked under the stats.
+    private var shelfTiles: some View {
+        HStack(spacing: 8) {
+            shelfTile("Text Club", icon: "message.fill", count: viewModel.guestTextable) {
+                shelfDestination = .guestTextClub
+            }
+            shelfTile("Scheduled", icon: "calendar.badge.clock", count: compose.pendingCount) {
                 shelfDestination = .scheduled
             }
-            shelfRow("Drafts", icon: "square.and.pencil",
-                     badge: compose.drafts.isEmpty ? nil : "\(compose.drafts.count)") {
+            shelfTile("Drafts", icon: "square.and.pencil", count: compose.drafts.count) {
                 shelfDestination = .drafts
             }
         }
-        // A Button driving this, not three NavigationLinks — a
+        // A Button driving each tile, not a NavigationLink — a
         // simultaneousGesture haptic on a NavigationLink races its own tap
         // handling (see HomeModuleGrid's identical reasoning); a Button's
         // action closure is deterministic, so the haptic and the push always
         // happen together.
     }
 
-    private func shelfRow(_ title: String, icon: String, badge: String?, action: @escaping () -> Void) -> some View {
+    private func shelfTile(_ title: String, icon: String, count: Int, action: @escaping () -> Void) -> some View {
         Button {
             Haptic.light()
             action()
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: icon).foregroundStyle(Color.cavnarEmber)
-                Text(title).font(.cavnarBody(16.5, weight: 600))
-                Spacer()
-                if let badge {
-                    Text(badge)
-                        .font(.cavnarNumber(16.5, weight: 700))
-                        .foregroundStyle(Color.cavnarEmber)
-                }
-                Image(systemName: "chevron.right").foregroundStyle(Color.cavnarInk3)
+            VStack(alignment: .leading, spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.cavnarEmber2)
+                Text(title)
+                    .font(.cavnarBody(14, weight: 700))
+                    .foregroundStyle(Color.cavnarInk)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                Text("\(count)")
+                    .font(.cavnarNumber(18, weight: 700))
+                    .foregroundStyle(Color.cavnarEmber2)
             }
-            .foregroundStyle(Color.cavnarInk)
-            .cavnarCard()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 12)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
+            .background(Color.cavnarPaper2)
+            .overlay(RoundedRectangle(cornerRadius: CavnarRadius.card).strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.card))
         }
         .buttonStyle(.plain)
     }
@@ -224,20 +248,13 @@ struct MarketingView: View {
     // MARK: - Generator
 
     @ViewBuilder
-    private var generatorSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Generate content")
+    private var composerCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Write something")
                 .font(.cavnarBody(16, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
 
-            if let type = viewModel.selectedContentType {
-                Text(type.description)
-                    .font(.cavnarBody(15))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            TextField("Topic (optional)", text: $viewModel.topic)
+            TextField("Topic — optional, e.g. fall truffle menu", text: $viewModel.topic)
                 .cavnarTextFieldStyle()
                 .focused($focusedField, equals: .topic)
 
@@ -306,12 +323,17 @@ struct MarketingView: View {
             // It was 16pt at default leading in a 10pt box — a solid wall of
             // small type. 17.5pt with real line spacing and 14pt of inset is
             // the difference between skimming it and working in it.
+            // Sized by its text (a TextEditor with scrolling disabled lays
+            // out to its content) above a floor, so a two-line caption gets
+            // a compact box and a long one gets the room it needs, and the
+            // page — not the box — is what scrolls.
             TextEditor(text: $viewModel.draft)
                 .font(.cavnarBody(16.5))
                 .lineSpacing(5)
                 .foregroundStyle(Color.cavnarInk)
                 .scrollContentBackground(.hidden)
-                .frame(minHeight: 210)
+                .scrollDisabled(true)
+                .frame(minHeight: 132)
                 .padding(14)
                 .background(Color.cavnarPaper)
                 .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control)
@@ -321,17 +343,17 @@ struct MarketingView: View {
                 .id(Self.draftEditorAnchor)
 
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("Trim it to the version you want before posting")
-                    .font(.cavnarBody(15))
+                Text("Trim it before it goes out")
+                    .font(.cavnarBody(14))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 if let limit = viewModel.characterLimit, let type = viewModel.selectedContentType {
-                    (Text("\(viewModel.draft.count)").font(.cavnarNumber(16, weight: 600))
+                    (Text("\(viewModel.draft.count)").font(.cavnarNumber(14, weight: 700))
                         + Text(" / ")
-                        + Text("\(limit)").font(.cavnarNumber(16))
+                        + Text(limit.formatted()).font(.cavnarNumber(14))
                         + Text(viewModel.isOverLimit ? " over \(type.limitLabel)" : ""))
-                        .font(.cavnarBody(15))
+                        .font(.cavnarBody(14))
                         .foregroundStyle(viewModel.isOverLimit ? Color.cavnarRed : Color.cavnarInk3)
                         .layoutPriority(1)
                 }
@@ -506,102 +528,263 @@ struct MarketingView: View {
         }
     }
 
-    // MARK: - Calendar
+    // MARK: - Week
 
+    /// The week as a rail of seven days and ONE focused card — one orange
+    /// call to action on screen instead of seven stacked cards each with
+    /// its own. Tap a day (or the skip arrow) to move through the week;
+    /// written days go green on the rail.
     @ViewBuilder
-    private var calendarSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("This week's content calendar")
+    private var weekSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("This week")
                     .font(.cavnarBody(16, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Spacer()
-                if !viewModel.calendar.isEmpty {
+                if let range = weekRangeLabel {
+                    Text(range).font(.cavnarNumber(13)).foregroundStyle(Color.cavnarInk3)
+                }
+                if !viewModel.calendar.isEmpty && !viewModel.isGeneratingCalendar {
+                    Button {
+                        Haptic.light()
+                        Task { await viewModel.generateCalendar() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.cavnarEmber)
+                    }
+                    .accessibilityLabel("Plan a new week")
                     ShareLink(item: viewModel.calendarCSV,
                               preview: SharePreview("Content calendar")) {
-                        Image(systemName: "square.and.arrow.up").foregroundStyle(Color.cavnarEmber)
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.cavnarEmber)
                     }
                 }
             }
-
-            if viewModel.calendar.isEmpty && !viewModel.isGeneratingCalendar {
-                Text("Seven ideas for the week, built from your menu, your voice and what's coming up.")
-                    .font(.cavnarBody(15))
-                    .foregroundStyle(Color.cavnarInk3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            .padding(.horizontal, 4)
 
             if viewModel.isGeneratingCalendar {
                 // Planning a week of ideas is the model deciding what to do,
-                // which is what `solving` depicts. It also takes real time —
-                // several seconds — so this needs actual motion, not a
-                // shimmering label sitting inside a disabled button.
+                // which is what `solving` depicts. It takes real seconds, so
+                // it needs actual motion, not a label inside a dead button.
                 CavnarWorkingOrb(state: .solving, label: "Planning your week…")
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity)
                     .transition(.opacity)
-            } else {
-                Button {
-                    Task { await viewModel.generateCalendar() }
-                } label: {
-                    Text(viewModel.calendar.isEmpty ? "Generate week" : "Generate a new week")
-                        .frame(maxWidth: .infinity)
+            } else if viewModel.calendar.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Seven ideas for the week, built from your menu, your voice and what's coming up.")
+                        .font(.cavnarBody(15))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        Haptic.light()
+                        Task { await viewModel.generateCalendar() }
+                    } label: {
+                        Text("Generate week").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarSecondaryButtonStyle())
                 }
-                .buttonStyle(CavnarSecondaryButtonStyle())
+                .cavnarCard()
+            } else {
+                weekRail
+                if let idea = focusedIdea {
+                    focusCard(idea)
+                }
             }
 
             if let error = viewModel.calendarError {
                 Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
             }
-
-            ForEach(viewModel.calendar) { idea in
-                calendarCard(idea)
-            }
         }
         .animation(.easeOut(duration: 0.3), value: viewModel.isGeneratingCalendar)
     }
 
-    private func calendarCard(_ idea: ContentCalendarIdea) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(idea.day)
-                    .font(.cavnarBody(15, weight: 700))
-                    .foregroundStyle(Color.cavnarEmber)
-                if let date = idea.date, !date.isEmpty {
-                    Text(date).font(.cavnarNumber(15)).foregroundStyle(Color.cavnarInk3)
-                }
-                Spacer()
-                Text(idea.platform)
-                    .font(.cavnarBody(15, weight: 600))
-                    .foregroundStyle(Color.cavnarInk3)
-            }
-            Text(idea.angle)
-                .font(.cavnarBody(16))
-                .foregroundStyle(Color.cavnarInk)
-                .fixedSize(horizontal: false, vertical: true)
+    private var focusedIdea: ContentCalendarIdea? {
+        guard !viewModel.calendar.isEmpty else { return nil }
+        return viewModel.calendar[min(selectedDay, viewModel.calendar.count - 1)]
+    }
 
-            // Tapping a day writes it. The web tab has always done this; on
-            // the phone a calendar idea was something you had to retype.
-            Button {
-                Haptic.light()
-                Task {
-                    await viewModel.generate(from: idea)
-                    // The draft lands hundreds of points ABOVE the calendar,
-                    // so tapping a day left the reader staring at the bottom
-                    // of the page with the one thing the tap produced off
-                    // screen. Only scroll once there is actually something
-                    // there to scroll to.
-                    if viewModel.hasDraft { scrollToDraft = UUID() }
+    /// "Sep 6 – 12" from the first and last day's dates.
+    private var weekRangeLabel: String? {
+        guard let first = viewModel.calendar.first?.calendarDate,
+              let last = viewModel.calendar.last?.calendarDate else { return nil }
+        let month = first.formatted(.dateTime.month(.abbreviated))
+        let lastMonth = last.formatted(.dateTime.month(.abbreviated))
+        let a = first.formatted(.dateTime.day())
+        let b = last.formatted(.dateTime.day())
+        return month == lastMonth ? "\(month) \(a) – \(b)" : "\(month) \(a) – \(lastMonth) \(b)"
+    }
+
+    private func select(_ index: Int) {
+        guard index != selectedDay, viewModel.calendar.indices.contains(index) else { return }
+        Haptic.light()
+        withAnimation(.easeInOut(duration: 0.25)) { selectedDay = index }
+    }
+
+    private var weekRail: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 6) {
+                ForEach(Array(viewModel.calendar.enumerated()), id: \.element.id) { index, idea in
+                    dayChip(idea, selected: index == selectedDay) { select(index) }
                 }
-            } label: {
-                Text("Write this").frame(maxWidth: .infinity)
             }
-            .buttonStyle(CavnarChipButtonStyle(tone: .cavnarEmber))
-            .disabled(viewModel.isGenerating)
-            .padding(.top, 2)
+            .padding(.horizontal, 2)
+            .padding(.vertical, 4)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.cavnarPaper2)
-        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+        .scrollIndicators(.hidden)
+        // The selected chip lifts 3pt and throws a glow; without this the
+        // scroll view's bounds clip both.
+        .scrollClipDisabled()
+    }
+
+    private func dayChip(_ idea: ContentCalendarIdea, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                Text(idea.dayAbbrev.uppercased())
+                    .font(.cavnarBody(11))
+                    .tracking(0.6)
+                    .foregroundStyle(Color.cavnarInk3)
+                Text(idea.dayNumber)
+                    .font(.cavnarNumber(18, weight: 700))
+                    .foregroundStyle(Color.cavnarInk)
+                // Email gets a symbol: a "✉" character renders as the color
+                // emoji, which ignores foregroundStyle and can't go green.
+                Group {
+                    if idea.platformGlyph == "✉" {
+                        Image(systemName: "envelope.fill").font(.system(size: 10, weight: .bold))
+                    } else {
+                        Text(idea.platformGlyph).font(.cavnarBody(10, weight: 700))
+                    }
+                }
+                .foregroundStyle(idea.written ? Color.cavnarGreen : Color.cavnarEmber2)
+            }
+            .frame(width: 46, height: 74)
+            .background {
+                if selected {
+                    LinearGradient(colors: [Color.cavnarEmber.opacity(0.28), Color.cavnarEmber.opacity(0.08)],
+                                   startPoint: .top, endPoint: .bottom)
+                } else {
+                    Color.cavnarPaper2
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(selected ? Color.cavnarEmber : Color.cavnarPaper3, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .shadow(color: Color.cavnarEmber.opacity(selected ? 0.25 : 0), radius: 10, y: 8)
+            .offset(y: selected ? -3 : 0)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(idea.day), \(idea.platform)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// The day's idea, set as a headline, with the one button that matters.
+    private func focusCard(_ idea: ContentCalendarIdea) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(idea.platform.uppercased())
+                    .font(.cavnarBody(12, weight: 700))
+                    .tracking(1.4)
+                    .foregroundStyle(Color.cavnarEmber2)
+                    .contentTransition(.opacity)
+                Spacer()
+                Text(focusDateLabel(idea))
+                    .font(.cavnarNumber(12))
+                    .foregroundStyle(Color.cavnarInk3)
+                    .contentTransition(.opacity)
+            }
+
+            Text(idea.angle)
+                .font(.cavnarHeadline(21))
+                .foregroundStyle(Color.cavnarInk)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentTransition(.opacity)
+                .padding(.top, 10)
+                .padding(.bottom, 16)
+
+            HStack(spacing: 10) {
+                Button {
+                    Haptic.light()
+                    Task { await write(idea) }
+                } label: {
+                    Group {
+                        if viewModel.isGenerating {
+                            CavnarShimmerText(text: "Writing…")
+                        } else if justWrote {
+                            Label("Written", systemImage: "checkmark")
+                        } else {
+                            Text("Write this")
+                        }
+                    }
+                    .font(.cavnarBody(16, weight: 700))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(justWrote ? Color.cavnarGreen : Color.cavnarEmber)
+                    .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous))
+                    .shadow(color: (justWrote ? Color.cavnarGreen : Color.cavnarEmber).opacity(0.32), radius: 13, y: 10)
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isGenerating)
+                .animation(.easeOut(duration: 0.2), value: justWrote)
+
+                Button {
+                    select((selectedDay + 1) % max(viewModel.calendar.count, 1))
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Color.cavnarEmber2)
+                        .frame(width: 50, height: 50)
+                        .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
+                            .strokeBorder(Color.cavnarEmber.opacity(0.5), lineWidth: 1.5))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Next day")
+            }
+
+            HStack(spacing: 5) {
+                ForEach(viewModel.calendar.indices, id: \.self) { i in
+                    Capsule()
+                        .fill(i == selectedDay ? Color.cavnarEmber : Color.cavnarPaper3)
+                        .frame(width: i == selectedDay ? 16 : 5, height: 5)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 14)
+            .animation(.easeInOut(duration: 0.25), value: selectedDay)
+        }
+        .padding(18)
+        .background(
+            LinearGradient(stops: [.init(color: Color.cavnarEmber.opacity(0.16), location: 0),
+                                   .init(color: Color.cavnarPaper2, location: 0.6)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .strokeBorder(Color.cavnarEmber2.opacity(0.35), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    /// "Sun 6 · Today", or just "Sun 6".
+    private func focusDateLabel(_ idea: ContentCalendarIdea) -> String {
+        var s = idea.dayAbbrev
+        if !idea.dayNumber.isEmpty { s += " \(idea.dayNumber)" }
+        if idea.isToday { s += " · Today" }
+        return s
+    }
+
+    /// Tapping Write writes the focused day — and carries the reader UP to
+    /// the draft, which lands hundreds of points above the calendar. Only
+    /// scroll once there is actually something there to scroll to.
+    private func write(_ idea: ContentCalendarIdea) async {
+        await viewModel.generate(from: idea)
+        guard viewModel.hasDraft else { return }
+        justWrote = true
+        scrollToDraft = UUID()
+        try? await Task.sleep(for: .seconds(1.4))
+        justWrote = false
     }
 }

@@ -2212,6 +2212,47 @@ def _marketing_channels(restaurant_id):
     }
 
 
+def _annotate_written(restaurant_id, ideas):
+    """Mark which of this week's ideas have already been written from.
+
+    The week rail shows a written day in green. mark_calendar_idea_used has
+    logged every calendar-sourced generation as content_type "calendar_<type>"
+    since the web tab existed; matching those rows' topics against this
+    week's angles is what turns that log into a state the phone can show,
+    instead of the app forgetting every time it relaunches."""
+    if not ideas:
+        return ideas
+    try:
+        from marketing import _week_start
+        since = _week_start(restaurant_id).strftime("%Y-%m-%d")
+        conn = get_conn()
+        rows = conn.execute(
+            "SELECT DISTINCT topic FROM marketing_content_log "
+            "WHERE restaurant_id=? AND content_type LIKE 'calendar_%' AND created_at >= ?",
+            (restaurant_id, since)).fetchall()
+        conn.close()
+        done = {(r["topic"] or "").strip() for r in rows}
+        for idea in ideas:
+            idea["written"] = (idea.get("angle") or "").strip() in done
+    except Exception:
+        for idea in ideas:
+            idea.setdefault("written", False)
+    return ideas
+
+
+def _guest_textable_count(restaurant_id):
+    """Consented, not unsubscribed — the number the Text Club tile shows."""
+    try:
+        conn = get_conn()
+        n = conn.execute(
+            "SELECT COUNT(*) FROM guest_contacts WHERE restaurant_id=? AND consent=1 AND unsubscribed=0",
+            (restaurant_id,)).fetchone()[0]
+        conn.close()
+        return int(n or 0)
+    except Exception:
+        return 0
+
+
 def _do_mobile_marketing(restaurant_id):
     # Cached read only. This used to call get_content_calendar_ideas()
     # unconditionally, so every open of the Marketing tab fired a Sonnet
@@ -2222,7 +2263,8 @@ def _do_mobile_marketing(restaurant_id):
     return {
         "ok": True,
         "stats": stats,
-        "calendar": get_cached_calendar(restaurant_id) or [],
+        "calendar": _annotate_written(restaurant_id, get_cached_calendar(restaurant_id) or []),
+        "guest_textable": _guest_textable_count(restaurant_id),
         # Served rather than hardcoded in the app, which had drifted to five
         # types with different labels and no descriptions.
         "content_types": CONTENT_TYPES,
@@ -2254,7 +2296,7 @@ def mobile_generate_calendar(current_user):
     # impatient taps locked the button for five minutes having generated once.
     just_made = get_cached_calendar(rid, max_age_seconds=RECENT_CALENDAR_SECONDS)
     if just_made:
-        return jsonify(ok=True, calendar=just_made), 200
+        return jsonify(ok=True, calendar=_annotate_written(rid, just_made)), 200
 
     if ai_rate_limited(f"calendar:{rid}", max_calls=4, window_secs=300):
         return jsonify(ok=False, error="Too many calendar regenerations — try again in a few minutes."), 429
@@ -2268,10 +2310,10 @@ def mobile_generate_calendar(current_user):
         # back an error and an empty screen.
         existing = get_cached_calendar(rid)
         if existing:
-            return jsonify(ok=True, calendar=existing, stale=True), 200
+            return jsonify(ok=True, calendar=_annotate_written(rid, existing), stale=True), 200
         return jsonify(ok=False,
                        error="Couldn't build a calendar right now — try again in a moment."), 200
-    return jsonify(ok=True, calendar=ideas), 200
+    return jsonify(ok=True, calendar=_annotate_written(rid, ideas)), 200
 
 
 def _do_mobile_generate_content(restaurant_id, content_type, topic, from_calendar=False):
