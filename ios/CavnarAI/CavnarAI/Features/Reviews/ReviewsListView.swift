@@ -89,7 +89,25 @@ struct ReviewsListView: View {
                     message: "New reviews land here automatically once your platforms are connected."
                 )
             } else {
-                List(Array(viewModel.reviews.enumerated()), id: \.element.id) { index, review in
+                List {
+                    // Same chips as the web inbox, plus search — the web
+                    // had both and the phone had neither.
+                    Section {
+                        inboxFilters
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 6, trailing: 16))
+                    }
+                    if viewModel.filteredReviews.isEmpty {
+                        Text(viewModel.searchText.isEmpty ? "No \(viewModel.filter.rawValue.lowercased()) reviews" : "Nothing matches \u{201C}\(viewModel.searchText)\u{201D}")
+                            .font(.cavnarBody(15))
+                            .foregroundStyle(Color.cavnarInk3)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 30)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
+                    ForEach(Array(viewModel.filteredReviews.enumerated()), id: \.element.id) { index, review in
                     // A NavigationLink row plus a .simultaneousGesture tap
                     // haptic was tried here and broke navigation outright —
                     // the gesture ended up winning the hit-test in this List,
@@ -114,6 +132,7 @@ struct ReviewsListView: View {
                     // gradient instead of blending into it.
                     .listRowBackground(Color.clear)
                     .listRowSeparatorTint(Color.cavnarPaper3)
+                    }
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
@@ -123,6 +142,64 @@ struct ReviewsListView: View {
             if viewModel.isLoading && viewModel.reviews.isEmpty { CavnarLoadingOrb() }
         }
         .cavnarEmberRefreshable { await viewModel.load() }
+    }
+
+    private var inboxFilters: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(Color.cavnarInk3)
+                TextField("Search reviews", text: Binding(
+                    get: { viewModel.searchText }, set: { viewModel.searchText = $0 }))
+                    .font(.cavnarBody(16))
+                    .autocorrectionDisabled()
+                if !viewModel.searchText.isEmpty {
+                    Button {
+                        Haptic.light()
+                        viewModel.searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(Color.cavnarInk3)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(Color.cavnarPaper2)
+            .overlay(Capsule().strokeBorder(Color.cavnarPaper3, lineWidth: 1))
+            .clipShape(Capsule())
+
+            ScrollView(.horizontal) {
+                HStack(spacing: 8) {
+                    ForEach(ReviewInboxFilter.allCases) { f in
+                        let on = viewModel.filter == f
+                        let n = viewModel.count(for: f)
+                        Button {
+                            guard !on else { return }
+                            Haptic.light()
+                            withAnimation(.easeOut(duration: 0.2)) { viewModel.filter = f }
+                        } label: {
+                            HStack(spacing: 5) {
+                                Text(f.rawValue).font(.cavnarBody(14.5, weight: 600))
+                                if n > 0 {
+                                    Text("\(n)").font(.cavnarNumber(13, weight: 700))
+                                        .foregroundStyle(on ? Color.white.opacity(0.85) : Color.cavnarEmber2)
+                                }
+                            }
+                            .foregroundStyle(on ? Color.white : Color.cavnarInk2)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(on ? Color.cavnarEmber : Color.cavnarPaper2)
+                            .overlay(Capsule().strokeBorder(on ? Color.cavnarEmber : Color.cavnarPaper3, lineWidth: 1))
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .scrollIndicators(.hidden)
+            .scrollClipDisabled()
+        }
     }
 
     /// Reads directly from the shared DeepLinkRouter (injected via

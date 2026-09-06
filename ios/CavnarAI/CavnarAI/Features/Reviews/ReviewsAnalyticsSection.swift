@@ -15,6 +15,19 @@ struct ReviewsAnalyticsSection: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                Picker("Period", selection: Binding(
+                    get: { viewModel.windowDays },
+                    set: { days in
+                        guard days != viewModel.windowDays else { return }
+                        Haptic.light()
+                        Task { await viewModel.setWindow(days) }
+                    })) {
+                    Text("30 days").tag(30)
+                    Text("90 days").tag(90)
+                    Text("6 months").tag(180)
+                }
+                .pickerStyle(.segmented)
+
                 if let performance = viewModel.performance {
                     ResponseRingsChart(performance: performance)
                 } else if viewModel.isLoading {

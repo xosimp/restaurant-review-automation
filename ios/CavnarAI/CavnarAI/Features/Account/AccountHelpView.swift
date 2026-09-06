@@ -18,6 +18,13 @@ private struct FAQGroup: Identifiable {
 /// features, not placeholder copy.
 struct AccountHelpView: View {
     @State private var expanded: Set<UUID> = []
+    @State private var refName = ""
+    @State private var refEmail = ""
+    @State private var refNote = ""
+    @State private var refSending = false
+    @State private var refSent = false
+    @State private var refError: String?
+    private let viewModel = AccountViewModel()
 
     private static let groups: [FAQGroup] = [
         FAQGroup(title: "Getting started", items: [
@@ -65,6 +72,9 @@ struct AccountHelpView: View {
                     } subtitle: {
                         Text("Common questions about Cavnar AI")
                     }
+
+                    consultantCard
+                    referralCard
 
                     ForEach(Self.groups) { group in
                         VStack(alignment: .leading, spacing: 8) {
@@ -116,6 +126,87 @@ struct AccountHelpView: View {
                 .padding(20)
             }
             .accountSheetChrome("Help & FAQ")
+        }
+    }
+
+    /// The web Account tab opens on this: a real person, two ways to reach
+    /// him. Same-day response, always.
+    private var consultantCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AccountKicker(text: "Your consultant")
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Image("WillPortrait")
+                        .resizable().scaledToFill()
+                        .frame(width: 48, height: 48)
+                        .clipShape(Circle())
+                        .overlay(Circle().strokeBorder(Color.cavnarEmber.opacity(0.5), lineWidth: 1))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Will Cavnar").font(.cavnarBody(16, weight: 700)).foregroundStyle(Color.cavnarInk)
+                        Text("Founder, Cavnar AI · your dedicated restaurant intelligence consultant")
+                            .font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                HStack(spacing: 10) {
+                    if let url = URL(string: "mailto:will@cavnar.ai") {
+                        Link(destination: url) {
+                            Label("Email Will", systemImage: "envelope").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
+                    }
+                    if let url = URL(string: "https://calendly.com/will-cavnar/30min") {
+                        Link(destination: url) {
+                            Label("Book a call", systemImage: "calendar").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarPrimaryButtonStyle())
+                    }
+                }
+            }
+            .cavnarCard()
+        }
+    }
+
+    /// The web's referral card: one free month if they sign up.
+    private var referralCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AccountKicker(text: "Know another restaurant owner?")
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Send them an intro — you get one free month if they sign up.")
+                    .font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+                if refSent {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.cavnarGreen)
+                        Text("Referral sent — thank you.").font(.cavnarBody(15, weight: 600)).foregroundStyle(Color.cavnarInk)
+                    }
+                } else {
+                    TextField("Restaurant or owner name", text: $refName).cavnarTextFieldStyle()
+                    TextField("Their email", text: $refEmail).cavnarTextFieldStyle()
+                        .keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    TextField("A note from you (optional)", text: $refNote, axis: .vertical).cavnarTextFieldStyle()
+                    if let refError {
+                        Text(refError).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                    }
+                    Button {
+                        Task {
+                            refSending = true
+                            refError = nil
+                            let err = await viewModel.sendReferral(name: refName, email: refEmail, note: refNote)
+                            refSending = false
+                            if let err { refError = err; Haptic.error() } else { refSent = true; Haptic.success() }
+                        }
+                    } label: {
+                        Group {
+                            if refSending { CavnarShimmerText(text: "Sending…") } else { Text("Send referral") }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: refSending || refName.isEmpty || !refEmail.contains("@")))
+                    .disabled(refSending || refName.isEmpty || !refEmail.contains("@"))
+                }
+            }
+            .cavnarCard()
         }
     }
 

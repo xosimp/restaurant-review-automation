@@ -115,6 +115,18 @@ struct HomeView: View {
                                     .belowFold(heroAppeared, delay: 0.1)
                             }
 
+                            if let steps = summary.setupChecklist, !steps.isEmpty {
+                                HomeSetupChecklist(steps: steps, onStep: { step in
+                                    guard let module = step.module, module != "account" else { return }
+                                    navigate(to: ModuleRoute(key: module, label: moduleLabel(module, in: summary)))
+                                }, onDismiss: {
+                                    Task { await viewModel.dismissSetupChecklist() }
+                                })
+                                .padding(.horizontal, 20)
+                                .padding(.top, 24)
+                                .belowFold(heroAppeared, delay: 0.2)
+                            }
+
                             attentionSection(summary)
                                 .padding(.horizontal, 20)
                                 .padding(.top, 30)
@@ -641,5 +653,84 @@ private struct BelowFoldReveal: ViewModifier {
 private extension View {
     func belowFold(_ appeared: Bool, delay: Double) -> some View {
         modifier(BelowFoldReveal(appeared: appeared, delay: delay))
+    }
+}
+
+
+/// The web Home's "Let's get set up" card: real completion state per
+/// step, tap a step to go do it, ✕ to retire it for good.
+struct HomeSetupChecklist: View {
+    let steps: [HomeSetupStep]
+    var onStep: (HomeSetupStep) -> Void
+    var onDismiss: () -> Void
+
+    private var done: Int { steps.filter(\.done).count }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                HomeSectionHeader(kicker: "Getting started", title: "Let's get you set up")
+                Spacer()
+                (Text("\(done)").font(.cavnarNumber(15, weight: 700)) + Text("/") + Text("\(steps.count)").font(.cavnarNumber(15, weight: 700)))
+                    .font(.cavnarBody(15))
+                    .foregroundStyle(Color.cavnarEmber2)
+                Button {
+                    Haptic.light()
+                    onDismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.cavnarInk3)
+                        .frame(width: 28, height: 28)
+                        .background(Color.cavnarPaper2, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss")
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.cavnarPaper3)
+                    Capsule().fill(Color.cavnarEmber)
+                        .frame(width: geo.size.width * CGFloat(done) / CGFloat(max(steps.count, 1)))
+                }
+            }
+            .frame(height: 4)
+
+            VStack(spacing: 8) {
+                ForEach(steps) { step in
+                    Button {
+                        Haptic.light()
+                        onStep(step)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: step.done ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(step.done ? Color.cavnarGreen : Color.cavnarEmber)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(step.label)
+                                    .font(.cavnarBody(15.5, weight: 600))
+                                    .foregroundStyle(step.done ? Color.cavnarInk3 : Color.cavnarInk)
+                                    .strikethrough(step.done, color: Color.cavnarInk3)
+                                if let sub = step.sub, !step.done {
+                                    Text(sub).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                                }
+                            }
+                            Spacer()
+                            if !step.done, let module = step.module, module != "account" {
+                                Image(systemName: "chevron.right").foregroundStyle(Color.cavnarInk3)
+                            }
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.cavnarPaper2)
+                        .overlay(RoundedRectangle(cornerRadius: CavnarRadius.control).strokeBorder(Color.cavnarEmber.opacity(step.done ? 0 : 0.3), lineWidth: 1))
+                        .clipShape(RoundedRectangle(cornerRadius: CavnarRadius.control))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(step.done)
+                }
+            }
+        }
+        .cavnarCard()
     }
 }

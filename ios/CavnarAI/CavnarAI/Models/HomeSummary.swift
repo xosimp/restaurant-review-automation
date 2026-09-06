@@ -33,6 +33,9 @@ struct HomeSummary: Codable {
     // the hero simply falls back to its quiet line.
     let overnight: HomeOvernight?
     let weeklyReceipts: [HomeWeeklyReceipt]?
+    // The web Home's getting-started card. Empty once every step is done
+    // or the owner dismissed it — see mobile_api._setup_checklist.
+    let setupChecklist: [HomeSetupStep]?
 
     enum CodingKeys: String, CodingKey {
         case username
@@ -48,7 +51,17 @@ struct HomeSummary: Codable {
         case alertQuietEnd = "alert_quiet_end"
         case overnight
         case weeklyReceipts = "weekly_receipts"
+        case setupChecklist = "setup_checklist"
     }
+}
+
+struct HomeSetupStep: Codable, Identifiable, Hashable {
+    let key: String
+    let label: String
+    let sub: String?
+    let done: Bool
+    let module: String?
+    var id: String { key }
 }
 
 /// Drafts written and alerts fired in the last `windowHours` — the numbers

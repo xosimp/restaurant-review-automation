@@ -5,6 +5,7 @@ struct ReviewDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showingTemplates = false
     @State private var showingRetractConfirm = false
+    @State private var showingDeleteConfirm = false
     @State private var postedOverlayLabel: String?
     @FocusState private var isDraftFocused: Bool
     var onCompleted: (String) -> Void
@@ -35,6 +36,40 @@ struct ReviewDetailView: View {
         .navigationTitle(reviewTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { cavnarTitleToolbar(reviewTitle) }
+        .toolbar {
+            cavnarToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button(role: .destructive) {
+                        showingDeleteConfirm = true
+                    } label: {
+                        Label("Delete review", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.cavnarEmber)
+                        .cavnarToolbarIconGlass()
+                }
+                .tint(nil)
+            }
+        }
+        .confirmationDialog(
+            "Delete this review?",
+            isPresented: $showingDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete review", role: .destructive) {
+                Task {
+                    if await viewModel.deleteReview() {
+                        onCompleted("deleted")
+                        dismiss()
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It leaves your inbox and your stats. This doesn't touch the review on \(viewModel.review.platformDisplayName).")
+        }
         .cavnarEmberBackButton()
         .keyboardDoneToolbar { isDraftFocused = false }
         .onChange(of: viewModel.didComplete) { _, completed in
@@ -226,14 +261,32 @@ struct ReviewDetailView: View {
                     showingRetractConfirm = true
                 }
             case "approved":
-                completedBanner(
-                    "Approved", icon: "checkmark.circle.fill", color: .cavnarBlue, background: .cavnarBlueBg,
-                    undoLabel: "Undo"
-                ) {
-                    Task {
-                        if await viewModel.undo() {
-                            onCompleted(viewModel.currentStatus)
+                VStack(spacing: 10) {
+                    completedBanner(
+                        "Approved", icon: "checkmark.circle.fill", color: .cavnarBlue, background: .cavnarBlueBg,
+                        undoLabel: "Undo"
+                    ) {
+                        Task {
+                            if await viewModel.undo() {
+                                onCompleted(viewModel.currentStatus)
+                            }
                         }
+                    }
+                    // Google replies post themselves once GBP is connected;
+                    // everywhere else the owner pastes the reply in by hand
+                    // and tells Cavnar it's live — same as the web's button.
+                    if viewModel.review.platform != "google", !viewModel.isSubmitting {
+                        Button {
+                            Task {
+                                if await viewModel.markPosted() {
+                                    onCompleted(viewModel.currentStatus)
+                                }
+                            }
+                        } label: {
+                            Label("Mark as posted on \(viewModel.review.platformDisplayName)", systemImage: "checkmark.seal")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
                     }
                 }
             case "skipped":

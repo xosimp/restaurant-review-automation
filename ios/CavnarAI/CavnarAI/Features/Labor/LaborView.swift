@@ -601,19 +601,44 @@ struct LaborView: View {
                 }
 
                 // The schedule used to end at a CSV download — the people
-                // who actually work the shifts never saw it.
-                Button {
-                    Haptic.light()
-                    showingPublishSchedule = true
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "paperplane.fill").font(.system(size: 13, weight: .semibold))
-                        Text("Send to staff")
+                // who actually work the shifts never saw it. Send is the
+                // main act; the CSV rides along for the office.
+                HStack(spacing: 10) {
+                    Button {
+                        Haptic.light()
+                        showingPublishSchedule = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "paperplane.fill").font(.system(size: 13, weight: .semibold))
+                            Text("Send to staff")
+                        }
+                        .frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: .infinity)
+                    .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
+
+                    if let csvURL = Self.csvFile(for: result) {
+                        ShareLink(item: csvURL, preview: SharePreview("Schedule CSV", image: Image(systemName: "tablecells"))) {
+                            Label("CSV", systemImage: "square.and.arrow.down")
+                        }
+                        .buttonStyle(CavnarSecondaryButtonStyle())
+                        .simultaneousGesture(TapGesture().onEnded { Haptic.light() })
+                    }
                 }
-                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: false))
             }
+        }
+    }
+
+    /// The schedule as a real .csv file on disk, so the share sheet offers
+    /// Files/Mail/AirDrop with a filename instead of a blob of text.
+    private static func csvFile(for result: GeneratedSchedule) -> URL? {
+        guard let csv = result.scheduleCsv, !csv.isEmpty else { return nil }
+        let week = result.weekDates?.first ?? "week"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("schedule-\(week).csv")
+        do {
+            try csv.write(to: url, atomically: true, encoding: .utf8)
+            return url
+        } catch {
+            return nil
         }
     }
 

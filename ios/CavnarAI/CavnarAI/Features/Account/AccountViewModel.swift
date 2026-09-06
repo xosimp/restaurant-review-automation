@@ -714,6 +714,68 @@ final class AccountViewModel {
         }
     }
 
+    // MARK: - Instagram & Facebook (Meta OAuth, same browser-sheet flow)
+
+    var isConnectingInstagram = false
+    var connectInstagramError: String?
+
+    func connectInstagram() async {
+        isConnectingInstagram = true
+        connectInstagramError = nil
+        defer { isConnectingInstagram = false }
+        do {
+            let response: GoogleAuthorizeResponse = try await client.send("/mobile/api/connections/instagram/authorize")
+            guard response.ok, let urlString = response.url, let url = URL(string: urlString) else {
+                connectInstagramError = response.error ?? "Couldn't start Instagram connect."
+                return
+            }
+            try await GMBConnectCoordinator().connect(authorizeURL: url)
+            await load()
+        } catch let error as GMBConnectError {
+            switch error {
+            case .cancelled: break
+            case .server(let msg): connectInstagramError = msg
+            }
+        } catch let error as APIClient.APIError {
+            connectInstagramError = error.message
+        } catch {
+            connectInstagramError = "Couldn't connect Instagram & Facebook."
+        }
+    }
+
+    func disconnectInstagram() async {
+        do {
+            let _: APIClient.EmptyResponse = try await client.send("/mobile/api/connections/instagram", method: .delete)
+            await load()
+        } catch {
+            // Same low-stakes fallback as disconnectToast() below.
+        }
+    }
+
+    // MARK: - Referral
+
+    private struct ReferralBody: Encodable {
+        let name: String
+        let email: String
+        let note: String
+    }
+
+    /// The web's "Know another restaurant owner?" card — one free month
+    /// if they sign up. Same route, same email.
+    func sendReferral(name: String, email: String, note: String) async -> String? {
+        do {
+            let response: APIClient.EmptyResponse = try await client.send(
+                "/mobile/api/account/referral", method: .post,
+                body: ReferralBody(name: name, email: email, note: note))
+            _ = response
+            return nil
+        } catch let error as APIClient.APIError {
+            return error.message
+        } catch {
+            return "Couldn't send that right now."
+        }
+    }
+
     func disconnectGoogleBusiness() async {
         do {
             let _: APIClient.EmptyResponse = try await client.send("/mobile/api/connections/google", method: .delete)

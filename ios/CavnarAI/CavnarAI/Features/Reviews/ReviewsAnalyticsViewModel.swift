@@ -11,6 +11,16 @@ final class ReviewsAnalyticsViewModel {
     var insight: String?
     var isLoading = false
     var errorMessage: String?
+    /// 30 / 90 / 180 — the same three windows as the web's analytics tab.
+    /// Response performance and the topic grid take it; the 8-week
+    /// sentiment river and the insight are fixed-window by design.
+    var windowDays = 90
+
+    func setWindow(_ days: Int) async {
+        guard days != windowDays else { return }
+        windowDays = days
+        await load()
+    }
 
     private let client: APIClient
 
@@ -44,11 +54,12 @@ final class ReviewsAnalyticsViewModel {
         errorMessage = nil
         defer { isLoading = false }
 
+        let window = ["days": "\(windowDays)"]
         async let performanceResult: DataResponse<ResponsePerformance>? = try? client.send(
-            "/mobile/api/reviews/response-performance"
+            "/mobile/api/reviews/response-performance", query: window
         )
         async let heatmapResult: DataResponse<[TopicHeatmapEntry]>? = try? client.send(
-            "/mobile/api/reviews/topic-heatmap"
+            "/mobile/api/reviews/topic-heatmap", query: window
         )
         async let weeksResult: WeeksResponse? = try? client.send("/mobile/api/reviews/sentiment-trend")
         async let insightResult: InsightResponse? = try? client.send("/mobile/api/reviews/insight")

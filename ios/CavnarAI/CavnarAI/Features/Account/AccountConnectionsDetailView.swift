@@ -25,7 +25,7 @@ struct AccountConnectionsDetailView: View {
                     marksRow
                     googleRow
                     toastRow
-                    requestRow("Instagram & Facebook", brand: .instagram, status: connections.instagram)
+                    instagramRow
                     posRow("Square POS", brand: .square, status: connections.square,
                            connect: { showingSquareConnect = true },
                            disconnect: { await viewModel.disconnectSquare() })
@@ -191,11 +191,52 @@ struct AccountConnectionsDetailView: View {
         .cavnarCard()
     }
 
-    // MARK: - Not yet self-serve (Instagram/Facebook)
+    // MARK: - Instagram & Facebook (Meta OAuth — the web's popup, as a sheet)
 
-    private func requestRow(_ label: String, brand: ConnectionBrand, status: ConnectionStatus) -> some View {
-        header(label, brand: brand, status: status)
-            .cavnarCard()
+    private var instagramRow: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            header("Instagram & Facebook", brand: .instagram, status: connections.instagram)
+
+            if viewModel.isConnectingInstagram {
+                CavnarHandshake(
+                    providerSymbol: "camera.fill", providerTint: Color(red: 0.88, green: 0.30, blue: 0.55),
+                    state: .connecting, caption: "Connecting · Instagram & Facebook"
+                )
+                .padding(.vertical, 4)
+            }
+
+            if let error = viewModel.connectInstagramError {
+                Text(error).font(.cavnarBody(15)).foregroundStyle(Color.cavnarRed)
+            }
+
+            if connections.instagram.connected {
+                Text("Posts and scheduled content go straight to your Instagram business account and Facebook page.")
+                    .font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+                AccountActionRow(label: "Disconnect", symbol: "xmark", tone: .cavnarRed, showsDivider: false) {
+                    Task { await viewModel.disconnectInstagram() }
+                }
+            } else {
+                Text("Sign in with the Facebook account that manages your page — Cavnar can then publish to both.")
+                    .font(.cavnarBody(15)).foregroundStyle(Color.cavnarInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    Task { await viewModel.connectInstagram() }
+                } label: {
+                    Group {
+                        if viewModel.isConnectingInstagram {
+                            CavnarShimmerText(text: "Connecting…")
+                        } else {
+                            Text("Connect")
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(CavnarPrimaryButtonStyle(isDisabled: viewModel.isConnectingInstagram))
+                .disabled(viewModel.isConnectingInstagram)
+            }
+        }
+        .cavnarCard()
     }
 
     // MARK: - Shared header

@@ -286,6 +286,59 @@ final class ReviewDetailViewModel {
         }
     }
 
+    /// A reply the owner pasted onto Yelp/Facebook themselves — the web's
+    /// "Mark as posted", for platforms Cavnar can't post to directly.
+    @discardableResult
+    func markPosted() async -> Bool {
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+        do {
+            let response: OkResponse = try await client.send(
+                "/mobile/api/reviews/\(review.id)/mark-posted", method: .post
+            )
+            if response.ok {
+                Haptic.success()
+                currentStatus = "posted"
+                return true
+            }
+            errorMessage = response.error ?? "Couldn't mark that as posted."
+            return false
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+            return false
+        } catch {
+            errorMessage = "Couldn't mark that as posted."
+            return false
+        }
+    }
+
+    /// Soft-deletes the review (deleted_at server-side) — it leaves the
+    /// inbox and every stat. Same route the web's Delete uses.
+    @discardableResult
+    func deleteReview() async -> Bool {
+        isSubmitting = true
+        errorMessage = nil
+        defer { isSubmitting = false }
+        do {
+            let response: OkResponse = try await client.send(
+                "/mobile/api/reviews/\(review.id)/delete", method: .post
+            )
+            if response.ok {
+                Haptic.success()
+                return true
+            }
+            errorMessage = response.error ?? "Couldn't delete that review."
+            return false
+        } catch let error as APIClient.APIError {
+            errorMessage = error.message
+            return false
+        } catch {
+            errorMessage = "Couldn't delete that review."
+            return false
+        }
+    }
+
     /// Retracts an auto-posted approval — actually deletes the live reply
     /// from Google first (server-side), only reverting to "drafted" once
     /// that really succeeds. A real API call with a real external effect,

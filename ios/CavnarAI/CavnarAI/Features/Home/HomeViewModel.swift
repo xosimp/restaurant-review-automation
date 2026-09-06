@@ -53,6 +53,17 @@ final class HomeViewModel {
         }
     }
 
+    /// Hides the getting-started card for good — the same flag the web
+    /// card's ✕ sets.
+    func dismissSetupChecklist() async {
+        do {
+            let _: APIClient.EmptyResponse = try await client.send("/mobile/api/account/dismiss-onboarding", method: .post)
+            await load()
+        } catch {
+            // Best effort — the card comes back next load if it didn't stick.
+        }
+    }
+
     func load() async {
         // Warm start: paint cached numbers immediately rather than a loading
         // seal, and keep them on screen if the fetch fails.

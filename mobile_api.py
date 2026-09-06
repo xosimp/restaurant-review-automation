@@ -4262,3 +4262,13 @@ def mobile_instagram_authorize(current_user):
         "state": sign_mobile_state(current_user["restaurant_id"]),
     })
     return jsonify(ok=True, url=oauth_dialog_url(params))
+
+
+@mobile_bp.route("/connections/instagram", methods=["DELETE"])
+@mobile_login_required
+def mobile_instagram_disconnect(current_user):
+    update_restaurant(current_user["restaurant_id"], {
+        "ig_token": None, "ig_user_id": None, "ig_token_expires": None,
+        "fb_page_token": None, "fb_page_id": None, "fb_token_expires": None,
+    })
+    return jsonify(ok=True)
