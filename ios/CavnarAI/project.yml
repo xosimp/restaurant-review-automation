@@ -164,6 +164,12 @@ schemes:
       # non-AirPlay request instead of a "connection refused", which reads
       # exactly like a real API error. Keep the local dev server on 5050.
       environmentVariables:
+        # Substituted by xcodegen AT GENERATE TIME. Run `xcodegen generate`
+        # from a shell without this exported and the scheme silently gets the
+        # literal placeholder, the app falls back to localhost, and every
+        # request fails with nothing on screen explaining why. Generate with
+        # ./generate.sh instead — it resolves the URL from .dev-url or .env
+        # and then verifies the substitution landed.
         CAVNAR_API_BASE_URL: "${CAVNAR_DEV_API_BASE_URL}"
     test:
       config: Debug

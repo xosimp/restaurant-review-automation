@@ -168,9 +168,19 @@ struct LoginView: View {
             )
             .loginRise(Cue.field2, enabled: introReady)
 
-            if let error = viewModel.errorMessage {
-                LoginErrorBar(message: error)
+            // A fixed slot, always present. The bar used to be inserted and
+            // removed with the error, and because this whole block is
+            // vertically centered, every appearance moved the wordmark up
+            // and the Apple/Google buttons down — twice per tap, since the
+            // attempt cleared the error before setting it again. The slot
+            // holds the height; only the bar inside it fades and shakes.
+            ZStack {
+                if let error = viewModel.errorMessage {
+                    LoginErrorBar(message: error, shakeTrigger: viewModel.errorShake)
+                }
             }
+            .frame(height: LoginMetrics.errorBarHeight)
+            .frame(maxWidth: .infinity)
 
             HStack {
                 Spacer()
@@ -227,6 +237,8 @@ struct LoginView: View {
             .loginRise(Cue.primary, enabled: introReady)
         }
         .animation(.easeOut(duration: 0.25), value: viewModel.errorMessage != nil)
+        .onChange(of: viewModel.username) { _, _ in viewModel.clearErrorOnEdit() }
+        .onChange(of: viewModel.password) { _, _ in viewModel.clearErrorOnEdit() }
         // Password AutoFill fills both fields at once, which is the moment
         // canSubmit flips true — and it's also the moment the engine is
         // coldest, because the Face ID / AutoFill flow has just torn the

@@ -13,6 +13,23 @@ final class LoginViewModel {
     // Bumped every time a real error lands — the fields key their shake
     // off it so a second identical error still shakes.
     var errorShake = 0
+
+    /// Clearing the error at the START of an attempt is what made the whole
+    /// sign-in screen bounce. `errorMessage = nil` unmounts LoginErrorBar,
+    /// the form gets shorter, and because the block is vertically centered
+    /// everything above and below it slides — wordmark, Apple, Google — then
+    /// slides back a moment later when the failure re-mounts the bar. Two
+    /// full layout animations per tap, so holding down Sign In against a
+    /// failing server made the page jump continuously.
+    ///
+    /// The bar stays mounted instead. A repeated failure reassigns the same
+    /// message, which still fires `didSet` and still bumps `errorShake`, so
+    /// the red bar and the fields shake in place and nothing else moves.
+    /// The error is cleared when the attempt SUCCEEDS, or when the person
+    /// edits a field — the two moments it stops being true.
+    func clearErrorOnEdit() {
+        if errorMessage != nil { errorMessage = nil }
+    }
     var twoFactorPendingToken: String?
     var twoFactorMaskedEmail: String?
 
@@ -31,10 +48,10 @@ final class LoginViewModel {
     func submit() async {
         guard canSubmit else { return }
         isLoading = true
-        errorMessage = nil
         defer { isLoading = false }
         do {
             let outcome = try await sessionStore.login(username: username, password: password)
+            errorMessage = nil
             switch outcome {
             case .loggedIn:
                 break // SessionStore.isAuthenticated flips; RootView reacts to it.
@@ -57,11 +74,11 @@ final class LoginViewModel {
     func signInWithGoogle() async {
         guard !isLoading else { return }
         isLoading = true
-        errorMessage = nil
         defer { isLoading = false }
         do {
             let token = try await googleSignIn.signIn(baseURL: AppEnvironment.baseURL)
             try await sessionStore.completeGoogleLogin(token: token)
+            errorMessage = nil
         } catch GoogleSignInError.cancelled {
             // User backed out of the browser sheet — not an error worth a banner or a buzz.
         } catch GoogleSignInError.serverError(let code) {
@@ -82,11 +99,11 @@ final class LoginViewModel {
     func signInWithApple() async {
         guard !isLoading else { return }
         isLoading = true
-        errorMessage = nil
         defer { isLoading = false }
         do {
             let identityToken = try await appleSignIn.signIn()
             try await sessionStore.loginWithApple(identityToken: identityToken)
+            errorMessage = nil
         } catch let appleError as AppleSignInError {
             switch appleError {
             case .cancelled:

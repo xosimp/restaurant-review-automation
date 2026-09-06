@@ -31,7 +31,17 @@ enum AppEnvironment {
             rebuild.
             """)
         }
-        return URL(string: "http://localhost:5000")!
+        // 5050, not 5000. macOS runs AirPlay Receiver on port 5000 (it is
+        // ControlCenter, listening on *:5000), so a Debug build that fell
+        // back to :5000 did not fail cleanly — it reached AirTunes, which
+        // answers every unknown path with a 4xx, and the app rendered
+        // "Something went wrong (404)." That reads like a broken server
+        // rather than an unconfigured client, which is the opposite of what
+        // this fallback is for. Nothing listens on 5050 unless the project's
+        // own `PORT=5050 python3 hosted_dashboard.py` is running, so a
+        // misconfigured build now either works (Simulator, server up) or
+        // fails as a connection error that says so.
+        return URL(string: "http://localhost:5050")!
         #else
         return URL(string: "https://dashboard.cavnar.ai")!
         #endif

@@ -22,3 +22,6 @@ ios/CavnarAI/*.xcuserstate
 hosted_dashboard_condensed_backup.py
 hosted_dashboard_recovered.py
 .DS_Store
+
+# iOS dev API base URL — per-machine, points at your tunnel or LAN IP
+ios/CavnarAI/.dev-url

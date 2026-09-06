@@ -111,6 +111,12 @@ struct LoginField<Field: Hashable>: View {
 /// message. Paired with Haptic.error() at the call site that sets it.
 struct LoginErrorBar: View {
     let message: String
+    /// Bumped on every failed attempt, including a repeat of the same
+    /// message — the bar shakes in place so a second identical error still
+    /// reads as a new one. The fields shake off the same counter.
+    var shakeTrigger: Int = 0
+
+    @State private var shake: CGFloat = 0
 
     var body: some View {
         HStack(spacing: LoginMetrics.spaceS) {
@@ -120,7 +126,10 @@ struct LoginErrorBar: View {
             Text(message)
                 .font(.cavnarBody(13.5, weight: 600))
                 .foregroundStyle(Color.cavnarRed.opacity(0.92))
-                .fixedSize(horizontal: false, vertical: true)
+                // One line, shrinking if it has to. Wrapping would grow the
+                // reserved slot and put the page back to moving.
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, LoginMetrics.spaceM)
@@ -130,7 +139,19 @@ struct LoginErrorBar: View {
             RoundedRectangle(cornerRadius: CavnarRadius.control, style: .continuous)
                 .strokeBorder(Color.cavnarRed.opacity(0.35), lineWidth: 1)
         )
-        .transition(.opacity.combined(with: .move(edge: .top)))
+        .transition(.opacity)
+        .offset(x: shake)
+        .onChange(of: shakeTrigger) { _, _ in
+            // The same decaying shake the fields use, so the red bar and the
+            // fields move together rather than one twitching alone.
+            let steps: [CGFloat] = [-4, 4, -4, 4, -2, 2, 0]
+            Task {
+                for s in steps {
+                    withAnimation(.linear(duration: 0.05)) { shake = s }
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+            }
+        }
     }
 }
 
@@ -202,4 +223,10 @@ enum LoginMetrics {
     static let buttonHeight: CGFloat = 52
     static let wordmarkWidth: CGFloat = 236
     static let pageInset: CGFloat = 24
+    /// The error slot's reserved height — one line of LoginErrorBar. Held
+    /// constant whether or not an error is showing, so the bar can never
+    /// move the rest of the sign-in screen. Messages are kept to one line
+    /// (see LoginErrorBar) so a long one shrinks slightly rather than
+    /// wrapping and growing the slot.
+    static let errorBarHeight: CGFloat = 40
 }

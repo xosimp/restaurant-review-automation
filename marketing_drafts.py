@@ -6,9 +6,16 @@ no "hold this for Tuesday", and no way for the person who writes the post to
 be different from the person who decides it goes out, which is how most
 restaurants above one location actually work.
 
-Approval is scoped to the restaurant's `role='owner'` login, the same
-distinction team invites already use. A teammate can write and save all day;
-releasing it is the owner's.
+Approval is scoped to the restaurant's PRIMARY login. An invited teammate can
+write and save all day; releasing it belongs to the account that invited them.
+
+The role vocabulary here is the one auth.py already established, and getting
+it wrong has bitten this codebase before: 'client' is every restaurant's
+primary login and the default, 'owner' is Will's multi-restaurant login, and
+'member' is an invited teammate (see invite_team_member's comment — the Team
+feature's first cut gated on role == 'owner', which no real client login has,
+so it 403'd for every account). The gate is therefore "not a member", never
+"is an owner".
 """
 import logging
 
@@ -89,11 +96,24 @@ def get_draft(draft_id, restaurant_id, db_path: str = DB_PATH):
     return dict(row) if row else None
 
 
+# Roles that may NOT release content. Deny-list rather than allow-list,
+# deliberately: an allow-list of {"client", "owner"} would silently lock out
+# any role added later, which is the shape of the bug this replaces.
+CANNOT_APPROVE = {"member"}
+
+
 def approve_draft(draft_id, restaurant_id, *, user_id=None, role=None,
                   db_path: str = DB_PATH) -> dict:
-    """Owner-only, matching how team access is already scoped."""
-    if role and role != "owner":
-        return {"ok": False, "error": "Only the owner account can approve content to go out."}
+    """Release a draft. Invited teammates can write but not publish.
+
+    This used to require role == "owner", which meant NOBODY could approve
+    anything: every restaurant's primary login is 'client', and 'owner' is
+    reserved for the multi-restaurant account. auth.invite_team_member's
+    comment records the same mistake being made and fixed for Team access.
+    """
+    if role in CANNOT_APPROVE:
+        return {"ok": False,
+                "error": "Ask the main account to approve this before it goes out."}
     conn = get_conn(db_path)
     try:
         n = conn.execute(

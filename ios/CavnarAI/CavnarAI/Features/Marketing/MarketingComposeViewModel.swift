@@ -248,8 +248,8 @@ final class MarketingComposeViewModel {
         drafts = response?.drafts ?? []
     }
 
-    /// Owner-only on the server, so the error here is the real rule rather
-    /// than a hidden button.
+    /// Invited teammates can write but not release; the server decides and
+    /// the message comes back from it, so the rule is never duplicated here.
     func approve(_ draft: MarketingDraft) async {
         do {
             let response: OKResponse = try await client.send(

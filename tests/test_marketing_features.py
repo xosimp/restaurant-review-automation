@@ -239,20 +239,35 @@ def test_a_draft_survives_leaving_the_screen(rid, db_path):
     assert drafts[0]["status"] == "draft"
 
 
-def test_only_an_owner_can_approve_content_to_go_out(rid, db_path):
+def test_the_primary_login_can_approve_and_an_invited_teammate_cannot(rid, db_path):
+    """The first cut of this gate required role == "owner", which meant NOBODY
+    could approve: every restaurant's primary login is 'client' and 'owner' is
+    reserved for the multi-restaurant account. auth.invite_team_member's own
+    comment records the same mistake being made and fixed for Team access."""
     saved = marketing_drafts.save_draft(rid, "Copy", db_path=db_path)
-    refused = marketing_drafts.approve_draft(saved["id"], rid, role="manager", db_path=db_path)
+
+    refused = marketing_drafts.approve_draft(saved["id"], rid, role="member", db_path=db_path)
     assert not refused["ok"]
-    allowed = marketing_drafts.approve_draft(saved["id"], rid, role="owner", db_path=db_path)
+    assert marketing_drafts.list_drafts(rid, db_path=db_path)[0]["status"] == "draft"
+
+    allowed = marketing_drafts.approve_draft(saved["id"], rid, role="client", db_path=db_path)
     assert allowed["ok"]
     assert marketing_drafts.list_drafts(rid, db_path=db_path)[0]["status"] == "approved"
+
+
+@pytest.mark.parametrize("role", ["client", "owner", None])
+def test_every_real_account_role_can_approve(rid, db_path, role):
+    """The regression guard: a role this codebase actually issues must never
+    be locked out of releasing its own content."""
+    saved = marketing_drafts.save_draft(rid, "Copy", db_path=db_path)
+    assert marketing_drafts.approve_draft(saved["id"], rid, role=role, db_path=db_path)["ok"]
 
 
 def test_editing_an_approved_draft_sends_it_back_for_approval(rid, db_path):
     """Otherwise "approved" means someone approved some earlier version of
     this, which is worse than no approval at all."""
     saved = marketing_drafts.save_draft(rid, "First", db_path=db_path)
-    marketing_drafts.approve_draft(saved["id"], rid, role="owner", db_path=db_path)
+    marketing_drafts.approve_draft(saved["id"], rid, role="client", db_path=db_path)
     marketing_drafts.save_draft(rid, "Rewritten", draft_id=saved["id"], db_path=db_path)
     assert marketing_drafts.list_drafts(rid, db_path=db_path)[0]["status"] == "draft"
 
@@ -261,7 +276,7 @@ def test_one_restaurant_cannot_read_or_approve_anothers_draft(db_path, rid):
     other = create_restaurant(Restaurant(name="Other", owner_email="o@x.com"), db_path=db_path)
     saved = marketing_drafts.save_draft(rid, "Private copy", db_path=db_path)
     assert marketing_drafts.list_drafts(other, db_path=db_path) == []
-    assert not marketing_drafts.approve_draft(saved["id"], other, role="owner", db_path=db_path)["ok"]
+    assert not marketing_drafts.approve_draft(saved["id"], other, role="client", db_path=db_path)["ok"]
 
 
 # ── Link tracking ──────────────────────────────────────────────────────────
