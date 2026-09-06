@@ -10,6 +10,15 @@ private enum MarketingContentField: Hashable, CaseIterable {
     case topic, draft, ctaLink
 }
 
+/// The three destinations off the Content tab's shelf (Guest Text Club,
+/// Scheduled, Drafts) — one Identifiable enum driving a single
+/// navigationDestination(item:) rather than three separate NavigationLinks,
+/// so the row's tap can fire a deterministic haptic (see shelfRow).
+private enum MarketingShelfDestination: String, Identifiable {
+    case guestTextClub, scheduled, drafts
+    var id: String { rawValue }
+}
+
 struct MarketingView: View {
     @State private var viewModel = MarketingViewModel()
     @State private var analyticsViewModel = MarketingAnalyticsViewModel()
@@ -18,6 +27,7 @@ struct MarketingView: View {
     @State private var showingPreview = false
     @State private var showingSchedule = false
     @State private var schedulePlatform = "instagram"
+    @State private var shelfDestination: MarketingShelfDestination?
     @FocusState private var focusedField: MarketingContentField?
 
     var body: some View {
@@ -39,7 +49,7 @@ struct MarketingView: View {
                             CavnarLoadingOrb().padding(.top, 60).frame(maxWidth: .infinity)
                         } else if let error = viewModel.errorMessage {
                             VStack(spacing: 8) {
-                                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+                                Text(error).font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
                                 Button("Retry") { Task { await viewModel.load() } }
                             }
                             .padding(.top, 60)
@@ -112,43 +122,59 @@ struct MarketingView: View {
 
     private func statTile(value: String, label: String) -> some View {
         VStack(spacing: 4) {
-            Text(value).font(.cavnarNumber(22, weight: 500)).foregroundStyle(Color.cavnarInk).cavnarNumberGlow()
-            Text(label).font(.cavnarBody(14)).foregroundStyle(Color.cavnarInk3)
+            Text(value).font(.cavnarNumber(24, weight: 500)).foregroundStyle(Color.cavnarInk).cavnarNumberGlow()
+            Text(label).font(.cavnarBody(16)).foregroundStyle(Color.cavnarInk3)
         }
         .frame(maxWidth: .infinity)
     }
 
     private var shelfRows: some View {
         VStack(spacing: 10) {
-            shelfRow("Guest Text Club", icon: "message", badge: nil) { GuestTextClubView() }
+            shelfRow("Guest Text Club", icon: "message", badge: nil) { shelfDestination = .guestTextClub }
             shelfRow("Scheduled", icon: "calendar.badge.clock",
                      badge: compose.pendingCount > 0 ? "\(compose.pendingCount)" : nil) {
-                MarketingQueueView(viewModel: compose)
+                shelfDestination = .scheduled
             }
             shelfRow("Drafts", icon: "square.and.pencil",
                      badge: compose.drafts.isEmpty ? nil : "\(compose.drafts.count)") {
+                shelfDestination = .drafts
+            }
+        }
+        // A Button driving this, not three NavigationLinks — a
+        // simultaneousGesture haptic on a NavigationLink races its own tap
+        // handling (see HomeModuleGrid's identical reasoning); a Button's
+        // action closure is deterministic, so the haptic and the push always
+        // happen together.
+        .navigationDestination(item: $shelfDestination) { destination in
+            switch destination {
+            case .guestTextClub:
+                GuestTextClubView()
+            case .scheduled:
+                MarketingQueueView(viewModel: compose)
+            case .drafts:
                 MarketingDraftsView(viewModel: compose) { draft in
                     viewModel.draft = draft.body
                     viewModel.hasDraft = true
                     if let type = draft.contentType { viewModel.selectedType = type }
                     viewModel.topic = draft.topic ?? ""
+                    shelfDestination = nil
                 }
             }
         }
     }
 
-    private func shelfRow<Destination: View>(_ title: String, icon: String, badge: String?,
-                                             @ViewBuilder destination: @escaping () -> Destination) -> some View {
-        NavigationLink {
-            destination()
+    private func shelfRow(_ title: String, icon: String, badge: String?, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptic.light()
+            action()
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: icon).foregroundStyle(Color.cavnarEmber)
-                Text(title).font(.cavnarBody(14.5, weight: 600))
+                Text(title).font(.cavnarBody(18, weight: 600))
                 Spacer()
                 if let badge {
                     Text(badge)
-                        .font(.cavnarNumber(14, weight: 700))
+                        .font(.cavnarNumber(17.5, weight: 700))
                         .foregroundStyle(Color.cavnarEmber)
                 }
                 Image(systemName: "chevron.right").foregroundStyle(Color.cavnarInk3)
@@ -156,6 +182,7 @@ struct MarketingView: View {
             .foregroundStyle(Color.cavnarInk)
             .cavnarCard()
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Generator
@@ -164,12 +191,12 @@ struct MarketingView: View {
     private var generatorSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Generate content")
-                .font(.cavnarBody(14.5, weight: 700))
+                .font(.cavnarBody(16.5, weight: 700))
                 .foregroundStyle(Color.cavnarInk)
 
             if let type = viewModel.selectedContentType {
                 Text(type.description)
-                    .font(.cavnarBody(14))
+                    .font(.cavnarBody(16))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -210,7 +237,7 @@ struct MarketingView: View {
             }
 
             if let error = viewModel.generateError {
-                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(16)).foregroundStyle(Color.cavnarRed)
             }
 
             if viewModel.hasDraft {
@@ -235,7 +262,7 @@ struct MarketingView: View {
     private var draftEditor: some View {
         VStack(alignment: .leading, spacing: 6) {
             TextEditor(text: $viewModel.draft)
-                .font(.cavnarBody(14))
+                .font(.cavnarBody(16))
                 .foregroundStyle(Color.cavnarInk)
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: 150)
@@ -248,15 +275,15 @@ struct MarketingView: View {
 
             HStack(spacing: 6) {
                 Text("Trim it to the version you want before posting")
-                    .font(.cavnarBody(14))
+                    .font(.cavnarBody(16))
                     .foregroundStyle(Color.cavnarInk3)
                 Spacer()
                 if let limit = viewModel.characterLimit, let type = viewModel.selectedContentType {
-                    (Text("\(viewModel.draft.count)").font(.cavnarNumber(14, weight: 600))
+                    (Text("\(viewModel.draft.count)").font(.cavnarNumber(16, weight: 600))
                         + Text(" / ")
-                        + Text("\(limit)").font(.cavnarNumber(14))
+                        + Text("\(limit)").font(.cavnarNumber(16))
                         + Text(viewModel.isOverLimit ? " over \(type.limitLabel)" : ""))
-                        .font(.cavnarBody(14))
+                        .font(.cavnarBody(16))
                         .foregroundStyle(viewModel.isOverLimit ? Color.cavnarRed : Color.cavnarInk3)
                 }
             }
@@ -339,7 +366,7 @@ struct MarketingView: View {
                 .padding(.top, 6)
         }
         if let error = viewModel.postError {
-            Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+            Text(error).font(.cavnarBody(16)).foregroundStyle(Color.cavnarRed)
         }
     }
 
@@ -352,7 +379,7 @@ struct MarketingView: View {
             Text(viewModel.isGooglePost
                  ? "Connect Google Business under Account → Connections to publish this to your listing."
                  : "Connect Instagram or Facebook under Account → Connections to publish from here. You can still copy the caption and post it yourself.")
-                .font(.cavnarBody(14))
+                .font(.cavnarBody(16))
                 .foregroundStyle(Color.cavnarInk3)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -424,7 +451,7 @@ struct MarketingView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("This week's content calendar")
-                    .font(.cavnarBody(14.5, weight: 700))
+                    .font(.cavnarBody(16.5, weight: 700))
                     .foregroundStyle(Color.cavnarInk)
                 Spacer()
                 if !viewModel.calendar.isEmpty {
@@ -437,7 +464,7 @@ struct MarketingView: View {
 
             if viewModel.calendar.isEmpty && !viewModel.isGeneratingCalendar {
                 Text("Seven ideas for the week, built from your menu, your voice and what's coming up.")
-                    .font(.cavnarBody(14))
+                    .font(.cavnarBody(16))
                     .foregroundStyle(Color.cavnarInk3)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -461,7 +488,7 @@ struct MarketingView: View {
             }
 
             if let error = viewModel.calendarError {
-                Text(error).font(.cavnarBody(14)).foregroundStyle(Color.cavnarRed)
+                Text(error).font(.cavnarBody(16)).foregroundStyle(Color.cavnarRed)
             }
 
             ForEach(viewModel.calendar) { idea in
@@ -475,18 +502,18 @@ struct MarketingView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(idea.day)
-                    .font(.cavnarBody(14, weight: 700))
+                    .font(.cavnarBody(16, weight: 700))
                     .foregroundStyle(Color.cavnarEmber)
                 if let date = idea.date, !date.isEmpty {
-                    Text(date).font(.cavnarNumber(14)).foregroundStyle(Color.cavnarInk3)
+                    Text(date).font(.cavnarNumber(16)).foregroundStyle(Color.cavnarInk3)
                 }
                 Spacer()
                 Text(idea.platform)
-                    .font(.cavnarBody(14, weight: 600))
+                    .font(.cavnarBody(16, weight: 600))
                     .foregroundStyle(Color.cavnarInk3)
             }
             Text(idea.angle)
-                .font(.cavnarBody(14.5))
+                .font(.cavnarBody(16.5))
                 .foregroundStyle(Color.cavnarInk)
                 .fixedSize(horizontal: false, vertical: true)
 

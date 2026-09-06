@@ -1587,6 +1587,35 @@ def test_account_endpoint_returns_profile_and_connections(client, db_path):
     assert data["connections"]["instagram"]["connected"] is False
 
 
+def test_connections_report_false_when_credentials_are_saved_but_broken(client, db_path):
+    """A credential-pair POS (Toast/Square/Clover) can have its id fields set
+    and still not work: Toast's connect route saves the three fields BEFORE
+    verifying them so a nightly retry can pick up a transient failure, and
+    all three write sync_error whenever a LATER sync fails too (a revoked
+    token, an expired secret). Reporting "connected" off the id field alone
+    means a typo'd connect, or a token revoked months later, shows a
+    permanent green "Connected" with no data ever syncing again."""
+    rid = _restaurant(db_path)
+    token = _login(client, db_path, rid)
+    update_restaurant(rid, {
+        "toast_restaurant_guid": "some-guid",
+        "toast_sync_error": "401 Client Error: Unauthorized",
+        "square_location_id": "loc1",
+        "square_sync_error": "token expired",
+        "clover_merchant_id": "merch1",
+        "clover_sync_error": None,  # this one is genuinely fine
+    }, db_path=db_path)
+
+    data = client.get("/mobile/api/account", headers=_auth_headers(token)).get_json()
+
+    assert data["connections"]["toast"]["connected"] is False
+    assert data["connections"]["toast"]["error"] == "401 Client Error: Unauthorized"
+    assert data["connections"]["square"]["connected"] is False
+    assert data["connections"]["square"]["error"] == "token expired"
+    assert data["connections"]["clover"]["connected"] is True
+    assert data["connections"]["clover"]["error"] is None
+
+
 def test_account_endpoint_scoped_to_own_restaurant(client, db_path):
     rid_a = _restaurant(db_path, name="Restaurant A", owner_name="Owner A")
     rid_b = _restaurant(db_path, name="Restaurant B", owner_name="Owner B")

@@ -3847,11 +3847,22 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <!-- Toast POS -->
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
         <div style="display:flex;align-items:center;gap:8px;min-width:0">
-          {% if restaurant.toast_restaurant_guid %}
+          {% if restaurant.toast_restaurant_guid and not restaurant.toast_sync_error %}
           <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
           <div>
             <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS</div>
             <div style="font-size:11px;color:var(--ink3)">{% if restaurant.toast_last_synced %}Last synced {{ restaurant.toast_last_synced[:16].replace('T',' ') }} UTC{% else %}Connected — initial sync pending{% endif %}</div>
+          </div>
+          {% elif restaurant.toast_restaurant_guid and restaurant.toast_sync_error %}
+          <!-- Credentials are on file but the last sync failed — a typo, or
+               a token Toast later revoked. Showing a plain green check here
+               (the id-only check this replaced) claimed "Connected" while no
+               data had synced since, which is exactly the state that would
+               make an owner think their numbers were live when they weren't. -->
+          <span style="color:var(--red);font-size:13px;flex-shrink:0">⚠</span>
+          <div style="min-width:0">
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Toast POS — reconnect needed</div>
+            <div style="font-size:11px;color:var(--red);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px" title="{{ restaurant.toast_sync_error }}">{{ restaurant.toast_sync_error }}</div>
           </div>
           {% else %}
           <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
@@ -3862,8 +3873,13 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           {% endif %}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
-          {% if restaurant.toast_restaurant_guid %}
+          {% if restaurant.toast_restaurant_guid and not restaurant.toast_sync_error %}
           <button onclick="toastSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
+          <button onclick="toastDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
+          {% elif restaurant.toast_restaurant_guid and restaurant.toast_sync_error %}
+          <!-- Retrying a sync fixes nothing when the root cause is the
+               credentials themselves — offer re-entering them instead. -->
+          <button onclick="openToastClientModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Reconnect</button>
           <button onclick="toastDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
           {% else %}
           <button onclick="openToastClientModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -3874,11 +3890,22 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <!-- Square POS -->
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px">
         <div style="display:flex;align-items:center;gap:8px;min-width:0">
-          {% if restaurant.square_location_id %}
+          {% if restaurant.square_location_id and not restaurant.square_sync_error %}
           <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
           <div>
             <div style="font-size:12px;font-weight:600;color:var(--ink)">Square POS</div>
             <div style="font-size:11px;color:var(--ink3)">{% if restaurant.square_last_synced %}Last synced {{ restaurant.square_last_synced[:16].replace('T',' ') }} UTC{% else %}Connected — initial sync pending{% endif %}</div>
+          </div>
+          {% elif restaurant.square_location_id and restaurant.square_sync_error %}
+          <!-- Credentials are on file but the last sync failed — a typo, or
+               a token Square later revoked. Showing a plain green check here
+               (the id-only check this replaced) claimed "Connected" while no
+               data had synced since, which is exactly the state that would
+               make an owner think their numbers were live when they weren't. -->
+          <span style="color:var(--red);font-size:13px;flex-shrink:0">⚠</span>
+          <div style="min-width:0">
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Square POS — reconnect needed</div>
+            <div style="font-size:11px;color:var(--red);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px" title="{{ restaurant.square_sync_error }}">{{ restaurant.square_sync_error }}</div>
           </div>
           {% else %}
           <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
@@ -3889,8 +3916,13 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           {% endif %}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
-          {% if restaurant.square_location_id %}
+          {% if restaurant.square_location_id and not restaurant.square_sync_error %}
           <button onclick="squareSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
+          <button onclick="squareDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
+          {% elif restaurant.square_location_id and restaurant.square_sync_error %}
+          <!-- Retrying a sync fixes nothing when the root cause is the
+               credentials themselves — offer re-entering them instead. -->
+          <button onclick="openSquareModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Reconnect</button>
           <button onclick="squareDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
           {% else %}
           <button onclick="openSquareModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -3901,11 +3933,22 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
       <!-- Clover POS -->
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px">
         <div style="display:flex;align-items:center;gap:8px;min-width:0">
-          {% if restaurant.clover_merchant_id %}
+          {% if restaurant.clover_merchant_id and not restaurant.clover_sync_error %}
           <span style="color:var(--green);font-size:13px;flex-shrink:0">✓</span>
           <div>
             <div style="font-size:12px;font-weight:600;color:var(--ink)">Clover POS</div>
             <div style="font-size:11px;color:var(--ink3)">{% if restaurant.clover_last_synced %}Last synced {{ restaurant.clover_last_synced[:16].replace('T',' ') }} UTC{% else %}Connected — initial sync pending{% endif %}</div>
+          </div>
+          {% elif restaurant.clover_merchant_id and restaurant.clover_sync_error %}
+          <!-- Credentials are on file but the last sync failed — a typo, or
+               a token Clover later revoked. Showing a plain green check here
+               (the id-only check this replaced) claimed "Connected" while no
+               data had synced since, which is exactly the state that would
+               make an owner think their numbers were live when they weren't. -->
+          <span style="color:var(--red);font-size:13px;flex-shrink:0">⚠</span>
+          <div style="min-width:0">
+            <div style="font-size:12px;font-weight:600;color:var(--ink)">Clover POS — reconnect needed</div>
+            <div style="font-size:11px;color:var(--red);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px" title="{{ restaurant.clover_sync_error }}">{{ restaurant.clover_sync_error }}</div>
           </div>
           {% else %}
           <span style="color:#ef9f27;font-size:11px;flex-shrink:0">●</span>
@@ -3916,8 +3959,13 @@ var gSalesLiftYr = {{savings_breakdown.sales_lift_yr if savings_breakdown and sa
           {% endif %}
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
-          {% if restaurant.clover_merchant_id %}
+          {% if restaurant.clover_merchant_id and not restaurant.clover_sync_error %}
           <button onclick="cloverSyncNow(this)" class="btn btn-approve" style="font-size:11px;padding:4px 10px;flex-shrink:0">↻ Sync</button>
+          <button onclick="cloverDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
+          {% elif restaurant.clover_merchant_id and restaurant.clover_sync_error %}
+          <!-- Retrying a sync fixes nothing when the root cause is the
+               credentials themselves — offer re-entering them instead. -->
+          <button onclick="openCloverModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Reconnect</button>
           <button onclick="cloverDisconnect(this)" style="font-size:11px;padding:4px 10px;flex-shrink:0;background:none;border:1px solid var(--red);border-radius:6px;color:var(--red);font-weight:600;cursor:pointer;font-family:'Apfel Grotezk',sans-serif">Disconnect</button>
           {% else %}
           <button onclick="openCloverModal()" class="btn btn-approve" style="font-size:11px;padding:5px 12px;flex-shrink:0">Connect<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;margin-left:4px"><circle cx="8" cy="8" r="8" fill="currentColor" fill-opacity=".18"/><path d="M6.5 5.5l3 2.5-3 2.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></button>

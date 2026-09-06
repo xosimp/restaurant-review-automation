@@ -263,6 +263,11 @@ struct RootView: View {
                 // straight back on Account instead of Home. A fresh sign-in
                 // should always start on Home.
                 selectedTab = AppPreferences.shared.defaultTab
+                // Same reasoning, same fix, for Ask Cavnar: askCavnarViewModel
+                // is also a RootView @State that outlives sign-out/sign-in, so
+                // without this a fresh sign-in reopened whatever chat and
+                // scroll position the previous session left behind.
+                askCavnarViewModel.reset()
             }
         }
         .onChange(of: deepLinkRouter.pendingTab) { _, tab in

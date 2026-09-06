@@ -3102,6 +3102,16 @@ def _do_mobile_account(current_user):
         "password_changed_at": current_user.get("password_changed_at"),
         "password_strength": current_user.get("password_strength"),
     }
+    # A credential-pair POS (Toast/Square/Clover) can have its id fields set
+    # and still not be working: Toast's connect route saves the three fields
+    # BEFORE verifying them (so a nightly retry can pick up a transient
+    # failure), and all three write sync_error whenever a LATER sync fails —
+    # a revoked token, an expired secret. Reporting "connected" off the id
+    # field alone means a typo'd Toast connect, or a token Toast revokes
+    # six months in, shows a permanent green "Connected" with a Disconnect
+    # button while no data has synced since. sync_error is the same signal
+    # admin.html already reads for exactly this reason (see its "Last error"
+    # line) — this brings the client-facing surfaces in line with it.
     connections = {
         "google_business": {
             "connected": bool(getattr(restaurant, "gmb_refresh_token", None)),
@@ -3110,16 +3120,22 @@ def _do_mobile_account(current_user):
             "connected": bool(getattr(restaurant, "ig_token", None)),
         },
         "toast": {
-            "connected": bool(getattr(restaurant, "toast_restaurant_guid", None)),
+            "connected": bool(getattr(restaurant, "toast_restaurant_guid", None))
+                        and not getattr(restaurant, "toast_sync_error", None),
             "last_synced": getattr(restaurant, "toast_last_synced", None),
+            "error": getattr(restaurant, "toast_sync_error", None),
         },
         "square": {
-            "connected": bool(getattr(restaurant, "square_location_id", None)),
+            "connected": bool(getattr(restaurant, "square_location_id", None))
+                        and not getattr(restaurant, "square_sync_error", None),
             "last_synced": getattr(restaurant, "square_last_synced", None),
+            "error": getattr(restaurant, "square_sync_error", None),
         },
         "clover": {
-            "connected": bool(getattr(restaurant, "clover_merchant_id", None)),
+            "connected": bool(getattr(restaurant, "clover_merchant_id", None))
+                        and not getattr(restaurant, "clover_sync_error", None),
             "last_synced": getattr(restaurant, "clover_last_synced", None),
+            "error": getattr(restaurant, "clover_sync_error", None),
         },
     }
     alerts = {

@@ -257,16 +257,20 @@ final class AskCavnarViewModel {
 
     // MARK: Chat history
 
-    /// First appearance of the tab: pick up where the owner left off — the
-    /// most recent chat, already fully revealed (no retyping of old
-    /// answers). Nothing to do on later appearances; the tab keeps state.
+    /// First appearance of the tab after a fresh launch or sign-in: start a
+    /// new chat, not the most recent one.
+    ///
+    /// This used to reopen the latest conversation, fully revealed, on the
+    /// theory that resuming where the owner left off saved them a tap. In
+    /// practice it meant tapping the home row's Ask Cavnar button dropped
+    /// them wherever they'd last scrolled inside an old chat — sometimes
+    /// mid-conversation — instead of the fresh composer the tap implies.
+    /// Old chats are one tap away in History; this only changes what
+    /// greets a brand new session.
     func loadInitialIfNeeded() async {
         guard !hasLoadedInitial else { return }
         hasLoadedInitial = true
         await refreshConversations()
-        if let latest = conversations.first, messages.isEmpty, conversationId == nil {
-            await open(latest)
-        }
     }
 
     func refreshConversations() async {
@@ -312,6 +316,21 @@ final class AskCavnarViewModel {
         wantsNewConversation = true
         errorBanner = nil
         statusLabel = nil
+    }
+
+    /// Called on a fresh sign-in (see RootView's onChange(of:
+    /// sessionStore.isAuthenticated)). This view model is a single @State
+    /// on RootView that outlives sign-out/sign-in within the same app
+    /// process — the same reason hasShownHomeIntro and selectedTab need
+    /// their own reset there — so without this, signing out of one chat and
+    /// back in (same account or a different one on a shared device) landed
+    /// on whatever conversation and scroll position were left over, and
+    /// `hasLoadedInitial` being permanently true meant even the old
+    /// resume-latest-chat behavior never got a chance to run again either.
+    func reset() {
+        hasLoadedInitial = false
+        conversations = []
+        startNewChat()
     }
 
     /// Permanent. If it was the chat on screen, the screen becomes a new
