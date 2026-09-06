@@ -16,7 +16,7 @@ struct ResponseRingsChart: View {
         VStack(alignment: .leading, spacing: 14) {
             CavnarChartHeader(kicker: "Response performance · last \(performance.days) days", title: "Response Rings",
                               detail: "How much gets answered, and how much of the AI's draft goes out untouched.")
-            CavnarAnimatedCanvas(duration: 1.3, height: 230, replayKey: "\(performance.total)-\(performance.approvedAsIs)-\(performance.edited)") { ctx, size, t, _ in
+            CavnarAnimatedCanvas(duration: 2.6, height: 230, replayKey: "\(performance.total)-\(performance.approvedAsIs)-\(performance.edited)") { ctx, size, t, _ in
                 draw(&ctx, size: size, t: t)
             }
         }

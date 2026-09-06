@@ -25,7 +25,7 @@ struct WasteLedgerChart: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             CavnarChartHeader(kicker: kicker, title: title)
-            CavnarAnimatedCanvas(duration: 1.6, height: height, replayKey: shown.map(\.id).joined()) { ctx, size, t, _ in
+            CavnarAnimatedCanvas(duration: 2.9, height: height, replayKey: shown.map(\.id).joined()) { ctx, size, t, _ in
                 draw(&ctx, size: size, t: t)
             }
         }

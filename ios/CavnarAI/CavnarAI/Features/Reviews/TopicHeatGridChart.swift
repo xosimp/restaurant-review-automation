@@ -18,7 +18,7 @@ struct TopicHeatGridChart: View {
         VStack(alignment: .leading, spacing: 14) {
             CavnarChartHeader(kicker: "Topic sentiment", title: "Topic Heat Grid",
                               detail: "Ember is praise, red is complaints — intensity is how often it came up.")
-            CavnarAnimatedCanvas(duration: 1.5, height: height, replayKey: data.topics.map(\.category).joined()) { ctx, size, t, _ in
+            CavnarAnimatedCanvas(duration: 2.8, height: height, replayKey: data.topics.map(\.category).joined()) { ctx, size, t, _ in
                 draw(&ctx, size: size, t: t)
             } overlay: {
                 // Invisible row hit targets over the canvas.
@@ -42,9 +42,20 @@ struct TopicHeatGridChart: View {
     }
 
     private func draw(_ ctx: inout GraphicsContext, size: CGSize, t: Double) {
-        let left: CGFloat = 92, right: CGFloat = 44, top: CGFloat = 16
+        // `left` stays at 92: the longest category ("Takeout & Delivery")
+        // already needs the whole 80pt gutter that leaves, so trimming it
+        // to widen the cells would clip labels off the canvas. The cells
+        // get their room from the trailing gutter and a tighter inset
+        // instead.
+        let left: CGFloat = 92, right: CGFloat = 38, top: CGFloat = 16
         let cols = max(1, data.weekLabels.count)
         let cw = (size.width - left - right) / CGFloat(cols)
+        // Actually square, at any column count. The cell used to be
+        // (cw - 6) wide by (rowHeight - 6) tall — two unrelated numbers,
+        // so it only looked square by luck and in practice came out
+        // noticeably taller than wide. One side length, centred in its
+        // column, is square by construction however many weeks there are.
+        let side = min(cw - 4, rowHeight - 4)
         for (r, row) in data.topics.enumerated() {
             let cy = top + rowHeight * CGFloat(r) + rowHeight / 2
             CavnarChart.text(&ctx, CavnarChart.label(row.label, size: 11.5, weight: 700, color: .cavnarInk2),
@@ -53,7 +64,10 @@ struct TopicHeatGridChart: View {
             for (c, cell) in row.weeks.enumerated() {
                 let delay = Double(r + c) * 0.055
                 let s = CavnarChart.easeOut(CavnarChart.window(t, from: delay, length: 0.35))
-                let rect = CGRect(x: left + cw * CGFloat(c) + 3, y: top + rowHeight * CGFloat(r) + 3, width: cw - 6, height: rowHeight - 6)
+                let cx = left + cw * CGFloat(c) + cw / 2
+                let rect = CGRect(x: cx - side / 2,
+                                  y: top + rowHeight * CGFloat(r) + (rowHeight - side) / 2,
+                                  width: side, height: side)
                 let scaled = rect.insetBy(dx: rect.width * (1 - s) / 2, dy: rect.height * (1 - s) / 2)
                 let path = CavnarChart.roundedRect(scaled, radius: 6)
                 guard cell.total > 0 else {

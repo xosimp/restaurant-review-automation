@@ -1,22 +1,28 @@
 import SwiftUI
 
-/// Full-page loading skeleton for the Analytics tab's first load —
-/// replaces the plain ProgressView() with blocks roughly shaped like the
-/// real content underneath (hero, stat strip, benchmark bar, two donut
-/// rows, action rows, trend chart), each using the house CavnarSkeletonBar
-/// sliding-highlight shimmer (DesignSystem/ViewModifiers.swift) rather than
-/// a spinner — the same convention other loading states in this app use,
-/// just composed into a full-screen layout instead of a single line.
+/// Full-page loading skeleton for the Analytics tab's first load.
+///
+/// Reshaped to match what this page ACTUALLY renders now: hero card (with
+/// its AI strip), stat strip, recoverable gauge, the two ledgers (Waste
+/// Ledger and Tied-Up Capital), the action rows, then the trend chart. It
+/// still described the old layout — a benchmark bar and two donut rows —
+/// none of which is on this page any more, so the placeholder was
+/// resolving to a shape the real content never landed in and everything
+/// jumped once it arrived.
+///
+/// Blocks are sized to the real components' own heights (the gauge is 230,
+/// a ledger is 44 + 40/row + 8, the trend chart 200) so the page barely
+/// moves when the data lands.
 struct FoodCostAnalyticsSkeleton: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
             heroBlock
             statStripBlock
-            CavnarSkeletonBar(height: 22, widthFraction: 1.0)
-            donutRowBlock
-            donutRowBlock
+            chartBlock(kickerWidth: 0.30, titleWidth: 0.52, height: 230)   // Recoverable Gauge
+            ledgerBlock(rows: 4)                                          // Waste Ledger
+            ledgerBlock(rows: 3)                                          // Tied-Up Capital
             actionBlock
-            CavnarSkeletonBar(height: 120, widthFraction: 1.0)
+            chartBlock(kickerWidth: 0.26, titleWidth: 0.44, height: 200)   // Trend chart
         }
     }
 
@@ -27,10 +33,15 @@ struct FoodCostAnalyticsSkeleton: View {
     private var heroBlock: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("COUNTING THE PANTRY")
-                .font(.cavnarNumber(14, weight: 600))
+                .font(.cavnarBody(14, weight: 600))
                 .tracking(1.4)
                 .foregroundStyle(Color.cavnarInk3)
             CavnarLedgerFill()
+            // The hero carries the AI consultant strip along its bottom
+            // edge, after a divider — reserved here so it doesn't appear
+            // out of nowhere.
+            Rectangle().fill(Color.cavnarEmber.opacity(0.25)).frame(height: 1)
+            CavnarSkeletonBar(height: 15, widthFraction: 0.8)
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -50,16 +61,37 @@ struct FoodCostAnalyticsSkeleton: View {
         }
     }
 
-    private var donutRowBlock: some View {
-        HStack(alignment: .center, spacing: 20) {
-            Circle()
-                .fill(Color.cavnarPaper3.opacity(0.5))
-                .frame(width: 92, height: 92)
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(0..<3, id: \.self) { _ in
-                    CavnarSkeletonBar(height: 12, widthFraction: 0.75)
+    /// Every chart on this page opens with a CavnarChartHeader (kicker +
+    /// title, sometimes a detail line) above the canvas stage, so the
+    /// placeholder carries the same three parts.
+    private func chartBlock(kickerWidth: CGFloat, titleWidth: CGFloat, height: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 7) {
+                CavnarSkeletonBar(height: 10, widthFraction: kickerWidth)
+                CavnarSkeletonBar(height: 19, widthFraction: titleWidth)
+            }
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.cavnarPaper2.opacity(0.55))
+                .frame(height: height)
+        }
+    }
+
+    /// A ledger's own geometry: header, then one pill-shaped bar per row at
+    /// the real 40pt row pitch, each already carrying the shimmer.
+    private func ledgerBlock(rows: Int) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 7) {
+                CavnarSkeletonBar(height: 10, widthFraction: 0.28)
+                CavnarSkeletonBar(height: 19, widthFraction: 0.46)
+            }
+            VStack(spacing: 14) {
+                // Descending widths — a ledger is sorted by cost, so the
+                // placeholder leans the way the real bars will.
+                ForEach(0..<rows, id: \.self) { i in
+                    CavnarSkeletonBar(height: 26, widthFraction: 1.0 - Double(i) * 0.14)
                 }
             }
+            .padding(.vertical, 8)
         }
     }
 

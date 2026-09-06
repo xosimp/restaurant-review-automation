@@ -278,6 +278,15 @@ struct AccountView: View {
                     showingScheduleHistory = true
                 }
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
+                // Directly under Schedule History — the two "what has this
+                // account already sent/produced" records belong next to
+                // each other, rather than with What's New between them.
+                settingsRow {
+                    row("Email history", systemImage: "envelope")
+                } action: {
+                    showingEmailHistory = true
+                }
+                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
                 settingsRow {
                     row(
                         "What's New", systemImage: "sparkles",
@@ -285,12 +294,6 @@ struct AccountView: View {
                     )
                 } action: {
                     showingChangelog = true
-                }
-                Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
-                settingsRow {
-                    row("Email history", systemImage: "envelope")
-                } action: {
-                    showingEmailHistory = true
                 }
                 Rectangle().fill(Color.cavnarPaper3.opacity(0.6)).frame(height: 1).padding(.leading, 47)
                 settingsRow {

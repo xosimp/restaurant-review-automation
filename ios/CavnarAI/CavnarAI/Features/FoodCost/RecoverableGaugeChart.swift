@@ -16,7 +16,7 @@ struct RecoverableGaugeChart: View {
         VStack(alignment: .leading, spacing: 14) {
             CavnarChartHeader(kicker: "Recoverable", title: "Recoverable Gauge",
                               detail: "Waste and overstock you can claw back with better ordering — the one number to remember.")
-            CavnarAnimatedCanvas(duration: 1.4, height: 230, replayKey: "\(Int(monthly))-\(Int(ceiling))") { ctx, size, t, _ in
+            CavnarAnimatedCanvas(duration: 2.8, height: 230, replayKey: "\(Int(monthly))-\(Int(ceiling))") { ctx, size, t, _ in
                 draw(&ctx, size: size, t: t)
             }
         }
@@ -51,11 +51,12 @@ struct RecoverableGaugeChart: View {
         // centered at any canvas width, since R is what actually sets how
         // tall the open area is.
         let bowlMid = center.y - R * 0.55
-        ctx.drawLayer { layer in
-            layer.addFilter(.shadow(color: Color.cavnarEmber.opacity(0.8), radius: 14))
-            CavnarChart.text(&layer, CavnarChart.number("$\(Int((monthly * s).rounded()).formatted())", size: 34, weight: 700),
-                             at: CGPoint(x: center.x, y: bowlMid))
-        }
+        // Drawn flat. This used to sit inside a drawLayer with a 14pt ember
+        // shadow filter behind it, which at this size read as the number
+        // itself being blurry rather than as a glow. The arc already
+        // carries the gauge's glow; the figure just needs to be crisp.
+        CavnarChart.text(&ctx, CavnarChart.number("$\(Int((monthly * s).rounded()).formatted())", size: 34, weight: 700),
+                         at: CGPoint(x: center.x, y: bowlMid))
         // +40 / +64, not +28 / +50. The big figure keeps its position; the
         // caption drops away from it. At 28pt below a 34pt number the two
         // were nearly touching — the number's own descenders ran into the
